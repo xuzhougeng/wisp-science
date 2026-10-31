@@ -920,11 +920,11 @@ button.run-status:hover { filter:brightness(0.96); }
   .rightpane,
   .rp-tab-add-menu,
   .rightpane-backdrop,
-  .agent-workflow-progress .agent-workflow-hub,
-  .agent-workflow-progress .agent-workflow-orbit::after,
-  .agent-workflow-progress .agent-workflow-orbit > span,
+  .agent-workflow-progress.moving .agent-workflow-hub,
+  .agent-workflow-progress.moving .agent-workflow-orbit:is([data-status="running"], [data-status="waiting_run"], [data-status="pending"], [data-status="queued"])::after,
+  .agent-workflow-progress.moving .agent-workflow-orbit:is([data-status="running"], [data-status="waiting_run"]) > span,
   .agent-workflow-meter > span[data-status="running"]::after,
-  .agent-step .agent-attempt-status::before {
+  .agent-step:is([data-status="running"], [data-status="waiting_run"]) .agent-attempt-status::before {
     animation: none;
   }
   .agent-workflow-meter > span,

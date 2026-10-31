@@ -7,16 +7,16 @@ the connection file.
 
 ## Connect and disconnect
 
-Configure a provider in Magpie, then install the plugin from its source checkout:
+Configure a provider in Magpie, then install the plugin:
 
 ```sh
-magpie plugin add /absolute/path/to/magpie-agents/packages/agent-wisp-science
+magpie plugin add @hoptoper/magpie-agent-wisp-science
 magpie wisp-science magpie/provider/model
 ```
 
 Replace `provider/model` with an available model and keep the gateway running.
-After npm publication, use
-`magpie plugin add @xuzhougeng/magpie-agent-wisp-science@alpha` instead.
+To try an unreleased plugin, pass its source checkout instead:
+`magpie plugin add /absolute/path/to/magpie-agents/packages/agent-wisp-science`.
 
 Restart Wisp Science after every connection, model change, or disconnection.
 The desktop and CLI read the connection once per process, so live agents and
@@ -41,6 +41,35 @@ profiles remain editable, and their validation tests the fields in the form.
 Model changes in the personal editor take effect after Magpie is disconnected.
 External ACP agents and dedicated image/video generation configurations retain
 their own model management. A model must support any requested tools or images.
+
+## Gateway sessions
+
+Every model request through the Magpie connection carries an `X-Session-Id`
+header with the conversation's ID: the desktop conversation (or delegated
+child), or the CLI's `.wisp/session-id`. Wisp Science conversations then
+appear on Magpie's Sessions page as gateway-backed, read-only sessions with
+transcripts from the gateway's request ledger. Personal model profiles keep
+their own session-header setting.
+
+## Library: instructions, MCP servers and skills
+
+Magpie's Library writes into three fixed Wisp Science user-level locations.
+They are ordinary Wisp files (`~` is `%USERPROFILE%` on Windows) and work the
+same without Magpie; Magpie keeps whatever else you put there.
+
+| Library item | Location | Takes effect |
+| --- | --- | --- |
+| Instructions | `~/.wisp/AGENTS.md`; Magpie appends a delimited block and keeps your text | New conversations. An existing desktop conversation is marked stale and can use **Reload project rules…** |
+| MCP servers | `~/.wisp/mcp.json` in the `mcpServers` format; Magpie merges in its servers | The next agent build: a new desktop conversation, or an existing one once its agent is rebuilt; the next CLI start |
+| Skills | `~/.wisp/skills/<skill>`, usually a symlinked folder | **Settings → Skills → Reload skills** or a restart; the next CLI start |
+
+User instructions have the lowest precedence: the project's `AGENTS.md` and
+`.wisp/WISP.md` override them. MCP secrets stay `${NAME}` references in the
+file. Wisp expands them from its own process environment when it starts a
+server and skips a server whose variable is unset, so the desktop app needs the
+variable in the environment it was launched from. Legacy SSE servers are skipped
+with an error; stdio and Streamable HTTP (`"type": "http"`) are supported. See
+[Skills](skills.md) and [basic configuration](basic-configuration.md#用户级-mcp-文件-wispmcpjson).
 
 ## Model facts and reasoning effort
 

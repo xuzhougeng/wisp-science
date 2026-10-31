@@ -3464,7 +3464,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "session.children.exploration_blocks") => Some("An open exploration round cannot outlive the conversation it started from. Keep this checked to discard it, or abandon or select the exploration first."),
         (Locale::En, "session.delete_confirm") => Some("Delete this session? This cannot be undone."),
         (Locale::En, "ctx.reload_rules") => Some("Reload project rules…"),
-        (Locale::En, "session.reload_rules_hint") => Some("Rebuild this session's system prompt with the current AGENTS.md / WISP.md. Takes effect on the next turn. Because the prompt prefix changes, the model's prompt cache for this session is invalidated once (the next turn costs a bit more). Chat history is unaffected."),
+        (Locale::En, "session.reload_rules_hint") => Some("Rebuild this session's system prompt with the current ~/.wisp/AGENTS.md, AGENTS.md and WISP.md. Takes effect on the next turn. Because the prompt prefix changes, the model's prompt cache for this session is invalidated once (the next turn costs a bit more). Chat history is unaffected."),
         (Locale::En, "session.reload_rules_action") => Some("Reload rules"),
         (Locale::En, "session.delete_many_confirm") => Some("Delete {n} conversations? This cannot be undone."),
         (Locale::En, "session.rename_title") => Some("Rename session"),
@@ -3581,7 +3581,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "files.delete_directory_confirm") => Some("Delete “{path}” and all of its contents? This action cannot be undone."),
         (Locale::En, "caps.title") => Some("Capabilities"),
         (Locale::En, "env.title") => Some("Local environment (optional)"),
-        (Locale::En, "env.optional") => Some("Detected paths are saved to Local, keeping your choices. Missing tools do not block startup. Use local-env-setup after launch when needed."),
+        (Locale::En, "env.optional") => Some("Detected paths are saved to Local, keeping your choices. Missing tools do not block startup: install them into Wisp below, or use local-env-setup after launch."),
         (Locale::En, "env.missing") => Some("Not found · set up later if needed"),
         (Locale::En, "env.checking") => Some("Checking paths in the background; you can continue."),
         (Locale::En, "env.edit") => Some("Edit paths"),
@@ -3590,7 +3590,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "env.edit_hint") => Some("Enter the full path to each executable. Clear a field to use automatic detection, then save your changes."),
         (Locale::En, "env.check_again") => Some("Check paths again"),
         (Locale::Zh, "env.title") => Some("本地环境（可选）"),
-        (Locale::Zh, "env.optional") => Some("检测到的路径会保存到 Local，保留已有配置。缺少工具不影响启动；需要时可在启动后使用 local-env-setup 配置。"),
+        (Locale::Zh, "env.optional") => Some("检测到的路径会保存到 Local，保留已有配置。缺少工具不影响启动：可以在下方安装到 Wisp，或在启动后使用 local-env-setup 配置。"),
         (Locale::Zh, "env.missing") => Some("未找到 · 可稍后按需配置"),
         (Locale::Zh, "env.checking") => Some("正在后台检测路径，可以继续。"),
         (Locale::Zh, "env.edit") => Some("编辑路径"),
@@ -3598,6 +3598,52 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::Zh, "env.saved") => Some("本地环境路径已保存"),
         (Locale::Zh, "env.edit_hint") => Some("填写可执行文件的完整路径；清空后恢复自动检测。修改后请点击「保存路径」。"),
         (Locale::Zh, "env.check_again") => Some("重新检测路径"),
+        (Locale::En, "toolchain.title") => Some("Install into Wisp"),
+        (Locale::En, "toolchain.hint") => Some("Tools already on this computer are used as they are. Missing ones can be installed into Wisp's own folder ({root}): no administrator rights, no change to your system PATH. Give a project its own environment with uv later."),
+        (Locale::En, "toolchain.uv") => Some("Manages project Python environments"),
+        (Locale::En, "toolchain.python") => Some("Wisp's Python environment with common analysis packages; brings uv"),
+        (Locale::En, "toolchain.r") => Some("With jsonlite for the persistent R tool"),
+        (Locale::En, "toolchain.node") => Some("With npm, for literature tools and npx services"),
+        (Locale::En, "toolchain.managed") => Some("Installed by Wisp"),
+        (Locale::En, "toolchain.found") => Some("Found · used as is"),
+        (Locale::En, "toolchain.absent") => Some("Not found · install suggested"),
+        (Locale::En, "toolchain.install") => Some("Install selected"),
+        (Locale::En, "toolchain.retry") => Some("Retry"),
+        (Locale::En, "toolchain.cancel") => Some("Stop installing"),
+        (Locale::En, "toolchain.progress") => Some("Step {step} of {total}: {action}"),
+        (Locale::En, "toolchain.step.pixi") => Some("preparing the installer"),
+        (Locale::En, "toolchain.step.install") => Some("installing {tool}"),
+        (Locale::En, "toolchain.step.venv") => Some("creating Wisp's Python environment"),
+        (Locale::En, "toolchain.step.packages") => Some("installing common analysis packages"),
+        (Locale::En, "toolchain.step.save") => Some("saving paths"),
+        (Locale::En, "toolchain.done") => Some("Tools installed; paths saved to Local."),
+        (Locale::En, "toolchain.cancelled") => Some("Installation stopped. Finished tools stay installed."),
+        (Locale::En, "toolchain.failed") => Some("Installation failed."),
+        (Locale::En, "toolchain.checking") => Some("Checking…"),
+        (Locale::En, "toolchain.later") => Some("You can also skip this now and install later from Settings → General → Local environment, or ask Wisp to set it up with local-env-setup."),
+        (Locale::Zh, "toolchain.title") => Some("安装到 Wisp"),
+        (Locale::Zh, "toolchain.hint") => Some("电脑上已有的工具直接使用。未检测到的可以安装到 Wisp 自己的目录（{root}），不需要管理员权限，也不改动系统 PATH；项目专属环境之后用 uv 创建。"),
+        (Locale::Zh, "toolchain.uv") => Some("管理项目的 Python 环境"),
+        (Locale::Zh, "toolchain.python") => Some("Wisp 默认 Python 环境，含常用分析包；会同时安装 uv"),
+        (Locale::Zh, "toolchain.r") => Some("含持久化 R 工具需要的 jsonlite"),
+        (Locale::Zh, "toolchain.node") => Some("含 npm，用于文献工具和 npx 服务"),
+        (Locale::Zh, "toolchain.managed") => Some("已由 Wisp 安装"),
+        (Locale::Zh, "toolchain.found") => Some("已检测到 · 直接使用"),
+        (Locale::Zh, "toolchain.absent") => Some("未检测到 · 建议安装"),
+        (Locale::Zh, "toolchain.install") => Some("安装所选"),
+        (Locale::Zh, "toolchain.retry") => Some("重试"),
+        (Locale::Zh, "toolchain.cancel") => Some("停止安装"),
+        (Locale::Zh, "toolchain.progress") => Some("第 {step}/{total} 步：{action}"),
+        (Locale::Zh, "toolchain.step.pixi") => Some("准备安装器"),
+        (Locale::Zh, "toolchain.step.install") => Some("安装 {tool}"),
+        (Locale::Zh, "toolchain.step.venv") => Some("创建 Wisp 的 Python 环境"),
+        (Locale::Zh, "toolchain.step.packages") => Some("安装常用分析包"),
+        (Locale::Zh, "toolchain.step.save") => Some("保存路径"),
+        (Locale::Zh, "toolchain.done") => Some("安装完成，路径已保存到 Local。"),
+        (Locale::Zh, "toolchain.cancelled") => Some("已停止安装，已完成的工具会保留。"),
+        (Locale::Zh, "toolchain.failed") => Some("安装失败。"),
+        (Locale::Zh, "toolchain.checking") => Some("检测中…"),
+        (Locale::Zh, "toolchain.later") => Some("现在不装也可以：之后在 设置 → 常规 → 本地环境 安装，或在对话里让 Wisp 用 local-env-setup 配置。"),
         (Locale::En, "caps.runtime") => Some("Runtime v{version}"),
         (Locale::En, "caps.workspace") => Some("Workspace: {path}"),
         (Locale::En, "caps.runtime_status") => Some("Startup effective Skills: {skills} · bundled MCP packages: {mcp}"),
@@ -6748,7 +6794,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "session.children.exploration_blocks") => Some("未完成的探索轮次不能脱离其来源会话而保留。请保持勾选以一并放弃，或先放弃或选定该探索。"),
         (Locale::Zh, "session.delete_confirm") => Some("删除此会话？此操作无法撤销。"),
         (Locale::Zh, "ctx.reload_rules") => Some("重载项目规则…"),
-        (Locale::Zh, "session.reload_rules_hint") => Some("将用当前的 AGENTS.md / WISP.md 重建本会话的系统提示词，下一轮起生效。由于提示词前缀变化，该会话的模型提示词缓存将失效一次（下一轮成本略增）。聊天历史不受影响。"),
+        (Locale::Zh, "session.reload_rules_hint") => Some("将用当前的 ~/.wisp/AGENTS.md、AGENTS.md 和 WISP.md 重建本会话的系统提示词，下一轮起生效。由于提示词前缀变化，该会话的模型提示词缓存将失效一次（下一轮成本略增）。聊天历史不受影响。"),
         (Locale::Zh, "session.reload_rules_action") => Some("重载规则"),
         (Locale::Zh, "session.delete_many_confirm") => Some("删除这 {n} 个会话？此操作无法撤销。"),
         (Locale::Zh, "session.rename_title") => Some("重命名会话"),
@@ -7244,6 +7290,23 @@ pub fn localize_backend(locale: Locale, msg: &str) -> String {
         m if m.starts_with("project_folder_metadata_invalid:") => {
             if locale == Locale::Zh { "项目 metadata 数据库损坏、不完整或与项目说明不匹配，无法导入。请从原项目重新导出。".into() }
             else { "Project metadata is damaged, incomplete or does not match the manifest. Export the original project again.".into() }
+        }
+        "An installation is already running." => {
+            if locale == Locale::Zh { "已有安装正在进行。".into() } else { msg.into() }
+        }
+        m if m.starts_with("Could not download pixi from GitHub: ") => {
+            let detail = m["Could not download pixi from GitHub: ".len()..]
+                .trim_end_matches(". Check the Code requests proxy in Settings → Network, then retry.");
+            if locale == Locale::Zh { format!("无法从 GitHub 下载 pixi（{detail}）。请检查 设置 → 网络 中的「代码请求」代理后重试。") } else { msg.into() }
+        }
+        m if m.starts_with("pixi download failed verification") => {
+            if locale == Locale::Zh { "pixi 下载内容校验失败。请重试；如使用了代理，请确认它没有改写下载内容。".into() } else { msg.into() }
+        }
+        m if m.starts_with("Wisp cannot install tools on ") => {
+            if locale == Locale::Zh { "Wisp 暂不支持在这台机器上安装这些工具。请自行安装，再点击「编辑路径」填写。".into() } else { msg.into() }
+        }
+        m if m.ends_with("; see the log for details.") => {
+            if locale == Locale::Zh { format!("{}；详见下方日志。", m.trim_end_matches("; see the log for details.")) } else { msg.into() }
         }
         "This decision model service needs an API key." => {
             if locale == Locale::Zh { "这个决策模型服务需要 API key。".into() } else { msg.into() }

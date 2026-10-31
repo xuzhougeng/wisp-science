@@ -1,14 +1,31 @@
 //! Layered system-prompt assembly, ported from mangopi-cli's `SystemPrompt`.
 //!
 //! Sections: base intro, safety, built-in rules, tool guidance, skills
-//! guidance, user rules (memory), environment.
+//! guidance, user instructions + project rules (memory), environment.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use wisp_skills::SkillIndex;
+
+const USER_INSTRUCTIONS_HEADER: &str = "## User Instructions (~/.wisp/AGENTS.md)";
+const PROJECT_INSTRUCTIONS_HEADER: &str = "## Project Instructions (AGENTS.md)";
+const USER_RULES_HEADER: &str = "## User Rules";
+
+/// `~/.wisp/AGENTS.md`: the user's instructions for every project.
+pub fn user_instructions_path(home: &Path) -> PathBuf {
+    home.join(".wisp").join("AGENTS.md")
+}
+
+/// Read the user-level instructions under `home`. Missing or blank adds nothing.
+pub fn read_user_instructions(home: &Path) -> Option<String> {
+    std::fs::read_to_string(user_instructions_path(home))
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+}
 
 pub struct SystemPrompt<'a> {
     project_root: &'a Path,
     skills: &'a SkillIndex,
+    user_instructions: Option<String>,
     project_instructions: Option<String>,
     user_rules: Option<String>,
     compute_hosts: Option<String>,
@@ -29,10 +46,18 @@ impl<'a> SystemPrompt<'a> {
         Self {
             project_root,
             skills,
+            user_instructions: None,
             project_instructions,
             user_rules,
             compute_hosts,
         }
+    }
+
+    /// Add the host-read `~/.wisp/AGENTS.md` (see [`read_user_instructions`]).
+    /// The caller reads HOME, so tests and reproducible hosts can leave it out.
+    pub fn with_user_instructions(mut self, instructions: Option<String>) -> Self {
+        self.user_instructions = instructions.filter(|s| !s.trim().is_empty());
+        self
     }
 
     fn base_intro() -> String {
@@ -108,7 +133,7 @@ Always finish with **attempt_completion** to present the final result.\n".into()
         "## Python, R, And Local Environments\n\n\
 Use the selected environment for both standalone scripts and interactive analysis; choose process lifetime using Tool Selection above. **A missing package is a setup step, not a dead end.** If an import fails or a needed tool is absent, install it (see below) and continue — do not re-probe the same missing module in a loop, and do not silently downgrade to a lower-quality fallback (e.g. a worse PDF/text extractor) that yields garbled output. Install once, confirm the import, then proceed. Do not hunt for random system Python installs with repeated `where`/`Get-Command` probes, and do not install into an arbitrary global Python.\n\
 The persistent **r** tool requires an existing `Rscript` and `jsonlite`; standalone R scripts require only their own dependencies. Do not silently install R or packages. Interpreter paths belong to the selected execution context's persisted settings. When the user supplies or asks to change a Python/R path, use `set_runtime_interpreter` with the matching `context_id` if that tool is available; never try to change the Wisp host process environment from a shell tool.\n\
-When packages or a project-specific scientific stack are needed, call `use_skill` for `local-env-setup` first. For local bioinformatics/scientific package work, prefer a project-local **pixi** environment: `pixi init`, `pixi add ...`, then `pixi run python ...` from the project directory.\n\
+When packages or a project-specific scientific stack are needed, call `use_skill` for `local-env-setup` first. Tools the user installed into Wisp (uv, Python, Rscript, Node/npm) are on `PATH` for local shell commands and Runs; there `python` and `pip` mean Wisp's own environment, so give a project its own environment rather than adding project packages to it. For a Python-only project, use **uv** in the project directory: `uv venv` (or `uv init`), `uv add ...` or `uv pip install ...`, then `uv run python ...`; for the persistent tool, save the project `.venv` interpreter with `set_runtime_interpreter`. When the stack needs conda packages (bioinformatics binaries, R packages, compiled libraries), prefer a project-local **pixi** environment: `pixi init`, `pixi add ...`, then `pixi run python ...` from the project directory.\n\
 Before any `pip`, `uv`, `npm`, or `pixi add` download, consider the user's network. If mainland-China or corporate-mirror access is likely or requested, configure PyPI/uv and pixi conda/PyPI mirrors first; otherwise use defaults.\n".into()
     }
 
@@ -153,12 +178,13 @@ If a named workflow is disabled or unavailable, follow the same principles direc
             // A similarly named heading inside user/project instructions is
             // not a host-owned section, including in older/custom prompts.
             let boundary = [
-                "\n\n## Project Instructions (AGENTS.md)",
-                "\n\n## User Rules",
-                "\n\n## Environment",
+                USER_INSTRUCTIONS_HEADER,
+                PROJECT_INSTRUCTIONS_HEADER,
+                USER_RULES_HEADER,
+                "## Environment",
             ]
             .iter()
-            .filter_map(|marker| prompt.find(marker))
+            .filter_map(|section| prompt.find(&format!("\n\n{section}")))
             .min()
             .unwrap_or(prompt.len());
             let marker = format!("\n\n{header}\n");
@@ -191,28 +217,34 @@ If a named workflow is disabled or unavailable, follow the same principles direc
 
     fn memory(&self) -> String {
         let mut sections = Vec::new();
-        if let Some(instructions) = &self.project_instructions {
+        // Lowest precedence first: later project sections override it.
+        if let Some(instructions) = &self.user_instructions {
             sections.push(format!(
-                "## Project Instructions (AGENTS.md)\n\n{instructions}"
+                "{USER_INSTRUCTIONS_HEADER}\n\n\
+These apply to every project. Project Instructions and User Rules below take precedence when they conflict.\n\n\
+{instructions}"
             ));
         }
+        if let Some(instructions) = &self.project_instructions {
+            sections.push(format!("{PROJECT_INSTRUCTIONS_HEADER}\n\n{instructions}"));
+        }
         sections.push(match &self.user_rules {
-            Some(rules) => format!("## User Rules\n\n{rules}"),
-            None => "## User Rules\n\nNo user-defined rules.".into(),
+            Some(rules) => format!("{USER_RULES_HEADER}\n\n{rules}"),
+            None => format!("{USER_RULES_HEADER}\n\nNo user-defined rules."),
         });
         sections.join("\n\n") + "\n"
     }
 
-    /// The prompt section derived from AGENTS.md / .wisp/WISP.md. Compared
-    /// against `extract_rules_section` of a persisted prompt to detect stale
-    /// project rules in long-lived sessions.
+    /// The prompt section derived from ~/.wisp/AGENTS.md, AGENTS.md and
+    /// .wisp/WISP.md. Compared against `extract_rules_section` of a persisted
+    /// prompt to detect stale rules in long-lived sessions.
     pub fn rules_section(&self) -> String {
         self.memory()
     }
 
-    /// Extract the rules section (AGENTS.md + User Rules) from an assembled
-    /// system prompt. Returns `None` when neither marker is present, meaning
-    /// the prompt predates this layout and staleness cannot be determined.
+    /// Extract the rules section (user AGENTS.md + AGENTS.md + User Rules) from
+    /// an assembled system prompt. Returns `None` when no marker is present,
+    /// meaning the prompt predates this layout and staleness cannot be determined.
     pub fn extract_rules_section(prompt: &str) -> Option<String> {
         let (start, end) = Self::rules_section_span(prompt)?;
         Some(prompt[start..end].trim_end().to_string() + "\n")
@@ -233,15 +265,17 @@ If a named workflow is disabled or unavailable, follow the same principles direc
     }
 
     /// Byte span of the rules section inside an assembled prompt: from the
-    /// first of the two section headers to just before `## Environment`.
+    /// first of the section headers to just before `## Environment`.
     fn rules_section_span(prompt: &str) -> Option<(usize, usize)> {
-        const INSTRUCTIONS_HEADER: &str = "## Project Instructions (AGENTS.md)";
-        const RULES_HEADER: &str = "## User Rules";
         const NEXT_SECTION: &str = "\n\n## Environment";
-        let start = [INSTRUCTIONS_HEADER, RULES_HEADER]
-            .iter()
-            .filter_map(|header| prompt.find(header))
-            .min()?;
+        let start = [
+            USER_INSTRUCTIONS_HEADER,
+            PROJECT_INSTRUCTIONS_HEADER,
+            USER_RULES_HEADER,
+        ]
+        .iter()
+        .filter_map(|header| prompt.find(header))
+        .min()?;
         let rest = &prompt[start..];
         let end = start + rest.find(NEXT_SECTION).unwrap_or(rest.len());
         Some((start, end))
@@ -302,6 +336,101 @@ mod tests {
             agents < wisp,
             "WISP.md must remain the later override:\n{out}"
         );
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn user_instructions_come_first_and_yield_to_project_files() {
+        let root = std::env::temp_dir().join(format!("wisp-user-agents-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join(".wisp")).unwrap();
+        std::fs::write(root.join("AGENTS.md"), "Use the repository checks.").unwrap();
+        std::fs::write(root.join(".wisp/WISP.md"), "Prefer the project UI setting.").unwrap();
+
+        let skills = SkillIndex::default();
+        let out = SystemPrompt::new(&root, &skills, None)
+            .with_user_instructions(Some("Answer in British English.".into()))
+            .assemble();
+        let user = out
+            .find("## User Instructions (~/.wisp/AGENTS.md)")
+            .unwrap();
+        let global = out.find("Answer in British English.").unwrap();
+        let agents = out.find("## Project Instructions (AGENTS.md)").unwrap();
+        let wisp = out.find("Prefer the project UI setting.").unwrap();
+        assert!(user < global && global < agents && agents < wisp, "{out}");
+        assert!(out.contains("Project Instructions and User Rules below take precedence"));
+        assert!(out.find("## Skills Selection Guidelines").unwrap() < user);
+
+        // A blank or absent file adds nothing.
+        for blank in [None, Some(String::new()), Some(" \n\t".into())] {
+            let out = SystemPrompt::new(&root, &skills, None)
+                .with_user_instructions(blank)
+                .assemble();
+            assert!(!out.contains("## User Instructions"), "{out}");
+        }
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn read_user_instructions_uses_the_given_home_only() {
+        let home = std::env::temp_dir().join(format!("wisp-user-home-{}", uuid::Uuid::new_v4()));
+        assert_eq!(read_user_instructions(&home), None);
+        std::fs::create_dir_all(home.join(".wisp")).unwrap();
+        std::fs::write(user_instructions_path(&home), "  \n").unwrap();
+        assert_eq!(read_user_instructions(&home), None);
+        std::fs::write(user_instructions_path(&home), "Cite DOIs.\n").unwrap();
+        assert_eq!(
+            read_user_instructions(&home).as_deref(),
+            Some("Cite DOIs.\n")
+        );
+        std::fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn rules_section_tracks_user_instructions() {
+        let root = std::env::temp_dir().join(format!("wisp-user-stale-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join(".wisp")).unwrap();
+        std::fs::write(root.join("AGENTS.md"), "Use the repository checks.").unwrap();
+        let skills = SkillIndex::default();
+        let build = |user: Option<&str>| {
+            SystemPrompt::new(&root, &skills, None).with_user_instructions(user.map(Into::into))
+        };
+
+        // A prompt built before the user file existed is stale once it appears.
+        let original = build(None).assemble();
+        let stored = SystemPrompt::extract_rules_section(&original).unwrap();
+        let fresh = build(Some("Old global rule.")).rules_section();
+        assert_ne!(stored, fresh);
+        let reloaded = SystemPrompt::replace_rules_section(&original, &fresh).unwrap();
+        assert!(reloaded.contains("Old global rule."));
+        assert_eq!(
+            SystemPrompt::extract_rules_section(&reloaded).as_deref(),
+            Some(fresh.as_str())
+        );
+
+        // Editing it is detected and spliced like a project rule edit.
+        let edited = build(Some("New global rule.")).rules_section();
+        assert_ne!(
+            SystemPrompt::extract_rules_section(&reloaded),
+            Some(edited.clone())
+        );
+        let reloaded = SystemPrompt::replace_rules_section(&reloaded, &edited).unwrap();
+        assert!(reloaded.contains("New global rule."));
+        assert!(!reloaded.contains("Old global rule."));
+        assert!(reloaded.contains("Use the repository checks."));
+        assert!(reloaded.contains("## Environment"));
+
+        // Resumed-prompt refresh treats the user section as non-host text.
+        let mut prompt = format!(
+            "Intro\n\n{}\n\n## Environment\n",
+            build(Some("## Tool Selection\n\nUser-owned heading."))
+                .rules_section()
+                .trim_end()
+        );
+        let before = prompt.clone();
+        build(None).refresh_execution_guidance(&mut prompt);
+        assert_eq!(prompt, before);
 
         std::fs::remove_dir_all(root).ok();
     }
@@ -495,6 +624,11 @@ mod tests {
         assert!(
             out.contains("project-local **pixi** environment"),
             "pixi-first local env guidance missing:\n{out}"
+        );
+        assert!(
+            out.contains("For a Python-only project, use **uv** in the project directory")
+                && out.contains("Tools the user installed into Wisp"),
+            "uv project environment guidance missing:\n{out}"
         );
         assert!(
             out.contains("mirrors first"),

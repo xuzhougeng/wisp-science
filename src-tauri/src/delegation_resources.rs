@@ -153,6 +153,16 @@ impl ScientificResourceCatalog {
                 });
             }
         }
+        connectors.extend(
+            crate::mcp_connections::user_config()
+                .servers
+                .iter()
+                .map(|server| ConnectorResource {
+                    id: server.id.clone(),
+                    class: ConnectorClass::External,
+                    fingerprint: user_connector_fingerprint(server),
+                }),
+        );
         if let Some(command) = dev_command {
             let hash = command.bytes().fold(0xcbf29ce484222325u64, |hash, byte| {
                 (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
@@ -671,6 +681,15 @@ fn custom_connector_fingerprint(connection: &crate::McpConnection) -> String {
         (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
     });
     format!("custom:{}:{hash:016x}", connection.id)
+}
+
+fn user_connector_fingerprint(server: &wisp_mcp::user_config::UserServer) -> String {
+    // Expanded values may carry secrets; keep only their hash.
+    let bytes = serde_json::to_vec(server).unwrap_or_default();
+    let hash = bytes.into_iter().fold(0xcbf29ce484222325u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+    });
+    format!("{}:{hash:016x}", server.id)
 }
 
 fn bundled_connector_resources(

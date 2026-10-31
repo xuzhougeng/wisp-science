@@ -166,6 +166,45 @@ fn mcp_app_isolation_dtos_keep_js_camel_case_and_page_generation() {
     );
 }
 
+/// The `toolchain-install` event and `get_toolchain_status` reply. The idle
+/// form omits progress fields; a running one keeps step, label, and log.
+#[test]
+fn toolchain_status_keeps_progress_and_accepts_the_idle_form() {
+    let idle: wisp_dto::ToolchainStatus = serde_json::from_value(json!({
+        "root": "/data/toolchain", "installed": ["r"], "state": "idle"
+    }))
+    .unwrap();
+    assert_eq!(idle.installed, ["r"]);
+    assert!(idle.log.is_empty() && idle.error.is_none() && idle.step == 0);
+    let running = wisp_dto::ToolchainStatus {
+        root: "/data/toolchain".into(),
+        installed: vec!["uv".into()],
+        state: "running".into(),
+        tools: vec!["uv".into(), "python".into()],
+        step: 3,
+        total: 6,
+        label: "install:python".into(),
+        log: vec!["$ pixi global install --environment python python=3.12".into()],
+        error: None,
+    };
+    let wire = serde_json::to_value(&running).unwrap();
+    for key in [
+        "root",
+        "installed",
+        "state",
+        "tools",
+        "step",
+        "total",
+        "label",
+        "log",
+        "error",
+    ] {
+        assert!(wire.get(key).is_some(), "{key} missing from {wire}");
+    }
+    let ui: wisp_dto::ToolchainStatus = roundtrip(&running);
+    assert_eq!(ui, running);
+}
+
 #[test]
 fn network_settings_support_partial_persisted_configuration() {
     let settings: wisp_dto::NetworkSettings = serde_json::from_value(json!({

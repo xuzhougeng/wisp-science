@@ -40,6 +40,7 @@ mod skill_detail;
 mod skill_store;
 mod swarm;
 mod text;
+mod toolchain_setup;
 mod trajectory;
 mod window_titlebar;
 mod workflow_conversion;
@@ -3447,11 +3448,10 @@ fn App() -> impl IntoView {
     // the UI is already interactive. Keep the capabilities view in sync without
     // polling or delaying the first window.
     {
-        let bootstrap_js = Closure::<dyn Fn(JsValue)>::new(move |event: JsValue| {
-            if let Ok(payload) = js_sys::Reflect::get(&event, &JsValue::from_str("payload")) {
-                if let Ok(status) = serde_wasm_bindgen::from_value::<BootstrapStatus>(payload) {
-                    bootstrap.set(Some(status));
-                }
+        // `bindings::listen` already hands over the event payload.
+        let bootstrap_js = Closure::<dyn Fn(JsValue)>::new(move |payload: JsValue| {
+            if let Ok(status) = serde_wasm_bindgen::from_value::<BootstrapStatus>(payload) {
+                bootstrap.set(Some(status));
             }
         });
         let bootstrap_fn = bootstrap_js

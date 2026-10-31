@@ -69,3 +69,24 @@
 .environment-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .environment-paths input { width: 100%; min-width: 0; padding: 6px 8px; background: var(--bg-input); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font: inherit; }
 .environment-paths:has(input) > div { align-items: center; }
+/* Installing into Wisp's own toolchain, below the detected paths. */
+.toolchain-setup { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); min-width: 0; }
+.toolchain-setup h4 { margin: 0 0 6px; font-size: calc(13px * var(--ui-font-scale, 1)); }
+.toolchain-setup .hint { overflow-wrap: anywhere; }
+.toolchain-tools { display: grid; gap: 4px; margin: 8px 0 10px; font-size: calc(12px * var(--ui-font-scale, 1)); }
+.toolchain-tool { display: grid; grid-template-columns: 16px 88px minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.toolchain-tool:has(input) { cursor: pointer; }
+.toolchain-tool > .toolchain-name { grid-column: 2; }
+.toolchain-later { margin: 8px 0 0; }
+.toolchain-tool input { margin: 0; }
+.toolchain-name { font-weight: 600; }
+.toolchain-note { color: var(--text-muted); overflow-wrap: anywhere; }
+.toolchain-state { color: var(--text-muted); white-space: nowrap; }
+.toolchain-log { margin: 6px 0 10px; padding: 8px 10px; max-height: 9.5em; overflow: auto; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: calc(11px * var(--ui-font-scale, 1)); white-space: pre-wrap; overflow-wrap: anywhere; }
+.local-environment .toolchain-setup button.primary { background: var(--clay); border-color: var(--clay); color: var(--on-clay); }
+@media (max-width: 520px) {
+  .toolchain-tool { grid-template-columns: 16px minmax(0, 1fr) auto; }
+  .toolchain-tool > .toolchain-name { grid-row: 1; }
+  .toolchain-state { grid-column: 3; grid-row: 1; }
+  .toolchain-note { grid-column: 2 / -1; grid-row: 2; }
+}

@@ -1243,7 +1243,7 @@ async fn send_message_inner_with_continuation(
             );
         }
         if !assistant {
-            agent.seed_system_prompt(&skills, None);
+            agent.seed_system_prompt(&skills, None, crate::user_instructions());
         } else if agent.ctx.is_empty() {
             agent
                 .ctx

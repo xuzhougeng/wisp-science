@@ -887,15 +887,16 @@ pub(super) async fn list_sessions_page(
     })
 }
 
-/// Frames whose persisted system prompt was built from AGENTS.md / WISP.md
-/// contents that differ from the files on disk. Undecidable prompts (missing
-/// or legacy layout) are never flagged.
+/// Frames whose persisted system prompt was built from ~/.wisp/AGENTS.md,
+/// AGENTS.md or WISP.md contents that differ from the files on disk.
+/// Undecidable prompts (missing or legacy layout) are never flagged.
 async fn stale_prompt_frames(
     store: &Store,
     root: &std::path::Path,
     frame_ids: &[String],
 ) -> HashSet<String> {
     let expected = wisp_core::SystemPrompt::new(root, &wisp_skills::SkillIndex::default(), None)
+        .with_user_instructions(crate::user_instructions())
         .rules_section();
     let Ok(stored) = store.load_system_messages(frame_ids).await else {
         return HashSet::new();
@@ -913,8 +914,8 @@ async fn stale_prompt_frames(
         .collect()
 }
 
-/// Rebuild a session's persisted system prompt with the current AGENTS.md /
-/// WISP.md contents. Only the rules section is spliced; every other section
+/// Rebuild a session's persisted system prompt with the current
+/// ~/.wisp/AGENTS.md, AGENTS.md and WISP.md contents. Only the rules section is spliced; every other section
 /// (skills guidance, delegation/plan-mode/specialist additions) is preserved.
 /// The cached agent is dropped so the next turn rebuilds from the new prompt,
 /// which invalidates the provider's prompt cache for one turn.
@@ -953,6 +954,7 @@ pub(super) async fn reload_project_rules(
         .map(|content| content.as_text())
         .map_err(|error| error.to_string())?;
     let rules = wisp_core::SystemPrompt::new(&ap.root, &wisp_skills::SkillIndex::default(), None)
+        .with_user_instructions(crate::user_instructions())
         .rules_section();
     let Some(updated) = wisp_core::SystemPrompt::replace_rules_section(&text, &rules) else {
         return Err(

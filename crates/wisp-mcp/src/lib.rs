@@ -10,6 +10,7 @@ pub mod connection;
 pub mod desktop_autopilot;
 pub mod result;
 pub mod tool;
+pub mod user_config;
 
 pub use client::{McpCallResult, McpClient, RemoteTool};
 pub use tool::{validate_tool_arguments, McpTool};

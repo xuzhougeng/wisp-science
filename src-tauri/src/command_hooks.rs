@@ -458,7 +458,7 @@ async fn exec(
         cmd
     };
     cmd.current_dir(cwd)
-        .envs(wisp_tools::network::command_proxy_env())
+        .envs(wisp_tools::local_env::command_env())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

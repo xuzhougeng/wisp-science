@@ -119,6 +119,7 @@ mod research_recap;
 mod resource_leases;
 mod resource_refs;
 mod review;
+mod toolchain;
 mod workflow_approval;
 mod workflow_artifacts;
 pub(crate) use wisp_runs as run_context;
@@ -4622,8 +4623,8 @@ async fn load_session_settings(
             String::new(),
             cfg.user_agent,
             true,
-            None,
-            String::new(),
+            cfg.send_session_id,
+            cfg.session_header_name,
         );
     }
     let profile_id = models::session_profile_id(store, frame_id).await;
@@ -5872,6 +5873,15 @@ fn load_skill_index(root: &std::path::Path) -> SkillIndex {
     SkillIndex::load_scoped(&skill_sources(root))
 }
 
+/// `~/.wisp/AGENTS.md` for new prompts and the stale-rules check. Unit tests
+/// never read the developer's HOME.
+pub(crate) fn user_instructions() -> Option<String> {
+    if cfg!(test) {
+        return None;
+    }
+    dirs::home_dir().and_then(|home| wisp_core::system_prompt::read_user_instructions(&home))
+}
+
 fn kernel_worker_path() -> PathBuf {
     let configured = std::env::var("WISP_KERNEL_WORKER")
         .ok()
@@ -6136,11 +6146,13 @@ async fn finish_custom_mcp_wiring(
 ) -> ToolWiringResult {
     let (specs, errors) = mcp_connections::configured(store, project_id).await;
     for error in errors {
-        result
-            .plugin_runtime_checks
-            .entry(error.plugin_id)
-            .or_default()
-            .push(error.message.clone());
+        if let Some(plugin_id) = error.plugin_id {
+            result
+                .plugin_runtime_checks
+                .entry(plugin_id)
+                .or_default()
+                .push(error.message.clone());
+        }
         result.errors.push(error.message);
     }
     let decision = decision_model::configured(store).await;
@@ -7663,6 +7675,7 @@ pub fn run() {
                 .unwrap_or_else(|_| PathBuf::from(".wisp"))
                 .join("wisp-science");
             std::fs::create_dir_all(&app_data).expect("create app data dir");
+            wisp_tools::local_env::set_managed_path(toolchain::Layout::new(&app_data).path_dirs());
             let db_path = app_data.join("wisp.sqlite");
             let store = startup.record("store", || {
                 tauri::async_runtime::block_on(Store::open_application(&db_path)).expect("open store")
@@ -8357,6 +8370,9 @@ pub fn run() {
             app_commands::get_bootstrap_status,
             app_commands::detect_local_environment,
             app_commands::save_local_environment_paths,
+            toolchain::get_toolchain_status,
+            toolchain::install_toolchain,
+            toolchain::cancel_toolchain_install,
             app_updates::check_for_updates,
             app_updates::download_update,
             app_updates::install_update,

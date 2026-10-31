@@ -216,8 +216,16 @@ impl Agent {
     }
 
     /// Seed a fresh system prompt or refresh host execution and skills guidance.
-    pub fn seed_system_prompt(&mut self, skills: &SkillIndex, compute_hosts: Option<String>) {
-        let system_prompt = SystemPrompt::new(&self.root, skills, compute_hosts);
+    /// `user_instructions` is `~/.wisp/AGENTS.md` as the host read it; like the
+    /// project rules it lands only in a fresh prompt.
+    pub fn seed_system_prompt(
+        &mut self,
+        skills: &SkillIndex,
+        compute_hosts: Option<String>,
+        user_instructions: Option<String>,
+    ) {
+        let system_prompt = SystemPrompt::new(&self.root, skills, compute_hosts)
+            .with_user_instructions(user_instructions);
         if self.ctx.is_empty() {
             self.ctx.append_system(system_prompt.assemble());
         } else if let Some(message) = self.ctx.messages.first_mut() {
@@ -552,7 +560,7 @@ mod session_ctor_tests {
         ctx.append_user("Continue the project task.");
         ctx.save(&root.join(".wisp/session.json"));
         let mut agent = construct(root.clone(), false);
-        agent.seed_system_prompt(&SkillIndex::default(), None);
+        agent.seed_system_prompt(&SkillIndex::default(), None, None);
         assert_eq!(agent.ctx.messages.len(), 2);
         let prompt = agent.ctx.messages[0].content.as_text();
         assert!(prompt.contains("provide persistent runtimes"));

@@ -1518,7 +1518,8 @@ fn build_agent(
     if vision.is_some() {
         agent.ctx.supports_vision = false;
     }
-    agent.seed_system_prompt(&skills, Some(wisp_runs::runs_guidance()));
+    // Evals stay independent of the developer's ~/.wisp, like their skills.
+    agent.seed_system_prompt(&skills, Some(wisp_runs::runs_guidance()), None);
     Ok(agent)
 }
 
