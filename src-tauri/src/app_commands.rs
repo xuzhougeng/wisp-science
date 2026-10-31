@@ -486,11 +486,12 @@ async fn capability_mcp_counts(store: &Store, project: &ActiveProject) -> Capabi
         .count();
     let (plugin_launches, plugin_errors) =
         plugins::enabled_plugin_mcp_launches(store, &project.id).await;
+    let user = crate::mcp_connections::user_config().servers.len();
     CapabilitySourceCounts {
         bundled: list_mcp_servers(&project.root).len(),
         // Invalid plugin launch configurations are still configured project
         // MCP services and remain visible as unavailable in Settings.
-        project: custom + plugin_launches.len() + plugin_errors.len(),
+        project: custom + plugin_launches.len() + plugin_errors.len() + user,
     }
 }
 

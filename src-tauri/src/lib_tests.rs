@@ -125,6 +125,10 @@ async fn magpie_turn_body(store: &wisp_store::Store, frame_id: &str) -> String {
     .unwrap();
     assert_eq!(cfg.model, "fixture/reasoner");
     assert_eq!(cfg.api_key, "gateway-test-key");
+    // Each conversation is its own session on the gateway.
+    assert_eq!(cfg.session_id, frame_id);
+    assert_eq!(cfg.send_session_id, Some(true));
+    assert_eq!(cfg.session_header_name, "X-Session-Id");
     let reply = wisp_llm::build(cfg)
         .complete(&[wisp_llm::Message::user("fixture")], &[])
         .await

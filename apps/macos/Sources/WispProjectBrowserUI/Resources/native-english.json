@@ -1428,7 +1428,7 @@
   "将方法文档转为可复用的工作流，审阅独立节点后再保存。": "Turn method documents into a reusable workflow. Review the independent nodes before saving.",
   "将此技能复制到 {path}，保留启用状态和标签。": "Copies this skill to {path}. Enabled state and tags are kept.",
   "将演示复制到项目": "Copy demo to a project",
-  "将用当前的 AGENTS.md / WISP.md 重建本会话的系统提示词，下一轮起生效。由于提示词前缀变化，该会话的模型提示词缓存将失效一次（下一轮成本略增）。聊天历史不受影响。": "Rebuild this session's system prompt with the current AGENTS.md / WISP.md. Takes effect on the next turn. Because the prompt prefix changes, the model's prompt cache for this session is invalidated once (the next turn costs a bit more). Chat history is unaffected.",
+  "将用当前的 ~/.wisp/AGENTS.md、AGENTS.md 和 WISP.md 重建本会话的系统提示词，下一轮起生效。由于提示词前缀变化，该会话的模型提示词缓存将失效一次（下一轮成本略增）。聊天历史不受影响。": "Rebuild this session's system prompt with the current ~/.wisp/AGENTS.md, AGENTS.md and WISP.md. Takes effect on the next turn. Because the prompt prefix changes, the model's prompt cache for this session is invalidated once (the next turn costs a bit more). Chat history is unaffected.",
   "将自动加入": "Auto-attaches",
   "将该变量加入对话或让 AI 解释": "Add this variable to chat or explain it",
   "将跳过 {invalid} 个损坏存档和 {duplicate} 个重复存档。": "{invalid} damaged archive(s) and {duplicate} duplicate archive(s) will be skipped.",

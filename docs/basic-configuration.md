@@ -341,6 +341,8 @@ Wisp 可以把独立 Codex CLI 或 Claude Code 的 JSONL 会话导入当前项�
 
 然后点击 **重新加载技能**。同名 Skill 按 bundled、project、global、额外路径、plugin 的既定优先级解析；插件提供的 Skill 应在插件页管理，不要重复导入。
 
+`~/.wisp/skills` 下的 Skill 文件夹也可以是符号链接（例如由 Magpie 的 Library 链接进来的共享 Skill）；只有这个全局目录会跟随顶层链接，失效的链接会在技能列表中显示为错误。新增或删除链接后点击 **重新加载技能** 或重启 Wisp 生效。
+
 更多发现范围和覆盖规则见[Skills](skills.md)。
 
 ### 查看连接器与工具说明
@@ -386,6 +388,33 @@ https://mcp.notion.com/mcp
 实时网页搜索可再添加一个远程 URL：`https://search.parallel.ai/mcp`，认证方式选 **无**。Parallel Search MCP 免费，无需账号或 API Key。
 
 需要数据库、部署或存储等后端时，可再添加一个远程 URL：`https://cohesivity.ai/mcp`，认证方式选 **无**。Cohesivity MCP 让 Agent 直接创建后端并开通所需服务，开始使用无需账号或 API Key；后端 72 小时后过期，认领后可保留。
+
+### 用户级 MCP 文件 `~/.wisp/mcp.json`
+
+除了在设置页添加连接，也可以把 MCP 服务器写进 `~/.wisp/mcp.json`（Windows 为 `%USERPROFILE%\.wisp\mcp.json`）。格式与常见的 `mcpServers` 配置相同，可手写，也可由 Magpie 的 Library 等工具合并写入：
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}" }
+    },
+    "remote": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer ${EXAMPLE_TOKEN}" }
+    }
+  }
+}
+```
+
+- 不写 `type` 或写 `"stdio"` 为本地命令：`command`，可选 `args`、`env`、`cwd`。`"type": "http"` 为 Streamable HTTP：`url`，可选 `headers`。旧版 SSE（`"type": "sse"`）和其他类型不受支持，会跳过并报错。
+- `command`、`args`、`cwd`、`env` 的值、`url` 和 `headers` 的值中的 `${NAME}` 与 `${NAME:-默认值}` 从 Wisp 进程的环境变量展开；变量未设置且没有默认值时跳过该服务器，错误信息会指出变量名，不会把 `${...}` 原样发给服务器。桌面版只能读到启动它时的环境变量。
+- 未知字段会被忽略；文件不存在即没有服务器；JSON 无效时报告一条错误并忽略整个文件，设置页的连接和插件不受影响。
+- 文件内容按原样使用，不会写入数据库或钥匙串，也不会出现在 **设置 → 连接** 列表中。连接 ID 为 `user:<名称>`，工具审批规则与自定义连接相同。
+- 桌面版在每次构建会话 Agent 时重新读取该文件：新会话立即生效，已有会话在其 Agent 重建后生效；命令行在启动时读取一次，与 `WISP_MCP_COMMAND` 并存。配置错误和其他连接错误一样列在 **能力** 面板的运行状态下。
 
 ## 7. 配置 ACP
 
@@ -576,6 +605,10 @@ Wisp 不会直接把一轮对话写成长时记忆。任务完成后，点击回
 项目记忆按需检索，不会在每轮全部注入。对于含糊或复合问题，Agent 会先生成最多四条互补检索词：保留路径、错误码、包名等精确标识符，并按需要补充概念同义词、解决步骤或时间条件。Wisp 在本地对这些查询分别执行词法检索（中文支持连续文本匹配），再合并排名并返回命中原因；没有足够证据时最多细化检索一次，不应把未命中的记忆当作事实。
 
 工具失败分析是一个默认关闭的选项。在输入框的 Agent 菜单中启用 **自动分析工具失败** 后，可以设置失败率阈值和最少失败次数。一轮任务正常完成且同时达到两个阈值时，Wisp 会分析该轮失败工具的原因，并弹出可编辑的项目记忆草稿。取消窗口不会写入任何内容；该功能只统计有明确成功/失败结果的工具调用。
+
+### 用户级指令 `~/.wisp/AGENTS.md`
+
+希望所有项目都遵循的长期指令可写入 `~/.wisp/AGENTS.md`（Windows 为 `%USERPROFILE%\.wisp\AGENTS.md`），也可由 Magpie 的 Library 追加写入。新会话会把它作为 **User Instructions** 放在项目 `AGENTS.md` 和 `.wisp/WISP.md` 之前；三者冲突时以项目文件为准。文件为空或不存在时不添加任何内容。桌面版和命令行都会读取它；修改后，已有桌面会话会像项目规则变化一样标记为过期，可右键选择 **重载项目规则…**。
 
 ## 13. 自定义外观与主题
 

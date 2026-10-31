@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use wisp_core::{Agent, MemoryManager, Output};
 use wisp_llm::{Message, ProviderConfig, ToolCall};
-use wisp_skills::SkillIndex;
+use wisp_skills::{SkillIndex, SkillSource};
 
 const HELP: &str = "Built-in commands:\n  /q, /quit       Quit\n  /n, /new        Start a new session (old session is backed up)\n  /c, /compact    Compact the context (full history is archived to .wisp/history/ first)\n  /h, /help       Show this help";
 const EVENT_SCHEMA: &str = "wisp.agent-event.v1";
@@ -717,6 +717,32 @@ async fn wire_mcp(agent: &mut Agent, command: &str, args: &[String], jsonl: bool
     }
 }
 
+/// Servers from `~/.wisp/mcp.json`, used as written and read once at startup.
+/// Unit tests never read HOME.
+async fn wire_user_mcp(agent: &mut Agent, jsonl: bool) {
+    if cfg!(test) {
+        return;
+    }
+    let Some(home) = dirs::home_dir() else {
+        return;
+    };
+    let config = wisp_mcp::user_config::UserMcpConfig::load(&wisp_mcp::user_config::path(&home));
+    for error in &config.errors {
+        setup_message(jsonl, format_args!("mcp skipped: {error}"));
+    }
+    for server in &config.servers {
+        match server.connect("").await {
+            Ok(client) => {
+                register_mcp_tools(agent, std::sync::Arc::new(client), &server.name, jsonl).await
+            }
+            Err(e) => setup_message(
+                jsonl,
+                format_args!("mcp '{}' launch failed: {e}", server.name),
+            ),
+        }
+    }
+}
+
 async fn register_mcp_tools(
     agent: &mut Agent,
     client: std::sync::Arc<wisp_mcp::McpClient>,
@@ -1038,22 +1064,32 @@ fn parse_wisp_reasoning_effort(raw: Option<&str>) -> Option<String> {
     .then_some(value)
 }
 
-fn skill_paths(root: &std::path::Path) -> Vec<PathBuf> {
+/// Same order and scopes as the desktop, so `~/.wisp/skills` loads as Global
+/// (whose top-level skill links are followed).
+fn skill_sources(root: &std::path::Path) -> Vec<(PathBuf, SkillSource)> {
     let mut paths = vec![];
     // Bundled catalog shipped inside the Wisp source tree (wisp/skills).
     if let Some(b) = wisp_skills::bundled_dir() {
-        paths.push(b);
+        paths.push((b, SkillSource::Bundled));
     }
-    paths.push(root.join(".wisp").join("skills"));
+    paths.push((root.join(".wisp").join("skills"), SkillSource::Project));
     if let Some(home) = dirs::home_dir() {
-        paths.push(home.join(".wisp").join("skills"));
+        paths.push((home.join(".wisp").join("skills"), SkillSource::Global));
     }
     if let Ok(extra) = std::env::var("WISP_SKILLS_PATH") {
         for p in extra.split([':', ';']).filter(|s| !s.is_empty()) {
-            paths.push(PathBuf::from(p));
+            paths.push((PathBuf::from(p), SkillSource::Extra));
         }
     }
     paths
+}
+
+/// `~/.wisp/AGENTS.md` for a fresh prompt. Unit tests never read HOME.
+fn user_instructions() -> Option<String> {
+    if cfg!(test) {
+        return None;
+    }
+    dirs::home_dir().and_then(|home| wisp_core::system_prompt::read_user_instructions(&home))
 }
 
 async fn run_prompt(agent: &mut Agent, prompt: &str, output: &dyn Output) -> Result<()> {
@@ -1354,7 +1390,7 @@ async fn main() -> Result<()> {
     let max_iter = parse_wisp_max_iter(std::env::var("WISP_MAX_ITER").ok().as_deref())
         .unwrap_or(DEFAULT_HEADLESS_MAX_ITER);
 
-    let skills = Arc::new(SkillIndex::load(&skill_paths(&root)));
+    let skills = Arc::new(SkillIndex::load_scoped(&skill_sources(&root)));
     let memory = Arc::new(MemoryManager::new(&root));
 
     let mut vision_cfg = match vision_provider_config().await {
@@ -1411,7 +1447,7 @@ async fn main() -> Result<()> {
         max_iter,
     );
     let compute = wisp_runs::cli_compute_section(&run_store).await;
-    agent.seed_system_prompt(&skills, Some(compute));
+    agent.seed_system_prompt(&skills, Some(compute), user_instructions());
 
     // Python is prepared on demand through local-env-setup.
     let app_data = root.join(".wisp");
@@ -1508,6 +1544,7 @@ async fn main() -> Result<()> {
             format_args!("Unknown native bio package: {bio_package}"),
         );
     }
+    wire_user_mcp(&mut agent, jsonl).await;
 
     let out = CliOutput;
     if command == CliCommand::Rpc {
@@ -1604,7 +1641,7 @@ async fn main() -> Result<()> {
                 agent.ctx.backup(&agent.session_path);
                 agent.ctx.clear();
                 let compute = wisp_runs::cli_compute_section(&run_store).await;
-                agent.seed_system_prompt(&skills, Some(compute));
+                agent.seed_system_prompt(&skills, Some(compute), user_instructions());
                 println!("{}New session created.{}", out.green(), out.reset());
                 agent.save();
                 continue;
@@ -1970,6 +2007,10 @@ mod tests {
             effort(file(serde_json::json!({"id":"p/m"})), Some("high")),
             None
         );
+        // `.wisp/session-id` replaces `session_id` later; the gateway header stays on.
+        let cfg = magpie_provider_config(known(), None);
+        assert_eq!(cfg.send_session_id, Some(true));
+        assert_eq!(cfg.session_header_name, "X-Session-Id");
     }
 
     #[test]
