@@ -11,6 +11,7 @@ pub mod edit;
 pub mod env;
 pub mod grep;
 pub mod image;
+pub mod local_env;
 pub mod network;
 pub mod plan;
 pub mod process;

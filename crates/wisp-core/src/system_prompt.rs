@@ -133,7 +133,7 @@ Always finish with **attempt_completion** to present the final result.\n".into()
         "## Python, R, And Local Environments\n\n\
 Use the selected environment for both standalone scripts and interactive analysis; choose process lifetime using Tool Selection above. **A missing package is a setup step, not a dead end.** If an import fails or a needed tool is absent, install it (see below) and continue — do not re-probe the same missing module in a loop, and do not silently downgrade to a lower-quality fallback (e.g. a worse PDF/text extractor) that yields garbled output. Install once, confirm the import, then proceed. Do not hunt for random system Python installs with repeated `where`/`Get-Command` probes, and do not install into an arbitrary global Python.\n\
 The persistent **r** tool requires an existing `Rscript` and `jsonlite`; standalone R scripts require only their own dependencies. Do not silently install R or packages. Interpreter paths belong to the selected execution context's persisted settings. When the user supplies or asks to change a Python/R path, use `set_runtime_interpreter` with the matching `context_id` if that tool is available; never try to change the Wisp host process environment from a shell tool.\n\
-When packages or a project-specific scientific stack are needed, call `use_skill` for `local-env-setup` first. For local bioinformatics/scientific package work, prefer a project-local **pixi** environment: `pixi init`, `pixi add ...`, then `pixi run python ...` from the project directory.\n\
+When packages or a project-specific scientific stack are needed, call `use_skill` for `local-env-setup` first. Tools the user installed into Wisp (uv, Python, Rscript, Node/npm) are on `PATH` for local shell commands and Runs; there `python` and `pip` mean Wisp's own environment, so give a project its own environment rather than adding project packages to it. For a Python-only project, use **uv** in the project directory: `uv venv` (or `uv init`), `uv add ...` or `uv pip install ...`, then `uv run python ...`; for the persistent tool, save the project `.venv` interpreter with `set_runtime_interpreter`. When the stack needs conda packages (bioinformatics binaries, R packages, compiled libraries), prefer a project-local **pixi** environment: `pixi init`, `pixi add ...`, then `pixi run python ...` from the project directory.\n\
 Before any `pip`, `uv`, `npm`, or `pixi add` download, consider the user's network. If mainland-China or corporate-mirror access is likely or requested, configure PyPI/uv and pixi conda/PyPI mirrors first; otherwise use defaults.\n".into()
     }
 
@@ -624,6 +624,11 @@ mod tests {
         assert!(
             out.contains("project-local **pixi** environment"),
             "pixi-first local env guidance missing:\n{out}"
+        );
+        assert!(
+            out.contains("For a Python-only project, use **uv** in the project directory")
+                && out.contains("Tools the user installed into Wisp"),
+            "uv project environment guidance missing:\n{out}"
         );
         assert!(
             out.contains("mirrors first"),

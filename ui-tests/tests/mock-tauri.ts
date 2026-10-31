@@ -3453,6 +3453,27 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             return `proj-${arg("id")}`;
           case "open_new_window":
             return "home-mock";
+          // Wisp-managed toolchain (src-tauri/src/toolchain.rs): tests drive
+          // progress with `toolchain-install` events after the request.
+          case "get_toolchain_status":
+            return (window as any).__mockToolchainStatus ?? {
+              root: "/mock/app-data/toolchain", installed: [], state: "idle",
+              tools: [], step: 0, total: 0, label: "", log: [], error: null,
+            };
+          case "install_toolchain": {
+            if ((window as any).__failInstallToolchain) throw new Error("An installation is already running.");
+            const tools = plain(arg("tools") ?? []) as string[];
+            const normalized = ["uv", "python", "r", "node"]
+              .filter((tool) => tools.includes(tool) || (tool === "uv" && tools.includes("python")));
+            const status = {
+              root: "/mock/app-data/toolchain", installed: [], state: "running", tools: normalized,
+              step: 0, total: normalized.length + (tools.includes("python") ? 4 : 2), label: "", log: [], error: null,
+            };
+            (window as any).__mockToolchainStatus = status;
+            return status;
+          }
+          case "cancel_toolchain_install":
+            return true;
           case "save_local_environment_paths": {
             if ((window as any).__failSaveLocalEnvironment) throw new Error("python_executable: file not found");
             const raw = arg("paths");

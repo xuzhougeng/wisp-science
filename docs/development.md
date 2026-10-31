@@ -417,6 +417,24 @@ without resetting models or installing software. Use **Check
 paths again** after installing tools. Windows Store Python aliases and the
 macOS system Python developer-tools stub are excluded from automatic selection.
 
+The one exception is the user-initiated **Install into Wisp** action in the
+same panel (`src-tauri/src/toolchain.rs`). The panel offers only tools that
+detection did not find; detected tools are used as they are. It installs uv, Python 3.12, R
+(r-base + r-jsonlite), and Node.js into `<app data>/toolchain`, a pixi
+`PIXI_HOME` with one global environment per tool, using a pinned pixi release
+whose archive SHA-256 is checked before it is unpacked. Python also brings uv,
+which creates Wisp's default environment at `<app data>/python/.venv` and
+installs `python/requirements-kernel.txt` there. Pixi's config in `PIXI_HOME`
+maps conda-forge to the Network page's Conda mirror; downloads and child
+processes follow the Code requests proxy, Python package index, and CA bundle.
+Progress is the `toolchain-install` event (`wisp_dto::ToolchainStatus`); on
+success the installed paths are saved on Local. `wisp_tools::local_env`
+prepends Wisp's Python environment, `toolchain/bin`, and the Node prefix to
+`PATH` for local shell commands, local Runs, and command hooks, without
+changing the host environment. Detection falls back to the same directories
+after PATH. Tests use a fake host for pixi/uv and the download; nothing in
+them touches the network.
+
 For analysis or custom Python MCP servers, ask Wisp to load
 `skills/local-env-setup`. The skill prepares only the required environment and
 saves Python/R interpreters through `set_runtime_interpreter` or the existing

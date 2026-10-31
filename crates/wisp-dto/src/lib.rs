@@ -4415,6 +4415,35 @@ pub struct LocalEnvironmentStatus {
     pub warning: Option<String>,
 }
 
+/// Wisp-managed tools (uv, Python, R, Node) under the app data folder: what
+/// is installed and the progress of the current or last installation. Sent
+/// as the `toolchain-install` event and returned by `get_toolchain_status`.
+#[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq)]
+pub struct ToolchainStatus {
+    /// The toolchain directory.
+    pub root: String,
+    /// Tool ids present there: `uv`, `python`, `r`, `node`.
+    pub installed: Vec<String>,
+    /// `idle`, `running`, `done`, `failed`, or `cancelled`.
+    pub state: String,
+    /// Tools in the current or last request; Python brings uv.
+    #[serde(default)]
+    pub tools: Vec<String>,
+    /// 1-based step of `total`. `label` names it: `pixi`, `install:<tool>`,
+    /// `venv`, `packages`, or `save`.
+    #[serde(default)]
+    pub step: usize,
+    #[serde(default)]
+    pub total: usize,
+    #[serde(default)]
+    pub label: String,
+    /// Recent output lines, oldest first.
+    #[serde(default)]
+    pub log: Vec<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct BootstrapStatus {
     pub skills_loaded: usize,
