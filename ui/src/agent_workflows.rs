@@ -3815,6 +3815,105 @@ fn execution_limit_label(locale: Locale, limit: u64) -> String {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct WorkflowTaskProgress {
+    total: usize,
+    running: usize,
+    completed: usize,
+    waiting: usize,
+    failed: usize,
+}
+
+fn workflow_task_status(task: &ResolvedAgentTaskSummary) -> &str {
+    task.result
+        .as_ref()
+        .map(|result| result.status.as_str())
+        .unwrap_or("pending")
+}
+
+fn workflow_task_progress<'a>(statuses: impl IntoIterator<Item = &'a str>) -> WorkflowTaskProgress {
+    let mut progress = WorkflowTaskProgress::default();
+    for status in statuses {
+        progress.total += 1;
+        match status {
+            "running" | "waiting_run" => progress.running += 1,
+            "succeeded" => progress.completed += 1,
+            "failed" | "cancelled" | "blocked" => progress.failed += 1,
+            _ => progress.waiting += 1,
+        }
+    }
+    progress
+}
+
+fn workflow_progress_overview(
+    tasks: &[ResolvedAgentTaskSummary],
+    workflow_status: &str,
+    locale: Locale,
+) -> View {
+    let progress = workflow_task_progress(tasks.iter().map(workflow_task_status));
+    let summary = tf(
+        locale,
+        "agents.progress.summary",
+        &[
+            ("completed", &progress.completed.to_string()),
+            ("total", &progress.total.to_string()),
+            ("running", &progress.running.to_string()),
+            ("waiting", &progress.waiting.to_string()),
+            ("failed", &progress.failed.to_string()),
+        ],
+    );
+    let moving = workflow_status == "running";
+    let meter = [
+        ("succeeded", progress.completed),
+        ("failed", progress.failed),
+        ("running", progress.running),
+        ("waiting", progress.waiting),
+    ];
+    view! {
+        <section class="agent-workflow-progress" class:moving=moving
+            data-testid="agent-workflow-progress" data-status=workflow_status.to_string()
+            aria-label=t(locale, "agents.progress.title")>
+            <div class="agent-workflow-progress-head">
+                <div class="agent-workflow-progress-copy">
+                    <strong>{compose_icon("activity-orbit")}<span>{t(locale, "agents.progress.title")}</span></strong>
+                    <p role="status">{summary}</p>
+                </div>
+                <div class="agent-workflow-constellation" aria-hidden="true">
+                    <span class="agent-workflow-hub">{compose_icon("branch")}</span>
+                    {tasks.iter().take(6).enumerate().map(|(index, task)| {
+                        let status = workflow_task_status(task).to_string();
+                        view! {
+                            <span class=format!("agent-workflow-orbit agent-workflow-orbit-{index}") data-status=status>
+                                <span>{compose_icon("bot")}</span>
+                            </span>
+                        }
+                    }).collect_view()}
+                </div>
+            </div>
+            <dl class="agent-workflow-metrics">
+                {[
+                    ("total", "agents.progress.total", progress.total, "layers"),
+                    ("running", "agents.activity.running", progress.running, "activity-orbit"),
+                    ("succeeded", "agents.activity.completed", progress.completed, "check"),
+                    ("failed", "agents.activity.status.failed", progress.failed, "circle-alert"),
+                ].into_iter().map(|(status, label, count, icon)| view! {
+                    <div class="agent-workflow-metric" data-status=status>
+                        <dt>{compose_icon(icon)}<span>{t(locale, label)}</span></dt>
+                        <dd>{count}</dd>
+                    </div>
+                }).collect_view()}
+            </dl>
+            <div class="agent-workflow-meter" aria-hidden="true">
+                {meter.into_iter().map(|(status, count)| {
+                    let share = 100.0 * count as f64 / progress.total.max(1) as f64;
+                    view! { <span data-status=status style:width=format!("{share}%")></span> }
+                }).collect_view()}
+            </div>
+        </section>
+    }
+    .into_view()
+}
+
 fn dynamic_workflow_card(
     snapshot: AgentWorkflowSnapshot,
     state: AgentPanelState,
@@ -3881,6 +3980,7 @@ fn dynamic_workflow_card(
                 <span class=status_class>{status_label(locale.get(), &status)}</span>
             </div>
             <p class="agent-workflow-goal">{workflow.goal.clone()}</p>
+            {workflow_progress_overview(&dynamic.tasks, &status, locale.get())}
             {execution_details}
             {(workflow.requires_confirmation && workflow.status == "draft").then(|| view! {
                 <div class="agent-confirm-hint">{t(locale.get(), "agents.confirm_hint")}</div>
@@ -3901,9 +4001,7 @@ fn dynamic_workflow_card(
                     let result = task.result.clone();
                     let is_run_activity = task.task_kind == WorkflowTaskKind::RunActivity;
                     let run_activity = task.run_activity.clone();
-                    let task_status = result.as_ref().map(|result| result.status.as_str())
-                        .unwrap_or("pending")
-                        .to_string();
+                    let task_status = workflow_task_status(&task).to_string();
                     let attempt_class = format!("agent-attempt-status {task_status}");
                     let specialist = if is_run_activity {
                         t(locale.get(), "agents.run_activity").into()
@@ -3944,7 +4042,7 @@ fn dynamic_workflow_card(
                     let result_workflow_id = workflow_id.clone();
                     let result_step_id = task.stored_step_id.clone();
                     view! {
-                        <section class="agent-step dynamic" role="listitem" data-step-id=task.stored_step_id.clone()>
+                        <section class="agent-step dynamic" role="listitem" data-step-id=task.stored_step_id.clone() data-status=task_status.clone()>
                             <div class="agent-step-head">
                                 <div>
                                     <span class="agent-step-name">{task.id.clone()}</span>
@@ -4748,6 +4846,30 @@ pub(super) fn agent_workflows_panel(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workflow_progress_counts_observed_states_without_estimating_time() {
+        let progress = workflow_task_progress([
+            "running",
+            "waiting_run",
+            "succeeded",
+            "failed",
+            "cancelled",
+            "blocked",
+            "queued",
+            "pending",
+        ]);
+        assert_eq!(
+            progress,
+            WorkflowTaskProgress {
+                total: 8,
+                running: 2,
+                completed: 1,
+                waiting: 2,
+                failed: 3,
+            }
+        );
+    }
 
     #[test]
     fn save_validation_identifies_tasks_and_rejects_invalid_optional_fields() {
