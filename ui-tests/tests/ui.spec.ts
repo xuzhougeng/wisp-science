@@ -4548,7 +4548,8 @@ test("side chat stays at the latest message after sending and switching tabs", a
   );
   await expect.poll(bottomGap).toBeLessThan(8);
 
-  await panel.locator(".rp-tab", { hasText: "Artifacts" }).click();
+  await panel.getByTestId("right-pane-home").click();
+  await panel.getByTestId("right-launcher-artifacts").click();
   await panel.getByRole("button", { name: "Side chat", exact: true }).click();
   await expect.poll(bottomGap).toBeLessThan(8);
 
@@ -5838,7 +5839,8 @@ test("workspace file can be registered as an artifact", async ({ page }) => {
   });
   await expect(page.locator("#copy-toast")).toHaveText("Registered report.csv as an artifact");
 
-  await page.getByRole("button", { name: /^Artifacts/ }).click();
+  await page.getByTestId("right-pane-home").click();
+  await page.getByTestId("right-launcher-artifacts").click();
   await expect(page.locator('.rp-tile[data-artifact-name="report.csv"]')).toBeVisible();
 });
 
@@ -7841,7 +7843,8 @@ test("right panel shows execution contexts and runs", async ({ page }) => {
   await expect(rightPanel.getByRole("button", { name: "Environment", exact: true })).toBeVisible();
   await expect(rightPanel.getByRole("button", { name: /^Notebook/ })).toHaveCount(0);
   await rightPanel.getByRole("button", { name: "Environment", exact: true }).click();
-  await expect(rightPanel.locator(".rp-tab")).toHaveCount(4);
+  await expect(rightPanel.locator(".rp-tab")).toHaveCount(1);
+  await expect(rightPanel.locator(".rp-tab.active")).toHaveText("Environment");
 
   await expect(page.locator(".context-card", { hasText: "local" })).toBeVisible();
   await expect(page.locator(".context-card", { hasText: "ssh:gpu-server" })).toContainText("NVIDIA A100");
@@ -13155,6 +13158,12 @@ test("long workspace scrolling keeps all headers visible across session switches
   for (const selector of [".sidebar-head", ".center > .topbar", ".rp-tabs"]) {
     await expectInsideViewport(page.locator(selector), viewport.width, viewport.height);
   }
+  const addPanel = page.getByRole("button", { name: "Add panel" });
+  for (const name of ["Agents", "Files"]) {
+    await addPanel.click();
+    await page.locator(".rp-tab-add-menu").getByRole("button", { name, exact: true }).click();
+  }
+  await page.locator(".rp-tabs").getByRole("button", { name: /^Artifacts/ }).click();
   await newSessionButton(page).click();
   await composer(page).fill("make second.png");
   await page.getByRole("button", { name: "Send" }).click();
@@ -17408,7 +17417,8 @@ test("code lives in Notebook instead of Artifacts", async ({ page }) => {
   await cells.nth(1).locator(".notebook-output summary").click();
   await expect(cells.nth(1).locator(".notebook-output pre")).toContainText("col_0: ok");
 
-  await page.getByRole("button", { name: "Artifacts", exact: true }).click();
+  await page.getByTestId("right-pane-home").click();
+  await page.getByTestId("right-launcher-artifacts").click();
   await expect(page.locator(".rp-badge.code")).toHaveCount(0);
 });
 

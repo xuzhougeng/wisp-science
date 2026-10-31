@@ -2409,7 +2409,7 @@ fn App() -> impl IntoView {
     let collapsed_art_groups = create_rw_signal::<HashSet<String>>(HashSet::new());
     let rp_grid = create_rw_signal(false); // false = detailed/list, true = tiled/grid; shared by Artifacts + Files
     let right_tab = create_rw_signal(RightTab::Artifacts);
-    let open_right_tabs = create_rw_signal(DEFAULT_RIGHT_TABS.to_vec());
+    let open_right_tabs = create_rw_signal(Vec::new());
     let right_launcher_open = create_rw_signal(false);
     create_effect(move |_| {
         right_tab.track();
@@ -13490,10 +13490,6 @@ fn App() -> impl IntoView {
                         if show_right.get_untracked() {
                             show_right.set(false);
                         } else {
-                            if open_right_tabs.get_untracked().is_empty() {
-                                open_right_tabs.set(DEFAULT_RIGHT_TABS.to_vec());
-                                right_tab.set(RightTab::Artifacts);
-                            }
                             right_launcher_open.set(true);
                             show_right.set(true);
                         }

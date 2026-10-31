@@ -29,11 +29,13 @@ test("the right pane opens a grouped tool home and returns to it from any panel"
 
   await panel.getByTestId("right-launcher-notebook").click();
   await expect(launcher).toHaveCount(0);
+  await expect(panel.locator(".rp-tab")).toHaveCount(1);
   await expect(panel.locator(".rp-tab.active")).toHaveText("Notebook");
   await panel.getByTestId("right-pane-home").click();
   await expect(launcher).toBeVisible();
 
   await panel.getByTestId("right-launcher-agents").click();
+  await expect(panel.locator(".rp-tab")).toHaveCount(2);
   await expect(panel.getByTestId("agent-workflows")).toBeVisible();
   await panel.getByTestId("right-pane-home").click();
   await panel.getByRole("button", { name: "Close panel" }).click();
@@ -50,11 +52,29 @@ test("direct tool links bypass the launcher without losing the way back", async 
   const panel = page.locator(".rightpane");
   await expect(panel).toBeVisible();
   await expect(panel.getByTestId("right-pane-launcher")).toHaveCount(0);
+  await expect(panel.locator(".rp-tab")).toHaveCount(1);
   await expect(panel.locator(".rp-tab.active")).toHaveText("Files");
 
   await panel.getByTestId("right-pane-home").click();
   await expect(panel.getByTestId("right-pane-launcher")).toBeVisible();
   await panel.getByTestId("right-launcher-artifacts").click();
+  await expect(panel.locator(".rp-tab")).toHaveCount(2);
+  await expect(panel.locator(".rp-tab.active")).toHaveText("Artifacts");
+});
+
+test("reopening after the last tab closes does not restore default tabs", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  const panel = page.locator(".rightpane");
+  await panel.getByTestId("right-launcher-hosts").click();
+  await expect(panel.locator(".rp-tab")).toHaveCount(1);
+  await panel.locator(".rp-tab-close").click();
+  await expect(panel).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await expect(panel.getByTestId("right-pane-launcher")).toBeVisible();
+  await panel.getByTestId("right-launcher-artifacts").click();
+  await expect(panel.locator(".rp-tab")).toHaveCount(1);
   await expect(panel.locator(".rp-tab.active")).toHaveText("Artifacts");
 });
 
