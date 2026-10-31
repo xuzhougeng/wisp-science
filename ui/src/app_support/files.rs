@@ -401,13 +401,6 @@ pub(crate) const ALL_RIGHT_TABS: [RightTab; 10] = [
     RightTab::Memos,
 ];
 
-pub(crate) const DEFAULT_RIGHT_TABS: [RightTab; 4] = [
-    RightTab::Artifacts,
-    RightTab::Agents,
-    RightTab::File,
-    RightTab::Hosts,
-];
-
 fn right_launcher_tool(
     tab: RightTab,
     id: &'static str,

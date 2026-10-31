@@ -7841,7 +7841,8 @@ test("right panel shows execution contexts and runs", async ({ page }) => {
   await expect(rightPanel.getByRole("button", { name: "Environment", exact: true })).toBeVisible();
   await expect(rightPanel.getByRole("button", { name: /^Notebook/ })).toHaveCount(0);
   await rightPanel.getByRole("button", { name: "Environment", exact: true }).click();
-  await expect(rightPanel.locator(".rp-tab")).toHaveCount(4);
+  await expect(rightPanel.locator(".rp-tab")).toHaveCount(1);
+  await expect(rightPanel.locator(".rp-tab.active")).toHaveText("Environment");
 
   await expect(page.locator(".context-card", { hasText: "local" })).toBeVisible();
   await expect(page.locator(".context-card", { hasText: "ssh:gpu-server" })).toContainText("NVIDIA A100");
@@ -13155,6 +13156,12 @@ test("long workspace scrolling keeps all headers visible across session switches
   for (const selector of [".sidebar-head", ".center > .topbar", ".rp-tabs"]) {
     await expectInsideViewport(page.locator(selector), viewport.width, viewport.height);
   }
+  const addPanel = page.getByRole("button", { name: "Add panel" });
+  for (const name of ["Agents", "Files"]) {
+    await addPanel.click();
+    await page.locator(".rp-tab-add-menu").getByRole("button", { name, exact: true }).click();
+  }
+  await page.locator(".rp-tabs").getByRole("button", { name: /^Artifacts/ }).click();
   await newSessionButton(page).click();
   await composer(page).fill("make second.png");
   await page.getByRole("button", { name: "Send" }).click();
