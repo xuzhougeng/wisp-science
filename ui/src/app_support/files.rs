@@ -408,6 +408,89 @@ pub(crate) const DEFAULT_RIGHT_TABS: [RightTab; 4] = [
     RightTab::Hosts,
 ];
 
+fn right_launcher_tool(
+    tab: RightTab,
+    id: &'static str,
+    icon: &'static str,
+    title: &'static str,
+    description: &'static str,
+    locale: RwSignal<Locale>,
+    on_open: Callback<RightTab>,
+) -> View {
+    let accessible_title = if tab == RightTab::File { "right.file" } else { title };
+    view! {
+        <button type="button" class="rp-launcher-tool" data-testid=format!("right-launcher-{id}")
+            aria-label=move || t(locale.get(), accessible_title)
+            on:click=move |_| on_open.call(tab)>
+            <span class="rp-launcher-tool-icon">{compose_icon(icon)}</span>
+            <span class="rp-launcher-tool-copy">
+                <strong>{move || t(locale.get(), title)}</strong>
+                <small>{move || t(locale.get(), description)}</small>
+            </span>
+            <span class="rp-launcher-tool-chevron">{compose_icon("chevron-right")}</span>
+        </button>
+    }
+    .into_view()
+}
+
+#[component]
+pub(crate) fn RightPaneLauncher(
+    locale: RwSignal<Locale>,
+    on_open: Callback<RightTab>,
+    on_close: Callback<()>,
+) -> impl IntoView {
+    let primary = [
+        (RightTab::File, "files", "folder", "right.launcher.files", "right.launcher.files_hint"),
+        (RightTab::Agents, "agents", "swarm", "right.agents", "right.launcher.agents_hint"),
+        (RightTab::Artifacts, "artifacts", "layers", "right.artifacts", "right.launcher.artifacts_hint"),
+        (RightTab::Hosts, "hosts", "server", "contexts.title", "right.launcher.hosts_hint"),
+    ];
+    let secondary = [
+        (RightTab::Runs, "runs", "activity-orbit", "right.runs", "right.launcher.runs_hint"),
+        (RightTab::Notebook, "notebook", "notebook", "right.notebook", "right.launcher.notebook_hint"),
+        (RightTab::Highlights, "highlights", "star", "right.highlights", "right.launcher.highlights_hint"),
+        (RightTab::Provenance, "provenance", "branch", "right.provenance", "right.launcher.provenance_hint"),
+        (RightTab::SideChat, "side-chat", "chat", "sidechat.title", "right.launcher.sidechat_hint"),
+        (RightTab::Memos, "memos", "memory", "right.memos", "right.launcher.memos_hint"),
+    ];
+    view! {
+        <div class="rp-launcher-header">
+            <span class="rp-launcher-start">{compose_icon("compass")}<strong>{move || t(locale.get(), "right.launcher.start")}</strong></span>
+            <button type="button" class="icon-btn" aria-label=move || t(locale.get(), "right.close")
+                title=move || t(locale.get(), "right.close") on:click=move |_| on_close.call(())>
+                {compose_icon("close")}
+            </button>
+        </div>
+        <nav class="rp-launcher" data-testid="right-pane-launcher" aria-label=move || t(locale.get(), "right.launcher.title")>
+            <div class="rp-launcher-intro">
+                <span>{compose_icon("compass")}</span>
+                <h2>{move || t(locale.get(), "right.launcher.title")}</h2>
+                <p>{move || t(locale.get(), "right.launcher.subtitle")}</p>
+            </div>
+            <div class="rp-launcher-tools">
+                {primary.into_iter().map(|(tab, id, icon, title, description)| {
+                    right_launcher_tool(tab, id, icon, title, description, locale, on_open.clone())
+                }).collect_view()}
+            </div>
+            <details class="rp-launcher-more" data-testid="right-launcher-more">
+                <summary aria-label=move || t(locale.get(), "right.launcher.more")>
+                    <span class="rp-launcher-tool-icon">{compose_icon("grid")}</span>
+                    <span class="rp-launcher-tool-copy">
+                        <strong>{move || t(locale.get(), "right.launcher.more")}</strong>
+                        <small>{move || t(locale.get(), "right.launcher.more_hint")}</small>
+                    </span>
+                    <span class="rp-launcher-tool-chevron">{compose_icon("chevron-down")}</span>
+                </summary>
+                <div class="rp-launcher-tools rp-launcher-secondary">
+                    {secondary.into_iter().map(|(tab, id, icon, title, description)| {
+                        right_launcher_tool(tab, id, icon, title, description, locale, on_open.clone())
+                    }).collect_view()}
+                </div>
+            </details>
+        </nav>
+    }
+}
+
 pub(crate) fn scroll_active_right_tab_into_view() {
     request_animation_frame(|| {
         let Some(document) = web_sys::window().and_then(|window| window.document()) else {

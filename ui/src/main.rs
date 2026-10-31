@@ -2410,6 +2410,11 @@ fn App() -> impl IntoView {
     let rp_grid = create_rw_signal(false); // false = detailed/list, true = tiled/grid; shared by Artifacts + Files
     let right_tab = create_rw_signal(RightTab::Artifacts);
     let open_right_tabs = create_rw_signal(DEFAULT_RIGHT_TABS.to_vec());
+    let right_launcher_open = create_rw_signal(false);
+    create_effect(move |_| {
+        right_tab.track();
+        right_launcher_open.set(false);
+    });
     // An unsaved memo survives closing the Memos panel; it is dropped only on
     // an explicit discard or when another project becomes active.
     let memo_draft = create_rw_signal(None::<memos::MemoDraft>);
@@ -12700,6 +12705,32 @@ fn App() -> impl IntoView {
         });
     });
 
+    let open_right_tool = Callback::new(move |tab: RightTab| {
+        right_launcher_open.set(false);
+        ensure_right_tab(tab, show_right, open_right_tabs, right_tab);
+        match tab {
+            RightTab::File => refresh_active_file_dir(
+                file_source,
+                file_cwd,
+                file_entries,
+                remote_file_cwd,
+                remote_file_entries,
+                remote_file_loading,
+                remote_file_error,
+            ),
+            RightTab::Hosts => {
+                refresh_execution_contexts(execution_contexts);
+                refresh_runtimes(runtime_infos);
+                refresh_runs(run_records, locale, Some(run_refresh_health));
+            }
+            RightTab::Runs => {
+                refresh_runs(run_records, locale, Some(run_refresh_health));
+            }
+            RightTab::Agents => refresh_agent_workflows(agent_panel),
+            _ => {}
+        }
+    });
+
     // Leptos 0.6 signals notify on every `set`, even with an equal value. The
     // right pane and the center preview mount surfaces that animate in from
     // opacity 0, so remounting them for nothing is a visible flash. Key both
@@ -13456,17 +13487,16 @@ fn App() -> impl IntoView {
                     class:active=move || show_right.get()
                     disabled=move || assistant_mode.get() || demo_mode.get()
                     on:click=move |_| {
-                        show_right.update(|open| {
-                            if *open {
-                                *open = false;
-                            } else {
-                                if open_right_tabs.get_untracked().is_empty() {
-                                    open_right_tabs.set(DEFAULT_RIGHT_TABS.to_vec());
-                                    right_tab.set(RightTab::Artifacts);
-                                }
-                                *open = true;
+                        if show_right.get_untracked() {
+                            show_right.set(false);
+                        } else {
+                            if open_right_tabs.get_untracked().is_empty() {
+                                open_right_tabs.set(DEFAULT_RIGHT_TABS.to_vec());
+                                right_tab.set(RightTab::Artifacts);
                             }
-                        });
+                            right_launcher_open.set(true);
+                            show_right.set(true);
+                        }
                     }>{compose_icon("panel")}</button>
                 </div>
             </div>
@@ -17233,7 +17263,18 @@ fn App() -> impl IntoView {
                     .min(max_right_pane_width(show_sidebar.get(), sidebar_w.get()));
                 format!("width:{width}px")
             }>
+                <Show when=move || !right_launcher_open.get() fallback=move || view! {
+                    <RightPaneLauncher locale=locale on_open=open_right_tool.clone()
+                        on_close=Callback::new(move |_| show_right.set(false))/>
+                }>
                 <div class="rp-tabs">
+                    <button type="button" class="icon-btn rp-home" data-testid="right-pane-home"
+                        aria-label=move || t(locale.get(), "right.launcher.home")
+                        title=move || t(locale.get(), "right.launcher.home")
+                        on:click=move |_| {
+                            right_tab_add_menu_open.set(false);
+                            right_launcher_open.set(true);
+                        }>{compose_icon("compass")}</button>
                     <div class="rp-tab-scroll">
                         {move || {
                             let loc = locale.get();
@@ -17257,6 +17298,7 @@ fn App() -> impl IntoView {
                                     RightTab::Memos => t(loc, "right.memos").into(),
                                 };
                                 let is_active = active == tab;
+                                let open_tool = open_right_tool.clone();
                                 view! {
                                     // Drag state is only read in per-element class closures and
                                     // handlers — reading it in the list closure above would
@@ -17309,32 +17351,7 @@ fn App() -> impl IntoView {
                                             // Labels ellipsize past 180px (long file names);
                                             // the tooltip keeps the full name one hover away.
                                             title=label.clone()
-                                            on:click=move |_| {
-                                                right_tab.set(tab);
-                                                match tab {
-                                                    RightTab::File => refresh_active_file_dir(
-                                                        file_source,
-                                                        file_cwd,
-                                                        file_entries,
-                                                        remote_file_cwd,
-                                                        remote_file_entries,
-                                                        remote_file_loading,
-                                                        remote_file_error,
-                                                    ),
-                                                    RightTab::Hosts => {
-                                                        refresh_execution_contexts(execution_contexts);
-                                                        refresh_runtimes(runtime_infos);
-                                                        refresh_runs(run_records, locale, Some(run_refresh_health));
-                                                    }
-                                                    RightTab::Runs => {
-                                                        refresh_runs(run_records, locale, Some(run_refresh_health));
-                                                    }
-                                                    RightTab::Agents => {
-                                                        refresh_agent_workflows(agent_panel)
-                                                    }
-                                                    _ => {}
-                                                }
-                                            }>{label}</button>
+                                            on:click=move |_| open_tool.call(tab)>{label}</button>
                                         <button type="button" class="rp-tab-close"
                                             aria-label=move || t(locale.get(), "right.close_tab")
                                             on:click=move |ev| {
@@ -17376,34 +17393,12 @@ fn App() -> impl IntoView {
                                             RightTab::Memos => t(loc, "right.memos").into(),
                                         };
                                         let is_open = open.contains(&tab);
+                                        let open_tool = open_right_tool.clone();
                                         view! {
                                             <button type="button" class="rp-tab-add-item" class:open=is_open
                                                 on:click=move |_| {
                                                     right_tab_add_menu_open.set(false);
-                                                    ensure_right_tab(tab, show_right, open_right_tabs, right_tab);
-                                                    match tab {
-                                                        RightTab::File => refresh_active_file_dir(
-                                                            file_source,
-                                                            file_cwd,
-                                                            file_entries,
-                                                            remote_file_cwd,
-                                                            remote_file_entries,
-                                                            remote_file_loading,
-                                                            remote_file_error,
-                                                        ),
-                                                        RightTab::Hosts => {
-                                                            refresh_execution_contexts(execution_contexts);
-                                                            refresh_runtimes(runtime_infos);
-                                                            refresh_runs(run_records, locale, Some(run_refresh_health));
-                                                        }
-                                                        RightTab::Runs => {
-                                                            refresh_runs(run_records, locale, Some(run_refresh_health));
-                                                        }
-                                                        RightTab::Agents => {
-                                                            refresh_agent_workflows(agent_panel)
-                                                        }
-                                                        _ => {}
-                                                    }
+                                                    open_tool.call(tab);
                                                 }>
                                                 <span>{label}</span>
                                                 {is_open.then(|| view! { <span>"✓"</span> })}
@@ -18743,6 +18738,7 @@ fn App() -> impl IntoView {
                         }
                     }}
                 </div>
+                </Show>
             </section>
         }.into_view())}
         </div>
