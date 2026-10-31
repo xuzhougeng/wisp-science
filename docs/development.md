@@ -364,7 +364,9 @@ processes — never copied to SSH/WSL hosts.
 
 Wisp reads `AGENTS.md` from the project root when a new session starts.
 Instructions in **Project Settings → Agent Context** live in `.wisp/WISP.md`
-and take precedence when both exist.
+and take precedence when both exist. User-level `~/.wisp/AGENTS.md` comes
+first, below both (`SystemPrompt::with_user_instructions`; hosts read HOME,
+unit tests do not).
 
 ### Native biological tools and custom MCP
 

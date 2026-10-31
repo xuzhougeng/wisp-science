@@ -144,13 +144,25 @@ impl SkillIndex {
                         continue;
                     }
                 };
-                if !entry.file_type().is_file() {
-                    continue;
-                }
-                if entry.file_name() != "SKILL.md" {
-                    continue;
-                }
-                let path = entry.path().to_path_buf();
+                let path = if entry.file_type().is_file() {
+                    if entry.file_name() != "SKILL.md" {
+                        continue;
+                    }
+                    entry.path().to_path_buf()
+                } else {
+                    match linked_global_skill(&entry, *source) {
+                        Some(Ok(path)) => path,
+                        Some(Err(error)) => {
+                            records.push(error_record(
+                                &entry.path().join("SKILL.md"),
+                                *source,
+                                error,
+                            ));
+                            continue;
+                        }
+                        None => continue,
+                    }
+                };
                 let dir = path.parent().map(PathBuf::from).unwrap_or_default();
                 if *source == SkillSource::Bundled
                     && dir
@@ -412,6 +424,29 @@ fn record_id(source: SkillSource, path: &Path, hash: Option<&str>, error: Option
     digest.update([0]);
     digest.update(error.unwrap_or_default().as_bytes());
     format!("skill-record:{}", hex::encode(digest.finalize()))
+}
+
+/// Skill managers link shared skill folders into `~/.wisp/skills` instead of
+/// copying them. Follow only those top-level Global links; every other scope,
+/// and deeper links, keep being skipped. A broken link is reported, not hidden.
+fn linked_global_skill(
+    entry: &walkdir::DirEntry,
+    source: SkillSource,
+) -> Option<Result<PathBuf, String>> {
+    if source != SkillSource::Global || entry.depth() != 1 || !entry.path_is_symlink() {
+        return None;
+    }
+    match std::fs::metadata(entry.path()) {
+        Ok(metadata) if metadata.is_dir() => {
+            let path = entry.path().join("SKILL.md");
+            path.is_file().then_some(Ok(path))
+        }
+        Ok(_) => None,
+        Err(error) => Some(Err(format!(
+            "broken skill link {}: {error}",
+            entry.path().display()
+        ))),
+    }
 }
 
 fn error_record(path: &Path, source: SkillSource, error: String) -> SkillCatalogRecord {
@@ -893,6 +928,53 @@ mod tests {
         assert_eq!(index.source("shared"), Some(SkillSource::Project));
 
         std::fs::remove_dir_all(root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn global_scope_follows_top_level_skill_links_only() {
+        let temp = crate::distribution::StagingDir::new(&std::env::temp_dir()).unwrap();
+        let target = temp.0.join("library").join("linked");
+        std::fs::create_dir_all(target.join("references")).unwrap();
+        std::fs::write(
+            target.join("SKILL.md"),
+            "---\nname: linked\ndescription: Kept in a shared library\n---\nbody",
+        )
+        .unwrap();
+        let base = temp.0.join("skills");
+        std::fs::create_dir_all(&base).unwrap();
+        std::os::unix::fs::symlink(&target, base.join("linked")).unwrap();
+        std::os::unix::fs::symlink(temp.0.join("gone"), base.join("dangling")).unwrap();
+        std::os::unix::fs::symlink(target.join("SKILL.md"), base.join("file-link")).unwrap();
+
+        let index = SkillIndex::load_scoped(&[(base.clone(), SkillSource::Global)]);
+        assert_eq!(index.source("linked"), Some(SkillSource::Global));
+        let skill = index.get("linked").unwrap();
+        assert_eq!(skill.dir, base.join("linked"));
+        assert_eq!(skill.description, "Kept in a shared library");
+        let broken = index
+            .catalog_records()
+            .iter()
+            .find(|record| record.name == "dangling")
+            .unwrap();
+        assert!(!broken.effective);
+        assert!(broken
+            .parse_error
+            .as_deref()
+            .is_some_and(|error| error.starts_with("broken skill link")));
+        assert_eq!(index.catalog_records().len(), 2);
+
+        for scope in [
+            SkillSource::Bundled,
+            SkillSource::Project,
+            SkillSource::Extra,
+            SkillSource::Plugin,
+            SkillSource::Custom,
+        ] {
+            let index = SkillIndex::load_scoped(&[(base.clone(), scope)]);
+            assert!(index.is_empty(), "{scope:?} must not follow links");
+            assert!(index.catalog_records().is_empty(), "{scope:?}");
+        }
     }
 
     #[test]

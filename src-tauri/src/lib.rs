@@ -4623,8 +4623,8 @@ async fn load_session_settings(
             String::new(),
             cfg.user_agent,
             true,
-            None,
-            String::new(),
+            cfg.send_session_id,
+            cfg.session_header_name,
         );
     }
     let profile_id = models::session_profile_id(store, frame_id).await;
@@ -5873,6 +5873,15 @@ fn load_skill_index(root: &std::path::Path) -> SkillIndex {
     SkillIndex::load_scoped(&skill_sources(root))
 }
 
+/// `~/.wisp/AGENTS.md` for new prompts and the stale-rules check. Unit tests
+/// never read the developer's HOME.
+pub(crate) fn user_instructions() -> Option<String> {
+    if cfg!(test) {
+        return None;
+    }
+    dirs::home_dir().and_then(|home| wisp_core::system_prompt::read_user_instructions(&home))
+}
+
 fn kernel_worker_path() -> PathBuf {
     let configured = std::env::var("WISP_KERNEL_WORKER")
         .ok()
@@ -6137,11 +6146,13 @@ async fn finish_custom_mcp_wiring(
 ) -> ToolWiringResult {
     let (specs, errors) = mcp_connections::configured(store, project_id).await;
     for error in errors {
-        result
-            .plugin_runtime_checks
-            .entry(error.plugin_id)
-            .or_default()
-            .push(error.message.clone());
+        if let Some(plugin_id) = error.plugin_id {
+            result
+                .plugin_runtime_checks
+                .entry(plugin_id)
+                .or_default()
+                .push(error.message.clone());
+        }
         result.errors.push(error.message);
     }
     let decision = decision_model::configured(store).await;
