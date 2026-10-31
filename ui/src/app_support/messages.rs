@@ -181,6 +181,7 @@ pub(crate) fn SessionStatusBadge(
 pub(crate) fn compose_icon(kind: &str) -> impl IntoView {
     let body = match kind {
         "calendar" => view! { <rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18M8 15h2M14 15h2"/> }.into_view(),
+        "compass" => view! { <circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5 5-2Z"/> }.into_view(),
         "external-link" => view! { <path d="M15 3h6v6M10 14 21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/> }.into_view(),
         "table" => view! { <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/> }.into_view(),
         "research-trail" => view! { <path d="M3 3v18h18"/><path d="m7 14 4-4 4 3 5-7"/><circle cx="7" cy="14" r="1"/><circle cx="11" cy="10" r="1"/><circle cx="15" cy="13" r="1"/> }.into_view(),

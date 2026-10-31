@@ -134,6 +134,7 @@ test("right-pane tabs keep their labels and scroll instead of ellipsizing", asyn
   await page.getByRole("button", { name: "Toggle panel" }).click();
 
   const panel = page.locator(".rightpane");
+  await panel.getByTestId("right-launcher-artifacts").click();
   const addPanel = panel.getByRole("button", { name: "Add panel" });
   for (const name of [/^Notebook/, /^Highlights/, /^Provenance/, /^Side chat$/]) {
     await addPanel.click();

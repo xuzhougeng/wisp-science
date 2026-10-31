@@ -33,8 +33,8 @@ async function setup(page: Page) {
   await expect(page.locator("#composer-input")).toBeVisible();
   await page.getByRole("button", { name: "Toggle panel" }).click();
   const panel = page.locator(".rightpane");
-  await panel.getByRole("button", { name: "Add panel" }).click();
-  await panel.locator(".rp-tab-add-menu").getByRole("button", { name: /^Runs/ }).click();
+  await panel.getByTestId("right-launcher-more").locator("summary").click();
+  await panel.getByTestId("right-launcher-runs").click();
   await expect(panel.locator(".rp-tab-add-menu")).toHaveCount(0);
   return panel;
 }
@@ -108,8 +108,8 @@ test("a session without runs shows the empty state and an unbadged tab", async (
   await page.locator('[data-session-id="s-model-a"]').click();
   await page.getByRole("button", { name: "Toggle panel" }).click();
   const panel = page.locator(".rightpane");
-  await panel.getByRole("button", { name: "Add panel" }).click();
-  await panel.locator(".rp-tab-add-menu").getByRole("button", { name: "Runs", exact: true }).click();
+  await panel.getByTestId("right-launcher-more").locator("summary").click();
+  await panel.getByTestId("right-launcher-runs").click();
   await expect(panel.locator(".rp-tab.active")).toHaveText("Runs");
   await expect(panel.getByTestId("session-runs-empty")).toContainText("No runs in this session");
 });

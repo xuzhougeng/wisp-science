@@ -732,6 +732,7 @@ test("sidebar Feedback opens a blank conversation and waits for the user's first
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible();
   await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
   const tile = page.locator('.rp-tile[data-artifact-name="counts.csv"]');
   await tile.click({ button: "right" });
   await page.locator(".ctx-menu").getByRole("button", { name: "Open in center" }).click();
@@ -3632,6 +3633,7 @@ test("artifact type badges stay neutral instead of rainbow pills", async ({ page
   await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
   await page.getByRole("button", { name: "Toggle panel" }).click();
 
+  await page.getByTestId("right-launcher-artifacts").click();
   const badge = page.locator('.rp-tile[data-artifact-name="panel_I_heatmap_4genes_median.png"] .rp-badge');
   await expect(badge).toHaveText("image");
   await expect(badge).toHaveCSS("border-radius", "8px");
@@ -5400,6 +5402,7 @@ test("uploaded file shows up in the artifacts panel after send", async ({ page }
   await expect(page.locator(".center-tab.active")).not.toContainText("Uploaded files:");
   // The right panel starts collapsed; open it to see the collected artifact.
   await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
   // The upload path lives in the user turn; the panel must pick it up from there.
   const tile = page.locator('.rp-tile[data-artifact-name="counts.csv"]');
   await expect(tile).toBeVisible();
@@ -5550,6 +5553,7 @@ test("artifact category headers collapse and expand their tiles", async ({ page 
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
   await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
 
   const tile = page.locator('.rp-tile[data-artifact-name="volcano.png"]');
   await expect(tile).toBeVisible();
@@ -5765,6 +5769,7 @@ test("artifact tile attaches to the chat from its context and more menus", async
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
   await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
 
   const tile = page.locator('.rp-tile[data-artifact-name="volcano.png"]');
   await expect(tile).toBeVisible();
@@ -7411,6 +7416,7 @@ test("registered Artifact opens publication binding and Escape keeps Workspace o
   await page.locator('[data-session-id="publication-session"]').click();
   await page.getByRole("button", { name: "Toggle panel" }).click();
 
+  await page.getByTestId("right-launcher-artifacts").click();
   const artifact = page.locator('.rp-tile[data-artifact-name="plddt_profile.png"]');
   await expect(artifact).toBeVisible();
   await artifact.getByRole("button", { name: "More" }).click();
@@ -7827,13 +7833,15 @@ test("right panel shows execution contexts and runs", async ({ page }) => {
   await selectRemoteContext(page);
   await page.getByRole("button", { name: "Toggle panel" }).click();
   const rightPanel = page.locator(".rightpane");
-  await expect(rightPanel.locator(".rp-tab")).toHaveCount(4);
+  await expect(rightPanel.getByTestId("right-pane-launcher")).toBeVisible();
+  await expect(rightPanel.locator(".rp-tab")).toHaveCount(0);
   await expect(rightPanel.getByRole("button", { name: "Artifacts", exact: true })).toBeVisible();
   await expect(rightPanel.getByRole("button", { name: "Agents", exact: true })).toBeVisible();
   await expect(rightPanel.getByRole("button", { name: "Files", exact: true })).toBeVisible();
   await expect(rightPanel.getByRole("button", { name: "Environment", exact: true })).toBeVisible();
   await expect(rightPanel.getByRole("button", { name: /^Notebook/ })).toHaveCount(0);
   await rightPanel.getByRole("button", { name: "Environment", exact: true }).click();
+  await expect(rightPanel.locator(".rp-tab")).toHaveCount(4);
 
   await expect(page.locator(".context-card", { hasText: "local" })).toBeVisible();
   await expect(page.locator(".context-card", { hasText: "ssh:gpu-server" })).toContainText("NVIDIA A100");
@@ -8992,6 +9000,7 @@ test("clicking a figure opens the artifact modal with provenance", async ({ page
   await page.getByRole("button", { name: "Send" }).click();
   await page.getByRole("button", { name: "Toggle panel" }).click();
   // Clicking an image artifact opens the modal viewer directly (no expand step).
+  await page.getByTestId("right-launcher-artifacts").click();
   await page.locator('.rp-tile[data-artifact-name="volcano.png"] .rp-tile-main').click();
   await expect(page.locator(".artifact-modal")).toBeVisible();
   const overlay = page.locator(".overlay", { has: page.locator(".artifact-modal") });
@@ -9169,6 +9178,7 @@ test("PDF artifacts render inside the app without a browser PDF plugin", async (
   await composer(page).fill("open paper.pdf");
   await page.getByRole("button", { name: "Send" }).click();
   await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
   await page.locator('.rp-tile[data-artifact-name="paper.pdf"] .rp-tile-main').click();
 
   const modal = page.locator(".artifact-modal");
@@ -9248,6 +9258,7 @@ test("PDF artifacts switch pages with toolbar buttons, arrow keys, and Page Up/D
   await composer(page).fill("open paper.pdf");
   await page.getByRole("button", { name: "Send" }).click();
   await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
   await page.locator('.rp-tile[data-artifact-name="paper.pdf"] .rp-tile-main').click();
 
   const modal = page.locator(".artifact-modal");
@@ -9288,6 +9299,7 @@ test("PDF text can be selected and added to chat", async ({ page }) => {
   await composer(page).fill("open paper.pdf");
   await page.getByRole("button", { name: "Send" }).click();
   await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
   await page.locator('.rp-tile[data-artifact-name="paper.pdf"] .rp-tile-main').click();
 
   const layer = page.locator(".artifact-modal .rp-pdf-textlayer");
@@ -9381,6 +9393,7 @@ test("DOCX artifacts render offline with headings, tables, and equations", async
   // projection can replace the clicked tile before the selection signal lands.
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
   const manuscriptTile = page.locator('.rp-tile[data-artifact-name="manuscript.docx"] .rp-tile-main');
   await expect(manuscriptTile).toBeVisible();
   await manuscriptTile.click();
@@ -9474,6 +9487,7 @@ test("center previews are read-only and send selected code or text to the AI con
   await page.getByRole("button", { name: "Toggle panel" }).click();
 
   // Right-click the file tile → "Open in center" opens the real workspace file.
+  await page.getByTestId("right-launcher-artifacts").click();
   await page.locator('.rp-tile[data-artifact-name="report.md"]').click({ button: "right" });
   await page.getByRole("button", { name: "Open in center" }).click();
   const preview = page.locator('.center-file-preview[data-file-path="report.md"]');
@@ -9507,6 +9521,7 @@ test("center split keeps the same conversation beside the open document", async 
   await composer(page).fill("open report.md");
   await page.getByRole("button", { name: "Send" }).click();
   await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
   await page.locator('.rp-tile[data-artifact-name="report.md"]').click({ button: "right" });
   await page.getByRole("button", { name: "Open in center" }).click();
   const preview = page.locator('.center-file-preview[data-file-path="report.md"]');
@@ -9567,6 +9582,7 @@ test("artifact modal stays mounted while background tools update outputs", async
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expect(page.getByRole("button", { name: "Stop", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
   await page.locator('.rp-tile[data-artifact-name="first.png"] .rp-tile-main').click();
   const modal = page.locator(".artifact-modal");
   const image = modal.locator(".rp-img");
@@ -9624,6 +9640,7 @@ test("artifact modal switches between images with left and right arrows", async 
   await composer(page).fill("make plots first.png second.png third.png");
   await page.getByRole("button", { name: "Send" }).click();
   await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
   await expect(page.locator('.rp-tile[data-artifact-name="second.png"]')).toBeVisible();
 
   await page.locator('.rp-tile[data-artifact-name="second.png"] .rp-tile-main').click();
@@ -9655,6 +9672,7 @@ test("center file tabs are restored per conversation", async ({ page }) => {
   await composer(page).fill("make a volcano plot volcano.png");
   await page.getByRole("button", { name: "Send" }).click();
   await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
   await page.locator('.rp-tile[data-artifact-name="volcano.png"] .rp-tile-main').click();
   await page.getByRole("button", { name: "Open in center" }).click();
   await expect(page.locator(".center-tab.active")).toContainText("volcano.png");
@@ -9678,6 +9696,7 @@ test("image preview context menu copies the image", async ({ page, context }) =>
   await composer(page).fill("make a volcano plot volcano.png");
   await page.getByRole("button", { name: "Send" }).click();
   await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
   await page.locator('.rp-tile[data-artifact-name="volcano.png"] .rp-tile-main').click();
   const image = page.locator(".artifact-modal .rp-img");
   await expect(image).toBeVisible();
@@ -9698,6 +9717,7 @@ test("image crop stays highlighted until it is added to chat", async ({ page }) 
   await composer(page).fill("make a volcano plot volcano.png");
   await page.getByRole("button", { name: "Send" }).click();
   await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
   await page.locator('.rp-tile[data-artifact-name="volcano.png"] .rp-tile-main').click();
   const image = page.locator(".artifact-modal .rp-img");
   await expect(image).toBeVisible();
@@ -9738,6 +9758,7 @@ test("image region comments become numbered pins and a revision request", async 
   await composer(page).fill("make a volcano plot volcano.png");
   await page.getByRole("button", { name: "Send" }).click();
   await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
   await page.locator('.rp-tile[data-artifact-name="volcano.png"] .rp-tile-main').click();
   const image = page.locator(".artifact-modal .rp-img");
   await expect(image).toBeVisible();
@@ -9777,6 +9798,7 @@ test("image crop can be added and jump back from the preview to chat", async ({ 
   await composer(page).fill("make a volcano plot volcano.png");
   await page.getByRole("button", { name: "Send" }).click();
   await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
   await page.locator('.rp-tile[data-artifact-name="volcano.png"] .rp-tile-main').click();
   await page.getByRole("button", { name: "Open in center" }).click();
 
@@ -9810,6 +9832,7 @@ test("artifact panel normalizes png/pdf shorthand to the previewable image", asy
   await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
   await page.getByRole("button", { name: "Toggle panel" }).click();
 
+  await page.getByTestId("right-launcher-artifacts").click();
   const tile = page.locator('.rp-tile[data-artifact-name="panel_I_heatmap_4genes_median.png"]');
   await expect(tile).toBeVisible();
   await expect(tile.locator(".rp-badge")).toHaveText("image");
@@ -13104,7 +13127,7 @@ test("long workspace scrolling keeps all headers visible across session switches
   await composer(page).fill("make volcano.png");
   await page.getByRole("button", { name: "Send" }).click();
   await page.getByRole("button", { name: "Toggle panel" }).click();
-  await page.locator(".rp-tabs").getByRole("button", { name: /^Artifacts/ }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
   const tiles = page.locator(".rp-tiles");
   await expect(tiles).toBeVisible();
   await tiles.evaluate((el) => {
@@ -13240,6 +13263,7 @@ test("right panel keeps actions and the active tab visible when tabs overflow", 
   await page.getByRole("button", { name: "Toggle panel" }).click();
 
   const panel = page.locator(".rightpane");
+  await panel.getByTestId("right-launcher-artifacts").click();
   const addPanel = panel.getByRole("button", { name: "Add panel" });
   for (const name of [/^Notebook/, /^Highlights/, /^Provenance/, /^Side chat$/]) {
     await addPanel.click();
@@ -17154,8 +17178,8 @@ test("provenance rows and collapsed bodies stay isolated while assistant text st
 
   await page.getByRole("button", { name: "Toggle panel" }).click();
   const panel = page.locator(".rightpane");
-  await panel.getByRole("button", { name: "Add panel" }).click();
-  await panel.locator(".rp-tab-add-menu").getByRole("button", { name: /^Provenance/ }).click();
+  await panel.getByTestId("right-launcher-more").locator("summary").click();
+  await panel.getByTestId("right-launcher-provenance").click();
 
   const first = panel.locator(".prov-item").first();
   await expect(first).toBeVisible();
@@ -17338,8 +17362,8 @@ test("code lives in Notebook instead of Artifacts", async ({ page }) => {
   await expect(page.getByText(/60,675 genes/)).toBeVisible({ timeout: 10_000 });
 
   await page.getByRole("button", { name: "Toggle panel" }).click();
-  await page.getByRole("button", { name: "Add panel" }).click();
-  await page.getByRole("button", { name: "Notebook (2)", exact: true }).click();
+  await page.getByTestId("right-launcher-more").locator("summary").click();
+  await page.getByTestId("right-launcher-notebook").click();
 
   const cells = page.locator(".notebook-cell");
   await expect(cells).toHaveCount(2);
@@ -17359,8 +17383,8 @@ test("R tool calls project into a highlighted Notebook cell", async ({ page }) =
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("R summary complete.")).toBeVisible({ timeout: 10_000 });
   await page.getByRole("button", { name: "Toggle panel" }).click();
-  await page.getByRole("button", { name: "Add panel" }).click();
-  await page.getByRole("button", { name: "Notebook (1)", exact: true }).click();
+  await page.getByTestId("right-launcher-more").locator("summary").click();
+  await page.getByTestId("right-launcher-notebook").click();
 
   const cell = page.locator(".notebook-cell");
   await expect(cell.locator(".notebook-language")).toHaveText("r");
@@ -17376,8 +17400,8 @@ test("an SVG star saves a Notebook cell in the global library", async ({ page })
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText(/60,675 genes/)).toBeVisible({ timeout: 10_000 });
   await page.getByRole("button", { name: "Toggle panel" }).click();
-  await page.getByRole("button", { name: "Add panel" }).click();
-  await page.getByRole("button", { name: "Notebook (2)", exact: true }).click();
+  await page.getByTestId("right-launcher-more").locator("summary").click();
+  await page.getByTestId("right-launcher-notebook").click();
 
   const cell = page.locator(".notebook-cell").first();
   const star = cell.getByRole("button", { name: "Add to library" });
@@ -17422,6 +17446,7 @@ test("a starred figure keeps its image and generating code", async ({ page }) =>
   await composer(page).fill("make a volcano plot volcano.png");
   await page.getByRole("button", { name: "Send" }).click();
   await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
   await page.locator('.rp-tile[data-artifact-name="volcano.png"] .rp-tile-main').click();
 
   const modal = page.locator(".artifact-modal");
@@ -17460,8 +17485,8 @@ test("a starred code item edits into a new version and re-runs from the composer
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText(/60,675 genes/)).toBeVisible({ timeout: 10_000 });
   await page.getByRole("button", { name: "Toggle panel" }).click();
-  await page.getByRole("button", { name: "Add panel" }).click();
-  await page.getByRole("button", { name: "Notebook (2)", exact: true }).click();
+  await page.getByTestId("right-launcher-more").locator("summary").click();
+  await page.getByTestId("right-launcher-notebook").click();
   await page.locator(".notebook-cell").first().getByRole("button", { name: "Add to library" }).click();
 
   await openSidebarEntry(page, "Library");
@@ -17496,6 +17521,7 @@ test("a starred figure's generating code is editable as a new version (#474)", a
   await composer(page).fill("make a volcano plot volcano.png");
   await page.getByRole("button", { name: "Send" }).click();
   await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
   await page.locator('.rp-tile[data-artifact-name="volcano.png"] .rp-tile-main').click();
   const modal = page.locator(".artifact-modal");
   await modal.getByRole("button", { name: "Add to library" }).click();
@@ -17521,6 +17547,7 @@ test("the artifact modal edits provenance code into a composer re-run (#474)", a
   await composer(page).fill("make a volcano plot volcano.png");
   await page.getByRole("button", { name: "Send" }).click();
   await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
   await page.locator('.rp-tile[data-artifact-name="volcano.png"] .rp-tile-main').click();
   const modal = page.locator(".artifact-modal");
   await page.locator(".am-tab", { hasText: "Code" }).click();

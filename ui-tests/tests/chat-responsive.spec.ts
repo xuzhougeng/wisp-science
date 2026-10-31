@@ -177,6 +177,7 @@ for (const width of [960, 800, 640]) {
 
     await page.setViewportSize({ width, height: 600 });
     await expect(panel).toHaveCSS("position", "fixed");
+    await panel.getByTestId("right-launcher-artifacts").click();
     await panel.getByRole("button", { name: "Add panel" }).click();
     await page.keyboard.press("Escape");
     await expect(panel.locator(".rp-tab-add-menu")).toHaveCount(0);
