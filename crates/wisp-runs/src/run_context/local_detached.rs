@@ -41,7 +41,7 @@ pub(super) fn transport_script_command(
                 envs: if program == "wsl.exe" {
                     Vec::new()
                 } else {
-                    wisp_tools::network::command_proxy_env()
+                    wisp_tools::local_env::command_env()
                 },
             }),
             // `-Command -` parses stdin line-by-line like an interactive
@@ -59,7 +59,7 @@ pub(super) fn transport_script_command(
                 script: label.into(),
                 cwd: None,
                 stdin: Some(payload),
-                envs: wisp_tools::network::command_proxy_env(),
+                envs: wisp_tools::local_env::command_env(),
             }),
         },
         RemoteRunHandle::SshDirect { .. } => {

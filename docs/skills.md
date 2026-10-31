@@ -103,7 +103,11 @@ Discovery uses this precedence when two packages declare the same public name:
 
 1. `bundled` — the read-only catalog shipped with Wisp.
 2. `project` — `<project>/.wisp/skills` for workflows owned by one project.
-3. `global` — `~/.wisp/skills` for workflows shared by all projects.
+3. `global` — `~/.wisp/skills` for workflows shared by all projects. A skill
+   folder directly inside it may be a symbolic link, which is how skill
+   managers such as Magpie's Library share one copy between agents. Only this
+   scope follows such links (one level deep); a broken link is listed as an
+   error. Installing from Wisp still copies a package and refuses symlinks.
 4. `extra` — directories configured through `WISP_SKILLS_PATH`, in configured
    order.
 5. `plugin` — Skills from enabled feature plugins. A plugin never replaces a
@@ -211,7 +215,22 @@ service or send the Skill catalog to a third party.
 The **Capabilities** summary uses the same current enabled Skill inventory and
 splits it into bundled and project-added counts. Project-added includes project,
 global, extra-path, and project-enabled plugin Skills. MCP counts are split into
-bundled packages and enabled custom/plugin services available to the project.
+bundled packages and enabled custom, plugin, and `~/.wisp/mcp.json` services
+available to the project.
+
+The CLI loads the same scopes in the same order, once at startup.
+
+## User-level instructions and MCP servers
+
+Two more files in `~/.wisp` apply to every project (`%USERPROFILE%\.wisp` on
+Windows):
+
+- `~/.wisp/AGENTS.md` — instructions added to new conversations as **User
+  Instructions**, before the project's `AGENTS.md` and `.wisp/WISP.md`, which
+  take precedence. A blank or missing file adds nothing. Editing it marks
+  existing desktop conversations stale, like project rules.
+- `~/.wisp/mcp.json` — MCP servers in the `mcpServers` format, read on each
+  agent build. See [basic configuration](basic-configuration.md#用户级-mcp-文件-wispmcpjson).
 
 ## Scripts and interactive analysis
 

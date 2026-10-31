@@ -224,10 +224,21 @@ fn conda_prefix(interpreter: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
+/// An executable inside a conda-style prefix (conda, mamba, pixi), searched in
+/// the directories that prefix's activation puts on `PATH`. Windows packages
+/// spread binaries over the prefix root, `Library\bin`, and `Scripts`, so a
+/// fixed `bin/<name>` guess would miss most of them.
+pub fn find_in_conda_prefix(prefix: &Path, name: &str) -> Option<PathBuf> {
+    let directories =
+        std::env::join_paths(prefix_path_entries(prefix, cfg!(target_os = "windows"))).ok()?;
+    // which checks executability and PATHEXT without launching the program.
+    which::which_in(name, Some(directories), prefix).ok()
+}
+
 /// Directories a conda-style prefix contributes to `PATH`, in the order conda's
 /// own activation uses them. The Windows entries are spelled out rather than
 /// joined through `Path`, so the layout stays unit-testable on any host.
-fn prefix_path_entries(prefix: &Path, windows: bool) -> Vec<PathBuf> {
+pub fn prefix_path_entries(prefix: &Path, windows: bool) -> Vec<PathBuf> {
     if !windows {
         return vec![prefix.join("bin")];
     }
@@ -528,6 +539,32 @@ mod tests {
             prefix_path_entries(Path::new("/opt/conda/envs/research"), false),
             [PathBuf::from("/opt/conda/envs/research/bin")]
         );
+    }
+
+    /// pixi global environments are plain conda prefixes; their tools live
+    /// where activation would find them, never by guessing a name elsewhere.
+    #[cfg(unix)]
+    #[test]
+    fn conda_prefix_executables_are_found_only_where_activation_looks() {
+        use std::os::unix::fs::PermissionsExt;
+        let prefix = std::env::temp_dir().join(format!("wisp-prefix-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(prefix.join("bin")).unwrap();
+        std::fs::create_dir_all(prefix.join("share")).unwrap();
+        let uv = prefix.join("bin").join("uv");
+        std::fs::write(&uv, b"fixture").unwrap();
+        std::fs::set_permissions(&uv, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Present but outside the activation directories.
+        let stray = prefix.join("share").join("node");
+        std::fs::write(&stray, b"fixture").unwrap();
+        std::fs::set_permissions(&stray, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Not executable: which must not report it.
+        std::fs::write(prefix.join("bin").join("Rscript"), b"fixture").unwrap();
+
+        assert_eq!(find_in_conda_prefix(&prefix, "uv"), Some(uv));
+        assert_eq!(find_in_conda_prefix(&prefix, "node"), None);
+        assert_eq!(find_in_conda_prefix(&prefix, "Rscript"), None);
+        assert_eq!(find_in_conda_prefix(&prefix.join("missing"), "uv"), None);
+        std::fs::remove_dir_all(prefix).unwrap();
     }
 
     /// The prefix must win over whatever the host happens to have on PATH: a

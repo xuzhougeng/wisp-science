@@ -57,11 +57,12 @@ to restore the normal grouped conversation list.
 
 ## Project rules changes and existing conversations
 
-A conversation's system prompt — including `AGENTS.md` and the project **Agent
-context** (`.wisp/WISP.md`) — is assembled once when the conversation starts
-and kept stable for its lifetime, so edits apply only to new conversations.
-When the files on disk no longer match a conversation's persisted prompt,
-right-click that conversation and choose **Reload project rules…**. A
+A conversation's system prompt — including the user-level `~/.wisp/AGENTS.md`,
+`AGENTS.md` and the project **Agent context** (`.wisp/WISP.md`) — is assembled
+once when the conversation starts and kept stable for its lifetime, so edits
+apply only to new conversations. When the files on disk no longer match a
+conversation's persisted prompt, right-click that conversation and choose
+**Reload project rules…**. A
 confirmation dialog explains the prompt-cache cost; there is no toast.
 The reload takes effect on the next turn and leaves the chat history
 untouched; because the prompt prefix changes, the provider's prompt cache

@@ -49,7 +49,12 @@ pub async fn build(
     agent.ctx.messages = store.load_messages(frame).await?;
     agent.ctx.supports_vision = config.supports_vision;
     let repaired = wisp_core::repair_unpaired_tool_calls(&mut agent.ctx.messages);
-    agent.seed_system_prompt(&skills, Some(wisp_runs::cli_compute_section(store).await));
+    // The server configures its own skill paths and does not read ~/.wisp.
+    agent.seed_system_prompt(
+        &skills,
+        Some(wisp_runs::cli_compute_section(store).await),
+        None,
+    );
     if repaired > 0 {
         store
             .open_context_epoch(

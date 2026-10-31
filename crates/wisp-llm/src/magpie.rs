@@ -132,6 +132,10 @@ pub fn parse(bytes: &[u8]) -> Option<Connection> {
         cfg.max_tokens = output;
     }
     cfg.reasoning_effort = default_effort(&info.efforts).map(str::to_string);
+    // The gateway groups requests into sessions by this header; hosts set
+    // `session_id` to the conversation, so each one appears there by itself.
+    cfg.send_session_id = Some(true);
+    cfg.session_header_name = "X-Session-Id".into();
     // A local gateway must not accidentally use an ambient system proxy.
     if matches!(
         url.host_str(),
@@ -263,6 +267,29 @@ mod tests {
         assert_eq!(default_effort(&levels(&["max", "minimal"])), Some("max"));
         assert_eq!(resolve_effort(&[], "high"), None);
         assert_eq!(resolve_effort(&[], ""), None);
+    }
+
+    #[test]
+    fn magpie_names_the_conversation_to_the_gateway_and_personal_profiles_do_not() {
+        let headers = |cfg: ProviderConfig| {
+            let cfg = cfg.with_session_id("frame-1");
+            let request = reqwest::Client::new().post(&cfg.base_url);
+            cfg.request_headers(request)
+                .build()
+                .unwrap()
+                .headers()
+                .clone()
+        };
+        let text = br#"{"baseURL":"https://gateway.example/v1","apiKey":"k","model":"p/m"}"#;
+        let magpie = headers(parse(text).unwrap().config);
+        assert_eq!(magpie.get("x-session-id").unwrap(), "frame-1");
+        let personal = headers(ProviderConfig::openai(
+            "https://api.openai.com/v1",
+            "k",
+            "gpt-5",
+        ));
+        assert!(personal.get("x-session-id").is_none());
+        assert!(personal.get("x-opencode-session").is_none());
     }
 
     #[test]
