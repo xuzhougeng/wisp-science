@@ -17257,6 +17257,34 @@ test("main-Agent dynamic batches show parallel roots and pending dependencies", 
   await expect(panel.locator(".agent-workflow-group-head")).toContainText("Conversation");
 });
 
+test("workflow progress reports observed task states and honors reduced motion", async ({ page }, testInfo) => {
+  await enterApp(page, "/?mockAgentWorkflow=parallel");
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
+  const card = page.getByTestId("agent-workflows").locator(".agent-workflow-card.dynamic").first();
+  const progress = card.getByTestId("agent-workflow-progress");
+
+  await expect(progress).toHaveAttribute("data-status", "running");
+  await expect(progress.getByRole("status")).toHaveText("0/3 completed · 2 running · 1 waiting · 0 failed");
+  for (const [status, count] of [["total", "3"], ["running", "2"], ["succeeded", "0"], ["failed", "0"]]) {
+    await expect(progress.locator(`.agent-workflow-metric[data-status="${status}"] dd`)).toHaveText(count);
+  }
+  await expect(progress.locator(".agent-workflow-orbit")).toHaveCount(3);
+  await expect(progress.locator(".agent-workflow-orbit").nth(0)).toHaveAttribute("data-status", "running");
+  await expect(progress.locator(".agent-workflow-orbit").nth(1)).toHaveAttribute("data-status", "running");
+  await expect(progress.locator(".agent-workflow-orbit").nth(2)).toHaveAttribute("data-status", "pending");
+  await expect(progress.locator(".agent-workflow-hub")).toHaveCSS("animation-name", "swarm-breathe");
+  await expect(progress.locator(".agent-workflow-orbit").first().locator(":scope > span")).toHaveCSS("animation-name", "swarm-ring");
+  const meter = progress.locator(".agent-workflow-meter");
+  expect((await meter.locator('[data-status="running"]').boundingBox())!.width / (await meter.boundingBox())!.width).toBeCloseTo(2 / 3, 1);
+  expect((await meter.locator('[data-status="waiting"]').boundingBox())!.width / (await meter.boundingBox())!.width).toBeCloseTo(1 / 3, 1);
+  await page.screenshot({ path: testInfo.outputPath("workflow-live-progress.png") });
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(progress.locator(".agent-workflow-hub")).toHaveCSS("animation-name", "none");
+  await expect(progress.locator(".agent-workflow-orbit").first().locator(":scope > span")).toHaveCSS("animation-name", "none");
+});
+
 test("nested Agent workflows render under their root without independent controls", async ({ page }) => {
   await enterApp(page, "/?mockAgentWorkflow=nested");
   await page.getByRole("button", { name: "Toggle panel" }).click();
@@ -17280,6 +17308,11 @@ test("failed dynamic tasks and dependency-blocked tasks stay distinct", async ({
   const card = page.getByTestId("agent-workflows").locator(".agent-workflow-card.dynamic").first();
 
   await expect(card.locator(".agent-workflow-status")).toHaveText("Failed");
+  const progress = card.getByTestId("agent-workflow-progress");
+  await expect(progress.getByRole("status")).toHaveText("1/3 completed · 0 running · 0 waiting · 2 failed");
+  await expect(progress.locator('.agent-workflow-metric[data-status="succeeded"] dd')).toHaveText("1");
+  await expect(progress.locator('.agent-workflow-metric[data-status="failed"] dd')).toHaveText("2");
+  await expect(progress).not.toHaveClass(/moving/);
   await expect(card.locator('[data-step-id$=":research_a"] .agent-attempt-status')).toHaveText("Failed");
   await expect(card.locator('[data-step-id$=":research_b"] .agent-attempt-status')).toHaveText("Succeeded");
   await expect(card.locator('[data-step-id$=":synthesize"] .agent-attempt-status')).toHaveText("Blocked");
@@ -17300,6 +17333,8 @@ test("failed dynamic tasks and dependency-blocked tasks stay distinct", async ({
   await card.getByTestId("agent-run").click();
   await expect(card.locator(".agent-workflow-status")).toHaveText("Succeeded", { timeout: 2_000 });
   await expect(card.locator('[data-step-id$=":research_b"] .agent-attempt-status')).toHaveText("Succeeded");
+  await expect(progress.getByRole("status")).toHaveText("3/3 completed · 0 running · 0 waiting · 0 failed");
+  await expect(progress.locator('.agent-workflow-metric[data-status="succeeded"] dd')).toHaveText("3");
 });
 
 test("unlimited workflow budgets show usage without presenting zero as a ceiling", async ({ page }) => {
