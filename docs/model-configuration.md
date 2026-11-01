@@ -583,7 +583,11 @@ suppressed until the estimate grows by another tenth of the window, so a
 doomed compaction is not repaid at every model boundary. Tool
 results are also capped to a 16 KiB head/tail excerpt when they enter model
 context (the full result is still shown in the tool event), preventing one
-read, grep, browser, or MCP response from consuming the whole window. Each
+read, grep, browser, or MCP response from consuming the whole window. The
+full text is also saved under `.wisp/tool-output/` so the agent can read it
+back; if that save takes longer than 5 seconds (a project on iCloud Drive, a
+network share, or a sleeping disk), the turn continues with the excerpt alone
+instead of waiting on the disk. Each
 automatic or manual compaction leaves a persistent **Context automatically
 compacted** / **Context compacted** flag in the conversation with the before
 and after request-token estimates and the new epoch number. Turning the setting off keeps the warning,

@@ -1226,8 +1226,15 @@ async fn send_message_inner_with_continuation(
         }
         let mut msgs =
             wisp_core::require_sqlite_session_messages(state.store.load_messages(&frame_id).await)?;
-        wisp_core::bound_tool_results_in_history(&ap.root, &mut msgs);
-        agent.ctx.messages = msgs;
+        // An oversized leftover result is spilled under the project root, which
+        // may be a slow volume: keep that write off the runtime threads (#1668).
+        let root = ap.root.clone();
+        agent.ctx.messages = tokio::task::spawn_blocking(move || {
+            wisp_core::bound_tool_results_in_history(&root, &mut msgs);
+            msgs
+        })
+        .await
+        .map_err(|error| format!("bounding restored tool results failed: {error}"))?;
         if let Some(message) = agent.ctx.messages.first_mut() {
             if let wisp_llm::Content::Text(prompt) = &mut message.content {
                 ssh_hosts::strip_legacy_compute_section(prompt);
