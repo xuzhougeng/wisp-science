@@ -19,6 +19,7 @@ parity-ledger` 检查这一点（`scripts/check_native_parity.py`）。
 
 | WebView 改动 | SwiftUI 状态 | 说明 |
 | --- | --- | --- |
+| 设置 › 远程接入 › 网页远程访问：联机链接二维码 | 待补 | `RemoteAccessStatus` 新增 `qr`（SVG data URL），SwiftUI 读同一字段即可 |
 | 右侧面板：仅显示实际打开的工具标签，不再预置四个默认标签 | 不需要 | 修复 WebView 启动器的标签初始化与重开行为 |
 | 右侧面板：浏览器式工具导航首页、常用入口与更多工具分组 | 待补 | WebView 已支持导航首页与返回，SwiftUI 尚未同步 |
 | Agents › 工作流：实时任务进展统计、分段进度条与状态动画 | 待补 | WebView 已基于现有任务快照展示，SwiftUI 尚未同步 |

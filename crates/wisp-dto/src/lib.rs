@@ -2363,6 +2363,9 @@ pub struct RemoteAccessStatus {
     pub code: Option<String>,
     #[serde(default)]
     pub link: Option<String>,
+    /// `link` as a QR code (`data:image/svg+xml` URL) for a phone camera to scan.
+    #[serde(default)]
+    pub qr: Option<String>,
     /// Browsers currently connected through the relay.
     #[serde(default)]
     pub clients: u32,

@@ -1,0 +1,17 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "wisp-relay",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-09-12",
+  "workers_dev": true,
+  // The browser page and icons are imported from the Rust crate as-is.
+  "rules": [
+    { "type": "Text", "globs": ["**/remote.html", "**/remote.js"], "fallthrough": false },
+    { "type": "Data", "globs": ["**/*.png"], "fallthrough": false }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "REMOTE", "class_name": "RemoteSid" }]
+  },
+  // SQLite-backed classes are the ones the Workers Free plan allows.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RemoteSid"] }]
+}

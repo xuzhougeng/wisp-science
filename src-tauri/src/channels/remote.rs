@@ -145,15 +145,20 @@ pub(super) async fn status(app: &AppHandle) -> RemoteAccessStatus {
     let relay_url = get_setting(&state.store, URL_KEY).await;
     let code = load_code(false).await.ok().flatten();
     let runtime = status_snapshot(&mgr.remote_status);
+    let link = code
+        .as_ref()
+        .and_then(|code| wisp_sync::remote_endpoints(&relay_url, code).ok())
+        .map(|(_, link)| link);
     RemoteAccessStatus {
         enabled: get_setting(&state.store, ENABLED_KEY).await == "true",
         has_token: !load_secret(TOKEN_SECRET).await.is_empty(),
         state: runtime.state,
         detail: runtime.detail,
-        link: code
-            .as_ref()
-            .and_then(|code| wisp_sync::remote_endpoints(&relay_url, code).ok())
-            .map(|(_, link)| link),
+        // As secret as the link it encodes: a phone camera opens the page from it.
+        qr: link
+            .as_deref()
+            .and_then(|link| super::qr_svg_data_url(link).ok()),
+        link,
         code: code.map(|code| code.display()),
         relay_url,
         clients: mgr.remote_clients.load(Ordering::Relaxed),

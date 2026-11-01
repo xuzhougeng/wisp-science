@@ -1397,6 +1397,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
       detail: "",
       code: null as string | null,
       link: null as string | null,
+      qr: null as string | null,
       clients: 0,
     },
   };
@@ -1419,6 +1420,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
   let mockLabInviteSequence = 0;
   // Set when a lab join filled in a sync backend that had no relay yet.
   let mockLabSeededSync = "";
+  // What the backend's qr_svg_data_url produces: an SVG data URL of the link.
+  const MOCK_REMOTE_QR = "data:image/svg+xml;base64,PHN2Zy8+";
   let mockRemoteCodeSequence = 0;
   const mockRemoteCode = () =>
     `${String(mockRemoteCodeSequence).padStart(4, "0")}-0203-0405-0607-0809-0a0b-0c0d-0e0f`;
@@ -4209,6 +4212,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             mockChannels.remote.link = mockChannels.remote.code
               ? `${relayUrl.replace(/\/$/, "")}/remote#${mockChannels.remote.code}`
               : null;
+            mockChannels.remote.qr = mockChannels.remote.link ? MOCK_REMOTE_QR : null;
             return null;
           }
           case "lab_status":
@@ -4271,6 +4275,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             mockRemoteCodeSequence += 1;
             mockChannels.remote.code = mockRemoteCode();
             mockChannels.remote.link = `${mockChannels.remote.relay_url.replace(/\/$/, "")}/remote#${mockChannels.remote.code}`;
+            mockChannels.remote.qr = MOCK_REMOTE_QR;
             return null;
           case "set_feishu_channel":
             mockChannels.feishu_enabled = Boolean(arg("enabled"));

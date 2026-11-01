@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import VisionKit
 import WispRemote
 
 struct WorkspaceView: View {
@@ -478,6 +479,7 @@ struct ConnectionView: View {
     @ObservedObject var model: RemoteWorkspace
     /// Shown in the iPad workspace's list column, beside the sidebar, rather than as its own screen.
     var embedded = false
+    @State private var scanning = false
     var body: some View {
         if embedded {
             form.navigationTitle("连接").navigationBarTitleDisplayMode(.inline)
@@ -523,6 +525,15 @@ struct ConnectionView: View {
                 Button("连接") { model.connect(address: model.connectionAddress, code: model.connectionCode) }
                     .disabled(model.connectionAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("connect")
+                Button { scanning = true } label: { Label("扫描桌面二维码", systemImage: "qrcode.viewfinder") }
+                    .accessibilityIdentifier("scan-code")
+                    .sheet(isPresented: $scanning) {
+                        QRScannerSheet { link in
+                            scanning = false
+                            model.connectionAddress = link
+                            model.connect(address: link, code: "")
+                        }
+                    }
             } header: {
                 Text("云端连接")
             } footer: {
@@ -661,6 +672,60 @@ struct StatusBadge: View {
             .padding(.horizontal, 7).padding(.vertical, 4)
             .background(selected ? Color.white.opacity(0.2) : color.opacity(0.09), in: RoundedRectangle(cornerRadius: 6))
             .accessibilityElement(children: .combine)
+        }
+    }
+}
+
+/// Live scan of the QR code the desktop shows under its connection code. The
+/// code is the remote link itself, so the first barcode that parses as one is
+/// handed back; every other QR code is ignored. VisionKit scanning needs a
+/// real device (A12 or later) and camera access; otherwise the sheet says so
+/// and the link can still be pasted.
+struct QRScannerSheet: View {
+    let onLink: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        NavigationStack {
+            Group {
+                if DataScannerViewController.isSupported && DataScannerViewController.isAvailable {
+                    QRScanner(onLink: onLink).ignoresSafeArea()
+                } else {
+                    ContentUnavailableView("无法使用相机扫码", systemImage: "camera",
+                        description: Text("这台设备不支持扫码，或相机权限已关闭。可在系统设置中允许 Wisp Science 使用相机，或粘贴桌面端复制的链接。"))
+                }
+            }
+            .navigationTitle("扫描桌面二维码").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } } }
+        }
+    }
+}
+
+private struct QRScanner: UIViewControllerRepresentable {
+    let onLink: (String) -> Void
+    func makeCoordinator() -> Coordinator { Coordinator(onLink: onLink) }
+    func makeUIViewController(context: Context) -> DataScannerViewController {
+        let scanner = DataScannerViewController(recognizedDataTypes: [.barcode(symbologies: [.qr])],
+                                                qualityLevel: .fast, isHighlightingEnabled: true)
+        scanner.delegate = context.coordinator
+        return scanner
+    }
+    func updateUIViewController(_ scanner: DataScannerViewController, context: Context) {
+        if !scanner.isScanning { try? scanner.startScanning() }
+    }
+    final class Coordinator: NSObject, DataScannerViewControllerDelegate {
+        let onLink: (String) -> Void
+        private var done = false
+        init(onLink: @escaping (String) -> Void) { self.onLink = onLink }
+        func dataScanner(_ scanner: DataScannerViewController, didAdd addedItems: [RecognizedItem], allItems: [RecognizedItem]) {
+            guard !done else { return }
+            for case .barcode(let barcode) in addedItems {
+                // Camera input is untrusted: accept exactly what the connection form would.
+                guard let link = barcode.payloadStringValue, (try? RemoteConfiguration(address: link)) != nil else { continue }
+                done = true
+                scanner.stopScanning()
+                onLink(link)
+                return
+            }
         }
     }
 }

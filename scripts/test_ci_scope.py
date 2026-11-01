@@ -69,6 +69,8 @@ class ScopeTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(select_scopes([path]), {"ui"})
         self.assertEqual(select_scopes(["ui/build-fast.mjs"]), {"ui", "frontend_assets"})
+        self.assertEqual(select_scopes(["crates/wisp-sync/cloudflare/relay.mjs"]), {"relay_worker"})
+        self.assertIn("rust", select_scopes(["crates/wisp-sync/src/remote.rs"]))
         self.assertEqual(select_scopes(["ui/src/app_support/messages.rs"]), {"ui", "shared_assets"})
         self.assertEqual(select_scopes(["vendor/tao/src/lib.rs"]), {"rust", "desktop", "macos", "windows"})
 

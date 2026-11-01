@@ -78,6 +78,45 @@ The relay pings both sides every 25 seconds, under nginx's default idle
 timeout. A path prefix works (`https://example.com/wisp/` → page at
 `/wisp/remote`) as long as the proxy strips it.
 
+### Deploy to Cloudflare (no server)
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xuzhougeng/wisp-science/tree/main/crates/wisp-sync/cloudflare)
+
+The same rendezvous also runs on Cloudflare Workers with Durable Objects,
+within the Workers Free plan, from `crates/wisp-sync/cloudflare/`. The button
+copies this repository into your GitHub account, asks for `WISP_RELAY_TOKEN`
+(choose a long random value) and deploys a Worker at
+`https://wisp-relay.<account>.workers.dev`. Enter that URL and token on the
+desktop as in [Connect a computer](#connect-a-computer); HTTPS and the
+certificate come with the domain. A custom domain on your Cloudflare zone works
+the same and is the one to use where `workers.dev` is unreachable (mainland
+China blocks it often).
+
+From a clone, without the button:
+
+```bash
+cd crates/wisp-sync/cloudflare
+npm install
+npx wrangler secret put WISP_RELAY_TOKEN
+npx wrangler deploy
+```
+
+This edition serves remote access only. Project sync and Wisp Lab store files
+and need the binary relay. Other differences from the binary:
+
+- Each connection code is one Durable Object, which hibernates while nothing is
+  sent; the desktop's persistent connection costs nothing while idle.
+- The Worker sends no keepalive pings. The desktop pings every 25 seconds and
+  the platform answers; a phone whose idle socket is dropped by its network
+  reconnects when the page is used again.
+- No path prefix: the page is at `/remote` on the Worker's own domain.
+- Browser frames stay capped at 1 MiB and host frames at 16 MiB, under the
+  platform's 32 MiB message limit, so nothing changes on the desktop.
+
+Manual check after deploying: open `https://<worker>/healthz` (`ok`), then
+`https://<worker>/remote` shows the connection page; enable remote access on
+the desktop with the Worker URL and the token, and the badge turns *Running*.
+
 ### Run the relay in Docker
 
 Each release publishes a small image for amd64 and arm64 servers: one static
@@ -164,8 +203,13 @@ docker run -d --name wisp-relay --restart unless-stopped \
    Wisp Lab accept `http://` to a private address, but a browser runs the
    page's encryption only on HTTPS, so remote web access needs a certificate.
 3. Wisp shows a **connection code** (`xxxx-xxxx-…`, 128 random bits, kept in
-   the OS keyring) and a link `https://relay.example.com/remote#<code>`.
-4. Open the link on the phone, or open `/remote` and type the code.
+   the OS keyring), a link `https://relay.example.com/remote#<code>` and that
+   link as a QR code.
+4. Scan the QR code with the phone's camera to open the page, open the link,
+   or open `/remote` and type the code. The iPhone and Android apps scan the
+   same QR code from **扫描桌面二维码** on their connection screen, or take the
+   link in their connection field; the QR code and the link are the password,
+   so show them only to your own phone.
 
 The badge shows *Running* while the tunnel is up and how many browsers are
 connected. **Reset code** generates a new code: every old link stops working
@@ -358,6 +402,7 @@ the desktop's outbound connection. The desktop host name comes from
 | Piece | Location |
 | --- | --- |
 | Relay rendezvous, page routes, code derivation, frame sealing | `crates/wisp-sync/src/remote.rs` |
+| Cloudflare edition of the rendezvous (same envelopes, one Durable Object per code) | `crates/wisp-sync/cloudflare/relay.mjs`, tests in `relay.test.mjs` |
 | Web client (vanilla JS, `textContent` only, strict CSP) | `crates/wisp-sync/src/remote.{html,js}` |
 | Browser test of that page against a fake sealed-frame host | `ui-tests/tests/remote-web.spec.ts` |
 | Desktop tunnel, allowlist, settings commands | `src-tauri/src/channels/remote.rs` |

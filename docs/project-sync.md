@@ -139,7 +139,9 @@ and compares the submitted base revision with the current project head before
 committing. Back up this directory like any other application data.
 The same relay also serves [remote web access](remote-access.md), and can
 run [as a container](remote-access.md#run-the-relay-in-docker). Started with
-`WISP_LAB=1` it additionally hosts a [Wisp Lab](wisp-lab.md).
+`WISP_LAB=1` it additionally hosts a [Wisp Lab](wisp-lab.md). The
+[Cloudflare edition](remote-access.md#deploy-to-cloudflare-no-server) serves
+remote web access only, not project sync.
 
 ### Baidu Netdisk, Nutstore, or another shared folder
 

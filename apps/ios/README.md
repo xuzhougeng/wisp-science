@@ -17,7 +17,7 @@ iPhone / iPad ── WSS、端到端加密 ── wisp-relay ── 在线 Wisp 
 2. 选择 iPhone 或 iPad 模拟器。工程不依赖第三方 Swift 包；`WispRemote` 是本地 Swift Package。
 3. 真机运行时，在 **Signing & Capabilities** 中选择自己的开发团队，并按需修改 Bundle Identifier。
 4. 在 Wisp 主机启用「设置 → 远程接入 → 网页远程访问」，复制远程访问链接。
-5. 在 App 中粘贴 `https://relay.example.com/remote#联机码`，或分别填写中继 HTTPS 地址和联机码。
+5. 在 App 中点击「扫描桌面二维码」扫描桌面端显示的二维码，或粘贴 `https://relay.example.com/remote#联机码`，或分别填写中继 HTTPS 地址和联机码。
    使用反向代理前缀时，如 `/wisp/remote#…`，App 会保留 `/wisp/`。
 
 手机使用的是**联机码**，不是中继管理员的 `WISP_RELAY_TOKEN`。连接成功后凭据保存在设备
@@ -248,7 +248,7 @@ Application Support 的 `WispResearch-v1` 目录，采用原子写入和 iOS 完
 使用 Apple Vision `VNRecognizeTextRequest` 在设备上识别中英文，可查看并保存校对文字；
 不需要 Apple Intelligence 账号或在线模型。已有文字不会被再次识别覆盖。手写、公式、单位和样本编号
 需要人工核对；可以选择「暂不校对，先完成记录」，保留原图及已有识别文字，稍后继续。
-相册中只存于 iCloud 的图片需要先下载。相机授权仅用于拍摄，选图使用系统 PhotosPicker。
+相册中只存于 iCloud 的图片需要先下载。相机授权仅用于拍摄和扫描桌面端的联机二维码，选图使用系统 PhotosPicker。
 
 保存结果明确区分「已保存在本机」与是否曾向主机发送，并提供返回列表、继续编辑和可选的整理入口。
 点「选择内容，交给 Wisp 整理」后，依次选择内容、项目和已有对话，再核对并确认发送；

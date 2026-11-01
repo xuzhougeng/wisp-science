@@ -9,10 +9,10 @@ import subprocess
 
 SCOPES = (
     "rust", "headless", "desktop", "ui", "macos", "windows", "ios", "release_notes",
-    "shared_assets", "frontend_assets",
+    "shared_assets", "frontend_assets", "relay_worker",
 )
 ALL = frozenset(SCOPES)
-APPLICATIONS = ALL - {"release_notes", "frontend_assets"}
+APPLICATIONS = ALL - {"release_notes", "frontend_assets", "relay_worker"}
 BACKEND = frozenset({"rust", "headless", "desktop", "macos", "windows"})
 NATIVE = frozenset({"macos", "windows", "ios", "shared_assets"})
 TEST = ALL - NATIVE
@@ -44,6 +44,8 @@ def scopes_for_path(path):
         return {"macos", "shared_assets"} if path in DESIGN_INPUTS else {"macos"}
     if path.startswith("apps/windows/"):
         return {"windows", "shared_assets"}
+    if path.startswith("crates/wisp-sync/cloudflare/"):
+        return {"relay_worker"}  # Plain JS, tested with node; no Rust build.
     if path.startswith(("crates/wisp-dto/", "crates/wisp-sync/", "src-tauri/", "contracts/", ".cargo/")):
         return APPLICATIONS
     if path.startswith("crates/"):

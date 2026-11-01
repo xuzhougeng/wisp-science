@@ -3853,3 +3853,4 @@ body { font-size: var(--ui-font-size, 14px); }
 .specialists-subagent-model { display: flex; flex-direction: column; gap: 6px; padding: 4px 0 12px; }
 .specialists-subagent-model > label { font-size: calc(13px * var(--ui-font-scale, 1)); font-weight: 600; }
 .specialists-subagent-model > select { max-width: 360px; }
+.remote-qr { display: block; width: 160px; height: 160px; margin-top: 10px; background: white; border-radius: 8px; }
