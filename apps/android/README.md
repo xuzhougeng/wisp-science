@@ -100,7 +100,7 @@ gh workflow run "Android Release" --ref main -f tag=vX.Y.Z
 | 功能 | Android 框架版 |
 | --- | --- |
 | 工程 | 独立 `app` + 纯 JVM `remote` 模块，中文、明暗外观、字号适配、居中单栏布局 |
-| 连接 | 完整远程链接或 HTTPS 地址 + 联机码，保留反向代理路径前缀 |
+| 连接 | 扫描桌面端的联机二维码（CameraX + 内置 ML Kit 模型，不依赖 Google Play 服务）、完整远程链接或 HTTPS 地址 + 联机码，保留反向代理路径前缀 |
 | 协议 | 与 Rust / iOS 一致的 AES-GCM 帧、方向认证、nonce、递增序列、请求关联、命令能力检查 |
 | 生命周期 | 前台轮询，后台断开，回到前台重连；发送和审批要求当前连接的新快照 |
 | 项目与对话 | 分组项目卡片、对话数量／待处理状态、跨项目待处理入口（主机一次返回全部项目）、带活动日期的会话列表、新建对话、最近快照、文本消息、停止、一次性批准／拒绝；运行结束后打开的对话会标记为已读，清除未读回复的待处理状态 |
@@ -117,7 +117,7 @@ gh workflow run "Android Release" --ref main -f tag=vX.Y.Z
 记录本发送、平板多栏布局。当前运行期间发送按钮停用，不会把输入悄悄排队。
 
 iOS 的 Vision OCR、相机／相册桥接、图像预处理和 Apple 专有交互暂不移植。
-`NotebookTextRecognizer` 留有独立接口，当前实现明确报告不可用；不会申请相机或照片权限。
+`NotebookTextRecognizer` 留有独立接口，当前实现明确报告不可用；不会申请照片权限，相机权限只在点击「扫描桌面二维码」时申请。
 Android 采用自身的 Keystore 和生命周期机制。基础加密属于跨平台协议，已用 JCA 实现，未留空。
 
 ## Markdown 阅读

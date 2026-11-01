@@ -811,6 +811,7 @@ fn channels_status_contract_includes_feishu_owner() {
             enabled: true,
             state: "running".into(),
             link: Some("https://relay.example.test/remote#0000".into()),
+            qr: Some("data:image/svg+xml;base64,PHN2Zy8+".into()),
             clients: 2,
             ..Default::default()
         },

@@ -23,6 +23,8 @@ on:
         value: ${{ jobs.detect.outputs.shared_assets }}
       frontend_assets:
         value: ${{ jobs.detect.outputs.frontend_assets }}
+      relay_worker:
+        value: ${{ jobs.detect.outputs.relay_worker }}
 
 permissions:
   contents: read
@@ -42,6 +44,7 @@ jobs:
       release_notes: ${{ steps.scope.outputs.release_notes }}
       shared_assets: ${{ steps.scope.outputs.shared_assets }}
       frontend_assets: ${{ steps.scope.outputs.frontend_assets }}
+      relay_worker: ${{ steps.scope.outputs.relay_worker }}
     steps:
       - uses: actions/checkout@v4
         with:

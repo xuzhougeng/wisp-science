@@ -1,0 +1,3 @@
+# The relay access token desktops must present (Settings → Remote Access).
+# Deploy to Cloudflare asks for it; locally: npx wrangler secret put WISP_RELAY_TOKEN
+WISP_RELAY_TOKEN=

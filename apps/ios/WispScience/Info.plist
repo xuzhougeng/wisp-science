@@ -21,7 +21,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>拍摄实验记录本，原图保存在手机；仅在你确认发送后上传所选照片到 Wisp 主机。</string>
+	<string>扫描桌面端的联机二维码，以及拍摄实验记录本；原图保存在手机，仅在你确认发送后上传所选照片到 Wisp 主机。</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

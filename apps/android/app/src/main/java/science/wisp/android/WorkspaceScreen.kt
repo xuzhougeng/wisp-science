@@ -167,9 +167,12 @@ private fun Connection(state: WorkspaceState, model: WorkspaceModel) {
     // Do not put connection secrets into Android's saved-instance-state bundle.
     var address by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
+    var scanning by remember { mutableStateOf(false) }
+    if (scanning) QrScannerDialog(onLink = { link -> scanning = false; address = link; model.connect(link, "") }) { scanning = false }
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("连接你的研究工作台", style = MaterialTheme.typography.headlineSmall)
-        Text("在电脑端的「设置 → 远程接入 → 网页远程访问」复制链接。计算、模型和项目文件保留在主机上。")
+        Text("在电脑端的「设置 → 远程接入 → 网页远程访问」扫描二维码或复制链接。计算、模型和项目文件保留在主机上。")
+        Button(onClick = { scanning = true }, Modifier.testTag("scan-code")) { Text("扫描桌面二维码") }
         OutlinedTextField(address, { address = it }, Modifier.fillMaxWidth(), label = { Text("HTTPS 中继地址或完整链接") },
             singleLine = true, visualTransformation = PasswordVisualTransformation())
         OutlinedTextField(code, { code = it }, Modifier.fillMaxWidth(), label = { Text("联机码（完整链接可留空）") },

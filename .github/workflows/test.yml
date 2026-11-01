@@ -273,6 +273,19 @@ jobs:
       - name: Test incremental frontend asset staging
         run: node --test ui/build-fast.test.mjs
 
+  relay-worker:
+    needs: changes
+    if: needs.changes.outputs.relay_worker == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test the Cloudflare relay rendezvous
+        run: node --test crates/wisp-sync/cloudflare/relay.test.mjs
+
   # The suite (1,100 tests) is fully parallel (see ui-tests/playwright.config.ts)
   # and split across runners: one runner with two workers needed ~40 minutes,
   # four shards of four workers each finish in well under ten. A hang must fail

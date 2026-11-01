@@ -34,6 +34,15 @@ final class RemoteProtocolTests: XCTestCase {
         XCTAssertEqual(try RemoteConfiguration(address: "https://relay.example.test/wisp/", code: testCode), configuration)
     }
 
+    /// The scanner feeds every QR payload through this parser and keeps only desktop links.
+    func testScannedPayloadsOnlyConnectWhenTheyAreDesktopLinks() {
+        XCTAssertNoThrow(try RemoteConfiguration(address: "https://wisp-relay.example.workers.dev/remote#\(testCode)"))
+        for payload in ["WIFI:T:WPA;S:lab;P:secret;;", "https://example.com/", "https://relay.example.test/remote",
+                        "http://relay.example.test/remote#\(testCode)", testCode, "", "not a url at all"] {
+            XCTAssertThrowsError(try RemoteConfiguration(address: payload), payload)
+        }
+    }
+
     func testRejectsInsecureCredentialBearingOrMalformedAddresses() {
         for address in ["http://relay.example.test", "http://127.0.0.1:8787", "wss://relay.example.test",
                         "https://user:password@relay.example.test", "https://relay.example.test?code=secret", "not a URL", "https://relay.example.test:0"] {

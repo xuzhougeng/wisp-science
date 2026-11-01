@@ -18187,6 +18187,8 @@ test("remote web access needs a relay, then shows the connection link and resets
   await expect(page.getByTestId("remote-link")).toHaveText(
     "https://relay.example.test/remote#0000-0203-0405-0607-0809-0a0b-0c0d-0e0f",
   );
+  // The same link as a QR code, rendered by the backend as an SVG data URL.
+  await expect(page.getByTestId("remote-qr")).toHaveAttribute("src", /^data:image\/svg\+xml;base64,/);
 
   await page.getByTestId("remote-reset-code").click();
   await expect(page.getByTestId("remote-code")).toHaveText("0001-0203-0405-0607-0809-0a0b-0c0d-0e0f");

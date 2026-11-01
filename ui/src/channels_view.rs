@@ -1148,6 +1148,11 @@ pub(super) fn ChannelsPane(
                                     <strong>{move || t(locale.get(), "channels.remote.code")}</strong>
                                     <p><code data-testid="remote-code">{code.clone()}</code></p>
                                     <p class="settings-field-hint" data-testid="remote-link">{shown_link}</p>
+                                    {s.qr.clone().map(|qr| view! {
+                                        <img class="remote-qr" data-testid="remote-qr" src=qr
+                                            alt=move || t(locale.get(), "channels.remote.scan") />
+                                        <p class="settings-field-hint">{move || t(locale.get(), "channels.remote.scan")}</p>
+                                    })}
                                 </div>
                                 <div class="row">
                                     <button type="button" data-testid="remote-copy-link"
