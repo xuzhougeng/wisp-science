@@ -435,10 +435,13 @@ impl Store {
                 .fetch_optional(&registry.global)
                 .await?;
         let Some(path) = path else { return Ok(None) };
-        anyhow::ensure!(
-            Path::new(&path).is_file(),
-            "Project {id} database is unavailable: {path}"
-        );
+        // Every routed call passes here, including a turn's event writers. The
+        // database may sit on a slow volume, so stat it off the runtime threads
+        // (#1668).
+        let available = tokio::fs::metadata(&path)
+            .await
+            .is_ok_and(|metadata| metadata.is_file());
+        anyhow::ensure!(available, "Project {id} database is unavailable: {path}");
         let mut pools = registry.pools.lock().await;
         if !pools.contains_key(id) {
             let database = Path::new(&path);
@@ -2147,6 +2150,16 @@ mod tests {
             .to_string()
             .contains("unavailable"));
         assert!(!database.exists());
+        // Only a regular file counts as the database, as before the stat moved
+        // off the runtime threads (#1668).
+        std::fs::create_dir(&database).unwrap();
+        assert!(store
+            .create_frame("f", "p", "agent", "model")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("unavailable"));
+        std::fs::remove_dir(&database).unwrap();
         let fresh = Store::open_application(&root.path().join("fresh.sqlite"))
             .await
             .unwrap();

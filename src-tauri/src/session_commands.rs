@@ -2763,14 +2763,49 @@ async fn read_session_transcript_page(
         if let Some(runtime) = runtime {
             // Deliver already-buffered live deltas before returning the snapshot
             // that contains them. The frontend's revision guard then retries.
-            flush_session_events(&runtime.live_event_writer).await?;
+            flush_writer(
+                &runtime.live_event_writer,
+                SessionWriter::Live,
+                SESSION_WRITER_FLUSH_WAIT,
+            )
+            .await?;
         }
     }
     Ok(page)
 }
 
+const SESSION_WRITER_FLUSH_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The two per-turn event tasks a transcript read waits on. The error names
+/// the one that stalled so a report can tell them apart (#1668).
+#[derive(Clone, Copy)]
+enum SessionWriter {
+    /// `persist_ui_events`: saves UI events to the store.
+    Saved,
+    /// `coalesce_live_agent_events`: forwards streaming deltas to windows.
+    Live,
+}
+
+impl SessionWriter {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Saved => "saved events",
+            Self::Live => "live stream",
+        }
+    }
+}
+
+/// Wait until the turn's saved-event writer has stored everything it buffered.
 pub(crate) async fn flush_session_events(
     writer: &StdMutex<Option<tokio::sync::mpsc::WeakUnboundedSender<SessionUiMessage>>>,
+) -> Result<(), String> {
+    flush_writer(writer, SessionWriter::Saved, SESSION_WRITER_FLUSH_WAIT).await
+}
+
+async fn flush_writer(
+    writer: &StdMutex<Option<tokio::sync::mpsc::WeakUnboundedSender<SessionUiMessage>>>,
+    kind: SessionWriter,
+    wait: std::time::Duration,
 ) -> Result<(), String> {
     let writer = writer
         .lock()
@@ -2780,10 +2815,17 @@ pub(crate) async fn flush_session_events(
     if let Some(writer) = writer {
         let (tx, rx) = tokio::sync::oneshot::channel();
         if writer.send(SessionUiMessage::Flush(tx)).is_ok() {
-            tokio::time::timeout(std::time::Duration::from_secs(5), rx)
+            let label = kind.label();
+            tokio::time::timeout(wait, rx)
                 .await
-                .map_err(|_| "Timed out loading the live transcript. Please retry.".to_string())?
-                .map_err(|_| "The live transcript writer stopped. Please retry.".to_string())?;
+                .map_err(|_| {
+                    tracing::warn!(target: "wisp", writer = label, wait_ms = wait.as_millis() as u64,
+                        "session event writer did not answer a flush");
+                    format!("Timed out loading the live transcript ({label}). Please retry.")
+                })?
+                .map_err(|_| {
+                    format!("The live transcript writer stopped ({label}). Please retry.")
+                })?;
         }
     }
     Ok(())
@@ -3057,6 +3099,30 @@ mod hydration_tests {
             .await
             .unwrap();
         assert_eq!(runtime.last_seq(), 42);
+    }
+
+    #[tokio::test]
+    async fn a_stalled_writer_flush_names_the_writer_that_did_not_answer() {
+        // The receiver stays alive but is never polled, like a writer task
+        // stranded on a blocked runtime thread (#1668).
+        let (tx, _never_polled) = tokio::sync::mpsc::unbounded_channel::<SessionUiMessage>();
+        let writer = StdMutex::new(Some(tx.downgrade()));
+        let wait = std::time::Duration::from_millis(20);
+
+        let live = flush_writer(&writer, SessionWriter::Live, wait)
+            .await
+            .unwrap_err();
+        assert!(live.contains("(live stream)"), "{live}");
+        let saved = flush_writer(&writer, SessionWriter::Saved, wait)
+            .await
+            .unwrap_err();
+        assert!(saved.contains("(saved events)"), "{saved}");
+
+        // Once the turn drops its sender there is nothing left to flush.
+        drop(tx);
+        flush_writer(&writer, SessionWriter::Saved, wait)
+            .await
+            .unwrap();
     }
 }
 

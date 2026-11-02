@@ -68,14 +68,23 @@ fn context_archive(root: &Path) -> (PathBuf, String) {
     )
 }
 
+/// Longest the turn waits for an oversized tool result to reach
+/// `.wisp/tool-output/`. The project root may sit on iCloud Drive, a network
+/// share or a sleeping disk; past this the model gets the excerpt without a
+/// file reference and the write finishes (or not) on its blocking thread.
+const TOOL_OUTPUT_SPILL_WAIT: Duration = Duration::from_secs(5);
+
+fn tool_result_budget() -> usize {
+    std::env::var("WISP_TOOL_RESULT_BUDGET")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_STREAM_RESULT_BUDGET)
+}
+
 /// Head/tail-truncate a tool's text result to the ingestion budget. The full
 /// text is written under `.wisp/tool-output/` so the model can read/grep it back.
 fn budget_tool_result(root: &Path, tool_name: &str, content: Content) -> Content {
-    let budget = std::env::var("WISP_TOOL_RESULT_BUDGET")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(DEFAULT_STREAM_RESULT_BUDGET);
-    budget_tool_result_with_limit(root, tool_name, content, budget)
+    budget_tool_result_with_limit(root, tool_name, content, tool_result_budget())
 }
 
 fn budget_tool_result_with_limit(
@@ -84,42 +93,83 @@ fn budget_tool_result_with_limit(
     content: Content,
     budget: usize,
 ) -> Content {
-    if let Content::Parts(parts) = &content {
-        // Mixed MCP output must obey the same text budget as text-only tools.
-        let text = parts
+    let Some(text) = over_budget_text(&content, budget) else {
+        return content;
+    };
+    let spill = spill_tool_output(root, tool_name, &text);
+    bounded_tool_result(tool_name, content, &text, budget, spill.as_deref())
+}
+
+/// The turn's form of [`budget_tool_result`]. The spill write runs on a
+/// blocking thread: inline, a stalled filesystem would freeze the turn task
+/// mid-poll, so Stop is never observed and the session event writers it has
+/// just woken cannot run either (one suspect for #1668).
+async fn budget_tool_result_off_runtime(root: &Path, tool_name: &str, content: Content) -> Content {
+    let (root, name) = (root.to_path_buf(), tool_name.to_string());
+    budget_tool_result_off_runtime_with(
+        tool_name,
+        content,
+        tool_result_budget(),
+        TOOL_OUTPUT_SPILL_WAIT,
+        move |text| spill_tool_output(&root, &name, &text),
+    )
+    .await
+}
+
+async fn budget_tool_result_off_runtime_with(
+    tool_name: &str,
+    content: Content,
+    budget: usize,
+    wait: Duration,
+    spill: impl FnOnce(String) -> Option<PathBuf> + Send + 'static,
+) -> Content {
+    let Some(text) = over_budget_text(&content, budget) else {
+        return content;
+    };
+    let write = tokio::task::spawn_blocking({
+        let text = text.clone();
+        move || spill(text)
+    });
+    let spilled = match tokio::time::timeout(wait, write).await {
+        Ok(Ok(path)) => path,
+        Ok(Err(error)) => {
+            tracing::warn!("saving {tool_name} output failed: {error}");
+            None
+        }
+        Err(_) => {
+            tracing::warn!(
+                "saving {tool_name} output took longer than {wait:?}; continuing without a file reference"
+            );
+            None
+        }
+    };
+    bounded_tool_result(tool_name, content, &text, budget, spilled.as_deref())
+}
+
+/// The text a result's budget applies to, when that text exceeds it. Mixed
+/// MCP output must obey the same text budget as text-only tools.
+fn over_budget_text(content: &Content, budget: usize) -> Option<String> {
+    if budget == 0 {
+        return None;
+    }
+    let text = match content {
+        Content::Text(text) if text.len() <= budget => return None,
+        Content::Text(text) => text.clone(),
+        Content::Parts(parts) => parts
             .iter()
             .filter_map(|part| match part {
                 Part::Text { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect::<Vec<_>>()
-            .join("\n");
-        if budget == 0 || text.len() <= budget {
-            return content;
-        }
-        let Content::Text(bounded) =
-            budget_tool_result_with_limit(root, tool_name, Content::text(text), budget)
-        else {
-            unreachable!()
-        };
-        let mut bounded_parts = vec![Part::Text {
-            kind: "text".into(),
-            text: bounded,
-        }];
-        bounded_parts.extend(
-            parts
-                .iter()
-                .filter(|part| !matches!(part, Part::Text { .. }))
-                .cloned(),
-        );
-        return Content::Parts(bounded_parts);
-    }
-    let Content::Text(text) = &content else {
-        return content;
+            .join("\n"),
     };
-    if budget == 0 || text.len() <= budget {
-        return content;
-    }
+    (text.len() > budget).then_some(text)
+}
+
+/// Blocking: write the full text under `.wisp/tool-output/` and prune old
+/// spills. Returns the file only when it is actually there.
+fn spill_tool_output(root: &Path, tool_name: &str, text: &str) -> Option<PathBuf> {
     let spill_dir = root.join(".wisp").join("tool-output");
     let safe_name = tool_name.replace(['/', '\\'], "_");
     let spill_path = spill_dir.join(format!(
@@ -130,20 +180,44 @@ fn budget_tool_result_with_limit(
         let _ = std::fs::write(&spill_path, text.as_bytes());
         prune_dir(&spill_dir, ArchiveRetention::default());
     }
+    spill_path.is_file().then_some(spill_path)
+}
+
+/// Replace `text` (from [`over_budget_text`]) in `content` by its head/tail
+/// excerpt, pointing at `spill` when the full output was saved.
+fn bounded_tool_result(
+    tool_name: &str,
+    content: Content,
+    text: &str,
+    budget: usize,
+    spill: Option<&Path>,
+) -> Content {
     let half = budget / 2;
-    let marker = if spill_path.is_file() {
-        format!(
+    let marker = match spill {
+        Some(spill_path) => format!(
             "[... ~{} bytes omitted from {tool_name}; full output at {} — read/grep narrow ranges; do not load the whole file ...]",
             text.len().saturating_sub(budget),
             spill_path.display()
-        )
-    } else {
-        format!(
+        ),
+        None => format!(
             "[... ~{} bytes omitted from {tool_name} to fit the model-context budget; the full output was shown to the user. Re-run with narrower ranges or filters for omitted details. ...]",
             text.len().saturating_sub(budget)
-        )
+        ),
     };
-    Content::text(ContextManager::truncate_middle(text, half, half, &marker))
+    let bounded = ContextManager::truncate_middle(text, half, half, &marker);
+    let Content::Parts(parts) = content else {
+        return Content::text(bounded);
+    };
+    let mut bounded_parts = vec![Part::Text {
+        kind: "text".into(),
+        text: bounded,
+    }];
+    bounded_parts.extend(
+        parts
+            .into_iter()
+            .filter(|part| !matches!(part, Part::Text { .. })),
+    );
+    Content::Parts(bounded_parts)
 }
 
 /// Cap tool results restored from SQLite. Ingestion already budgets live
@@ -764,11 +838,8 @@ impl<'a> AgentLoop<'a> {
         .await;
         self.output
             .tool_result(&event_name, ok, &tool_text, duration_ms);
-        ctx.append_tool(
-            &tc.id,
-            name,
-            budget_tool_result(env.project_root(), name, content),
-        );
+        let content = budget_tool_result_off_runtime(env.project_root(), name, content).await;
+        ctx.append_tool(&tc.id, name, content);
         if let Some(m) = ctx.messages.last() {
             self.output.on_message(m);
         }
@@ -1420,6 +1491,85 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(std::fs::read_to_string(spill.path()).unwrap(), raw);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_stalled_tool_output_spill_does_not_block_the_turn() {
+        // One runtime thread: an inline spill would starve every other task,
+        // the way a stalled volume would starve a session's event writers.
+        let ticks = Arc::new(AtomicUsize::new(0));
+        let ticker = tokio::spawn({
+            let ticks = ticks.clone();
+            async move {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                    ticks.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        });
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        let started = std::time::Instant::now();
+        let bounded = budget_tool_result_off_runtime_with(
+            "search",
+            Content::text(format!("BEGIN\n{}\nEND", "x".repeat(8_000))),
+            1024,
+            Duration::from_millis(100),
+            move |_| {
+                let _ = gate.recv_timeout(Duration::from_secs(10));
+                Some(PathBuf::from("/never/written.txt"))
+            },
+        )
+        .await;
+        let elapsed = started.elapsed();
+        release.send(()).unwrap();
+        ticker.abort();
+
+        assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
+        assert!(ticks.load(Ordering::SeqCst) > 0);
+        let text = bounded.as_text();
+        assert!(text.starts_with("BEGIN") && text.ends_with("END"));
+        assert!(
+            text.contains("the full output was shown to the user"),
+            "{text}"
+        );
+        assert!(!text.contains("/never/written.txt"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn an_off_runtime_spill_still_points_the_model_at_the_saved_file() {
+        let root = std::env::temp_dir().join(format!(
+            "wisp-spill-off-runtime-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let raw = format!("BEGIN\n{}\nEND", "界".repeat(2_000));
+        let spill_root = root.clone();
+        let bounded = budget_tool_result_off_runtime_with(
+            "read",
+            Content::text(raw.clone()),
+            1024,
+            Duration::from_secs(10),
+            move |text| spill_tool_output(&spill_root, "read", &text),
+        )
+        .await;
+
+        assert!(bounded.as_text().contains("full output at"));
+        let spill = std::fs::read_dir(root.join(".wisp/tool-output"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(spill.path()).unwrap(), raw);
+        // Within budget: returned as is, with nothing written.
+        let small = budget_tool_result_off_runtime_with(
+            "read",
+            Content::text("short"),
+            1024,
+            Duration::from_secs(10),
+            |_| panic!("a result within budget must not be spilled"),
+        )
+        .await;
+        assert_eq!(small.as_text(), "short");
         std::fs::remove_dir_all(&root).ok();
     }
 
