@@ -370,6 +370,25 @@ fn request_turn_memory_proposal(
     });
 }
 
+/// Load-unpacked walkthrough for the browser extension. Chrome's folder picker
+/// cannot browse into the hidden `~/Library` on macOS, so that step names the
+/// ⌘⇧G "Go to Folder" sheet; other platforms paste into the address bar.
+fn browser_setup_steps(loc: Locale) -> impl IntoView {
+    let (path_key, choose_key) = if is_mac() {
+        ("browser.offline.step_path_mac", "browser.offline.step_choose_mac")
+    } else {
+        ("browser.offline.step_path_other", "browser.offline.step_choose_other")
+    };
+    view! {
+        <ol class="browser-setup-steps" data-testid="browser-setup-steps">
+            <li>{t(loc, "browser.offline.step_devmode")}</li>
+            <li>{t(loc, "browser.offline.step_load")}</li>
+            <li>{t(loc, path_key)}</li>
+            <li>{t(loc, choose_key)}</li>
+        </ol>
+    }
+}
+
 #[component]
 fn App() -> impl IntoView {
     let locale = create_rw_signal(Locale::detect_browser());
@@ -1454,6 +1473,9 @@ fn App() -> impl IntoView {
     // Live web retrieval failed because the Chrome extension is disconnected.
     // Root-owned so Escape can dismiss it without first focusing the banner.
     let browser_offline_notice = create_rw_signal::<Option<BrowserOfflineNotice>>(None);
+    // Set once the user asks for setup: the load-unpacked steps and the path
+    // stay in the banner after the toast is gone.
+    let browser_offline_setup_path = create_rw_signal::<Option<String>>(None);
     // A connected extension can still be too old for this build. Keep this
     // separate from the offline verdict: live retrieval may work while newer
     // capabilities fail, and the remediation is an extension update.
@@ -15286,6 +15308,7 @@ fn App() -> impl IntoView {
                                 {(!path.is_empty()).then(|| view! {
                                     <code class="browser-extension-path" data-testid="browser-extension-path">{path}</code>
                                 })}
+                                {manual.then(|| browser_setup_steps(loc))}
                                 {backend_error.map(|error| view! {
                                     <span class="browser-extension-error" role="alert">{error}</span>
                                 })}
@@ -15432,6 +15455,10 @@ fn App() -> impl IntoView {
                                     <span class="exploration-banner-eyebrow">{t(locale.get(), "browser.offline.eyebrow")}</span>
                                     <strong>{t(locale.get(), "browser.offline.title")}</strong>
                                     <span>{t(locale.get(), "browser.offline.body")}</span>
+                                    {move || browser_offline_setup_path.get().map(|path| view! {
+                                        <code class="browser-extension-path" data-testid="browser-offline-extension-path">{path}</code>
+                                        {browser_setup_steps(locale.get())}
+                                    })}
                                 </div>
                                 <div class="exploration-banner-actions">
                                     <button type="button" class="primary"
@@ -15454,6 +15481,7 @@ fn App() -> impl IntoView {
                                                     .extension_path
                                                     .filter(|path| !path.trim().is_empty());
                                                 let has_path = path.is_some();
+                                                browser_offline_setup_path.set(path.clone());
                                                 // Keep the remaining manual steps to one paste:
                                                 // the extension path goes onto the clipboard.
                                                 if let Some(path) = path {
@@ -15472,7 +15500,10 @@ fn App() -> impl IntoView {
                                             });
                                         }>{t(locale.get(), "browser.offline.setup")}</button>
                                     <button type="button"
-                                        on:click=move |_| browser_offline_notice.set(None)>{t(locale.get(), "browser.offline.dismiss")}</button>
+                                        on:click=move |_| {
+                                            browser_offline_notice.set(None);
+                                            browser_offline_setup_path.set(None);
+                                        }>{t(locale.get(), "browser.offline.dismiss")}</button>
                                 </div>
                             </section>
                         }

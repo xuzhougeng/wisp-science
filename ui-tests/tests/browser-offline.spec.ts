@@ -107,6 +107,7 @@ test("an outdated connected extension gets a verified update and manual reload f
   await expect.poll(() => invokeCount(page, "update_browser_extension")).toBe(1);
   await expect(banner).toContainText("Updated files are ready");
   await expect(banner.getByTestId("browser-extension-path")).toHaveText("/mock/wisp/browser-extension");
+  await expect(banner.getByTestId("browser-setup-steps").locator("li")).toHaveCount(4);
   await expect(banner.getByRole("button", { name: "Copy extension path" })).toBeVisible();
   await expect(banner.getByRole("button", { name: "Open extension page" })).toBeVisible();
   await expect(banner.getByRole("button", { name: "Recheck" })).toBeVisible();
@@ -230,6 +231,59 @@ test("disconnected browser retrieval shows a banner that Escape dismisses withou
   await page.keyboard.press("Escape");
   await expect(banner).toBeHidden();
   await expect(page.locator("#composer-input")).toBeVisible();
+});
+
+const macUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+const windowsUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+
+async function openSetupSteps(page: Page) {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+      writeText: async (value: string) => { (window as any).__copiedExtensionPath = value; },
+    } });
+  });
+  await enterApp(page);
+  const sessionId = await startLiveRetrievalTurn(page);
+  await emitTauriEvent(page, "agent", disconnectedSetup(sessionId));
+  const banner = page.getByTestId("browser-offline-banner");
+  await expect(banner).toBeVisible();
+  await expect(banner.getByTestId("browser-setup-steps")).toHaveCount(0);
+
+  await banner.getByRole("button", { name: "Set up browser" }).click();
+  await expect.poll(() => invokeCount(page, "open_browser_extension_page")).toBe(1);
+  await expect(banner.getByTestId("browser-offline-extension-path")).toHaveText("/mock/wisp/browser-extension");
+  expect(await page.evaluate(() => (window as any).__copiedExtensionPath)).toBe("/mock/wisp/browser-extension");
+  const steps = banner.getByTestId("browser-setup-steps").locator("li");
+  await expect(steps).toHaveCount(4);
+  await expect(steps.nth(0)).toContainText("Developer mode");
+  await expect(steps.nth(1)).toContainText("Load unpacked");
+  return { banner, steps };
+}
+
+test.describe("load-unpacked steps on macOS", () => {
+  test.use({ userAgent: macUserAgent });
+
+  test("Set up browser keeps the ⌘⇧G walkthrough and the path in the banner", async ({ page }) => {
+    const { banner, steps } = await openSetupSteps(page);
+    await expect(steps.nth(2)).toContainText("⌘⇧G");
+    await expect(steps.nth(3)).toContainText("do not click any file");
+
+    await banner.getByRole("button", { name: "Dismiss" }).click();
+    await expect(banner).toBeHidden();
+  });
+});
+
+test.describe("load-unpacked steps on Windows", () => {
+  test.use({ userAgent: windowsUserAgent });
+
+  test("Set up browser explains the address-bar paste", async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "platform", { configurable: true, value: "Win32" });
+    });
+    const { steps } = await openSetupSteps(page);
+    await expect(steps.nth(2)).toContainText("address bar");
+    await expect(steps.nth(3)).toContainText("Select Folder");
+  });
 });
 
 test("browser offline banner stays under Settings in the Escape stack and can retry", async ({ page }) => {
