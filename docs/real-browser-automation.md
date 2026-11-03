@@ -36,7 +36,10 @@ shows a chat banner that the current answer includes no live web results,
 and the Agent must stop on live, latest, current, or URL-specific requests
 instead of answering from memory. The banner's **Set up browser** button
 opens the browser's extension page and copies the managed path so the
-remaining steps are Developer mode and Load unpacked. After Chrome is open
+remaining steps are Developer mode and Load unpacked; the banner then lists
+those steps with the path. On macOS the folder picker cannot browse into the
+hidden `~/Library`: press ⌘⇧G in the picker, paste the path, press Return,
+then click Select without picking a file. After Chrome is open
 and the popup shows **Connected to Wisp**, use **Retry after connecting**
 to run the same request again.
 

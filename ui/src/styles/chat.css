@@ -663,6 +663,7 @@
   background: color-mix(in srgb, var(--warn) 10%, var(--bg-elev));
 }
 .exploration-banner.browser-extension-update .exploration-banner-eyebrow { color: var(--warn); }
+.exploration-banner.browser-offline .exploration-banner-copy,
 .exploration-banner.browser-extension-update .exploration-banner-copy,
 .exploration-banner.browser-extension-update .exploration-banner-actions {
   /* Column layouts must constrain intrinsic widths before the path can truncate. */
@@ -675,6 +676,11 @@
   color: var(--text); font-size: calc(10px * var(--ui-font-scale, 1)); text-overflow: ellipsis; white-space: nowrap;
 }
 .exploration-banner-copy .browser-extension-error { color: var(--err); }
+.browser-setup-steps {
+  margin: 4px 0 0; padding-left: 18px; color: var(--text-muted);
+  font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.45;
+}
+.browser-setup-steps li + li { margin-top: 2px; }
 @container (max-width: 820px) {
   .exploration-banner.browser-extension-update { align-items: stretch; flex-direction: column; }
   .exploration-banner.browser-extension-update .exploration-banner-actions { justify-content: flex-start; }

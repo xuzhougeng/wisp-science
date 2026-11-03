@@ -1985,9 +1985,15 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "browser.offline.body") => Some("The browser extension is not connected. This reply is based only on the model's existing knowledge."),
         (Locale::En, "browser.offline.retry") => Some("Retry after connecting"),
         (Locale::En, "browser.offline.setup") => Some("Set up browser"),
-        (Locale::En, "browser.offline.setup_done") => Some("Extension path copied. In the browser tab that just opened: enable Developer mode, then choose \"Load unpacked\" and paste the path."),
+        (Locale::En, "browser.offline.setup_done") => Some("Extension path copied. Follow the steps in the banner to load it in the browser."),
         (Locale::En, "browser.offline.setup_failed") => Some("Couldn't open the browser automatically. Open chrome://extensions yourself, enable Developer mode, and load the bundled extension from the Wisp install folder."),
         (Locale::En, "browser.offline.dismiss") => Some("Dismiss"),
+        (Locale::En, "browser.offline.step_devmode") => Some("On the extension page that just opened (chrome://extensions), turn on Developer mode in the top-right corner."),
+        (Locale::En, "browser.offline.step_load") => Some("Click \"Load unpacked\". A folder picker opens."),
+        (Locale::En, "browser.offline.step_path_mac") => Some("In the picker press ⌘⇧G to open \"Go to Folder\", paste the path above with ⌘V (it is already copied), then press Return. The Library folder is hidden, so clicking through folders will not find it."),
+        (Locale::En, "browser.offline.step_path_other") => Some("Paste the path above into the picker's address bar with Ctrl+V (Linux: press Ctrl+L first), then press Enter."),
+        (Locale::En, "browser.offline.step_choose_mac") => Some("Once manifest.json is listed, do not click any file: press \"Select\" in the bottom-right corner."),
+        (Locale::En, "browser.offline.step_choose_other") => Some("Once manifest.json is listed, press \"Select Folder\"."),
         (Locale::En, "browser.extension.eyebrow") => Some("Browser extension update"),
         (Locale::En, "browser.extension.title") => Some("Wisp Real Browser Bridge is out of date"),
         (Locale::En, "browser.extension.body") => Some("Connected version {current}; this build includes {required}. Update before using newer browser tools."),
@@ -5520,9 +5526,15 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "browser.offline.body") => Some("浏览器扩展未连接。该回答仅基于模型已有知识，不是实时检索结果。"),
         (Locale::Zh, "browser.offline.retry") => Some("连接后重试"),
         (Locale::Zh, "browser.offline.setup") => Some("一键安装引导"),
-        (Locale::Zh, "browser.offline.setup_done") => Some("扩展路径已复制。在刚打开的浏览器页面中开启「开发者模式」，再点「加载已解压的扩展程序」并粘贴路径。"),
+        (Locale::Zh, "browser.offline.setup_done") => Some("扩展路径已复制，按横幅里的步骤在浏览器中加载即可。"),
         (Locale::Zh, "browser.offline.setup_failed") => Some("未能自动打开浏览器。请自行打开 chrome://extensions 开启开发者模式，并从 Wisp 安装目录加载扩展。"),
         (Locale::Zh, "browser.offline.dismiss") => Some("关闭"),
+        (Locale::Zh, "browser.offline.step_devmode") => Some("在刚打开的扩展管理页（chrome://extensions）右上角开启「开发者模式」。"),
+        (Locale::Zh, "browser.offline.step_load") => Some("点「加载已解压的扩展程序」，会弹出文件对话框。"),
+        (Locale::Zh, "browser.offline.step_path_mac") => Some("在对话框里按 ⌘⇧G 打开「前往文件夹」，按 ⌘V 粘贴上面的路径（已复制好），再按回车。Library 文件夹默认隐藏，逐级点击是找不到的。"),
+        (Locale::Zh, "browser.offline.step_path_other") => Some("在对话框顶部地址栏按 Ctrl+V 粘贴上面的路径（Linux 先按 Ctrl+L），再按回车。"),
+        (Locale::Zh, "browser.offline.step_choose_mac") => Some("看到 manifest.json 后不要点任何文件，直接点右下角「选择」。"),
+        (Locale::Zh, "browser.offline.step_choose_other") => Some("看到 manifest.json 后直接点「选择文件夹」。"),
         (Locale::Zh, "browser.extension.eyebrow") => Some("浏览器扩展更新"),
         (Locale::Zh, "browser.extension.title") => Some("Wisp Real Browser Bridge 版本过低"),
         (Locale::Zh, "browser.extension.body") => Some("当前已连接版本为 {current}，本构建内置版本为 {required}。请先更新，再使用新版浏览器工具。"),
@@ -8255,6 +8267,26 @@ mod queue_label_tests {
             for locale in [Locale::En, Locale::Zh] {
                 assert_ne!(t(locale, key), key, "missing {key}");
             }
+        }
+    }
+
+    #[test]
+    fn browser_setup_steps_are_localized() {
+        for key in [
+            "browser.offline.step_devmode",
+            "browser.offline.step_load",
+            "browser.offline.step_path_mac",
+            "browser.offline.step_path_other",
+            "browser.offline.step_choose_mac",
+            "browser.offline.step_choose_other",
+        ] {
+            for locale in [Locale::En, Locale::Zh] {
+                assert_ne!(t(locale, key), key, "missing {key}");
+            }
+        }
+        for locale in [Locale::En, Locale::Zh] {
+            assert!(t(locale, "browser.offline.step_path_mac").contains("⌘⇧G"));
+            assert!(t(locale, "browser.offline.step_path_other").contains("Ctrl+V"));
         }
     }
 
