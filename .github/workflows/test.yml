@@ -173,6 +173,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # A workspace version bump rebuilds every wisp-* crate next to the
+      # restored cache, which filled the runner's ~14 GB on Release v1.24.0.
+      # Drop preinstalled toolchains this job never uses (~20 GB) first.
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
+
       # Keep the workspace MSRV explicit; floating stable alone does not catch
       # accidental dependency bumps past the version declared in Cargo.toml.
       - uses: dtolnay/rust-toolchain@master
