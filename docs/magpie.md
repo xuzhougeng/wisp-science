@@ -42,6 +42,18 @@ Model changes in the personal editor take effect after Magpie is disconnected.
 External ACP agents and dedicated image/video generation configurations retain
 their own model management. A model must support any requested tools or images.
 
+The desktop app shows the override wherever a model is picked. The composer,
+side chat, reviewer and subagent pickers offer only `Magpie · <model>`, plus
+any ACP agents, and the Fast toggle is hidden because Magpie turns send no
+service tier. Switch models in Magpie. Settings → Models keeps the personal
+profiles editable and says they apply again after a disconnect. Stored
+per-conversation, reviewer and subagent choices are left as they were, so they
+return after you disconnect.
+
+接入 Magpie 后，输入框、侧边对话、审查模型和子智能体模型的选择里只有
+`Magpie · <模型>`（ACP Agent 仍可选），Fast 开关隐藏；要换模型请在 Magpie 中切换。
+设置 › 模型里的个人模型仍可编辑，断开 Magpie 并重启后重新生效。
+
 ## Gateway sessions
 
 Every model request through the Magpie connection carries an `X-Session-Id`

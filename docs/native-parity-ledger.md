@@ -19,6 +19,7 @@ parity-ledger` 检查这一点（`scripts/check_native_parity.py`）。
 
 | WebView 改动 | SwiftUI 状态 | 说明 |
 | --- | --- | --- |
+| 接入 Magpie 时，输入框、侧边对话、审查模型和子智能体模型的选择只列出 `Magpie · <模型>`（ACP Agent 保留），隐藏 Fast；设置 › 模型顶部提示个人模型断开后才生效 | 待补 | 读 `magpie_model_info`；SwiftUI 的模型选择尚未识别 Magpie，仍列出个人模型。文案键 `composer.magpie_managed`、`models.magpie_connected` |
 | 浏览器离线横幅 / 扩展更新横幅：点「一键安装引导」或需手动重载时，横幅内联显示扩展路径和分平台的「加载已解压的扩展程序」步骤（macOS 为 ⌘⇧G 前往文件夹） | 待补 | 文案键 `browser.offline.step_*`；SwiftUI 横幅尚无步骤列表 |
 | 设置 › 远程接入 › 网页远程访问：联机链接二维码 | 待补 | `RemoteAccessStatus` 新增 `qr`（SVG data URL），SwiftUI 读同一字段即可 |
 | 右侧面板：仅显示实际打开的工具标签，不再预置四个默认标签 | 不需要 | 修复 WebView 启动器的标签初始化与重开行为 |
