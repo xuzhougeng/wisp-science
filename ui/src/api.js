@@ -853,13 +853,12 @@ function paintShareListMarker(ctx, el, style, ox, oy) {
   const type = style.listStyleType;
   if (!type || type === "none") return;
   const marker = getComputedStyle(el, "::marker");
-  const range = document.createRange();
   let first = null;
   const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
   while (walker.nextNode()) {
-    if (!walker.currentNode.nodeValue || !walker.currentNode.nodeValue.trim()) continue;
-    range.selectNodeContents(walker.currentNode);
-    first = range.getBoundingClientRect();
+    const [line] = shareTextLines(walker.currentNode);
+    if (!line) continue;
+    first = line;
     break;
   }
   if (!first || first.height <= 0) first = el.getBoundingClientRect();
@@ -892,8 +891,41 @@ function paintShareListMarker(ctx, el, style, ox, oy) {
   ctx.textAlign = "left";
 }
 
+/**
+ * Split a text node into the browser's line boxes. Each character is measured
+ * on its own: a Range spanning several lines reports the union of its line
+ * boxes, so its `top` never moves and wrapping would go undetected.
+ */
+function shareTextLines(node) {
+  const text = node.nodeValue || "";
+  const range = document.createRange();
+  const lines = [];
+  let line = null;
+  for (let k = 0; k < text.length; k += 1) {
+    range.setStart(node, k);
+    range.setEnd(node, k + 1);
+    const r = range.getClientRects()[0];
+    const ch = text[k];
+    if (!r || (r.width === 0 && r.height === 0)) continue;
+    const sameLine = line && Math.abs(r.top - line.top) <= Math.max(0.6, line.height * 0.3);
+    if (sameLine) {
+      line.text += ch;
+      line.right = Math.max(line.right, r.right);
+      line.height = Math.max(line.height, r.height);
+      continue;
+    }
+    // Collapsed or hanging whitespace at a wrap point sits at the far edge of
+    // the previous line; it must not anchor a new line there.
+    if (/\s/.test(ch) || r.width === 0) continue;
+    line = { text: ch, left: r.left, right: r.right, top: r.top, height: r.height };
+    lines.push(line);
+  }
+  for (const entry of lines) entry.text = entry.text.replace(/\s+$/, "");
+  return lines.filter((entry) => entry.text);
+}
+
 /** Paint a text node using the browser's already-wrapped line boxes. */
-function paintShareTextNode(ctx, node, ox, oy) {
+function paintShareTextNode(ctx, node, ox, oy, stats) {
   const text = node.nodeValue;
   if (!text || !node.parentElement) return;
   const style = getComputedStyle(node.parentElement);
@@ -903,36 +935,34 @@ function paintShareTextNode(ctx, node, ox, oy) {
   ctx.textBaseline = "top";
   ctx.textAlign = "left";
   if (ctx.letterSpacing !== undefined) ctx.letterSpacing = style.letterSpacing || "0px";
-  const range = document.createRange();
-  let i = 0;
-  while (i < text.length) {
-    range.setStart(node, i);
-    range.setEnd(node, i + 1);
-    const first = range.getBoundingClientRect();
-    if (first.width === 0 && first.height === 0) {
-      i += 1;
-      continue;
+  if (stats && text.trim()) {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const tops = [];
+    for (const r of range.getClientRects()) {
+      if (r.width <= 0.5) continue;
+      if (!tops.some((top) => Math.abs(top - r.top) <= 0.6)) tops.push(r.top);
     }
-    let j = i + 1;
-    while (j < text.length) {
-      range.setEnd(node, j + 1);
-      const next = range.getBoundingClientRect();
-      if (Math.abs(next.top - first.top) > 0.6) break;
-      j += 1;
+    stats.domLines += tops.length;
+  }
+  for (const line of shareTextLines(node)) {
+    // Canvas metrics can differ from the DOM font (fallback CJK faces), so
+    // never let a painted line run past the box the browser laid out.
+    const boxWidth = Math.max(1, line.right - line.left);
+    ctx.fillText(line.text, line.left - ox, line.top - oy, boxWidth);
+    if (stats) {
+      const painted = Math.min(ctx.measureText(line.text).width, boxWidth);
+      stats.lines += 1;
+      stats.maxRight = Math.max(stats.maxRight, line.left - ox + painted);
     }
-    const slice = text.slice(i, j);
-    if (slice && slice !== "\n") {
-      ctx.fillText(slice, first.left - ox, first.top - oy);
-    }
-    i = j;
   }
   if (ctx.letterSpacing !== undefined) ctx.letterSpacing = "0px";
 }
 
-function paintShareDom(ctx, node, ox, oy, alpha) {
+function paintShareDom(ctx, node, ox, oy, alpha, stats) {
   if (node.nodeType === Node.TEXT_NODE) {
     ctx.globalAlpha = alpha;
-    paintShareTextNode(ctx, node, ox, oy);
+    paintShareTextNode(ctx, node, ox, oy, stats);
     return;
   }
   if (node.nodeType !== Node.ELEMENT_NODE) return;
@@ -955,7 +985,7 @@ function paintShareDom(ctx, node, ox, oy, alpha) {
     }
     return;
   }
-  for (const child of el.childNodes) paintShareDom(ctx, child, ox, oy, nextAlpha);
+  for (const child of el.childNodes) paintShareDom(ctx, child, ox, oy, nextAlpha, stats);
 }
 
 /**
@@ -1014,11 +1044,22 @@ async function rasterizeShareHtml(html, width) {
     throw new Error("Canvas is not available");
   }
   ctx.scale(SHARE_SCALE, SHARE_SCALE);
-  paintShareDom(ctx, host, rect.left, rect.top, 1);
+  const stats = { lines: 0, domLines: 0, maxRight: 0 };
+  paintShareDom(ctx, host, rect.left, rect.top, 1, stats);
   ctx.globalAlpha = 1;
   const katexCount = host.querySelectorAll(".katex").length;
   host.remove();
-  return { canvas, width: w, height: h, tableCount, mathCount, katexCount };
+  return {
+    canvas,
+    width: w,
+    height: h,
+    tableCount,
+    mathCount,
+    katexCount,
+    textLines: stats.lines,
+    domLines: stats.domLines,
+    textOverflow: Math.max(0, stats.maxRight - w),
+  };
 }
 
 function recordShareRasterInfo(info) {
@@ -1055,6 +1096,9 @@ export async function render_share_png(payloadJson) {
   let tableCount = 0;
   let mathCount = 0;
   let katexCount = 0;
+  let textLines = 0;
+  let domLines = 0;
+  let textOverflow = 0;
   let usedHtml = false;
   let fallback = false;
   for (const message of messages) {
@@ -1066,6 +1110,9 @@ export async function render_share_png(payloadJson) {
         tableCount += raster.tableCount;
         mathCount += raster.mathCount;
         katexCount += raster.katexCount;
+        textLines += raster.textLines;
+        domLines += raster.domLines;
+        textOverflow = Math.max(textOverflow, raster.textOverflow);
       } catch {
         rasters.push(null);
         fallback = true;
@@ -1074,7 +1121,16 @@ export async function render_share_png(payloadJson) {
       rasters.push(null);
     }
   }
-  recordShareRasterInfo({ usedHtml, fallback, tableCount, mathCount, katexCount });
+  recordShareRasterInfo({
+    usedHtml,
+    fallback,
+    tableCount,
+    mathCount,
+    katexCount,
+    textLines,
+    domLines,
+    textOverflow,
+  });
 
   const laid = messages.map((message, index) => {
     const raster = rasters[index];
