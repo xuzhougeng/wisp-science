@@ -387,7 +387,7 @@ pub(super) fn Sidebar(
                                 let rect = el.get_bounding_client_rect();
                                 nav_more_at.set(Some((rect.right() + 6.0, rect.top())));
                             }>
-                            {compose_icon("more")}
+                            {compose_icon("circle-ellipsis")}
                             <span class="side-btn-label">{move || t(locale.get(), "sidebar.more")}</span>
                             <span class="nav-more-caret" aria-hidden="true">{compose_icon("chevron-right")}</span>
                         </button>
@@ -1265,9 +1265,28 @@ pub(super) fn Sidebar(
                             ])}</span>
                         </div>
                     }})}
-                    <button class="side-btn" title=move || t(locale.get(), "sidebar.capabilities") on:click=move |ev| open_capabilities.call(ev)>{compose_icon("grid")}<span class="side-btn-label">{move || t(locale.get(), "sidebar.capabilities")}</span></button>
-                    <button class="side-btn" data-testid="report-problem-entry" title=move || t(locale.get(), "issue_report.sidebar") on:click=move |ev| open_issue_report.call(ev)>{compose_icon("chat")}<span class="side-btn-label">{move || t(locale.get(), "issue_report.sidebar")}</span></button>
-                    <button class="side-btn" title=move || t(locale.get(), "sidebar.settings") on:click=move |ev| open_settings.call(ev)>{compose_icon("gear")}<span class="side-btn-label">{move || t(locale.get(), "sidebar.settings")}</span></button>
+                    // Footer actions are one row of icons; the label stays for screen readers
+                    // and the tooltip names the action.
+                    <div class="side-foot-actions">
+                        <button class="side-btn" title=move || t(locale.get(), "sidebar.capabilities")
+                            aria-label=move || t(locale.get(), "sidebar.capabilities")
+                            on:click=move |ev| open_capabilities.call(ev)>
+                            {compose_icon("grid")}
+                            <span class="side-btn-label">{move || t(locale.get(), "sidebar.capabilities")}</span>
+                        </button>
+                        <button class="side-btn" data-testid="report-problem-entry" title=move || t(locale.get(), "issue_report.sidebar")
+                            aria-label=move || t(locale.get(), "issue_report.sidebar")
+                            on:click=move |ev| open_issue_report.call(ev)>
+                            {compose_icon("chat")}
+                            <span class="side-btn-label">{move || t(locale.get(), "issue_report.sidebar")}</span>
+                        </button>
+                        <button class="side-btn" title=move || t(locale.get(), "sidebar.settings")
+                            aria-label=move || t(locale.get(), "sidebar.settings")
+                            on:click=move |ev| open_settings.call(ev)>
+                            {compose_icon("gear")}
+                            <span class="side-btn-label">{move || t(locale.get(), "sidebar.settings")}</span>
+                        </button>
+                    </div>
                 </div>
             })}
         </aside>

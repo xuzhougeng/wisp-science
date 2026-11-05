@@ -240,6 +240,8 @@ pub(crate) fn compose_icon(kind: &str) -> impl IntoView {
         "inbox" => view! { <path d="m22 12-3.45-6.9A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.1L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2Z"/><path d="M2 12h6l2 3h4l2-3h6"/> }.into_view(),
         "close" => view! { <path d="M18 6 6 18"/><path d="m6 6 12 12"/> }.into_view(),
         "more" => view! { <circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/> }.into_view(),
+        // Sidebar "More": an outlined circle keeps the stroke weight of the nav icons beside it.
+        "circle-ellipsis" => view! { <circle cx="12" cy="12" r="9"/><circle cx="8" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="16" cy="12" r="1" fill="currentColor" stroke="none"/> }.into_view(),
         "arrow-right" => view! { <path d="M5 12h14m-6-6 6 6-6 6"/> }.into_view(),
         "arrow-up" => view! { <path d="m5 12 7-7 7 7"/><path d="M12 19V5"/> }.into_view(),
         "minus" => view! { <path d="M5 12h14"/> }.into_view(),

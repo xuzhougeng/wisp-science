@@ -202,6 +202,44 @@ test("sidebar, chat topbar and right-pane tabs share one header height", async (
   for (const value of bottoms) expect(Math.abs(value - bottoms[0])).toBeLessThanOrEqual(1);
 });
 
+test("sidebar footer puts Capabilities, Feedback and Settings in one icon row under the skills line", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await enterApp(page);
+  const foot = page.locator(".sidebar .side-foot");
+  const names = ["Capabilities", "Feedback", "Settings"];
+  const buttons = names.map((name) => foot.getByRole("button", { name, exact: true }));
+  for (const button of buttons) await expect(button).toBeVisible();
+  for (const [i, name] of names.entries()) await expect(buttons[i]).toHaveAttribute("title", name);
+
+  const boxes = await Promise.all(buttons.map((button) => button.boundingBox()));
+  for (const box of boxes) {
+    expect(Math.abs(box!.y - boxes[0]!.y)).toBeLessThanOrEqual(1);
+    expect(box!.width).toBeLessThanOrEqual(36);
+  }
+  expect(boxes[1]!.x).toBeGreaterThan(boxes[0]!.x);
+  expect(boxes[2]!.x).toBeGreaterThan(boxes[1]!.x);
+
+  const meta = await foot.locator(".proj-meta").boundingBox();
+  expect(meta!.y + meta!.height).toBeLessThanOrEqual(boxes[0]!.y + 1);
+
+  // At 800px tall the nav folds into More; its icon is the outlined circle.
+  const more = page.locator(".sidebar .nav-more");
+  await expect(more).toBeVisible();
+  await expect(more.locator("> svg circle[r='9']")).toHaveCount(1);
+});
+
+test("the compact rail stacks the footer icons in one column", async ({ page }) => {
+  await page.setViewportSize({ width: 860, height: 900 });
+  await enterApp(page);
+  const foot = page.locator(".sidebar .side-foot");
+  const settings = foot.getByRole("button", { name: "Settings", exact: true });
+  const capabilities = foot.getByRole("button", { name: "Capabilities", exact: true });
+  await expect(settings).toBeVisible();
+  const [top, bottom] = await Promise.all([capabilities.boundingBox(), settings.boundingBox()]);
+  expect(Math.abs(top!.x - bottom!.x)).toBeLessThanOrEqual(1);
+  expect(bottom!.y).toBeGreaterThan(top!.y);
+});
+
 test("a lone conversation tab reads as the title and the welcome uses the UI face", async ({ page }) => {
   await enterApp(page);
   const title = page.locator(".center-tabs > .center-tab").first();
