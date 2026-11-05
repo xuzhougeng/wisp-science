@@ -41,6 +41,11 @@ fn shared_native_fixture_roundtrips_through_the_rust_contract() {
     .unwrap();
     let decoded: Response = serde_json::from_value(expected.clone()).unwrap();
     assert_eq!(serde_json::to_value(decoded).unwrap(), expected);
+
+    let mut legacy = expected.clone();
+    legacy.as_object_mut().unwrap().remove("privacy");
+    let decoded: Response = serde_json::from_value(legacy).unwrap();
+    assert_eq!(serde_json::to_value(decoded).unwrap(), expected);
 }
 
 #[tokio::test]

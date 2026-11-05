@@ -828,7 +828,7 @@ mod tests {
     async fn file_provenance_keeps_frame_scope_without_requiring_a_registered_file() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
-        let store = wisp_store::Store::open(root.join("store.db")).await.unwrap();
+        let store = wisp_store::Store::open(&root.join("store.db")).await.unwrap();
         store.create_project("p", "Project", "").await.unwrap();
         store.create_frame("s", "p", "OPERON", "m").await.unwrap();
         store.create_frame("other", "p", "OPERON", "m").await.unwrap();
