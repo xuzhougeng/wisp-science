@@ -129,8 +129,10 @@ internal static class NativeInlineSettingsTests
             "an explicit successful retry updates the displayed value");
 
         client.UpdateReply = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        pending = model.SetUpdateCheckEnabledAsync(false); model.Dispose(); client.UpdateReply.SetResult(null);
-        Check(!await pending && model.Values["get_update_check_enabled"]!.GetValue<bool>(), "late replies cannot mutate a closed settings surface");
+        pending = model.SetUpdateCheckEnabledAsync(false); model.Dispose();
+        Check(model.Values.Count == 0, "closing the editor clears its settings snapshot");
+        client.UpdateReply.SetResult(JsonValue.Create(false));
+        Check(!await pending && model.Values.Count == 0, "a successful late reply cannot repopulate a closed settings surface");
     }
     private static async Task SharedWindowDraftAsync()
     {
