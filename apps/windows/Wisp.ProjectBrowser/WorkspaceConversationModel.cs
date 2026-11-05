@@ -9,6 +9,18 @@ public sealed partial class WorkspaceConversationModel(INativeConversationClient
 {
     public event Action? Changed;
     public event Action<ConversationSnapshot>? SnapshotAccepted;
+    public bool AssistantMode { get; init; }
+    public bool ContextReady { get; private set; } = true;
+    public NativeReferenceOption? ContextReference { get; private set; }
+    public void SetAssistantContext(NativeReferenceOption? reference, bool ready)
+    {
+        if (!AssistantMode) return;
+        if (reference != null && (reference.Reference.Kind != "project" || !reference.Reference.Valid))
+            throw new ArgumentException("Assistant context must identify a visible project", nameof(reference));
+        ContextReference = ready ? reference : null; ContextReady = ready; ModelContext.Bind(Snapshot, ready); Notify();
+    }
+    private NativeReferenceOption[] SendingReferences => ContextReference is { } context
+        ? References.Prepend(context).DistinctBy(value => value.Reference.Key).ToArray() : References;
     public NativeInputPreferences InputPreferences { get; private set; } = new();
     public void ApplyInputPreferences(NativeInputPreferences preferences)
     {
@@ -16,10 +28,20 @@ public sealed partial class WorkspaceConversationModel(INativeConversationClient
         Notify();
     }
     public string Draft { get; set; } = "";
+    public bool HasComposerContent => !string.IsNullOrWhiteSpace(Draft) || Attachments.Length > 0 || References.Length > 0 || Quotes.Length > 0;
+    public bool ShowStopButton => Snapshot?.Running == true && !HasComposerContent;
+    private readonly HashSet<(string Project, string Session, string Epoch, string? Request)> pendingStops = [];
+    public bool IsStopping => active && !ShowingHistory && Snapshot is { Running: true } turn
+        && (turn.Stopping || pendingStops.Contains((turn.ProjectId, turn.SessionId, turn.Epoch, turn.RequestId)));
+    public bool CanStop => active && !Loading && !Busy && !ShowingHistory && ConnectionError == null
+        && Snapshot is { Running: true, ReadOnly: false } && !IsStopping;
     public ConversationSnapshot? Snapshot { get; private set; }
     public ConversationSnapshot? History { get; private set; }
     public bool ShowingHistory { get; private set; }
     public ConversationItem[] VisibleItems => (ShowingHistory ? History : Snapshot)?.Items ?? [];
+    public bool ShowWelcome => !ModelContext.Active && !Loading && !ShowingHistory && VisibleItems.Length == 0
+        && Snapshot?.Exploration is not { Summary: not null } && Snapshot?.Exploration?.SourceFrozen != true
+        && Snapshot?.Running != true && ConnectionError == null && (OperationError == null || HasInlineAttachmentError) && Snapshot?.Error == null;
     public bool Loading { get; private set; }
     public bool Busy { get; private set; }
     public bool UncertainSend { get; private set; }
@@ -36,24 +58,28 @@ public sealed partial class WorkspaceConversationModel(INativeConversationClient
     private readonly Dictionary<string, ComposerAttachment[]> submittedFiles = [];
     private readonly Dictionary<string, string> queuedDrafts = [];
     private readonly HashSet<string> uncertainQueues = [];
-    public bool CanAttach => Snapshot is { ReadOnly: false } && !Busy && !UncertainSend && !QueueEnqueuePending && !ShowingHistory && ConnectionError == null;
-    public bool CanQueue => CanAttach && !Options.Busy && Snapshot?.Running == true && (Draft.Trim().Length > 0 || Attachments.Length > 0 || References.Length > 0 || Quotes.Length > 0)
+    public bool CanAttach => ContextReady && Snapshot is { ReadOnly: false } && !Busy && !CompactionBlocksInput && !UncertainSend && !QueueEnqueuePending && !ShowingHistory && ConnectionError == null;
+    public bool CanQueue => CanAttach && !Options.Busy && Snapshot?.Running == true && HasComposerContent
         && (Snapshot.Queue != null ? QueuedTurns.Length < 64 : QueuedFollowUp == null) && sessionId != null && !QueueUncertain
-        && (References.Length == 0 || Snapshot?.ComposerReferences == true);
+        && (SendingReferences.Length == 0 || Snapshot?.ComposerReferences == true);
     public string? ConnectionError { get; private set; }
     public string? OperationError { get; private set; }
     public ConversationModelOption[] Models { get; private set; } = [];
     public ConversationModelOption[] Agents { get; private set; } = [];
     public NativeComposerEffortModel Effort { get; } = new(settings);
+    public NativeRuntimeStripModel Runtimes { get; } = new(settings);
+    public NativeContextDetailsModel ContextDetails { get; } = new(settings);
+    public NativeModelContextModel ModelContext { get; } = new(settings);
     public NativeComposerOptionsModel Options { get; } = new(settings);
     private JsonObject[] profiles = [];
+    public ComposerModelMenuChoice[] ModelMenuChoices => NativeComposerModelMenu.Choices(profiles, Agents, ComposerModelId);
     public NativeHighlight[] SavedHighlights { get; private set; } = [];
     public string? RevealedExcerpt { get; private set; }
     public int? ScrollTarget { get; private set; }
     public int ScrollRevision { get; private set; }
     public bool CanSend =>
-        (Draft.Trim().Length > 0 || Attachments.Length > 0 || References.Length > 0 || Quotes.Length > 0) && Snapshot is { Running: false, ReadOnly: false } && !Busy && !Effort.Busy && !Options.Busy && !UncertainSend
-        && ConnectionError == null && !ShowingHistory && !QueueUncertain && !QueueEnqueuePending && (References.Length == 0 || Snapshot?.ComposerReferences == true);
+        HasComposerContent && Snapshot is { Running: false, ReadOnly: false } && !Busy && !SavingFastMode && !Effort.Busy && !Options.Busy && !UncertainSend
+        && ContextReady && !CompactionBlocksInput && ConnectionError == null && !ShowingHistory && !QueueUncertain && !QueueEnqueuePending && (SendingReferences.Length == 0 || Snapshot?.ComposerReferences == true);
     private string? projectId, sessionId;
     private int generation;
     private int historyGeneration;
@@ -65,11 +91,12 @@ public sealed partial class WorkspaceConversationModel(INativeConversationClient
     private ConversationCursor? cursor;
     private readonly HashSet<string> savingSelections = [];
 
-    public async Task OpenAsync(string projectId, string sessionId, CancellationToken cancellationToken = default)
+    public async Task OpenAsync(string projectId, string sessionId, CancellationToken cancellationToken = default, long lastActivity = 0)
     {
         Pause();
         profiles = []; Models = []; Agents = []; Effort.Reset();
         this.projectId = projectId; this.sessionId = sessionId;
+        Runtimes.Bind(projectId, sessionId);
         Options.Bind(projectId, sessionId);
         ReferencePicker.Bind(projectId, sessionId);
         active = true;
@@ -81,8 +108,8 @@ public sealed partial class WorkspaceConversationModel(INativeConversationClient
         Snapshot = null; History = null; ShowingHistory = false; RevealedExcerpt = null; ScrollTarget = null;
         SavedHighlights = []; cursor = new(projectId, sessionId);
         pending = pendingSends.TryGetValue(sessionId, out var waiting) ? waiting : null;
-        UncertainSend = pending != null;
-        OperationError = pending == null ? null : "上次发送结果尚未确认。请核对最新消息；不会自动重发。";
+        UncertainSend = pending != null || uncertainRecoveryResumes.ContainsKey((projectId, sessionId));
+        OperationError = !UncertainSend ? null : "上次发送结果尚未确认。请核对最新消息；不会自动重发。";
         ConnectionError = null; Loading = true; Busy = false;
         var current = ++generation;
         Notify();
@@ -96,49 +123,27 @@ public sealed partial class WorkspaceConversationModel(INativeConversationClient
             { if (current == generation) OperationError = "未能标记已查看：" + ex.Message; }
         }
         if (current != generation) return;
-        if (settings is not null)
-        {
-            try
-            {
-                var rows = await settings.InvokeAsync("list_models", new JsonObject(), projectId, cancellationToken) as JsonArray ?? [];
-                if (current == generation)
-                {
-                    profiles = rows.OfType<JsonObject>().Select(row => (JsonObject)row.DeepClone()).ToArray();
-                    Models = rows.OfType<JsonObject>()
-                        .Where(row => row["use_for_image_generation"]?.GetValue<bool>() != true && row["use_for_video_generation"]?.GetValue<bool>() != true)
-                        .Select(row => new ConversationModelOption(row["id"]?.GetValue<string>() ?? "",
-                            string.IsNullOrEmpty(row["label"]?.GetValue<string>()) ? row["model"]?.GetValue<string>() ?? "" : row["label"]!.GetValue<string>()))
-                        .Where(row => row.Id.Length > 0).ToArray();
-                    await SyncEffortAsync(cancellationToken);
-                }
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            { if (current == generation) OperationError = ex.Message; }
-        }
-        if (current != generation) return;
-        if (settings != null)
-        {
-            try
-            {
-                var agents = await settings.InvokeAsync("list_acp_agents", new(), projectId, cancellationToken) as JsonArray ?? [];
-                if (current != generation) return;
-                Agents = agents.OfType<JsonObject>().Where(row => row["id"] is JsonValue).Select(row => new ConversationModelOption(
-                    row["id"]!.GetValue<string>(), row["label"]?.GetValue<string>() ?? row["id"]!.GetValue<string>())).ToArray();
-                if (Snapshot?.ModelId is { } currentModel && currentModel.StartsWith("acp:", StringComparison.Ordinal))
-                    Models = [new(currentModel, "ACP · " + (Agents.FirstOrDefault(agent => agent.Id == currentModel[4..])?.Label ?? currentModel[4..]))];
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException) { if (current == generation) OperationError = "未能读取 ACP Agent：" + ex.Message; }
-        }
+        await LoadComposerCatalogAsync(projectId, current, cancellationToken);
         if (current == generation) Notify();
+        if (current == generation) await ReadIdleCompactionPromptAsync(lastActivity, current, cancellationToken);
     }
 
     public void Pause()
     {
+        ContextRecovery = null; recoveryCompactionOwner = null; recoveryResumeReady = null;
+        IdleCompactionPrompt = null;
+        excerptStart = null; excerptReadFailure = null;
+        AttachmentUploads = []; attachmentReads.Clear(); attachmentOperationError = null;
         HistoryBusy = false;
         RunReviewPrompt = null;
+        if (CurrentProjectDraft is { } projectDraft) { projectDraft.Text = Draft; projectDraft.References = References; projectDraft.Quotes = Quotes; }
         if (sessionId is { } session) { drafts[session] = Draft; stagedFiles[session] = Attachments; stagedReferences[session] = References; stagedQuotes[session] = Quotes; }
         generation++;
         active = false;
+        ContextDetails.Bind(null);
+        Handoff.Bind(null, false);
+        ModelContext.Bind(null);
+        Runtimes.Bind(null, null);
         Effort.Reset();
         Options.Reset();
         ReferencePicker.Bind(null, null);
@@ -149,6 +154,7 @@ public sealed partial class WorkspaceConversationModel(INativeConversationClient
         Pause();
         projectId = null; sessionId = null; Snapshot = null; History = null; ShowingHistory = false;
         Attachments = []; References = []; Quotes = []; QueuedFollowUp = null;
+        Draft = ""; OperationError = null; UncertainSend = false; pending = null;
         Loading = false; Busy = false; ConnectionError = null; Notify();
     }
 
@@ -161,7 +167,12 @@ public sealed partial class WorkspaceConversationModel(INativeConversationClient
             var value = await client.SnapshotAsync(project, session, null, cancellationToken);
             if (current != generation) return;
             if (cursor is null || !cursor.TryAccept(value)) return;
+            var previous = Snapshot;
             Snapshot = value; ConnectionError = null;
+            if (excerptStart is { } start && !ValidExcerptTurn(start)) excerptStart = null;
+            ModelContext.Bind(value, ContextReady);
+            ReconcileCompaction(value);
+            if (value.AcpAgentId != null || value.Items.Length > 0) provisionalAgents.Remove((project, session));
             foreach (var run in value.RunCards ?? []) runReadErrors.Remove((project, session, run.Id));
             SnapshotAccepted?.Invoke(value);
             _ = SyncEffortAsync(cancellationToken);
@@ -187,6 +198,7 @@ public sealed partial class WorkspaceConversationModel(INativeConversationClient
             if (value.Queue != null) ReconcileQueue(value);
             else if (!value.Running) { QueuedFollowUp = null; queuedDrafts.Remove(session); }
             ObserveRunReviews(value, cancellationToken);
+            ObserveContextRecovery(previous, value);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -196,6 +208,7 @@ public sealed partial class WorkspaceConversationModel(INativeConversationClient
         }
         if (current == generation) Notify();
         if (current == generation) await RefreshHistoricalRunsAsync(cancellationToken);
+        if (current == generation) await ResumeRecoveredTurnAsync(cancellationToken);
     }
 
     public async Task<string?> CreateAsync(string projectId, CancellationToken cancellationToken = default, string? agentId = null)
@@ -210,7 +223,7 @@ public sealed partial class WorkspaceConversationModel(INativeConversationClient
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            if (current == generation) OperationError = "新建会话未确认成功，请刷新列表后检查：" + ex.Message;
+            if (current == generation) OperationError = CreationFailurePrefix + ex.Message;
             return null;
         }
         finally { if (generation == current) { Busy = false; Notify(); } }
@@ -220,15 +233,16 @@ public sealed partial class WorkspaceConversationModel(INativeConversationClient
     {
         if (cancellationToken.IsCancellationRequested || UncertainSend || Busy || !CanSend || projectId is not { } project || sessionId is not { } session) return;
         var text = Draft; var id = Guid.NewGuid(); var current = generation;
+        var selectedAgent = ProvisionalAgent;
         var files = Attachments; submittedFiles[session] = files;
-        var references = References; submittedReferences[session] = references;
+        var references = SendingReferences; submittedReferences[session] = References;
         var quotes = Quotes; submittedQuotes[session] = quotes;
         Busy = true; OperationError = null; pending = (id, text); pendingSends[session] = pending.Value; submittedDrafts[session] = pending.Value;
         Notify();
         try
         {
-            await client.SendContextAsync(project, session, id, NativeComposerReferencesModel.Message(NativeComposerQuote.Compose(text, quotes), references),
-                files.Select(f => f.Path).ToArray(), references.Select(option => option.Reference).ToArray(), cancellationToken);
+            await client.SendSelectedContextAsync(project, session, id, NativeComposerReferencesModel.Message(NativeComposerQuote.Compose(text, quotes), references),
+                files.Select(f => f.Path).ToArray(), references.Where(option => option.Reference.Kind != "file-path").Select(option => option.Reference).ToArray(), selectedAgent, cancellationToken);
             pendingSends.Remove(session);
             stagedFiles[session] = [];
             stagedReferences[session] = [];
@@ -253,51 +267,87 @@ public sealed partial class WorkspaceConversationModel(INativeConversationClient
 
     public void AcknowledgeUncertainSend()
     {
+        if (projectId != null && sessionId != null) uncertainRecoveryResumes.Remove((projectId, sessionId));
         if (sessionId is { } session) { pendingSends.Remove(session); uncertainQueues.Remove(session); uncertainQueueActions.Remove(session); RetainUnconfirmedQueueDraft(session); }
         UncertainSend = false; pending = null; OperationError = null; Notify();
     }
 
+    public void ReportAttachmentSelectionError(string message)
+    {
+        OperationError = message; Notify();
+    }
+
+    public async Task<int> AttachFilesAsync(IReadOnlyList<string> paths, CancellationToken cancellationToken = default)
+    {
+        if (!CanAttach) return 0;
+        var current = generation; var accepted = 0;
+        foreach (var path in paths.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            // Stop on the first unknown result. Retain accepted files and never
+            // replay a copy, or continue the selection into a different session.
+            if (current != generation || !CanAttach || !await AttachAsync(path, cancellationToken)) break;
+            if (current != generation) break;
+            accepted++;
+        }
+        return accepted;
+    }
     public async Task<bool> AttachAsync(string path, CancellationToken cancellationToken = default)
     {
         if (!CanAttach || string.IsNullOrWhiteSpace(path) || projectId is not { } project || sessionId is not { } session) return false;
+        var upload = new NativeAttachmentUpload(Guid.NewGuid(), path.Replace('\\', '/').Split('/').Last());
+        AttachmentUploads = [.. AttachmentUploads, upload];
         var current = generation; Busy = true; OperationError = null; Notify();
         try
         {
             var file = await client.AttachAsync(project, session, path, cancellationToken);
-            if (!file.Path.StartsWith("uploads/", StringComparison.Ordinal) || string.IsNullOrWhiteSpace(file.Name)) throw new InvalidDataException("Invalid attachment response");
+            if (!NativeAttachmentPresentation.ValidPath(file.Path) || string.IsNullOrWhiteSpace(file.Name)) throw new InvalidDataException("Invalid attachment response");
             if (current != generation) return false;
+            AttachmentUploads = AttachmentUploads.Where(item => item.Id != upload.Id).ToArray();
             Attachments = Attachments.Where(f => f.Path != file.Path).Append(file).ToArray(); stagedFiles[session] = Attachments;
             return true;
         }
-        catch (Exception ex) { if (current == generation) OperationError = "附件未能确认添加；不会自动重试。\n" + ex.Message; return false; }
+        catch (Exception ex)
+        {
+            if (current == generation)
+            {
+                AttachmentUploads = AttachmentUploads.Select(item => item.Id == upload.Id ? item with { Error = ex.Message } : item).ToArray();
+                OperationError = attachmentOperationError = "附件未能确认添加；不会自动重试。\n" + ex.Message;
+            }
+            return false;
+        }
         finally { if (current == generation) { Busy = false; Notify(); } }
     }
     public void RemoveAttachment(string path)
     {
         if (!CanAttach) return;
         Attachments = Attachments.Where(f => f.Path != path).ToArray();
+        attachmentReads.Remove(path);
         if (sessionId != null) stagedFiles[sessionId] = Attachments;
         Notify();
     }
     public bool AddReference(NativeReferenceOption option)
     {
-        if (!CanAttach || Snapshot?.ComposerReferences != true || !option.Reference.Valid || References.Length >= 64) return false;
+        if (!(CanAttach && Snapshot?.ComposerReferences == true || CanPrepareProjectDraft && option.Reference.Kind is "file-path" or "session")
+            || !option.Reference.Valid || References.Length >= 64) return false;
         if (!References.Any(existing => existing.Reference.Key == option.Reference.Key)) References = [.. References, option];
         if (sessionId != null) stagedReferences[sessionId] = References;
+        else if (CurrentProjectDraft is { } draft) draft.References = References;
         Notify(); return true;
     }
+    public bool CanRemoveReference => CanAttach || CanPrepareProjectDraft;
     public void RemoveReference(string key)
     {
-        if (!CanAttach) return;
+        if (!CanRemoveReference) return;
         References = References.Where(option => option.Reference.Key != key).ToArray();
         if (sessionId != null) stagedReferences[sessionId] = References;
+        else if (CurrentProjectDraft is { } draft) draft.References = References;
         Notify();
     }
     public async Task QueueAsync(CancellationToken cancellationToken = default)
     {
         if (!CanQueue || projectId is not { } project || sessionId is not { } session) return;
         var current = generation; var text = Draft; var files = Attachments.Select(f => f.Path).ToArray();
-        var references = References;
+        var references = SendingReferences;
         var quotes = Quotes;
         var requestId = Guid.NewGuid();
         var queuedDraft = new QueueDraft(NativeQueueSnapshot.RequestQueueId(requestId), Snapshot!.Epoch, text, Attachments, references, quotes);
@@ -306,7 +356,7 @@ public sealed partial class WorkspaceConversationModel(INativeConversationClient
         try
         {
             await client.EnqueueContextAsync(project, session, requestId, NativeComposerReferencesModel.Message(NativeComposerQuote.Compose(text, quotes), references), files,
-                references.Select(option => option.Reference).ToArray(), cancellationToken);
+                references.Where(option => option.Reference.Kind != "file-path").Select(option => option.Reference).ToArray(), cancellationToken);
             if (pendingQueueEnqueues.TryGetValue(session, out var waitingQueue) && waitingQueue.Id == queuedDraft.Id)
             {
                 pendingQueueEnqueues.Remove(session); submittedQueueDrafts[(session, queuedDraft.Id)] = queuedDraft;
@@ -321,6 +371,7 @@ public sealed partial class WorkspaceConversationModel(INativeConversationClient
             if (pendingQueueEnqueues.TryGetValue(session, out var waitingQueue) && waitingQueue.Id == queuedDraft.Id)
             {
                 uncertainQueues.Add(session);
+                queueErrorDetails[session] = ex.Message;
                 if (current == generation) OperationError = "后续未能确认排队；请核对会话，不会自动重试。\n" + ex.Message;
             }
         }
@@ -332,12 +383,22 @@ public sealed partial class WorkspaceConversationModel(INativeConversationClient
         if (sessionId == null || Busy || UncertainSend || Snapshot is not { ReadOnly: false }) return false;
         Draft = append && !string.IsNullOrWhiteSpace(Draft) ? Draft + "\n\n" + text : text; Notify(); return true;
     }
+    // Explicit Insert only: never creates a conversation or sends a message.
+    public bool InsertMemoBody(string body)
+    {
+        if (!(CanCompose || CanPrepareProjectDraft) || UncertainSend) return false;
+        Draft = WorkspaceMemosModel.ComposeInsert(Draft, body);
+        if (CurrentProjectDraft is { } draft) draft.Text = Draft;
+        Notify(); return true;
+    }
+    public bool CanQuote(ConversationSnapshot source, int itemIndex, string text) => CanAttach
+        && source.ProjectId == projectId && source.SessionId == sessionId && Quotes.Length < 16
+        && text.Length <= 32768 && Quotes.Sum(quote => quote.Text.Length) + text.Length <= 65536
+        && NativeComposerQuote.From(source, itemIndex, text) != null;
+
     public bool AddQuote(ConversationSnapshot source, int itemIndex, string text)
     {
-        if (!CanAttach
-            || source.ProjectId != projectId || source.SessionId != sessionId || Quotes.Length >= 16
-            || text.Length > 32768 || Quotes.Sum(quote => quote.Text.Length) + text.Length > 65536
-            || NativeComposerQuote.From(source, itemIndex, text) is not { } quote) return false;
+        if (!CanQuote(source, itemIndex, text) || NativeComposerQuote.From(source, itemIndex, text) is not { } quote) return false;
         if (!Quotes.Contains(quote)) Quotes = [.. Quotes, quote];
         stagedQuotes[sessionId!] = Quotes;
         // Quoting an older page returns to the live composer without changing the draft.
@@ -345,10 +406,20 @@ public sealed partial class WorkspaceConversationModel(INativeConversationClient
     }
     public void RemoveQuote(NativeComposerQuote quote)
     {
-        if (!CanAttach) return;
+        if (!CanAttach && !CanPrepareProjectDraft) return;
         Quotes = Quotes.Where(value => value != quote).ToArray();
         if (sessionId != null) stagedQuotes[sessionId] = Quotes;
         Notify();
+    }
+    public bool AddRuntimeQuote(string text)
+    {
+        if (!(CanAttach || CanPrepareProjectDraft) || string.IsNullOrWhiteSpace(text) || text.Length > 32768
+            || Quotes.Length >= 16 || Quotes.Sum(q => q.Text.Length) + text.Length > 65536) return false;
+        var value = new NativeComposerQuote(sessionId ?? "", -1, "runtime", text.Trim());
+        if (!Quotes.Contains(value)) Quotes = [.. Quotes, value];
+        if (sessionId != null) stagedQuotes[sessionId] = Quotes;
+        if (CurrentProjectDraft is { } draft) draft.Quotes = Quotes;
+        Notify(); return true;
     }
     public bool AddDocumentQuote(string project, string session, string path, NativeDocumentSelection selection)
     {
@@ -376,7 +447,29 @@ public sealed partial class WorkspaceConversationModel(INativeConversationClient
         catch (Exception ex) { if (current == generation) { OperationError = ex.Message; Notify(); } }
     }
 
-    public Task StopAsync(CancellationToken cancellationToken = default) => ActAsync((project, session, token) => client.StopAsync(project, session, token), cancellationToken);
+    public async Task StopAsync(CancellationToken cancellationToken = default)
+    {
+        if (!CanStop || cancellationToken.IsCancellationRequested || projectId is not { } project || sessionId is not { } session) return;
+        // Interrupt only the selected turn. The input stays editable, including
+        // while a runtime is taking time to acknowledge its cancellation.
+        var owner = generation; var key = (project, session, Snapshot!.Epoch, Snapshot.RequestId);
+        pendingStops.Add(key); OperationError = null; Notify();
+        try
+        {
+            await client.StopAsync(project, session, cancellationToken);
+            if (generation == owner) await RefreshAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            if (generation == owner) ConnectionError = OperationError = "操作等待已取消，结果尚未确认；不会自动重试。请重新读取会话核对。";
+        }
+        catch (Exception ex) { if (generation == owner) OperationError = ex.Message; }
+        finally
+        {
+            pendingStops.Remove(key);
+            if (projectId == project && sessionId == session) Notify();
+        }
+    }
     public Task RespondAcpPermissionAsync(NativeAcpPermission permission, string? optionId, CancellationToken token = default)
     {
         if (ShowingHistory || ConnectionError != null || Snapshot is not { ReadOnly: false }
@@ -403,29 +496,90 @@ public sealed partial class WorkspaceConversationModel(INativeConversationClient
             : Task.CompletedTask;
     public Task ApproveAsync(ConversationApproval approval, bool allowed, CancellationToken cancellationToken = default) =>
         ActAsync((project, session, token) => client.ApproveAsync(project, session, approval.ApprovalId, allowed, token), cancellationToken);
-    public Task SelectModelAsync(string modelId, CancellationToken cancellationToken = default) =>
-        ActAsync((project, session, token) => client.SetModelAsync(project, session, modelId, token), cancellationToken);
-
-    public bool CanChangePlanMode => CanAttach && !Effort.Busy && !Options.Busy && Snapshot is { Running: false, PlanMode: not null };
-    public bool CanChangeFastMode => CanAttach && !Effort.Busy && !Options.Busy && Snapshot is { Running: false, FastMode: not null };
-    public Task SetFastModeAsync(bool enabled, CancellationToken cancellationToken = default)
+    public async Task<bool> SelectModelAsync(string modelId, CancellationToken cancellationToken = default)
     {
-        if (!CanChangeFastMode || Snapshot is not { } snapshot || snapshot.FastMode?.Enabled == enabled) return Task.CompletedTask;
-        return ActAsync((project, session, token) => client.SetFastModeAsync(project, session, snapshot.ModelId, enabled, token), cancellationToken);
+        if (!CanAttach || Snapshot is not { Running: false, AcpAgentId: null } || AcpModelLocked)
+            return false;
+        var owner = generation; var accepted = false; var compact = false;
+        await ActAsync(async (project, session, token) =>
+        {
+            if (settings != null && VisibleItems.Length > 0)
+                compact = (await settings.InvokeAsync("get_settings", new(), project, token))?["semantic_compact_on_model_switch"]?.GetValue<bool>() == true;
+            if (owner != generation || token.IsCancellationRequested) return;
+            await client.SetModelAsync(project, session, modelId, token);
+            accepted = true;
+        }, cancellationToken);
+        // A rejected/uncertain write or late reply must not suppress future confirmation.
+        if (accepted && owner == generation && projectId != null)
+        {
+            provisionalAgents.Remove((projectId, sessionId));
+            await SyncEffortAsync(cancellationToken);
+            if (compact && owner == generation && !cancellationToken.IsCancellationRequested)
+                await StartCompactionAsync(token: cancellationToken);
+            if (owner == generation) Notify();
+            return owner == generation;
+        }
+        return false;
+    }
+
+    public bool CanChangePlanMode => ComposerAgentId == null && CanAttach && !Effort.Busy && !Options.Busy && Snapshot is { Running: false, PlanMode: not null };
+    private const string DraftFastFailurePrefix = "Draft Fast mode was not confirmed: ";
+    public string? DraftFastFailureDetail => OperationError?.StartsWith(DraftFastFailurePrefix, StringComparison.Ordinal) == true
+        ? OperationError[DraftFastFailurePrefix.Length..] : null;
+    private bool? DraftFastDefault => ComposerProfile is { } profile && NativeModelPresentation.SupportsFast(profile)
+        ? profile["service_tier"]?.GetValue<string>().Trim() is "priority" or "fast" : null;
+    public ConversationFastMode? ComposerFastMode => ComposerAgentId != null ? null
+        : CurrentProjectDraft is { } draft && DraftFastDefault is bool inherited
+            ? new(draft.FastOverride ?? inherited, draft.FastOverride == null) : Snapshot?.FastMode;
+    private int? fastWriteGeneration;
+    public bool SavingFastMode => fastWriteGeneration == generation;
+    public bool CanChangeFastMode => ComposerFastMode != null && !SavingFastMode
+        && (CanPrepareProjectDraft || CanAttach && !Effort.Busy && !Options.Busy && Snapshot is { Running: false });
+    public async Task SetFastModeAsync(bool enabled, CancellationToken cancellationToken = default)
+    {
+        if (cancellationToken.IsCancellationRequested || !CanChangeFastMode || ComposerFastMode?.Enabled == enabled) return;
+        if (CurrentProjectDraft is { } draft && DraftFastDefault is bool inherited)
+        {
+            draft.FastOverride = enabled == inherited ? null : enabled;
+            Notify(); return;
+        }
+        await WriteSessionFastAsync(enabled, cancellationToken);
+    }
+    private async Task<bool> WriteSessionFastAsync(bool enabled, CancellationToken token)
+    {
+        if (token.IsCancellationRequested || !CanChangeFastMode || Snapshot is not { } snapshot) return false;
+        var owner = generation; var acknowledged = false;
+        fastWriteGeneration = owner;
+        try
+        {
+            await ActAsync(async (project, session, ct) =>
+            {
+                await client.SetFastModeAsync(project, session, snapshot.ModelId, enabled, ct);
+                acknowledged = true;
+            }, token);
+            return acknowledged && owner == generation && !token.IsCancellationRequested && ConnectionError == null
+                && Snapshot?.ModelId == snapshot.ModelId && Snapshot.FastMode?.Enabled == enabled;
+        }
+        finally { if (fastWriteGeneration == owner) { fastWriteGeneration = null; Notify(); } }
     }
     public Task SetPlanModeAsync(bool enabled, CancellationToken cancellationToken = default) =>
         CanChangePlanMode && Snapshot?.PlanMode != enabled
             ? ActAsync((project, session, token) => client.SetPlanModeAsync(project, session, enabled, token), cancellationToken)
             : Task.CompletedTask;
 
-    private Task SyncEffortAsync(CancellationToken token) => projectId != null && sessionId != null
-        ? Effort.BindAsync(projectId, sessionId, profiles.FirstOrDefault(row => row["id"]?.GetValue<string>() == Snapshot?.ModelId), token)
+    private JsonObject? ComposerProfile => ComposerAgentId != null
+        ? null : NativeModelPresentation.SessionProfile(profiles, Snapshot?.ModelId);
+    public string? ComposerModelId => ComposerAgentId is { } agent ? "acp:" + agent : ComposerProfile?["id"]?.GetValue<string>();
+    public bool CanSelectEffort => Effort.Available && !Effort.Busy && !Options.Busy
+        && (CanPrepareProjectDraft || CanAttach && Snapshot is { Running: false });
+    private Task SyncEffortAsync(CancellationToken token) => projectId != null
+        ? Effort.BindAsync(projectId, sessionId, ComposerProfile, token)
         : Task.CompletedTask;
 
     public async Task<bool> SelectEffortAsync(string effort, CancellationToken token = default)
     {
-        if (!CanAttach || Snapshot is not { Running: false }) return false;
-        var current = generation; var id = Snapshot.ModelId;
+        if (!CanSelectEffort) return false;
+        var current = generation; var id = ComposerModelId;
         var saved = await Effort.SaveAsync(effort, token);
         if (saved && current == generation && profiles.FirstOrDefault(row => row["id"]?.GetValue<string>() == id) is { } profile)
             profile["reasoning_effort"] = Effort.Value;
@@ -446,6 +600,7 @@ public sealed partial class WorkspaceConversationModel(INativeConversationClient
             if (current != generation || request != historyGeneration) return;
             History = page;
             ShowingHistory = true;
+            await ModelContext.SelectAsync(false, cancellationToken);
             ScrollTarget = 0; ScrollRevision++;
             ObserveRunReviews(page, cancellationToken);
         }
@@ -455,6 +610,23 @@ public sealed partial class WorkspaceConversationModel(INativeConversationClient
     }
 
     public void Latest() { historyGeneration++; RevealedExcerpt = null; ShowingHistory = false; History = null; ScrollTarget = null; ScrollRevision++; Notify(); }
+
+    public async Task<bool> RevealChatQuestionAsync(ProjectChatLocation target)
+    {
+        if (Snapshot == null) return false;
+        if (WorkspaceOutlineModel.QuestionItemIndex(target.UserIndex, Snapshot.UserOffset, Snapshot.Items) != null)
+        {
+            var owner = generation;
+            var jump = ++historyGeneration;
+            await ModelContext.SelectAsync(false);
+            if (owner != generation || jump != historyGeneration || Snapshot == null
+                || WorkspaceOutlineModel.QuestionItemIndex(target.UserIndex, Snapshot.UserOffset, Snapshot.Items) is not { } index) return false;
+            History = null; ShowingHistory = false; RevealedExcerpt = null;
+            ScrollTarget = index; ScrollRevision++; Notify(); return true;
+        }
+        if (Snapshot.Running) return false;
+        return await OpenQuestionAsync(new(target.UserIndex, "", target.BeforeSeq, null, null));
+    }
 
     public async Task<bool> OpenQuestionAsync(ConversationOutlineEntry entry, CancellationToken cancellationToken = default)
     {
@@ -470,6 +642,7 @@ public sealed partial class WorkspaceConversationModel(INativeConversationClient
             var index = WorkspaceOutlineModel.QuestionItemIndex(entry.UserIndex, page.UserOffset, page.Items)
                 ?? throw new InvalidOperationException("问题位置已变化，请刷新大纲后重试。");
             History = page; ShowingHistory = true; ScrollTarget = index; ScrollRevision++;
+            await ModelContext.SelectAsync(false, cancellationToken);
             opened = true; OperationError = null;
             ObserveRunReviews(page, cancellationToken);
         }

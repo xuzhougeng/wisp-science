@@ -14,7 +14,8 @@ internal static class NativeHistoricalRunTests
         var history = model.History!; var target = model.ScrollTarget; var scroll = model.ScrollRevision;
         host.Current = host.Current with { StdoutTail = "first\nsecond", ProgressJson = """{"phase":"copy","completed_bytes":75,"total_bytes":100}""" };
         await model.RefreshAsync();
-        Check(model.History!.RunCards!.Single().StdoutTail == "first\nsecond" && NativeRunPresentation.Progress(model.History.RunCards.Single())?.Percent == 75,
+        var historicalRun = model.History!.RunCards!.Single();
+        Check(historicalRun.StdoutTail == "first\nsecond" && NativeRunPresentation.Progress(historicalRun, new(new Dictionary<string, Dictionary<string, string>>()))?.Percent == 75,
             "historical card reads current output and byte progress even when absent from latest messages");
         Check(host.DetailCalls == 1 && host.HistoryReads == 1 && model.History.UserOffset == history.UserOffset
             && model.History.NextBeforeSeq == history.NextBeforeSeq && model.ScrollTarget == target && model.ScrollRevision == scroll

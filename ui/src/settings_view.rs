@@ -2606,17 +2606,22 @@ pub(super) fn SettingsView(
     // Add skill installs globally unless the user picks this project.
     let skill_install_scope = create_rw_signal(String::from("global"));
     let skill_install_locations = create_rw_signal(None::<SkillInstallLocations>);
+    let location_request = create_rw_signal(0_u64);
+    let location_error = create_rw_signal(false);
     create_effect(move |_| {
+        let generation = location_request.get_untracked().wrapping_add(1);
+        location_request.set(generation);
+        skill_install_locations.set(None);
+        location_error.set(false);
         if !show_settings.get() || settings_section.get() != "skills" {
             return;
         }
         spawn_local(async move {
-            if let Ok(value) = invoke_checked("skill_install_locations", JsValue::UNDEFINED).await {
-                if let Ok(locations) =
-                    serde_wasm_bindgen::from_value::<SkillInstallLocations>(value)
-                {
-                    skill_install_locations.set(Some(locations));
-                }
+            let locations = invoke_checked("skill_install_locations", JsValue::UNDEFINED).await.ok()
+                .and_then(|value| serde_wasm_bindgen::from_value::<SkillInstallLocations>(value).ok());
+            if location_request.get_untracked() == generation {
+                location_error.set(locations.is_none());
+                skill_install_locations.set(locations);
             }
         });
     });
@@ -7488,7 +7493,8 @@ pub(super) fn SettingsView(
                                                 <p class="skill-install-scope-warning" role="note">{move || t(locale.get(), "skills.install_scope.project_warning")}</p>
                                             })}
                                         </fieldset>
-                                        <button type="button" on:click=move |ev| {
+                                        {move || location_error.get().then(|| view! { <p role="alert" class="skill-install-scope-warning">{t(locale.get(), "skills.locations_error")}</p> })}
+                                        <button type="button" disabled=move || skill_install_locations.get().is_none() on:click=move |ev| {
                                             close_details_ancestor(&ev);
                                             let scope = skill_install_scope.get_untracked();
                                             spawn_local(async move {
@@ -7498,7 +7504,7 @@ pub(super) fn SettingsView(
                                                 }
                                             });
                                         }>{move || t(locale.get(), "skills.add_file")}</button>
-                                        <button type="button" on:click=move |ev| {
+                                        <button type="button" disabled=move || skill_install_locations.get().is_none() on:click=move |ev| {
                                             close_details_ancestor(&ev);
                                             let scope = skill_install_scope.get_untracked();
                                             spawn_local(async move {

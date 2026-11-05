@@ -180,6 +180,15 @@ window.__WISP_MCP_APP_BACKEND__ = "legacy-iframe";
         // call sites.
         const args = rawArgs instanceof Map ? Object.fromEntries(rawArgs) : rawArgs;
         switch (cmd) {
+          case "get_privacy_mode": {
+            const saved = localStorage.getItem("wisp-preview-host-privacy");
+            if (saved) return JSON.parse(saved);
+            const seed = args?.legacy instanceof Map ? Object.fromEntries(args.legacy) : args?.legacy;
+            return seed ?? { active: false, project_ids: [] };
+          }
+          case "set_privacy_mode":
+            localStorage.setItem("wisp-preview-host-privacy", JSON.stringify({ active: args.active, project_ids: args.projectIds }));
+            return null;
           case "list_sessions_page": {
             const cursor = args?.cursor;
             const start = cursor ? sessions.findIndex((item) => item.id === cursor.id) + 1 : 0;
@@ -503,6 +512,13 @@ window.__WISP_MCP_APP_BACKEND__ = "legacy-iframe";
             return mockModels;
           case "get_project_info":
             return project;
+          case "skill_install_locations":
+            return {global_dir: "C:\\mock\\user\\.wisp\\skills", project_dir: project.root + "\\.wisp\\skills"};
+          case "pick_skill_source":
+            return null;
+          case "install_skill":
+          case "install_scoped_skill":
+            throw new Error("The preview does not install local skill packages.");
           case "get_onboarding_state":
             return { show: false, has_api_key: true };
           case "get_bootstrap_status":

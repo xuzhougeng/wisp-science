@@ -3,6 +3,7 @@
   "id": "projects-1",
   "type": "projects",
   "activity_source": "persisted_only",
+  "privacy": { "active": false, "project_ids": [] },
   "projects": [
     {
       "id": "research-1",

@@ -23,6 +23,7 @@ pub(super) struct ProjectLandingState {
     pub(super) sync_actions_available: RwSignal<bool>,
     pub(super) command_palette_open: RwSignal<bool>,
     pub(super) project_transfer: RwSignal<Option<ProjectTransferProgress>>,
+    pub(super) privacy_ready: RwSignal<bool>,
     pub(super) privacy_mode_active: RwSignal<bool>,
     pub(super) privacy_hidden_project_ids: RwSignal<HashSet<String>>,
     /// One-shot requests from the titlebar File menu; ProjectsScreen owns the
@@ -60,6 +61,7 @@ pub(super) fn ProjectLanding(
         project_transfer,
         privacy_mode_active,
         privacy_hidden_project_ids,
+        privacy_ready,
         menu_new_project,
         menu_import_project,
     } = state;
@@ -105,6 +107,7 @@ pub(super) fn ProjectLanding(
                     on_search=Callback::new(move |_| command_palette_open.set(true))
                     on_export_project=open_project_export
                     project_transfer=project_transfer
+                    privacy_ready=privacy_ready
                     privacy_mode_active=privacy_mode_active
                     privacy_hidden_project_ids=privacy_hidden_project_ids
                     menu_new_project=menu_new_project

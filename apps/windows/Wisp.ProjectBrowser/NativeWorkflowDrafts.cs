@@ -26,7 +26,7 @@ public static class NativeWorkflowDrafts
     public static JsonObject Specialist() => new()
     {
         ["id"] = Guid.NewGuid().ToString(), ["name"] = "", ["description"] = "",
-        ["builtin"] = false, ["instructions"] = "", ["model_id"] = "",
+        ["builtin"] = false, ["instructions"] = "", ["model_id"] = "", ["icon"] = "review", ["color"] = "clay",
         ["skills"] = null, ["connectors"] = null
     };
     public static JsonObject Copy(JsonObject source)

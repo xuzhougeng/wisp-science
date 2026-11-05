@@ -11,6 +11,8 @@ public sealed partial class WorkspaceConversationModel
     private readonly Dictionary<(string Session, string Id), QueueDraft> submittedQueueDrafts = [];
     private readonly Dictionary<(string Session, string Id), string> queueRecoveryReasons = [];
     private readonly HashSet<string> uncertainQueueActions = [];
+    private readonly Dictionary<string, string> queueErrorDetails = [];
+    public string? QueueErrorDetail => QueueUncertain && sessionId is { } session ? queueErrorDetails.GetValueOrDefault(session) : null;
     private readonly HashSet<(string Session, string Id)> startedQueueDrafts = [];
     private bool QueueEnqueuePending => sessionId != null && pendingQueueEnqueues.ContainsKey(sessionId);
     public NativeQueueItem[] QueuedTurns => Snapshot?.Queue?.Items ?? [];
@@ -60,13 +62,14 @@ public sealed partial class WorkspaceConversationModel
         }
         foreach (var entry in submittedQueueDrafts.Where(row => row.Key.Session == session).ToArray())
         {
+            if (queueRecoveryReasons.GetValueOrDefault(entry.Key) == "returned") continue;
             var outcome = queue.Outcomes.LastOrDefault(row => row.Id == entry.Key.Id);
-            if (outcome?.State == "failed") queueRecoveryReasons[entry.Key] = "排队执行失败，请检查会话后恢复草稿。";
+            if (outcome?.State == "failed") queueRecoveryReasons[entry.Key] = "failed";
             else if (outcome?.State is "completed" or "cancelled" or "superseded")
             { submittedQueueDrafts.Remove(entry.Key); queueRecoveryReasons.Remove(entry.Key); startedQueueDrafts.Remove(entry.Key); }
             else if (outcome?.State == "started") startedQueueDrafts.Add(entry.Key);
             else if (entry.Value.Epoch != snapshot.Epoch && !startedQueueDrafts.Contains(entry.Key) && !queue.Items.Any(row => row.Id == entry.Key.Id))
-                queueRecoveryReasons[entry.Key] = "宿主已重启，排队结果未确认。请核对会话后恢复草稿。";
+                queueRecoveryReasons[entry.Key] = "restarted";
             else if (entry.Value.Epoch != snapshot.Epoch && startedQueueDrafts.Remove(entry.Key)) submittedQueueDrafts.Remove(entry.Key);
         }
         QueuedFollowUp = queue.Items.FirstOrDefault()?.Message;
@@ -88,14 +91,33 @@ public sealed partial class WorkspaceConversationModel
             _ => false
         };
     }
-    public async Task<bool> QueueActionAsync(NativeQueueTarget target, JsonObject action, CancellationToken token = default)
+    public Task<bool> TakeQueuedDraftAsync(NativeQueueTarget target, CancellationToken token = default) =>
+        QueueActionAsync(target, new() { ["kind"] = "cancel" }, token, takeDraft: true);
+
+    public void ConsumeReturnedQueueDraft(NativeQueueTarget target)
+    {
+        var key = (target.SessionId, target.Item.Id);
+        if (target.ProjectId != projectId || target.SessionId != sessionId || queueRecoveryReasons.GetValueOrDefault(key) != "returned") return;
+        queueRecoveryReasons.Remove(key); submittedQueueDrafts.Remove(key); Notify();
+    }
+
+    public async Task<bool> QueueActionAsync(NativeQueueTarget target, JsonObject action, CancellationToken token = default, bool takeDraft = false)
     {
         if (!CanQueueAction(target, action["kind"]?.GetValue<string>() ?? "")) return false;
+        if (takeDraft && action["kind"]?.GetValue<string>() != "cancel") return false;
+        var returned = takeDraft ? new QueueDraft(target.Item.Id, Snapshot!.Epoch, target.Item.EditText,
+            target.Item.Attachments.Select(path => new ComposerAttachment(path, path.Replace('\\', '/').Split('/').Last())).ToArray(),
+            target.Item.References.Select(reference => new NativeReferenceOption(reference, reference.Name ?? reference.Id ?? reference.ContextId ?? reference.Kind, "")).ToArray(), []) : null;
         var current = generation; Busy = true; OperationError = null; Notify();
         var success = false;
         try
         {
             await new NativeConversationQueueClient(settings!).ActAsync(target, action, token);
+            if (returned != null)
+            {
+                submittedQueueDrafts[(target.SessionId, target.Item.Id)] = returned;
+                queueRecoveryReasons[(target.SessionId, target.Item.Id)] = "returned";
+            }
             if (action["kind"]?.GetValue<string>() == "edit" && submittedQueueDrafts.TryGetValue((target.SessionId, target.Item.Id), out var original))
                 submittedQueueDrafts[(target.SessionId, target.Item.Id)] = original with { Text = HistoryDraft(action["message"]!.GetValue<string>()), Quotes = [] };
             success = true;
@@ -103,6 +125,7 @@ public sealed partial class WorkspaceConversationModel
         catch (Exception ex)
         {
             uncertainQueueActions.Add(target.SessionId);
+            queueErrorDetails[target.SessionId] = ex.Message;
             if (current == generation) OperationError = "队列操作结果未确认，请重新读取后核对；不会自动重试。" + ex.Message;
         }
         finally { if (current == generation) { Busy = false; Notify(); } }

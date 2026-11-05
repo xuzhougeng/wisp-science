@@ -4,7 +4,7 @@ namespace Wisp.ProjectBrowser;
 
 /// <summary>One source/destination per batch; read generations reject stale data
 /// and an ambiguous write stops the batch without replaying the current item.</summary>
-public sealed class WorkspaceExternalImportModel(INativeExternalImportClient client, string project) : IDisposable
+public sealed class WorkspaceExternalImportModel(INativeExternalImportClient client, string project, NativeLocalization? locale = null) : IDisposable
 {
     public const int PageSize = 25;
     public event Action? Changed;
@@ -19,7 +19,13 @@ public sealed class WorkspaceExternalImportModel(INativeExternalImportClient cli
     public string? SelectedPath { get; private set; }
     public string Query { get; private set; } = "";
     public int Page { get; private set; }
-    public ExternalImportItem[] Filtered => Items.Where(i => (i.Title + " " + i.Cwd + " " + i.SessionId + " " + i.Path).Contains(Query.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
+    public ExternalImportItem[] Filtered => Items.Where(i => new[] { i.Title, i.Cwd, i.SessionId, i.Path }.Any(s => s.Contains(Query.Trim(), StringComparison.OrdinalIgnoreCase))).ToArray();
+    public static string ShortPath(string path)
+    {
+        var parts = path.Split(new[] { '/', '\\' }, StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length == 0 ? path : string.Join("/", parts.TakeLast(2));
+    }
+    private string L(string zh, string en) => locale?.Choose(zh, en) ?? zh;
     public int PageCount => Math.Max(1, (Filtered.Length + PageSize - 1) / PageSize);
     public ExternalImportItem[] PageItems => Filtered.Skip(Page * PageSize).Take(PageSize).ToArray();
     public bool Loading { get; private set; }
@@ -50,7 +56,7 @@ public sealed class WorkspaceExternalImportModel(INativeExternalImportClient cli
         {
             var response = await client.SourcesAsync(destination, lifetime.Token);
             if (Closed || current != selection) return;
-            if (response.ProjectId != destination) throw new InvalidDataException("来源列表与当前目标项目不符。");
+            if (response.ProjectId != destination) throw new InvalidDataException(L("来源列表与当前目标项目不符。", "The source list belongs to another destination project."));
             Sources = response.Sources; SourcesError = null;
         }
         catch (OperationCanceledException) { }
@@ -89,7 +95,7 @@ public sealed class WorkspaceExternalImportModel(INativeExternalImportClient cli
         {
             var response = await client.ListAsync(destination, provider, context, refresh, read.Token);
             if (Closed || current != listGeneration) return;
-            if (response.ProjectId != destination || response.Provider != provider || response.ContextId != context) throw new InvalidDataException("会话列表与当前来源或目标不符。");
+            if (response.ProjectId != destination || response.Provider != provider || response.ContextId != context) throw new InvalidDataException(L("会话列表与当前来源或目标不符。", "The conversation list belongs to another source or destination."));
             Items = response.Items;
         }
         catch (OperationCanceledException) { }
@@ -114,12 +120,17 @@ public sealed class WorkspaceExternalImportModel(INativeExternalImportClient cli
     private void ValidatePreview(ExternalImportPreview reviewed, ExternalImportItem item)
     {
         if (reviewed.ProjectId != Project || reviewed.Provider != Provider || reviewed.ContextId != Context || reviewed.Path != item.Path || reviewed.SourceSessionId != item.SessionId)
-            throw new InvalidDataException("预览的会话或来源已改变，请重新扫描。");
+            throw new InvalidDataException(L("预览的会话或来源已改变，请重新扫描。", "The conversation or source changed. Refresh the list."));
     }
     public Task ImportPreviewAsync() => CanImport && Preview is { } reviewed
         ? ImportBatchAsync(Items.Where(i => i.Path == reviewed.Path).ToArray(), reviewed) : Task.CompletedTask;
     public Task ImportFilteredAsync() => CanImportFiltered
         ? ImportBatchAsync(Filtered.Where(i => i.State != "imported" && !Results.ContainsKey(i.Path)).ToArray(), null) : Task.CompletedTask;
+    // Reuse the same identity-checked preview and write as Import all, scoped
+    // to the one visible row. A callback from a previous list cannot import.
+    public Task ImportItemAsync(ExternalImportItem item) => !Closed && !Loading && !Importing && !Previewing && !Uncertain
+        && item.State != "imported" && !Results.ContainsKey(item.Path) && PageItems.Any(row => ReferenceEquals(row, item))
+        ? ImportBatchAsync([item], Preview?.Path == item.Path ? Preview : null) : Task.CompletedTask;
     public void StopAfterCurrent() { if (Importing) { StopRequested = true; Notify(); } }
     private async Task ImportBatchAsync(ExternalImportItem[] items, ExternalImportPreview? single)
     {
@@ -142,7 +153,7 @@ public sealed class WorkspaceExternalImportModel(INativeExternalImportClient cli
                     if (result.ProjectId != reviewed.ProjectId || result.Provider != reviewed.Provider || result.ContextId != reviewed.ContextId
                         || result.Path != reviewed.Path || result.SourceSessionId != reviewed.SourceSessionId || string.IsNullOrWhiteSpace(result.FrameId)
                         || result.MessageCount != reviewed.MessageCount || (reviewed.ExistingSessionId != null && reviewed.ExistingSessionId != result.FrameId)
-                        || result.Status is not ("imported" or "updated" or "skipped")) throw new InvalidDataException("导入结果与确认的来源或目标不符。");
+                        || result.Status is not ("imported" or "updated" or "skipped")) throw new InvalidDataException(L("导入结果与确认的来源或目标不符。", "The import result does not match the confirmed source or destination."));
                     Results[item.Path] = result; ItemErrors.Remove(item.Path);
                     Items = Items.Select(i => i.Path == item.Path ? i with { State = "imported", MessageCount = result.MessageCount } : i).ToArray();
                     if (result.Status == "imported") Imported++; else if (result.Status == "updated") Updated++; else Skipped++;
@@ -152,7 +163,7 @@ public sealed class WorkspaceExternalImportModel(INativeExternalImportClient cli
                 {
                     if (Closed) break;
                     Failed++; ItemErrors[item.Path] = ex.Message;
-                    if (writing) { Uncertain = true; Error = "当前导入结果未能确认，已停止后续导入且不会重试。请先在目标项目核对。\n" + ex.Message; }
+                    if (writing) { Uncertain = true; Error = L("导入结果未能确认。请在目标项目核对。", "Could not confirm the import. Check the destination project before trying again.") + "\n" + ex.Message; }
                 }
                 Done++; Notify();
                 if (Uncertain) break;

@@ -16,6 +16,14 @@ internal static class NativeParityTests
     }
     private static async Task PdfPreview()
     {
+        Check(NativePreviewImageSize.Height(800, 700, 300, 500) == 300
+            && NativePreviewImageSize.Height(350, 700, 300, 500) == 150
+            && NativePreviewImageSize.Height(700, 300, 900, 400) == 400,
+            "SVG plots retain intrinsic size, shrink with width and respect the dialog height cap");
+        Check(NativePreviewImageSize.Height(0, 700, 300, 500) == 0
+            && NativePreviewImageSize.Height(800, 0, 300, 500) == 0
+            && NativePreviewImageSize.Height(double.NaN, 700, 300, 500) == 0,
+            "unmeasured or invalid image dimensions cannot produce a non-finite layout");
         var transport = new Fake();
         transport.Handler = (_, _, _) => Task.FromResult<JsonNode?>(JsonNode.Parse("{\"path\":\"paper.pdf\",\"mime\":\"application/pdf\",\"base64\":\"JVBERg==\",\"truncated\":false}"));
         var panel = new NativePanelClient(transport);
@@ -94,6 +102,8 @@ internal static class NativeParityTests
         Check(transport.Calls.Last().Command == "native_project_import" && transport.Calls.Last().Args["archive_path"]!.GetValue<string>() == "C:/fixtures/project.zip", "import forwards selected archive without activating another project");
 
         var groups = new WorkspaceSessionGroups(transport, "project-a");
+        Check(!groups.CanSave, "empty new-group dialogs disable save");
+        groups.Draft = "  "; Check(!groups.CanSave, "whitespace-only group drafts cannot enable save");
         transport.Handler = (command, _, _) => Task.FromResult<JsonNode?>(command == "native_project_folders" ? JsonNode.Parse("[{\"id\":\"f1\",\"name\":\"Experiments\"}]") : JsonValue.Create(true));
         await groups.LoadAsync(); groups.Group = "folder";
         BrowserSession[] sessions = [new("s1", "project-a", "B", 2, "idle", "f1"), new("s2", "project-a", "A", 1, "idle", "unknown")];
@@ -101,15 +111,22 @@ internal static class NativeParityTests
         groups.Group = "none"; groups.Sort = "name";
         Check(groups.Sections(sessions).Single().Sessions[0].Id == "s2", "name sorting is stable and independent from grouping");
         groups.RenamingId = "f1"; groups.Draft = "Renamed";
+        Check(groups.CanSave, "valid rename draft enables save");
         await groups.SaveAsync();
+        Check(!groups.CanSave, "confirmed save clears the dialog readiness with its draft");
         Check(transport.Calls.Any(c => c.Command == "native_project_folder_rename" && c.Project == "project-a" && c.Args["folder_id"]!.GetValue<string>() == "f1"), "rename explicitly scopes both project and folder");
         groups.RenamingId = "f1"; groups.Draft = "keep rename";
         transport.Handler = (_, _, _) => throw new IOException("lost rename"); await groups.SaveAsync();
+        var renameCalls = transport.Calls.Count;
+        Check(groups.FolderSaveUnconfirmed && !groups.CanSave && !await groups.SaveAsync() && transport.Calls.Count == renameCalls,
+            "an unconfirmed rename cannot be replayed from the same edit");
         Check(groups.Draft == "keep rename" && groups.RenamingId == "f1", "lost rename keeps the draft and target");
         groups.Selecting = true; groups.Selected.UnionWith(["s1", "s2"]);
         transport.Handler = (_, args, _) => args["session_id"]!.GetValue<string>() == "s2" ? throw new IOException("lost move") : Task.FromResult<JsonNode?>(JsonValue.Create(true));
         await groups.MoveAsync("f1");
         Check(!groups.Selected.Contains("s1") && groups.Selected.Contains("s2") && groups.Selecting, "partial move removes confirmed successes and retains unresolved selection");
+        var moveCalls = transport.Calls.Count;
+        Check(groups.MoveUnconfirmed && !await groups.MoveAsync("f1") && transport.Calls.Count == moveCalls, "unknown move is not replayed by another click");
 
         var publication = new WorkspacePublicationModel(new NativePublicationClient(transport), "project-a") { Title = "Paper", RevisionLabel = "v1" };
         transport.Handler = (_, _, _) => Task.FromResult<JsonNode?>(JsonNode.Parse("{\"publications\":[],\"publication\":null,\"revision\":null,\"items\":[]}"));

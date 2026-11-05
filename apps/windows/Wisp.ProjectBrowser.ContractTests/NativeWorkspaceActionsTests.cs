@@ -42,7 +42,7 @@ internal static class NativeWorkspaceActionsTests
         var groups = new WorkspaceSessionGroups(new RecordingSettings(), "proj") { Group = "none", Sort = "newest" };
         var sections = groups.Sections([normal, pinned, unknown]);
         Require(sections[0].Title == "已置顶" && sections[0].Sessions.Single().Id == "p1", "pinned section leads");
-        Require(sections[1].Sessions.Select(s => s.Id).SequenceEqual(["u1", "n1"]), "unknown pin keeps its newest order");
+        Require(sections[1].Sessions.Select(s => s.Id).SequenceEqual(["n1", "u1"]), "newest keeps the host's activity order, including unknown pin state");
 
         var dated = new WorkspaceSessionGroups(new RecordingSettings(), "proj") { Group = "date" };
         sections = dated.Sections([pinned, normal]);
@@ -53,7 +53,7 @@ internal static class NativeWorkspaceActionsTests
         sections = foldered.Sections([pinned, normal]);
         Require(sections[0].Title == "已置顶", "pinned section leads in folder grouping");
 
-        var unpinned = new WorkspaceSessionGroups(new RecordingSettings(), "proj");
+        var unpinned = new WorkspaceSessionGroups(new RecordingSettings(), "proj") { Group = "none" };
         sections = unpinned.Sections([normal, unknown]);
         Require(sections.Length == 1 && sections[0].Title == "会话", "no pinned rows means no pinned section");
     }

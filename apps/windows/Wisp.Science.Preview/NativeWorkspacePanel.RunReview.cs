@@ -7,20 +7,35 @@ namespace Wisp.Science.Preview;
 
 internal sealed partial class NativeWorkspacePanel
 {
+    public bool HandleArtifactEscape() => artifactDialog?.HandleEscape() == true;
     public void CloseRunReview() { reviewNavigation++; runReview?.Close(); }
     public bool HandleEscape()
     {
+        if (contextReviewDialog?.IsOpen == true) { dismissContextReview?.Invoke(); return true; }
+        if (contextDialog != null)
+        {
+            if (runtimeLanguage?.IsDropDownOpen == true) runtimeLanguage.IsDropDownOpen = false;
+            else contextDialog.IsOpen = false;
+            return true;
+        }
+        if (artifactDialog != null) return artifactDialog.HandleEscape();
+        if (pickingFiles) return true;
+        if (tabStrip.HandleEscape()) return true;
         if (sideChatModelPicker?.IsDropDownOpen == true) { sideChatModelPicker.IsDropDownOpen = false; return true; }
         if (openMenus.LastOrDefault() is { } menu) { menu.Hide(); return true; }
         if (fileDialog != null) { fileDialog.Hide(); return true; }
-        if (model.Tabs.Selected == "artifacts" && transcriptTables.Selected != null)
-        { transcriptTables.Dismiss(); Render(); return true; }
+        if (model.Tabs.Selected == "artifacts" && artifactsPane.HandleEscape()) return true;
+        if (model.Tabs.Selected == "memos" && memosPane?.HandleEscape() == true) return true;
         if (documentPreview?.DismissSelection() == true) return true;
-        if (sourceSelectionEditor is { IsLoaded: true, SelectionLength: > 0 } sourceEditor) {
-            sourceEditor.Select(sourceEditor.SelectionStart, 0); return true;
-        }
+        if (sourceSelectionActions?.HandleEscape() == true) return true;
         if (model.Preview != null) { model.DismissPreview(); Render(); return true; }
-        if (model.Tabs.Selected != "hosts" || runReview?.Visible != true) return false;
+        if (model.Tabs.Selected == "files" && model.SelectingFiles) { model.ClearFileSelection(leaveMode: true); Render(); return true; }
+        if (model.Tabs.Selected != "runs") return false;
+        if (runReview?.Visible != true)
+        {
+            if (model.SelectedRunId == null) return false;
+            model.DismissRun(); Render(); return true;
+        }
         if (runReview.Confirmation != null) runReview.CancelConfirmation();
         else _ = ReturnFromRunReviewAsync();
         return true;

@@ -1,0 +1,129 @@
+{
+  "run": {
+    "id": "method-search-001",
+    "project_id": "default",
+    "frame_id": "s-complete",
+    "context_id": "local",
+    "title": "Develop computational method",
+    "kind": "method_search",
+    "status": "draft",
+    "created_at": 1783482800,
+    "env_snapshot_json": "{}",
+    "progress_json": "{\"phase\":\"awaiting_approval\",\"baseline_primary\":0.5372,\"best_primary\":0.5717,\"candidate_count\":21,\"successful_count\":17,\"failed_count\":4,\"cost_microunits\":1300000,\"current_strategy\":\"diagnostic:residual_slice\"}"
+  },
+  "state": {
+    "run_id": "method-search-001",
+    "spec_artifact_version_id": "spec-version-001",
+    "spec_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "control_state": "run",
+    "result_status": null
+  },
+  "spec": {
+    "objective": "Improve validation AUPRC without violating runtime limits.",
+    "target": {
+      "source_artifact_version_id": "source-version-001",
+      "source_path": "analysis/model.py",
+      "symbol": "fit_model"
+    },
+    "evaluator": {
+      "artifact_version_id": "evaluator-version-001",
+      "entry_path": "analysis/evaluate.py",
+      "repetitions": 3,
+      "timeout_seconds": 120
+    },
+    "metrics": {
+      "primary": "auprc",
+      "direction": "maximize",
+      "guardrails": [
+        {
+          "metric": "runtime_seconds",
+          "op": "lte",
+          "value": 120
+        }
+      ]
+    },
+    "protected_paths": [
+      "analysis/evaluate.py",
+      "data/validation.csv"
+    ],
+    "constraints": [
+      "Keep the target signature unchanged."
+    ],
+    "budget": {
+      "max_candidates": 20,
+      "max_wall_seconds": 14400,
+      "max_evaluator_seconds": 120,
+      "max_cost_microunits": 5000000
+    },
+    "final_verification": {
+      "path": "data/holdout.csv"
+    }
+  },
+  "audit": {
+    "baseline": {
+      "repetitions": 3,
+      "successful_repetitions": 3,
+      "failure_rate": 0,
+      "median_primary": 0.5372,
+      "spread": 0.001,
+      "noise_floor": 0.002
+    },
+    "sentinelReachable": true,
+    "protectedFiles": [
+      {
+        "path": "analysis/evaluate.py"
+      }
+    ],
+    "targetSourceSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "findings": [
+      "Baseline stable across three repetitions."
+    ]
+  },
+  "auditArtifactVersionId": "audit-version-001",
+  "candidates": [
+    {
+      "id": "candidate-0",
+      "run_id": "method-search-001",
+      "sequence": 0,
+      "strategy_key": "baseline",
+      "family": "baseline",
+      "status": "succeeded",
+      "primary_score": 0.5372,
+      "runtime_ms": 1000,
+      "changed_lines": 0,
+      "rationale": "Frozen baseline"
+    },
+    {
+      "id": "candidate-21",
+      "run_id": "method-search-001",
+      "parent_candidate_id": "candidate-0",
+      "sequence": 21,
+      "strategy_key": "diagnostic:residual_slice",
+      "family": "ridge",
+      "status": "succeeded",
+      "primary_score": 0.5717,
+      "runtime_ms": 900,
+      "changed_lines": 8,
+      "rationale": "Use robust residual features."
+    }
+  ],
+  "strategies": [
+    {
+      "run_id": "method-search-001",
+      "strategy_key": "diagnostic:residual_slice",
+      "category": "diagnostic",
+      "weight": 1.4,
+      "attempts": 4,
+      "improvements": 2
+    }
+  ],
+  "outputs": [
+    {
+      "run_id": "method-search-001",
+      "artifact_version_id": "selected-version-001",
+      "role": "selected_method",
+      "logical_output_key": "selected_method",
+      "source_path": "method-search/selected_method.py"
+    }
+  ]
+}

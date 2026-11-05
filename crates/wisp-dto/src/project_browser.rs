@@ -6,6 +6,13 @@ use crate::{ProjectSummary, RecentSession};
 
 pub const SCHEMA: &str = "wisp.project-browser.v1";
 
+#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrivacyMode {
+    pub active: bool,
+    pub project_ids: Vec<String>,
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct Request {
     pub schema: String,
@@ -30,6 +37,16 @@ pub enum Command {
         session_id: String,
         before_seq: Option<i64>,
     },
+    SearchProjectChats {
+        project_id: String,
+        query: String,
+        cursor: Option<crate::ProjectChatSearchCursor>,
+    },
+    LocateProjectChatMatch {
+        project_id: String,
+        session_id: String,
+        message_seq: i64,
+    },
     Capabilities,
 }
 
@@ -46,6 +63,8 @@ pub struct Response {
 pub enum Reply {
     Projects {
         projects: Vec<ProjectSummary>,
+        #[serde(default)]
+        privacy: PrivacyMode,
         activity_source: ActivitySource,
     },
     Transcript {
@@ -55,6 +74,17 @@ pub enum Reply {
     Sessions {
         sessions: Vec<RecentSession>,
         activity_source: ActivitySource,
+    },
+    ProjectChatMatches {
+        project_id: String,
+        query: String,
+        page: crate::ProjectChatSearchPage,
+    },
+    ProjectChatLocation {
+        project_id: String,
+        session_id: String,
+        message_seq: i64,
+        target: Option<crate::ProjectChatSearchTarget>,
     },
     Capabilities {
         commands: Vec<String>,

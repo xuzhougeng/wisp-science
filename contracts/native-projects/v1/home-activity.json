@@ -1,0 +1,14 @@
+{
+  "command": "native_project_home_activity",
+  "project_id": null,
+  "args": {},
+  "result": {
+    "revision": "305cbb8966c49bde",
+    "privacy": { "active": true, "project_ids": ["hidden"] },
+    "projects": [{ "project_id": "study", "running": 3, "needs_you": 1 }],
+    "recent": [
+      { "id": "s2", "project_id": "study", "title": "Review the alignment", "ts": 20, "status": "needs_you" },
+      { "id": "s1", "project_id": "study", "title": "Generate counts", "ts": 10, "status": "running" }
+    ]
+  }
+}

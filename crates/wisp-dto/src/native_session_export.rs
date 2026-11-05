@@ -1,6 +1,24 @@
 //! Reviewed native exports use the same ZIP entries as the WebView exporter.
 use serde::{Deserialize, Serialize};
 pub const SCHEMA: &str = "wisp.native-session-export.v1";
+pub const DEBUG_SCHEMA: &str = "wisp.native-debug-request.v1";
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DebugRequestArgs {
+    pub session_id: String,
+}
+
+/// Exact JSON produced by the WebView debug exporter. The frontend chooses a
+/// destination and saves it locally; this read command has no write side effect.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DebugRequestFile {
+    pub schema: String,
+    pub project_id: String,
+    pub session_id: String,
+    pub filename: String,
+    pub contents: String,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -84,6 +102,27 @@ pub struct ExportResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn debug_request_fixture_keeps_exact_json_and_explicit_scope() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-session-export/v1/debug-request.json"
+        ))
+        .unwrap();
+        let args: DebugRequestArgs = serde_json::from_value(fixture["args"].clone()).unwrap();
+        let result: DebugRequestFile = serde_json::from_value(fixture["result"].clone()).unwrap();
+        assert_eq!(result.schema, DEBUG_SCHEMA);
+        assert_eq!(result.session_id, args.session_id);
+        assert_eq!(result.project_id, "research-1");
+        let contents: serde_json::Value = serde_json::from_str(&result.contents).unwrap();
+        assert_eq!(contents["session_id"], args.session_id);
+        assert_eq!(contents["source"], "stored-messages");
+        assert_eq!(
+            serde_json::to_value(result).unwrap()["contents"],
+            fixture["result"]["contents"]
+        );
+        assert!(serde_json::from_value::<DebugRequestArgs>(serde_json::json!({"session_id":"s","before_seq":3})).is_err());
+        assert!(crate::native_conversations::COMMANDS.contains(&"native_conversation_debug_request"));
+    }
     #[test]
     fn export_fixture_binds_source_file_choice_revision_and_destination() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(

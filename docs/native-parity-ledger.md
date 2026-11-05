@@ -23,6 +23,8 @@ parity-ledger` 检查这一点（`scripts/check_native_parity.py`）。
 | 右侧面板：关闭后再打开，恢复上次打开的工具标签和当前标签，只有没有打开任何工具时才显示导航首页；切换会话时只在「产物」已打开时才切到它 | 待补 | WebView 启动器的重开行为（`right_tab_to_reopen`）；SwiftUI 尚无导航首页，补导航首页时一并按此行为实现 |
 | `/share` PNG：在 #1678 按 DOM 行盒逐行光栅化的基础上，改为按词 / 中文单字落在各自的 DOM 位置、按字体基线对齐，跳过 KaTeX 的隐藏 MathML 副本，代码长行在块内折行；新增「出图方式」单张长图 / 多张 3:4 分页，分页只在行间断开（#1677） | 待补 | 光栅化修复（含 #1678）只在 WebView（`ui/src/api.js`），SwiftUI 用 `ImageRenderer` 出图，不受影响；多张分页需要 SwiftUI 分享页加同样的选项，保存走新命令 `save_share_images`（`pngsBase64` + `defaultName`，返回各页路径），文案键 `share.layout_*` / `share.pages_hint` / `share.export_pages` / `share.saved_pages` |
 | 接入 Magpie 时，输入框、侧边对话、审查模型和子智能体模型的选择只列出 `Magpie · <模型>`（ACP Agent 保留），隐藏 Fast；设置 › 模型顶部提示个人模型断开后才生效 | 待补 | 读 `magpie_model_info`；SwiftUI 的模型选择尚未识别 Magpie，仍列出个人模型。文案键 `composer.magpie_managed`、`models.magpie_connected` |
+| 技能安装：位置读取失败时显示错误、禁用安装，并忽略过期的位置响应（#1680） | 待补 | SwiftUI 仍需核对本地和项目两种安装位置的失败提示与重试。 |
+| 项目、工作区与设置的 Windows 原生布局对齐；WinUI 与 WebView 共用会话分享渲染器（#1680） | 不需要 | 此轮对照针对 Windows。SwiftUI 不使用这个浏览器渲染器；共享资源更新不代表已验证 macOS 界面。 |
 | 浏览器离线横幅 / 扩展更新横幅：点「一键安装引导」或需手动重载时，横幅内联显示扩展路径和分平台的「加载已解压的扩展程序」步骤（macOS 为 ⌘⇧G 前往文件夹） | 待补 | 文案键 `browser.offline.step_*`；SwiftUI 横幅尚无步骤列表 |
 | 设置 › 远程接入 › 网页远程访问：联机链接二维码 | 待补 | `RemoteAccessStatus` 新增 `qr`（SVG data URL），SwiftUI 读同一字段即可 |
 | 右侧面板：仅显示实际打开的工具标签，不再预置四个默认标签 | 不需要 | 修复 WebView 启动器的标签初始化与重开行为 |

@@ -41,6 +41,11 @@ fn shared_native_fixture_roundtrips_through_the_rust_contract() {
     .unwrap();
     let decoded: Response = serde_json::from_value(expected.clone()).unwrap();
     assert_eq!(serde_json::to_value(decoded).unwrap(), expected);
+
+    let mut legacy = expected.clone();
+    legacy.as_object_mut().unwrap().remove("privacy");
+    let decoded: Response = serde_json::from_value(legacy).unwrap();
+    assert_eq!(serde_json::to_value(decoded).unwrap(), expected);
 }
 
 #[tokio::test]
@@ -81,14 +86,47 @@ async fn stdio_supports_queries_capabilities_and_recovers_after_invalid_requests
             "list_projects",
             "list_sessions",
             "get_transcript",
+            "search_project_chats",
+            "locate_project_chat_match",
             "capabilities"
         ])
     );
     assert_eq!(replies[3]["schema"], SCHEMA);
     assert_eq!(replies[3]["id"], "list");
     assert_eq!(replies[3]["activity_source"], "persisted_only");
+    assert_eq!(replies[3]["privacy"], json!({"active":false, "project_ids":[]}));
     assert_eq!(replies[3]["projects"][0]["name"], "Research");
     assert_eq!(store.list_projects().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn project_chat_search_and_location_are_read_only_and_scoped() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("wisp.sqlite");
+    let store = Store::open(&database).await.unwrap();
+    store
+        .create_project("p", "Research", "workspace")
+        .await
+        .unwrap();
+    let search = json!({"schema":SCHEMA, "id":"search", "type":"search_project_chats",
+        "project_id":"p", "query":"100%_", "cursor":null});
+    let locate = json!({"schema":SCHEMA, "id":"location", "type":"locate_project_chat_match",
+        "project_id":"p", "session_id":"not-in-this-project", "message_seq":1});
+    let output = request(&database, &format!("{search}\n{locate}\n"));
+    assert!(output.status.success());
+    let replies: Vec<Value> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(replies.len(), 2);
+    assert_eq!(
+        replies[0],
+        json!({"schema":SCHEMA, "id":"search", "type":"project_chat_matches",
+        "project_id":"p", "query":"100%_", "page":{"items":[], "next_cursor":null}})
+    );
+    assert_eq!(replies[1]["id"], "location");
+    assert_eq!(replies[1]["code"], "query_failed");
 }
 
 #[tokio::test]
@@ -127,6 +165,7 @@ async fn oversized_requests_fail_without_polluting_stdout() {
 #[test]
 fn shared_session_and_transcript_contracts_roundtrip() {
     for source in [
+        include_str!("../../../contracts/project-browser/v1/chat-matches.json"),
         include_str!("../../../contracts/project-browser/v1/sessions.json"),
         include_str!("../../../contracts/project-browser/v1/transcript.json"),
     ] {

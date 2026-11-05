@@ -1,0 +1,24 @@
+{
+  "schema": "wisp.native-conversations.v1",
+  "epoch": "branch-results-review",
+  "sequence": 1,
+  "project_id": "research-1",
+  "session_id": "main-1",
+  "user_offset": 2,
+  "next_before_seq": 12,
+  "running": false,
+  "stopping": false,
+  "read_only": false,
+  "model_id": "",
+  "request_id": null,
+  "error": null,
+  "approvals": [],
+  "items": [
+    { "role": "user", "text": "Compare normalization methods.", "tool_name": null, "input": null, "ok": null, "status": null },
+    { "role": "assistant", "text": "The original answer remains visible.", "tool_name": null, "input": null, "ok": null, "status": null }
+  ],
+  "branches": [
+    { "id": "before-1", "title": "Alternative question", "source_session_id": "main-1", "checkpoint_user_index": 2, "checkpoint_kind": "before_user", "merged": false, "merge_summary": null },
+    { "id": "branch-1", "title": "Alternative normalization · 分支研究", "source_session_id": "main-1", "checkpoint_user_index": 2, "checkpoint_kind": "after_response", "merged": true, "merge_summary": "## Findings\n\nThe **main conclusion** is preserved.\n\n## Unresolved\n\nValidate on an independent cohort.\n" }
+  ]
+}

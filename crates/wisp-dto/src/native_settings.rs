@@ -4,6 +4,12 @@ use serde_json::Value;
 
 pub const SCHEMA: &str = "wisp.native-settings.v1";
 
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkflowConversionProgressRequest {
+    pub conversion_id: String,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct HostDescriptor {
     pub schema: String,
@@ -32,12 +38,24 @@ pub struct Response {
 }
 
 pub const COMMANDS: &[&str] = &[
+    "copy_demo_to_project",
+    "native_workflow_conversion_progress",
+    "assistant_weixin_status",
+    "get_decision_model",
+    "save_decision_model",
+    "test_decision_model",
+    "clear_decision_model_key",
     "codex_subscription_status",
     "start_codex_login",
     "codex_login_status",
     "submit_codex_login_redirect",
     "cancel_codex_login",
     "save_codex_login",
+    "list_codex_accounts",
+    "switch_codex_account",
+    "remove_codex_account",
+    "codex_account_usage",
+    "import_local_codex_accounts",
     "enable_project_folder_sync",
     "authorize_http_connection",
     "cancel_oauth_authorization",
@@ -55,6 +73,18 @@ pub const COMMANDS: &[&str] = &[
     "add_ssh_host",
     "browser_extension_status",
     "channels_status",
+    "set_remote_access",
+    "reset_remote_access_code",
+    "lab_status",
+    "lab_join",
+    "lab_set_relay_token",
+    "lab_leave",
+    "lab_set_inbox_project",
+    "lab_create_invite",
+    "lab_approve_member",
+    "lab_remove_member",
+    "lab_publish_knowledge_base",
+    "lab_join_knowledge_base",
     "check_for_updates",
     "clear_memory",
     "confirm_feishu_pending_owner",
@@ -76,6 +106,7 @@ pub const COMMANDS: &[&str] = &[
     "get_command_hooks",
     "get_project_hooks",
     "get_bootstrap_status",
+    "get_capabilities",
     "get_browser_auto_close_tabs",
     "get_browser_auto_launch",
     "get_browser_url_filters",
@@ -84,11 +115,15 @@ pub const COMMANDS: &[&str] = &[
     "get_device_bridge_token",
     "get_memory_view",
     "get_network_settings",
+    "get_subscription_proxies",
     "get_pet_runtime_status",
     "get_project_run_retention",
     "get_project_settings",
+    "get_project_info",
     "get_session_token_usage",
     "get_settings",
+    "get_skill_install_source",
+    "skill_install_locations",
     "get_storage_usage",
     "get_token_usage",
     "get_update_check_enabled",
@@ -97,6 +132,9 @@ pub const COMMANDS: &[&str] = &[
     "install_github_skill",
     "install_plugin",
     "install_plugin_url",
+    "install_scoped_skill",
+    "promote_skill_to_global",
+    "remove_project_skill_copy",
     "install_skill",
     "join_synced_project",
     "list_acp_agents",
@@ -115,15 +153,17 @@ pub const COMMANDS: &[&str] = &[
     "list_skill_files",
     "list_skills",
     "list_specialists",
-    "get_decision_model",
-    "save_decision_model",
-    "test_decision_model",
-    "clear_decision_model_key",
     "get_subagent_model",
     "set_subagent_model",
+    "test_reviewer_backend",
+    "pick_specialist_package",
+    "preview_specialist_import",
+    "import_specialist",
+    "export_specialist",
     "list_ssh_hosts",
     "list_ssh_trust_edges",
     "list_workflow_templates",
+    "get_dynamic_agent_options",
     "model_catalog_lookup",
     "open_browser_extension_page",
     "preview_github_skills",
@@ -177,6 +217,7 @@ pub const COMMANDS: &[&str] = &[
     "set_mcp_connection_enabled",
     "set_memory_enabled",
     "set_network_settings",
+    "set_subscription_proxy",
     "set_plugin_enabled",
     "set_project_run_retention",
     "set_settings",
@@ -261,5 +302,25 @@ mod tests {
         assert!(allowed.contains("authorize_http_connection"));
         assert!(allowed.contains("list_notification_sounds"));
         assert!(allowed.contains("preview_notification_sound"));
+        assert!(allowed.contains("get_project_info"));
+        assert!(allowed.contains("get_capabilities"));
+        assert!(allowed.contains("get_dynamic_agent_options"));
+        assert!(allowed.contains("copy_demo_to_project"));
+        for command in [
+            "set_remote_access",
+            "reset_remote_access_code",
+            "lab_status",
+            "lab_join",
+            "lab_set_relay_token",
+            "lab_leave",
+            "lab_set_inbox_project",
+            "lab_create_invite",
+            "lab_approve_member",
+            "lab_remove_member",
+            "lab_publish_knowledge_base",
+            "lab_join_knowledge_base",
+        ] {
+            assert!(allowed.contains(command), "{command}");
+        }
     }
 }

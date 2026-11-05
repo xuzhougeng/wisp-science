@@ -9,6 +9,34 @@ use tauri::Manager;
 use tokio::sync::Mutex;
 use wisp_dto::{native_conversations as dto, native_settings::Request};
 
+fn validate_handoff(
+    args: &dto::HandoffRequest,
+    acp: bool,
+    running: bool,
+) -> Result<(), String> {
+    if args.session_id.trim().is_empty() || acp || running {
+        return Err("Handoff requires an idle built-in conversation".into());
+    }
+    if args
+        .instruction
+        .as_ref()
+        .is_some_and(|text| text.chars().count() > 8000)
+    {
+        return Err("Handoff instructions must be at most 8000 characters".into());
+    }
+    Ok(())
+}
+
+fn validate_session_review(args: &dto::SessionRequest, native_running: bool) -> Result<(), String> {
+    if args.before_seq.is_some() {
+        return Err("Review applies to the current conversation, not a history page".into());
+    }
+    if native_running {
+        return Err("Session is busy — wait for the current turn to finish.".into());
+    }
+    Ok(())
+}
+
 pub(crate) struct Conversations {
     pub(crate) queue_events: crate::native_queue::QueueEvents,
     epoch: String,
@@ -36,9 +64,15 @@ struct Record {
     accepted: HashMap<String, [u8; 32]>,
 }
 fn payload_digest(request: &dto::SendRequest) -> Result<[u8; 32], String> {
-    let payload =
-        serde_json::to_vec(&(&request.message, &request.attachments, &request.references))
-            .map_err(|error| error.to_string())?;
+    let payload = serde_json::to_vec(&(
+        &request.message,
+        &request.attachments,
+        &request.references,
+        &request.acp_agent_id,
+        request.resume,
+        &request.resume_after,
+    ))
+    .map_err(|error| error.to_string())?;
     Ok(Sha256::digest(payload).into())
 }
 impl Record {
@@ -48,8 +82,15 @@ impl Record {
         external_running: bool,
     ) -> Result<bool, String> {
         uuid::Uuid::parse_str(&request.request_id).map_err(|_| "Invalid send request ID")?;
-        if request.message.trim().is_empty() || request.message.len() > 128 * 1024 {
+        if request.resume && (!request.message.is_empty() || !request.attachments.is_empty()
+            || !request.references.is_empty() || request.acp_agent_id.is_some()) {
+            return Err("Resume cannot append a message, attachments, references or ACP selection".into());
+        }
+        if !request.resume && (request.message.trim().is_empty() || request.message.len() > 128 * 1024) {
             return Err("Message must contain 1–131072 bytes".into());
+        }
+        if request.resume != request.resume_after.is_some() {
+            return Err("Resume must identify its settled request".into());
         }
         if request.references.len() > 64 {
             return Err("Too many composer references".into());
@@ -64,6 +105,12 @@ impl Record {
         }
         if self.running || external_running {
             return Err("This conversation is already running".into());
+        }
+        if request.resume && self.request_id != request.resume_after {
+            return Err("The conversation changed after this request; resume was not sent".into());
+        }
+        if request.resume && self.error.as_deref().is_some_and(|error| error.starts_with(wisp_dto::ACP_TURN_ERROR_PREFIX)) {
+            return Err("ACP conversations cannot resume a Wisp transcript".into());
         }
         if self.accepted.len() >= 1024 {
             return Err(
@@ -314,11 +361,24 @@ fn decode<T: DeserializeOwned>(value: &Value) -> Result<T, String> {
 }
 
 fn delete_session_arguments(value: &Value) -> Result<Value, String> {
-    let args: dto::SessionRequest = decode(value)?;
-    if args.before_seq.is_some() {
-        return Err("Delete does not accept a history cursor".into());
+    let args: dto::DeleteRequest = decode(value)?;
+    if args.session_id.trim().is_empty() {
+        return Err("A conversation is required".into());
     }
-    Ok(json!({"id": args.session_id}))
+    let mut result = json!({"id": args.session_id});
+    if let Some(choice) = args.include_children {
+        result["includeChildren"] = json!(choice);
+    }
+    if let Some(choice) = args.include_artifacts {
+        result["includeArtifacts"] = json!(choice);
+    }
+    if let Some(fingerprint) = args.artifact_fingerprint {
+        result["artifactFingerprint"] = json!(fingerprint);
+    }
+    if let Some(fingerprints) = args.child_artifact_fingerprints {
+        result["childArtifactFingerprints"] = json!(fingerprints);
+    }
+    Ok(result)
 }
 
 fn require_acp_profile(profiles: &[crate::acp::AcpAgentProfile], id: &str) -> Result<(), String> {
@@ -428,6 +488,7 @@ async fn remote_turn(
     message: &str,
     attachments: &[String],
     references: &[wisp_dto::ComposerReferenceArg],
+    resume: bool,
 ) -> Result<Value, String> {
     let label = crate::native_settings::context_label(broker, Some(project.to_owned())).await?;
     crate::send_message_inner(
@@ -438,7 +499,7 @@ async fn remote_turn(
         message.to_owned(),
         Some(attachments.to_vec()),
         Some(references.to_vec()),
-        None,
+        Some(resume),
         None,
         None,
         None,
@@ -508,12 +569,32 @@ pub(crate) async fn call(
     invoke_command(broker, Some(project.to_owned()), command, args).await
 }
 
+pub(crate) async fn native_explorations(store: &wisp_store::Store, project: &str) -> Result<Vec<wisp_dto::ExplorationSummary>, String> {
+    decode(&serde_json::to_value(store.list_project_explorations(project).await
+        .map_err(|error| error.to_string())?).map_err(|error| error.to_string())?)
+}
+
+async fn native_exploration_state(store: &wisp_store::Store, project: &str, session: &str) -> Result<dto::ExplorationState, String> {
+    let rows = native_explorations(store, project).await?;
+    Ok(dto::ExplorationState::for_session(&rows, session))
+}
+
 pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value, String> {
     let project = request
         .project_id
         .as_deref()
         .filter(|v| !v.is_empty())
         .ok_or("A project is required")?;
+    if request.command == "native_conversation_explorations" {
+        if !request.args.as_object().is_some_and(|args| args.is_empty()) {
+            return Err("Exploration list takes no arguments".into());
+        }
+        let state = broker.app.state::<crate::AppState>();
+        crate::project_commands::load_active_project(&state, project).await?;
+        let explorations = native_explorations(&state.store, project).await?;
+        return serde_json::to_value(dto::Explorations { project_id: project.into(), explorations })
+            .map_err(|error| error.to_string());
+    }
     if request.command == "native_conversation_inbox" {
         if !request.args.as_object().is_some_and(|v| v.is_empty()) {
             return Err("Inbox takes no arguments".into());
@@ -583,8 +664,63 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
         let result = wait_for_activity(&state, session, decode(&request.args)?).await;
         return serde_json::to_value(result).map_err(|e| e.to_string());
     }
+    if request.command == "native_conversation_exploration_open" {
+        let args: dto::ExplorationOpenRequest = decode(&request.args)?;
+        let state = broker.app.state::<crate::AppState>();
+        let summary = native_explorations(&state.store, project).await?.into_iter()
+            .find(|row| row.exploration.id == args.exploration_id && row.exploration.frame_id == session)
+            .ok_or("Exploration no longer belongs to the current round")?;
+        require_owner(&state.store, project, &summary.source_frame_id).await?;
+        // Navigation is explicit in the native client. Do not switch the cached
+        // hidden WebView context to this private workspace.
+        return serde_json::to_value(dto::ExplorationOpen { project_id: project.into(), summary })
+            .map_err(|error| error.to_string());
+    }
+    if request.command == "native_conversation_excerpt" {
+        return crate::native_history::excerpt(broker, project, decode(&request.args)?).await;
+    }
+    if matches!(request.command.as_str(), "native_conversation_rules_status" | "native_conversation_rules_reload") {
+        let args: dto::RulesRequest = decode(&request.args)?;
+        if request.command == "native_conversation_rules_status" {
+            let state = broker.app.state::<crate::AppState>();
+            let (active, _, _) = crate::project_commands::load_active_project(&state, project).await?;
+            let stale = crate::session_commands::stale_prompt_frames(
+                &state.store, &active.root, std::slice::from_ref(&args.session_id),
+            ).await;
+            return serde_json::to_value(dto::RulesStatus {
+                project_id: project.into(), session_id: args.session_id.clone(),
+                stale_prompt: stale.contains(&args.session_id),
+            }).map_err(|error| error.to_string());
+        }
+        let result = invoke_command(broker, Some(project.into()), "reload_project_rules",
+            json!({"frameId":args.session_id})).await?;
+        return serde_json::to_value(dto::RulesReloadResult {
+            project_id: project.into(), session_id: args.session_id,
+            changed: serde_json::from_value(result).map_err(|error| error.to_string())?,
+        }).map_err(|error| error.to_string());
+    }
+    if request.command.starts_with("native_conversation_exploration_") {
+        return crate::native_explorations::dispatch(broker, project, &request.command, &request.args).await;
+    }
     if request.command == "native_conversation_timer" {
         return crate::native_assistant::timer(broker, project, decode(&request.args)?).await;
+    }
+    if request.command.starts_with("native_conversation_branch_") {
+        return crate::native_branch_merge::dispatch(broker, project, &request.command, &request.args).await;
+    }
+    if request.command == "native_conversation_debug_request" {
+        let args: wisp_dto::native_session_export::DebugRequestArgs = decode(&request.args)?;
+        let state = broker.app.state::<crate::AppState>();
+        let _activity = state.begin_project_activity(project)?;
+        let prepared = crate::debug_request::prepare_debug_request(&state, args.session_id).await?;
+        return serde_json::to_value(wisp_dto::native_session_export::DebugRequestFile {
+            schema: wisp_dto::native_session_export::DEBUG_SCHEMA.into(),
+            project_id: project.into(),
+            session_id: session.into(),
+            filename: prepared.filename,
+            contents: prepared.contents,
+        })
+        .map_err(|error| error.to_string());
     }
     if request.command == "native_conversation_references" {
         return crate::native_composer::references(
@@ -730,6 +866,44 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 project,
                 decode(&request.args)?,
                 acp_agent_id.is_some(),
+            )
+            .await
+        }
+        "native_conversation_handoff" => {
+            let args: dto::HandoffRequest = decode(&request.args)?;
+            validate_handoff(&args, acp_agent_id.is_some(), record.lock().await.running)?;
+            require_mutable_session(&broker.app.state::<crate::AppState>().store, session).await?;
+            // Generation calls the same model path as WebView. Do not hold the
+            // native record lock while waiting: snapshot polling must stay live.
+            let note: String = decode(
+                &call(
+                    broker,
+                    project,
+                    "generate_session_handoff",
+                    json!({"id":session,"instruction":args.instruction}),
+                )
+                .await?,
+            )?;
+            if note.trim().is_empty() {
+                return Err("The handoff summary was empty".into());
+            }
+            serde_json::to_value(dto::HandoffResponse {
+                project_id: project.into(),
+                session_id: session.into(),
+                note,
+            })
+            .map_err(|e| e.to_string())
+        }
+        "native_conversation_review" => {
+            let args: dto::SessionRequest = decode(&request.args)?;
+            validate_session_review(&args, record.lock().await.running)?;
+            require_mutable_session(&broker.app.state::<crate::AppState>().store, session).await?;
+            // Review may call a model for minutes; snapshot reads must stay live.
+            call(
+                broker,
+                project,
+                "review_session",
+                json!({"sessionId": session}),
             )
             .await
         }
@@ -981,7 +1155,15 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             }
             record.sequence += 1;
             // A subagent conversation (#1061) is watched, not written to.
-            let read_only = frozen
+            let exploration = native_exploration_state(&state.store, project, session).await?;
+            let scope = state.store.frame_state_scope(session).await.map_err(|error| error.to_string())?
+                .ok_or("Session state scope was not found")?;
+            let exploration_read_only = match &scope {
+                wisp_store::StateScope::Mainline { .. } => exploration.source_frozen,
+                wisp_store::StateScope::Exploration { .. } =>
+                    crate::exploration_commands::require_writable_scope(&state.store, &scope).await.is_err(),
+            };
+            let read_only = frozen || exploration_read_only
                 || state
                     .store
                     .session_dispatched_from(session)
@@ -1113,6 +1295,10 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 (approvals, scopes)
             };
             let snapshot = dto::Snapshot {
+                exploration: (exploration.summary.is_some() || exploration.source_frozen).then_some(exploration),
+                branches: decode(&serde_json::to_value(
+                    state.store.list_session_branches(session, project).await.map_err(|e| e.to_string())?
+                ).map_err(|e| e.to_string())?)?,
                 approval_scopes,
                 run_cards,
                 run_review_supported: Some(true),
@@ -1198,6 +1384,12 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 return Err("ACP conversations can only be continued on the desktop".into());
             }
             let args: dto::SendRequest = decode(&request.args)?;
+            if args.resume || args.resume_after.is_some() {
+                return Err("Resume cannot be queued as a new user message".into());
+            }
+            if args.acp_agent_id.is_some() {
+                return Err("Choose an ACP Agent before sending the first turn, not in a queued follow-up".into());
+            }
             let id = follow_up_id(&args.request_id)?;
             let digest = payload_digest(&args)?;
             let mut guard = record.lock().await;
@@ -1266,10 +1458,21 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             Ok(json!({"queued": true, "message": text, "id":id.to_string()}))
         }
         "native_conversation_send" => {
+            let mut args: dto::SendRequest = decode(&request.args)?;
+            let acp_agent_id = crate::acp::resolve_agent_choice(
+                args.acp_agent_id.as_deref(),
+                acp_agent_id.as_deref(),
+            )?;
+            if args.resume && acp_agent_id.is_some() {
+                return Err("ACP conversations cannot resume a Wisp transcript".into());
+            }
             if broker.remote && acp_agent_id.is_some() {
                 return Err("ACP conversations can only be continued on the desktop".into());
             }
-            let mut args: dto::SendRequest = decode(&request.args)?;
+            if let Some(agent) = args.acp_agent_id.as_deref() {
+                let state = broker.app.state::<crate::AppState>();
+                require_acp_profile(&crate::acp::profiles(&state.store).await, agent)?;
+            }
             args.attachments.retain(|path| !path.trim().is_empty());
             args.message = dto::message_with_attachments(&args.message, &args.attachments);
             let mut guard = record.lock().await;
@@ -1282,6 +1485,7 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 let attachments = args.attachments.clone();
                 let acp_agent_id = acp_agent_id.clone();
                 let references = args.references.clone();
+                let resume = args.resume;
                 tauri::async_runtime::spawn(async move {
                     let mut turn = Box::pin(async {
                         if broker.remote {
@@ -1292,6 +1496,7 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                                 &message,
                                 &attachments,
                                 &references,
+                                resume,
                             )
                             .await
                         } else {
@@ -1299,13 +1504,17 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                                 &broker,
                                 &project,
                                 "send_message",
-                                turn_arguments(
+                                {
+                                    let mut args = turn_arguments(
                                     &session,
                                     &message,
                                     &attachments,
                                     acp_agent_id.as_deref(),
                                     &references,
-                                ),
+                                    );
+                                    args["resume"] = json!(resume);
+                                    args
+                                },
                             )
                             .await
                         }
@@ -1500,6 +1709,35 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn handoff_requires_idle_scoped_builtin_session() {
+        let mut args = super::dto::HandoffRequest { session_id: "s".into(), instruction: None };
+        assert!(super::validate_handoff(&args, false, false).is_ok());
+        assert!(super::validate_handoff(&args, true, false).is_err());
+        assert!(super::validate_handoff(&args, false, true).is_err());
+        args.instruction = Some("研".repeat(8001));
+        assert!(super::validate_handoff(&args, false, false).is_err());
+        args.instruction = Some("研".repeat(8000));
+        assert!(super::validate_handoff(&args, false, false).is_ok());
+        args.session_id = " ".into();
+        assert!(super::validate_handoff(&args, false, false).is_err());
+        assert!(serde_json::from_value::<super::dto::HandoffRequest>(serde_json::json!({
+            "session_id":"s", "instruction":null, "unexpected":true
+        })).is_err());
+        assert!(super::dto::COMMANDS.contains(&"native_conversation_handoff"));
+    }
+    #[test]
+    fn review_rejects_a_history_cursor_and_a_running_native_turn() {
+        let mut args = wisp_dto::native_conversations::SessionRequest {
+            session_id: "assistant-session".into(),
+            before_seq: None,
+        };
+        assert!(super::validate_session_review(&args, false).is_ok());
+        assert!(super::validate_session_review(&args, true).is_err());
+        args.before_seq = Some(5);
+        assert!(super::validate_session_review(&args, false).is_err());
+        assert!(wisp_dto::native_conversations::COMMANDS.contains(&"native_conversation_review"));
+    }
     #[test]
     fn native_plan_proposal_projection_requires_plan_role_and_keeps_raw_fallback() {
         let source = crate::UiItem {
@@ -1722,6 +1960,13 @@ mod tests {
             super::delete_session_arguments(&serde_json::json!({"session_id":"s"})).unwrap(),
             serde_json::json!({"id":"s"})
         );
+        assert_eq!(super::delete_session_arguments(&serde_json::json!({
+            "session_id":"s", "include_children":true, "include_artifacts":true,
+            "artifact_fingerprint":"reviewed-root", "child_artifact_fingerprints":{"child":"reviewed-child"}
+        })).unwrap(), serde_json::json!({
+            "id":"s", "includeChildren":true, "includeArtifacts":true,
+            "artifactFingerprint":"reviewed-root", "childArtifactFingerprints":{"child":"reviewed-child"}
+        }));
         for args in [
             serde_json::json!({}),
             serde_json::json!({"session_id":"s","before_seq":1}),
@@ -1769,11 +2014,20 @@ mod tests {
             session_id: "a".into(),
             request_id: uuid::Uuid::new_v4().to_string(),
             message: "hello".into(),
+            resume: false,
+            resume_after: None,
             attachments: Vec::new(),
             references: Vec::new(),
+            acp_agent_id: None,
         };
         assert!(record.accept(&request, false).unwrap());
         assert!(!record.accept(&request, false).unwrap());
+        request.acp_agent_id = Some("other-agent".into());
+        assert!(
+            record.accept(&request, false).is_err(),
+            "an accepted request cannot change its ACP selection"
+        );
+        request.acp_agent_id = None;
         request
             .references
             .push(wisp_dto::ComposerReferenceArg::Artifact {
@@ -1793,6 +2047,45 @@ mod tests {
         assert!(record.accept(&request, false).unwrap());
     }
 
+    #[test]
+    fn resume_is_scoped_idempotent_and_never_appends_user_context() {
+        let previous = uuid::Uuid::new_v4().to_string();
+        let mut record = Record { request_id: Some(previous.clone()), ..Default::default() };
+        let mut request: dto::SendRequest = serde_json::from_value(json!({
+            "session_id":"s", "request_id":uuid::Uuid::new_v4().to_string(),
+            "message":"", "resume":true, "resume_after":previous
+        })).unwrap();
+        assert!(record.accept(&request, false).unwrap());
+        assert!(!record.accept(&request, true).unwrap());
+        request.resume = false;
+        request.message = "new question".into();
+        assert!(record.accept(&request, false).is_err());
+        request.resume = true;
+        assert!(record.accept(&request, false).is_err());
+        request.message.clear();
+        request.attachments.push("file.csv".into());
+        assert!(record.accept(&request, false).is_err());
+        request.attachments.clear();
+        request.request_id = uuid::Uuid::new_v4().to_string();
+        record.running = false;
+        assert!(record.accept(&request, false).is_err(), "stale compaction cannot resume a later turn");
+        assert!(Record::default().accept(&request, false).is_err(), "restarted host cannot resume the old request");
+    }
+    #[test]
+    fn resume_continues_a_settled_failure_without_replaying_the_user_message() {
+        let previous = uuid::Uuid::new_v4().to_string();
+        let request: dto::SendRequest = serde_json::from_value(json!({
+            "session_id":"s", "request_id":uuid::Uuid::new_v4().to_string(),
+            "message":"", "resume":true, "resume_after":previous
+        })).unwrap();
+        let mut record = Record { request_id: Some(previous.clone()), error: Some("api: 503 overloaded".into()), ..Default::default() };
+        assert!(record.accept(&request, true).is_err(), "a live external turn takes priority");
+        assert!(record.accept(&request, false).unwrap());
+        assert!(record.error.is_none() && record.running);
+        assert!(!record.accept(&request, true).unwrap(), "an acknowledged resume is deduplicated even while running");
+        let mut acp = Record { request_id: Some(previous), error: Some(format!("{}disconnected", wisp_dto::ACP_TURN_ERROR_PREFIX)), ..Default::default() };
+        assert!(acp.accept(&request, false).is_err(), "ACP failure must never fall back to replaying Wisp context");
+    }
     #[test]
     fn native_send_passes_references_to_the_shared_resolver() {
         let references = vec![wisp_dto::ComposerReferenceArg::Project {

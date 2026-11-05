@@ -6,6 +6,7 @@ using Wisp.ProjectBrowser.Contracts;
 namespace Wisp.ProjectBrowser;
 
 public sealed record PublicationItemDraft(string? Id = null, string Kind = "figure", string Title = "", string Content = "", string? ParentId = null, long Ordinal = 0);
+public sealed record PublicationRunSource(string ProjectId, string Id, string Title);
 
 public sealed partial class WorkspacePublicationModel
 {
@@ -25,6 +26,26 @@ public sealed partial class WorkspacePublicationModel
     public string? SourcesError { get; private set; }
     private int sourceGeneration;
     private bool preciseSource;
+    public PublicationRunSource? PendingRun { get; private set; }
+    public bool BeginRunBinding(PublicationRunSource run)
+    {
+        if (run.ProjectId != projectId || string.IsNullOrWhiteSpace(run.Id) || Busy || Closed) return false;
+        PendingRun = run; Notify(); return true;
+    }
+    public void DismissRunBinding() { if (!Closed && PendingRun != null) { PendingRun = null; Notify(); } }
+
+    public async Task<bool> BindPendingRunAsync(string revision, string? item, string purpose, string? claim, string selection, string visibility)
+    {
+        if (PendingRun is not { } run || !Editable || revision != RevisionId || string.IsNullOrWhiteSpace(purpose)
+            || Workspace?.Revisions?.Any(r => r.Id == revision && r.State == "draft") != true
+            || item != null && !Workspace.Items.Any(i => i.Id == item && i.RevisionId == revision)
+            || claim != null && !Workspace.Items.Any(i => i.Id == claim && i.RevisionId == revision && i.Kind == "claim")
+            || selection is not ("candidate" or "selected" or "rejected") || visibility is not ("public" or "restricted" or "private")) return false;
+        var ok = await MutateAsync(new() { ["action"] = "bind_evidence", ["source_kind"] = "run", ["source_id"] = run.Id,
+            ["item_id"] = item, ["purpose"] = purpose, ["supported_claim_item_id"] = claim, ["selection_state"] = selection, ["visibility"] = visibility });
+        if (ok && PendingRun == run) DismissRunBinding();
+        return ok;
+    }
     private readonly Dictionary<string, PublicationItemDraft> drafts = [];
     private readonly Dictionary<(string Revision, string Item), PublicationItemDraft> itemDrafts = [];
     private readonly Dictionary<string, string> pendingNewItems = [];

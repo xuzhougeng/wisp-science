@@ -9,28 +9,23 @@ pub(crate) async fn dispatch(
     broker: &Broker,
     request: &Request,
     project_id: &str,
-    session: &str,
+    session: Option<&str>,
 ) -> Result<Value, String> {
-    if matches!(
-        request.command.as_str(),
-        "native_conversation_panel_file_upload" | "native_conversation_panel_file_download"
-    ) {
+    let action = request.command.strip_prefix(if session.is_some() { "native_conversation_panel_file_" } else { "native_project_file_" })
+        .ok_or("File command scope mismatch")?;
+    if matches!(action, "upload" | "download") {
         return dispatch_transfer(broker, request, project_id, session).await;
     }
     let args: dto::Request =
         serde_json::from_value(request.args.clone()).map_err(|e| e.to_string())?;
-    if args.session_id != session {
+    if args.session_id.as_deref() != session {
         return Err("Session scope mismatch".into());
     }
     let state = broker.app.state::<crate::AppState>();
-    let (project, scope) =
-        crate::exploration_commands::working_project_for_frame(&state, session).await?;
-    if project.id != project_id {
-        return Err("Project scope mismatch".into());
-    }
+    let (root, scope) = file_scope(&state, project_id, session).await?;
     let context = args.context_id.as_deref().unwrap_or("local");
-    match request.command.as_str() {
-        "native_conversation_panel_file_locations" => {
+    match action {
+        "locations" => {
             if context != "local" || args.path.is_some() || !args.paths.is_empty() {
                 return Err("Locations take no path or remote context".into());
             }
@@ -43,27 +38,23 @@ pub(crate) async fn dispatch(
                 crate::exploration_commands::require_writable_scope(&state.store, &scope)
                     .await
                     .is_err()
-                    || state
-                        .store
-                        .require_unarchived_session(session)
-                        .await
-                        .is_err();
-            let root = wisp_tools::safety::resolve_under_root(&project.root, ".")?;
+                    || if let Some(session) = session { state.store.require_unarchived_session(session).await.is_err() } else { false };
+            let root = wisp_tools::safety::resolve_under_root(&root, ".")?;
             value(dto::Locations {
                 schema: dto::SCHEMA.into(),
                 project_id: project_id.into(),
-                session_id: session.into(),
+                session_id: session.map(str::to_owned),
                 local_root: root.to_string_lossy().into_owned(),
                 read_only,
                 locations: locations(&contexts),
             })
         }
-        "native_conversation_panel_file_directory" => {
+        "directory" => {
             if !args.paths.is_empty() {
                 return Err("Directory takes one path".into());
             }
             let listing = if context == "local" {
-                let root = project.root;
+                let root = root;
                 let path = args.path.unwrap_or_else(|| ".".into());
                 tokio::task::spawn_blocking(move || local_directory(&root, &path))
                     .await
@@ -76,34 +67,34 @@ pub(crate) async fn dispatch(
             value(dto::Directory {
                 schema: dto::SCHEMA.into(),
                 project_id: project_id.into(),
-                session_id: session.into(),
+                session_id: session.map(str::to_owned),
                 context_id: context.into(),
                 path: listing.path,
                 entries: listing.entries,
             })
         }
-        "native_conversation_panel_file_paths" => {
+        "paths" => {
             if context != "local" || args.path.is_some() {
                 return Err("Path copies require the local project location".into());
             }
-            let root = project.root;
+            let root = root;
             let paths = tokio::task::spawn_blocking(move || local_paths(&root, &args.paths))
                 .await
                 .map_err(|e| e.to_string())??;
             value(dto::Paths {
                 schema: dto::SCHEMA.into(),
                 project_id: project_id.into(),
-                session_id: session.into(),
+                session_id: session.map(str::to_owned),
                 paths,
             })
         }
-        "native_conversation_panel_file_read" => {
+        "read" => {
             if !args.paths.is_empty() {
                 return Err("Preview takes one path".into());
             }
             let path = args.path.ok_or("File path is required")?;
             let content = if context == "local" {
-                let root = project.root;
+                let root = root;
                 let requested = path.clone();
                 tokio::task::spawn_blocking(move || {
                     crate::file_browser::read_native_preview_at(
@@ -132,42 +123,87 @@ pub(crate) async fn dispatch(
             value(dto::Preview {
                 schema: dto::SCHEMA.into(),
                 project_id: project_id.into(),
-                session_id: session.into(),
+                session_id: session.map(str::to_owned),
                 context_id: context.into(),
                 requested_path: path,
                 content,
             })
         }
+        "search" if session.is_none() => {
+            if context != "local" { return Err("Search requires the local project".into()); }
+            let query = args.query.unwrap_or_default();
+            tokio::task::spawn_blocking(move || value(crate::file_browser::search_files_at(&root, &query, None)?))
+                .await.map_err(|e| e.to_string())?
+        }
+        "action" | "save" if session.is_none() => {
+            if context != "local" { return Err("Editing requires the local project".into()); }
+            crate::exploration_commands::require_writable_scope(&state.store, &scope).await?;
+            let activity = state.begin_project_activity(project_id)?;
+            let path = args.path.ok_or("File path is required")?;
+            let save = action == "save";
+            tokio::task::spawn_blocking(move || {
+                let _activity = activity;
+                if save {
+                    crate::file_browser::save_file_preview_at(&root, &path,
+                        &args.original_text.ok_or("Original file text is required")?, &args.text.ok_or("File text is required")?)
+                } else {
+                    crate::native_panels::apply_file_action(&root, args.file_action.ok_or("File action is required")?, &path, args.new_path.as_deref())
+                }
+            }).await.map_err(|e| e.to_string())??;
+            state.store.bump_state_generation(&scope).await.map_err(|e| e.to_string())?;
+            Ok(Value::Bool(true))
+        }
+        "run" if session.is_none() => {
+            let id = args.run_id.ok_or("Run ID is required")?;
+            crate::native_panels::require_run_scope(&state.store, &scope, &id, false).await?;
+            let run = state.store.get_run(&id).await.map_err(|e| e.to_string())?.ok_or("Run not found")?;
+            if run.frame_id.is_some() || run.context_id != context || run.kind != "file_transfer" {
+                return Err("Project file transfer scope mismatch".into());
+            }
+            value(run)
+        }
         _ => Err("Unknown native Files command".into()),
     }
+}
+
+/// Resolve an explicit project without selecting a hidden WebView or creating a frame.
+async fn file_scope(state: &crate::AppState, project_id: &str, session: Option<&str>) -> Result<(std::path::PathBuf, wisp_store::StateScope), String> {
+    if let Some(session) = session {
+        let (project, scope) = crate::exploration_commands::working_project_for_frame(state, session).await?;
+        if project.id != project_id { return Err("Project scope mismatch".into()); }
+        return Ok((project.root, scope));
+    }
+    let (_, workspace) = state.store.get_project(project_id).await.map_err(|e| e.to_string())?.ok_or("Project not found")?;
+    let root = project_root(&workspace)?;
+    Ok((root, wisp_store::StateScope::mainline(project_id)))
+}
+
+fn project_root(workspace: &str) -> Result<std::path::PathBuf, String> {
+    let path = Path::new(workspace);
+    if !path.is_absolute() { return Err("Project folder must be absolute".into()); }
+    let root = dunce::canonicalize(path).map_err(|e| e.to_string())?;
+    if !root.is_dir() { return Err("Project folder is unavailable".into()); }
+    Ok(root)
 }
 
 async fn dispatch_transfer(
     broker: &Broker,
     request: &Request,
     project_id: &str,
-    session: &str,
+    session: Option<&str>,
 ) -> Result<Value, String> {
     let args: dto::TransferRequest =
         serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
     let upload = request.command.ends_with("file_upload");
     validate_transfer(&args, session, upload)?;
     let state = broker.app.state::<crate::AppState>();
-    let (project, scope) =
-        crate::exploration_commands::working_project_for_frame(&state, session).await?;
-    if project.id != project_id {
-        return Err("Project scope mismatch".into());
-    }
+    let (root, scope) = file_scope(&state, project_id, session).await?;
     let activity = state.begin_project_activity(project_id)?;
     let items = if upload {
         crate::exploration_commands::require_writable_scope(&state.store, &scope).await?;
-        state
-            .store
-            .require_unarchived_session(session)
-            .await
-            .map_err(|error| error.to_string())?;
+        if let Some(session) = session { state.store.require_unarchived_session(session).await.map_err(|error| error.to_string())?; }
         if args.context_id == "local" {
-            let root = project.root;
+            let root = root;
             let path = args.path.clone();
             let sources = args.source_paths.clone();
             let (results, _activity) = tokio::task::spawn_blocking(move || {
@@ -217,7 +253,7 @@ async fn dispatch_transfer(
             .submit_ssh_file_download(
                 &state.store,
                 project_id,
-                Some(session),
+                session,
                 &context,
                 &args.path,
                 Path::new(destination),
@@ -234,7 +270,7 @@ async fn dispatch_transfer(
     value(dto::Transfer {
         schema: dto::SCHEMA.into(),
         project_id: project_id.into(),
-        session_id: session.into(),
+        session_id: session.map(str::to_owned),
         context_id: args.context_id,
         path: args.path,
         items,
@@ -243,10 +279,10 @@ async fn dispatch_transfer(
 
 fn validate_transfer(
     args: &dto::TransferRequest,
-    session: &str,
+    session: Option<&str>,
     upload: bool,
 ) -> Result<(), String> {
-    if args.session_id != session {
+    if args.session_id.as_deref() != session {
         return Err("Session scope mismatch".into());
     }
     if upload {
@@ -291,14 +327,14 @@ async fn remote_upload(
     store: &wisp_store::Store,
     manager: &crate::run_context::RunManager,
     project: &str,
-    session: &str,
+    session: Option<&str>,
     args: &dto::TransferRequest,
 ) -> Result<Vec<dto::TransferItem>, String> {
     let items = crate::run_context::submit_local_uploads_to_context(
         store,
         manager,
         project,
-        Some(session),
+        session,
         &args.context_id,
         &args.path,
         &args.source_paths,
@@ -438,6 +474,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn project_roots_and_sessionless_transfers_do_not_fall_back_to_a_frame() {
+        let temp = tempfile::tempdir().unwrap();
+        assert!(project_root("").is_err());
+        assert!(project_root("relative").is_err());
+        assert_eq!(project_root(temp.path().to_str().unwrap()).unwrap(), dunce::canonicalize(temp.path()).unwrap());
+        let request = dto::TransferRequest { session_id: None, context_id: "local".into(), path: ".".into(),
+            source_paths: vec![temp.path().join("sample.csv").to_string_lossy().into_owned()], destination_path: None };
+        assert!(validate_transfer(&request, None, true).is_ok());
+        assert!(validate_transfer(&request, Some("existing-frame"), true).is_err());
+    }
+
+    #[test]
     fn transfer_requests_require_exact_session_unique_absolute_sources_and_matching_operation_fields(
     ) {
         let source = std::env::temp_dir()
@@ -445,34 +493,34 @@ mod tests {
             .to_string_lossy()
             .into_owned();
         let mut args = dto::TransferRequest {
-            session_id: "s".into(),
+            session_id: Some("s".into()),
             context_id: "local".into(),
             path: ".".into(),
             source_paths: vec![source.clone()],
             destination_path: None,
         };
-        assert!(validate_transfer(&args, "s", true).is_ok());
-        assert!(validate_transfer(&args, "foreign", true).is_err());
+        assert!(validate_transfer(&args, Some("s"), true).is_ok());
+        assert!(validate_transfer(&args, Some("foreign"), true).is_err());
         args.source_paths.push(source.clone());
-        assert!(validate_transfer(&args, "s", true).is_err());
+        assert!(validate_transfer(&args, Some("s"), true).is_err());
         args.source_paths = vec!["relative.csv".into()];
-        assert!(validate_transfer(&args, "s", true).is_err());
+        assert!(validate_transfer(&args, Some("s"), true).is_err());
         args.source_paths = vec![source.clone()];
         args.context_id = "ssh:lab".into();
         for path in ["../results", "/results/*", "/results\nother"] {
             args.path = path.into();
-            assert!(validate_transfer(&args, "s", true).is_err());
+            assert!(validate_transfer(&args, Some("s"), true).is_err());
         }
         args.path = "/results".into();
-        assert!(validate_transfer(&args, "s", true).is_ok());
+        assert!(validate_transfer(&args, Some("s"), true).is_ok());
         args.destination_path = Some(source);
-        assert!(validate_transfer(&args, "s", true).is_err());
-        assert!(validate_transfer(&args, "s", false).is_err());
+        assert!(validate_transfer(&args, Some("s"), true).is_err());
+        assert!(validate_transfer(&args, Some("s"), false).is_err());
         args.source_paths.clear();
         args.path = "/results/qc.csv".into();
-        assert!(validate_transfer(&args, "s", false).is_ok());
+        assert!(validate_transfer(&args, Some("s"), false).is_ok());
         args.context_id = "local".into();
-        assert!(validate_transfer(&args, "s", false).is_err());
+        assert!(validate_transfer(&args, Some("s"), false).is_err());
     }
 
     #[test]

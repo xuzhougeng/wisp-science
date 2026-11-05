@@ -53,6 +53,8 @@ mod exploration_commands;
 #[cfg(target_os = "macos")]
 mod mac_notifications;
 mod native_assistant;
+mod native_branch_merge;
+mod native_explorations;
 mod native_calendar;
 mod native_composer;
 mod native_conversations;
@@ -64,12 +66,14 @@ mod native_journey;
 mod native_library;
 mod native_message_images;
 mod native_projects;
+mod native_session_deletion;
 mod native_publication;
 mod native_queue;
 mod native_search;
 mod native_session_export;
 mod native_session_transfer;
 mod native_settings;
+mod native_workflow_conversion;
 mod privacy_mode;
 pub(crate) use wisp_runs::exploration_isolation;
 mod exploration_promotion;
@@ -124,6 +128,8 @@ mod workflow_approval;
 mod workflow_artifacts;
 pub(crate) use wisp_runs as run_context;
 mod native_panels;
+mod native_runtimes;
+mod native_memos;
 mod native_run_review;
 mod native_share;
 mod native_terminals;
@@ -6760,13 +6766,22 @@ fn emit_review(
     );
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ReviewerBackendTestResult {
-    backend: String,
-    model: String,
-    status: String,
-    summary: String,
+async fn reviewer_test_session_profile(
+    store: &wisp_store::Store,
+    project_id: &str,
+    session_id: Option<&str>,
+) -> Result<Option<String>, String> {
+    let Some(session_id) = session_id else {
+        return Ok(None);
+    };
+    // Native settings have no active frame on their hidden project surface.
+    // Validate the explicitly supplied conversation before reading its binding.
+    native_conversations::require_owner(store, project_id, session_id).await?;
+    Ok(store
+        .get_acp_session(session_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .map(|binding| binding.agent_profile_id))
 }
 
 /// Make one real Reviewer call with the current (possibly unsaved) settings
@@ -6777,22 +6792,17 @@ async fn test_reviewer_backend(
     state: State<'_, AppState>,
     window: crate::workspace_surface::WorkspaceSurface,
     reviewer: specialists::Specialist,
-) -> Result<ReviewerBackendTestResult, String> {
+    session_id: Option<String>,
+) -> Result<wisp_dto::ReviewerBackendTestResult, String> {
     if reviewer.id != "reviewer" {
         return Err("Only the built-in Reviewer backend can be tested here.".into());
     }
 
     let project = state.require_active(window.label())?;
     let _project_activity = state.begin_project_activity(&project.id)?;
-    let session_acp_profile_id = match state.active_frame(window.label()) {
-        Some(frame_id) => state
-            .store
-            .get_acp_session(&frame_id)
-            .await
-            .map_err(|error| error.to_string())?
-            .map(|binding| binding.agent_profile_id),
-        None => None,
-    };
+    let session_id = session_id.or_else(|| state.active_frame(window.label()));
+    let session_acp_profile_id =
+        reviewer_test_session_profile(&state.store, &project.id, session_id.as_deref()).await?;
     let backend = resolve_review_backend(&reviewer, session_acp_profile_id.as_deref());
     let transcript = vec![
         Message::user("Verify the reported sample count against the recorded tool output."),
@@ -6815,7 +6825,7 @@ async fn test_reviewer_backend(
         None,
     )
     .await?;
-    Ok(ReviewerBackendTestResult {
+    Ok(wisp_dto::ReviewerBackendTestResult {
         backend: report.reviewer_backend,
         model: report.reviewer_model,
         status: report.review_status,
@@ -8216,6 +8226,7 @@ pub fn run() {
             skill_commands::promote_skill_to_global,
             skill_commands::remove_project_skill_copy,
             skill_commands::list_project_skill_packages,
+            skill_commands::install_scoped_skill,
             skill_commands::remove_skill,
             plugins::list_plugins,
             plugins::pick_plugin_source,

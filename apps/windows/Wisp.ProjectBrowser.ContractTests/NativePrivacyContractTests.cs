@@ -21,6 +21,12 @@ internal static class NativePrivacyContractTests
         try { await client.GetAsync(); throw new InvalidOperationException("Expected lost privacy read"); }
         catch (IOException) { }
         if (fake.Calls != 2) throw new InvalidOperationException("Privacy read was retried");
+        fake.Fail = false;
+        fake.Reply = JsonSerializer.SerializeToNode(new PrivacyMode(false, ["research-1"]));
+        var restored = await client.SaveAsync(new(false, ["research-1"]));
+        if (restored.Active || restored.ProjectIds is not ["research-1"] || fake.Command != "set_privacy_mode"
+            || fake.ProjectId != null || fake.Arguments?["project_ids"]?[0]?.ToString() != "research-1")
+            throw new InvalidOperationException("Restore must retain the saved selection and use global scope");
         Console.WriteLine("Native privacy mode fixture, empty scope and no-retry tests passed.");
     }
 
@@ -30,10 +36,12 @@ internal static class NativePrivacyContractTests
         public bool Fail;
         public string? Command;
         public string? ProjectId;
+        public JsonObject? Arguments;
         public JsonNode? Reply;
         public Task<JsonNode?> InvokeAsync(string command, JsonObject arguments, string? projectId = null, CancellationToken cancellationToken = default)
         {
             Calls++;
+            Arguments = arguments;
             Command = command;
             ProjectId = projectId;
             if (Fail) throw new IOException("lost response");

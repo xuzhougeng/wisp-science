@@ -9,11 +9,31 @@ internal static class NativeComposerReadingTests
         static void Check(bool pass, string message) { if (!pass) throw new InvalidOperationException(message); }
         var usage = Item("usage", """{"input":9999999,"ctx_tokens":500,"max_context":1000,"context_usage":{"system_prompt":100,"conversation":400}}""");
         var total = NativeContextUsage.Latest([usage])!;
-        Check(total.Used == 500 && total.Label.Contains("50%") && total.Rows.Count == 2, "context uses the active window, not cumulative billing");
-        Check(total.CompactLabel == "50%" && new NativeContextUsage(10, 0, []).CompactLabel == "?",
+        Check(total.Used == 500 && total.Label.Contains("50%") && total.Rows.Count == 7 && total.Rows.Count(row => row.Tokens > 0) == 2, "context uses the active window and includes empty categories, not cumulative billing");
+        Check(total.CompactLabel == "50%" && new NativeContextUsage(10, 0, []).CompactLabel == "—",
             "toolbar usage stays compact while unknown limits never claim zero usage");
+        var locale = new NativeLocalization(new Dictionary<string, Dictionary<string, string>> { ["en"] = new()
+        { ["context_usage.system_prompt"] = "System prompt", ["context_usage.conversation"] = "Conversation",
+          ["context_usage.open_pct"] = "Open context usage, {pct}%", ["context_usage.open_unknown"] = "Context window unknown",
+          ["context_usage.total_estimated"] = "~{used} / {max} Tokens", ["context_usage.total_used"] = "{used} Tokens" } }, "en");
+        var localized = NativeContextUsage.Latest([usage], locale)!;
+        Check(localized.Rows.Where(row => row.Tokens > 0).Select(row => row.Label).SequenceEqual(new[] { "System prompt", "Conversation" })
+            && localized.LocalizedLabel(locale) == "Open context usage, 50%", "usage popover labels follow the current shared locale");
+        Check(new NativeContextUsage(10, 0, []).LocalizedTotal(locale) == "10 Tokens"
+            && new NativeContextUsage(10, 0, []).LocalizedLabel(locale) == "Context window unknown", "unknown window never invents a localized percentage or capacity");
         var compacted = Item("compaction", """{"after":100,"strategy":"manual","undone":false}""");
-        Check(NativeContextUsage.Latest([usage, compacted]) is { Used: 100, Rows.Count: 1 }, "compaction discards stale buckets");
+        var afterCompact = NativeContextUsage.Latest([usage, compacted])!;
+        Check(afterCompact.Used == 100 && afterCompact.Rows.Count == 7 && afterCompact.Rows.Take(6).All(row => row.Tokens == 0)
+            && afterCompact.Rows[^1].Tokens == 100, "compaction discards stale buckets without hiding empty category rows");
+        Check(new NativeContextUsage(695, 1000, []).Percent == 70 && new NativeContextUsage(905, 1000, []).Tone == "err"
+            && new NativeContextUsage(900, 1000, []).Tone == "warn" && new NativeContextUsage(694, 1000, []).Tone == "text-muted",
+            "WebView half-up percentage and 70/90 warning bands are respected");
+        Check(new NativeContextUsage(ulong.MaxValue, 1, []).Percent == 100 && new NativeContextUsage(ulong.MaxValue, ulong.MaxValue, []).Percent == 100,
+            "percentage arithmetic cannot overflow or exceed the visible window");
+        Check(NativeContextUsage.FormatTokens(1200) == "1.2K" && NativeContextUsage.FormatTokens(1500000) == "1.5M"
+            && NativeContextUsage.FormatLimit(128000) == "128K" && NativeContextUsage.FormatLimit(2000000) == "2M", "shared compact token formatting");
+        Check(total.Rows.Select(row => row.Color).Distinct().Count() == 7 && total.Rows.Count(row => row.Expandable) == 6
+            && total.SegmentShare(total.Rows[0]) == .1, "distinct category colors and the full-capacity denominator match the usage panel");
         Check(NativeContextUsage.Latest([usage, compacted with { Text = """{"after":100,"strategy":"auto_continue"}""" }])?.Used == 500,
             "auto-continue does not compact the context window");
         Check(NativeContextUsage.Latest([usage, compacted with { Text = """{"after":100,"undone":true}""" }])?.Used == 500, "undone compaction is ignored");
@@ -65,6 +85,24 @@ internal static class NativeComposerReadingTests
         var sourceQuote = new NativeComposerQuote("s", -1, "document", sourceSelection.Text, new("p", "aligned.fa", sourceSelection.Location));
         Check(sourceQuote.Message.Contains("未保存草稿") && sourceQuote.Message.Contains("> ACGT\n> TT😀\n> "),
             "source quotes label unsaved content and quote each Windows newline");
+        var quoteLocale = new NativeLocalization(new Dictionary<string, Dictionary<string, string>> {
+            ["en"] = new() { ["attachment.quote"] = "Quoted text" }, ["zh"] = new() { ["attachment.quote"] = "引用文本" } }, "en");
+        var message = sourceQuote.Message;
+        foreach (var language in new[] { "en", "zh" })
+        {
+            quoteLocale.Preview(language);
+            Check(sourceQuote.SourceLabel(quoteLocale) == "aligned.fa" && sourceQuote.Tooltip() == "aligned.fa\n\n" + sourceText.Substring(6, 10),
+                "file quote captions and tooltips match WebView's literal source path");
+            Check(sourceQuote.Message == message && sourceQuote.Document?.Location.Unsaved == true,
+                "display language does not rewrite quote provenance or outgoing content");
+            Check(quote.SourceLabel(quoteLocale) == (language == "en" ? "Quoted text" : "引用文本") && quote.Tooltip() == quote.Text,
+                "ordinary transcript selection uses the shared localized quote caption");
+        }
+        var registeredQuote = sourceQuote with { Document = sourceQuote.Document! with { Path = "artifact:snapshot" } };
+        Check(registeredQuote.SourceLabel(quoteLocale) == "artifact:snapshot", "reference captions never replace immutable artifact identities");
+        var excerptQuote = new NativeComposerQuote("s", 3, "excerpt", "Evidence", ExcerptLabel: "Study {title} · turns 4–5");
+        Check(excerptQuote.SourceLabel(quoteLocale) == "Study {title} · turns 4–5" && excerptQuote.Tooltip() == "Study {title} · turns 4–5\n\nEvidence",
+            "excerpt captions preserve the selected title without interpreting user placeholders");
         Console.WriteLine("Native reading: context windows, compaction, malformed rows and source-aware quotes passed.");
     }
 }

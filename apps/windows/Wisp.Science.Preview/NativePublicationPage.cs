@@ -7,7 +7,7 @@ using Wisp.ProjectBrowser.Contracts;
 
 namespace Wisp.Science.Preview;
 
-internal sealed class NativePublicationPage : NativeActionPage
+internal sealed partial class NativePublicationPage : NativeActionPage
 {
     private readonly WorkspacePublicationModel model;
     private readonly StackPanel creation = new() { Spacing = 10 }, evidence = new() { Spacing = 10 }, editor = new() { Spacing = 10 },
@@ -33,24 +33,30 @@ internal sealed class NativePublicationPage : NativeActionPage
     private readonly Button freeze, clone, buildCapsule, checkRevision;
     private readonly NativeActionWrap sourcePaging = new();
 
-    public NativePublicationPage(WorkspacePublicationModel model, WispDesign design, Func<Task<string?>> pickDirectory, Action close) : base(design, "论文证据", model, close)
+    private readonly Button createPublication;
+    private readonly NativeActionWrap tabs = new();
+    private readonly Grid createLayout = new() { RowSpacing = 28, ColumnSpacing = 48 };
+    public NativePublicationPage(WorkspacePublicationModel model, WispDesign design, Func<Task<string?>> pickDirectory, Action close) : base(design, design.T("publication.title"), model, close)
     {
         this.model = model;
-        var refresh = Design.ToolButton("刷新论文工作区", "refresh"); refresh.Click += async (_, _) => await model.LoadAsync(); HeaderActions.Children.Add(refresh);
+        SetupPublicationHeader(close);
         Form.Children.Add(uncertain);
         acknowledge = Button("已刷新并核对操作结果", () => { model.AcknowledgeUncertain(); return Task.CompletedTask; }); Form.Children.Add(acknowledge);
         Form.Children.Add(papers); Form.Children.Add(revisions); Form.Children.Add(summary);
         TrackSelector(papers); TrackSelector(revisions);
         papers.SelectionChanged += async (_, _) => { if (!rendering && papers.SelectedItem is ComboBoxItem i) await model.SelectWorkspaceAsync((string)i.Tag, null); };
         revisions.SelectionChanged += async (_, _) => { if (!rendering && revisions.SelectedItem is ComboBoxItem i) await model.SelectWorkspaceAsync(model.PublicationId, (string)i.Tag); };
-        newTitle = Input(creation, "论文标题", model.Title, text => model.Title = text);
-        newDescription = Input(creation, "描述", model.Description, text => model.Description = text, true);
-        newLabel = Input(creation, "版本标签", model.RevisionLabel, text => model.RevisionLabel = text);
-        creation.Children.Add(Button("创建论文证据", async () => { if (await model.CreateAsync()) newTitle.Text = newDescription.Text = newLabel.Text = ""; }));
-        Form.Children.Add(creation);
-        var tabs = new NativeActionWrap();
-        foreach (var (id, label) in new[] { ("evidence", "证据与条目"), ("sources", "添加证据"), ("readiness", "冻结检查"), ("versions", "版本与复现") })
-            tabs.Children.Add(Button(label, async () => { tab = id; ShowTab(); if (id == "sources") await LoadSources(); }));
+        papers.Header = design.T("publication.paper"); revisions.Header = design.T("publication.revision");
+        if (model.RevisionLabel.Length == 0) model.RevisionLabel = design.T("publication.initial_revision");
+        newTitle = Input(creation, design.T("publication.paper_title"), model.Title, text => { model.Title = text; UpdateCreate(); });
+        newDescription = Input(creation, design.T("publication.description"), model.Description, text => model.Description = text, true);
+        newDescription.MinHeight = 140;
+        newLabel = Input(creation, design.T("publication.revision_label"), model.RevisionLabel, text => { model.RevisionLabel = text; UpdateCreate(); });
+        createPublication = Button(design.T("publication.create_action"), async () => { if (await model.CreateAsync()) newTitle.Text = newDescription.Text = ""; }, true);
+        createPublication.HorizontalAlignment = HorizontalAlignment.Stretch; creation.Children.Add(createPublication);
+        SetupCreation(); Form.Children.Add(createLayout);
+        foreach (var (id, key) in new[] { ("evidence", "tab_evidence"), ("sources", "add_evidence"), ("readiness", "tab_readiness"), ("versions", "tab_versions") })
+            tabs.Children.Add(Button(design.T("publication." + key), async () => { model.DismissRunBinding(); tab = id; ShowTab(); if (id == "sources") await LoadSources(); }));
         Form.Children.Add(tabs);
         Results.Children.Add(evidence); Results.Children.Add(editor); Results.Children.Add(sourcePanel); Results.Children.Add(readinessPanel); Results.Children.Add(versions);
         SetupSources();
@@ -78,12 +84,19 @@ internal sealed class NativePublicationPage : NativeActionPage
         }));
         versions.Children.Add(Mute("冻结版本后可构建证据包。请选择新的 ZIP 文件名，已有文件不会被覆盖。"));
         buildCapsule = Button("构建证据包", async () => { if (!string.IsNullOrWhiteSpace(destination.Text)) await model.MutateAsync(new() { ["action"] = "build_capsule", ["destination"] = destination.Text.Trim() }); }); versions.Children.Add(buildCapsule);
-        model.Changed += Render; Render(); _ = model.LoadAsync();
+        Results.Children.Insert(0, runBinding);
+        model.Changed += Render; Render(); _ = ReadPublication();
     }
     private TextBox Input(Panel parent, string label, string text, Action<string> change, bool multiline = false)
     {
-        var field = new TextBox { Header = label, AcceptsReturn = multiline, TextWrapping = TextWrapping.Wrap, MinHeight = multiline ? 90 : 32, MaxHeight = multiline ? 260 : double.PositiveInfinity };
-        field.Text = text; field.TextChanged += (_, _) => change(field.Text); parent.Children.Add(field); return field;
+        var group = new StackPanel { Spacing = 4 };
+        var caption = Design.Text(label, 11); caption.Foreground = Design.Brush("text-muted"); group.Children.Add(caption);
+        var field = new TextBox { AcceptsReturn = multiline, TextWrapping = TextWrapping.Wrap, MinHeight = multiline ? 90 : 36,
+            MaxHeight = multiline ? 260 : double.PositiveInfinity, CornerRadius = new(7), Padding = new(10, 7, 10, 7),
+            Background = Design.Brush("bg-input"), Foreground = Design.Brush("text"), BorderBrush = Design.Brush("border-strong"), BorderThickness = new(1) };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(field, label);
+        field.Text = text; field.TextChanged += (_, _) => change(field.Text); group.Children.Add(NativeDialogVisuals.Input(field, Design));
+        parent.Children.Add(group); return field;
     }
     private ComboBox Choice(Panel parent, string label, IEnumerable<(string Id, string Label)> options, string? selected, Action<string> change)
     {
@@ -106,7 +119,7 @@ internal sealed class NativePublicationPage : NativeActionPage
     {
         evidence.Visibility = tab == "evidence" && !editing ? Visibility.Visible : Visibility.Collapsed;
         editor.Visibility = tab == "evidence" && editing ? Visibility.Visible : Visibility.Collapsed;
-        sourcePanel.Visibility = tab == "sources" ? Visibility.Visible : Visibility.Collapsed;
+        sourcePanel.Visibility = tab == "sources" && model.PendingRun == null ? Visibility.Visible : Visibility.Collapsed;
         sourcePicker.Visibility = model.Source == null ? Visibility.Visible : Visibility.Collapsed;
         sourcePreview.Visibility = model.Source != null ? Visibility.Visible : Visibility.Collapsed;
         readinessPanel.Visibility = tab == "readiness" ? Visibility.Visible : Visibility.Collapsed;
@@ -117,7 +130,11 @@ internal sealed class NativePublicationPage : NativeActionPage
         if (model.Closed) return;
         uncertain.Visibility = acknowledge.Visibility = model.MutationUncertain ? Visibility.Visible : Visibility.Collapsed;
         acknowledge.IsEnabled = model.Reconciled && !model.Busy;
-        creation.Visibility = model.CreationAvailable ? Visibility.Visible : Visibility.Collapsed;
+        createLayout.Visibility = model.CreationAvailable ? Visibility.Visible : Visibility.Collapsed;
+        var hasPaper = model.Workspace?.Publication != null;
+        tabs.Visibility = papers.Visibility = revisions.Visibility = summary.Visibility = hasPaper ? Visibility.Visible : Visibility.Collapsed;
+        Results.Visibility = hasPaper || model.PendingRun != null ? Visibility.Visible : Visibility.Collapsed;
+        UpdateCreate();
         if (!ReferenceEquals(renderedWorkspace, model.Workspace))
         {
             var changedRevision = renderedWorkspace?.Revision?.Id != model.RevisionId;
@@ -129,7 +146,7 @@ internal sealed class NativePublicationPage : NativeActionPage
                 papers.SelectedItem = papers.Items.Cast<ComboBoxItem>().FirstOrDefault(i => (string)i.Tag == model.PublicationId);
                 revisions.SelectedItem = revisions.Items.Cast<ComboBoxItem>().FirstOrDefault(i => (string)i.Tag == model.RevisionId);
             } finally { rendering = false; }
-            summary.Text = model.Workspace?.Publication == null ? "创建论文记录，组织条目和来源证据。" : $"{model.Workspace.Publication.Description}\n{model.Workspace.Revision?.State} · {model.Workspace.Items.Count} 个条目 · 能力：{model.Workspace.EffectiveCapabilityLevel ?? model.Workspace.Revision?.CapabilityLevel}";
+            summary.Text = model.Workspace?.Publication == null ? "" : string.Join(" · ", new[] { model.Workspace.Publication.Description, ValueLabel("state", model.Workspace.Revision?.State), Design.L($"{model.Workspace.Items.Count} 个条目", $"{model.Workspace.Items.Count} items"), ValueLabel("capability", model.Workspace.EffectiveCapabilityLevel ?? model.Workspace.Revision?.CapabilityLevel) }.Where(s => !string.IsNullOrEmpty(s)));
             if (changedRevision) { editing = false; InvalidateCheck(); }
             InvalidateCheck(); RenderEvidence(); RenderVersions(); RenderReadiness();
         }
@@ -149,72 +166,72 @@ internal sealed class NativePublicationPage : NativeActionPage
         checkRevision.IsEnabled = model.Editable;
         clone.IsEnabled = model.RevisionId != null && !model.Busy && !model.MutationUncertain;
         buildCapsule.IsEnabled = model.CanBuildCapsule;
-        ShowTab(); Update();
+        RenderRunBinding(); ShowTab(); Update();
     }
     private void RenderEvidence()
     {
         evidence.Children.Clear();
-        var add = Button("新增条目", () => { model.SelectItem(null); editing = true; RenderEditor(); ShowTab(); return Task.CompletedTask; }); add.IsEnabled = model.Workspace?.Revision?.State == "draft"; evidence.Children.Add(add);
+        var add = Button(T("add_item"), () => { model.SelectItem(null); editing = true; RenderEditor(); ShowTab(); return Task.CompletedTask; }); add.IsEnabled = model.Workspace?.Revision?.State == "draft"; evidence.Children.Add(add);
         foreach (var item in (model.Workspace?.Items ?? []).OrderBy(i => i.Ordinal))
         {
             var row = new StackPanel { Spacing = 7 };
-            row.Children.Add(Design.Text(item.Title, 18)); row.Children.Add(Mute($"{KindLabel(item.Kind)} · 顺序 {item.Ordinal}"));
+            row.Children.Add(Design.Text(item.Title, 18)); row.Children.Add(Mute($"{KindLabel(item.Kind)} · {Design.L("顺序", "Order")} {item.Ordinal}"));
             if (item.Content.Length > 0) row.Children.Add(new TextBlock { Text = item.Content, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true });
-            var edit = Button("编辑条目", () => { model.SelectItem(item.Id); editing = true; RenderEditor(); ShowTab(); return Task.CompletedTask; }); edit.IsEnabled = model.Workspace?.Revision?.State == "draft"; row.Children.Add(edit);
+            var edit = Button(Design.L("编辑条目", "Edit item"), () => { model.SelectItem(item.Id); editing = true; RenderEditor(); ShowTab(); return Task.CompletedTask; }); edit.IsEnabled = model.Workspace?.Revision?.State == "draft"; row.Children.Add(edit);
             foreach (var binding in (model.Workspace?.Bindings ?? []).Where(b => b.ItemId == item.Id)) row.Children.Add(BindingCard(binding));
             evidence.Children.Add(Design.Card(row));
         }
         foreach (var binding in (model.Workspace?.Bindings ?? []).Where(b => b.ItemId == null)) evidence.Children.Add(BindingCard(binding));
         foreach (var link in model.Workspace?.ItemLinks ?? []) {
             string Title(string key) => model.Workspace?.Items.FirstOrDefault(i => i.Id == link[key]?.GetValue<string>())?.Title ?? link[key]?.ToString() ?? "";
-            evidence.Children.Add(Mute($"条目关系：{Title("source_item_id")} · {link["relation"]} · {Title("target_item_id")}"));
+            evidence.Children.Add(Mute($"{Design.L("条目关系", "Item link")}: {Title("source_item_id")} · {link["relation"]} · {Title("target_item_id")}"));
         }
     }
-    private static string KindLabel(string kind) => kind switch { "section" => "章节", "claim" => "结论", "figure" => "图", "table" => "表", "methods" => "方法", "supplement" => "补充材料", _ => kind };
+    private string KindLabel(string kind) => ValueLabel("item", kind);
     private void RenderEditor()
     {
         editor.Children.Clear(); var draft = model.ItemDraft;
-        Choice(editor, "条目类型", new[] { "section", "claim", "figure", "table", "methods", "supplement" }.Select(k => (k, KindLabel(k))), draft.Kind, s => model.ItemDraft = model.ItemDraft with { Kind = s });
-        Input(editor, "条目标题", draft.Title, s => model.ItemDraft = model.ItemDraft with { Title = s });
-        Input(editor, "正文／说明", draft.Content, s => model.ItemDraft = model.ItemDraft with { Content = s }, true);
-        Choice(editor, "所属条目", new[] { ("", "无上级") }.Concat((model.Workspace?.Items ?? []).Where(i => i.Id != draft.Id).Select(i => (i.Id, i.Title))), draft.ParentId, s => model.ItemDraft = model.ItemDraft with { ParentId = s.Length == 0 ? null : s });
-        Input(editor, "排序（非负整数）", draft.Ordinal.ToString(), s => model.ItemDraft = model.ItemDraft with { Ordinal = long.TryParse(s, out var n) ? n : -1 });
-        editor.Children.Add(Button("保存条目", async () => { if (await model.SaveItemAsync()) { editing = false; RenderEvidence(); ShowTab(); } }));
-        editor.Children.Add(Button("返回证据列表", () => { editing = false; ShowTab(); return Task.CompletedTask; }));
+        Choice(editor, T("item_kind"), new[] { "section", "claim", "figure", "table", "methods", "supplement" }.Select(k => (k, KindLabel(k))), draft.Kind, s => model.ItemDraft = model.ItemDraft with { Kind = s });
+        Input(editor, T("item_title"), draft.Title, s => model.ItemDraft = model.ItemDraft with { Title = s });
+        Input(editor, T("description"), draft.Content, s => model.ItemDraft = model.ItemDraft with { Content = s }, true);
+        Choice(editor, T("parent_item"), new[] { ("", T("no_parent")) }.Concat((model.Workspace?.Items ?? []).Where(i => i.Id != draft.Id).Select(i => (i.Id, i.Title))), draft.ParentId, s => model.ItemDraft = model.ItemDraft with { ParentId = s.Length == 0 ? null : s });
+        Input(editor, Design.L("顺序", "Order"), draft.Ordinal.ToString(), s => model.ItemDraft = model.ItemDraft with { Ordinal = long.TryParse(s, out var n) ? n : -1 });
+        editor.Children.Add(Button(T("save_item"), async () => { if (await model.SaveItemAsync()) { editing = false; RenderEvidence(); ShowTab(); } }));
+        editor.Children.Add(Button(Design.L("返回证据列表", "Back to evidence"), () => { editing = false; ShowTab(); return Task.CompletedTask; }));
     }
     private FrameworkElement BindingCard(NativePublicationBinding b)
     {
         var body = new StackPanel { Spacing = 6 };
         var lineage = model.Workspace?.Lineage?.FirstOrDefault(v => v["binding_id"]?.GetValue<string>() == b.Id);
-        body.Children.Add(Design.Text(lineage?["source_label"]?.GetValue<string>() ?? b.SourceKind, 15));
-        body.Children.Add(Mute(b.Purpose + "\n" + b.SelectionState + " · " + b.ReviewState + " · " + b.ReproductionState));
-        if (lineage != null) body.Children.Add(Mute($"来源质量：{lineage["quality"]} · 版本：{lineage["version_number"]}\n运行：{lineage["producing_run_title"]}\n校验：{lineage["checksum"]}"));
-        if (model.Workspace?.Drift?.Any(d => d["binding_id"]?.GetValue<string>() == b.Id && d["has_drift"]?.GetValue<bool>() == true) == true) body.Children.Add(Warn("来源已有新版本；此证据仍绑定原始版本。"));
+        body.Children.Add(Design.Text(lineage?["source_label"]?.GetValue<string>() ?? ValueLabel("source", b.SourceKind), 15));
+        body.Children.Add(Mute(b.Purpose + "\n" + ValueLabel("selection", b.SelectionState) + " · " + ValueLabel("review", b.ReviewState) + " · " + ValueLabel("reproduction", b.ReproductionState)));
+        if (lineage != null) body.Children.Add(Mute($"{T("lineage_quality")}: {lineage["quality"]} · {T("revision")}: {lineage["version_number"]}\n{T("source.run")}: {lineage["producing_run_title"]}\n{Design.L("校验", "Checksum")}: {lineage["checksum"]}"));
+        if (model.Workspace?.Drift?.Any(d => d["binding_id"]?.GetValue<string>() == b.Id && d["has_drift"]?.GetValue<bool>() == true) == true) body.Children.Add(Warn(T("drift")));
         if (model.Workspace?.Revision?.State == "draft")
         {
-            var selection = Choice(body, "证据状态", NativePublicationEvidence.SelectionChoices, b.SelectionState, _ => { });
-            var visible = Choice(body, "来源可见性", [("private", "私有"), ("restricted", "受限"), ("public", "公开")], b.Visibility, _ => { });
-            body.Children.Add(Button("保存证据状态", async () => await model.MutateAsync(new() { ["action"] = "update_binding", ["binding_id"] = b.Id, ["selection_state"] = Selected(selection), ["visibility"] = Selected(visible) })));
+            var selection = Choice(body, T("selection"), NativePublicationEvidence.SelectionChoices.Select(s => (s.Id, T("selection." + s.Id))), b.SelectionState, _ => { });
+            var visible = Choice(body, T("visibility"), new[] { "private", "restricted", "public" }.Select(v => (v, T("visibility." + v))), b.Visibility, _ => { });
+            body.Children.Add(Button(Design.L("保存证据状态", "Save evidence status"), async () => await model.MutateAsync(new() { ["action"] = "update_binding", ["binding_id"] = b.Id, ["selection_state"] = Selected(selection), ["visibility"] = Selected(visible) })));
         }
         else if (model.Workspace?.Revision?.State is "frozen" or "published")
         {
             var run = b.SourceKind == "run" ? b.SourceId : lineage?["producing_run_id"]?.GetValue<string>();
-            if (run != null) body.Children.Add(Button("在隔离目录验证复现", async () => await model.MutateAsync(new() { ["action"] = "verify", ["source_run_id"] = run, ["comparisons"] = new JsonArray() })));
+            if (run != null) body.Children.Add(Button(T("verify_run"), async () => await model.MutateAsync(new() { ["action"] = "verify", ["source_run_id"] = run, ["comparisons"] = new JsonArray() })));
         }
         var source = new TextBox { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, IsReadOnly = true, MaxHeight = 220 }; source.Text = b.SourceSnapshotJson;
-        body.Children.Add(Disclosure("精确来源与快照", source));
+        body.Children.Add(Disclosure(T("exact_source"), source));
         foreach (var review in (model.Workspace?.Reviews ?? []).Where(r => r["binding_id"]?.GetValue<string>() == b.Id))
-            body.Children.Add(Mute($"核验：{review["reviewer"]} · {review["method"]} · {review["result"]}\n{review["report_json"]}"));
+            body.Children.Add(Mute($"{T("review")}: {review["reviewer"]} · {review["method"]} · {review["result"]}\n{review["report_json"]}"));
         foreach (var supersession in (model.Workspace?.Supersessions ?? []).Where(r => r["old_binding_id"]?.GetValue<string>() == b.Id || r["new_binding_id"]?.GetValue<string>() == b.Id))
-            body.Children.Add(Mute($"证据替代：{supersession["old_binding_id"]} → {supersession["new_binding_id"]}\n{supersession["reason"]}"));
+            body.Children.Add(Mute($"{T("supersession")}: {supersession["old_binding_id"]} → {supersession["new_binding_id"]}\n{supersession["reason"]}"));
         return Design.Card(body);
     }
     private void SetupSources()
     {
         sourcePanel.Children.Add(sourcePicker);
-        Choice(sourcePicker, "来源类型", [("files", "文件版本"), ("runs", "运行"), ("messages", "消息片段")], sourceKind, s => { sourceKind = s; sourceOffset = 0; _ = LoadSources(); });
-        Input(sourcePicker, "查找来源", "", s => sourceQuery = s);
-        sourcePicker.Children.Add(Button("搜索来源", async () => { sourceOffset = 0; await LoadSources(); }));
+        Choice(sourcePicker, Design.L("来源类型", "Source type"), new[] { "files", "runs", "messages" }.Select(k => (k, T("sources." + k))), sourceKind, s => { sourceKind = s; sourceOffset = 0; _ = LoadSources(); });
+        Input(sourcePicker, T("source_search"), "", s => sourceQuery = s);
+        sourcePicker.Children.Add(Button(T("search"), async () => { sourceOffset = 0; await LoadSources(); }));
         SetupPreciseSources();
         sourcePicker.Children.Add(new ScrollViewer { Content = sourceRows, MaxHeight = 300, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
         sourcePicker.Children.Add(sourcePaging); sourcePanel.Children.Add(sourcePreview);
@@ -245,14 +262,14 @@ internal sealed class NativePublicationPage : NativeActionPage
             catch (Exception e) { model.Fail(e.Message); }
             return Task.CompletedTask;
         }));
-        SelectKind("message_span"); sourcePicker.Children.Add(Disclosure("添加精确来源", form));
+        SelectKind("message_span"); sourcePicker.Children.Add(Disclosure(T("add_precise"), form));
     }
     private Task LoadSources() => model.LoadSourcesAsync(sourceKind, sourceQuery, sourceOffset);
     private void RenderSourceRows()
     {
         sourceRows.Children.Clear(); sourcePaging.Children.Clear();
         if (model.SourcesError != null) sourceRows.Children.Add(Warn(model.SourcesError));
-        if (model.SourcesLoading) sourceRows.Children.Add(Mute("正在读取来源…"));
+        if (model.SourcesLoading) sourceRows.Children.Add(Mute(T("loading")));
         foreach (var source in model.Sources.Sources) {
             var label = NativePublicationEvidence.SourceLabel(source);
             var choice = Button(label, () => { model.SelectSource(source); return Task.CompletedTask; });
@@ -260,8 +277,8 @@ internal sealed class NativePublicationPage : NativeActionPage
             choice.HorizontalAlignment = choice.HorizontalContentAlignment = HorizontalAlignment.Stretch;
             sourceRows.Children.Add(choice);
         }
-        var prev = Button("上一页来源", async () => { sourceOffset = sourceOffset >= 50 ? sourceOffset - 50 : 0; await LoadSources(); }); prev.IsEnabled = sourceOffset > 0 && !model.SourcesLoading;
-        var next = Button("下一页来源", async () => { sourceOffset += 50; await LoadSources(); }); next.IsEnabled = model.Sources.HasMore && !model.SourcesLoading;
+        var prev = Button(T("previous"), async () => { sourceOffset = sourceOffset >= 50 ? sourceOffset - 50 : 0; await LoadSources(); }); prev.IsEnabled = sourceOffset > 0 && !model.SourcesLoading;
+        var next = Button(T("next"), async () => { sourceOffset += 50; await LoadSources(); }); next.IsEnabled = model.Sources.HasMore && !model.SourcesLoading;
         sourcePaging.Children.Add(prev); sourcePaging.Children.Add(next);
     }
     private void RenderSourcePreview()
@@ -278,8 +295,8 @@ internal sealed class NativePublicationPage : NativeActionPage
         var item = Choice(sourcePreview, "绑定到条目", new[] { ("", "整个版本") }.Concat((model.Workspace?.Items ?? []).Select(i => (i.Id, i.Title))), model.SelectedItem, _ => { });
         var purpose = Input(sourcePreview, "用途", "", _ => { }, true);
         var claim = Choice(sourcePreview, "支持的结论", new[] { ("", "不指定") }.Concat((model.Workspace?.Items ?? []).Where(i => i.Kind == "claim").Select(i => (i.Id, i.Title))), "", _ => { });
-        var state = Choice(sourcePreview, "证据状态", NativePublicationEvidence.SelectionChoices, "selected", _ => { });
-        var visible = Choice(sourcePreview, "来源可见性", [("private", "私有"), ("restricted", "受限"), ("public", "公开")], "private", _ => { });
+        var state = Choice(sourcePreview, T("selection"), NativePublicationEvidence.SelectionChoices.Select(s => (s.Id, T("selection." + s.Id))), "selected", _ => { });
+        var visible = Choice(sourcePreview, T("visibility"), [("private", "私有"), ("restricted", "受限"), ("public", "公开")], "private", _ => { });
         var bind = Button("绑定此来源", async () => {
             try { if (await model.BindSourceAsync(Empty(Selected(item)), purpose.Text, Empty(Selected(claim)), Selected(state), Selected(visible), start, length)) { tab = "evidence"; ShowTab(); } }
             catch (Exception e) { model.Fail(e.Message); }
@@ -325,6 +342,7 @@ internal sealed class NativePublicationPage : NativeActionPage
     public override void HandleEscape()
     {
         foreach (var selector in selectors.AsEnumerable().Reverse()) if (selector.IsDropDownOpen) { selector.IsDropDownOpen = false; return; }
+        if (model.PendingRun != null) { CancelBinding(); return; }
         if (confirmingFreeze) { InvalidateCheck(); return; }
         if (editing) { editing = false; ShowTab(); return; }
         if (tab == "sources" && model.Source != null) { model.ClearSource(); return; }

@@ -21,8 +21,8 @@ internal static class NativeTranscriptActivityTests
         Check(NativeTranscriptActivity.Groups(rows.ToArray(), true).Count == 0, "active tail stays visible");
         Check(NativeTranscriptActivity.Groups([.. rows, Row("user"), Row("reasoning")], true).SequenceEqual([new NativeActivityGroup(1, final)]), "historical turn folds while next turn runs");
         Check(NativeTranscriptActivity.Groups([.. rows, Row("queued_user")], true).Count == 0, "queued prompt does not complete active turn");
-        foreach (var boundary in new[] { Row("question"), Row("tool", ok: false), Row("tool", ok: true, status: "running"),
-            Row("tool"), Row("tool", ok: true, tool: "monitor_run"), Row("tool", ok: true, tool: "generate_image"),
+        foreach (var boundary in new[] { Row("question"),
+            Row("tool", ok: true, tool: "monitor_run"), Row("tool", ok: true, tool: "generate_image"),
             Row("assistant", "Error: failure"), Row("unknown_action") })
         {
             var groups = NativeTranscriptActivity.Groups([Row("reasoning"), boundary, Row("tool", ok: true)], false);
@@ -86,7 +86,78 @@ internal static class NativeTranscriptActivityTests
             "review support does not relax monitor identity validation");
         linked[1] = linked[1] with { Run = run with { NeedsReview = true, OwnerIndex = null } };
         Check(NativeTranscriptActivity.Groups(linked, false, true).Count == 0, "unowned review-required Runs remain visible");
+        DisplayAndDisclosure();
         Console.WriteLine("Native completed process grouping, final reports, running turns and actionable boundaries passed.");
+    }
+
+    private static void DisplayAndDisclosure()
+    {
+        ConversationItem Row(string role, string text = "text", bool? ok = null, string? status = null) => new(role, text, role == "tool" ? "python" : null, null, ok, status);
+        var user = Row("user"); var reasoning = Row("reasoning");
+        var tool = Row("tool", "", null, "in_progress") with { Input = "print(result)" };
+        var usage = Row("usage", "{}"); var queued = Row("queued_user");
+        ConversationItem[] rows = [user, reasoning, tool, usage, queued];
+        var active = NativeTranscriptActivity.DisplayGroups(rows, true).Single();
+        Check(NativeTranscriptActivity.DisplayGroups(rows, true, modelView: true).Count == 0
+            && NativeTranscriptActivity.DisplayGroups(rows, false, modelView: true).Count == 0, "Model context preserves raw order in running and completed turns without narrative folding.");
+        Check(active == new NativeActivityGroup(2, 3, false, true), "live tools group separately from reasoning; usage and queued prompts do not end live status");
+        var locale = new NativeLocalization(new Dictionary<string, Dictionary<string, string>> {
+            ["en"] = new() { ["chat.activity_done"] = "Processed", ["chat.steps_running"] = "Working…", ["chat.model_waiting"] = "Waiting for the model…",
+                ["chat.model_wait_1"] = "Wait 1", ["chat.model_wait_2"] = "Wait 2", ["chat.model_wait_3"] = "Wait 3", ["chat.model_wait_4"] = "Wait 4",
+                ["chat.steps_1"] = "Ran 1 step", ["chat.steps_1_time"] = "Ran 1 step · {t}", ["chat.steps_n"] = "Ran {n} steps", ["chat.steps_n_time"] = "Ran {n} steps · {t}" },
+            ["zh"] = new() { ["chat.steps_running"] = "执行中…" }
+        }, "en");
+        var summary = NativeTranscriptActivity.Summary(rows, active, "stable", locale);
+        Check(summary.Title == "Working…" && summary.Now == "python · print(result)" && summary.Duration == null && summary.Note == null,
+            "running header shows current input without inventing elapsed time");
+        rows[2] = tool with { Ok = true, Status = "completed", Text = "done", DurationMs = 1250 };
+        var waiting = NativeTranscriptActivity.Summary(rows, active, "stable", locale);
+        Check(waiting.Title == "Waiting for the model…" && waiting.Note!.StartsWith("Wait ") && waiting.Now == null && waiting.Duration == "1s",
+            "completed tool in the active tail shows model wait and known tool time");
+        Check(waiting.Note == NativeTranscriptActivity.Summary(rows, active, "stable", locale).Note, "polling does not shuffle model wait copy");
+        var unknown = rows.ToArray(); unknown[2] = tool with { Ok = true, Status = "future" };
+        Check(NativeTranscriptActivity.Summary(unknown, active, "stable", locale).Note == null, "unknown lifecycle is not proof that the model is waiting");
+        var later = rows[..4].Append(Row("assistant", "Streaming answer")).ToArray();
+        var settled = NativeTranscriptActivity.DisplayGroups(later, true).Single();
+        Check(!settled.Live && !settled.CompletedTurn && NativeTranscriptActivity.Summary(later, settled, "stable", locale).Title == "Ran 1 step · 1s",
+            "an answer or reasoning after tools settles that phase while the turn remains active");
+        var complete = NativeTranscriptActivity.DisplayGroups(later, false).Single();
+        Check(complete == new NativeActivityGroup(1, 3) && NativeTranscriptActivity.Summary(later, complete, "complete", locale).Duration == null,
+            "finished turn merges reasoning/tools before answer; tool time never masquerades as whole-turn time");
+        foreach (var terminal in new[] { tool with { Ok = false, Status = "failed" }, tool with { Ok = true, Status = "cancelled" }, tool with { Status = "future" } })
+        {
+            ConversationItem[] stopped = [reasoning, terminal, Row("assistant", "Final answer")];
+            var group = NativeTranscriptActivity.DisplayGroups(stopped, false).Single();
+            Check(group == new NativeActivityGroup(0, 2) && !NativeTranscriptActivity.Summary(stopped, group, "stopped", locale).SettledOk,
+                "failed, cancelled and unknown tool phases fold together with a neutral indicator");
+        }
+        ConversationItem[] multiple = [user, rows[2], Row("file_changed"), rows[2] with { DurationMs = 61000 }, usage, queued];
+        var multipleGroup = NativeTranscriptActivity.DisplayGroups(multiple, true).Single();
+        Check(multipleGroup == new NativeActivityGroup(1, 4, false, true)
+            && NativeTranscriptActivity.Members(multiple, multipleGroup).SequenceEqual([1, 3]), "hidden metadata does not split a tool group or produce visible nested cards");
+        Check(NativeTranscriptActivity.Summary(multiple, multipleGroup, "many", locale).Duration == "1m 2s", "elapsed aggregation uses recorded tool durations");
+        Check(NativeTranscriptActivity.DisplayGroups([user, tool, Row("question"), tool], true).Count == 2, "questions remain between independent tool phases");
+        Check(NativeTranscriptActivity.DisplayGroups([user, tool with { ToolName = "attempt_completion", Ok = true, Text = "Only final answer" }], true).Count == 0,
+            "sole completion output remains a visible answer, never hidden as metadata");
+        var acp = tool with { Role = "acp_tool", ToolName = "Read", Status = "completed", Ok = null };
+        Check(NativeTranscriptActivity.Summary([acp], new(0, 1), "acp", locale).SettledOk, "ACP completion does not require legacy ok");
+        var located = acp with { Status = "in_progress", Locations = "data/source.csv:12", Text = "second-choice output" };
+        Check(NativeTranscriptActivity.Summary([located], new(0, 1, false, true), "acp-located", locale).Now == "Read · data/source.csv:12",
+            "live ACP group and nested step share the same location-first preview");
+        locale.Preview("zh"); Check(NativeTranscriptActivity.Summary([tool], new(0, 1, false, true), "zh", locale).Title == "执行中…", "running group follows shared locale");
+
+        var disclosure = new NativeDisclosureState(true);
+        Check(disclosure.Expanded && disclosure.Choice == null, "live group opens automatically without a user override");
+        disclosure.Automatic = false; Check(!disclosure.Expanded, "settled tool phase closes if the user has not chosen");
+        disclosure.Choice = true; disclosure.Automatic = true; disclosure.Automatic = false;
+        Check(disclosure.Expanded, "explicit open survives lifecycle and polling");
+        disclosure.Choice = false; disclosure.Automatic = true;
+        Check(!disclosure.Expanded, "explicit close survives running updates");
+        var refreshed = new NativeDisclosureState(true) { Choice = disclosure.Choice };
+        Check(!refreshed.Expanded && !new NativeDisclosureState(false).Expanded, "render refresh preserves choice; a new completed-turn group starts collapsed");
+        var empty = new NativeDisclosureState(true) { Choice = true, HasBody = false };
+        Check(!empty.Expanded, "a terminal stub cannot restore an expanded empty body from a previous snapshot");
+        empty.HasBody = true; Check(empty.Expanded, "real content arriving later can restore the user's disclosure choice");
     }
 
     private static void Check(bool value, string message)

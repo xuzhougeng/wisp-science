@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="../../../seed/manifest_*.json" LogicalName="Example.%(Filename)%(Extension)" />
     <PackageReference Include="Markdig" Version="0.37.0" />
     <ProjectReference Include="../Wisp.ProjectBrowser.Contracts/Wisp.ProjectBrowser.Contracts.csproj" />
   </ItemGroup>

@@ -2,7 +2,7 @@
 use crate::{active_skill_index, delegation_runtime, dynamic_workflow, models, AppState};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, time::Duration};
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 use wisp_core::workflow_conversion::WorkflowSource;
 pub(crate) use wisp_dto::SkillPortfolioRequest;
 use wisp_dto::{WorkflowConversionProgress, WorkflowConversionStage};
@@ -45,8 +45,12 @@ pub(crate) async fn plan_skill_portfolio(
     conversion_id: Option<String>,
     expected_project_id: Option<String>,
 ) -> Result<SkillPortfolioDraft, String> {
+    let progress_project = state.require_active(window.label()).ok().map(|project| project.id.clone());
     let progress = |stage| {
         if let Some(conversion_id) = &conversion_id {
+            if let (Some(project), Some(broker)) = (progress_project.as_deref(), window.app_handle().try_state::<crate::native_settings::Broker>()) {
+                broker.workflow_conversions.record(project, conversion_id, stage);
+            }
             let _ = window.emit_to(
                 window.label(),
                 "workflow-conversion-progress",

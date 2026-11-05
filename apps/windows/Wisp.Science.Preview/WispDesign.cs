@@ -12,6 +12,23 @@ namespace Wisp.Science.Preview;
 
 internal sealed class WispDesign : INotifyPropertyChanged
 {
+    private static readonly Dictionary<string, Dictionary<string, string>> translations = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(
+        File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Assets", "native-locales.json")))!;
+    public Wisp.ProjectBrowser.NativeLocalization Localization { get; } = new(translations);
+    public Wisp.ProjectBrowser.NativeWelcomeModel Welcome { get; } = new();
+    public Wisp.ProjectBrowser.NativeContextPanelLayout ContextUsageLayout { get; } = new();
+    public Action<Wisp.ProjectBrowser.NativeContextPanelGeometry>? SaveContextUsageGeometry { get; set; }
+    public double? ComposerTextHeight { get; set; }
+    public Action<double>? SaveComposerTextHeight { get; set; }
+    public string T(string key) => Localization.Text(key);
+    public string L(string chinese, string english) => Localization.Choose(chinese, english);
+    private bool selectionPopupEnabled = true;
+    public event Action<bool>? SelectionPopupChanged;
+    public bool SelectionPopupEnabled
+    {
+        get => selectionPopupEnabled;
+        set { if (selectionPopupEnabled == value) return; selectionPopupEnabled = value; SelectionPopupChanged?.Invoke(value); }
+    }
     private Wisp.ProjectBrowser.NativeTypography typography = new();
     public event Action? TypographyChanged;
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -29,18 +46,25 @@ internal sealed class WispDesign : INotifyPropertyChanged
     }
     public FontFamily UiFont => Font();
     public FontFamily CodeFont => Font(true);
-    public double UiSize => Typography.UiSize;
-    public double CodeSize => Typography.CodeSize;
-    public void BindTypography(Control control, bool code = false)
+    public double UiSize => Typography.Scale(14);
+    public double CodeSize => Typography.Scale(12, true);
+    public void BindTypography(Control control, bool code = false, double? size = null)
     {
         Bind(control, Control.FontFamilyProperty, code ? nameof(CodeFont) : nameof(UiFont));
-        Bind(control, Control.FontSizeProperty, code ? nameof(CodeSize) : nameof(UiSize));
+        if (size is { } scaledSize)
+            control.SetBinding(Control.FontSizeProperty, new Binding { Source = this, Path = new PropertyPath(nameof(UiSize)),
+                Mode = BindingMode.OneWay, Converter = new ScaledFontSize(), ConverterParameter = scaledSize });
+        else Bind(control, Control.FontSizeProperty, code ? nameof(CodeSize) : nameof(UiSize));
     }
     public TextBlock Text(string text, double size = 14)
     {
         var block = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap };
         BindTypography(block, size);
         return block;
+    }
+    public TextBlock Text(string text, double size, string color)
+    {
+        var block = Text(text, size); block.Foreground = Brush(color); return block;
     }
     public void BindTypography(TextBlock block, double size = 14)
     {
@@ -50,6 +74,14 @@ internal sealed class WispDesign : INotifyPropertyChanged
     }
     private void Bind(FrameworkElement target, DependencyProperty property, string path)
         => target.SetBinding(property, new Binding { Source = this, Path = new PropertyPath(path), Mode = BindingMode.OneWay });
+    public void BindLineHeight(TextBlock block, double size, double leading)
+    {
+        // CJK/custom fallback glyphs can exceed the Latin reference line box.
+        // Treat the CSS leading as a minimum instead of clipping their ink.
+        block.LineStackingStrategy = LineStackingStrategy.MaxHeight;
+        block.SetBinding(TextBlock.LineHeightProperty, new Binding { Source = this, Path = new PropertyPath(nameof(UiSize)),
+            Mode = BindingMode.OneWay, Converter = new ScaledFontSize(), ConverterParameter = size * leading });
+    }
     // Walk only app-owned content, never generated control templates or icon glyphs.
     // Existing bindings and explicit font families belong to their renderer.
     public void ApplyTypography(DependencyObject? element, DependencyObject? exclude = null)
@@ -78,13 +110,33 @@ internal sealed class WispDesign : INotifyPropertyChanged
         public object ConvertBack(object value, Type targetType, object parameter, string language) => throw new NotSupportedException();
     }
     public double FontSize(double size, bool code = false) => Typography.Scale(size, code);
-    public FontFamily Font(bool code = false) => new(code ? Typography.CodeFamily : Typography.UiFamily);
+    public FontFamily Font(bool code = false) => new(Typography.FontSource(code));
     private readonly Dictionary<string, Dictionary<string, string>> palettes = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(
         File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Assets", "palette.json")))!;
-    private readonly Dictionary<string, SvgImageSource> icons = new();
+    private readonly Dictionary<(string Name, string? Color, int Size, bool Filled), SvgImageSource> icons = new();
     private readonly Dictionary<string, SolidColorBrush> brushes = new();
     private string? renderedIconColor;
-    public bool Dark { get; set; }
+    private bool dark;
+    private readonly Dictionary<bool, SvgImageSource> wordmarks = new();
+    public bool Dark
+    {
+        get => dark;
+        set
+        {
+            if (dark == value) return;
+            dark = value;
+            PropertyChanged?.Invoke(this, new(nameof(WordmarkSource)));
+        }
+    }
+    public ImageSource WordmarkSource
+    {
+        get
+        {
+            if (!wordmarks.TryGetValue(Dark, out var source))
+                wordmarks[Dark] = source = new SvgImageSource(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", $"wordmark-{(Dark ? "dark" : "light")}.svg")));
+            return source;
+        }
+    }
     public string LightPalette { get; set; } = "paper";
     public string DarkPalette { get; set; } = "charcoal";
     public string ColorText(string token)
@@ -109,7 +161,8 @@ internal sealed class WispDesign : INotifyPropertyChanged
         var color = ColorText("text");
         if (renderedIconColor == color) return;
         renderedIconColor = color;
-        foreach (var (name, source) in icons) _ = RecolorIconAsync(source, name, color);
+        foreach (var (key, source) in icons)
+            if (key.Color == null) _ = RecolorIconAsync(source, key.Name, color, key.Filled);
     }
 
     private Windows.UI.Color ParseColor(string token)
@@ -149,18 +202,32 @@ internal sealed class WispDesign : INotifyPropertyChanged
         return button;
     }
 
-    public void ActionButton(Button button, bool primary = false)
+    public void ActionButton(Button button, bool primary = false, bool destructive = false)
     {
         BindTypography(button);
         button.Padding = new Thickness(14, 8, 14, 8);
         button.MinHeight = 36; button.CornerRadius = new CornerRadius(8);
-        button.Background = Brush(primary ? "clay-strong" : "bg-elev");
-        button.Foreground = primary ? new SolidColorBrush(Microsoft.UI.Colors.White) : Brush("text");
-        button.BorderBrush = Brush(primary ? "clay-strong" : "border");
+        var filled = primary || destructive;
+        var fill = Brush(destructive ? "err" : primary ? "clay" : "bg-elev");
+        var ink = destructive ? new SolidColorBrush(Microsoft.UI.Colors.White) : Brush(primary ? "on-clay" : "text");
+        var hover = Brush(destructive ? "err" : primary ? "clay-strong" : "surface-hover");
+        button.Background = fill;
+        button.Foreground = ink;
+        button.BorderBrush = filled ? fill : Brush("border");
         button.BorderThickness = new Thickness(1);
+        if (filled)
+        {
+            button.Resources["ButtonBorderBrushPointerOver"] = button.Resources["ButtonBorderBrushPressed"] = hover;
+            button.Resources["ButtonForegroundPointerOver"] = button.Resources["ButtonForegroundPressed"] = ink;
+        }
         if (button.Content is string label) button.Content = Text(label, 13);
-        button.Resources["ButtonBackgroundPointerOver"] = Brush(primary ? "clay" : "surface-hover");
-        button.Resources["ButtonBackgroundPressed"] = Brush(primary ? "clay-strong" : "bg-sunken");
+        if (filled && button.Content is TextBlock caption)
+        {
+            caption.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+            if (destructive) caption.Foreground = ink;
+        }
+        button.Resources["ButtonBackgroundPointerOver"] = hover;
+        button.Resources["ButtonBackgroundPressed"] = filled ? hover : Brush("bg-sunken");
     }
 
     public Border Card(UIElement content) => new()
@@ -181,27 +248,33 @@ internal sealed class WispDesign : INotifyPropertyChanged
         return card;
     }
 
-    public Image Wordmark() => new()
+    public Image Wordmark()
     {
-        Source = new SvgImageSource(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", $"wordmark-{(Dark ? "dark" : "light")}.svg"))),
-        Width = 180, Height = 119, Stretch = Stretch.Uniform
-    };
+        var image = new Image { Width = 180, Height = 119, Stretch = Stretch.Uniform };
+        Bind(image, Image.SourceProperty, nameof(WordmarkSource));
+        return image;
+    }
 
-    public Image Icon(string name, int size = 18)
+    public Image Icon(string name, int size = 18, string? color = null, bool filled = false)
     {
-        if (!icons.TryGetValue(name, out var source))
+        // Render small shared strokes above the display size before scaling;
+        // automatic low-resolution rasterization can drop thin plus/line strokes.
+        var key = (name, color, size, filled);
+        if (!icons.TryGetValue(key, out var source))
         {
-            source = new SvgImageSource();
-            icons[name] = source;
+            source = new SvgImageSource { RasterizePixelWidth = size * 3, RasterizePixelHeight = size * 3 };
+            icons[key] = source;
             // Recolor the exported compose_icon SVG, retaining the shared paths.
-            _ = RecolorIconAsync(source, name, ColorText("text"));
+            _ = RecolorIconAsync(source, name, color ?? ColorText("text"), filled);
         }
         return new Image { Source = source, Width = size, Height = size, Stretch = Stretch.Uniform };
     }
 
-    private static Task RecolorIconAsync(SvgImageSource source, string name, string color) =>
-        LoadIconAsync(source, File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Assets", $"icon-{name}.svg"))
-            .Replace("#000000", color));
+    private static Task RecolorIconAsync(SvgImageSource source, string name, string color, bool filled)
+    {
+        var svg = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Assets", $"icon-{name}.svg")).Replace("#000000", color);
+        return LoadIconAsync(source, filled ? svg.Replace("fill=\"none\"", $"fill=\"{color}\"") : svg);
+    }
 
     private static async Task LoadIconAsync(SvgImageSource source, string svg)
     {

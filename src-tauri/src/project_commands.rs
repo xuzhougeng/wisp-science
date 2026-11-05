@@ -794,9 +794,20 @@ pub(super) async fn delete_project(
     id: String,
     delete_data: Option<bool>,
 ) -> Result<(), String> {
-    validate_project_deletion(&state.store, &id, delete_data.unwrap_or(false)).await?;
+    delete_project_record(state.inner(), &id, delete_data.unwrap_or(false), Some(window.label())).await
+}
+
+/// Shared deletion pipeline. Native callers supply an explicit project and no
+/// window; only existing window bindings to that project need a fallback.
+pub(crate) async fn delete_project_record(
+    state: &AppState,
+    id: &str,
+    delete_data: bool,
+    window_label: Option<&str>,
+) -> Result<(), String> {
+    validate_project_deletion(&state.store, id, delete_data).await?;
     let _project_activity = state.begin_project_activity(&id)?;
-    let workspace_delete_target = if delete_data.unwrap_or(false) {
+    let workspace_delete_target = if delete_data {
         let (_, workspace_dir) = state
             .store
             .get_project(&id)
@@ -813,13 +824,15 @@ pub(super) async fn delete_project(
     // to leave). Delete it, then fall back to the always-present "default"
     // workspace so `active` never dangles at a deleted project. An unbound
     // File → New Window (`home-*`) must not treat `main` as active or panic.
-    let was_active = state
-        .require_active(window.label())
-        .map(|ap| ap.id == id)
-        .unwrap_or(false);
+    let fallback_windows: Vec<String> = match window_label {
+        Some(label) => state.require_active(label).ok().filter(|ap| ap.id == id)
+            .map(|_| vec![label.to_owned()]).unwrap_or_default(),
+        None => state.active.read().unwrap().iter()
+            .filter(|(_, project)| project.id == id).map(|(label, _)| label.clone()).collect(),
+    };
     // Stop the deleted project's own running sessions (gather frame ids before
     // the store cascade removes them); other projects keep running (#52).
-    cancel_project_sessions(state.inner(), &id).await;
+    cancel_project_sessions(state, id).await;
     state.browser_bridge.stop_project_workspace(&id).await;
     state.runtime_manager.stop_project(&id).await;
     if let Err(error) = state.run_manager.wind_down_project(&state.store, &id).await {
@@ -834,8 +847,11 @@ pub(super) async fn delete_project(
         .await
         .map_err(|e| format!("{e}"))?;
     project_sync::forget_project_key(&id).await;
-    if was_active {
-        let _ = set_active_project(state.inner(), window.label(), "default").await;
+    for label in fallback_windows {
+        // A window may have navigated elsewhere while the deletion was running.
+        if state.require_active(&label).is_ok_and(|project| project.id == id) {
+            let _ = set_active_project(state, &label, "default").await;
+        }
     }
     Ok(())
 }

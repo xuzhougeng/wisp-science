@@ -107,14 +107,6 @@ extern "C" {
     pub(crate) fn preview_selection(fallback_x: i32, fallback_y: i32) -> String;
     #[wasm_bindgen(js_name = clear_selection)]
     pub(crate) fn clear_selection();
-    #[wasm_bindgen(catch, js_name = render_share_png)]
-    pub(crate) async fn render_share_png(payload_json: &str) -> Result<JsValue, JsValue>;
-    /// Same payload as `render_share_png`, cut into 3:4 pages; resolves to an
-    /// array of base64 PNGs in page order.
-    #[wasm_bindgen(catch, js_name = render_share_png_pages)]
-    pub(crate) async fn render_share_png_pages(payload_json: &str) -> Result<JsValue, JsValue>;
-    #[wasm_bindgen(js_name = snapshot_share_theme)]
-    pub(crate) fn snapshot_share_theme() -> String;
     #[wasm_bindgen(catch, js_name = copy_share_pack)]
     pub(crate) async fn copy_share_pack(text: &str, png_base64: &str) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_name = crop_region_to_upload)]
@@ -252,4 +244,17 @@ pub(crate) fn open_external_url(url: String) {
 /// manager page; resolves to the `BrowserExtensionSetup` reply.
 pub(crate) async fn open_browser_extension_page() -> JsValue {
     invoke("open_browser_extension_page", JsValue::UNDEFINED).await
+}
+
+// Register the shared renderer so wasm-bindgen packages this sibling JS module.
+#[wasm_bindgen(module = "/src/share-renderer.js")]
+extern "C" {
+    #[wasm_bindgen(catch, js_name = render_share_png)]
+    pub(crate) async fn render_share_png(payload_json: &str) -> Result<JsValue, JsValue>;
+    /// Same payload as `render_share_png`, cut into 3:4 pages; resolves to an
+    /// array of base64 PNGs in page order.
+    #[wasm_bindgen(catch, js_name = render_share_png_pages)]
+    pub(crate) async fn render_share_png_pages(payload_json: &str) -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_name = snapshot_share_theme)]
+    pub(crate) fn snapshot_share_theme() -> String;
 }

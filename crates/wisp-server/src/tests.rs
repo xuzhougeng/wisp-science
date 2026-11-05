@@ -144,6 +144,9 @@ async fn mobile_turn_approval_persistence_and_restart_reuse_the_same_runtime() {
             .unwrap(),
     );
     let pending = wait_for(&server, &id, |s| !s.approvals.is_empty()).await;
+    let wire = serde_json::to_value(&pending).unwrap();
+    assert!(wire.get("exploration").is_none());
+    assert!(wire.get("branches").is_none());
     assert!(!cfg.workspace.join("answer.txt").exists());
     assert_eq!(pending.approvals[0].tool, "write");
     assert!(pending.approvals[0].preview.contains("offline result"));

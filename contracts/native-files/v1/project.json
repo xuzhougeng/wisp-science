@@ -1,0 +1,16 @@
+{
+  "locations": {
+    "schema": "wisp.native-files.v1", "project_id": "project-without-sessions", "session_id": null,
+    "local_root": "C:/Research", "read_only": false,
+    "locations": [{"context_id": "local", "label": "", "kind": "local"}]
+  },
+  "directory": {
+    "schema": "wisp.native-files.v1", "project_id": "project-without-sessions", "session_id": null,
+    "context_id": "local", "path": ".",
+    "entries": [{"name": "sample.csv", "is_dir": false, "size": 3, "modified_unix_millis": null}]
+  },
+  "paths": {
+    "schema": "wisp.native-files.v1", "project_id": "project-without-sessions", "session_id": null,
+    "paths": [{"requested_path": "sample.csv", "relative_path": "sample.csv", "absolute_path": "C:/Research/sample.csv"}]
+  }
+}

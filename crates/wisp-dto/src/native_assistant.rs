@@ -35,6 +35,10 @@ pub struct Workspace {
     pub schedules: Vec<crate::ScheduleRecord>,
     pub runs: Vec<crate::ScheduleRunRecord>,
     pub daily_recap: crate::DailyRecapAutomation,
+    #[serde(default)]
+    pub memory_tidy: Option<crate::MemoryTidyAutomation>,
+    #[serde(default)]
+    pub mandates: Option<Vec<crate::MandateOverview>>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -91,6 +95,40 @@ pub enum Operation {
         time: String,
     },
     RunDailyRecap,
+    SetMemoryTidy {
+        enabled: bool,
+    },
+    RunMemoryTidy,
+    ApplyMemoryTidy {
+        id: String,
+    },
+    DismissMemoryTidy {
+        id: String,
+    },
+    CreateMandate {
+        draft: crate::MandateDraft,
+    },
+    UpdateMandate {
+        id: String,
+        draft: crate::MandateDraft,
+    },
+    SetMandateStatus {
+        id: String,
+        status: String,
+    },
+    DeleteMandate {
+        id: String,
+    },
+    RunMandate {
+        id: String,
+    },
+    ReportMandate {
+        id: String,
+    },
+    ReplyMandate {
+        id: String,
+        text: String,
+    },
 }
 
 #[cfg(test)]

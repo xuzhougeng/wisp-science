@@ -64,9 +64,11 @@ public sealed class NativeComposerReferencesModel(INativeSettingsClient? client)
         foreach (var group in references.GroupBy(option => option.Reference.Kind))
         {
             var label = group.Key switch { "artifact" => "Attached artifacts", "session" => "Attached sessions",
+                "file-path" => "Referenced local file paths (not imported)",
                 "project" => "Project context", "skill" => "Selected skills", "workflow" => "Selected workflows",
                 "context" => "Target environments", "runtime" => "Target runtimes", _ => throw new InvalidDataException("Invalid reference kind") };
-            message += (message.Length > 0 ? "\n\n" : "") + label + ": " + string.Join(", ", group.Select(option => option.Label.Replace('\r', ' ').Replace('\n', ' ')));
+            message += (message.Length > 0 ? "\n\n" : "") + label + ": " + string.Join(", ", group.Select(option => group.Key == "file-path"
+                ? JsonSerializer.Serialize(option.Reference.Id) : option.Label.Replace('\r', ' ').Replace('\n', ' ')));
         }
         return message;
     }

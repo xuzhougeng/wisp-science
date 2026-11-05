@@ -9,10 +9,51 @@ internal static class NativeSearchTests
         void Check(bool ok, string name) { if (!ok) throw new Exception(name); Console.WriteLine("PASS native search: " + name); }
         Check(NativePaletteActions.Match("", false, false, true).All(a => !a.Project && !a.Session), "home palette does not advertise project/session-only actions");
         Check(NativePaletteActions.Match("", true, false, true).All(a => !a.Session), "empty project does not expose unusable session panels");
+        Check(NativePaletteActions.Match("no document matches", false, false, false).Select(a => a.Id)
+            .SequenceEqual(new[] { "new-project", "check-updates", "star-us" }), "home search keeps its three fixed commands while typing");
+        Check(NativePaletteActions.Match("", true, false, false).Select(a => a.Id)
+            .SequenceEqual(new[] { "new-project", "check-updates", "star-us", "project-settings", "skills" }),
+            "workspace search adds project settings and skills in the reference order");
+        var p = new NativeSearchItem("project", "p", "p", "project", "project", "", null);
+        var a = new NativeSearchItem("artifact", "a", "p", "project", "file", "", "s");
+        var s = new NativeSearchItem("session", "s", "p", "project", "session", "", "s");
+        Check(SearchPaletteLayout.Attachment(s, [p, a, s]) == s && SearchPaletteLayout.Attachment(p, [p, a, s]) == a
+            && SearchPaletteLayout.Attachment(null, [p]) == null, "Shift+Enter uses the selected reference or the first attachable match");
         Check(NativePaletteActions.Match("files", true, true, true).Single().Id == "files", "English keyword finds the native file action");
         var commands = NativePaletteActions.Match("", true, true, true).ToArray();
         Check(commands.Select(a => a.Icon).Distinct().Count() == commands.Length, "actions have distinct shared icons");
         var root = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(fixture)!, "../../.."));
+        var catalog = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(
+            File.ReadAllText(Path.Combine(root, "apps/macos/Sources/WispProjectBrowserUI/Resources/native-locales.json")))!;
+        var locale = new NativeLocalization(catalog);
+        foreach (var code in new[] { "en", "zh" })
+        {
+            locale.Preview(code);
+            var transfer = NativePaletteActions.Match(locale.Text("command.group.transfer"), true, false, true, locale).Select(x => x.Id);
+            Check(transfer.SequenceEqual(new[] { "import-codex", "import-claude", "import-session", "export-current-project" })
+                && !NativePaletteActions.Match(locale.Text("command.group.transfer"), false, false, true, locale).Any(),
+                $"{code} group search lists all four transfers in order only inside a project, even without a session");
+            Check(NativePaletteActions.Match("github", false, false, true, locale).Select(x => x.Id).SequenceEqual(new[] { "star-us", "issues" })
+                && NativePaletteActions.Match("upgrade", false, false, true, locale).Single().Id == "check-updates",
+                "help links and update checking are available without opening a project");
+            Check(NativePaletteActions.Match("font-code-decrease", false, false, true, locale).Single().Id == "font-code-decrease"
+                && NativePaletteActions.Match(locale.Text("command.group.appearance"), false, false, true, locale).Count() == 7,
+                "the full appearance group can be found by ID or localized section name");
+            foreach (var action in commands)
+            {
+                var label = action.Label(locale);
+                Check(!string.IsNullOrWhiteSpace(label) && !label.StartsWith("command.") && !label.StartsWith("menu.")
+                    && NativePaletteActions.Match(label, true, true, true, locale).Any(a => a.Id == action.Id),
+                    $"{code} palette finds {action.Id} by its visible label");
+            }
+            Check(commands.Single(a => a.Id == "new-project").Label(locale) == (code == "en" ? "New project" : "新建项目"),
+                "palette follows the shared project creation label");
+        }
+        Check(SearchPaletteLayout.StepChoice(0, 3, false) == 2 && SearchPaletteLayout.StepChoice(2, 3, true) == 0
+            && SearchPaletteLayout.StepChoice(-1, 1, false) == 0 && SearchPaletteLayout.StepChoice(-1, 0, true) == -1,
+            "search wraps between actionable rows and handles an empty or one-result list");
+        Check(!SearchPaletteLayout.ListOverflows(0) && !SearchPaletteLayout.ListOverflows(1) && SearchPaletteLayout.ListOverflows(2),
+            "fitting lists have no footer fade, including fractional layout rounding");
         Check(commands.All(a => File.Exists(Path.Combine(root, "apps/macos/Sources/WispProjectBrowserUI/Resources", "icon-" + a.Icon + ".svg"))),
             "every palette icon is shipped so opening the palette cannot fail on a missing resource");
         var json = JsonNode.Parse(File.ReadAllText(fixture))!;
@@ -44,11 +85,13 @@ internal static class NativeSearchTests
         heldConnect.SetResult(client); await late;
         Check(client.Calls == calls, "closing while connecting never dispatches a stale read");
         client.Pending = null; client.Fail = true;
-        using var failing = new WorkspaceSearchModel(() => Task.FromResult<INativeSearchClient?>(client), null);
+        using var failing = new WorkspaceSearchModel(() => Task.FromResult<INativeSearchClient?>(client), null, locale);
         await failing.SearchAsync("private"); calls = client.Calls;
         Check(failing.Error != null && failing.Items.Length == 0 && !failing.Busy, "failed search displays an error without exposing cached results");
         await failing.SearchAsync(new string('中', 172));
-        Check(client.Calls == calls && failing.Error != null, "UTF-8 query ceiling is enforced before transport");
+        Check(client.Calls == calls && failing.Error?.Contains("过长") == true, "UTF-8 query ceiling is reported in Chinese before transport");
+        locale.Preview("en"); await failing.SearchAsync(new string('中', 172));
+        Check(client.Calls == calls && failing.Error?.Contains("too long") == true, "validation follows the current English locale");
         client.Fail = false;
         using var debounced = new WorkspaceSearchModel(() => Task.FromResult<INativeSearchClient?>(client), null);
         var cancelled = debounced.SearchAsync("cancelled", TimeSpan.FromSeconds(10));

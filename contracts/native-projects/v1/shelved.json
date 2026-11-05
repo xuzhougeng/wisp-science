@@ -1,0 +1,8 @@
+{
+  "page": {
+    "project_id": "research-1",
+    "items": [{ "id": "session-a", "title": "RNA 研究", "ts": 1789500000 }],
+    "next_cursor": { "ts": 1789500000, "id": "session-a" }
+  },
+  "restore": { "project_id": "research-1", "session_id": "session-a", "shelved": false }
+}

@@ -10,11 +10,27 @@ public sealed record CalendarEntry(
     [property: JsonPropertyName("title")] string Title,
     [property: JsonPropertyName("occurred_at")] long OccurredAt,
     [property: JsonPropertyName("status")] string Status,
-    [property: JsonPropertyName("manual")] bool Manual);
+    [property: JsonPropertyName("manual")] bool Manual)
+{
+    // Existing fields in wisp_dto::ResearchJourneyEntry, optional for old hosts.
+    [JsonPropertyName("source_id")] public string SourceId { get; init; } = "";
+    [JsonPropertyName("run_id")] public string? RunId { get; init; }
+    [JsonPropertyName("version_number")] public long? VersionNumber { get; init; }
+}
+
+public sealed record CalendarRecapItem([property: JsonPropertyName("text")] string Text);
+public sealed record CalendarRecap(
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("headline")] string Headline,
+    [property: JsonPropertyName("done")] IReadOnlyList<CalendarRecapItem> Done);
 
 public sealed record CalendarHistory(
     [property: JsonPropertyName("entries")] IReadOnlyList<CalendarEntry> Entries,
-    [property: JsonPropertyName("truncated")] bool Truncated);
+    [property: JsonPropertyName("truncated")] bool Truncated)
+{
+    // Read-only projection of the shared ResearchJourney.recaps DTO.
+    [JsonPropertyName("recaps")] public IReadOnlyList<CalendarRecap> Recaps { get; init; } = [];
+}
 
 public sealed record CalendarProject(
     [property: JsonPropertyName("project_id")] string ProjectId,

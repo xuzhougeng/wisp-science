@@ -183,6 +183,7 @@ pub(crate) fn CommandPalette(
     current_project_id: Signal<Option<String>>,
     can_search_project: Signal<bool>,
     on_search_project: Callback<()>,
+    privacy_ready: RwSignal<bool>,
     privacy_mode_active: RwSignal<bool>,
     privacy_hidden_project_ids: RwSignal<HashSet<String>>,
     on_open_project: Callback<(String, bool)>,
@@ -262,35 +263,37 @@ pub(crate) fn CommandPalette(
             .then(|| privacy_hidden_project_ids.get())
             .unwrap_or_default();
         let mut out = Vec::new();
-        let mut ps: Vec<_> = projects
-            .get()
-            .into_iter()
-            .filter(|p| !hidden.contains(&p.id) && contains_search(&q, &[&p.name, &p.description]))
-            .collect();
-        ps.sort_by_key(|p| (current.as_deref() != Some(p.id.as_str()), p.name.clone()));
-        out.extend(ps.into_iter().map(CommandPaletteItem::Project));
-        let mut ars = artifacts.get();
-        ars.sort_by_key(|a| {
-            (
-                current.as_deref() != a.project_id.as_deref(),
-                std::cmp::Reverse(a.ts),
-            )
-        });
-        out.extend(
-            ars.into_iter()
-                .filter(|a| !a.project_id.as_ref().is_some_and(|id| hidden.contains(id)))
-                .map(CommandPaletteItem::Artifact),
-        );
-        let mut ss = sessions.get();
-        // The store ranks title hits ahead of transcript-body hits. This stable
-        // partition keeps that order while retaining a current-project bias
-        // when an older backend or mocked bridge returns unranked rows.
-        ss.sort_by_key(|s| current.as_deref() != Some(s.project_id.as_str()));
-        out.extend(
-            ss.into_iter()
-                .filter(|s| !hidden.contains(&s.project_id))
-                .map(CommandPaletteItem::Session),
-        );
+        if privacy_ready.get() {
+            let mut ps: Vec<_> = projects
+                .get()
+                .into_iter()
+                .filter(|p| !hidden.contains(&p.id) && contains_search(&q, &[&p.name, &p.description]))
+                .collect();
+            ps.sort_by_key(|p| (current.as_deref() != Some(p.id.as_str()), p.name.clone()));
+            out.extend(ps.into_iter().map(CommandPaletteItem::Project));
+            let mut ars = artifacts.get();
+            ars.sort_by_key(|a| {
+                (
+                    current.as_deref() != a.project_id.as_deref(),
+                    std::cmp::Reverse(a.ts),
+                )
+            });
+            out.extend(
+                ars.into_iter()
+                    .filter(|a| !a.project_id.as_ref().is_some_and(|id| hidden.contains(id)))
+                    .map(CommandPaletteItem::Artifact),
+            );
+            let mut ss = sessions.get();
+            // The store ranks title hits ahead of transcript-body hits. This stable
+            // partition keeps that order while retaining a current-project bias
+            // when an older backend or mocked bridge returns unranked rows.
+            ss.sort_by_key(|s| current.as_deref() != Some(s.project_id.as_str()));
+            out.extend(
+                ss.into_iter()
+                    .filter(|s| !hidden.contains(&s.project_id))
+                    .map(CommandPaletteItem::Session),
+            );
+        }
         out.push(CommandPaletteItem::Command("new"));
         out.push(CommandPaletteItem::Command("check-updates"));
         out.push(CommandPaletteItem::Command("star-us"));
@@ -962,6 +965,9 @@ pub(crate) fn ActionPalette(
 pub(crate) fn PrivacyModeModal(
     open: RwSignal<bool>,
     active: RwSignal<bool>,
+    ready: RwSignal<bool>,
+    busy: RwSignal<bool>,
+    error: RwSignal<bool>,
     hidden_project_ids: RwSignal<HashSet<String>>,
     on_hide: Callback<HashSet<String>>,
     on_restore: Callback<()>,
@@ -974,7 +980,7 @@ pub(crate) fn PrivacyModeModal(
         if !open.get() {
             return;
         }
-        selected.set(hidden_project_ids.get_untracked());
+        selected.set(hidden_project_ids.get());
         spawn_local(async move {
             let value = invoke("list_projects", JsValue::UNDEFINED).await;
             if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<ProjectSummary>>(value) {
@@ -985,7 +991,7 @@ pub(crate) fn PrivacyModeModal(
 
     view! {
         {move || open.get().then(|| view! {
-            <div class="overlay privacy-mode-overlay" on:click=move |_| open.set(false)>
+            <div class="overlay privacy-mode-overlay" on:click=move |_| { if !busy.get_untracked() { open.set(false); } }>
                 <div class="modal privacy-mode-modal" role="dialog"
                     aria-label=move || t(locale.get(), "privacy.title")
                     on:click=|event| event.stop_propagation()>
@@ -1044,18 +1050,18 @@ pub(crate) fn PrivacyModeModal(
                     </div>
                     <div class="privacy-mode-foot">
                         <p class="privacy-mode-status">
-                            {move || t(locale.get(), if active.get() { "privacy.active" } else { "privacy.inactive" })}
+                            {move || t(locale.get(), if error.get() { "privacy.error" } else if !ready.get() { "privacy.loading" } else if active.get() { "privacy.active" } else { "privacy.inactive" })}
                         </p>
                         <div class="row privacy-mode-actions">
-                            <button type="button" on:click=move |_| open.set(false)>
+                            <button type="button" disabled=move || busy.get() on:click=move |_| { if !busy.get_untracked() { open.set(false); } }>
                                 {move || t(locale.get(), "projects.cancel")}
                             </button>
-                            <button type="button" disabled=move || !active.get()
+                            <button type="button" disabled=move || busy.get() || !ready.get() || !active.get()
                                 on:click=move |_| on_restore.call(())>
                                 {move || t(locale.get(), "privacy.restore")}
                             </button>
                             <button type="button" class="primary"
-                                disabled=move || selected.with(|ids| ids.is_empty())
+                                disabled=move || busy.get() || !ready.get() || selected.with(|ids| ids.is_empty())
                                 on:click=move |_| on_hide.call(selected.get_untracked())>
                                 {move || t(locale.get(), "privacy.hide")}
                             </button>

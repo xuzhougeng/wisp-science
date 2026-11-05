@@ -30,7 +30,7 @@ public static class ProjectBrowserProtocol
 
 public sealed record ProjectListSnapshot(
     IReadOnlyList<ProjectSummary> Projects,
-    string ActivitySource);
+    string ActivitySource, PrivacyMode Privacy);
 
 public sealed record ProjectSummary(
     [property: JsonPropertyName("id")] string Id,
@@ -44,7 +44,8 @@ public sealed record ProjectSummary(
     [property: JsonPropertyName("running_count")] long RunningCount,
     [property: JsonPropertyName("needs_you_count")] long NeedsYouCount,
     [property: JsonPropertyName("sync_configured")] bool SyncConfigured,
-    [property: JsonPropertyName("last_synced_at")] long? LastSyncedAt);
+    [property: JsonPropertyName("last_synced_at")] long? LastSyncedAt,
+    [property: JsonPropertyName("folder_sync")] string? FolderSync = null);
 
 /// <summary>Decode this envelope, validate Schema/Id/Type, then expose a snapshot.</summary>
 public sealed record ProjectBrowserResponse(
@@ -57,7 +58,14 @@ public sealed record ProjectBrowserResponse(
     [property: JsonPropertyName("message")] string? Message,
     [property: JsonPropertyName("sessions")] IReadOnlyList<BrowserSession>? Sessions = null,
     [property: JsonPropertyName("messages")] IReadOnlyList<BrowserMessage>? Messages = null,
-    [property: JsonPropertyName("next_before_seq")] long? NextBeforeSeq = null);
+    [property: JsonPropertyName("next_before_seq")] long? NextBeforeSeq = null,
+    [property: JsonPropertyName("project_id")] string? ProjectId = null,
+    [property: JsonPropertyName("session_id")] string? SessionId = null,
+    [property: JsonPropertyName("message_seq")] long? MessageSeq = null,
+    [property: JsonPropertyName("query")] string? Query = null,
+    [property: JsonPropertyName("page")] ProjectChatMatches? Page = null,
+    [property: JsonPropertyName("privacy")] PrivacyMode? Privacy = null,
+    [property: JsonPropertyName("target"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] System.Text.Json.JsonElement Target = default);
 
 public sealed record BrowserSession(
     [property: JsonPropertyName("id")] string Id,
@@ -66,7 +74,10 @@ public sealed record BrowserSession(
     [property: JsonPropertyName("ts")] long Timestamp,
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("folder_id")] string? FolderId = null,
-    [property: JsonPropertyName("pinned")] bool? Pinned = null);
+    [property: JsonPropertyName("pinned")] bool? Pinned = null,
+    [property: JsonPropertyName("branched_from")] string? BranchedFrom = null,
+    [property: JsonPropertyName("branch_state")] string? BranchState = null,
+    [property: JsonPropertyName("dispatched_from")] string? DispatchedFrom = null);
 
 public sealed record BrowserMessage(
     [property: JsonPropertyName("seq")] long Sequence,

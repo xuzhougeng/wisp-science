@@ -6,6 +6,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../Wisp.Science.Preview/NativeWindowEscape.cs" Link="NativeWindowEscape.cs" />
+    <Compile Include="../Wisp.Science.Preview/PreviewSettings.cs" Link="PreviewSettings.cs" />
     <ProjectReference Include="../Wisp.ProjectBrowser.Contracts/Wisp.ProjectBrowser.Contracts.csproj" />
     <ProjectReference Include="../Wisp.ProjectBrowser/Wisp.ProjectBrowser.csproj" />
   </ItemGroup>

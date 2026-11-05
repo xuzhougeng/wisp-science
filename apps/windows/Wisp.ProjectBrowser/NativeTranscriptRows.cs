@@ -6,6 +6,25 @@ namespace Wisp.ProjectBrowser;
 /// snapshot's polling sequence or message text (repeated prompts are valid).</summary>
 public static class NativeTranscriptRows
 {
+    public static bool IsContextTombstone(ConversationItem item) => item.Role is "assistant" or "tool"
+        && item.Text.StartsWith("[compacted;", StringComparison.Ordinal);
+    public static string? ContextArchiveReference(string text)
+    {
+        const string prefix = "[compacted;";
+        const string marker = "full content archived at ";
+        if (!text.StartsWith(prefix, StringComparison.Ordinal)) return null;
+        var rest = text[prefix.Length..].TrimStart();
+        if (!rest.StartsWith(marker, StringComparison.Ordinal)) return null;
+        var reference = rest[marker.Length..].Split(" — ", 2, StringSplitOptions.None)[0].Trim();
+        return reference.Length == 0 ? null : reference;
+    }
+    public static bool RendersNothing(ConversationItem item, bool modelView = false) => item.Role == "queued_user"
+        || !modelView && item.Role == "file_changed";
+    // A passive refresh may retain reading position only within the navigation
+    // revision that was already applied when the anchor was captured.
+    public static bool ReadingAnchorIsCurrent(int capturedRevision, int currentRevision, int appliedRevision) =>
+        capturedRevision == currentRevision && currentRevision == appliedRevision;
+
     public static IReadOnlyList<string> Keys(ConversationSnapshot snapshot)
     {
         var turn = (snapshot.UserOffset ?? 0) - 1;

@@ -18,12 +18,12 @@ using MarkdownBlock = Markdig.Syntax.Block;
 
 namespace Wisp.Science.Preview;
 
-internal static class TranscriptView
+internal static partial class TranscriptView
 {
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
-        .UsePipeTables().UseTaskLists().UseAutoLinks().UseMathematics().Build();
+        .UsePipeTables().UseTaskLists().UseAutoLinks().UseMathematics().UseEmphasisExtras().Build();
 
-    public static FrameworkElement Create(BrowserMessage message, WispDesign design, bool inlineTools = false)
+    public static FrameworkElement Create(BrowserMessage message, WispDesign design, bool inlineTools = false, bool commentary = false, bool revealTool = false)
     {
         var sections = new StackPanel { Spacing = 12 };
         foreach (var section in TranscriptPresentation.Sections(message))
@@ -42,21 +42,28 @@ internal static class TranscriptView
                 }
                 var expander = new Expander { Header = header, HorizontalAlignment = HorizontalAlignment.Stretch,
                     HorizontalContentAlignment = HorizontalAlignment.Stretch, Background = design.Brush("bg-sunken"),
-                    BorderBrush = design.Brush("border"), Content = Code(section.Text, design), IsExpanded = false };
+                    BorderBrush = design.Brush("border"), Content = Code(section.Text, design), IsExpanded = revealTool };
                 sections.Children.Add(expander);
             }
-            else sections.Children.Add(RenderMarkdown(section.Text, design));
+            else sections.Children.Add(message.Role == "assistant" || message.Role == "tool" && message.ToolName == "attempt_completion"
+                ? ProseBlocks(Markdown.Parse(section.Text, Pipeline), design, response: true, commentary: commentary)
+                : RenderMarkdown(section.Text, design));
         }
         return sections;
     }
 
+    public static FrameworkElement RenderUpdateNotes(string text, WispDesign design)
+        => ProseBlocks(Markdown.Parse(text, Pipeline), design, proseSize: design.FontSize(13), leading: 1.55);
+
     /// <summary>Markdown to app-owned controls. Flow blocks share one selectable
     /// RichTextBlock; tables, code fences and images break out as elements.</summary>
-    public static FrameworkElement RenderMarkdown(string text, WispDesign design)
+    public static FrameworkElement RenderMarkdown(string text, WispDesign design, bool skillDocument = false)
     {
+        if (skillDocument) return SkillMarkdown(text, design);
         var panel = new StackPanel { Spacing = 0 };
         RichTextBlock? rich = null;
-        foreach (var block in Markdown.Parse(text, Pipeline))
+        var document = Markdown.Parse(text, Pipeline);
+        foreach (var block in document)
         {
             switch (block)
             {
@@ -94,6 +101,17 @@ internal static class TranscriptView
         IsTextSelectionEnabled = true, TextWrapping = TextWrapping.Wrap
     };
 
+    private static FrameworkElement SkillCode(string value, WispDesign design)
+    {
+        var text = new TextBlock { Text = value, FontFamily = design.Font(true), FontSize = design.FontSize(12.5),
+            LineHeight = design.FontSize(12.5) * 1.55, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+            TextWrapping = TextWrapping.NoWrap, IsTextSelectionEnabled = true, Foreground = design.Brush("text") };
+        return new Border { Child = new ScrollViewer { Content = text, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollMode = ScrollMode.Enabled, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled },
+            Padding = new Thickness(13, 11, 13, 11), Margin = new Thickness(0, 0, 0, 12), CornerRadius = new CornerRadius(10),
+            BorderThickness = new Thickness(1), BorderBrush = design.Brush("border"), Background = design.Brush("bg-sunken") };
+    }
+
     private static FrameworkElement Code(string value, WispDesign design) => new ScrollViewer
     {
         MaxHeight = 300, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -113,7 +131,7 @@ internal static class TranscriptView
             Foreground = design.Brush("text"), Padding = new Thickness(10, 8, 10, 10)
         };
         ApplyHighlight(body.Inlines, value, language, design);
-        var copy = new Button { Content = "复制", FontSize = design.FontSize(11), Padding = new Thickness(8, 2, 8, 2) };
+        var copy = new Button { Content = design.T("tool.copy_code"), FontSize = design.FontSize(11), Padding = new Thickness(8, 2, 8, 2) };
         copy.Click += (_, _) =>
         {
             try { var package = new DataPackage { RequestedOperation = DataPackageOperation.Copy }; package.SetText(value); Clipboard.SetContent(package); }
@@ -135,7 +153,7 @@ internal static class TranscriptView
         };
     }
 
-    private static void ApplyHighlight(InlineCollection inlines, string value, string? language, WispDesign design)
+    internal static void ApplyHighlight(InlineCollection inlines, string value, string? language, WispDesign design, bool syntax = false)
     {
         XamlInline Plain(int start, int length) => new Run { Text = value[start..(start + length)] };
         if (language is null)
@@ -150,7 +168,13 @@ internal static class TranscriptView
             inlines.Add(new Run
             {
                 Text = value.Substring(token.Start, token.Length),
-                Foreground = design.Brush(token.Kind switch
+                Foreground = design.Brush(syntax ? token.Kind switch
+                {
+                    NativeCodeHighlight.Comment => "syntax-comment",
+                    NativeCodeHighlight.StringToken => "syntax-string",
+                    NativeCodeHighlight.Number => "syntax-variable",
+                    _ => "syntax-keyword",
+                } : token.Kind switch
                 {
                     NativeCodeHighlight.Comment => "text-faint",
                     NativeCodeHighlight.StringToken => "clay",
@@ -163,7 +187,15 @@ internal static class TranscriptView
         if (position < value.Length) inlines.Add(Plain(position, value.Length - position));
     }
 
-    internal static FrameworkElement TableElement(Table table, WispDesign design)
+    internal static void GeneratedCell(TextBlock target, string source, WispDesign design)
+    {
+        target.Text = "";
+        foreach (var paragraph in NativeGeneratedArtifacts.ParseCell(source).OfType<ParagraphBlock>())
+            if (paragraph.Inline != null)
+                foreach (var inline in paragraph.Inline) target.Inlines.Add(RenderInline(inline, design, true));
+    }
+
+    internal static FrameworkElement TableElement(Table table, WispDesign design, bool softBreaksAsSpaces = false)
     {
         var rows = table.OfType<TableRow>().ToArray();
         var columns = NativeTranscriptTables.ColumnCount(table);
@@ -181,7 +213,7 @@ internal static class TranscriptView
                     TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true,
                     Foreground = design.Brush("text") };
                 if (isHeader) text.FontWeight = FontWeights.SemiBold;
-                text.Inlines.Add(CellInline(cell, design));
+                text.Inlines.Add(CellInline(cell, design, softBreaksAsSpaces));
                 var border = new Border
                 {
                     Child = text, Padding = new Thickness(8, 6, 8, 6),
@@ -196,9 +228,9 @@ internal static class TranscriptView
                 column += Math.Max(1, cell.ColumnSpan);
             }
         }
-        var copy = new Button { Content = "复制表格", HorizontalAlignment = HorizontalAlignment.Right,
+        var copy = new Button { Content = design.T("table.copy"), HorizontalAlignment = HorizontalAlignment.Right,
             FontSize = design.FontSize(11), Padding = new Thickness(8, 4, 8, 4) };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(copy, "复制表格");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(copy, design.T("table.copy"));
         copy.Click += (_, _) =>
         {
             try { var data = new DataPackage(); data.SetText(NativeTranscriptTables.Copy(table)); Clipboard.SetContent(data); }
@@ -209,26 +241,37 @@ internal static class TranscriptView
         return panel;
     }
 
-    private static XamlInline CellInline(TableCell cell, WispDesign design)
+    private static XamlInline CellInline(TableCell cell, WispDesign design, bool softBreaksAsSpaces)
     {
         var span = new Span();
         foreach (var child in cell)
         {
             if (child is ParagraphBlock paragraph && paragraph.Inline != null)
-                foreach (var inline in paragraph.Inline) span.Inlines.Add(RenderInline(inline, design));
+                foreach (var inline in paragraph.Inline) span.Inlines.Add(RenderInline(inline, design, softBreaksAsSpaces));
             else if (child is LeafBlock leaf) span.Inlines.Add(new Run { Text = leaf.Lines.ToString() });
         }
         return span;
     }
 
-    private static void AppendBlock(RichTextBlock rich, MarkdownBlock block, WispDesign design, string prefix = "")
+    private static void AppendBlock(RichTextBlock rich, MarkdownBlock block, WispDesign design, string prefix = "", bool softBreaksAsSpaces = false)
     {
         if (block is LeafBlock leaf)
         {
             var paragraph = new Paragraph { Margin = new Thickness(0, 0, 0, 12) };
-            if (block is HeadingBlock heading) { paragraph.FontSize = design.FontSize(heading.Level <= 2 ? 18 : 15); paragraph.FontWeight = FontWeights.SemiBold; }
+            if (softBreaksAsSpaces)
+            {
+                paragraph.Margin = new Thickness(0, 0, 0, design.Typography.MarkdownSize * .55);
+                if (block is HeadingBlock skillHeading)
+                {
+                    var (scale, line) = skillHeading.Level switch { 1 => (1.55, 1.3), 2 => (1.28, 1.35), 3 => (1.12, 1.4), _ => (1.02, 1.45) };
+                    paragraph.FontSize = design.Typography.MarkdownSize * scale; paragraph.LineHeight = paragraph.FontSize * line;
+                    paragraph.Margin = new Thickness(0, rich.Blocks.Count == 0 || skillHeading.Level == 1 ? 0 : paragraph.FontSize, 0, paragraph.FontSize * .4);
+                    paragraph.FontWeight = FontWeights.SemiBold;
+                }
+            }
+            else if (block is HeadingBlock heading) { paragraph.FontSize = design.FontSize(heading.Level <= 2 ? 18 : 15); paragraph.FontWeight = FontWeights.SemiBold; }
             if (prefix.Length > 0) paragraph.Inlines.Add(new Run { Text = prefix });
-            if (leaf.Inline != null) foreach (var inline in leaf.Inline) paragraph.Inlines.Add(RenderInline(inline, design));
+            if (leaf.Inline != null) foreach (var inline in leaf.Inline) paragraph.Inlines.Add(RenderInline(inline, design, softBreaksAsSpaces));
             else paragraph.Inlines.Add(new Run { Text = leaf.Lines.ToString() });
             rich.Blocks.Add(paragraph);
         }
@@ -241,23 +284,23 @@ internal static class TranscriptView
                 var first = true;
                 foreach (var child in item)
                 {
-                    AppendBlock(rich, child, design, first ? bullet : ""); first = false;
+                    AppendBlock(rich, child, design, first ? bullet : "", softBreaksAsSpaces); first = false;
                 }
                 index++;
             }
         }
         else if (block is ContainerBlock container)
-            foreach (var child in container) AppendBlock(rich, child, design, block is QuoteBlock ? "│ " : prefix);
+            foreach (var child in container) AppendBlock(rich, child, design, block is QuoteBlock ? "│ " : prefix, softBreaksAsSpaces);
     }
 
-    private static XamlInline RenderInline(Markdig.Syntax.Inlines.Inline inline, WispDesign design)
+    private static XamlInline RenderInline(Markdig.Syntax.Inlines.Inline inline, WispDesign design, bool softBreaksAsSpaces = false)
     {
         switch (inline)
         {
             case MathInline math: return new InlineUIContainer { Child = new NativeRichPreview(design, "math", math.Content.ToString(), "公式", false) };
             case LiteralInline literal: return new Run { Text = literal.Content.ToString() };
             case CodeInline code: return new Run { Text = code.Content, FontFamily = design.Font(true), FontSize = design.FontSize(12, true), Foreground = design.Brush("clay-strong") };
-            case LineBreakInline: return new LineBreak();
+            case LineBreakInline line: return softBreaksAsSpaces && !line.IsHard ? new Run { Text = " " } : new LineBreak();
             case TaskList task: return new Run { Text = task.Checked ? "☑ " : "☐ " };
             case HtmlInline html: return new Run { Text = html.Tag }; // Display HTML as inert text; never embed web content.
             case AutolinkInline link:
@@ -283,7 +326,7 @@ internal static class TranscriptView
                         span = new Hyperlink { NavigateUri = uri };
                     span.Foreground = design.Brush("clay-strong");
                 }
-                foreach (var child in container) span.Inlines.Add(RenderInline(child, design));
+                foreach (var child in container) span.Inlines.Add(RenderInline(child, design, softBreaksAsSpaces));
                 return span;
             default: return new Run { Text = inline.ToString() ?? "" };
         }

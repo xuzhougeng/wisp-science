@@ -846,7 +846,7 @@ pub(crate) struct MethodSearchRunDetails {
     pub activity: Option<wisp_store::AgentWorkflowRunActivity>,
 }
 
-async fn method_search_details(
+pub(crate) async fn method_search_details(
     store: &Store,
     project_root: &Path,
     project_id: &str,
@@ -915,6 +915,14 @@ pub(crate) async fn pause_method_search(
     run_id: String,
 ) -> Result<MethodSearchRunDetails, String> {
     let project = state.require_active(window.label())?;
+    pause_in_project(&state, project, run_id).await
+}
+
+pub(crate) async fn pause_in_project(
+    state: &AppState,
+    project: ActiveProject,
+    run_id: String,
+) -> Result<MethodSearchRunDetails, String> {
     let _activity = state.begin_project_activity(&project.id)?;
     method_search_details(&state.store, &project.root, &project.id, &run_id).await?;
     if !state
@@ -972,6 +980,15 @@ pub(crate) async fn start_method_search(
     let (project, scope) =
         crate::exploration_commands::working_project_for_active_frame(&state, window.label())
             .await?;
+    start_in_project(&state, project, scope, run_id).await
+}
+
+pub(crate) async fn start_in_project(
+    state: &AppState,
+    project: ActiveProject,
+    scope: wisp_store::StateScope,
+    run_id: String,
+) -> Result<MethodSearchRunDetails, String> {
     if matches!(&scope, wisp_store::StateScope::Exploration { .. }) {
         return Err(
             "exploration_scope_violation: Method Search is not scope-aware inside an exploration."
@@ -1071,6 +1088,15 @@ pub(crate) async fn resume_method_search(
     let (project, scope) =
         crate::exploration_commands::working_project_for_active_frame(&state, window.label())
             .await?;
+    resume_in_project(&state, project, scope, run_id).await
+}
+
+pub(crate) async fn resume_in_project(
+    state: &AppState,
+    project: ActiveProject,
+    scope: wisp_store::StateScope,
+    run_id: String,
+) -> Result<MethodSearchRunDetails, String> {
     if matches!(&scope, wisp_store::StateScope::Exploration { .. }) {
         return Err(
             "exploration_scope_violation: Method Search is not scope-aware inside an exploration."
@@ -1166,6 +1192,14 @@ pub(crate) async fn cancel_method_search(
     run_id: String,
 ) -> Result<MethodSearchRunDetails, String> {
     let project = state.require_active(window.label())?;
+    cancel_in_project(&state, project, run_id).await
+}
+
+pub(crate) async fn cancel_in_project(
+    state: &AppState,
+    project: ActiveProject,
+    run_id: String,
+) -> Result<MethodSearchRunDetails, String> {
     let _activity = state.begin_project_activity(&project.id)?;
     let details = method_search_details(&state.store, &project.root, &project.id, &run_id).await?;
     if details.run.status.is_terminal() {

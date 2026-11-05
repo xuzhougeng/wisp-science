@@ -1,0 +1,9 @@
+{
+  "project_id": "p",
+  "session_id": null,
+  "contexts": [{ "id": "local", "kind": "local", "label": "Local", "config_json": "{}", "capabilities_json": "{}", "last_probe_status": null, "last_probe_error": null }],
+  "enabled_ids": [],
+  "default_context_id": null,
+  "runtimes": [{ "runtimeId": "runtime-1", "generation": 3, "key": { "projectId": "p", "contextId": "local", "language": "python", "scopeKey": "mainline", "sessionId": "" }, "status": "ready", "interpreter": "python", "version": "3.12", "processId": 1234, "startedAtMs": 1000, "lastActivityAtMs": 2000, "residentMemoryBytes": 4096, "lastError": null }],
+  "read_only": false
+}

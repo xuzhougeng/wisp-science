@@ -32,3 +32,28 @@ export function clearDocumentSelection(content) {
     window.getSelection()?.removeAllRanges();
     content.querySelectorAll('.rp-xlsx-cell.selected').forEach(cell => cell.classList.remove('selected'));
 }
+
+// Anchor to the topmost visible fragment, independent of drag direction.
+// Coordinates stay inside the renderer and never enter the quote payload.
+export function documentSelectionAnchor(content, kind) {
+    const bounds = content.getBoundingClientRect();
+    let clip = { left: Math.max(0, bounds.left), top: Math.max(0, bounds.top),
+        right: Math.min(innerWidth, bounds.right), bottom: Math.min(innerHeight, bounds.bottom) };
+    let rects;
+    if (kind === 'xlsx') {
+        const cell = content.querySelector('.rp-xlsx-cell.selected');
+        if (!cell) return null;
+        const grid = cell.closest('.rp-xlsx-grid')?.getBoundingClientRect();
+        if (grid) clip = { left: Math.max(clip.left, grid.left), top: Math.max(clip.top, grid.top),
+            right: Math.min(clip.right, grid.right), bottom: Math.min(clip.bottom, grid.bottom) };
+        rects = [cell.getBoundingClientRect()];
+    } else {
+        const selection = window.getSelection();
+        if (!selection?.rangeCount || selection.isCollapsed) return null;
+        rects = [...selection.getRangeAt(0).getClientRects()];
+    }
+    return rects.map(rect => ({ left: Math.max(rect.left, clip.left), top: Math.max(rect.top, clip.top),
+        right: Math.min(rect.right, clip.right), bottom: Math.min(rect.bottom, clip.bottom) }))
+        .filter(rect => rect.right > rect.left && rect.bottom > rect.top)
+        .sort((a, b) => a.top - b.top || a.left - b.left)[0] ?? null;
+}

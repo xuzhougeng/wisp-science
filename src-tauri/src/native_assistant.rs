@@ -40,6 +40,8 @@ pub(crate) async fn workspace(store: &Store, day: &str) -> Result<dto::Workspace
         schedules,
         runs,
         daily_recap: crate::research_recap::load_daily(store).await,
+        memory_tidy: Some(crate::memory_tidy::current(store).await),
+        mandates: Some(crate::mandates::visible_mandates(store).await?),
     })
 }
 
@@ -119,6 +121,80 @@ async fn mutation(
             json!({"enabled": enabled, "time": time}),
         ),
         RunDailyRecap => (None, "run_daily_recap_now", json!({})),
+        SetMemoryTidy { enabled } => (
+            None,
+            "set_memory_tidy_automation",
+            json!({"enabled": enabled}),
+        ),
+        RunMemoryTidy => (None, "run_memory_tidy_now", json!({})),
+        ApplyMemoryTidy { id } => {
+            if id.trim().is_empty() {
+                return Err("A memory proposal is required".into());
+            }
+            (None, "apply_memory_tidy_proposal", json!({"id": id}))
+        }
+        DismissMemoryTidy { id } => {
+            if id.trim().is_empty() {
+                return Err("A memory proposal is required".into());
+            }
+            (None, "dismiss_memory_tidy_proposal", json!({"id": id}))
+        }
+        CreateMandate { draft } => {
+            if !visible.contains(&draft.project_id) {
+                return Err("The target project is not visible".into());
+            }
+            (
+                Some(draft.project_id.clone()),
+                "create_mandate",
+                json!({"draft": draft}),
+            )
+        }
+        UpdateMandate { id, draft } => {
+            let project = check_mandate(store, &visible, &id).await?;
+            if draft.project_id != project {
+                return Err("A mandate cannot move to a different project".into());
+            }
+            (
+                Some(project),
+                "update_mandate",
+                json!({"id": id, "draft": draft}),
+            )
+        }
+        SetMandateStatus { id, status } => {
+            if !matches!(status.as_str(), "active" | "paused" | "done") {
+                return Err("A mandate can be set to active, paused or done".into());
+            }
+            (
+                Some(check_mandate(store, &visible, &id).await?),
+                "set_mandate_status",
+                json!({"id": id, "status": status}),
+            )
+        }
+        DeleteMandate { id } => (
+            Some(check_mandate(store, &visible, &id).await?),
+            "delete_mandate",
+            json!({"id": id}),
+        ),
+        RunMandate { id } => (
+            Some(check_mandate(store, &visible, &id).await?),
+            "run_mandate_now",
+            json!({"id": id}),
+        ),
+        ReportMandate { id } => (
+            Some(check_mandate(store, &visible, &id).await?),
+            "report_mandate_now",
+            json!({"id": id}),
+        ),
+        ReplyMandate { id, text } => {
+            if text.trim().is_empty() {
+                return Err("Write a reply first".into());
+            }
+            (
+                Some(check_mandate(store, &visible, &id).await?),
+                "reply_to_mandate",
+                json!({"id": id, "text": text}),
+            )
+        }
     };
     Ok((project, command, args))
 }
@@ -158,6 +234,26 @@ async fn check_schedule(
         }
     }
     Err("The automation is unavailable or its project is hidden".into())
+}
+
+async fn check_mandate(
+    store: &Store,
+    visible: &std::collections::HashSet<String>,
+    id: &str,
+) -> Result<String, String> {
+    // Resolve only among admitted projects, before reading or mutating a guessed ID.
+    for project in visible {
+        if store
+            .list_mandates(project)
+            .await
+            .map_err(|e| e.to_string())?
+            .iter()
+            .any(|row| row.id == id)
+        {
+            return Ok(project.clone());
+        }
+    }
+    Err("The mandate is unavailable or its project is hidden".into())
 }
 
 pub(crate) async fn execute(broker: &Broker, request: &Request) -> Result<Value, String> {
@@ -330,6 +426,135 @@ mod tests {
         assert_eq!(binding.as_deref(), Some("visible"));
         assert_eq!(command, "set_session_timer");
         assert_eq!(args["sessionId"], "visible-session");
+        assert!(value.memory_tidy.is_some());
+        for project in ["visible", "hidden"] {
+            store
+                .create_mandate(&wisp_dto::MandateRecord {
+                    id: format!("{project}-mandate"),
+                    project_id: project.into(),
+                    name: "Literature".into(),
+                    goal: "Keep the literature current".into(),
+                    status: "active".into(),
+                    interval_secs: 86400,
+                    report_interval_secs: 604800,
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+        }
+        let mandates = workspace(&store, "2026-10-08")
+            .await
+            .unwrap()
+            .mandates
+            .unwrap();
+        assert_eq!(mandates.len(), 1);
+        assert_eq!(mandates[0].mandate.id, "visible-mandate");
+        for (action, command) in [
+            ("run_mandate", "run_mandate_now"),
+            ("report_mandate", "report_mandate_now"),
+            ("delete_mandate", "delete_mandate"),
+            ("set_mandate_status", "set_mandate_status"),
+            ("reply_mandate", "reply_to_mandate"),
+            ("update_mandate", "update_mandate"),
+        ] {
+            for project in ["visible", "hidden"] {
+                let mut input = json!({"action": action, "id": format!("{project}-mandate")});
+                if action == "set_mandate_status" {
+                    input["status"] = json!("paused");
+                }
+                if action == "reply_mandate" {
+                    input["text"] = json!("The materials are ready");
+                }
+                if action == "update_mandate" {
+                    input["draft"] = json!({"project_id": project, "goal": "Revised goal"});
+                }
+                let result = mutation(&store, serde_json::from_value(input).unwrap()).await;
+                if project == "hidden" {
+                    assert!(result.is_err());
+                } else {
+                    let (binding, actual, _) = result.unwrap();
+                    assert_eq!(binding.as_deref(), Some("visible"));
+                    assert_eq!(actual, command);
+                }
+            }
+        }
+        assert!(mutation(
+            &store,
+            dto::Operation::CreateMandate {
+                draft: wisp_dto::MandateDraft {
+                    project_id: "hidden".into(),
+                    ..Default::default()
+                }
+            }
+        )
+        .await
+        .is_err());
+        assert!(mutation(
+            &store,
+            dto::Operation::UpdateMandate {
+                id: "visible-mandate".into(),
+                draft: wisp_dto::MandateDraft {
+                    project_id: "hidden".into(),
+                    ..Default::default()
+                }
+            }
+        )
+        .await
+        .is_err());
+        assert!(mutation(
+            &store,
+            dto::Operation::SetMandateStatus {
+                id: "visible-mandate".into(),
+                status: "waiting".into()
+            }
+        )
+        .await
+        .is_err());
+        assert!(mutation(
+            &store,
+            dto::Operation::ReplyMandate {
+                id: "visible-mandate".into(),
+                text: " ".into()
+            }
+        )
+        .await
+        .is_err());
+        for (operation, expected, expected_args) in [
+            (
+                dto::Operation::SetMemoryTidy { enabled: false },
+                "set_memory_tidy_automation",
+                json!({"enabled": false}),
+            ),
+            (
+                dto::Operation::RunMemoryTidy,
+                "run_memory_tidy_now",
+                json!({}),
+            ),
+            (
+                dto::Operation::ApplyMemoryTidy {
+                    id: "proposal-a".into(),
+                },
+                "apply_memory_tidy_proposal",
+                json!({"id": "proposal-a"}),
+            ),
+            (
+                dto::Operation::DismissMemoryTidy {
+                    id: "proposal-a".into(),
+                },
+                "dismiss_memory_tidy_proposal",
+                json!({"id": "proposal-a"}),
+            ),
+        ] {
+            let (binding, command, args) = mutation(&store, operation).await.unwrap();
+            assert!(binding.is_none());
+            assert_eq!(command, expected);
+            assert_eq!(args, expected_args);
+        }
+        assert!(
+            mutation(&store, dto::Operation::ApplyMemoryTidy { id: " ".into() })
+                .await
+                .is_err()
+        );
         drop(store);
         let _ = std::fs::remove_file(path);
     }

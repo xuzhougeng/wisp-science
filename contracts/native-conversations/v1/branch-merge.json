@@ -1,0 +1,9 @@
+{
+  "preview": { "project_id": "research-1", "result": {
+    "main_session_id": "main-1", "branch_session_id": "branch-1", "branch_title": "Alternative normalization",
+    "checkpoint_user_index": 2, "checkpoint_kind": "after_turn", "guard_hash": "reviewed-guard", "new_message_count": 2,
+    "messages": [{"seq": 20, "role": "user", "text": "Compare normalization methods."}, {"seq": 21, "role": "assistant", "text": "The alternate method retains the same conclusion."}]
+  }},
+  "guided_request": {"session_id":"branch-1", "expected_guard_hash":"reviewed-guard", "current_version":"Current summary", "user_guidance":"Retain the uncertainty."},
+  "merged": {"project_id":"research-1", "result":{"main_session_id":"main-1", "branch_session_id":"branch-1", "summary_message_seq":42}}
+}

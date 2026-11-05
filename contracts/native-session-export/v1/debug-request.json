@@ -1,0 +1,10 @@
+{
+  "args": { "session_id": "source-1" },
+  "result": {
+    "schema": "wisp.native-debug-request.v1",
+    "project_id": "research-1",
+    "session_id": "source-1",
+    "filename": "wisp-debug-request-source_1.json",
+    "contents": "{\n  \"session_id\": \"source-1\",\n  \"captured_at\": \"2026-11-01T00:00:00Z\",\n  \"source\": \"stored-messages\",\n  \"message_count\": 1,\n  \"messages\": [{\"index\": 0, \"role\": \"user\", \"text\": \"Synthetic research question\", \"chars\": 27, \"est_tokens\": 7}],\n  \"tools\": []\n}"
+  }
+}

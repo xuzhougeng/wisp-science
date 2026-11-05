@@ -10,6 +10,85 @@ use sha2::{Digest, Sha256};
 const TERMINAL_RUN_STATUSES: &str = "('succeeded','failed','cancelled','timed_out','lost')";
 
 impl Store {
+    /// Resolve produced edges, their runs and artifact heads in one read. An
+    /// exploration can see its own records and only its checkpoint's baseline.
+    pub async fn context_run_artifacts(
+        &self,
+        scope: &StateScope,
+        context: &str,
+        reader: Option<&str>,
+    ) -> Result<Vec<wisp_dto::native_runtimes::ContextRunArtifact>> {
+        if let Some(store) = self.route_project(scope.project_id()).await? {
+            return Box::pin(store.context_run_artifacts(scope, context, reader)).await;
+        }
+        let exploration = match scope {
+            StateScope::Mainline { .. } => None,
+            StateScope::Exploration { exploration_id, .. } => Some(exploration_id.as_str()),
+        };
+        let rows: Vec<(String, String, String, String, String, String)> = sqlx::query_as(
+            r#"WITH checkpoint AS (SELECT c.id AS checkpoint_id FROM explorations x
+                                   JOIN exploration_checkpoints c ON c.id=x.checkpoint_id
+                                   WHERE x.id=?3 AND c.project_id=?1),
+                 baseline AS (SELECT entity_kind, entity_id FROM exploration_baseline_entities
+                              WHERE checkpoint_id IN (SELECT checkpoint_id FROM checkpoint))
+               SELECT r.id, a.id, coalesce(n.title,a.id), a.filename, a.content_type, coalesce(?4,a.root_frame_id)
+               FROM runs r JOIN research_edges e ON e.project_id=r.project_id AND e.source_id='run:'||r.id AND e.relation='produced'
+               JOIN artifacts a ON a.id=substr(e.target_id,10) AND e.target_id='artifact:'||a.id AND a.project_id=r.project_id
+               JOIN frames f ON f.id=coalesce(?4,a.root_frame_id) AND f.project_id=r.project_id AND f.exploration_id IS ?3
+               LEFT JOIN research_nodes n ON n.id=e.target_id AND n.project_id=r.project_id
+                 AND (n.exploration_id IS ?3 OR (n.exploration_id IS NULL AND n.id IN
+                     (SELECT entity_id FROM baseline WHERE entity_kind='research_node')))
+               WHERE r.project_id=?1 AND r.context_id=?2
+                 AND (r.exploration_id IS ?3 OR (r.exploration_id IS NULL AND r.id IN
+                     (SELECT entity_id FROM baseline WHERE entity_kind='run')))
+                 AND (e.exploration_id IS ?3 OR (e.exploration_id IS NULL AND e.id IN
+                     (SELECT entity_id FROM baseline WHERE entity_kind='research_edge')))
+                 AND (a.exploration_id IS ?3 OR (a.exploration_id IS NULL AND a.id IN
+                     (SELECT artifact_id FROM exploration_baseline_artifact_heads
+                      WHERE checkpoint_id IN (SELECT checkpoint_id FROM checkpoint))))
+               GROUP BY r.id,a.id ORDER BY r.id,min(e.created_at),a.id"#,
+        )
+        .bind(scope.project_id())
+        .bind(context)
+        .bind(exploration)
+        .bind(reader)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(run_id, artifact_id, label, filename, kind, reader_session)| {
+                    wisp_dto::native_runtimes::ContextRunArtifact {
+                        run_id,
+                        artifact_id,
+                        label,
+                        filename,
+                        kind,
+                        reader_session,
+                    }
+                },
+            )
+            .collect())
+    }
+
+    /// Owned runs in this environment, excluding records of archived notebooks.
+    /// Used for control visibility; the host checks write access again on click.
+    pub async fn manageable_context_runs(
+        &self,
+        scope: &StateScope,
+        context: &str,
+    ) -> Result<std::collections::HashSet<String>> {
+        if let Some(store) = self.route_project(scope.project_id()).await? {
+            return Box::pin(store.manageable_context_runs(scope, context)).await;
+        }
+        let exploration = match scope {
+            StateScope::Mainline { .. } => None,
+            StateScope::Exploration { exploration_id, .. } => Some(exploration_id.as_str()),
+        };
+        let ids: Vec<String> = sqlx::query_scalar("SELECT r.id FROM runs r WHERE r.project_id=? AND r.context_id=? AND r.exploration_id IS ? AND NOT EXISTS (SELECT 1 FROM frames f JOIN research_archives a ON a.frame_id=f.root_frame_id WHERE f.id=r.frame_id AND a.frozen_at IS NOT NULL)")
+            .bind(scope.project_id()).bind(context).bind(exploration).fetch_all(&self.pool).await?;
+        Ok(ids.into_iter().collect())
+    }
     pub async fn project_has_active_runs(&self, project_id: &str) -> Result<bool> {
         if let Some(store) = self.route_project(project_id).await? {
             return Box::pin(store.project_has_active_runs(project_id)).await;

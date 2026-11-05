@@ -890,7 +890,7 @@ pub(super) async fn list_sessions_page(
 /// Frames whose persisted system prompt was built from ~/.wisp/AGENTS.md,
 /// AGENTS.md or WISP.md contents that differ from the files on disk.
 /// Undecidable prompts (missing or legacy layout) are never flagged.
-async fn stale_prompt_frames(
+pub(super) async fn stale_prompt_frames(
     store: &Store,
     root: &std::path::Path,
     frame_ids: &[String],
@@ -1742,11 +1742,18 @@ pub(super) async fn latest_used_session(
 #[tauri::command]
 pub(super) async fn list_recent_sessions(
     state: State<'_, AppState>,
-) -> Result<Vec<serde_json::Value>, String> {
+) -> Result<Vec<wisp_dto::RecentSession>, String> {
     let running = state.running_turns.lock().await.clone();
     let awaiting = state.awaiting_confirm.lock().unwrap().clone();
-    let rows = state
-        .store
+    recent_home_sessions(&state.store, &running, &awaiting).await
+}
+
+pub(crate) async fn recent_home_sessions(
+    store: &wisp_store::Store,
+    running: &std::collections::HashSet<String>,
+    awaiting: &std::collections::HashSet<String>,
+) -> Result<Vec<wisp_dto::RecentSession>, String> {
+    let rows = store
         .list_recent_sessions_detail(RECENT_SESSIONS_LIMIT)
         .await
         .map_err(|e| format!("{e}"))?;
@@ -1757,16 +1764,14 @@ pub(super) async fn list_recent_sessions(
                 &r.id,
                 r.last_role.as_deref(),
                 r.unseen,
-                &running,
-                &awaiting,
+                running,
+                awaiting,
             );
-            serde_json::json!({
-                "id": r.id,
-                "project_id": r.project_id,
-                "title": r.title,
-                "ts": r.created_at,
-                "status": status,
-            })
+            wisp_dto::RecentSession {
+                id: r.id, project_id: r.project_id, title: r.title, ts: r.created_at,
+                status: status.into(), folder_id: None, pinned: None, branched_from: None,
+                branch_state: None, dispatched_from: None,
+            }
         })
         .collect())
 }

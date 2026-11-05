@@ -23,6 +23,8 @@ public interface INativeConversationClient
         => throw new NotSupportedException("ACP settings are not supported by this client");
     Task<ConversationSnapshot> SnapshotAsync(string projectId, string sessionId, long? beforeSeq = null, CancellationToken cancellationToken = default);
     Task SendAsync(string projectId, string sessionId, Guid requestId, string message, CancellationToken cancellationToken = default);
+    Task ResumeAsync(string projectId, string sessionId, Guid requestId, string afterRequestId, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Turn recovery is not supported by this client");
     Task SendFilesAsync(string projectId, string sessionId, Guid requestId, string message, string[] attachments, CancellationToken cancellationToken = default)
         => attachments.Length == 0 ? SendAsync(projectId, sessionId, requestId, message, cancellationToken) : throw new NotSupportedException("Attachments are not supported by this client");
     Task SendContextAsync(string projectId, string sessionId, Guid requestId, string message, string[] attachments,
@@ -31,6 +33,10 @@ public interface INativeConversationClient
             : throw new NotSupportedException("Composer references are not supported by this client");
     Task<ComposerAttachment> AttachAsync(string projectId, string sessionId, string path, CancellationToken cancellationToken = default)
         => throw new NotSupportedException("Attachments are not supported by this client");
+    Task SendSelectedContextAsync(string projectId, string sessionId, Guid requestId, string message, string[] attachments,
+        NativeComposerReference[] references, string? agentId, CancellationToken cancellationToken = default)
+        => agentId == null ? SendContextAsync(projectId, sessionId, requestId, message, attachments, references, cancellationToken)
+            : throw new NotSupportedException("Provisional ACP selection is not supported by this client");
     Task EnqueueAsync(string projectId, string sessionId, Guid requestId, string message, CancellationToken cancellationToken = default)
         => throw new NotSupportedException("Follow-ups are not supported by this client");
     Task EnqueueFilesAsync(string projectId, string sessionId, Guid requestId, string message, string[] attachments, CancellationToken cancellationToken = default)
@@ -73,7 +79,8 @@ public sealed record ConversationSnapshot(string Schema, string Epoch, ulong Seq
     string? RequestId, string? Error, ConversationApproval[] Approvals, int? UserOffset = null, bool? PlanMode = null, ConversationFastMode? FastMode = null,
     bool? ComposerReferences = null, string[]? FollowUps = null, NativeAcpInteractions? Acp = null, string? AcpAgentId = null,
     NativeAcpSessionState? AcpState = null, NativeHistoryState? HistoryState = null, NativeQueueSnapshot? Queue = null,
-    NativeRun[]? RunCards = null, bool? RunReviewSupported = null, string? ActivityStatus = null)
+    NativeRun[]? RunCards = null, bool? RunReviewSupported = null, string? ActivityStatus = null,
+    NativeConversationBranch[]? Branches = null, NativeExplorationState? Exploration = null)
 {
     public const string SchemaId = "wisp.native-conversations.v1";
     public static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
@@ -81,9 +88,14 @@ public sealed record ConversationSnapshot(string Schema, string Epoch, ulong Seq
     {
         var value = node?.Deserialize<ConversationSnapshot>(JsonOptions) ?? throw new InvalidDataException("Missing conversation snapshot");
         if (value.Schema != SchemaId || string.IsNullOrEmpty(value.Epoch) || value.Sequence == 0
+            || value.Exploration != null && (!value.Exploration.ValidFor(sessionId)
+                || (value.Exploration.SourceFrozen || value.Exploration.Summary is { Exploration.Status: not "active" }) && !value.ReadOnly)
             || value.ProjectId != projectId || value.SessionId != sessionId || value.Items is null || value.Approvals is null
             || value.Approvals.Any(a => a.FrameId != sessionId)
             || value.AcpState != null && value.AcpState.FrameId != sessionId
+            || value.Branches != null && (value.Branches.Select(branch => branch?.Id).Distinct().Count() != value.Branches.Length
+                || value.Branches.Any(branch => branch == null || string.IsNullOrWhiteSpace(branch.Id) || branch.Id == sessionId
+                    || branch.SourceSessionId != sessionId || branch.CheckpointUserIndex < 0))
             || value.Queue != null && !value.Queue.Valid
             || value.RunCards != null && (value.RunCards.Select(run => run.Id).Distinct().Count() != value.RunCards.Length
                 || value.RunCards.Any(run => run.FrameId != sessionId || string.IsNullOrEmpty(run.Id)))
@@ -147,11 +159,21 @@ public sealed class NativeConversationClient(INativeSettingsClient transport) : 
             new() { ["session_id"] = sessionId, ["before_seq"] = beforeSeq }, projectId, cancellationToken).ConfigureAwait(false), projectId, sessionId);
     public async Task SendAsync(string projectId, string sessionId, Guid requestId, string message, CancellationToken cancellationToken = default) =>
         await transport.InvokeAsync("native_conversation_send", new() { ["session_id"] = sessionId, ["request_id"] = requestId.ToString(), ["message"] = message }, projectId, cancellationToken).ConfigureAwait(false);
+    public async Task ResumeAsync(string projectId, string sessionId, Guid requestId, string afterRequestId, CancellationToken cancellationToken = default) =>
+        await transport.InvokeAsync("native_conversation_send", new() { ["session_id"] = sessionId, ["request_id"] = requestId.ToString(),
+            ["message"] = "", ["resume"] = true, ["resume_after"] = afterRequestId }, projectId, cancellationToken).ConfigureAwait(false);
     public async Task SendFilesAsync(string projectId, string sessionId, Guid requestId, string message, string[] attachments, CancellationToken cancellationToken = default) =>
         await transport.InvokeAsync("native_conversation_send", ComposerArgs(sessionId, requestId, message, attachments), projectId, cancellationToken).ConfigureAwait(false);
     public async Task SendContextAsync(string projectId, string sessionId, Guid requestId, string message, string[] attachments,
         NativeComposerReference[] references, CancellationToken cancellationToken = default) =>
         await transport.InvokeAsync("native_conversation_send", ReferenceArgs(sessionId, requestId, message, attachments, references), projectId, cancellationToken).ConfigureAwait(false);
+    public async Task SendSelectedContextAsync(string projectId, string sessionId, Guid requestId, string message, string[] attachments,
+        NativeComposerReference[] references, string? agentId, CancellationToken cancellationToken = default)
+    {
+        var args = ReferenceArgs(sessionId, requestId, message, attachments, references);
+        if (agentId != null) args["acp_agent_id"] = agentId;
+        await transport.InvokeAsync("native_conversation_send", args, projectId, cancellationToken).ConfigureAwait(false);
+    }
     private static JsonObject ReferenceArgs(string sessionId, Guid requestId, string message, string[] attachments, NativeComposerReference[] references)
     {
         var args = ComposerArgs(sessionId, requestId, message, attachments);

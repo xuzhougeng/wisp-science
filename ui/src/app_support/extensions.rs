@@ -90,13 +90,13 @@ impl ExtensionsState {
             let arg = to_value(&serde_json::json!({ "srcPath": path, "scope": scope })).unwrap();
             match invoke_checked("install_skill", arg).await {
                 Ok(value) => {
-                    let text = serde_wasm_bindgen::from_value::<SkillInstallReceipt>(value)
-                        .map(|receipt| {
-                            crate::skill_detail::skill_install_receipt_text(locale.get(), &receipt)
-                        })
-                        .unwrap_or_else(|_| t(locale.get(), "skills.installed"));
-                    skills_msg.set(Some((true, text)));
-                    self.refresh_skills();
+                    match serde_wasm_bindgen::from_value::<SkillInstallReceipt>(value) {
+                        Ok(receipt) if receipt.scope == scope && !receipt.dir.trim().is_empty() && !receipt.name.trim().is_empty() => {
+                            skills_msg.set(Some((true, crate::skill_detail::skill_install_receipt_text(locale.get(), &receipt))));
+                            self.refresh_skills();
+                        }
+                        _ => skills_msg.set(Some((false, t(locale.get(), "skills.receipt_unconfirmed")))),
+                    }
                 }
                 Err(err) => {
                     skills_msg.set(Some((

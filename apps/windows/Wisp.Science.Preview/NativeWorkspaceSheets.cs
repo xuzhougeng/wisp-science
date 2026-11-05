@@ -1,5 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Wisp.ProjectBrowser;
 using Wisp.ProjectBrowser.Contracts;
 using Windows.Storage;
@@ -9,6 +11,8 @@ namespace Wisp.Science.Preview;
 
 internal interface IWorkspaceSheet : IDisposable
 {
+    bool IsModal => false;
+    bool KeepsProjectSidebar => false;
     void HandleEscape();
 }
 
@@ -16,12 +20,24 @@ internal abstract class WorkspaceSheet : UserControl, IWorkspaceSheet
 {
     private readonly Action close;
     private bool closed;
+    private bool settingsLayout;
+    protected Action? BackToSettingsList { get; private set; }
+    private double settingsContentMaxWidth = 1040;
+    private Action? resizeSettings;
+    private double? modalPreferredHeight;
     protected readonly WispDesign Design;
     private readonly Grid header;
     private readonly TextBlock heading;
-    protected WorkspaceSheet(WispDesign design, string title, Action close)
+    private readonly Button dismiss;
+    private readonly Grid headingContent = new() { ColumnSpacing = 10 };
+    public bool IsModal { get; }
+    protected WorkspaceSheet(WispDesign design, string title, Action close, bool modal = false, double modalWidth = ProjectDialogLayout.PreferredWidth,
+        bool scrollWholeModal = false, bool lightDismiss = false)
     {
         Design = design; this.close = close;
+        IsModal = modal;
+        HorizontalContentAlignment = HorizontalAlignment.Stretch;
+        VerticalContentAlignment = VerticalAlignment.Stretch;
         design.BindTypography(this);
         var root = new Grid { Background = design.Brush("bg-app") };
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
@@ -33,8 +49,11 @@ internal abstract class WorkspaceSheet : UserControl, IWorkspaceSheet
         header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         heading = design.Text(title, 24); heading.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
-        heading.Foreground = design.Brush("text"); header.Children.Add(heading);
-        var dismiss = design.ToolButton("关闭" + title, "close");
+        headingContent.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        headingContent.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        Grid.SetColumn(heading, 1);
+        heading.Foreground = design.Brush("text"); headingContent.Children.Add(heading); header.Children.Add(headingContent);
+        dismiss = design.ToolButton(design.L("关闭", "Close ") + title, "close");
         dismiss.Click += (_, _) => HandleEscape();
         Grid.SetColumn(HeaderActions, 1); header.Children.Add(HeaderActions);
         Grid.SetColumn(dismiss, 2); header.Children.Add(dismiss);
@@ -42,32 +61,235 @@ internal abstract class WorkspaceSheet : UserControl, IWorkspaceSheet
         Notices = new StackPanel { Spacing = 8, Padding = new Thickness(20, 0, 20, 12), Visibility = Visibility.Collapsed };
         Grid.SetRow(Notices, 1); root.Children.Add(Notices);
         Body = new StackPanel { Spacing = 20, Padding = new Thickness(28, 0, 28, 28), MaxWidth = 1040 };
-        BodyScroll = new ScrollViewer { Content = Body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        BodyScroll = new ScrollViewer { Content = Body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            HorizontalScrollMode = ScrollMode.Disabled, HorizontalContentAlignment = HorizontalAlignment.Stretch };
         Grid.SetRow(BodyScroll, 2); root.Children.Add(BodyScroll);
         Footer = new StackPanel { Spacing = 8, Visibility = Visibility.Collapsed };
         Grid.SetRow(Footer, 3); root.Children.Add(Footer);
         Content = root;
+        if (modal)
+        {
+            // Keep a finite width all the way through ScrollViewer and ContentControl.
+            // Otherwise a long path or multiline editor can measure beyond the window.
+            root.Background = design.Brush("bg-elev");
+            root.CornerRadius = new CornerRadius(16);
+            root.TabFocusNavigation = KeyboardNavigationMode.Cycle;
+            header.MaxWidth = Body.MaxWidth = double.PositiveInfinity;
+            headingContent.ColumnSpacing = 0;
+            header.Padding = new Thickness(22, 22, 22, 14);
+            Design.BindTypography(heading, 17);
+            Body.Padding = new Thickness(22, 0, 22, 0); Body.Spacing = 14;
+            Notices.Padding = new Thickness(22, 0, 22, 12);
+            Footer.Padding = new Thickness(22, 18, 22, 22);
+            if (scrollWholeModal)
+            {
+                // A WebView project form has one scroll surface, including the
+                // title and actions. Keep the corner and backdrop stationary.
+                root.Children.Remove(header); root.Children.Remove(Notices); root.Children.Remove(Footer);
+                BodyScroll.Content = null;
+                var form = new StackPanel();
+                headingContent.VerticalAlignment = VerticalAlignment.Center;
+                dismiss.MinHeight = dismiss.MinWidth = 0; dismiss.Height = dismiss.Width = 30; dismiss.Padding = new Thickness(0);
+                form.Children.Add(header); form.Children.Add(Notices); form.Children.Add(Body); form.Children.Add(Footer);
+                BodyScroll.Content = form;
+                BodyScroll.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+                BodyScroll.RegisterPropertyChangedCallback(ScrollViewer.ScrollableHeightProperty,
+                    (_, _) => form.Margin = new Thickness(0, 0, BodyScroll.ScrollableHeight > 0 ? ScrollGutter : 0, 0));
+            }
+            Content = null;
+            var card = new Border { Child = root, Width = modalWidth,
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+                Background = design.Brush("bg-elev"), BorderBrush = design.Brush("border-strong"),
+                BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(16),
+                Shadow = new ThemeShadow(), Translation = new System.Numerics.Vector3(0, 0, 24) };
+            var overlay = new Grid();
+            NativeDialogVisuals.Backdrop(overlay, design);
+            if (lightDismiss) overlay.PointerPressed += (_, e) =>
+            {
+                if (ReferenceEquals(e.OriginalSource, overlay)) { e.Handled = true; HandleEscape(); }
+            };
+            // A transparent full-window owner intercepts pointer input; Escape is
+            // still dispatched by MainWindow's stack, independent of input focus.
+            overlay.Children.Add(card); Content = overlay;
+            void Resize()
+            {
+                var layout = ModalBounds(ActualWidth, ActualHeight, modalWidth);
+                card.Width = layout.Width; card.MaxHeight = Math.Min(layout.MaxHeight, ModalHeightLimit(ActualHeight));
+                card.Height = modalPreferredHeight is { } preferred ? Math.Min(preferred, layout.MaxHeight) : double.NaN;
+            }
+            SizeChanged += (_, _) => Resize();
+            Loaded += (_, _) => { Resize(); dismiss.Focus(FocusState.Programmatic); };
+        }
         Loaded += (_, _) => Design.ApplyTypography(this);
     }
     protected StackPanel Body { get; }
+    protected virtual double ScrollGutter => 10;
+    protected virtual ProjectDialogLayout ModalBounds(double width, double height, double preferredWidth)
+        => ProjectDialogLayout.ForViewport(width, height, preferredWidth);
+    protected virtual double ModalHeightLimit(double viewportHeight) => double.PositiveInfinity;
     protected NativeActionWrap HeaderActions { get; } = new() { VerticalAlignment = VerticalAlignment.Center };
     protected ScrollViewer BodyScroll { get; }
     protected StackPanel Notices { get; }
     protected StackPanel Footer { get; }
-    protected void UseSettingsLayout()
+    protected void HideDismissButton() => dismiss.Visibility = Visibility.Collapsed;
+    protected void UseScrollingHeader(FrameworkElement content)
     {
-        header.MaxWidth = Body.MaxWidth = Notices.MaxWidth = Footer.MaxWidth = 1000;
-        header.HorizontalAlignment = Body.HorizontalAlignment = Notices.HorizontalAlignment = Footer.HorizontalAlignment = HorizontalAlignment.Stretch;
-        header.Padding = new Thickness(28, 28, 28, 16);
-        Body.Padding = new Thickness(28, 0, 28, 28); Body.Spacing = 20;
-        Notices.Padding = new Thickness(28, 0, 28, 12);
-        Footer.Padding = new Thickness(28, 12, 28, 20);
+        header.Visibility = Visibility.Collapsed;
+        Body.Children.Insert(0, content);
+    }
+    protected void SetDismissEnabled(bool enabled) => dismiss.IsEnabled = enabled;
+    protected void SetModalHeight(double height) => modalPreferredHeight = height;
+    protected void SetModalHeading(string title, string subtitle)
+    {
+        heading.Text = title; heading.TextWrapping = TextWrapping.NoWrap; heading.TextTrimming = TextTrimming.CharacterEllipsis;
+        ToolTipService.SetToolTip(heading, title); headingContent.Children.Clear();
+        var copy = new StackPanel { Spacing = 3 }; copy.Children.Add(heading);
+        var detail = Design.Text(subtitle, 11); detail.Foreground = Design.Brush("text-faint"); copy.Children.Add(detail);
+        Grid.SetColumn(copy, 1); headingContent.Children.Add(copy);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(dismiss, Design.T("settings.cancel"));
+    }
+    protected void SettingsHeading(string title, Action? back = null)
+    {
+        BackToSettingsList = back;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(dismiss, Design.L("关闭", "Close ") + title);
+        ToolTipService.SetToolTip(dismiss, Design.L("关闭", "Close ") + title);
+        headingContent.Children.Clear();
+        headingContent.ColumnSpacing = back == null ? 0 : 8;
+        if (back != null)
+        {
+            var button = Design.ToolButton(Design.L("返回设置列表", "Back to settings"), "chevron-left");
+            button.Click += (_, _) => back(); headingContent.Children.Add(button);
+        }
+        heading.Text = title; heading.VerticalAlignment = VerticalAlignment.Center;
+        var margin = settingsLayout ? Design.FontSize(21 * .83) : 12;
+        heading.Margin = back == null ? new Thickness(0, margin, 0, margin) : new Thickness(0);
+        Design.BindTypography(heading, back == null ? settingsLayout ? 21 : 24 : 14); headingContent.Children.Add(heading);
+        heading.FontWeight = settingsLayout && back == null ? Microsoft.UI.Text.FontWeights.Bold : Microsoft.UI.Text.FontWeights.SemiBold;
+        header.Padding = back == null ? new Thickness(20, 16, 20, 14) : new Thickness(20, 12, 20, 12);
+    }
+    protected void SettingsBreadcrumb(string section, string detail, Action back)
+    {
+        SettingsHeading(detail, back);
+        if (headingContent.Children[0] is Button backButton) StyleBreadcrumbBack(backButton);
+        header.Padding = new Thickness(20, 16, 20, 14);
+        headingContent.Children.Remove(heading);
+        var trail = BreadcrumbTrail(section, detail, back); Grid.SetColumn(trail, 1); headingContent.Children.Add(trail);
+    }
+    protected void StyleBreadcrumbBack(Button backButton)
+    {
+        backButton.Width = backButton.Height = 30; backButton.MinWidth = backButton.MinHeight = 0;
+        backButton.Padding = new Thickness(0); backButton.CornerRadius = new CornerRadius(15);
+        backButton.BorderThickness = new Thickness(1); backButton.BorderBrush = Design.Brush("border-strong");
+        backButton.Background = Design.Brush("bg-input");
+        backButton.Content = Design.Icon("chevron-left", 18, Design.ColorText("text-muted"));
+    }
+    protected Grid BreadcrumbTrail(string section, string detail, Action back, int separatorSize = 12)
+    {
+        var crumbs = new Grid { ColumnSpacing = 8 };
+        crumbs.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); crumbs.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); crumbs.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        var sectionButton = new Button { Content = Design.Text(section, 14) }; Design.QuietButton(sectionButton); sectionButton.Padding = new Thickness(0); sectionButton.MinHeight = 0;
+        if (sectionButton.Content is TextBlock caption) caption.Foreground = Design.Brush("text-muted");
+        sectionButton.Click += (_, _) => back(); crumbs.Children.Add(sectionButton);
+        var separator = Design.Icon("chevron-right", separatorSize, Design.ColorText("text-faint")); Grid.SetColumn(separator, 1); crumbs.Children.Add(separator);
+        var current = Design.Text(detail, 14); current.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold; current.TextWrapping = TextWrapping.NoWrap; current.TextTrimming = TextTrimming.CharacterEllipsis;
+        current.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(current, 2); crumbs.Children.Add(current); return crumbs;
+    }
+    protected void UseSettingsLayout(bool compactPreferences = false, bool reserveScrollbar = false, bool reserveOverflowScrollbar = false)
+    {
+        Foreground = Design.Brush("text");
+        settingsLayout = true; dismiss.Visibility = Visibility.Collapsed;
+        header.MaxWidth = Body.MaxWidth = Notices.MaxWidth = Footer.MaxWidth = 1040;
+        header.HorizontalAlignment = Body.HorizontalAlignment = Notices.HorizontalAlignment = Footer.HorizontalAlignment = HorizontalAlignment.Center;
+        header.Padding = new Thickness(20, 16, 20, 14);
+        heading.Margin = new Thickness(0, 12, 0, 12);
+        header.BorderBrush = Design.Brush("border"); header.BorderThickness = new Thickness(0, 0, 0, 1);
+        Body.Padding = new Thickness(24, 24, 24, 32); Body.Spacing = 20;
+        Notices.Padding = new Thickness(24, 0, 24, 12);
+        Footer.Padding = new Thickness(24, 12, 24, 20);
+        void ResizeSettings()
+        {
+            // MaxWidth alone does not constrain a StackPanel measured by a ScrollViewer.
+            var width = Math.Min(settingsContentMaxWidth, Math.Max(0, ActualWidth));
+            header.Width = Body.Width = Notices.Width = Footer.Width = width;
+            var gutter = reserveScrollbar || reserveOverflowScrollbar && BodyScroll.ScrollableHeight > 0;
+            Body.Margin = new Thickness(0, 0, gutter ? 10 : 0, 0);
+            if (gutter)
+            {
+                // WebView reserves its 10px scrollbar inside the centered pane.
+                Body.Width = Math.Max(0, width - 10);
+            }
+            if (compactPreferences)
+            {
+                var compact = (XamlRoot?.Size.Width ?? ActualWidth) <= 850;
+                Body.Padding = compact ? new Thickness(16) : new Thickness(24, 24, 24, 32);
+                Body.Spacing = compact ? 16 : 20;
+            }
+        }
+        SizeChanged += (_, _) => ResizeSettings();
+        Loaded += (_, _) => ResizeSettings();
+        if (reserveOverflowScrollbar)
+        {
+            // Network fits without a scrollbar on desktop; narrow windows need
+            // the gutter when the same rows overflow the available height.
+            Body.SizeChanged += (_, _) => ResizeSettings();
+            BodyScroll.SizeChanged += (_, _) => ResizeSettings();
+            BodyScroll.ViewChanged += (_, _) => ResizeSettings();
+        }
+        resizeSettings = ResizeSettings;
         Design.BindTypography(heading, 24);
+    }
+    protected void SettingsContentWidth(double width)
+    {
+        settingsContentMaxWidth = width;
+        header.MaxWidth = Body.MaxWidth = Notices.MaxWidth = Footer.MaxWidth = width;
+        resizeSettings?.Invoke();
     }
     public virtual void HandleEscape() { if (!closed) close(); }
     public virtual void Dispose() { closed = true; }
     protected TextBlock Mute(string text) { var block = Design.Text(text, 13); block.Foreground = Design.Brush("text-muted");
         block.Visibility = string.IsNullOrWhiteSpace(text) ? Visibility.Collapsed : Visibility.Visible; return block; }
+    protected void PopulateLocalEnvironment(StackPanel page, NativeLocalEnvironmentModel env, double rowSpacing = 3)
+    {
+        string T(string key) => Design.T(key);
+        TextBlock Hint(string message, double size)
+        {
+            var text = Design.Text(message, size, "text-muted"); text.LineHeight = Design.Typography.Scale(size) * 1.55; return text;
+        }
+        Button Action(string label, Action click)
+        {
+            var button = new Button { Content = label }; Design.ActionButton(button); button.Click += (_, _) => click(); return button;
+        }
+        page.Children.Clear(); page.Children.Add(Hint(T("env.optional"), 12));
+        var list = new StackPanel { Spacing = rowSpacing, Margin = new Thickness(0, 4, 0, 4) };
+        foreach (var (name, field) in NativeLocalEnvironmentModel.Fields)
+        {
+            var row = new Grid { ColumnSpacing = 8 }; row.ColumnDefinitions.Add(new() { Width = new GridLength(64) }); row.ColumnDefinitions.Add(new());
+            var label = Design.Text(name, 12); label.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold; row.Children.Add(label);
+            FrameworkElement value;
+            if (env.Draft is { } draft)
+            {
+                var input = new TextBox { Text = draft[field]?.ToString() ?? "", IsEnabled = !env.Busy, MinWidth = 0,
+                    PlaceholderText = T("env.missing"), CornerRadius = new(8), Background = Design.Brush("bg-input"), BorderBrush = Design.Brush("border-strong") };
+                Design.BindTypography(input, size: 12); Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(input, name);
+                input.TextChanged += (_, _) => draft[field] = input.Text; value = input;
+            }
+            else value = Design.Text(env.Paths?[field]?.ToString() is { Length: > 0 } path ? path
+                : T(env.Paths == null && env.Error == null ? "env.checking" : "env.missing"), 12);
+            Grid.SetColumn(value, 1); row.Children.Add(value); list.Children.Add(row);
+        }
+        page.Children.Add(list);
+        if (env.Warning is { Length: > 0 } warning) page.Children.Add(Hint(warning, 12));
+        if (env.Error != null) page.Children.Add(Warn(Design.L("无法确认本地环境路径。请重新检查。", "Could not confirm the local paths. Check them again.")));
+        if (env.Saved) page.Children.Add(Hint(T("env.saved"), 12));
+        if (env.Editing) page.Children.Add(Hint(T("env.edit_hint"), 12));
+        var actions = new NativeActionWrap();
+        actions.Children.Add(env.Editing ? Action(T("env.save"), () => _ = env.SaveAsync()) : Action(T("env.check_again"), () => _ = env.DetectAsync()));
+        var edit = env.Editing ? Action(T("share.cancel"), env.Cancel) : Action(T("env.edit"), env.Edit);
+        actions.Children.Add(edit);
+        foreach (var button in actions.Children.OfType<Button>()) { button.IsEnabled = !env.Busy; button.MinHeight = 0; button.Padding = new Thickness(12, 5, 12, 5); Design.BindTypography(button, size: 12); }
+        if (!env.Editing) edit.IsEnabled = env.CanEdit;
+        page.Children.Add(actions);
+    }
     protected TextBlock Warn(string text) { var block = Design.Text(text, 13); block.Foreground = Design.Brush("clay-strong"); return block; }
 }
 
@@ -270,7 +492,7 @@ internal sealed class NativeArchivePage : WorkspaceSheet
         {
             Body.Children.Add(new TextBlock { Text = model.Frozen ? "已归档研究节点" : "确认研究归档", FontSize = 16 });
             var title = new TextBox { Header = "节点标题", Text = archive.Title, IsReadOnly = model.Frozen || model.Busy };
-            var report = new TextBox { Header = "研究问题、结论、局限与选择依据", Text = archive.Report, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 160, IsReadOnly = model.Frozen || model.Busy };
+            var report = new TextBox { Header = "研究问题、结论、局限与选择依据", AcceptsReturn = true, Text = archive.Report, TextWrapping = TextWrapping.Wrap, MinHeight = 160, IsReadOnly = model.Frozen || model.Busy };
             Body.Children.Add(title); Body.Children.Add(report);
             foreach (var file in archive.Files)
                 Body.Children.Add(Mute($"{file.Path} · {file.Action} · {file.SizeBytes} bytes"));
@@ -309,56 +531,27 @@ internal sealed class NativeArchivePage : WorkspaceSheet
     }
 }
 
-internal sealed class NativeSharePage : WorkspaceSheet
-{
-    private readonly WorkspaceShareModel model;
-    private readonly Func<string, string, Task> saveHtml;
-    public NativeSharePage(WorkspaceShareModel model, WispDesign design, Func<string, string, Task> saveHtml, Action close)
-        : base(design, "分享对话", close)
-    {
-        this.model = model; this.saveHtml = saveHtml;
-        _ = StartAsync();
-    }
-    private async Task StartAsync() { await model.LoadAsync(); Render(); }
-    private void Render()
-    {
-        Body.Children.Clear();
-        Body.Children.Add(Mute("选择要导出的消息。思考内容默认不选中；编辑和脱敏只影响导出的 HTML 副本。"));
-        var actions = new NativeActionWrap();
-        var all = new Button { Content = "全选" }; all.Click += (_, _) => { model.SelectAll(true); Render(); };
-        var none = new Button { Content = "全不选" }; none.Click += (_, _) => { model.SelectAll(false); Render(); };
-        Design.ActionButton(all); Design.ActionButton(none);
-        actions.Children.Add(all); actions.Children.Add(none);
-        actions.Children.Add(Mute($"已选 {model.Selected.Length}/{model.Rows.Length}"));
-        Body.Children.Add(actions);
-        if (model.Error is { } error) Body.Children.Add(Warn(error));
-        foreach (var row in model.Rows)
-        {
-            var captured = row.Id;
-            var box = new CheckBox { Content = row.Row.Role == "user" ? "你" : row.Row.Role == "reasoning" ? "思考" : "Wisp Science", IsChecked = row.Selected };
-            box.Checked += (_, _) => model.SetSelected(captured, true);
-            box.Unchecked += (_, _) => model.SetSelected(captured, false);
-            var editor = new TextBox { Text = row.Row.Text, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 80 };
-            editor.TextChanged += (_, _) => model.Edit(captured, editor.Text);
-            var message = new StackPanel { Spacing = 8 }; message.Children.Add(box); message.Children.Add(editor);
-            Body.Children.Add(Design.Card(message));
-        }
-        var keywords = new TextBox { Header = "脱敏关键词，以逗号分隔", Text = model.Keywords };
-        keywords.TextChanged += (_, _) => model.Keywords = keywords.Text;
-        Body.Children.Add(keywords);
-        var export = new Button { Content = "导出 HTML", IsEnabled = model.Selected.Length > 0 };
-        export.Click += async (_, _) =>
-        {
-            try { await saveHtml("wisp-share.html", await model.HtmlAsync(Design.Dark)); }
-            catch (Exception ex) { Body.Children.Insert(0, Warn(ex.Message)); }
-        };
-        Body.Children.Add(export);
-        if (model.Rows.Length == 0 && !model.Loading) Body.Children.Add(Mute("没有可分享的消息"));
-    }
-}
-
 internal static class NativeWorkspaceFiles
 {
+    public static async Task<string?> PickDownloadAsync(Window window, string name, string fileLabel)
+    {
+        var safeName = NativeFileListPresentation.DownloadName(name);
+        var picker = new FileSavePicker { SuggestedFileName = safeName };
+        var extension = System.IO.Path.GetExtension(safeName);
+        picker.FileTypeChoices.Add(fileLabel, [extension.Length > 1 ? extension : ".download"]);
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(window));
+        return (await picker.PickSaveFileAsync())?.Path;
+    }
+    public static async Task<string?> SaveShareAsync(Window window, NativeShareFile content)
+    {
+        var picker = new FileSavePicker();
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(window));
+        picker.FileTypeChoices.Add(content.Extension == ".png" ? "PNG" : "HTML", [content.Extension]);
+        picker.SuggestedFileName = content.Name;
+        if (await picker.PickSaveFileAsync() is not { } file) return null;
+        await FileIO.WriteBytesAsync(file, content.Contents);
+        return file.Path;
+    }
     public static async Task SaveHtmlAsync(Window window, string name, string contents)
     {
         var picker = new FileSavePicker();

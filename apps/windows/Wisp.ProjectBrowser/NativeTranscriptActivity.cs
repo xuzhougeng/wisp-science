@@ -2,11 +2,12 @@ using Wisp.ProjectBrowser.Contracts;
 
 namespace Wisp.ProjectBrowser;
 
-public sealed record NativeActivityGroup(int Start, int End);
+public sealed record NativeActivityGroup(int Start, int End, bool CompletedTurn = true, bool Live = false);
+public sealed record NativeActivitySummary(string Title, string? Note, string? Now, string? Duration, bool SettledOk);
 
-/// <summary>Conservative completed-process grouping. Unknown/unresolved rows and
-/// run monitors without a successful exact owner remain visible. Review-needed
-/// Runs fold only when the caller exposes their actions outside the group.</summary>
+/// <summary>WebView process grouping. Live tools retain their own step groups;
+/// settled turns combine commentary, reasoning and tools. Active/unowned Run
+/// cards and actionable rows remain boundaries.</summary>
 public static class NativeTranscriptActivity
 {
     public static IReadOnlyList<NativeActivityGroup> Groups(ConversationItem[] items, bool busy, bool reviewActionsAvailable = false)
@@ -30,11 +31,62 @@ public static class NativeTranscriptActivity
         return groups;
     }
 
+    public static IReadOnlyList<NativeActivityGroup> DisplayGroups(ConversationItem[] items, bool busy, bool reviewActionsAvailable = false, bool modelView = false)
+    {
+        if (modelView) return [];
+        var completed = Groups(items, busy, reviewActionsAvailable).ToDictionary(group => group.Start);
+        var groups = new List<NativeActivityGroup>();
+        for (var index = 0; index < items.Length;)
+        {
+            if (completed.TryGetValue(index, out var group)) { groups.Add(group); index = group.End; continue; }
+            if (!StepTool(items, index, reviewActionsAvailable)) { index++; continue; }
+            var end = index + 1;
+            while (end < items.Length && (StepTool(items, end, reviewActionsAvailable) || Hidden(items[end]))) end++;
+            // Queued prompts and usage cannot make the active tail historical.
+            var live = busy && items[end..].All(row => Hidden(row) || row.Role == "usage");
+            groups.Add(new(index, end, CompletedTurn: false, Live: live)); index = end;
+        }
+        return groups;
+    }
+
+    public static int[] Members(ConversationItem[] items, NativeActivityGroup group, bool reviewActionsAvailable = false) =>
+        Enumerable.Range(group.Start, group.End - group.Start).Where(index => group.CompletedTurn
+            ? ActivityAt(items, index, reviewActionsAvailable) || items[index].Role is "usage" or "compaction"
+            : StepTool(items, index, reviewActionsAvailable)).ToArray();
+
+    private static bool StepTool(ConversationItem[] items, int index, bool includeReview) =>
+        Tool(items[index], includeReview) && ActivityAt(items, index, includeReview);
+
+    private static bool Hidden(ConversationItem row) => row.Role is "file_changed" or "app_context" or "queued_user"
+        || row.Role == "assistant" && string.IsNullOrWhiteSpace(row.Text);
+
+    public static NativeActivitySummary Summary(ConversationItem[] items, NativeActivityGroup group, string key, NativeLocalization locale)
+    {
+        var tools = items[group.Start..group.End].Where(row => row.Role is "tool" or "acp_tool").ToArray();
+        ulong total = 0;
+        foreach (var row in tools) if (row.DurationMs is { } duration) total = ulong.MaxValue - total < duration ? ulong.MaxValue : total + duration;
+        // The completed-turn clock needs actual turn timestamps. Tool elapsed
+        // time is available for step groups, but must not pretend to be that clock.
+        var elapsed = !group.CompletedTurn && total > 0 ? NativeToolPresentation.CompactDuration(total) : null;
+        var last = tools.LastOrDefault();
+        var waiting = group.Live && last != null && !NativeToolPresentation.Running(last)
+            && (NativeToolPresentation.Completed(last) || NativeToolPresentation.IsFailure(last) || last.Status is "cancelled" or "canceled" or "interrupted");
+        var title = group.CompletedTurn ? locale.Text("chat.activity_done")
+            : group.Live ? locale.Text(waiting ? "chat.model_waiting" : "chat.steps_running")
+            : locale.Format(tools.Length == 1 ? elapsed == null ? "chat.steps_1" : "chat.steps_1_time"
+                : elapsed == null ? "chat.steps_n" : "chat.steps_n_time", ("n", tools.Length.ToString(System.Globalization.CultureInfo.InvariantCulture)), ("t", elapsed ?? ""));
+        var note = waiting ? locale.Text("chat.model_wait_" + (System.Text.Encoding.UTF8.GetBytes(key).Sum(value => (int)value) % 4 + 1)) : null;
+        var nowTool = group.Live && !waiting ? tools.LastOrDefault(row => row.ToolName != "update_plan") : null;
+        var label = nowTool == null ? default : NativeToolPresentation.StepLabel(nowTool);
+        var now = nowTool == null ? null : label.Title + (label.Detail.Length > 0 ? " · " + label.Detail : "");
+        return new(title, note, now, group.Live ? elapsed : null, tools.All(NativeToolPresentation.Completed));
+    }
+
     private static bool Safe(ConversationItem row, bool includeReview = false) => row.Ok != false
         && (row.Run is null || row.Run.Status == "succeeded" && (!row.Run.NeedsReview || includeReview))
         && (row.Status is null or "" or "completed" or "done" or "success" or "succeeded");
 
-    private static bool Tool(ConversationItem row, bool includeReview = false) => Safe(row, includeReview) && row.Role is "tool" or "acp_tool" && row.Ok == true
+    private static bool Tool(ConversationItem row, bool includeReview = false) => (row.Run == null || Safe(row, includeReview)) && row.Role is "tool" or "acp_tool"
         && row.ToolName is not ("attempt_completion" or "monitor_run" or "wisp_monitor_run" or "generate_image" or "generate_video");
 
     public static bool Completion(ConversationItem row) => Safe(row) && row.Role == "tool"
@@ -56,7 +108,7 @@ public static class NativeTranscriptActivity
     }
 
     private static bool Glue(ConversationItem row) => Safe(row) && (row.Role is
-        "usage" or "compaction" or "file_changed" or "app_context"
+        "usage" or "compaction" or "file_changed" or "app_context" or "system" or "checkpoint"
         || row.Role == "assistant" && string.IsNullOrWhiteSpace(row.Text));
 
     /// <summary>These actions must remain outside the collapsed rows. Only the
@@ -73,7 +125,7 @@ public static class NativeTranscriptActivity
     private static bool ActivityAt(ConversationItem[] items, int index, bool includeReview)
     {
         var row = items[index];
-        if (!Safe(row, includeReview)) return false;
+        if (row.Run != null && !Safe(row, includeReview)) return false;
         if (row.Run?.NeedsReview == true && !ReviewedSubmission(row, index) && !CompletedMonitor(items, index, includeReview)) return false;
         if (row.Role == "reasoning" || Tool(row, includeReview) || CompletedMonitor(items, index, includeReview) || RepeatedCompletion(items, index)) return true;
         if (row.Role != "assistant" || string.IsNullOrWhiteSpace(row.Text)

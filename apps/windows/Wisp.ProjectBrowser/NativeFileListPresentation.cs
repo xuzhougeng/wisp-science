@@ -5,10 +5,23 @@ namespace Wisp.ProjectBrowser;
 
 public static class NativeFileListPresentation
 {
-    public static NativePanelFile[] VisibleFiles(IEnumerable<NativePanelFile> files, string query) => files
-        .Where(file => file.Name.Contains(query.Trim(), StringComparison.CurrentCultureIgnoreCase))
-        .OrderByDescending(file => file.IsDir)
-        .ThenBy(file => file.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
+    public static string DownloadName(string name)
+    {
+        var clean = new string(name.Select(c => c < 32 || "<>:\"/\\|?*".Contains(c) ? '_' : c).ToArray()).Trim().TrimEnd('.');
+        if (clean.Length == 0) return "download";
+        var stem = clean.Split('.')[0].TrimEnd();
+        if (new[] { "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$" }.Contains(stem, StringComparer.OrdinalIgnoreCase)
+            || System.Text.RegularExpressions.Regex.IsMatch(stem, @"^(COM|LPT)[1-9¹²³]$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)) clean = "_" + clean;
+        return clean;
+    }
+    public static NativePanelFile[] VisibleFiles(IEnumerable<NativePanelFile> files, string query, string sort = "name")
+    {
+        var ordered = files.Where(file => file.Name.Contains(query.Trim(), StringComparison.CurrentCultureIgnoreCase))
+            .OrderByDescending(file => file.IsDir);
+        if (sort == "size") ordered = ordered.ThenByDescending(file => file.Size);
+        if (sort == "modified") ordered = ordered.ThenByDescending(file => file.ModifiedUnixMillis ?? 0);
+        return ordered.ThenBy(file => file.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
+    }
 
     public static string Size(ulong bytes)
     {

@@ -12,4 +12,7 @@ public sealed record NativeInputPreferences(bool SendWithModifier = false, bool 
         preferences[key] is JsonValue value && value.TryGetValue<bool>(out var result) ? result : fallback;
 
     public string Hint => SendWithModifier ? "Ctrl+Enter 发送 · Enter 换行" : "Enter 发送 · Shift+Enter 换行";
+    public string LocalizedHint(NativeLocalization locale) => SendWithModifier
+        ? locale.Format("composer.hint_modifier", ("modifier", "Ctrl"))
+        : locale.Text("composer.hint");
 }

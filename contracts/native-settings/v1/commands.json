@@ -60,6 +60,12 @@
       "source": "src-tauri/src/ssh_hosts.rs"
     },
     {
+      "command": "assistant_weixin_status",
+      "arguments": [],
+      "result": "Result<AssistantWeixinStatus, String>",
+      "source": "src-tauri/src/channels/mod.rs"
+    },
+    {
       "command": "authenticate_acp_agent",
       "arguments": [
         {
@@ -161,6 +167,18 @@
       "source": "src-tauri/src/terminal_sessions.rs"
     },
     {
+      "command": "codex_account_usage",
+      "arguments": [
+        {
+          "name": "accountId",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<CodexAccountUsage, String>",
+      "source": "src-tauri/src/codex_accounts.rs"
+    },
+    {
       "command": "codex_login_status",
       "arguments": [
         {
@@ -201,6 +219,23 @@
       ],
       "result": "Result<crate::run_context::remote_files::ContextDisposalReport, String>",
       "source": "src-tauri/src/runtime_commands.rs"
+    },
+    {
+      "command": "copy_demo_to_project",
+      "arguments": [
+        {
+          "name": "id",
+          "rust_type": "String",
+          "optional": false
+        },
+        {
+          "name": "targetProjectId",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<String, String>",
+      "source": "src-tauri/src/seed.rs"
     },
     {
       "command": "create_global_memory",
@@ -290,6 +325,23 @@
       ],
       "result": "Result<ProjectSyncResult, String>",
       "source": "src-tauri/src/project_sync.rs"
+    },
+    {
+      "command": "export_specialist",
+      "arguments": [
+        {
+          "name": "id",
+          "rust_type": "String",
+          "optional": false
+        },
+        {
+          "name": "acknowledgeSecrets",
+          "rust_type": "bool",
+          "optional": false
+        }
+      ],
+      "result": "Result<SpecialistExportOutcome, String>",
+      "source": "src-tauri/src/specialist_package.rs"
     },
     {
       "command": "feishu_bind_cancel",
@@ -382,6 +434,12 @@
       "source": "src-tauri/src/browser_url_filters.rs"
     },
     {
+      "command": "get_capabilities",
+      "arguments": [],
+      "result": "Result<Capabilities, String>",
+      "source": "src-tauri/src/app_commands.rs"
+    },
+    {
       "command": "get_command_hooks",
       "arguments": [],
       "result": "Result<Vec<CommandHook>, String>",
@@ -418,6 +476,12 @@
       "source": "src-tauri/src/device_bridge.rs"
     },
     {
+      "command": "get_dynamic_agent_options",
+      "arguments": [],
+      "result": "Result<dynamic_workflow::DynamicAgentEditorOptions, String>",
+      "source": "src-tauri/src/delegation_runtime.rs"
+    },
+    {
       "command": "get_memory_view",
       "arguments": [
         {
@@ -452,6 +516,12 @@
       "arguments": [],
       "result": "Result<Option<ProjectHooks>, String>",
       "source": "src-tauri/src/command_hooks.rs"
+    },
+    {
+      "command": "get_project_info",
+      "arguments": [],
+      "result": "Result<ProjectInfo, String>",
+      "source": "src-tauri/src/project_commands.rs"
     },
     {
       "command": "get_project_run_retention",
@@ -500,6 +570,18 @@
       "source": "src-tauri/src/settings_commands.rs"
     },
     {
+      "command": "get_skill_install_source",
+      "arguments": [
+        {
+          "name": "name",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<Option<SkillInstallSource>, String>",
+      "source": "src-tauri/src/skill_store.rs"
+    },
+    {
       "command": "get_storage_usage",
       "arguments": [],
       "result": "Result<serde_json::Value, String>",
@@ -512,6 +594,12 @@
       "source": "src-tauri/src/models.rs"
     },
     {
+      "command": "get_subscription_proxies",
+      "arguments": [],
+      "result": "Result<BTreeMap<String, String>, String>",
+      "source": "src-tauri/src/network.rs"
+    },
+    {
       "command": "get_token_usage",
       "arguments": [],
       "result": "Result<TokenUsageOverview, String>",
@@ -522,6 +610,29 @@
       "arguments": [],
       "result": "Result<bool, String>",
       "source": "src-tauri/src/settings_commands.rs"
+    },
+    {
+      "command": "import_local_codex_accounts",
+      "arguments": [],
+      "result": "Result<CodexImportResult, String>",
+      "source": "src-tauri/src/codex_accounts.rs"
+    },
+    {
+      "command": "import_specialist",
+      "arguments": [
+        {
+          "name": "package",
+          "rust_type": "SpecialistPackage",
+          "optional": false
+        },
+        {
+          "name": "modelId",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<Vec<Specialist>, String>",
+      "source": "src-tauri/src/specialist_package.rs"
     },
     {
       "command": "import_ssh_config_hosts",
@@ -582,6 +693,23 @@
       "source": "src-tauri/src/plugins.rs"
     },
     {
+      "command": "install_scoped_skill",
+      "arguments": [
+        {
+          "name": "srcPath",
+          "rust_type": "String",
+          "optional": false
+        },
+        {
+          "name": "scope",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<wisp_dto::SkillInstallReceipt, String>",
+      "source": "src-tauri/src/skill_commands.rs"
+    },
+    {
       "command": "install_skill",
       "arguments": [
         {
@@ -617,6 +745,128 @@
       "source": "src-tauri/src/project_sync.rs"
     },
     {
+      "command": "lab_approve_member",
+      "arguments": [
+        {
+          "name": "memberId",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<(), String>",
+      "source": "src-tauri/src/channels/lab.rs"
+    },
+    {
+      "command": "lab_create_invite",
+      "arguments": [],
+      "result": "Result<String, String>",
+      "source": "src-tauri/src/channels/lab.rs"
+    },
+    {
+      "command": "lab_join",
+      "arguments": [
+        {
+          "name": "relayUrl",
+          "rust_type": "String",
+          "optional": false
+        },
+        {
+          "name": "relayToken",
+          "rust_type": "String",
+          "optional": false
+        },
+        {
+          "name": "name",
+          "rust_type": "String",
+          "optional": false
+        },
+        {
+          "name": "labName",
+          "rust_type": "String",
+          "optional": false
+        },
+        {
+          "name": "invite",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<LabStatus, String>",
+      "source": "src-tauri/src/channels/lab.rs"
+    },
+    {
+      "command": "lab_join_knowledge_base",
+      "arguments": [],
+      "result": "Result<Option<crate::ProjectSummary>, String>",
+      "source": "src-tauri/src/channels/lab.rs"
+    },
+    {
+      "command": "lab_leave",
+      "arguments": [
+        {
+          "name": "forget",
+          "rust_type": "bool",
+          "optional": false
+        }
+      ],
+      "result": "Result<(), String>",
+      "source": "src-tauri/src/channels/lab.rs"
+    },
+    {
+      "command": "lab_publish_knowledge_base",
+      "arguments": [
+        {
+          "name": "projectId",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<(), String>",
+      "source": "src-tauri/src/channels/lab.rs"
+    },
+    {
+      "command": "lab_remove_member",
+      "arguments": [
+        {
+          "name": "memberId",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<(), String>",
+      "source": "src-tauri/src/channels/lab.rs"
+    },
+    {
+      "command": "lab_set_inbox_project",
+      "arguments": [
+        {
+          "name": "projectId",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<(), String>",
+      "source": "src-tauri/src/channels/lab.rs"
+    },
+    {
+      "command": "lab_set_relay_token",
+      "arguments": [
+        {
+          "name": "relayToken",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<(), String>",
+      "source": "src-tauri/src/channels/lab.rs"
+    },
+    {
+      "command": "lab_status",
+      "arguments": [],
+      "result": "Result<LabStatus, String>",
+      "source": "src-tauri/src/channels/lab.rs"
+    },
+    {
       "command": "list_acp_agents",
       "arguments": [],
       "result": "Result<Vec<AcpAgentProfile>, String>",
@@ -627,6 +877,12 @@
       "arguments": [],
       "result": "Vec<ApprovalGrantInfo>",
       "source": "src-tauri/src/approval_commands.rs"
+    },
+    {
+      "command": "list_codex_accounts",
+      "arguments": [],
+      "result": "Result<Vec<CodexAccount>, String>",
+      "source": "src-tauri/src/codex_accounts.rs"
     },
     {
       "command": "list_community_skills",
@@ -789,10 +1045,28 @@
       "source": "src-tauri/src/native_settings.rs"
     },
     {
+      "command": "native_workflow_conversion_progress",
+      "arguments": [
+        {
+          "name": "conversionId",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Option<WorkflowConversionProgress>",
+      "source": "src-tauri/src/native_settings.rs"
+    },
+    {
       "command": "open_browser_extension_page",
       "arguments": [],
       "result": "wisp_dto::BrowserExtensionSetup",
       "source": "src-tauri/src/app_commands.rs"
+    },
+    {
+      "command": "pick_specialist_package",
+      "arguments": [],
+      "result": "Result<Option<String>, String>",
+      "source": "src-tauri/src/specialist_package.rs"
     },
     {
       "command": "plan_skill_portfolio",
@@ -846,6 +1120,18 @@
       "source": "src-tauri/src/notification_sound.rs"
     },
     {
+      "command": "preview_specialist_import",
+      "arguments": [
+        {
+          "name": "path",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<SpecialistImportPreview, String>",
+      "source": "src-tauri/src/specialist_package.rs"
+    },
+    {
       "command": "probe_execution_context",
       "arguments": [
         {
@@ -868,6 +1154,18 @@
       ],
       "result": "Result<String, String>",
       "source": "src-tauri/src/project_sync.rs"
+    },
+    {
+      "command": "promote_skill_to_global",
+      "arguments": [
+        {
+          "name": "name",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<wisp_dto::SkillInstallReceipt, String>",
+      "source": "src-tauri/src/skill_commands.rs"
     },
     {
       "command": "read_memory_file",
@@ -928,6 +1226,18 @@
       "source": "src-tauri/src/acp.rs"
     },
     {
+      "command": "remove_codex_account",
+      "arguments": [
+        {
+          "name": "accountId",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<Vec<CodexAccount>, String>",
+      "source": "src-tauri/src/codex_accounts.rs"
+    },
+    {
       "command": "remove_custom_credential",
       "arguments": [
         {
@@ -967,6 +1277,18 @@
       ],
       "result": "Result<(), String>",
       "source": "src-tauri/src/plugins.rs"
+    },
+    {
+      "command": "remove_project_skill_copy",
+      "arguments": [
+        {
+          "name": "name",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<(), String>",
+      "source": "src-tauri/src/skill_commands.rs"
     },
     {
       "command": "remove_quick_action",
@@ -1039,6 +1361,12 @@
       ],
       "result": "Result<Vec<ModelProfile>, String>",
       "source": "src-tauri/src/models.rs"
+    },
+    {
+      "command": "reset_remote_access_code",
+      "arguments": [],
+      "result": "Result<(), String>",
+      "source": "src-tauri/src/channels/remote.rs"
     },
     {
       "command": "resolve_project_sync",
@@ -1667,6 +1995,28 @@
       "source": "src-tauri/src/project_commands.rs"
     },
     {
+      "command": "set_remote_access",
+      "arguments": [
+        {
+          "name": "enabled",
+          "rust_type": "bool",
+          "optional": false
+        },
+        {
+          "name": "relayUrl",
+          "rust_type": "String",
+          "optional": false
+        },
+        {
+          "name": "relayToken",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<(), String>",
+      "source": "src-tauri/src/channels/remote.rs"
+    },
+    {
       "command": "set_settings",
       "arguments": [
         {
@@ -1725,6 +2075,23 @@
       "source": "src-tauri/src/models.rs"
     },
     {
+      "command": "set_subscription_proxy",
+      "arguments": [
+        {
+          "name": "provider",
+          "rust_type": "String",
+          "optional": false
+        },
+        {
+          "name": "proxyUrl",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<BTreeMap<String, String>, String>",
+      "source": "src-tauri/src/network.rs"
+    },
+    {
       "command": "set_tool_approval",
       "arguments": [
         {
@@ -1771,6 +2138,12 @@
       "source": "src-tauri/src/channels/mod.rs"
     },
     {
+      "command": "skill_install_locations",
+      "arguments": [],
+      "result": "Result<wisp_dto::SkillInstallLocations, String>",
+      "source": "src-tauri/src/skill_commands.rs"
+    },
+    {
       "command": "start_codex_login",
       "arguments": [
         {
@@ -1803,6 +2176,18 @@
       ],
       "result": "Result<CodexLoginSnapshot, String>",
       "source": "src-tauri/src/codex_login.rs"
+    },
+    {
+      "command": "switch_codex_account",
+      "arguments": [
+        {
+          "name": "accountId",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<Vec<CodexAccount>, String>",
+      "source": "src-tauri/src/codex_accounts.rs"
     },
     {
       "command": "sync_project",
@@ -1868,6 +2253,23 @@
       ],
       "result": "Result<Vec<wisp_mcp::RemoteTool>, String>",
       "source": "src-tauri/src/connector_commands.rs"
+    },
+    {
+      "command": "test_reviewer_backend",
+      "arguments": [
+        {
+          "name": "reviewer",
+          "rust_type": "specialists::Specialist",
+          "optional": false
+        },
+        {
+          "name": "sessionId",
+          "rust_type": "Option<String>",
+          "optional": true
+        }
+      ],
+      "result": "Result<wisp_dto::ReviewerBackendTestResult, String>",
+      "source": "src-tauri/src/lib.rs"
     },
     {
       "command": "test_ssh_connection",

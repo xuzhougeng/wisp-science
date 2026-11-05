@@ -978,17 +978,34 @@ pub(crate) async fn start_exploration(
     turn_index: Option<i64>,
     name: String,
 ) -> Result<Exploration, String> {
+    let active = state.require_active(window.label())?;
+    let exploration = start_from_source(&state, &terminals, &active.id, &source_frame_id, turn_index, &name).await?;
+    let (project, _) = working_project_for_frame(&state, &exploration.frame_id).await?;
+    state.set_active(window.label(), project);
+    state.set_active_frame(window.label(), Some(exploration.frame_id.clone()));
+    Ok(exploration)
+}
+
+/// Shared creation path; native navigation must not activate the hidden host's
+/// project context in the new private workspace.
+pub(crate) async fn start_from_source(
+    state: &AppState,
+    terminals: &crate::terminal_sessions::TerminalManager,
+    project_id: &str,
+    source_frame_id: &str,
+    turn_index: Option<i64>,
+    name: &str,
+) -> Result<Exploration, String> {
     let owner = state
         .store
         .frame_state_scope(&source_frame_id)
         .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| coded_error(ERR_HISTORY_UNAVAILABLE, "source conversation not found"))?;
-    let active = state.require_active(window.label())?;
-    if owner.project_id() != active.id || !matches!(owner, StateScope::Mainline { .. }) {
+    if owner.project_id() != project_id || !matches!(owner, StateScope::Mainline { .. }) {
         return Err("Source conversation does not belong to the active mainline".into());
     }
-    if wisp_store::is_assistant_project_id(&active.id) {
+    if wisp_store::is_assistant_project_id(project_id) {
         return Err("The research assistant keeps a single conversation.".into());
     }
     if state
@@ -1003,23 +1020,23 @@ pub(crate) async fn start_exploration(
             "Conversation branches cannot start an exploration.",
         ));
     }
-    let _creation = state.begin_exploration_creation(&active.id).await;
+    let _creation = state.begin_exploration_creation(project_id).await;
     let round_already_active = state
         .store
         .mainline_frame_is_frozen(&source_frame_id)
         .await
         .map_err(|error| error.to_string())?;
     let (_shared_activity, _exclusive_activity) = if round_already_active {
-        (Some(state.begin_project_activity(&active.id)?), None)
+        (Some(state.begin_project_activity(project_id)?), None)
     } else {
         (
             None,
-            Some(state.begin_project_exclusive_activity(&active.id)?),
+            Some(state.begin_project_exclusive_activity(project_id)?),
         )
     };
     if state
         .store
-        .project_has_current_exploration_for_other_source(&active.id, &source_frame_id)
+        .project_has_current_exploration_for_other_source(project_id, source_frame_id)
         .await
         .map_err(|error| error.to_string())?
     {
@@ -1028,34 +1045,32 @@ pub(crate) async fn start_exploration(
             "finish the current exploration round before starting from another conversation",
         ));
     }
-    if state.running_turns.lock().await.contains(&source_frame_id) {
+    if state.running_turns.lock().await.contains(source_frame_id) {
         return Err(coded_error(
             ERR_SOURCE_BUSY,
             "wait for the source turn to finish",
         ));
     }
-    if terminals.has_running(&active.id, MAINLINE_SCOPE_KEY) {
+    if terminals.has_running(project_id, MAINLINE_SCOPE_KEY) {
         return Err(coded_error(
             ERR_SOURCE_BUSY,
             "close the mainline terminal before starting an exploration",
         ));
     }
-    crate::exploration_promotion::ensure_no_queued_turns(&state, std::iter::once(&source_frame_id))
+    let source_id = source_frame_id.to_owned();
+    crate::exploration_promotion::ensure_no_queued_turns(state, std::iter::once(&source_id))
         .await?;
     let service = ExplorationService::new(state.store.clone(), state.app_data.clone());
     let checkpoint = service
-        .create_checkpoint_at(&active.id, &source_frame_id, turn_index)
+        .create_checkpoint_at(project_id, source_frame_id, turn_index)
         .await?;
     let exploration = service.create_exploration(&checkpoint.id, &name).await?;
-    let (project, _) = working_project_for_frame(&state, &exploration.frame_id).await?;
     crate::approval_commands::copy_session_permissions(
         &state.approval_grants,
         &state.full_permission_sessions,
         &source_frame_id,
         &exploration.frame_id,
     )?;
-    state.set_active(window.label(), project);
-    state.set_active_frame(window.label(), Some(exploration.frame_id.clone()));
     Ok(exploration)
 }
 

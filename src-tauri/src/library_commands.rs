@@ -132,6 +132,18 @@ pub(super) async fn star_library_figure(
         .map_err(|e| format!("{e}"))?
         .ok_or_else(|| "Source project no longer exists".to_string())?;
     let root = PathBuf::from(project_root);
+    star_figure_at(&state, &session_id, &root, &path, &name).await
+}
+
+/// The caller supplies the resolved workspace root, including exploration frames.
+pub(crate) async fn star_figure_at(
+    state: &AppState,
+    session_id: &str,
+    root: &Path,
+    path: &str,
+    name: &str,
+) -> Result<LibraryItem, String> {
+    let source = source_session(state, session_id).await?;
     let real = wisp_tools::safety::validate_file_path(&root, &path)?;
     let content_type = image_content_type(&real)
         .ok_or_else(|| "Only image artifacts can be added to the library".to_string())?;
@@ -184,9 +196,15 @@ pub(super) async fn get_library_item(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<LibraryItemDetail, String> {
-    let detail = state
-        .library
-        .get(&id)
+    read_detail(&state.library, &id).await
+}
+
+pub(super) async fn read_detail(
+    library: &wisp_store::LibraryStore,
+    id: &str,
+) -> Result<LibraryItemDetail, String> {
+    let detail = library
+        .get(id)
         .await
         .map_err(|e| format!("{e}"))?
         .ok_or_else(|| "Library item not found".to_string())?;
@@ -207,15 +225,23 @@ pub(super) async fn update_library_code(
     language: Option<String>,
     code: String,
 ) -> Result<LibraryItemVersion, String> {
+    append_code_version(&state.library, &id, language, code).await
+}
+
+pub(super) async fn append_code_version(
+    library: &wisp_store::LibraryStore,
+    id: &str,
+    language: Option<String>,
+    code: String,
+) -> Result<LibraryItemVersion, String> {
     if code.trim().is_empty() {
         return Err("Code is empty".into());
     }
     if code.len() > MAX_CODE_BYTES {
         return Err("Code is too large to add to the library".into());
     }
-    let detail = state
-        .library
-        .get(&id)
+    let detail = library
+        .get(id)
         .await
         .map_err(|e| format!("{e}"))?
         .ok_or_else(|| "Library item not found".to_string())?;
@@ -228,9 +254,8 @@ pub(super) async fn update_library_code(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .or(detail.item.language);
-    state
-        .library
-        .insert_version(&id, language, code)
+    library
+        .insert_version(id, language, code)
         .await
         .map_err(|e| format!("{e}"))
 }
@@ -290,7 +315,7 @@ fn code_title(code: &str) -> String {
     title
 }
 
-fn normalize_source_path(path: &str) -> String {
+pub(crate) fn normalize_source_path(path: &str) -> String {
     path.strip_prefix("./")
         .or_else(|| path.strip_prefix(".\\"))
         .unwrap_or(path)

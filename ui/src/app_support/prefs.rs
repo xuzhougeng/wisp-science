@@ -28,16 +28,7 @@ pub(crate) fn privacy_host_args(active: bool, projects: &HashSet<String>) -> ser
     })
 }
 
-pub(crate) fn mirror_privacy_mode(active: bool, projects: &HashSet<String>) {
-    let args = privacy_host_args(active, projects);
-    leptos::spawn_local(async move {
-        if let Ok(args) = serde_wasm_bindgen::to_value(&args) {
-            let _ = crate::bindings::invoke("set_privacy_mode", args).await;
-        }
-    });
-}
-
-pub(crate) fn save_privacy_mode(active: bool, projects: &HashSet<String>) {
+pub(crate) fn cache_privacy_mode(active: bool, projects: &HashSet<String>) {
     if let Some(storage) =
         web_sys::window().and_then(|window| window.local_storage().ok().flatten())
     {
@@ -50,7 +41,17 @@ pub(crate) fn save_privacy_mode(active: bool, projects: &HashSet<String>) {
             storage.remove_item(PRIVACY_MODE_ACTIVE_KEY)
         };
     }
-    mirror_privacy_mode(active, projects);
+}
+
+/// Read the host before displaying project identities. Only the first read
+/// offers the old window cache as a migration seed; it is not a preference write.
+pub(crate) async fn read_shared_privacy(seed: bool) -> Option<project_browser::PrivacyMode> {
+    let legacy = seed.then(load_privacy_mode).filter(|(_, ids)| !ids.is_empty());
+    let args = if let Some((active, ids)) = legacy {
+        let legacy = project_browser::PrivacyMode { active, project_ids: ids.into_iter().collect() };
+        to_value(&serde_json::json!({ "legacy": legacy })).ok()?
+    } else { JsValue::UNDEFINED };
+    serde_wasm_bindgen::from_value(invoke_checked("get_privacy_mode", args).await.ok()?).ok()
 }
 
 pub(crate) fn model_switch_warning_disabled() -> bool {

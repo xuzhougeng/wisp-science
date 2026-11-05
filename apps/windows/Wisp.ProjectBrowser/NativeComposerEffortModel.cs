@@ -11,6 +11,8 @@ public sealed class NativeComposerEffortModel(INativeSettingsClient? client)
     public string[] Options { get; private set; } = [];
     public string Value { get; private set; } = "";
     public bool Busy { get; private set; }
+    public bool Available => client != null && !string.IsNullOrEmpty(profileId);
+    public bool Unverified => Value.Length > 0 && !Options.Contains(Value);
     public string? Error { get; private set; }
     private string? binding, project, session, profileId, catalogKey;
     private int generation;
@@ -21,9 +23,12 @@ public sealed class NativeComposerEffortModel(INativeSettingsClient? client)
     }
     private static string S(JsonObject row, string key) => row[key]?.GetValue<string>() ?? "";
     private static string Key(JsonObject row) => string.Join("\n", S(row, "provider"), S(row, "api_url"), S(row, "model"));
-    public async Task BindAsync(string projectId, string sessionId, JsonObject? profile, CancellationToken token = default)
+    public static string DisplayLabel(string value, NativeLocalization locale) => value.Length == 0
+        ? locale.Text("composer.effort.default") : value.Trim() is "none" or "minimal" or "low" or "medium" or "high" or "xhigh" or "max" or "ultra"
+            ? locale.Text("composer.effort." + value.Trim()) : value;
+    public async Task BindAsync(string projectId, string? sessionId, JsonObject? profile, CancellationToken token = default)
     {
-        if (client == null || profile == null) { if (binding != null || profileId != null) Reset(); return; }
+        if (client == null || profile == null || string.IsNullOrEmpty(S(profile, "id"))) { if (binding != null || profileId != null) Reset(); return; }
         var key = projectId + "/" + sessionId + "/" + S(profile, "id") + "/" + Key(profile);
         if (binding == key) return;
         Reset(); var current = generation;
@@ -43,7 +48,7 @@ public sealed class NativeComposerEffortModel(INativeSettingsClient? client)
 
     public async Task<bool> SaveAsync(string effort, CancellationToken token = default)
     {
-        if (client == null || Busy || project == null || profileId == null || Options.Length == 0 || effort.Length > 0 && !Options.Contains(effort)) return false;
+        if (!Available || client == null || Busy || project == null || profileId == null || effort.Length > 0 && !Options.Contains(effort)) return false;
         var current = generation; var target = profileId; var scope = project; var expectedCatalog = catalogKey;
         Busy = true; Error = null; Changed?.Invoke();
         try
@@ -68,7 +73,7 @@ public sealed class NativeComposerEffortModel(INativeSettingsClient? client)
 
     public async Task ReloadAsync(CancellationToken token = default)
     {
-        if (client == null || Busy || project == null || session == null) return;
+        if (client == null || Busy || project == null) return;
         var current = generation; var p = project; var s = session; var id = profileId;
         try
         {

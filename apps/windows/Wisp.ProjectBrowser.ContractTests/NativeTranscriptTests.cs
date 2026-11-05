@@ -21,6 +21,15 @@ static class NativeTranscriptTests
             """{"input":950,"output":30,"reasoning":120,"cached":0,"ctx_tokens":100,"max_context":1000}""");
         Expect(reasoning == "输入 950 · 输出 30 tokens · 思考 120", reasoning ?? "null");
 
+        var locale = new NativeLocalization(new Dictionary<string, Dictionary<string, string>> {
+            ["en"] = new() { ["msg.usage"] = "{in} in · {out} out tokens", ["msg.usage.cached"] = " · {c} cached", ["msg.usage.reasoning"] = " · {r} reasoning" },
+            ["zh"] = new() { ["msg.usage"] = "输入 {in} · 输出 {out} tokens", ["msg.usage.cached"] = " · 缓存 {c}", ["msg.usage.reasoning"] = " · 思考 {r}" }
+        }, "en");
+        const string usage = """{"input":950,"output":30,"reasoning":120,"cached":2000}""";
+        Expect(TranscriptPresentation.UsageSummary("usage", usage, locale) == "950 in · 30 out tokens · 2.0k cached · 120 reasoning", "English usage follows shared WebView strings");
+        locale.Preview("zh");
+        Expect(TranscriptPresentation.UsageSummary("usage", usage, locale) == "输入 950 · 输出 30 tokens · 缓存 2.0k · 思考 120", "usage follows locale changes without changing counts");
+
         Expect(TranscriptPresentation.UsageSummary("assistant", "hello") == null, "non-usage role must stay null");
         Expect(TranscriptPresentation.UsageSummary("usage", "not json") == null, "malformed usage must stay null");
         Expect(TranscriptPresentation.FmtTokens(999) == "999", "fmt below 1k");

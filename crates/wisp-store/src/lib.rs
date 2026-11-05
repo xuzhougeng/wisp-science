@@ -50,6 +50,7 @@ mod session_artifacts;
 mod session_imports;
 mod session_timers;
 mod sessions;
+mod project_privacy;
 mod storage_prefs;
 mod turn_undo;
 mod upgrade_backup;

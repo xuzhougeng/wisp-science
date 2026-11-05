@@ -48,12 +48,27 @@ pub(crate) async fn dispatch(
         .await
         .map_err(|e| e.to_string())?
         .ok_or("Run not found")?;
+    review(&state, project_id, &run, args.operation, writable).await
+}
+
+pub(crate) async fn review(
+    state: &crate::AppState,
+    project_id: &str,
+    run: &wisp_store::RunRecord,
+    operation: Operation,
+    writable: bool,
+) -> Result<Value, String> {
+    operation.validate()?;
+    let mutation = operation.is_mutation();
+    if mutation && !writable {
+        return Err("Run results are read-only".into());
+    }
     if run.kind != "ssh_direct" || !run.status.is_terminal() {
         return Err("Results review requires a finished SSH-direct Run".into());
     }
     let mut reply = RunReviewReply {
         should_prompt: None,
-        run_id: args.run_id.clone(),
+        run_id: run.id.clone(),
         read_only: !writable,
         cleaned: run.cleaned_at.is_some(),
         listing: None,
@@ -65,19 +80,19 @@ pub(crate) async fn dispatch(
     } else {
         None
     };
-    match args.operation {
+    match operation {
         Operation::CheckPrompt => {
             reply.should_prompt = Some(
                 state
                     .run_manager
-                    .should_prompt_run_review(&state.store, &args.run_id)
+                    .should_prompt_run_review(&state.store, &run.id)
                     .await?,
             );
         }
         Operation::Dismiss => {
             if !state
                 .store
-                .mark_run_review_dismissed(&args.run_id)
+                .mark_run_review_dismissed(&run.id)
                 .await
                 .map_err(|e| e.to_string())?
             {
@@ -99,7 +114,7 @@ pub(crate) async fn dispatch(
                     .run_manager
                     .list_run_workspace_files(
                         &state.store,
-                        &args.run_id,
+                        &run.id,
                         &path,
                         &name_filter,
                         offset,
@@ -114,7 +129,7 @@ pub(crate) async fn dispatch(
             reply.downloaded = Some(
                 state
                     .run_manager
-                    .download_run_files(&state.store, &args.run_id, &files, &dirs)
+                    .download_run_files(&state.store, &run.id, &files, &dirs)
                     .await?
                     .len(),
             );
@@ -122,13 +137,13 @@ pub(crate) async fn dispatch(
         Operation::Delete { paths, .. } => {
             state
                 .run_manager
-                .delete_run_files(&state.store, &args.run_id, &paths)
+                .delete_run_files(&state.store, &run.id, &paths)
                 .await?;
         }
         Operation::Cleanup { .. } => {
             let updated = state
                 .run_manager
-                .cleanup_run_workspace(&state.store, &args.run_id, true)
+                .cleanup_run_workspace(&state.store, &run.id, true)
                 .await?;
             reply.cleaned = updated.cleaned_at.is_some();
             if !reply.cleaned {

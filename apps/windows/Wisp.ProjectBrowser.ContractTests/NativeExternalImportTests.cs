@@ -79,6 +79,17 @@ internal static class NativeExternalImportTests
         Check(closeFake.Writes.Count == 1 && closing.Results.Count == 0, "closed batch ignores its write reply and cannot continue or navigate");
         var outcomes = new Fake { Count = 3, OutcomeByIndex = true }; using var done = new WorkspaceExternalImportModel(outcomes, "research-1"); await done.LoadAsync(false); await done.ImportFilteredAsync();
         Check(done.Imported == 1 && done.Updated == 1 && done.Skipped == 1 && done.Done == 3 && !done.CanImportFiltered, "mixed confirmed outcomes update rows without rescanning or replay");
+        Check(WorkspaceExternalImportModel.ShortPath(@"C:\Users\a\work\dir\") == "work/dir"
+            && WorkspaceExternalImportModel.ShortPath("/home/user/project") == "user/project", "import rows show the last two directory components on each platform");
+        var oneFake = new Fake { Count = 26 }; using var singleRowModel = new WorkspaceExternalImportModel(oneFake, "project");
+        singleRowModel.Select("project", "claude", "local"); await singleRowModel.InitializeAsync();
+        var firstRow = singleRowModel.Items[0]; var lastRow = singleRowModel.Items[25]; await singleRowModel.ImportItemAsync(lastRow);
+        singleRowModel.SetPage(1); await singleRowModel.ImportItemAsync(firstRow);
+        await singleRowModel.LoadAsync(false); singleRowModel.SetPage(1); await singleRowModel.ImportItemAsync(lastRow);
+        Check(oneFake.Writes.Count == 0, "an off-page row or stale callback after refresh cannot start an import");
+        await singleRowModel.ImportItemAsync(singleRowModel.PageItems.Single()); await singleRowModel.ImportItemAsync(singleRowModel.PageItems.Single());
+        Check(oneFake.Writes.Single() is { Provider: "claude", ProjectId: "project", SourceSessionId: "session-25" } && singleRowModel.Total == 1,
+            "single-row import validates only the chosen conversation and cannot reimport its acknowledged row");
     }
     private sealed class Fake : INativeExternalImportClient
     {

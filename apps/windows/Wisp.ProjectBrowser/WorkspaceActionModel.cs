@@ -14,7 +14,9 @@ public class WorkspaceActionModel : IDisposable
     private int generation;
     public void Notify() => Changed?.Invoke();
     public void Fail(string message) { Error = message; Notify(); }
-    public async Task<bool> RunAsync<T>(Func<Task<T>> request, Action<T> apply)
+    protected void ClearFailure() => Error = null;
+    protected virtual string UnconfirmedFailure(Exception exception) => "操作结果未能确认；不会自动重试。\n" + exception.Message;
+    public async Task<bool> RunAsync<T>(Func<Task<T>> request, Action<T> apply, Func<Exception, string>? describeFailure = null)
     {
         if (Busy || Closed) return false;
         var current = ++generation;
@@ -28,7 +30,7 @@ public class WorkspaceActionModel : IDisposable
         }
         catch (Exception ex)
         {
-            if (!Closed && generation == current) Error = "操作结果未能确认；不会自动重试。\n" + ex.Message;
+            if (!Closed && generation == current) Error = (describeFailure ?? UnconfirmedFailure)(ex);
             return false;
         }
         finally { if (generation == current) { Busy = false; Notify(); } }
@@ -37,17 +39,95 @@ public class WorkspaceActionModel : IDisposable
 }
 
 public sealed record ProjectFolder(string Id, string Name);
-public sealed record SessionSection(string Title, string? FolderId, BrowserSession[] Sessions);
+public sealed record SessionSection(string Title, string? FolderId, BrowserSession[] Sessions, string? LabelKey = null)
+{
+    public string DisplayTitle(NativeLocalization locale) => LabelKey != null ? locale.Text(LabelKey)
+        : string.IsNullOrWhiteSpace(Title) ? locale.Text("folder.untitled") : Title;
+}
 
 public sealed class WorkspaceSessionGroups(INativeSettingsClient client, string projectId) : WorkspaceActionModel
 {
+    public NativeExplorationSummary[] Explorations { get; private set; } = [];
+    public string? ExplorationError { get; private set; }
+    private int explorationGeneration;
+    public async Task<bool> LoadExplorationsAsync()
+    {
+        if (Closed) return false;
+        var ticket = ++explorationGeneration;
+        try
+        {
+            var reply = NativeExplorations.Decode(await client.InvokeAsync("native_conversation_explorations", new(), projectId), projectId);
+            if (Closed || ticket != explorationGeneration) return false;
+            Explorations = reply.Explorations; ExplorationError = null; return true;
+        }
+        catch (Exception error)
+        {
+            if (!Closed && ticket == explorationGeneration) ExplorationError = error.Message;
+            return false;
+        }
+    }
     public ProjectFolder[] Folders { get; private set; } = [];
     public string Sort { get; set; } = "newest";
-    public string Group { get; set; } = "none";
+    public string Group { get; set; } = "folder";
     public bool Selecting { get; set; }
     public HashSet<string> Selected { get; } = [];
+    public bool MoveUnconfirmed { get; private set; }
+    public bool FolderSaveUnconfirmed { get; private set; }
+    public bool FolderOrderUnconfirmed { get; private set; }
+    // Folder dialogs provide their own localized uncertainty explanation.
+    public string? FolderFailureDetail
+    {
+        get
+        {
+            const string prefix = "操作结果未能确认；不会自动重试。\n";
+            return Error?.StartsWith(prefix, StringComparison.Ordinal) == true ? Error[prefix.Length..] : Error;
+        }
+    }
+    private readonly HashSet<string> unconfirmedFolderDeletes = [];
+    public bool CanDeleteFolder(string id) => !Closed && !Busy && Folders.Any(f => f.Id == id) && !unconfirmedFolderDeletes.Contains(id);
+    public bool FolderDeleteUnconfirmed(string id) => unconfirmedFolderDeletes.Contains(id);
+    private readonly HashSet<string> unconfirmedShelves = [];
+    public bool CanShelve(string id) => !Closed && !Busy && !unconfirmedShelves.Contains(id);
+    public Task<bool> ShelveAsync(string id)
+    {
+        if (!CanShelve(id)) return Task.FromResult(false);
+        return RunAsync(async () =>
+        {
+            try
+            {
+                var data = await client.InvokeAsync("native_project_session_shelve", new() { ["session_id"] = id, ["shelved"] = true }, projectId);
+                var result = data?.Deserialize<SessionShelveResult>();
+                if (result == null || result.ProjectId != projectId || result.SessionId != id || !result.Shelved)
+                    throw new InvalidDataException("Shelve acknowledgement did not match the conversation");
+                return true;
+            }
+            catch { unconfirmedShelves.Add(id); throw; }
+        }, _ => { });
+    }
+    public Task<bool> MoveSessionAsync(string id, string? folderId) => MoveUnconfirmed ? Task.FromResult(false) : RunAsync(async () =>
+    {
+        try
+        {
+            var result = await client.InvokeAsync("native_project_session_move", new() { ["session_id"] = id, ["folder_id"] = folderId }, projectId);
+            if (result is not JsonValue ack || !ack.TryGetValue<bool>(out var moved) || !moved) throw new InvalidDataException("Missing move acknowledgement");
+            return true;
+        }
+        catch { MoveUnconfirmed = true; throw; }
+    }, _ => { });
+    public void ToggleSelection(IEnumerable<string> ids)
+    {
+        if (Busy || Closed) return;
+        var members = ids.Distinct().ToArray();
+        if (members.All(Selected.Contains)) Selected.ExceptWith(members); else Selected.UnionWith(members);
+    }
     public string Draft { get; set; } = "";
     public string? RenamingId { get; set; }
+    public bool CanSave => !Closed && !Busy && !FolderSaveUnconfirmed && !string.IsNullOrWhiteSpace(Draft);
+    public void BeginFolderEdit(string? id)
+    {
+        RenamingId = id; Draft = id == null ? "" : Folders.FirstOrDefault(f => f.Id == id)?.Name ?? "";
+        FolderSaveUnconfirmed = false; ClearFailure();
+    }
     public Task<bool> LoadAsync() => RunAsync(
         async () => (await client.InvokeAsync("native_project_folders", new(), projectId))?.Deserialize<ProjectFolder[]>(ConversationSnapshot.JsonOptions)
             ?? throw new InvalidDataException("Missing project folders"), value => Folders = value);
@@ -55,23 +135,74 @@ public sealed class WorkspaceSessionGroups(INativeSettingsClient client, string 
     public async Task<bool> SaveAsync()
     {
         if (string.IsNullOrWhiteSpace(Draft)) { Fail("请填写分组名称。"); return false; }
+        if (!CanSave) return false;
         var args = new JsonObject { ["name"] = Draft.Trim() };
         var rename = RenamingId;
         if (rename != null) args["folder_id"] = rename;
-        var saved = await RunAsync(() => client.InvokeAsync(rename == null ? "native_project_folder_create" : "native_project_folder_rename", args, projectId), _ => { Draft = ""; RenamingId = null; });
+        var saved = await RunAsync(async () =>
+        {
+            try
+            {
+                var result = await client.InvokeAsync(rename == null ? "native_project_folder_create" : "native_project_folder_rename", args, projectId);
+                if (rename == null)
+                {
+                    var created = result?.Deserialize<ProjectFolder>(ConversationSnapshot.JsonOptions);
+                    if (created == null || string.IsNullOrEmpty(created.Id) || created.Name != args["name"]!.GetValue<string>()) throw new InvalidDataException("Missing created folder acknowledgement");
+                    return created;
+                }
+                else if (result is not JsonValue ack || !ack.TryGetValue<bool>(out var renamed) || !renamed) throw new InvalidDataException("Missing folder rename acknowledgement");
+                return new ProjectFolder(rename, args["name"]!.GetValue<string>());
+            }
+            catch { FolderSaveUnconfirmed = true; throw; }
+        }, saved => { Folders = Folders.Where(f => f.Id != saved.Id).Append(saved).ToArray(); Draft = ""; RenamingId = null; });
         if (saved) await LoadAsync();
         return saved;
     }
-    public Task<bool> MoveAsync(string? folderId) => RunAsync(async () =>
+    public void BeginFolderDelete() { if (!Busy) ClearFailure(); }
+    public Task<bool> DeleteFolderAsync(string id) => !CanDeleteFolder(id) ? Task.FromResult(false) : RunAsync(async () =>
+    {
+        try
+        {
+            var result = (await client.InvokeAsync("native_project_folder_delete", new() { ["folder_id"] = id }, projectId))?.Deserialize<NativeFolderDeleteResult>();
+            if (result == null || result.ProjectId != projectId || result.FolderId != id || !result.Deleted) throw new InvalidDataException("Folder deletion acknowledgement did not match");
+            return true;
+        }
+        catch { unconfirmedFolderDeletes.Add(id); throw; }
+    }, _ => { Folders = Folders.Where(f => f.Id != id).ToArray(); collapsedFolders.Remove(id); });
+    public bool CanReorderFolders => !Closed && !Busy && !FolderOrderUnconfirmed;
+    public Task<bool> ReorderFoldersAsync(string[] ids)
+    {
+        if (!CanReorderFolders || ids.Length != Folders.Length || ids.Distinct().Count() != ids.Length
+            || !ids.ToHashSet().SetEquals(Folders.Select(f => f.Id)) || ids.SequenceEqual(Folders.Select(f => f.Id))) return Task.FromResult(false);
+        var order = ids.ToArray();
+        return RunAsync(async () =>
+        {
+            try
+            {
+                var result = (await client.InvokeAsync("native_project_folders_reorder", new() { ["ids"] = JsonSerializer.SerializeToNode(order) }, projectId))?.Deserialize<NativeFolderOrderResult>();
+                if (result == null || result.ProjectId != projectId || result.Ids == null || !result.Ids.SequenceEqual(order)) throw new InvalidDataException("Folder order acknowledgement did not match");
+                return true;
+            }
+            catch { FolderOrderUnconfirmed = true; throw; }
+        }, _ => { var folders = Folders.ToDictionary(f => f.Id); Folders = order.Select(id => folders[id]).ToArray(); });
+    }
+    public Task<bool> MoveAsync(string? folderId) => MoveUnconfirmed ? Task.FromResult(false) : RunAsync(async () =>
     {
         foreach (var id in Selected.ToArray())
         {
-            await client.InvokeAsync("native_project_session_move", new() { ["session_id"] = id, ["folder_id"] = folderId }, projectId);
+            if (Closed) return false;
+            try
+            {
+                var result = await client.InvokeAsync("native_project_session_move", new() { ["session_id"] = id, ["folder_id"] = folderId }, projectId);
+                if (result is not JsonValue ack || !ack.TryGetValue<bool>(out var moved) || !moved) throw new InvalidDataException("Missing move acknowledgement");
+            }
+            catch { MoveUnconfirmed = true; throw; }
+            if (Closed) return false;
             // Do not replay earlier successes if a later move fails.
             Selected.Remove(id);
         }
         return true;
-    }, _ => Selecting = false);
+    }, moved => { if (moved) Selecting = false; });
 
     /// <summary>Rename the owned, unarchived conversation. The caller refreshes the session list;
     /// an ambiguous response is never retried automatically.</summary>
@@ -95,49 +226,49 @@ public sealed class WorkspaceSessionGroups(INativeSettingsClient client, string 
         return true;
     }, _ => { });
 
-    public SessionSection[] Sections(IEnumerable<BrowserSession> sessions)
+    public NativeSessionNesting Nesting { get; } = new();
+    private readonly HashSet<string> collapsedFolders = [];
+    public bool FolderExpanded(string id) => !collapsedFolders.Contains(id);
+    public void ToggleFolder(string id) { if (!collapsedFolders.Remove(id)) collapsedFolders.Add(id); }
+    public NativeSessionTree Tree(IEnumerable<BrowserSession> sessions) => NativeSessionTree.Build(Order(sessions));
+    private BrowserSession[] Order(IEnumerable<BrowserSession> sessions) => Sort == "name"
+        ? sessions.OrderBy(s => s.Title.Trim().ToLowerInvariant(), StringComparer.Ordinal).ToArray()
+        : sessions.ToArray(); // The host already orders by latest activity, not creation time.
+    public SessionSection[] Sections(IEnumerable<BrowserSession> sessions, DateTimeOffset? now = null)
     {
-        var ordered = Sort == "name" ? sessions.OrderBy(s => s.Title, StringComparer.CurrentCultureIgnoreCase).ThenBy(s => s.Id).ToArray()
-            : sessions.OrderByDescending(s => s.Timestamp).ThenBy(s => s.Id).ToArray();
-        SessionSection[] result;
-        if (Group == "date") result = ordered.GroupBy(s => DateTimeOffset.FromUnixTimeSeconds(s.Timestamp).LocalDateTime.ToString("yyyy-MM-dd"))
-            .Select(g => new SessionSection(g.Key, null, g.ToArray())).ToArray();
-        else if (Group != "folder") result = [new("会话", null, ordered)];
-        else result = Folders.Select(f => new SessionSection(f.Name, f.Id, ordered.Where(s => s.FolderId == f.Id).ToArray()))
-            .Append(new("未分组", null, ordered.Where(s => !Folders.Any(f => f.Id == s.FolderId)).ToArray())).ToArray();
-        // Pinned conversations float in a leading section inside every grouping mode,
-        // like the macOS sidebar; unknown pin state keeps the row in place.
+        var ordered = Order(sessions);
+        var result = new List<SessionSection>();
         var pinned = ordered.Where(s => s.Pinned == true).ToArray();
-        if (pinned.Length > 0)
+        if (pinned.Length > 0) result.Add(new("已置顶", null, pinned, "sidebar.pinned"));
+        var unpinned = ordered.Where(s => s.Pinned != true).ToArray();
+        void Dates(IEnumerable<BrowserSession> rows)
         {
-            var pinnedIds = pinned.Select(s => s.Id).ToHashSet();
-            var sections = result.Select(section => new SessionSection(section.Title, section.FolderId,
-                    section.Sessions.Where(s => !pinnedIds.Contains(s.Id)).ToArray()))
-                .Where(section => section.FolderId != null || section.Sessions.Length > 0)
-                .ToList();
-            sections.Insert(0, new SessionSection("已置顶", null, pinned));
-            result = sections.ToArray();
+            // Match bucket_sessions_by_date: a rolling 24 hours, with seconds and
+            // legacy millisecond timestamps, rather than calendar-midnight buckets.
+            var cutoff = (now ?? DateTimeOffset.UtcNow).ToUnixTimeMilliseconds() - 86_400_000m;
+            bool Today(BrowserSession s) => s.Timestamp > 0
+                && (s.Timestamp > 1_000_000_000_000 ? s.Timestamp : s.Timestamp * 1000m) >= cutoff;
+            var list = rows.ToArray();
+            var today = list.Where(Today).ToArray(); var earlier = list.Where(s => !Today(s)).ToArray();
+            if (today.Length > 0) result.Add(new("今天", null, today, "sidebar.today"));
+            if (earlier.Length > 0) result.Add(new("更早", null, earlier, "sidebar.earlier"));
         }
-        return result;
+        if (Group == "date") Dates(unpinned);
+        else if (Group == "folder")
+        {
+            foreach (var folder in Folders)
+                result.Add(new(folder.Name, folder.Id, unpinned.Where(s => s.FolderId == folder.Id).ToArray()));
+            // Keep an orphaned folder reference readable until the next folder refresh.
+            Dates(unpinned.Where(s => !Folders.Any(f => f.Id == s.FolderId)));
+        }
+        else if (unpinned.Length > 0) result.Add(new("会话", null, unpinned));
+        return result.ToArray();
     }
 }
 
-public sealed class WorkspaceLibraryModel(INativeLibraryClient client) : WorkspaceActionModel
-{
-    public string Query { get; set; } = "";
-    public string? Kind { get; set; }
-    public IReadOnlyList<LibraryItemSummary> Items { get; private set; } = [];
-    public Task<bool> SearchAsync() => RunAsync(() => client.SearchAsync(Query, Kind), rows => Items = rows);
-    public Task<bool> DeleteAsync(string id) => RunAsync(async () =>
-    {
-        if (!await client.DeleteAsync(id)) throw new InvalidOperationException("这条收藏已不存在，请刷新。");
-        return id;
-    }, removed => Items = Items.Where(i => i.Id != removed).ToArray());
-    public static string ComposerText(LibraryItemSummary item) => string.IsNullOrWhiteSpace(item.CodePreview)
-        ? $"请看收藏「{item.Title}」。" : $"请用收藏「{item.Title}」重新运行：\n```{item.Language}\n{item.CodePreview.Trim()}\n```";
-}
+public sealed record ProjectCreationDraft(string Name, string Directory, string Description, string AgentContext, bool StandardLayout);
 
-public sealed class WorkspaceProjectCreation(INativeProjectClient client) : WorkspaceActionModel
+public sealed class WorkspaceProjectCreation(INativeProjectClient client, string? layoutContext = null, ProjectCreationDraft? draft = null) : WorkspaceActionModel
 {
     public const string StandardContext = """
         本项目采用标准科研目录结构。产物请写入以下路径（相对项目根目录）：
@@ -151,16 +282,22 @@ public sealed class WorkspaceProjectCreation(INativeProjectClient client) : Work
         - 文献与 PDF -> literature/
         不要把生成的文件留在项目根目录。
         """;
-    public string Name { get; set; } = "";
-    public string Directory { get; set; } = "";
-    public string Description { get; set; } = "";
-    public string AgentContext { get; set; } = "";
-    public bool StandardLayout { get; set; }
+    public string Name { get; set; } = draft?.Name ?? "";
+    public string Directory { get; set; } = draft?.Directory ?? "";
+    public string Description { get; set; } = draft?.Description ?? "";
+    public string AgentContext { get; set; } = draft?.AgentContext ?? "";
+    public bool StandardLayout { get; set; } = draft?.StandardLayout ?? false;
+    public ProjectCreationDraft CaptureDraft() => new(Name, Directory, Description, AgentContext, StandardLayout);
+    public bool CanCreate => !Busy && !Closed
+        && !string.IsNullOrWhiteSpace(Name) && !string.IsNullOrWhiteSpace(Directory);
     public void SetStandardLayout(bool enabled)
     {
         StandardLayout = enabled;
-        var rest = AgentContext.Replace(StandardContext, "", StringComparison.Ordinal).Trim();
-        AgentContext = enabled ? (rest.Length == 0 ? StandardContext : rest + "\n\n" + StandardContext) : rest;
+        var block = (string.IsNullOrEmpty(layoutContext) ? StandardContext : layoutContext).ReplaceLineEndings("\n");
+        // WinUI TextBox may return CR/CRLF while the shared WebView catalog uses LF.
+        // Compare canonical text so toggling a rendered block cannot duplicate it.
+        var rest = AgentContext.ReplaceLineEndings("\n").Replace(block, "", StringComparison.Ordinal).Trim();
+        AgentContext = enabled ? (rest.Length == 0 ? block : rest + "\n\n" + block) : rest;
     }
     public ProjectSummary? Created { get; private set; }
     public Task<bool> CreateAsync()

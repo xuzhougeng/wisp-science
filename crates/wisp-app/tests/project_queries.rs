@@ -570,6 +570,31 @@ async fn native_session_navigation_uses_home_limit_project_scope_and_read_only_p
     assert_eq!(earlier[0].text, "Inspect the project");
     assert_eq!(cursor, None);
     assert_eq!(db.store.message_count("s0").await.unwrap(), 25);
+    db.store.set_session_shelved("s0", "p", true).await.unwrap();
+    assert!(!list_browser_sessions(&db.store, Some("p"))
+        .await
+        .unwrap()
+        .iter()
+        .any(|row| row.id == "s0"));
+    assert_eq!(
+        browser_transcript(&db.store, "p", "s0", None)
+            .await
+            .unwrap()
+            .0
+            .len(),
+        20
+    );
+    assert!(browser_transcript(&db.store, "other", "s0", None)
+        .await
+        .is_err());
+    assert!(
+        db.store
+            .get_session_reference("s0")
+            .await
+            .unwrap()
+            .unwrap()
+            .shelved
+    );
 }
 
 #[tokio::test]

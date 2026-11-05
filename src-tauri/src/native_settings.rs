@@ -19,6 +19,7 @@ use wisp_dto::native_settings::{HostDescriptor, Request, Response, COMMANDS, SCH
 pub(crate) struct Broker {
     pub(crate) app: tauri::AppHandle,
     pub(crate) conversations: Arc<crate::native_conversations::Conversations>,
+    pub(crate) workflow_conversions: Arc<crate::native_workflow_conversion::Progress>,
     contexts: Arc<Mutex<HashMap<Option<String>, String>>>,
     /// Stamped by the connection, never read from a request: true for the
     /// remote tunnel, whose turns use the IM approval default.
@@ -34,6 +35,7 @@ pub(crate) fn broker(app: &tauri::AppHandle) -> Broker {
     let broker = Broker {
         app: app.clone(),
         conversations: Arc::new(crate::native_conversations::Conversations::default()),
+        workflow_conversions: Default::default(),
         contexts: Default::default(),
         remote: false,
     };
@@ -123,9 +125,11 @@ pub(crate) fn capabilities() -> Value {
         "commands": COMMANDS,
         "schema": SCHEMA,
         "conversations": wisp_dto::native_conversations::COMMANDS,
+        "runtimes": wisp_dto::native_runtimes::COMMANDS,
         "conversation_schema": wisp_dto::native_conversations::SCHEMA,
         "projects": wisp_dto::native_projects::COMMANDS,
         "project_schema": wisp_dto::native_projects::SCHEMA,
+        "project_files": wisp_dto::native_files::PROJECT_COMMANDS,
         "library": wisp_dto::native_library::COMMANDS,
         "library_schema": wisp_dto::native_library::SCHEMA,
         "assistant": wisp_dto::native_assistant::COMMANDS,
@@ -136,9 +140,12 @@ pub(crate) fn capabilities() -> Value {
         "checklist_schema": wisp_dto::research_checklist::SCHEMA,
         "journey": wisp_dto::native_journey::COMMANDS,
         "journey_schema": wisp_dto::native_journey::SCHEMA,
+        "memos": wisp_dto::native_memos::COMMANDS,
+        "memos_schema": wisp_dto::native_memos::SCHEMA,
         "publication": wisp_dto::native_publication::COMMANDS,
         "publication_schema": wisp_dto::native_publication::SCHEMA,
-        "privacy": ["get_privacy_mode"],
+        "privacy": ["get_privacy_mode", "set_privacy_mode"],
+        "onboarding": ["get_onboarding_state", "dismiss_onboarding"],
         "search": wisp_dto::native_search::COMMANDS,
         "search_schema": wisp_dto::native_search::SCHEMA,
         "session_import": wisp_dto::native_session_import::COMMANDS,
@@ -179,10 +186,63 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
     if request.command == "native_settings_capabilities" {
         return Ok(capabilities());
     }
+    if matches!(request.command.as_str(), "get_onboarding_state" | "dismiss_onboarding") {
+        if broker.remote || request.project_id.is_some() || request.args != serde_json::json!({}) {
+            return Err("Onboarding takes no arguments and belongs to the local desktop".into());
+        }
+        let state = broker.app.state::<crate::AppState>();
+        return if request.command == "dismiss_onboarding" {
+            crate::app_commands::dismiss_onboarding(state).await?;
+            Ok(Value::Null)
+        } else {
+            serde_json::to_value(crate::app_commands::get_onboarding_state(state).await?)
+                .map_err(|e| e.to_string())
+        };
+    }
+    if request.command == "native_workflow_conversion_progress" {
+        let project = request
+            .project_id
+            .as_deref()
+            .filter(|id| !id.trim().is_empty())
+            .ok_or("A project is required")?;
+        let input: wisp_dto::native_settings::WorkflowConversionProgressRequest =
+            serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+        if !crate::native_workflow_conversion::valid_id(&input.conversion_id) {
+            return Err("A valid conversion id is required".into());
+        }
+        return serde_json::to_value(
+            broker
+                .workflow_conversions
+                .read(project, &input.conversion_id),
+        )
+        .map_err(|error| error.to_string());
+    }
+    if wisp_dto::native_files::PROJECT_COMMANDS.contains(&request.command.as_str()) {
+        let project = request
+            .project_id
+            .as_deref()
+            .filter(|id| !id.trim().is_empty())
+            .ok_or("A project is required")?;
+        return crate::native_files::dispatch(broker, request, project, None).await;
+    }
     if wisp_dto::native_projects::COMMANDS.contains(&request.command.as_str()) {
         let state = broker.app.state::<crate::AppState>();
+        if request.command == "native_project_home_activity" {
+            if broker.remote || request.project_id.is_some() {
+                return Err("Home activity belongs to the local desktop".into());
+            }
+            let input: wisp_dto::native_projects::HomeActivityRequest =
+                serde_json::from_value(request.args.clone()).map_err(|e| e.to_string())?;
+            let running = state.running_turns.lock().await.clone();
+            let awaiting = state.awaiting_confirm.lock().unwrap().clone();
+            let snapshot = crate::native_projects::home_activity(&state.store, &running, &awaiting, input).await?;
+            return serde_json::to_value(snapshot).map_err(|e| e.to_string());
+        }
         if request.command == "native_project_export" {
             return crate::native_projects::execute_export(&state, request).await;
+        }
+        if request.command == "native_project_delete" {
+            return crate::native_projects::execute_delete(&state, request).await;
         }
         if matches!(
             request.command.as_str(),
@@ -196,11 +256,24 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             return serde_json::to_value(crate::build_project_summary(&state, &id).await)
                 .map_err(|error| error.to_string());
         }
+        if request.command == "native_project_session_delete_preview" {
+            return crate::native_session_deletion::preview(broker, request).await;
+        }
         return crate::native_projects::execute_folders(&state.store, request).await;
     }
     if wisp_dto::native_library::COMMANDS.contains(&request.command.as_str()) {
         let state = broker.app.state::<crate::AppState>();
         return crate::native_library::execute(&state.library, request).await;
+    }
+    if request.command == "set_privacy_mode" {
+        if broker.remote || request.project_id.is_some() {
+            return Err("Privacy mode belongs to the local desktop".into());
+        }
+        let mode: crate::privacy_mode::PrivacyMode =
+            serde_json::from_value(request.args.clone()).map_err(|e| e.to_string())?;
+        let state = broker.app.state::<crate::AppState>();
+        state.store.write_project_privacy(mode, false).await.map_err(|e| e.to_string())?;
+        return serde_json::to_value(crate::privacy_mode::load(&state.store).await?).map_err(|e| e.to_string());
     }
     if request.command == "get_privacy_mode" {
         let state = broker.app.state::<crate::AppState>();
@@ -265,6 +338,10 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
         };
         return crate::native_journey::execute(&state.store, request).await;
     }
+    if wisp_dto::native_memos::COMMANDS.contains(&request.command.as_str()) {
+        let state = broker.app.state::<crate::AppState>();
+        return crate::native_memos::execute(&state.store, request).await;
+    }
     if wisp_dto::native_publication::COMMANDS.contains(&request.command.as_str()) {
         let state = broker.app.state::<crate::AppState>();
         let _activity = request
@@ -273,6 +350,9 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             .map(|project| state.begin_project_activity(project))
             .transpose()?;
         return crate::native_publication::execute(&state.store, request).await;
+    }
+    if wisp_dto::native_runtimes::COMMANDS.contains(&request.command.as_str()) {
+        return crate::native_runtimes::dispatch(broker, request).await;
     }
     if wisp_dto::native_conversations::COMMANDS.contains(&request.command.as_str()) {
         return crate::native_conversations::dispatch(broker, request).await;
@@ -542,7 +622,8 @@ mod tests {
             advertised["publication_schema"],
             wisp_dto::native_publication::SCHEMA
         );
-        assert_eq!(advertised["privacy"][0], "get_privacy_mode");
+        assert_eq!(advertised["privacy"], serde_json::json!(["get_privacy_mode", "set_privacy_mode"]));
+        assert_eq!(advertised["onboarding"], serde_json::json!(["get_onboarding_state", "dismiss_onboarding"]));
         assert_eq!(advertised["search"][0], "native_workspace_search");
         assert_eq!(advertised["search_schema"], wisp_dto::native_search::SCHEMA);
         assert_eq!(

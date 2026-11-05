@@ -7,6 +7,7 @@ internal static class NativePublicationEditorTests
     private static void Check(bool value, string label) { if (!value) throw new Exception(label); Console.WriteLine("PASS publication editor: " + label); }
     public static async Task RunAsync()
     {
+        await RunBindingAsync();
         var fake = new Fake(); var client = new NativePublicationClient(fake);
         using var model = new WorkspacePublicationModel(client, "p");
         Check(await model.LoadAsync() && model.Editable && model.Workspace!.Bindings!.Single().SourceId == "exact-v1", "full evidence contract retains exact source and editable revision");
@@ -125,6 +126,30 @@ internal static class NativePublicationEditorTests
         committedModel.SelectItem(committedId);
         Check(committedModel.ItemDraft.Content == "local unsaved correction",
             "confirmed creation retains local corrections under the persisted item identity");
+    }
+    private static async Task RunBindingAsync()
+    {
+        var host = new Fake();
+        using var page = new WorkspacePublicationModel(new NativePublicationClient(host), "p");
+        Check(!page.BeginRunBinding(new("foreign", "sibling-run", "Same title")), "cannot carry a run across projects");
+        var run = new PublicationRunSource("p", "sibling-run", "Same title");
+        Check(page.BeginRunBinding(run) && await page.LoadAsync(), "open a specific run without searching or writing");
+        page.DismissRunBinding();
+        Check(!page.Closed && page.Workspace != null && page.PendingRun == null && host.Writes == 0, "dismissing the binding step preserves its parent workspace");
+        page.BeginRunBinding(run);
+        Check(!await page.BindPendingRunAsync("r", null, "  ", null, "selected", "private"), "purpose is required");
+        await page.SelectWorkspaceAsync("pub", "r2");
+        Check(page.PendingRun == run && !await page.BindPendingRunAsync("r", null, "Fig 1", null, "selected", "private")
+            && !await page.BindPendingRunAsync("r2", null, "Fig 1", "stale-claim", "selected", "private") && host.Writes == 0,
+            "revision changes preserve the run but reject stale revision and claim targets");
+        host.Frozen = true; await page.LoadAsync();
+        Check(!await page.BindPendingRunAsync("r2", null, "Fig 1", null, "selected", "private") && host.Writes == 0, "frozen revisions cannot receive a run");
+        host.Frozen = false; await page.LoadAsync(); host.Fail = true;
+        Check(!await page.BindPendingRunAsync("r2", null, "Fig 1", null, "selected", "private") && page.PendingRun == run && page.MutationUncertain, "lost confirmation retains the run and prevents replay");
+        host.Fail = false; await page.LoadAsync(); page.AcknowledgeUncertain();
+        Check(await page.BindPendingRunAsync("r2", null, "Fig 1", "item", "selected", "private") && page.PendingRun == null
+            && host.LastOperation?["source_id"]?.ToString() == "sibling-run" && host.LastOperation?["source_kind"]?.ToString() == "run"
+            && host.LastOperation?["supported_claim_item_id"]?.ToString() == "item" && host.Writes == 2, "explicit confirmation binds the exact run and current claim");
     }
     private sealed class Fake : INativeSettingsClient
     {

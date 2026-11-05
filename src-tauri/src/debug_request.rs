@@ -226,14 +226,17 @@ fn sanitize_component(s: &str) -> String {
         .collect()
 }
 
-#[tauri::command]
-pub(super) async fn export_debug_request(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    session_id: String,
-) -> Result<Option<String>, String> {
-    use tauri_plugin_dialog::DialogExt;
+pub(crate) struct PreparedDebugRequest {
+    pub filename: String,
+    pub contents: String,
+}
 
+/// Both frontends save these exact captured bytes. The native read endpoint
+/// applies project ownership before calling this shared snapshot builder.
+pub(crate) async fn prepare_debug_request(
+    state: &AppState,
+    session_id: String,
+) -> Result<PreparedDebugRequest, String> {
     let captured_at = chrono::Utc::now().to_rfc3339();
     let terminal_events = terminal_ui_events(
         &state
@@ -347,10 +350,24 @@ pub(super) async fn export_debug_request(
         "wisp-debug-request-{}.json",
         sanitize_component(&session_id)
     );
+    Ok(PreparedDebugRequest {
+        filename: default_name,
+        contents: json,
+    })
+}
+
+#[tauri::command]
+pub(super) async fn export_debug_request(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let prepared = prepare_debug_request(&state, session_id).await?;
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
         .file()
-        .set_file_name(&default_name)
+        .set_file_name(&prepared.filename)
         .save_file(move |p| {
             let _ = tx.send(p);
         });
@@ -358,7 +375,7 @@ pub(super) async fn export_debug_request(
         return Ok(None);
     };
     let dest_path = std::path::PathBuf::from(dest.to_string());
-    std::fs::write(&dest_path, json).map_err(|e| format!("{e}"))?;
+    std::fs::write(&dest_path, prepared.contents).map_err(|e| format!("{e}"))?;
     Ok(Some(dest_path.to_string_lossy().into_owned()))
 }
 
@@ -391,6 +408,12 @@ pub(super) async fn get_context_usage_details(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn debug_export_filename_is_one_component_for_both_frontends() {
+        assert_eq!(sanitize_component("source-1"), "source_1");
+        assert_eq!(sanitize_component("../folder\\session:研究"), "___folder_session___");
+    }
 
     #[test]
     fn snapshot_breaks_out_system_prompt_and_sums_tokens() {

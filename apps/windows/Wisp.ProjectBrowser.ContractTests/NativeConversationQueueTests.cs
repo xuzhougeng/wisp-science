@@ -11,7 +11,11 @@ internal static class NativeConversationQueueTests
         Check(NativeQueueSnapshot.ValidId("18446744073709551615") && !NativeQueueSnapshot.ValidId("01"), "queue IDs retain all 64 bits");
         var host = new Fake(); var model = new WorkspaceConversationModel(new NativeConversationClient(host), host);
         await model.OpenAsync("p", "s");
-        model.Draft = "same"; Check(await model.AttachAsync("a.csv"), "first attachment accepted"); await model.QueueAsync();
+        model.Draft = "  "; Check(model.ShowStopButton && !model.CanSubmit, "running with a blank draft shows only Stop");
+        Check(await model.AttachAsync("a.csv") && !model.ShowStopButton && model.CanSubmit && !model.CanSend,
+            "an attachment without text replaces Stop with an enabled queue action, never an immediate send");
+        model.Draft = "same"; await model.QueueAsync();
+        Check(model.ShowStopButton && !model.CanSubmit, "queue acknowledgement consumes the draft and brings Stop back");
         model.Draft = "same"; Check(await model.AttachAsync("b.csv"), "second attachment accepted"); await model.QueueAsync();
         Check(model.QueuedTurns.Length == 2 && host.EnqueueCalls == 2 && model.QueuedTurns[0].Id != model.QueuedTurns[1].Id, "identical text with distinct files remains two authoritative queued items");
         Check(model.QueuedTurns[0].Attachments.Single() == "uploads/a.csv" && model.QueuedTurns[1].Attachments.Single() == "uploads/b.csv", "queue snapshot retains each attachment payload");
@@ -43,7 +47,49 @@ internal static class NativeConversationQueueTests
         Check(model.Draft == "same" && model.Attachments.Length == 1 && host.EnqueueCalls == 2, "recovery restores a draft and never resends it");
         await LostEnqueueAsync();
         await EnqueueNavigationAsync();
+        await ReturnDraftAsync();
+        Presentation();
         Console.WriteLine("Native queue: exact IDs, multi-item payloads, stale actions, cut-in restrictions, no replay, restart recovery and navigation passed.");
+    }
+    private static void Presentation()
+    {
+        var mixed = NativeQueuePresentation.Mix((255, 255, 255, 255), (30, 13, 148, 136), .82);
+        Check(mixed.A is 214 or 215 && mixed.R >= 248 && mixed.G >= 252, "CSS color mixing preserves premultiplied alpha instead of making translucent accents opaque");
+        Check(NativeQueuePresentation.Mix((0, 255, 0, 0), (0, 0, 255, 0), .5) == (0, 0, 0, 0), "transparent mix does not divide by zero");
+        var row = new ConversationItem("queued_user", "<script>literal user text</script>", null, null, null, null);
+        var snapshot = new ConversationSnapshot(ConversationSnapshot.SchemaId, "epoch", 1, "p", "s", [row, row], null, true, false, false, "", null, null, []);
+        Check(NativeTranscriptRows.RendersNothing(row) && !NativeTranscriptRows.RendersNothing(row with { Role = "user" }), "queued messages live only above the composer without hiding accepted user turns");
+        var legacy = NativeQueuePresentation.Rows(snapshot, "same legacy acknowledgement");
+        Check(legacy.Length == 2 && legacy.All(item => item.Item == null && item.Text == row.Text), "fallback preserves duplicate user text and never invents actionable IDs");
+        Check(NativeQueuePresentation.Rows(snapshot with { Items = [] }, "legacy").Single().Text == "legacy", "acknowledged old-host queue remains visible");
+        Check(NativeQueuePresentation.Rows(snapshot with { Queue = new([], [], true) }, "stale").Length == 0, "authoritative empty queue suppresses stale transcript and legacy data");
+        var locale = new NativeLocalization(new Dictionary<string, Dictionary<string, string>>(), "en");
+        Check(NativeQueuePresentation.RecoveryReason("returned", locale).StartsWith("Returned"), "recovery copy follows selected language");
+        locale.Preview("zh"); Check(NativeQueuePresentation.RecoveryReason("failed", locale).StartsWith("排队执行失败"), "failure recovery has Chinese copy");
+    }
+    private static async Task ReturnDraftAsync()
+    {
+        var host = new Fake(); var model = new WorkspaceConversationModel(new NativeConversationClient(host), host);
+        await model.OpenAsync("p", "s");
+        host.Rows["s"].Add(new("7", "authoritative-edit", "queued", "latest text\n\nUploaded files: uploads/a.csv", ["uploads/a.csv"], [new("session", "source")]));
+        await model.RefreshAsync(); var target = model.QueueTarget(model.QueuedTurns.Single())!;
+        model.Draft = "independent draft";
+        Check(await model.TakeQueuedDraftAsync(target), "editing first acknowledges removing the queued item");
+        model.RestoreQueueDraft("7");
+        Check(model.Draft == "independent draft" && model.QueueRecoveries.Single().Reason == "returned" && model.QueuedTurns.Length == 0, "taking a queued message preserves an occupied composer and retains a recovery");
+        await model.RefreshAsync(); model.Draft = ""; model.RestoreQueueDraft("7");
+        Check(model.Draft == "latest text" && model.Attachments.Single().Path == "uploads/a.csv" && model.References.Single().Reference.Id == "source", "restoring uses the authoritative edited text, attachments and references");
+        Check(host.Actions.Single()["action"]?["kind"]?.GetValue<string>() == "cancel", "Edit removes from the queue rather than changing an executing turn in place");
+        host.Rows["s"].Add(new("8", "next", "queued", "for later", [], [])); await model.RefreshAsync(); target = model.QueueTarget(model.QueuedTurns.Single())!;
+        host.PendingAction = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = model.TakeQueuedDraftAsync(target); await model.OpenAsync("p", "other"); model.Draft = "other draft";
+        host.PendingAction.SetResult(new JsonObject { ["session_id"] = "s", ["id"] = "8" });
+        Check(!await pending && model.Draft == "other draft", "late acknowledgement cannot replace another session draft or dispatch side chat");
+        host.PendingAction = null; host.Rows["s"].Clear(); await model.OpenAsync("p", "s");
+        Check(model.QueueRecoveries.Any(item => item.Id == "8" && item.Text == "for later"), "confirmed late cancellation keeps its payload in the original session");
+        host.Rows["s"].Add(new("9", "fail", "queued", "uncertain removal", [], [])); await model.RefreshAsync(); host.LoseAction = true;
+        Check(!await model.TakeQueuedDraftAsync(model.QueueTarget(model.QueuedTurns.Single())!) && model.QueueRecoveries.All(item => item.Id != "9")
+            && model.QueueErrorDetail == "lost action response", "uncertain cancellation cannot restore or send a message that may still be queued and retains untranslated transport details");
     }
     private static async Task EnqueueNavigationAsync()
     {
@@ -119,6 +165,7 @@ internal static class NativeConversationQueueTests
                 if (PendingAction != null) return PendingAction.Task;
                 var id = args["id"]!.GetValue<string>(); var index = Rows[session].FindIndex(row => row.Id == id);
                 if (args["action"]?["kind"]?.GetValue<string>() == "move_up") (Rows[session][index - 1], Rows[session][index]) = (Rows[session][index], Rows[session][index - 1]);
+                if (args["action"]?["kind"]?.GetValue<string>() == "cancel") { Rows[session].RemoveAt(index); Outcomes[session].Add(new(id, "cancelled")); }
                 return Task.FromResult<JsonNode?>(new JsonObject { ["session_id"] = session, ["id"] = id });
             }
             return Task.FromResult<JsonNode?>(null);

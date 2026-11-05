@@ -19,6 +19,9 @@ public interface INativeSettingsClient
         CancellationToken cancellationToken = default);
 }
 
+/// <summary>The host returned a correlated command error, rather than losing the reply.</summary>
+public sealed class NativeSettingsCommandException(string message) : InvalidOperationException(message) { }
+
 public sealed record NativeSettingsHost(
     [property: JsonPropertyName("schema")] string Schema,
     [property: JsonPropertyName("endpoint")] string Endpoint,
@@ -61,7 +64,7 @@ public static class NativeSettingsProtocol
         if (root["schema"]?.GetValue<string>() != Schema || root["id"]?.GetValue<string>() != requestId)
             throw new InvalidDataException("Native settings response correlation mismatch.");
         if (root["error"] is JsonValue error)
-            throw new InvalidOperationException(error.GetValue<string>());
+            throw new NativeSettingsCommandException(error.GetValue<string>());
         if (!root.ContainsKey("result")) throw new InvalidDataException("Missing command result.");
         return root["result"]?.DeepClone(); // null is a successful void command
     }
@@ -78,6 +81,7 @@ public sealed class NativeSettingsClient : INativeSettingsClient, IDisposable
     private readonly NativeSettingsHost initialHost;
     private readonly string databasePath;
     private readonly string? descriptorPath;
+    private string? hostExecutable;
 
     public NativeSettingsClient(NativeSettingsHost host, string databasePath, HttpMessageHandler? handler = null, string? descriptorPath = null)
     {
@@ -109,6 +113,21 @@ public sealed class NativeSettingsClient : INativeSettingsClient, IDisposable
     }
 
     /// <summary>
+    /// Re-establish the host for an explicit read retry. Mounted editors keep
+    /// this client: their next request reads the validated, rotated descriptor.
+    /// No previous command or arguments are retained or replayed here.
+    /// </summary>
+    public async Task ReconnectAsync(CancellationToken cancellationToken)
+    {
+        if (descriptorPath == null)
+        {
+            await InvokeAsync("native_settings_capabilities", new(), cancellationToken: cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        using var connected = await ConnectAsync(databasePath, hostExecutable, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Launch the full desktop backend on demand. Windows package layout supplies
     /// wisp-tauri.exe and its existing runtime resources (including WebView2).
     /// Cancellation stops discovery; it never kills a shared desktop host.
@@ -123,7 +142,7 @@ public sealed class NativeSettingsClient : INativeSettingsClient, IDisposable
             try {
                 var descriptor = JsonSerializer.Deserialize<NativeSettingsHost>(await File.ReadAllTextAsync(descriptorPath, cancellationToken).ConfigureAwait(false));
                 if (descriptor is null) return null;
-                client = new NativeSettingsClient(descriptor, databasePath, descriptorPath: descriptorPath);
+                client = new NativeSettingsClient(descriptor, databasePath, descriptorPath: descriptorPath) { hostExecutable = hostExecutable };
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 timeout.CancelAfter(TimeSpan.FromSeconds(2));
                 await client.InvokeAsync("native_settings_capabilities", new JsonObject(), cancellationToken: timeout.Token).ConfigureAwait(false);
@@ -134,6 +153,7 @@ public sealed class NativeSettingsClient : INativeSettingsClient, IDisposable
         }
         var connected = await Discover().ConfigureAwait(false);
         if (connected is not null) return connected;
+        cancellationToken.ThrowIfCancellationRequested();
         if (hostExecutable is null || !File.Exists(hostExecutable))
             throw new FileNotFoundException("The full desktop settings host is not bundled.", hostExecutable);
         using var process = Process.Start(new ProcessStartInfo(Path.GetFullPath(hostExecutable)) {

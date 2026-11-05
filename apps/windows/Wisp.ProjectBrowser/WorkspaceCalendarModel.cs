@@ -43,11 +43,14 @@ public sealed class WorkspaceCalendarModel(INativeCalendarClient client, INative
     }
     public Task ShiftMonthAsync(int delta)
     {
-        Month = Month.AddMonths(delta); Day = Month;
+        if (closed) return Task.CompletedTask;
+        Month = Month.AddMonths(delta); Day = NativeCalendarPresentation.SelectedDay(Month, DateTime.Today);
         return ReadAsync();
     }
+    public Task TodayAsync() => SelectDayAsync(DateTime.Today);
     public Task SelectDayAsync(DateTime day)
     {
+        if (closed) return Task.CompletedTask;
         Day = day.Date; Month = new(day.Year, day.Month, 1);
         return ReadAsync();
     }
@@ -59,7 +62,7 @@ public sealed class WorkspaceCalendarModel(INativeCalendarClient client, INative
         var privacyCurrent = privacyGeneration;
         var month = Month; var day = Day;
         var ids = VisibleProjects.Select(p => p.Id).ToArray();
-        Busy = true; Error = null; Changed?.Invoke();
+        Busy = true; Error = null; MonthRows = []; DayRows = []; Changed?.Invoke();
         try
         {
             var monthRows = ids.Length == 0 ? [] : await client.ReadAsync(ids, Unix(month), Unix(month.AddMonths(1)));
@@ -71,6 +74,7 @@ public sealed class WorkspaceCalendarModel(INativeCalendarClient client, INative
         catch (Exception ex) { if (!closed && current == readGeneration) Error = ex.Message; }
         finally { if (!closed && current == readGeneration) { Busy = false; Changed?.Invoke(); } }
     }
-    public IEnumerable<CalendarProject> Filter(IEnumerable<CalendarProject> rows) => rows.Where(p => ProjectFilter == null || p.ProjectId == ProjectFilter);
+    public IEnumerable<CalendarProject> Filter(IEnumerable<CalendarProject> rows) => rows.Where(p => VisibleProjects.Any(visible => visible.Id == p.ProjectId)
+        && (ProjectFilter == null || p.ProjectId == ProjectFilter));
     public void Dispose() { closed = true; privacyGeneration++; readGeneration++; }
 }

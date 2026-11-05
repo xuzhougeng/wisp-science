@@ -14,7 +14,6 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
     private readonly WorkspacePanelModel model;
     private readonly WispDesign design;
     private readonly WorkspaceConversationModel? conversation;
-    private readonly NativeTranscriptTables transcriptTables = new();
     private readonly WorkspaceSideChatModel? sideChat;
     private readonly Func<NativeInputPreferences> inputPreferences;
     private readonly Action<string>? openTerminal;
@@ -28,47 +27,59 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
     private NativePanelViewState.ReadingState? readingState;
     private bool syncingFilter;
     private bool restoreScroll;
-    private readonly Button tabSelector = new();
+    private readonly NativePanelTabStrip tabStrip;
     private ComboBox? sideChatModelPicker;
     private readonly List<FlyoutBase> openMenus = [];
     private ContentDialog? fileDialog;
+    private NativeArtifactDialog? artifactDialog;
+    private readonly Action<WorkspaceArtifactModel, string>? openCenter;
+    private readonly Func<string, bool>? insertArtifactDraft;
+    private readonly NativeMemosPane? memosPane;
+    private readonly StackPanel panelFilters;
     private readonly Border searchCard = new();
     private readonly Dictionary<string, FrameworkElement> previewImages = [];
     private readonly HashSet<string> previewLoading = [];
     private NativeRichPreview? documentPreview;
     private NativePanelFileContent? documentContent;
     private NativePanelFileContent? scientificSource;
-    private TextBox? sourceSelectionEditor;
+    private NativeSourceSelectionActions? sourceSelectionActions;
     private readonly Func<string, NativeDocumentSelection, bool>? quoteDocument;
     private readonly Func<bool>? windowEscape;
     private readonly CancellationTokenSource lifetime = new();
     private bool disposed;
     private int reviewNavigation;
     public async Task ShowFilesAsync() => await ShowTabAsync("files");
+    public void ReopenTabs()
+    {
+        if (model.Tabs.Open.Count > 0) return;
+        model.Tabs.Reopen();
+        _ = ShowTabAsync(model.Tabs.Selected);
+    }
     public Task ShowRunAsync(string runId) => PresentRunAsync(runId, true);
     public async Task ShowRunReviewAsync(string runId)
     {
         var loading = PresentRunAsync(runId, true);
         var current = reviewNavigation;
         await loading;
-        if (!disposed && current == reviewNavigation && model.Tabs.Selected == "hosts"
+        if (!disposed && current == reviewNavigation && model.Tabs.Selected == "runs"
             && model.SelectedRunId == runId && runReview != null && model.RunDetail is { Kind: "ssh_direct" } run
             && WorkspaceConversationModel.RunTerminal(run.Status)) await runReview.OpenAsync(runId, lifetime.Token, model.Activity?.ReadOnly != false);
     }
-    private async Task PresentRunAsync(string runId, bool openHosts)
+    private async Task PresentRunAsync(string runId, bool openRuns)
     {
         if (disposed) return;
         reviewNavigation++;
         runReview?.Close();
-        var read = openHosts ? model.OpenRunAsync(runId, lifetime.Token) : model.ReadRunAsync(runId, lifetime.Token);
-        viewState.For("hosts").SetOffset(0);
-        if (openHosts) tabChanged?.Invoke(model.Tabs.Selected, model.Tabs.Saved);
+        var read = openRuns ? model.OpenRunAsync(runId, lifetime.Token) : model.ReadRunAsync(runId, lifetime.Token);
+        viewState.For("runs").SetOffset(0);
+        if (openRuns) tabChanged?.Invoke(model.Tabs.Selected, model.Tabs.Saved);
         Render();
         await read;
         Render();
     }
     public async Task ShowTabAsync(string tab)
     {
+        if (tab != model.Tabs.Selected) completedRunsOpen = false;
         reviewNavigation++;
         runReview?.Close();
         try
@@ -85,8 +96,23 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
     public NativeWorkspacePanel(WorkspacePanelModel model, WorkspaceConversationModel? conversation, WispDesign design, Action close,
         WorkspaceSideChatModel? sideChat = null, Action<string>? openTerminal = null, Action<string, string>? tabChanged = null,
         WorkspaceRunReviewModel? runReview = null, Func<NativeInputPreferences>? inputPreferences = null,
-        Func<string, NativeDocumentSelection, bool>? quoteDocument = null, Func<bool>? windowEscape = null)
+        Func<string, NativeDocumentSelection, bool>? quoteDocument = null, Func<bool>? windowEscape = null,
+        Func<Task<IReadOnlyList<string>>>? pickFiles = null, Func<string, Task<string?>>? pickDownload = null,
+        Action<WorkspaceArtifactModel, string>? openCenter = null, Func<string, bool>? insertArtifactDraft = null,
+        WorkspaceMemosModel? memos = null, Func<string, bool>? insertMemo = null, Func<string>? projectRoot = null,
+        Action? manageEnvironments = null, Func<string, Button, bool, Task>? openContextRuntimes = null, Action<NativeRun>? useRunInPublication = null)
     {
+        this.openCenter = openCenter; this.insertArtifactDraft = insertArtifactDraft;
+        this.manageEnvironments = manageEnvironments;
+        this.openContextRuntimes = openContextRuntimes;
+        this.useRunInPublication = useRunInPublication;
+        this.projectRoot = projectRoot ?? (() => "");
+        this.pickFiles = pickFiles;
+        this.pickDownload = pickDownload;
+        transferTimer = DispatcherQueue.CreateTimer(); transferTimer.Interval = TimeSpan.FromSeconds(2);
+        transferTimer.Tick += PollFileTransfers;
+        runsTimer = DispatcherQueue.CreateTimer(); runsTimer.Interval = TimeSpan.FromSeconds(1);
+        runsTimer.Tick += TickRuns; Loaded += StartRunsPolling; Unloaded += StopRunsPolling;
         this.quoteDocument = quoteDocument;
         this.windowEscape = windowEscape;
         this.model = model; this.conversation = conversation; this.design = design; this.close = close;
@@ -97,38 +123,20 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
         if (runReview != null) runReview.Changed += Render;
         design.BindTypography(this);
         this.sideChat = sideChat; this.openTerminal = openTerminal;
-        var root = new Grid { Padding = new Thickness(20, 18, 20, 12), RowSpacing = 16, Background = design.Brush("bg-elev") };
+        var root = new Grid { Background = design.Brush("bg-elev") };
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         root.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
-        var header = new Grid();
-        header.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        var heading = new StackPanel { Spacing = 4 };
-        var caption = design.Text("工作区", 11); caption.Foreground = design.Brush("text-faint");
-        heading.Children.Add(caption);
-        design.QuietButton(tabSelector);
-        tabSelector.Padding = new Thickness(0, 4, 8, 4);
-        tabSelector.HorizontalAlignment = HorizontalAlignment.Left;
-        var tabs = new MenuFlyout { Placement = FlyoutPlacementMode.BottomEdgeAlignedLeft };
-        foreach (var id in model.Tabs.Available)
-        {
-            var captured = id;
-            var tab = new MenuFlyoutItem { Text = Label(id) };
-            tab.Click += async (_, _) => await ShowTabAsync(captured);
-            tabs.Items.Add(tab);
-        }
-        TrackMenu(tabs); tabSelector.Flyout = tabs;
-        heading.Children.Add(tabSelector); header.Children.Add(heading);
-        var dismiss = design.ToolButton("关闭面板", "close");
-        dismiss.VerticalAlignment = VerticalAlignment.Top;
-        dismiss.Click += (_, _) => close();
-        ToolTipService.SetToolTip(dismiss, "关闭面板");
-        Grid.SetColumn(dismiss, 1); header.Children.Add(dismiss);
-        root.Children.Add(header);
-        filter.TextChanged += (_, _) =>
+        InitializeGenerated(root);
+        tabStrip = new(model.Tabs, design, Label, ShowTabAsync,
+            () => tabChanged?.Invoke(model.Tabs.Selected, model.Tabs.Saved), close);
+        tabStrip.ViewModes.Content = artifactsPane.ViewModes;
+        root.Children.Add(tabStrip);
+        filter.TextChanged += async (_, _) =>
         {
             if (syncingFilter || disposed) return;
+            if (model.Tabs.Selected == "files" && model.RecursiveFileSearch)
+            { await FileReadAsync(model.SearchFilesAsync(filter.Text, lifetime.Token)); return; }
             readingState?.SetFilter(filter.Text);
             Render();
         };
@@ -141,17 +149,25 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
         filter.Resources["TextControlBackgroundFocused"] = design.Brush("bg-sunken");
         filter.Resources["TextControlBorderBrushFocused"] = design.Brush("clay");
         filter.FontSize = design.FontSize(12);
-        AutomationProperties.SetName(filter, "筛选当前面板");
+        AutomationProperties.SetName(filter, design.L("筛选当前面板", "Filter current panel"));
         Grid.SetColumn(filter, 1); search.Children.Add(filter);
         searchCard.Child = search; searchCard.CornerRadius = new CornerRadius(8); searchCard.Background = design.Brush("bg-sunken");
-        Grid.SetRow(searchCard, 1); root.Children.Add(searchCard);
-        scroll.Content = body;
+        var filters = new StackPanel { Spacing = 12, Margin = new Thickness(20, 16, 20, 16) }; filters.Children.Add(fileHeader); filters.Children.Add(searchCard);
+        panelFilters = filters;
+        Grid.SetRow(filters, 1); root.Children.Add(filters);
+        EnableFileDrop(root);
+        scroll.Content = body; scroll.Margin = new Thickness(20, 0, 20, 12);
         scroll.ViewChanged += (_, _) =>
         {
             if (!disposed && !restoreScroll && !model.Loading) readingState?.SetOffset(scroll.VerticalOffset);
         };
         scroll.LayoutUpdated += RestoreScroll;
         Grid.SetRow(scroll, 2); root.Children.Add(scroll);
+        Grid.SetRow(runsEmpty, 2); root.Children.Add(runsEmpty);
+        if (memos != null)
+        {
+            memosPane = new(memos, design, insertMemo); Grid.SetRow(memosPane, 2); root.Children.Add(memosPane);
+        }
         Content = root;
         _ = StartAsync();
     }
@@ -174,8 +190,7 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
     private ConversationSnapshot? Transcript => conversation?.ShowingHistory == true ? conversation.History : conversation?.Snapshot;
     private void RefreshTranscript()
     {
-        // Every table consumer is on the artifacts tab, which updates on render.
-        if (!disposed && model.Tabs.Selected == "artifacts" && transcriptTables.Update(Transcript)) Render();
+        if (!disposed && UpdateGenerated() && model.Tabs.Selected is not ("runs" or "hosts")) Render();
     }
 
     private void RestoreScroll(object? sender, object e)
@@ -188,31 +203,52 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
     private void Render()
     {
         if (disposed) return;
+        runsEmpty.Visibility = Visibility.Collapsed;
+        sourceSelectionActions?.Dispose(); sourceSelectionActions = null;
+        var showingGenerated = model.Tabs.Selected == "artifacts";
+        tabStrip.ViewModes.Visibility = showingGenerated ? Visibility.Visible : Visibility.Collapsed;
+        generatedHost.Visibility = showingGenerated ? Visibility.Visible : Visibility.Collapsed;
+        if (showingGenerated)
+        {
+            UpdateGenerated();
+            tabStrip.Refresh(); panelFilters.Visibility = scroll.Visibility = Visibility.Collapsed;
+            if (memosPane != null) memosPane.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var showingMemos = model.Tabs.Selected == "memos" && memosPane != null;
+        tabStrip.Refresh();
+        panelFilters.Visibility = scroll.Visibility = showingMemos ? Visibility.Collapsed : Visibility.Visible;
+        if (memosPane != null) memosPane.Visibility = showingMemos ? Visibility.Visible : Visibility.Collapsed;
+        if (showingMemos) { memosPane!.Activate(); return; }
         restoreScroll = true;
-        readingState = viewState.For(model.Tabs.Selected, model.Path);
+        readingState = viewState.For(model.Tabs.Selected, model.FileContext + "|" + model.Path);
         syncingFilter = true;
-        filter.Text = readingState.Filter;
+        filter.Text = model.Tabs.Selected == "files" && model.RecursiveFileSearch ? model.FileSearchQuery : readingState.Filter;
         syncingFilter = false;
-        var title = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
-        title.Children.Add(design.Icon(TabIcon(model.Tabs.Selected), 20));
-        var titleText = design.Text(Label(model.Tabs.Selected), 20); titleText.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
-        title.Children.Add(titleText); title.Children.Add(design.Icon("chevron-down", 14));
-        tabSelector.Content = title;
-        AutomationProperties.SetName(tabSelector, Label(model.Tabs.Selected) + "，切换面板视图");
-        ToolTipService.SetToolTip(tabSelector, "切换面板视图");
-        filter.PlaceholderText = model.Tabs.Selected == "files" ? "搜索此文件夹" : "筛选名称";
+        filter.PlaceholderText = model.Tabs.Selected == "files" ? design.T("files.search") : design.L("筛选名称", "Filter by name");
+        AutomationProperties.SetName(filter, filter.PlaceholderText);
         body.Spacing = model.Tabs.Selected == "files" ? 2 : 8;
         body.Children.Clear();
+        fileHeader.Children.Clear(); fileHeader.Visibility = model.Tabs.Selected == "files" ? Visibility.Visible : Visibility.Collapsed;
         sideChatModelPicker = null;
-        searchCard.Visibility = model.Tabs.Selected is "hosts" or "sidechat" ? Visibility.Collapsed : Visibility.Visible;
-        if (runReview?.Visible == true && model.Tabs.Selected == "hosts")
+        searchCard.Visibility = model.Tabs.Selected is "hosts" or "runs" or "sidechat" || model.Tabs.Selected == "files" && model.RemoteFiles ? Visibility.Collapsed : Visibility.Visible;
+        if (model.HasPendingFileTransfers && model.FileTransferReadError == null) transferTimer.Start(); else transferTimer.Stop();
+        var runsTab = model.Tabs.Selected == "runs";
+        var hostsTab = model.Tabs.Selected == "hosts";
+        panelFilters.Visibility = runsTab || hostsTab ? Visibility.Collapsed : Visibility.Visible;
+        scroll.Margin = runsTab || hostsTab ? new Thickness(12) : new Thickness(20, 0, 20, 12);
+        scroll.VerticalContentAlignment = VerticalAlignment.Stretch;
+        body.HorizontalAlignment = HorizontalAlignment.Stretch;
+        body.Spacing = runsTab ? 14 : body.Spacing;
+        if (Content is Grid panelRoot) panelRoot.Background = design.Brush(hostsTab || runsTab && !model.SessionRuns.Empty ? "bg-sunken" : "bg-elev");
+        if (runReview?.Visible == true && runsTab)
         { RenderRunReview(); design.ApplyTypography(this); return; }
         if (model.Loading) body.Children.Add(new ProgressBar { IsIndeterminate = true, Height = 3 });
         if (model.Error is { } error) body.Children.Add(new TextBlock { Text = error, TextWrapping = TextWrapping.Wrap, Foreground = design.Brush("clay-strong"), FontSize = 12 });
         var query = filter.Text.Trim();
-        if (model.Tabs.Selected == "artifacts") RenderArtifacts(query);
-        else if (model.Tabs.Selected == "files") RenderFiles(query);
+        if (model.Tabs.Selected == "files") RenderFiles(query);
         else if (model.Tabs.Selected == "hosts") RenderHosts();
+        else if (runsTab) RenderRuns();
         else if (model.Tabs.Selected == "agents") RenderAgents(query);
         else if (model.Tabs.Selected == "notebook") RenderNotebook(query);
         else if (model.Tabs.Selected == "highlights") RenderHighlights(query);
@@ -234,141 +270,11 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
             }
         }
         else if (model.Tabs.Selected == "sidechat") RenderSideChat();
-        if (body.Children.Count == 0 && !model.Loading && model.Error == null)
+        if (!runsTab && body.Children.Count == 0 && !model.Loading && model.Error == null)
             body.Children.Add(design.EmptyState(TabIcon(model.Tabs.Selected), query.Length > 0 ? "没有匹配的记录" : "暂无" + Label(model.Tabs.Selected),
                 query.Length > 0 ? "尝试其他关键词，或清空筛选查看全部记录。" : "会话中的相关内容会显示在这里。"));
         RenderPreview();
         design.ApplyTypography(this);
-    }
-
-    private void RenderArtifacts(string query)
-    {
-        transcriptTables.Update(Transcript);
-        if (transcriptTables.Selected is { } selected)
-        {
-            var heading = new Grid();
-            heading.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-            heading.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-            heading.Children.Add(TextHeading(selected.Name));
-            var dismiss = design.ToolButton("关闭表格预览", "close");
-            dismiss.Click += (_, _) => { transcriptTables.Dismiss(); Render(); };
-            Grid.SetColumn(dismiss, 1); heading.Children.Add(dismiss);
-            body.Children.Add(heading);
-            body.Children.Add(TranscriptView.TableElement(selected.Content, design));
-        }
-        var tables = transcriptTables.Items.Where(item => item.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase)).ToArray();
-        if (tables.Length > 0) body.Children.Add(TextHeading($"表格 · {tables.Length}"));
-        foreach (var table in tables)
-        {
-            var button = Row(table.Name, $"{table.Rows} 行 × {table.Columns} 列", "grid");
-            button.Click += (_, _) =>
-            {
-                if (!transcriptTables.Select(table.Id)) return;
-                model.DismissPreview(); readingState?.SetOffset(0); Render();
-            };
-            body.Children.Add(button);
-        }
-        var groups = NativeArtifactGroups.Collect(model.Artifacts, query);
-        foreach (var group in groups)
-        {
-            var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(0, 6, 0, 0) };
-            header.Children.Add(new TextBlock { Text = group.Label, FontSize = 12, Foreground = design.Brush("text-muted"), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-            header.Children.Add(new TextBlock { Text = group.Items.Count.ToString(), FontSize = 11, Foreground = design.Brush("text-faint"), VerticalAlignment = VerticalAlignment.Bottom });
-            body.Children.Add(header);
-            foreach (var artifact in group.Items)
-            {
-                var captured = artifact;
-                var button = Row(captured.Name, (captured.LogicalPath ?? captured.Path), "doc");
-                button.Click += async (_, _) => { transcriptTables.Dismiss(); await model.ReadArtifactAsync(captured.Id, lifetime.Token); Render(); };
-                body.Children.Add(button);
-            }
-        }
-        if (model.Artifacts.Length == 0 && transcriptTables.Items.Count == 0 && !model.Loading)
-            body.Children.Add(design.EmptyState("doc", "暂无产物", "会话中的表格和生成的文件、图片、报告会集中显示在这里。"));
-        else if (groups.Count == 0 && tables.Length == 0 && !model.Loading) body.Children.Add(Mute("没有匹配的产物"));
-    }
-
-    private void RenderFiles(string query)
-    {
-        var actions = new Grid { Margin = new Thickness(0, 0, 0, 12) };
-        actions.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        actions.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        var create = design.ToolButton("新建", "plus", true);
-        create.HorizontalAlignment = HorizontalAlignment.Left;
-        var createMenu = new MenuFlyout();
-        foreach (var (label, action) in new[] { ("新建文件", NativePanelFileAction.CreateFile), ("新建文件夹", NativePanelFileAction.CreateDirectory) })
-        {
-            var item = new MenuFlyoutItem { Text = label };
-            item.Click += async (_, _) => await PromptFileAsync(action);
-            createMenu.Items.Add(item);
-        }
-        TrackMenu(createMenu); create.Flyout = createMenu;
-        actions.Children.Add(create);
-        var refresh = design.ToolButton("刷新文件列表", "refresh");
-        refresh.IsEnabled = !model.Loading;
-        refresh.Click += async (_, _) => await ShowTabAsync("files");
-        Grid.SetColumn(refresh, 1); actions.Children.Add(refresh);
-        body.Children.Add(actions);
-        var location = new Grid { ColumnSpacing = 6, Margin = new Thickness(0, 0, 0, 10) };
-        location.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        location.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        var up = design.ToolButton("上一级文件夹", "arrow-left");
-        up.IsEnabled = model.Path != ".";
-        up.Click += async (_, _) => { await model.RefreshAsync("files", model.Parent, lifetime.Token); Render(); };
-        location.Children.Add(up);
-        var path = design.Text(model.Path == "." ? "项目文件" : model.Path, 12);
-        path.Foreground = design.Brush("text-muted"); path.TextWrapping = TextWrapping.NoWrap;
-        path.TextTrimming = TextTrimming.CharacterEllipsis; path.VerticalAlignment = VerticalAlignment.Center;
-        ToolTipService.SetToolTip(path, model.Path); Grid.SetColumn(path, 1); location.Children.Add(path);
-        body.Children.Add(location);
-        var files = NativeFileListPresentation.VisibleFiles(model.Files, query);
-        var count = Mute(query.Length == 0 ? $"{files.Length} 项" : $"{files.Length} 项匹配");
-        count.Margin = new Thickness(8, 0, 0, 8); body.Children.Add(count);
-        foreach (var file in files)
-        {
-            var captured = file;
-            var row = new Grid();
-            row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-            var content = new Grid { ColumnSpacing = 10 };
-            content.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-            content.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-            content.Children.Add(new Border { Child = design.Icon(captured.IsDir ? "folder" : "doc", 17), Width = 32, Height = 32,
-                Background = design.Brush("bg-sunken"), CornerRadius = new CornerRadius(8) });
-            var labels = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
-            var filename = design.Text(captured.Name, 13); filename.TextWrapping = TextWrapping.NoWrap;
-            filename.TextTrimming = TextTrimming.CharacterEllipsis; labels.Children.Add(filename);
-            if (!captured.IsDir) labels.Children.Add(Mute(NativeFileListPresentation.Size(captured.Size)));
-            Grid.SetColumn(labels, 1); content.Children.Add(labels);
-            var button = new Button { Content = content, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch };
-            design.QuietButton(button); button.Padding = new Thickness(8); button.MinHeight = 48;
-            AutomationProperties.SetName(button, captured.Name + (captured.IsDir ? "，文件夹" : "，" + NativeFileListPresentation.Size(captured.Size)));
-            ToolTipService.SetToolTip(button, captured.Name);
-            button.Click += async (_, _) =>
-            {
-                if (captured.IsDir) await model.RefreshAsync("files", WorkspacePanelModel.Child(model.Path, captured.Name), lifetime.Token);
-                else await model.ReadFileAsync(WorkspacePanelModel.Child(model.Path, captured.Name), lifetime.Token);
-                Render();
-            };
-            row.Children.Add(button);
-            var menu = new MenuFlyout();
-            var rename = new MenuFlyoutItem { Text = "重命名" };
-            rename.Click += async (_, _) => await PromptFileAsync(NativePanelFileAction.Rename, captured.Name);
-            var delete = new MenuFlyoutItem { Text = "删除…" };
-            delete.Click += async (_, _) => await PromptFileAsync(NativePanelFileAction.Delete, captured.Name);
-            menu.Items.Add(rename); menu.Items.Add(new MenuFlyoutSeparator()); menu.Items.Add(delete);
-            TrackMenu(menu);
-            var more = design.ToolButton(captured.Name + " 的操作", "more"); more.Flyout = menu;
-            Grid.SetColumn(more, 1); row.Children.Add(more);
-            body.Children.Add(row);
-        }
-        if (files.Length == 0 && !model.Loading)
-        {
-            var empty = new StackPanel { Spacing = 12, Margin = new Thickness(12, 28, 12, 28), HorizontalAlignment = HorizontalAlignment.Center };
-            empty.Children.Add(design.Icon("folder", 28));
-            empty.Children.Add(Mute(query.Length == 0 ? "此文件夹为空" : "没有匹配的文件"));
-            body.Children.Add(empty);
-        }
     }
 
     private void TrackMenu(FlyoutBase menu)
@@ -379,24 +285,26 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
 
     private async Task PromptFileAsync(NativePanelFileAction action, string currentName = "")
     {
-        var name = new TextBox { Text = currentName, PlaceholderText = "名称" };
+        if (!model.CanMutateLocalFiles) return;
+        var directory = model.Path; var context = model.FileContext;
+        var name = new TextBox { Text = currentName, PlaceholderText = design.T("files.name") };
         var dialog = new ContentDialog
         {
-            Title = action switch { NativePanelFileAction.CreateFile => "新建文件", NativePanelFileAction.CreateDirectory => "新建文件夹", NativePanelFileAction.Rename => "重命名", _ => "删除" },
-            Content = action == NativePanelFileAction.Delete ? new TextBlock { Text = $"永久删除“{currentName}”？文件夹内的所有内容也会被删除。此操作无法撤销。", TextWrapping = TextWrapping.Wrap } : name,
-            PrimaryButtonText = action == NativePanelFileAction.Delete ? "删除" : "确定",
-            CloseButtonText = "取消",
+            Title = action switch { NativePanelFileAction.CreateFile => design.T("files.new_file"), NativePanelFileAction.CreateDirectory => design.T("files.new_directory"), NativePanelFileAction.Rename => design.T("files.rename"), _ => design.L("删除", "Delete") },
+            Content = action == NativePanelFileAction.Delete ? new TextBlock { Text = design.T("files.delete_directory_confirm").Replace("{path}", currentName), TextWrapping = TextWrapping.Wrap } : name,
+            PrimaryButtonText = action == NativePanelFileAction.Delete ? design.L("删除", "Delete") : design.L("确定", "Confirm"),
+            CloseButtonText = design.L("取消", "Cancel"),
             XamlRoot = XamlRoot
         };
         fileDialog = dialog;
         ContentDialogResult result;
         try { result = await dialog.ShowAsync(); }
         finally { fileDialog = null; }
-        if (result != ContentDialogResult.Primary) return;
+        if (result != ContentDialogResult.Primary || disposed || model.Path != directory || model.FileContext != context) return;
         try
         {
-            var target = NativePanelPaths.Destination(model.Path, action is NativePanelFileAction.Rename or NativePanelFileAction.Delete ? currentName : name.Text);
-            var destination = action == NativePanelFileAction.Rename ? NativePanelPaths.Destination(model.Path, name.Text) : null;
+            var target = NativePanelPaths.Destination(directory, action is NativePanelFileAction.Rename or NativePanelFileAction.Delete ? currentName : name.Text);
+            var destination = action == NativePanelFileAction.Rename ? NativePanelPaths.Destination(directory, name.Text) : null;
             await model.PerformFileActionAsync(action, target, destination, lifetime.Token);
             Render();
         }
@@ -405,219 +313,56 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
 
     private async Task ShowErrorAsync(string message)
     {
-        var dialog = new ContentDialog { Title = "文件操作", Content = message, CloseButtonText = "关闭", XamlRoot = XamlRoot };
+        var dialog = new ContentDialog { Title = design.L("文件操作", "File operation"), Content = message, CloseButtonText = design.L("关闭", "Close"), XamlRoot = XamlRoot };
         fileDialog = dialog;
         try { await dialog.ShowAsync(); }
         finally { fileDialog = null; }
     }
 
-    private void RenderHosts()
-    {
-        RenderRunDetail();
-        if (model.Contexts?.DefaultContext is { } currentDefault)
-        {
-            var id = currentDefault.ContextId;
-            var label = id is null ? "继承全局设置" : id == "local" ? "本机" :
-                model.Contexts.Contexts.FirstOrDefault(context => context.Id == id)?.Label ?? "环境不可用：" + id;
-            body.Children.Add(Mute("本会话默认执行环境：" + label));
-        }
-        if (model.ContextUncertain)
-        {
-            var refresh = new Button { Content = "重新读取环境设置", IsEnabled = !model.Loading && !model.ContextBusy };
-            refresh.Click += async (_, _) => await ShowTabAsync("hosts");
-            body.Children.Add(refresh);
-        }
-        foreach (var context in model.Contexts?.Contexts ?? [])
-        {
-            var captured = context;
-            var attached = model.Contexts!.EnabledIds.Contains(captured.Id) || captured.Kind == "local";
-            var row = new StackPanel { Spacing = 4 };
-            var heading = Row(captured.Label, captured.Kind + (attached ? " · 已连接" : ""), "terminal");
-            var actions = new NativeActionWrap();
-            row.Children.Add(heading); row.Children.Add(actions);
-            if (captured.Kind != "local" && model.Contexts?.ReadOnly != true)
-            {
-                var toggle = new Button { Content = attached ? "断开" : "连接", IsEnabled = model.CanChangeContext };
-                toggle.Click += async (_, _) => { var change = model.SetContextEnabledAsync(captured.Id, !attached, lifetime.Token); Render(); await change; Render(); };
-                design.ActionButton(toggle); actions.Children.Add(toggle);
-            }
-            if (model.Contexts is { ReadOnly: false, DefaultContext: not null })
-            {
-                var target = captured.Kind == "local" ? "local" : captured.Id;
-                var selected = model.Contexts.DefaultContext.ContextId == target;
-                var choose = new Button { Content = selected ? "本会话默认" : "设为本会话默认", IsEnabled = model.CanChangeContext && !selected };
-                choose.Click += async (_, _) => { var change = model.SetDefaultContextAsync(target, lifetime.Token); Render(); await change; Render(); };
-                design.ActionButton(choose); actions.Children.Add(choose);
-            }
-            if (openTerminal is not null && attached)
-            {
-                var terminal = new Button { Content = "打开终端" };
-                terminal.Click += (_, _) => openTerminal(captured.Id);
-                design.ActionButton(terminal); actions.Children.Add(terminal);
-            }
-            body.Children.Add(row);
-        }
-        if ((model.Contexts?.Contexts.Length ?? 0) == 0) body.Children.Add(Mute("没有已连接的运行环境"));
-        RenderRuntimes();
-        RenderExecutePanel();
-        RenderRuns();
-    }
-
-    private void RenderRuntimes()
-    {
-        var activity = model.Activity;
-        if (activity is null) return;
-        body.Children.Add(TextHeading("运行时"));
-        if (activity.Runtimes.Length == 0) body.Children.Add(Mute("没有已启动的解释器；执行代码会自动按环境启动。"));
-        foreach (var runtime in activity.Runtimes)
-        {
-            var captured = runtime;
-            var card = new StackPanel { Spacing = 4 };
-            var detail = $"{runtime.Status}" +
-                (string.IsNullOrEmpty(runtime.Interpreter) ? "" : " · " + runtime.Interpreter) +
-                (runtime.ResidentMemoryBytes is { } memory ? $" · {memory / 1024 / 1024} MB" : "");
-            if (!string.IsNullOrEmpty(runtime.LastError)) detail += "\n" + runtime.LastError;
-            card.Children.Add(Row($"{runtime.Key.Language} · {runtime.Key.ContextId}", detail, "gauge"));
-            if (!activity.ReadOnly)
-            {
-                var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-                var stop = new Button { Content = "停止", IsEnabled = !model.ActivityBusy };
-                stop.Click += async (_, _) => { await model.StopRuntimeAsync(captured.RuntimeId, captured.Generation, lifetime.Token); Render(); };
-                var restart = new Button { Content = "重启", IsEnabled = !model.ActivityBusy };
-                restart.Click += async (_, _) => { await model.RestartRuntimeAsync(captured.RuntimeId, captured.Generation, lifetime.Token); Render(); };
-                var dismiss = new Button { Content = "丢弃", IsEnabled = !model.ActivityBusy };
-                dismiss.Click += async (_, _) => { await model.DismissRuntimeAsync(captured.RuntimeId, captured.Generation, lifetime.Token); Render(); };
-                row.Children.Add(stop); row.Children.Add(restart); row.Children.Add(dismiss);
-                card.Children.Add(row);
-            }
-            body.Children.Add(card);
-        }
-    }
-
-    private void RenderExecutePanel()
-    {
-        var activity = model.Activity;
-        if (activity is null) return;
-        body.Children.Add(TextHeading("执行代码"));
-        var attached = (model.Contexts?.Attached ?? []).Where(c => activity.Runtimes.Any(r => r.Key.ContextId == c.Id) || c.Kind == "local").ToArray();
-        if (model.Contexts is { ReadOnly: true } || attached.Length == 0)
-        {
-            body.Children.Add(Mute("当前环境只读或未连接，执行面板不可用。"));
-            return;
-        }
-        var contextPicker = new ComboBox { MaxWidth = 280, HorizontalAlignment = HorizontalAlignment.Stretch };
-        foreach (var context in attached) contextPicker.Items.Add(new ComboBoxItem { Content = context.Label, Tag = context.Id });
-        contextPicker.SelectedIndex = 0;
-        var languagePicker = new ComboBox { MaxWidth = 120 };
-        foreach (var language in new[] { "python", "r" }) languagePicker.Items.Add(new ComboBoxItem { Content = language, Tag = language });
-        languagePicker.SelectedIndex = 0;
-        var code = new TextBox { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 80,
-            PlaceholderText = "输入要执行的代码…", FontFamily = design.Font(true), FontSize = design.FontSize(12, true) };
-        var run = new Button { Content = "执行", IsEnabled = !model.ActivityBusy };
-        run.Click += async (_, _) =>
-        {
-            if (contextPicker.SelectedItem is ComboBoxItem contextItem && languagePicker.SelectedItem is ComboBoxItem languageItem
-                && code.Text.Trim().Length > 0)
-                await model.ExecuteAsync((string)contextItem.Tag, (string)languageItem.Tag, code.Text, lifetime.Token);
-            Render();
-        };
-        body.Children.Add(contextPicker); body.Children.Add(languagePicker); body.Children.Add(code); body.Children.Add(run);
-        if (model.Execution is { } execution)
-        {
-            if (execution.Text.Length > 0)
-                body.Children.Add(new TextBox { AcceptsReturn = true, Text = execution.Text, IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
-                    FontFamily = design.Font(true), FontSize = design.FontSize(11, true), MaxHeight = 220 });
-            foreach (var plot in execution.Plots.Where(File.Exists))
-            {
-                try
-                {
-                    body.Children.Add(new Border
-                    {
-                        Child = new Image { Source = new BitmapImage(new Uri(Path.GetFullPath(plot))), MaxHeight = 260, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Left },
-                        CornerRadius = new CornerRadius(8), Padding = new Thickness(4), Background = design.Brush("bg-app")
-                    });
-                }
-                catch { }
-            }
-        }
-    }
-
-    private void RenderRuns()
-    {
-        var activity = model.Activity;
-        if (activity is null) return;
-        body.Children.Add(TextHeading("运行记录"));
-        if (activity.Runs.Length == 0) { body.Children.Add(Mute("暂无运行记录。")); return; }
-        foreach (var run in activity.Runs)
-        {
-            var captured = run;
-            var card = new StackPanel { Spacing = 4 };
-            var detail = $"{NativeToolPresentation.RunState(run.Status)} · {run.Kind}" + (run.ExitCode is { } exit ? $" · 退出码 {exit}" : "");
-            var rowButton = Row(run.Title, detail, "list");
-            rowButton.Click += async (_, _) => await PresentRunAsync(captured.Id, false);
-            card.Children.Add(rowButton);
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-            if (!activity.ReadOnly && run.Status is "running" or "paused" or "submitted")
-            {
-                var cancel = new Button { Content = "取消", IsEnabled = !model.ActivityBusy && !(runReview?.Mutating == true && runReview.RunId == run.Id) };
-                cancel.Click += async (_, _) => { var change = model.CancelRunAsync(captured.Id, lifetime.Token); Render(); await change; Render(); };
-                row.Children.Add(cancel);
-            }
-            if (!activity.ReadOnly && run.HarvestedAt is null && run.CleanedAt is null && run.Status is "succeeded" or "failed" or "cancelled" or "timed_out" or "lost")
-            {
-                var harvest = new Button { Content = "收取", IsEnabled = !model.ActivityBusy && !(runReview?.Mutating == true && runReview.RunId == run.Id) };
-                harvest.Click += async (_, _) => { var change = model.HarvestRunAsync(captured.Id, lifetime.Token); Render(); await change; Render(); };
-                row.Children.Add(harvest);
-            }
-            if (row.Children.Count > 0) card.Children.Add(row);
-            body.Children.Add(card);
-        }
-    }
-
     private void RenderRunDetail()
     {
         if (model.SelectedRunId is not { } selected) return;
-        body.Children.Add(TextHeading("运行详情 · " + selected));
+        body.Children.Add(TextHeading(design.L("运行详情", "Run details") + " · " + selected));
         if (runReview?.DismissalError is { } dismissalError) body.Children.Add(Mute(dismissalError));
-        if (runReview?.Mutating == true) body.Children.Add(Mute("审阅操作仍在处理，详情可能尚未更新。"));
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-        var refresh = new Button { Content = "刷新详情", IsEnabled = !model.RunLoading };
+        if (runReview?.Mutating == true) body.Children.Add(Mute(design.L("审阅操作仍在处理，详情可能尚未更新。", "A review action is still in progress; details may be outdated.")));
+        var actions = new NativeActionWrap();
+        var refresh = new Button { Content = design.L("刷新详情", "Refresh details"), IsEnabled = !model.RunLoading };
         refresh.Click += async (_, _) => await PresentRunAsync(selected, false);
-        var dismiss = new Button { Content = "关闭详情" };
+        var dismiss = new Button { Content = design.L("关闭详情", "Close details") };
         dismiss.Click += (_, _) => { model.DismissRun(); Render(); };
         actions.Children.Add(refresh); actions.Children.Add(dismiss); body.Children.Add(actions);
         if (model.RunLoading) body.Children.Add(new ProgressBar { IsIndeterminate = true, Height = 3 });
         if (model.RunError is { } error)
-            body.Children.Add(new TextBlock { Text = error + (model.RunDetail != null ? "\n以下为上次读取的详情。" : ""),
+            body.Children.Add(new TextBlock { Text = error + (model.RunDetail != null ? design.L("\n以下为上次读取的详情。", "\nShowing the last available details.") : ""),
                 TextWrapping = TextWrapping.Wrap, Foreground = design.Brush("clay-strong") });
         if (model.RunDetail is { } runDetail)
         {
             var card = new StackPanel { Spacing = 4 };
             card.Children.Add(TextHeading(runDetail.Title));
-            card.Children.Add(Mute($"{NativeToolPresentation.RunState(runDetail.Status)} · {runDetail.Kind} · {runDetail.ContextId}"));
+            card.Children.Add(Mute($"{NativeToolPresentation.RunState(runDetail.Status, design.Localization)} · {runDetail.Kind} · {runDetail.ContextId}"));
             if (runReview != null && model.Activity?.RunReviewSupported == true && runDetail.Kind == "ssh_direct"
                 && runDetail.Status is "succeeded" or "failed" or "cancelled" or "timed_out" or "lost")
             {
-                var review = new Button { Content = "结果与清理", IsEnabled = !model.ActivityBusy && !runReview.Mutating };
-                review.Click += async (_, _) => { viewState.For("hosts").SetOffset(0); await runReview.OpenAsync(runDetail.Id, lifetime.Token, model.Activity.ReadOnly); };
+                var review = new Button { Content = design.L("结果与清理", "Results and cleanup"), IsEnabled = !model.ActivityBusy && !runReview.Mutating };
+                review.Click += async (_, _) => { viewState.For("runs").SetOffset(0); await runReview.OpenAsync(runDetail.Id, lifetime.Token, model.Activity.ReadOnly); };
                 card.Children.Add(review);
             }
-            if (runDetail.ExitCode is { } exit) card.Children.Add(Mute($"退出码：{exit}"));
-            if (!string.IsNullOrEmpty(runDetail.RemoteWorkdir)) card.Children.Add(Mute("工作目录：" + runDetail.RemoteWorkdir));
+            if (runDetail.ExitCode is { } exit) card.Children.Add(Mute(design.L("退出码：", "Exit code: ") + exit));
+            if (!string.IsNullOrEmpty(runDetail.RemoteWorkdir)) card.Children.Add(Mute(design.L("工作目录：", "Working directory: ") + runDetail.RemoteWorkdir));
             if (!string.IsNullOrEmpty(runDetail.Command)) card.Children.Add(new TextBox { Text = runDetail.Command, IsReadOnly = true, TextWrapping = TextWrapping.Wrap, FontFamily = design.Font(true), FontSize = design.FontSize(11, true) });
             if (!string.IsNullOrEmpty(runDetail.StdoutTail))
             {
-                card.Children.Add(Mute("标准输出（末尾片段）"));
+                card.Children.Add(Mute(design.L("标准输出（末尾片段）", "Standard output (tail)")));
                 card.Children.Add(new TextBox { AcceptsReturn = true, Text = runDetail.StdoutTail, IsReadOnly = true, TextWrapping = TextWrapping.Wrap, FontFamily = design.Font(true), FontSize = design.FontSize(11, true), MaxHeight = 180 });
             }
             if (!string.IsNullOrEmpty(runDetail.StderrTail))
             {
-                card.Children.Add(Mute("标准错误（末尾片段）"));
+                card.Children.Add(Mute(design.L("标准错误（末尾片段）", "Standard error (tail)")));
                 card.Children.Add(new TextBox { AcceptsReturn = true, Text = runDetail.StderrTail, IsReadOnly = true, TextWrapping = TextWrapping.Wrap, FontFamily = design.Font(true), FontSize = design.FontSize(11, true), MaxHeight = 120 });
             }
             if (string.IsNullOrEmpty(runDetail.StdoutTail) && string.IsNullOrEmpty(runDetail.StderrTail))
-                card.Children.Add(Mute("本次读取暂无输出。"));
-            if (!string.IsNullOrEmpty(runDetail.LastPollError)) card.Children.Add(Mute("上次状态轮询失败：" + runDetail.LastPollError));
+                card.Children.Add(Mute(design.L("本次读取暂无输出。", "No output available yet.")));
+            if (!string.IsNullOrEmpty(runDetail.LastPollError)) card.Children.Add(Mute(design.L("上次状态轮询失败：", "Last status poll failed: ") + runDetail.LastPollError));
             if (runDetail.CleanupError is { } cleanupError) card.Children.Add(Mute(cleanupError));
             body.Children.Add(card);
         }
@@ -779,13 +524,34 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
     public async Task OpenSearchArtifactAsync(string id)
     {
         if (disposed) return;
-        await model.ReadArtifactAsync(id, lifetime.Token);
-        if (!disposed) Render();
+        await model.RefreshAsync("artifacts", cancellationToken: lifetime.Token);
+        if (!disposed) { Render(); await OpenArtifactDialogAsync(id); }
+    }
+
+    private async Task OpenArtifactDialogAsync(string id, WorkspaceArtifactModel? source = null)
+    {
+        if (disposed || artifactDialog != null) { source?.Close(); return; }
+        var reader = source ?? model.CreateArtifactPreview();
+        var dialog = artifactDialog = new NativeArtifactDialog(reader, design, XamlRoot, pickDownload, insertArtifactDraft, openCenter != null,
+            quoteDocument == null ? null : request => !disposed && IsLoaded && conversation?.Snapshot is { } snapshot
+                && snapshot.ProjectId == request.ProjectId && snapshot.SessionId == request.SessionId
+                && quoteDocument(request.Path, request.Selection));
+        try
+        {
+            await dialog.ShowAsync(id);
+            if (!disposed && dialog.CenterRequestedId is { } selected) openCenter?.Invoke(reader.Fork(), selected);
+            if (!disposed && dialog.InputRequestedPath is { } input)
+            {
+                syncingFilter = true; filter.Text = ""; syncingFilter = false;
+                await model.RevealArtifactInputAsync(input, lifetime.Token);
+                if (!disposed) { tabChanged?.Invoke(model.Tabs.Selected, model.Tabs.Saved); Render(); }
+            }
+        }
+        finally { if (artifactDialog == dialog) artifactDialog = null; dialog.Dispose(); }
     }
 
     private void RenderPreview()
     {
-        sourceSelectionEditor = null;
         var openingDocument = documentContent != model.Preview;
         if (documentContent != model.Preview) { documentPreview?.Dispose(); documentPreview = null; documentContent = null; }
         if (!ReferenceEquals(scientificSource, model.Preview)) scientificSource = null;
@@ -798,11 +564,11 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
             var previewActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             if (scientificKind != null && preview.Text != null)
             {
-                var source = new Button { Content = "查看源文本" };
+                var source = new Button { Content = design.L("查看源文本", "View source") };
                 source.Click += (_, _) => { scientificSource = preview; documentPreview?.Dispose(); documentPreview = null; Render(); };
                 previewActions.Children.Add(source);
             }
-            var dismissDocument = new Button { Content = "关闭预览" };
+            var dismissDocument = new Button { Content = design.L("关闭预览", "Close preview") };
             dismissDocument.Click += (_, _) => { model.DismissPreview(); Render(); };
             previewActions.Children.Add(dismissDocument);
             body.Children.Add(previewActions);
@@ -836,46 +602,26 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
             var sourceContent = model.Preview;
             body.Children.Add(new TextBlock { Text = model.Preview.Path, FontSize = 12, Foreground = design.Brush("text-muted") });
             var editor = new TextBox { AcceptsReturn = true, Text = text, IsReadOnly = !model.PreviewEditable, TextWrapping = TextWrapping.Wrap, MinHeight = 120 };
-            sourceSelectionEditor = editor;
             body.Children.Add(editor);
-            if (quoteDocument != null) {
-                var quotes = new NativeActionWrap();
-                var status = Mute("选择源文本后可加入聊天；引用会保留文件路径和行号。");
-                var actions = new List<Button>();
-                foreach (var (label, jump) in new[] { ("加入聊天", false), ("加入聊天并跳转", true) }) {
-                    var action = new Button { Content = label, IsEnabled = false }; actions.Add(action);
-                    action.Click += (_, _) => {
-                        if (disposed || !IsLoaded || !editor.IsLoaded || !ReferenceEquals(model.Preview, sourceContent)) return;
-                        var selection = NativeDocumentSelection.FromSource(editor.Text, editor.SelectionStart, editor.SelectionLength, jump,
-                            editor.Text.Replace("\r\n", "\n").Replace('\r', '\n') != text.Replace("\r\n", "\n").Replace('\r', '\n'));
-                        if (selection == null) return;
-                        if (quoteDocument(sourceContent.Path, selection)) {
-                            editor.Select(editor.SelectionStart, 0); status.Text = "已加入聊天草稿。";
-                        } else status.Text = "未能加入聊天，请检查当前会话后重试。";
-                    };
-                    quotes.Children.Add(action);
-                }
-                editor.SelectionChanged += (_, _) => {
-                    var valid = NativeDocumentSelection.FromSource(editor.Text, editor.SelectionStart, editor.SelectionLength, false) != null;
-                    foreach (var action in actions) action.IsEnabled = valid;
-                };
-                body.Children.Add(quotes); body.Children.Add(status);
-            }
+            if (quoteDocument != null)
+                sourceSelectionActions = new(editor, text, design,
+                    () => !disposed && IsLoaded && ReferenceEquals(model.Preview, sourceContent),
+                    selection => quoteDocument(sourceContent.Path, selection));
             var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             if (scientificKind != null)
             {
-                var interactive = new Button { Content = "返回交互预览" };
+                var interactive = new Button { Content = design.L("返回交互预览", "Back to preview") };
                 interactive.Click += (_, _) => { scientificSource = null; documentContent = null; Render(); };
                 row.Children.Add(interactive);
             }
-            if (!model.PreviewEditable)
+            if (!model.PreviewEditable && model.CanEditPreview)
             {
-                var edit = new Button { Content = "编辑" }; edit.Click += (_, _) => { model.EditPreview(); Render(); };
+                var edit = new Button { Content = design.L("编辑", "Edit") }; edit.Click += (_, _) => { model.EditPreview(); Render(); };
                 row.Children.Add(edit);
             }
-            else
+            else if (model.PreviewEditable)
             {
-                var save = new Button { Content = "保存" };
+                var save = new Button { Content = design.L("保存", "Save") };
                 save.Click += async (_, _) =>
                 {
                     try { await model.SaveFileAsync(text, editor.Text, lifetime.Token); Render(); }
@@ -883,7 +629,7 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
                 };
                 row.Children.Add(save);
             }
-            var dismiss = new Button { Content = "关闭预览" }; dismiss.Click += (_, _) => { model.DismissPreview(); Render(); };
+            var dismiss = new Button { Content = design.L("关闭预览", "Close preview") }; dismiss.Click += (_, _) => { model.DismissPreview(); Render(); };
             row.Children.Add(dismiss); body.Children.Add(row);
             return;
         }
@@ -920,7 +666,7 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
                     CornerRadius = new CornerRadius(8), Padding = new Thickness(4), Background = design.Brush("bg-app")
                 });
                 if (content.Truncated) stack.Children.Add(Mute("内容被截断；预览可能不完整。"));
-                var dismiss = new Button { Content = "关闭预览" }; dismiss.Click += (_, _) => { model.DismissPreview(); Render(); };
+                var dismiss = new Button { Content = design.L("关闭预览", "Close preview") }; dismiss.Click += (_, _) => { model.DismissPreview(); Render(); };
                 stack.Children.Add(dismiss);
                 previewImages[key] = stack;
             }
@@ -952,24 +698,29 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
         return button;
     }
     private TextBlock Mute(string text) => new() { Text = text, Foreground = design.Brush("text-muted"), FontSize = 12, TextWrapping = TextWrapping.Wrap };
-    private static string Label(string id) => id switch
+    private string Label(string id) => id switch
     {
-        "artifacts" => "产物", "files" => "文件", "hosts" => "环境", "agents" => "工作流",
-        "notebook" => "笔记本", "highlights" => "摘录", "provenance" => "溯源", "sidechat" => "侧聊", _ => id
+        "artifacts" => design.T("right.artifacts"), "files" => design.T("right.file"), "hosts" => design.T("contexts.title"), "agents" => design.T("right.agents"),
+        "runs" => model.SessionRuns.Active.Length is var n && n > 0 ? design.Localization.Format("right.runs_n", ("n", n.ToString())) : design.T("right.runs"), "memos" => design.T("right.memos"), "notebook" => design.L("笔记本", "Notebook"), "highlights" => design.L("摘录", "Highlights"), "provenance" => design.L("溯源", "Provenance"), "sidechat" => design.L("侧聊", "Side chat"), _ => id
     };
     private static string TabIcon(string id) => id switch
     {
-        "files" => "folder", "artifacts" => "doc", "agents" => "grid", "hosts" => "server",
+        "runs" => "activity-orbit", "memos" => "notebook", "files" => "folder", "artifacts" => "doc", "agents" => "grid", "hosts" => "server",
         "notebook" => "book", "highlights" => "pin", "provenance" => "research-trail", _ => "chat"
     };
     public void Dispose()
     {
         if (disposed) return;
+        transferTimer.Stop(); transferTimer.Tick -= PollFileTransfers;
+        runsTimer.Stop(); runsTimer.Tick -= TickRuns; Loaded -= StartRunsPolling; Unloaded -= StopRunsPolling;
         foreach (var menu in openMenus.ToArray()) menu.Hide();
         fileDialog?.Hide();
+        if (contextReviewDialog != null) contextReviewDialog.IsOpen = false;
+        if (contextDialog != null) contextDialog.IsOpen = false;
         scroll.LayoutUpdated -= RestoreScroll;
         if (runReview != null) { runReview.Changed -= Render; runReview.Close(); }
         if (conversation != null) conversation.Changed -= RefreshTranscript;
-        disposed = true; lifetime.Cancel(); documentPreview?.Dispose(); model.Close(); lifetime.Dispose();
+        disposed = true; sourceSelectionActions?.Dispose(); artifactsPane.Dispose();
+        lifetime.Cancel(); tabStrip.Dispose(); memosPane?.Dispose(); artifactDialog?.Dispose(); documentPreview?.Dispose(); model.Close(); lifetime.Dispose();
     }
 }

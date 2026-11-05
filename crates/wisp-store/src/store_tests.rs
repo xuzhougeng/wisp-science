@@ -7659,6 +7659,42 @@ async fn research_graph_links_research_objects() {
         && e.target_id == "artifact:art-1"
         && e.relation == "produced"));
 
+    let scope = StateScope::mainline("p");
+    let outputs = store
+        .context_run_artifacts(&scope, "local", None)
+        .await
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    assert_eq!(outputs[0].artifact_id, "art-1");
+    assert_eq!(outputs[0].reader_session, "f1");
+    assert_eq!(outputs[0].filename, "volcano.png");
+    store
+        .create_frame("sibling", "p", "OPERON", "m")
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .context_run_artifacts(&scope, "local", Some("sibling"))
+            .await
+            .unwrap()[0]
+            .reader_session,
+        "sibling"
+    );
+    assert!(store
+        .context_run_artifacts(&scope, "ssh:elsewhere", None)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(store
+        .context_run_artifacts(
+            &StateScope::exploration("p", "private"),
+            "local",
+            Some("f1")
+        )
+        .await
+        .unwrap()
+        .is_empty());
+
     let papers = store
         .list_research_nodes("p", Some(ResearchNodeKind::Paper))
         .await
@@ -9617,7 +9653,7 @@ async fn create_exploration_checkpoint_fixture(store: &Store) {
             source_ui_event_seq: 0,
             source_ui_event_head_seq: 0,
             source_family_generation: 0,
-            source_state_generation: 0,
+            source_state_generation: store.project_state_generation("p").await.unwrap(),
             workspace_snapshot_id: "snapshot".into(),
             context_archive_id: "archive".into(),
             guard_hash: "c".repeat(64),
@@ -10326,6 +10362,99 @@ async fn discarding_exploration_purges_all_private_records() {
         .is_empty());
     assert_eq!(store.frame_message_head("main").await.unwrap(), 2);
 
+    store.pool.close().await;
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
+async fn context_output_links_keep_the_checkpoint_reader_and_exclude_later_edges() {
+    let (store, tmp) = exploration_store_fixture("context-output-links").await;
+    store
+        .upsert_execution_context(&ExecutionContext::new("local", "Local").unwrap())
+        .await
+        .unwrap();
+    store
+        .create_run(&RunRecord::new("r", "p", "local", "Analysis", "command"))
+        .await
+        .unwrap();
+    let version = store
+        .save_artifact_version(&exploration_test_artifact(
+            "a",
+            "main",
+            "path:report.tsv",
+            "before.tsv",
+        ))
+        .await
+        .unwrap();
+    store
+        .save_run_artifact_link("output", "r", "a", "table")
+        .await
+        .unwrap();
+    create_exploration_checkpoint_fixture(&store).await;
+    store
+        .capture_exploration_baseline_entities("checkpoint")
+        .await
+        .unwrap();
+    store
+        .record_exploration_baseline_artifact_head(&ExplorationBaselineArtifactHead {
+            checkpoint_id: "checkpoint".into(),
+            logical_key: "path:report.tsv".into(),
+            artifact_id: "a".into(),
+            artifact_version_id: version,
+            fingerprint: "e".repeat(64),
+        })
+        .await
+        .unwrap();
+    store
+        .create_exploration(&Exploration {
+            id: "e".into(),
+            checkpoint_id: "checkpoint".into(),
+            frame_id: "branch".into(),
+            name: "Branch".into(),
+            status: ExplorationStatus::Creating,
+            workspace_dir: "/tmp/explore".into(),
+            workspace_backend: "snapshot".into(),
+            scope_generation: 0,
+            warnings_json: "[]".into(),
+            created_at: 2,
+            updated_at: 2,
+        })
+        .await
+        .unwrap();
+    store
+        .save_artifact("later", "p", "main", "later.txt", "text/plain", "later.txt")
+        .await
+        .unwrap();
+    store
+        .save_run_artifact_link("late-output", "r", "later", "text")
+        .await
+        .unwrap();
+    let branch = StateScope::exploration("p", "e");
+    let links = store
+        .context_run_artifacts(&branch, "local", Some("branch"))
+        .await
+        .unwrap();
+    assert_eq!(links.len(), 1);
+    assert_eq!(
+        (
+            links[0].artifact_id.as_str(),
+            links[0].reader_session.as_str()
+        ),
+        ("a", "branch")
+    );
+    assert!(store
+        .context_run_artifacts(&branch, "local", Some("main"))
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        store
+            .context_run_artifacts(&StateScope::mainline("p"), "local", None)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
     store.pool.close().await;
     let _ = std::fs::remove_file(tmp);
 }

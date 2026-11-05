@@ -22,7 +22,11 @@ public sealed record NativeRuntimeObjects(NativeRuntimeObject[] Objects, [proper
 public sealed record NativeRun(string Id, string? FrameId, string ContextId, string Title, string Kind, string Status,
     long CreatedAt, long? StartedAt, long? EndedAt, long? ExitCode, string? RemoteWorkdir, long? TimeoutSecs,
     long? LastPolledAt, string? LastPollError, string ProgressJson, long? HarvestedAt, long? CleanedAt,
-    string? CleanupError, string? OutputFingerprint, string? Command, string? StdoutTail, string? StderrTail, string? EnvSnapshotJson);
+    string? CleanupError, string? OutputFingerprint, string? Command, string? StdoutTail, string? StderrTail, string? EnvSnapshotJson)
+{
+    // Only supplied by the environment host; inherited/archived rows remain readable.
+    public bool? CanManage { get; init; }
+}
 public sealed record NativeContextActivity(NativeRuntimeInfo[] Runtimes, NativeRun[] Runs, bool ReadOnly, bool? RunReviewSupported = null);
 public sealed record NativeRuntimeExecution(string Text, string[] Plots);
 public interface INativeContextActivityClient

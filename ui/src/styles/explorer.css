@@ -2,7 +2,7 @@
 .proj-meta { font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-faint); padding: 0 12px 8px; line-height: 1.4; }
 /* Capabilities grows with startup errors and the local-environment list, so it
    scrolls like every other .modal instead of clipping its lower rows (#1639). */
-.modal-wide { max-width: 560px; max-height: min(80vh, 640px); overflow-y: auto; }
+.modal-wide { max-width: 560px; max-height: min(80vh, 640px); overflow-x: hidden; overflow-y: auto; }
 .fb-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .fb-head h2 { margin: 0; }
 .fb-source-label { display: flex; flex-direction: column; gap: 4px; font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-faint); }

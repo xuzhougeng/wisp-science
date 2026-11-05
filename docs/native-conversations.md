@@ -706,6 +706,24 @@ profile produces an error instead of falling back to an HTTP model. Pending
 choices survive project export/import and empty conversation copy/move; external
 session bindings and histories are not injected into a new ACP session.
 
+The WinUI composer now also supports a WebView-style **in-memory** ACP choice:
+empty HTTP conversations and project drafts can choose/change an ACP profile
+without creating or binding a frame. A content-bearing conversation creates an
+ordinary empty frame and moves its staged draft into it. Its first explicit send
+includes optional `SendRequest.acp_agent_id`; old requests omit the field and
+retain their previous behavior. The host resolves that requested identity against
+any existing binding, validates the configured profile, and passes it through the
+shared `send_message` ACP path. A request ID cannot be reused with a different
+agent. Queued requests cannot introduce an ACP profile override, and remote
+clients cannot use this field to launch a desktop ACP agent. No agent process or
+connection is started by opening or choosing from the WinUI menu.
+
+This transient choice is distinct from the older `CreateRequest.acp_agent_id`
+persisted-selection route above. That route remains compatible for existing
+clients and saved empty frames. Choosing an HTTP profile cannot silently replace
+an existing persisted ACP selection or connected binding. WinUI's transient
+selection remains local until sending; it is not exported as a saved choice.
+
 For an offline, isolated UI smoke, configure a QA-only ACP profile using Python
 and `scripts/qa_native_acp.py --workspace /absolute/qa/root --log /absolute/qa/log`.
 The fixture refuses other workspaces, streams a fixed answer, requests a harmless

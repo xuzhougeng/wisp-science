@@ -41,6 +41,110 @@
     },
     {
       "action": "run_daily_recap"
+    },
+    {
+      "action": "set_memory_tidy",
+      "enabled": true
+    },
+    {
+      "action": "run_memory_tidy"
+    },
+    {
+      "action": "apply_memory_tidy",
+      "id": "proposal-a"
+    },
+    {
+      "action": "dismiss_memory_tidy",
+      "id": "proposal-a"
+    },
+    {
+      "action": "create_mandate",
+      "draft": {
+        "project_id": "project-a",
+        "name": "Literature watch",
+        "goal": "Keep the project literature current",
+        "kpis": [
+          {
+            "name": "Papers filed",
+            "definition": "Screened and saved",
+            "target": "5",
+            "period": "per week",
+            "current": "2"
+          }
+        ],
+        "constraints": {
+          "autonomous": "Read and file references",
+          "review_first": "Changing conclusions",
+          "ask_for_help": "Missing material",
+          "review_mutations": true,
+          "min_interval_secs": 900,
+          "max_interval_secs": 604800,
+          "max_rounds_per_day": 6,
+          "notes": [
+            "Cite sources"
+          ]
+        },
+        "ends_at": null,
+        "interval_secs": 86400,
+        "report_interval_secs": 604800,
+        "start_at": 1790899200
+      }
+    },
+    {
+      "action": "update_mandate",
+      "id": "mandate-a",
+      "draft": {
+        "project_id": "project-a",
+        "name": "Literature watch",
+        "goal": "Keep the project literature current",
+        "kpis": [
+          {
+            "name": "Papers filed",
+            "definition": "Screened and saved",
+            "target": "5",
+            "period": "per week",
+            "current": "2"
+          }
+        ],
+        "constraints": {
+          "autonomous": "Read and file references",
+          "review_first": "Changing conclusions",
+          "ask_for_help": "Missing material",
+          "review_mutations": true,
+          "min_interval_secs": 900,
+          "max_interval_secs": 604800,
+          "max_rounds_per_day": 6,
+          "notes": [
+            "Cite sources"
+          ]
+        },
+        "ends_at": null,
+        "interval_secs": 86400,
+        "report_interval_secs": 604800,
+        "start_at": null
+      }
+    },
+    {
+      "action": "set_mandate_status",
+      "id": "mandate-a",
+      "status": "paused"
+    },
+    {
+      "action": "run_mandate",
+      "id": "mandate-a"
+    },
+    {
+      "action": "report_mandate",
+      "id": "mandate-a"
+    },
+    {
+      "action": "delete_mandate",
+      "id": "mandate-a"
+    },
+    {
+      "action": "reply_mandate",
+      "id": "mandate-a",
+      "text": "The PDF is available"
     }
   ],
   "workspace": {
@@ -65,6 +169,13 @@
     ],
     "schedules": [],
     "runs": [],
+    "memory_tidy": {
+      "enabled": true,
+      "last_run_at": null,
+      "error": null,
+      "running": false,
+      "proposals": []
+    },
     "daily_recap": {
       "enabled": true,
       "time": "09:00",
@@ -72,6 +183,129 @@
       "drafted": 0,
       "error": null,
       "running": false
-    }
+    },
+    "mandates": [
+      {
+        "mandate": {
+          "id": "mandate-a",
+          "project_id": "project-a",
+          "name": "Literature watch",
+          "goal": "Keep the project literature current",
+          "kpis": [
+            {
+              "name": "Papers filed",
+              "definition": "Screened and saved",
+              "target": "5",
+              "period": "per week",
+              "current": "2"
+            }
+          ],
+          "constraints": {
+            "autonomous": "Read and file references",
+            "review_first": "Changing conclusions",
+            "ask_for_help": "Missing material",
+            "review_mutations": true,
+            "min_interval_secs": 900,
+            "max_interval_secs": 604800,
+            "max_rounds_per_day": 6,
+            "notes": [
+              "Cite sources"
+            ]
+          },
+          "ends_at": null,
+          "interval_secs": 86400,
+          "report_interval_secs": 604800,
+          "frame_id": null,
+          "next_report_at": 1791504000,
+          "status": "waiting",
+          "next_run_at": 1790985600,
+          "last_run_at": 1790899200,
+          "wait_run_id": null,
+          "created_at": 1790899200,
+          "updated_at": 1790899200
+        },
+        "last_round": {
+          "id": "round-a",
+          "mandate_id": "mandate-a",
+          "seq": 1,
+          "done": "Screened two papers",
+          "kpis": [],
+          "blockers": "Full text unavailable",
+          "next_step": "Compare the methods",
+          "next_run_at": null,
+          "source": "agent",
+          "created_at": 1790899200
+        },
+        "request": {
+          "id": "request-a",
+          "mandate_id": "mandate-a",
+          "kind": "materials",
+          "what": "Provide the full-text PDF",
+          "why": "Methods are not in the abstract",
+          "then_what": "Compare the methods",
+          "status": "open",
+          "reply": null,
+          "created_at": 1790899200,
+          "answered_at": null
+        },
+        "reports": [
+          {
+            "id": "report-a",
+            "mandate_id": "mandate-a",
+            "period_from": 1790294400,
+            "period_until": 1790899200,
+            "rounds": 1,
+            "kpis": [
+              {
+                "name": "Papers filed",
+                "definition": "Screened and saved",
+                "target": "5",
+                "period": "per week",
+                "current": "2"
+              }
+            ],
+            "body": {
+              "id": "recap-a",
+              "day_start": 1790899200,
+              "status": "confirmed",
+              "headline": "Literature review progressed",
+              "done": [
+                {
+                  "text": "Screened two papers",
+                  "refs": [
+                    0
+                  ]
+                }
+              ],
+              "findings": [
+                {
+                  "text": "One method is worth comparing",
+                  "refs": [
+                    0
+                  ]
+                }
+              ],
+              "issues": [],
+              "next": [
+                {
+                  "text": "Read the full methods",
+                  "refs": []
+                }
+              ],
+              "sources": [
+                {
+                  "kind": "mandate_round",
+                  "id": "round-a",
+                  "title": "Screening round"
+                }
+              ],
+              "model": "",
+              "generated_at": 1790899200
+            },
+            "created_at": 1790899200
+          }
+        ]
+      }
+    ]
   }
 }

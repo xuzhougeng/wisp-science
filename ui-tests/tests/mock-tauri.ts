@@ -553,7 +553,9 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     resolveMockOAuth?.();
     resolveMockOAuth = null;
   };
-  let skills = [
+  type MockSkillCopy = { scope: string; dir: string; effective: boolean; same_as_effective: boolean };
+  type MockSkill = { name: string; description: string; tags: string[]; scope: string; enabled: boolean; builtin: boolean; dir: string; copies?: MockSkillCopy[] };
+  let skills: MockSkill[] = [
     { name: "remote-compute-ssh", description: "Submit SSH-direct research Runs", tags: ["compute"], scope: "bundled", enabled: true, builtin: true, dir: "/skills/remote-compute-ssh" },
     { name: "literature-review", description: "Find and synthesize literature", tags: ["literature"], scope: "bundled", enabled: true, builtin: true, dir: "/skills/literature-review" },
     { name: "paper-narrative", description: "Shape a paper story", tags: [], scope: "global", enabled: true, builtin: false, dir: "/home/me/.wisp/skills/paper-narrative" },
@@ -2065,6 +2067,19 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           return value;
         };
         switch (cmd) {
+          case "get_privacy_mode": {
+            const saved = sessionStorage.getItem("mock-host-privacy");
+            if (saved) return JSON.parse(saved);
+            const legacy = arg("legacy");
+            const seed = legacy instanceof Map ? Object.fromEntries(legacy) : legacy;
+            const state = seed ?? { active: false, project_ids: [] };
+            sessionStorage.setItem("mock-host-privacy", JSON.stringify(state));
+            return state;
+          }
+          case "set_privacy_mode": {
+            sessionStorage.setItem("mock-host-privacy", JSON.stringify({ active: arg("active"), project_ids: arg("projectIds") }));
+            return null;
+          }
           case "start_window_move":
             return null;
           case "review_session": {
@@ -5185,21 +5200,24 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               : null;
           case "skill_install_locations":
             return { global_dir: mockGlobalSkillsDir, project_dir: mockProjectSkillsDir };
+          case "install_scoped_skill":
           case "install_skill": {
+            if (query.get("mockSkillMissingReceipt") === "1") return null;
             const scope = String(arg("scope") ?? "global");
             const dir = `${scope === "project" ? mockProjectSkillsDir : mockGlobalSkillsDir}/paper-narrative`;
             return { name: "paper-narrative", scope, dir, shadowed_by: null };
           }
           case "promote_skill_to_global": {
             const skill = skills.find((s) => s.name === String(arg("name")));
-            if (!skill) throw new Error("skill_not_in_project");
+            if (!skill?.copies) throw new Error("skill_not_in_project");
             const project = skill.copies.find((c: any) => c.scope === "project");
             const dir = `${mockGlobalSkillsDir}/${skill.name}`;
             skill.copies = [...skill.copies, { scope: "global", dir, effective: false, same_as_effective: true }];
-            return { name: skill.name, scope: "global", dir, shadowed_by: project.effective ? project : null };
+            return { name: skill.name, scope: "global", dir, shadowed_by: project?.effective ? project : null };
           }
           case "remove_project_skill_copy": {
             const skill = skills.find((s) => s.name === String(arg("name")));
+            if (!skill?.copies) throw new Error("skill_not_in_project");
             skill.copies = skill.copies.filter((c: any) => c.scope !== "project");
             if (skill.scope === "project") {
               skill.copies[0].effective = true;
@@ -7538,6 +7556,19 @@ export function parallelMock(): void {
         ((window as any).__sendInvokeLog ??= []).push({ cmd, args });
         const arg = (key: string) => args instanceof Map ? args.get(key) : args?.[key];
         switch (cmd) {
+          case "get_privacy_mode": {
+            const saved = sessionStorage.getItem("mock-host-privacy");
+            if (saved) return JSON.parse(saved);
+            const legacy = arg("legacy");
+            const seed = legacy instanceof Map ? Object.fromEntries(legacy) : legacy;
+            const state = seed ?? { active: false, project_ids: [] };
+            sessionStorage.setItem("mock-host-privacy", JSON.stringify(state));
+            return state;
+          }
+          case "set_privacy_mode": {
+            sessionStorage.setItem("mock-host-privacy", JSON.stringify({ active: arg("active"), project_ids: arg("projectIds") }));
+            return null;
+          }
           case "list_demos": return [];
           case "load_demo": return { id: "x", title: "x", request: "x", response: "x" };
           case "copy_demo_to_project": return `copied-${String(arg("id") ?? "demo")}`;

@@ -760,6 +760,18 @@ mod tests {
             "native_conversation_delete",
             "write_terminal",
             "channels_status",
+            "set_remote_access",
+            "reset_remote_access_code",
+            "lab_status",
+            "lab_join",
+            "lab_set_relay_token",
+            "lab_leave",
+            "lab_set_inbox_project",
+            "lab_create_invite",
+            "lab_approve_member",
+            "lab_remove_member",
+            "lab_publish_knowledge_base",
+            "lab_join_knowledge_base",
         ] {
             assert!(check(&request(command, json!({}))).is_err(), "{command}");
         }

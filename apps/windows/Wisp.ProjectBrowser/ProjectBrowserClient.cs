@@ -6,12 +6,12 @@ using Wisp.ProjectBrowser.Contracts;
 namespace Wisp.ProjectBrowser;
 
 /// <summary>One bounded, hidden service process per query. SQLite stays in Rust.</summary>
-public sealed class ProjectBrowserClient(string executablePath, TimeSpan? timeout = null) : IProjectBrowserClient
+public sealed class ProjectBrowserClient(string executablePath, TimeSpan? timeout = null) : IProjectBrowserClient, IProjectChatHistory
 {
     public async Task<ProjectListSnapshot> ListProjectsAsync(string databasePath, CancellationToken cancellationToken = default)
     {
         var reply = await QueryAsync(databasePath, new() { ["type"] = "list_projects" }, "projects", cancellationToken);
-        return new(reply.Projects ?? throw InvalidResponse(), reply.ActivitySource!);
+        return new(reply.Projects ?? throw InvalidResponse(), reply.ActivitySource!, reply.Privacy is { ProjectIds: not null } privacy ? privacy : throw InvalidResponse());
     }
 
     public async Task<ProjectListSnapshot> SetProjectStarredAsync(string databasePath, string projectId, bool starred,
@@ -19,7 +19,7 @@ public sealed class ProjectBrowserClient(string executablePath, TimeSpan? timeou
     {
         var reply = await QueryAsync(databasePath, new() { ["type"] = "set_project_starred", ["project_id"] = projectId,
             ["starred"] = starred }, "projects", cancellationToken);
-        return new(reply.Projects ?? throw InvalidResponse(), reply.ActivitySource!);
+        return new(reply.Projects ?? throw InvalidResponse(), reply.ActivitySource!, reply.Privacy is { ProjectIds: not null } privacy ? privacy : throw InvalidResponse());
     }
 
     public async Task<IReadOnlyList<BrowserSession>> ListSessionsAsync(string databasePath, string? projectId = null,
@@ -47,9 +47,31 @@ public sealed class ProjectBrowserClient(string executablePath, TimeSpan? timeou
         catch (JsonException ex) { throw new InvalidDataException("查询服务返回了无效 JSON。", ex); }
         if (reply.Schema != ProjectBrowserProtocol.Schema || reply.Id != requestId) throw InvalidResponse();
         if (reply.Type == "error") throw new InvalidOperationException(reply.Message ?? "查询失败。");
-        if (reply.Type != expectedType || (expectedType != "transcript" && reply.ActivitySource != ProjectBrowserProtocol.PersistedOnly))
+        if (reply.Type != expectedType || (expectedType is "projects" or "sessions" && reply.ActivitySource != ProjectBrowserProtocol.PersistedOnly))
             throw InvalidResponse();
         return reply;
+    }
+
+    public async Task<ProjectChatMatches> SearchChatsAsync(string database, string project, string query, ProjectChatCursor? cursor, CancellationToken token)
+    {
+        var reply = await QueryAsync(database, new() { ["type"] = "search_project_chats", ["project_id"] = project,
+            ["query"] = query, ["cursor"] = cursor }, "project_chat_matches", token);
+        if (reply.ProjectId != project || reply.Query != query || reply.Page is not { Items: { Length: <= 50 } items } page
+            || items.Any(h => h == null || string.IsNullOrWhiteSpace(h.SessionId) || h.SessionTitle == null
+                || h.Role is not ("user" or "assistant" or "tool") || h.Before == null || string.IsNullOrEmpty(h.Matched) || h.After == null)
+            || page.NextCursor is { } next && (items.LastOrDefault() is not { } last ||
+                next != new ProjectChatCursor(last.Ts, last.SessionId, last.MessageSeq) || next == cursor)) throw InvalidResponse();
+        return page;
+    }
+
+    public async Task<ProjectChatLocation?> LocateChatAsync(string database, string project, ProjectChatHit hit, CancellationToken token)
+    {
+        var reply = await QueryAsync(database, new() { ["type"] = "locate_project_chat_match", ["project_id"] = project,
+            ["session_id"] = hit.SessionId, ["message_seq"] = hit.MessageSeq }, "project_chat_location", token);
+        if (reply.ProjectId != project || reply.SessionId != hit.SessionId || reply.MessageSeq != hit.MessageSeq) throw InvalidResponse();
+        if (reply.Target.ValueKind == JsonValueKind.Null) return null;
+        return reply.Target.ValueKind == JsonValueKind.Object && reply.Target.Deserialize<ProjectChatLocation>() is { UserIndex: >= 0 } target
+            ? target : throw InvalidResponse();
     }
 
     private async Task<ProjectBrowserResponse> QueryAsync(string databasePath, Dictionary<string, object?> command,
