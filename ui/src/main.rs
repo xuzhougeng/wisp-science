@@ -7192,7 +7192,7 @@ fn App() -> impl IntoView {
         }
         attachments.set(vec![]);
         sel_artifact.set(0);
-        right_tab.set(RightTab::Artifacts);
+        focus_artifacts_if_open(open_right_tabs, right_tab);
         spawn_local(async move {
             // Guard the malformed-response case before moving the visible
             // transcript, so failure leaves the current session untouched (#15).
@@ -7239,7 +7239,7 @@ fn App() -> impl IntoView {
     let start_session_with_first_message = Callback::new(move |text: String| {
         attachments.set(vec![]);
         sel_artifact.set(0);
-        right_tab.set(RightTab::Artifacts);
+        focus_artifacts_if_open(open_right_tabs, right_tab);
         let turn_model = active_model_label(&models.get_untracked());
         replace_visible_transcript(
             active_session.get_untracked(),
@@ -7369,7 +7369,7 @@ fn App() -> impl IntoView {
             composer_references.set(vec![]);
             composer_quotes.set(vec![]);
             sel_artifact.set(0);
-            right_tab.set(RightTab::Artifacts);
+            focus_artifacts_if_open(open_right_tabs, right_tab);
             active_session.set(None);
             input.set(String::new());
             let model = active_model_label(&models.get_untracked())
@@ -7457,7 +7457,7 @@ fn App() -> impl IntoView {
                 show_settings.set(false);
                 attachments.set(vec![]);
                 sel_artifact.set(0);
-                right_tab.set(RightTab::Artifacts);
+                focus_artifacts_if_open(open_right_tabs, right_tab);
                 active_session.set(Some(session_id.clone()));
                 running.update(|sessions| {
                     sessions.insert(session_id.clone());
@@ -7510,7 +7510,7 @@ fn App() -> impl IntoView {
         show_research_graph.set(false);
         attachments.set(vec![]);
         sel_artifact.set(0);
-        right_tab.set(RightTab::Artifacts);
+        focus_artifacts_if_open(open_right_tabs, right_tab);
         restore_chat_session_scroll(&id);
         // Swap the visible transcript before changing the active id. Agent
         // events are app-wide and route by `active_session`; publishing the new
@@ -8686,7 +8686,7 @@ fn App() -> impl IntoView {
         );
         attachments.set(vec![]);
         sel_artifact.set(0);
-        right_tab.set(RightTab::Artifacts);
+        focus_artifacts_if_open(open_right_tabs, right_tab);
         active_session.set(None);
         spawn_local(async move {
             let v = invoke(
@@ -12225,7 +12225,7 @@ fn App() -> impl IntoView {
         composer_references.set(vec![]);
         composer_quotes.set(vec![]);
         sel_artifact.set(0);
-        right_tab.set(RightTab::Artifacts);
+        focus_artifacts_if_open(open_right_tabs, right_tab);
         spawn_local(async move {
             let id = match invoke_new_session().await {
                 Ok(id) => id,
@@ -13557,7 +13557,20 @@ fn App() -> impl IntoView {
                         if show_right.get_untracked() {
                             show_right.set(false);
                         } else {
-                            right_launcher_open.set(true);
+                            // Reopen what the user left open; the launcher is
+                            // only the landing page when no tab is open.
+                            let reopen = open_right_tabs.with_untracked(|tabs| {
+                                right_tab_to_reopen(tabs, right_tab.get_untracked())
+                            });
+                            match reopen {
+                                Some(tab) => {
+                                    if right_tab.get_untracked() != tab {
+                                        right_tab.set(tab);
+                                    }
+                                    right_launcher_open.set(false);
+                                }
+                                None => right_launcher_open.set(true),
+                            }
                             show_right.set(true);
                         }
                     }>{compose_icon("panel")}</button>
@@ -16999,7 +17012,7 @@ fn App() -> impl IntoView {
                                                                     let agent_id = id.clone();
                                                                     demo_mode.set(false);
                                                                     sel_artifact.set(0);
-                                                                    right_tab.set(RightTab::Artifacts);
+                                                                    focus_artifacts_if_open(open_right_tabs, right_tab);
                                                                     spawn_local(async move {
                                                                         let frame_id = match invoke_new_session().await {
                                                                             Ok(frame_id) => frame_id,

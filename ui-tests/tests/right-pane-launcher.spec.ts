@@ -40,10 +40,37 @@ test("the right pane opens a grouped tool home and returns to it from any panel"
   await panel.getByTestId("right-pane-home").click();
   await panel.getByRole("button", { name: "Close panel" }).click();
   await expect(panel).toHaveCount(0);
+  // Tabs are still open, so reopening returns to them instead of the home page.
   await page.getByRole("button", { name: "Toggle panel" }).click();
-  await expect(launcher).toBeVisible();
+  await expect(launcher).toHaveCount(0);
+  await expect(panel.locator(".rp-tab")).toHaveText(["Notebook", "Agents"]);
+  await expect(panel.locator(".rp-tab.active")).toHaveText("Agents");
   await page.keyboard.press("Escape");
   await expect(panel).toHaveCount(0);
+});
+
+test("reopening the panel restores only the tools the user opened", async ({ page }) => {
+  await enterApp(page);
+  const toggle = page.getByRole("button", { name: "Toggle panel" });
+  const panel = page.locator(".rightpane");
+  await toggle.click();
+  await panel.getByTestId("right-launcher-agents").click();
+  await expect(panel.locator(".rp-tab")).toHaveText(["Agents"]);
+
+  await toggle.click();
+  await expect(panel).toHaveCount(0);
+  await toggle.click();
+  await expect(panel.getByTestId("right-pane-launcher")).toHaveCount(0);
+  await expect(panel.locator(".rp-tab")).toHaveText(["Agents"]);
+  await expect(panel.getByTestId("agent-workflows")).toBeVisible();
+
+  await panel.getByTestId("right-pane-home").click();
+  await panel.getByTestId("right-launcher-hosts").click();
+  await expect(panel.locator(".rp-tab")).toHaveText(["Agents", "Environment"]);
+  await panel.getByRole("button", { name: "Close panel" }).click();
+  await toggle.click();
+  await expect(panel.locator(".rp-tab")).toHaveText(["Agents", "Environment"]);
+  await expect(panel.locator(".rp-tab.active")).toHaveText("Environment");
 });
 
 test("direct tool links bypass the launcher without losing the way back", async ({ page }) => {
