@@ -474,6 +474,8 @@ impl Server {
             sequence: self.0.sequence.fetch_add(1, Ordering::Relaxed),
             project_id: project.into(),
             session_id: request.session_id.clone(),
+            exploration: None,
+            branches: vec![],
             items,
             next_before_seq: if use_live {
                 live.next_before_seq
