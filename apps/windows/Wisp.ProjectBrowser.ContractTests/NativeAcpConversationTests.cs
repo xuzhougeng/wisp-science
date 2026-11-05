@@ -11,6 +11,9 @@ internal static class NativeAcpConversationTests
         var model = new WorkspaceConversationModel(client, transport);
         await model.OpenAsync("p", "s");
         Check(model.Agents.Single().Label == "QA Agent" && model.Models.Single().Id == "acp:agent-exact", "bound ACP identity is visible independently of provider models");
+        Check(model.ModelMenuChoices.Select(c => c.Id).SequenceEqual(["http-chat", "acp:agent-exact"])
+            && model.ModelMenuChoices.Single(c => c.Selected).Acp,
+            "ACP menu keeps configured HTTP alternatives for inspection and selects the exact bound agent");
         var permission = model.Snapshot!.Acp!.Permissions.Single();
         await model.RespondAcpPermissionAsync(permission, "allow-label");
         Check(transport.Writes.Count == 0, "permission labels cannot substitute for option IDs");
@@ -96,7 +99,7 @@ internal static class NativeAcpConversationTests
         public Task<JsonNode?> InvokeAsync(string command, JsonObject args, string? projectId = null, CancellationToken cancellationToken = default)
         {
             if (command == "native_conversation_snapshot") return Task.FromResult(JsonSerializer.SerializeToNode(Snapshot(args["session_id"]!.GetValue<string>()), ConversationSnapshot.JsonOptions));
-            if (command == "list_models") return Task.FromResult<JsonNode?>(new JsonArray());
+            if (command == "list_models") return Task.FromResult(JsonNode.Parse("""[{"id":"http-chat","label":"HTTP model","model":"chat","provider":"example","active":true}]"""));
             if (command == "list_acp_agents") return Task.FromResult(JsonNode.Parse("""[{"id":"agent-exact","label":"QA Agent"}]"""));
             if (command is "native_conversation_acp_permission" or "native_conversation_acp_answer" or "native_conversation_create" or "native_conversation_acp_setting")
             {

@@ -1,0 +1,23 @@
+{
+  "project_id": "research-1",
+  "explorations": [
+    {
+      "exploration": {
+        "id": "explore-1", "checkpoint_id": "checkpoint-1", "frame_id": "private-1",
+        "name": "Alternative normalization", "status": "active",
+        "workspace_dir": "C:/synthetic/explorations/one", "workspace_backend": "snapshot",
+        "scope_generation": 0, "warnings_json": "[]", "created_at": 1, "updated_at": 2
+      },
+      "source_frame_id": "main-1", "checkpoint_user_index": 3, "isolation_summary_json": "{\"partial\":false}"
+    },
+    {
+      "exploration": {
+        "id": "explore-2", "checkpoint_id": "checkpoint-1", "frame_id": "private-2",
+        "name": "External reference alternative", "status": "failed",
+        "workspace_dir": "C:/synthetic/explorations/two", "workspace_backend": "snapshot",
+        "scope_generation": 0, "warnings_json": "[\"external reference\"]", "created_at": 3, "updated_at": 4
+      },
+      "source_frame_id": "main-1", "checkpoint_user_index": 3, "isolation_summary_json": "{\"partial\":true}"
+    }
+  ]
+}

@@ -7,6 +7,10 @@ internal static class WorkspaceConversationTests
     public static async Task RunAsync(string projectFixture)
     {
         var snapshotPath = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(projectFixture)!, "../../native-conversations/v1/snapshot.json"));
+        await WelcomePresentationAsync(snapshotPath);
+        await ProjectDraftAsync(snapshotPath);
+        await MemoInsertAsync(snapshotPath);
+        await ModelSelectionAsync(snapshotPath);
 
         var client = new Fake();
         var model = new WorkspaceConversationModel(client, client);
@@ -17,6 +21,13 @@ internal static class WorkspaceConversationTests
         client.Reads = [Fixture(snapshotPath)];
         await model.OpenAsync("project-a", "session-a");
         Check(client.Seen == 1, "successful open marks seen once");
+
+        client.Reads = [Fixture(snapshotPath, running: true) with { UserOffset = 4 }];
+        await model.OpenAsync("project-a", "session-a");
+        Check(await model.RevealChatQuestionAsync(new(4, null)) && model.ScrollTarget == 0 && !model.ShowingHistory,
+            "project search can jump within a running conversation's loaded transcript");
+        Check(!await model.RevealChatQuestionAsync(new(0, 8)) && !model.ShowingHistory,
+            "an older match cannot replace a running conversation with a history page");
 
         client.Reads =
         [
@@ -128,10 +139,36 @@ internal static class WorkspaceConversationTests
         model = new WorkspaceConversationModel(client, client);
         await model.OpenAsync("project-a", "session-a");
         await model.StopAsync();
-        Check(client.LastCommand == "stop" && client.LastSession == "session-a", "stop carries the selected session");
+        Check(!model.CanStop && client.Stops == 0, "an idle session cannot receive a stop request");
+        client.Reads = [Fixture(snapshotPath, sequence: 8, running: true)];
+        await model.RefreshAsync();
+        client.StopHold = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stopping = model.StopAsync();
+        Check(model.IsStopping && !model.CanStop && model.CanCompose && client.Stops == 1,
+            "stop is acknowledged immediately without locking the draft while the host request is pending");
+        await model.StopAsync();
+        Check(client.Stops == 1, "a pending stop cannot be issued twice");
+        client.Reads = [Fixture(snapshotPath, sequence: 9, running: true) with { Stopping = true }];
+        client.StopHold.SetResult(); await stopping;
+        Check(model.IsStopping && !model.CanStop && client.LastCommand == "stop" && client.LastSession == "session-a", "acknowledgement retains stopping until the host reports completion");
+        client.Reads = [Fixture(snapshotPath, sequence: 10)];
+        await model.RefreshAsync();
+        Check(!model.IsStopping && !model.ShowStopButton, "a completed turn restores the idle send button");
         await model.ApproveAsync(new ConversationApproval("exact-id", "session-a", "Run?", "shell", "echo test"), false);
         Check(client.LastCommand == "approve" && client.LastApproval == "exact-id" && client.LastApproved == false,
             "approval uses the exact one-shot identity");
+
+        client.Reads = [Fixture(snapshotPath, sequence: 11, running: true)];
+        await model.RefreshAsync();
+        client.StopHold = new(TaskCreationOptions.RunContinuationsAsynchronously); var delayedStop = model.StopAsync();
+        client.Reads = [Fixture(snapshotPath, session: "session-b", running: true)];
+        await model.OpenAsync("project-a", "session-b");
+        Check(!model.IsStopping && model.CanStop, "another running session never inherits the pending stop");
+        client.Reads = [Fixture(snapshotPath, sequence: 12, running: true)];
+        await model.OpenAsync("project-a", "session-a");
+        Check(model.IsStopping && !model.CanStop, "reopening the original turn cannot duplicate its pending stop");
+        client.StopHold.SetException(new IOException("synthetic interruption failure")); await delayedStop;
+        Check(!model.IsStopping && model.CanStop, "a failed acknowledgement unlocks a deliberate retry");
 
         client = new Fake { FailSend = true, Reads = [Fixture(snapshotPath)] };
         model = new WorkspaceConversationModel(client, client);
@@ -246,10 +283,136 @@ internal static class WorkspaceConversationTests
         Check(client.FastWrites == 2 && !model.Busy, "already cancelled operations never start a host write");
     }
 
+    private static async Task WelcomePresentationAsync(string path)
+    {
+        var empty = Fixture(path) with { Items = [] };
+        var client = new Fake { Reads = [empty] };
+        var model = new WorkspaceConversationModel(client);
+        Check(model.ShowWelcome, "a project without a session shows the centered welcome");
+        var hold = client.Hold = new TaskCompletionSource<ConversationSnapshot>();
+        var opening = model.OpenAsync("project-a", "session-a");
+        Check(!model.ShowWelcome, "loading a session does not flash an empty welcome");
+        hold.SetResult(empty); await opening;
+        Check(model.ShowWelcome, "an empty loaded session keeps the welcome above its composer");
+        client.Reads = [empty with { Sequence = 8, Running = true }]; await model.RefreshAsync();
+        Check(!model.ShowWelcome, "a running conversation is never presented as a new conversation");
+        client.Reads = [Fixture(path, sequence: 9)]; await model.RefreshAsync();
+        Check(!model.ShowWelcome, "received messages replace the welcome with the transcript");
+        client.Reads = [empty with { Sequence = 10, NextBeforeSeq = 1 }]; await model.RefreshAsync();
+        await model.OlderAsync();
+        Check(!model.ShowWelcome, "an empty historical page does not offer a new conversation");
+        model.Latest(); client.FailRead = true; await model.RefreshAsync();
+        Check(!model.ShowWelcome, "a failed read remains visible instead of being covered by welcome content");
+    }
+
     private static void Check(bool passed, string name)
     {
         if (!passed) throw new InvalidOperationException(name);
         Console.WriteLine("PASS conversation: " + name);
+    }
+
+    private static async Task MemoInsertAsync(string path)
+    {
+        var client = new Fake(); var model = new WorkspaceConversationModel(client, client);
+        Check(!model.InsertMemoBody("private"), "memo insert requires a composer scope");
+        await model.OpenProjectDraftAsync("project-a"); model.Draft = "existing\n";
+        Check(model.InsertMemoBody("first\nsecond") && model.Draft == "existing\n\nfirst\nsecond", "memo body appends to the unsent project draft");
+        Check(client.Creates == 0 && client.Sends == 0 && model.CurrentSessionId == null, "memo insert never creates or sends a session");
+        await model.OpenProjectDraftAsync("project-b"); Check(model.Draft == "", "memo text does not leak to another project");
+        await model.OpenProjectDraftAsync("project-a"); Check(model.Draft == "existing\n\nfirst\nsecond", "inserted memo survives local draft navigation");
+        client.Reads = [Fixture(path) with { ReadOnly = true }]; await model.OpenAsync("project-a", "session-a");
+        var previous = model.Draft; Check(!model.InsertMemoBody("blocked") && model.Draft == previous, "read-only conversations reject memo insertion");
+        model.Pause();
+    }
+
+    private static async Task ProjectDraftAsync(string path)
+    {
+        var client = new Fake { Reads = [Fixture(path, session: "new") with { Items = [] }] };
+        var model = new WorkspaceConversationModel(client, client);
+        await model.OpenProjectDraftAsync("project-a");
+        Check(model.CanCompose && !model.CanSubmit && model.ShowWelcome && client.Creates == 0 && client.Seen == 0,
+            "opening an empty project exposes an editable composer without creating or opening a session");
+        model.Draft = "first question";
+        Check(model.CanSubmit && client.Creates == 0, "typing enables first send without persistence");
+        await model.OpenProjectDraftAsync("project-b");
+        Check(model.Draft == "", "a new project's first draft starts independently");
+        model.Draft = "different question";
+        await model.OpenProjectDraftAsync("project-a");
+        Check(model.Draft == "first question", "unsent first draft survives project navigation");
+        var hold = client.CreateHold = new();
+        var creating = model.EnsureDraftSessionAsync();
+        Check(client.Creates == 1 && !model.CanCompose && !model.CanSubmit, "creation disables competing first actions");
+        Check(await model.EnsureDraftSessionAsync() == null && client.Creates == 1, "double submit cannot create two sessions");
+        hold.SetResult("new");
+        Check(await creating == "new" && model.Draft == "first question" && model.CanSend && client.Sends == 0,
+            "confirmed creation carries the first draft into the opened session without sending by itself");
+        await model.SendAsync();
+        Check(client.Sends == 1 && client.LastSession == "new" && client.LastMessage == "first question" && model.Draft == "",
+            "first send uses the confirmed session and consumes exactly the submitted draft");
+
+        client = new Fake { Reads = [Fixture(path, session: "new") with { Items = [] }], FailCreate = true };
+        model = new WorkspaceConversationModel(client, client);
+        await model.OpenProjectDraftAsync("project-a"); model.Draft = "keep after lost reply";
+        Check(await model.EnsureDraftSessionAsync() == null && model.DraftCreationUncertain && !model.CanSubmit,
+            "ambiguous create preserves text and blocks replay");
+        await model.OpenProjectDraftAsync("project-b"); await model.OpenProjectDraftAsync("project-a");
+        await model.EnsureDraftSessionAsync();
+        Check(client.Creates == 1 && model.Draft == "keep after lost reply" && model.DraftCreationUncertain,
+            "navigation cannot reset ambiguous creation protection");
+        client.FailCreate = false; model.AcknowledgeDraftCreation();
+        Check(await model.EnsureDraftSessionAsync() == "new" && client.Creates == 2 && client.Sends == 0,
+            "only an explicit acknowledgment enables another creation attempt");
+
+        client = new Fake { Reads = [Fixture(path, session: "new") with { Items = [] }] };
+        model = new WorkspaceConversationModel(client, client);
+        await model.OpenProjectDraftAsync("project-a"); model.Draft = "original project";
+        hold = client.CreateHold = new(); creating = model.EnsureDraftSessionAsync();
+        await model.OpenProjectDraftAsync("project-b"); model.Draft = "current project";
+        hold.SetResult("new");
+        Check(await creating == null && model.CurrentProjectId == "project-b" && model.Draft == "current project" && model.Snapshot == null,
+            "late creation cannot replace another project's editor");
+        await model.OpenProjectDraftAsync("project-a");
+        Check(await model.EnsureDraftSessionAsync() == "new" && client.Creates == 1 && model.Draft == "original project",
+            "returning reuses the acknowledged late session instead of creating a duplicate");
+
+        client = new Fake { FailRead = true };
+        model = new WorkspaceConversationModel(client, client);
+        await model.OpenProjectDraftAsync("project-a"); model.Draft = "keep after read failure";
+        Check(await model.EnsureDraftSessionAsync() == null && client.Creates == 1 && model.Draft == "keep after read failure",
+            "failure to open a confirmed session retains the first draft");
+        await model.OpenProjectDraftAsync("project-b"); await model.OpenProjectDraftAsync("project-a");
+        client.FailRead = false; client.Reads = [Fixture(path, session: "new") with { Items = [] }];
+        Check(await model.EnsureDraftSessionAsync() == "new" && client.Creates == 1,
+            "retrying the read does not repeat a confirmed create");
+        await model.OpenProjectDraftAsync("project-b");
+        using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
+        Check(await model.EnsureDraftSessionAsync(cancelled.Token) == null && client.Creates == 1,
+            "a cancelled first action does not start a host write");
+    }
+
+    private static async Task ModelSelectionAsync(string path)
+    {
+        var client = new Fake { Reads = [Fixture(path)] };
+        var model = new WorkspaceConversationModel(client, client);
+        await model.OpenAsync("project-a", "session-a"); model.Draft = "keep this draft";
+        Check(await model.SelectModelAsync("next") && client.ModelWrites == 1 && model.Draft == "keep this draft" && client.Creates == 0,
+            "confirmed HTTP switch retains draft and conversation; only accepted writes may remember consent");
+        client.FailModel = true;
+        Check(!await model.SelectModelAsync("failed") && client.ModelWrites == 2 && model.OperationError != null,
+            "failed model switch does not allow suppressing future confirmation");
+        using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
+        Check(!await model.SelectModelAsync("cancelled", cancelled.Token) && client.ModelWrites == 2, "cancelled switch does not write");
+        client.FailModel = false;
+        var hold = client.ModelHold = new(); var pending = model.SelectModelAsync("late");
+        client.Reads = [Fixture(path, session: "session-b")]; await model.OpenAsync("project-a", "session-b");
+        hold.SetResult(); Check(!await pending, "a reply to a previous conversation must not remember the old checkbox");
+        client.ModelHold = null;
+        foreach (var snapshot in new[] { Fixture(path) with { Running = true }, Fixture(path) with { ReadOnly = true },
+            Fixture(path) with { AcpAgentId = "local", ModelId = "acp:local" } })
+        {
+            client.Reads = [snapshot]; await model.OpenAsync("project-a", "session-a");
+            Check(!await model.SelectModelAsync("blocked") && client.ModelWrites == 3, "running/read-only/ACP sessions cannot switch HTTP model");
+        }
     }
 
     private static ConversationSnapshot Fixture(string path, string session = "session-a", ulong sequence = 7,
@@ -270,11 +433,18 @@ internal static class WorkspaceConversationTests
     {
         public List<ConversationSnapshot> Reads = [];
         public bool FailSend, FailRead;
-        public int Seen, Sends;
+        public int Seen, Sends, Creates, Stops;
+        public TaskCompletionSource? StopHold;
+        public bool FailCreate;
+        public TaskCompletionSource<string>? CreateHold;
+        public string? LastMessage;
         public int PlanWrites;
         public int FastWrites;
         public string? FastModel;
         public TaskCompletionSource? FastHold;
+        public int ModelWrites;
+        public bool FailModel;
+        public TaskCompletionSource? ModelHold;
         public bool FailPlan;
         public TaskCompletionSource? PlanHold;
         public string? LastCommand, LastSession, LastApproval, LastRequestId;
@@ -291,20 +461,27 @@ internal static class WorkspaceConversationTests
         { Seen++; return Task.CompletedTask; }
         public Task SendAsync(string projectId, string sessionId, Guid requestId, string message, CancellationToken cancellationToken = default)
         {
-            Sends++; LastCommand = "send"; LastSession = sessionId; LastRequestId = requestId.ToString();
+            Sends++; LastCommand = "send"; LastSession = sessionId; LastRequestId = requestId.ToString(); LastMessage = message;
             if (FailSend) throw new IOException("response lost");
             return Task.CompletedTask;
         }
         public Task StopAsync(string projectId, string sessionId, CancellationToken cancellationToken = default)
-        { LastCommand = "stop"; LastSession = sessionId; return Task.CompletedTask; }
+        { Stops++; LastCommand = "stop"; LastSession = sessionId; return StopHold?.Task ?? Task.CompletedTask; }
         public Task ApproveAsync(string projectId, string sessionId, string approvalId, bool approved, CancellationToken cancellationToken = default)
         { LastCommand = "approve"; LastSession = sessionId; LastApproval = approvalId; LastApproved = approved; return Task.CompletedTask; }
-        public Task SetModelAsync(string projectId, string sessionId, string modelId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task SetModelAsync(string projectId, string sessionId, string modelId, CancellationToken cancellationToken = default)
+        { ModelWrites++; if (FailModel) throw new IOException("Model response lost"); return ModelHold?.Task ?? Task.CompletedTask; }
         public Task SetPlanModeAsync(string projectId, string sessionId, bool enabled, CancellationToken cancellationToken = default)
         { PlanWrites++; if (FailPlan) throw new IOException("Plan response lost"); return PlanHold?.Task ?? Task.CompletedTask; }
         public Task SetFastModeAsync(string projectId, string sessionId, string modelId, bool enabled, CancellationToken cancellationToken = default)
         { FastWrites++; FastModel = modelId; return FastHold?.Task ?? Task.CompletedTask; }
-        public Task<string> CreateAsync(string projectId, CancellationToken cancellationToken = default) => Task.FromResult("new");
+        public Task<string> CreateAsync(string projectId, CancellationToken cancellationToken = default)
+        {
+            Creates++;
+            if (FailCreate) throw new IOException("creation response lost");
+            if (CreateHold is { } hold) { CreateHold = null; return hold.Task; }
+            return Task.FromResult("new");
+        }
         public Task<NativeInboxEntry[]> InboxAsync(string projectId, CancellationToken cancellationToken = default) => Task.FromResult(Array.Empty<NativeInboxEntry>());
         public Task<NativeTrajectory> TrajectoryAsync(string projectId, string sessionId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<string> TrajectoryHtmlAsync(string projectId, string sessionId, CancellationToken cancellationToken = default) => Task.FromResult("");

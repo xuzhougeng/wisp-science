@@ -154,6 +154,7 @@ pub(crate) fn SkillDetail(
                     serde_wasm_bindgen::from_value::<SkillInstallReceipt>(v)
                         .map_err(|e| e.to_string())
                 });
+            if promoting.try_get_untracked().is_none() { return; }
             promoting.set(false);
             match result {
                 Ok(receipt) => {
@@ -172,9 +173,16 @@ pub(crate) fn SkillDetail(
     let disposed = std::rc::Rc::new(std::cell::Cell::new(false));
     let disposed_cleanup = disposed.clone();
     on_cleanup(move || disposed_cleanup.set(true));
+    let effective_dir = create_memo(move |_| skill.get().map(|s| s.dir));
+    let list_generation = create_rw_signal(0u32);
     let disposed_list = disposed.clone();
     create_effect(move |_| {
         retry.get();
+        effective_dir.get();
+        list_generation.update(|v| *v += 1);
+        let request = list_generation.get_untracked();
+        selected.set(String::new());
+        files.set(vec![]);
         loading.set(true);
         error.set(None);
         let disposed = disposed_list.clone();
@@ -186,7 +194,7 @@ pub(crate) fn SkillDetail(
                 .and_then(|v| {
                     serde_wasm_bindgen::from_value::<Vec<String>>(v).map_err(|e| e.to_string())
                 });
-            if disposed.get() {
+            if disposed.get() || list_generation.get_untracked() != request {
                 return;
             }
             match result {

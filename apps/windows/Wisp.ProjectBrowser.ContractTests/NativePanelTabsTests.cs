@@ -31,6 +31,21 @@ static class NativePanelTabsTests
         var full = new NativePanelTabs(available: NativePanelTabs.All);
         foreach (var id in new[] { "notebook", "highlights", "provenance", "sidechat" }) full.Show(id);
         Require(full.Open.Count == 8 && new NativePanelTabs(full.Saved, full.Selected, NativePanelTabs.All).Open.SequenceEqual(full.Open));
+        full.Show("memos"); full.Show("memos");
+        Require(full.Open.Count == 9 && full.Selected == "memos");
+        full.Show("runs"); full.Show("runs");
+        Require(full.Open.Count == 10 && full.Selected == "runs");
+        var restoredRuns = new NativePanelTabs(full.Saved, full.Selected, NativePanelTabs.All);
+        Require(restoredRuns.Selected == "runs" && restoredRuns.Open.Count(id => id == "runs") == 1);
+        restoredRuns.Remove("runs"); restoredRuns.Show("runs"); Require(restoredRuns.Selected == "runs");
+        full.Show("memos");
+        full.Remove("agents"); Require(full.Selected == "memos");
+        full.Move("memos", "artifacts"); Require(full.Open[0] == "memos" && full.Selected == "memos");
+        full.Remove("memos"); Require(full.Selected == "artifacts");
+        var projectOnly = new NativePanelTabs("[]", "memos", ["files", "memos"]);
+        projectOnly.Reopen(); Require(projectOnly.Open.SequenceEqual(["files"]) && projectOnly.Selected == "files");
+        projectOnly.Show("memos"); projectOnly.Remove("memos"); Require(projectOnly.Selected == "files");
+        projectOnly.Remove("files"); projectOnly.Reopen(); Require(projectOnly.Open.SequenceEqual(["files"]));
         Console.WriteLine("Native panel tab restoration, close, reorder and optional registry tests passed.");
     }
 }

@@ -1,0 +1,26 @@
+{
+  "project_id": "research-1", "session_id": "private-1", "source_session_id": "main-1",
+  "preview": {
+    "exploration": {
+      "id": "explore-1", "checkpoint_id": "checkpoint-1", "frame_id": "private-1",
+      "name": "Alternative normalization", "status": "active", "workspace_dir": "C:/synthetic/explorations/one",
+      "workspace_backend": "snapshot", "scope_generation": 1, "warnings_json": "[]", "created_at": 1, "updated_at": 2
+    },
+    "diff": {
+      "explorationId": "explore-1",
+      "files": [
+        { "path": "scripts/normalize.py", "kind": "added", "before": null, "after": { "sha256": "new" } },
+        { "path": "results/counts.tsv", "kind": "modified", "before": { "sha256": "old" }, "after": { "sha256": "new" } },
+        { "path": "results/obsolete.txt", "kind": "deleted", "before": { "sha256": "old" }, "after": null }
+      ],
+      "artifacts": [{ "logicalKey": "normalized-counts", "beforeArtifactId": null, "beforeVersionId": null, "afterArtifactId": "artifact-1", "afterVersionId": "version-2" }],
+      "runs": [{ "id": "run-1", "frame_id": "private-1", "context_id": "local", "title": "Normalization check", "kind": "shell", "status": "succeeded", "command": null, "created_at": 1, "started_at": 2, "ended_at": 3, "exit_code": 0, "stdout_tail": null, "stderr_tail": null, "remote_workdir": null, "timeout_secs": null, "last_polled_at": null, "last_poll_error": null, "progress_json": "{}", "env_snapshot_json": "{}", "harvested_at": null, "cleaned_at": null, "cleanup_error": null }],
+      "decisions": [{ "id": "decision-1", "kind": "decision", "title": "Keep independent validation", "ref_id": null, "metadata_json": "{}" }],
+      "researchEdges": [{ "source_id": "decision-1", "target_id": "run-1", "relation": "supported_by", "metadata_json": "{}" }],
+      "externalResources": [{ "id": "ref-1", "kind": "reference", "uri": "ssh://synthetic.example/data/reference.fa", "version": "1", "checksum": "abc" }],
+      "externalEffects": [{ "id": "effect-1", "effect_kind": "remote_write", "recoverability": "irreversible", "target_summary": "External job output", "metadata_json": "{}", "created_at": 3 }]
+    },
+    "mainlineChanges": { "files": [{ "path": "notes/mainline.md", "kind": "modified", "before": null, "after": null }], "artifactKeys": [], "entityKeys": [], "sourceMessageHead": 12, "sourceUiEventHead": 7, "stateGeneration": 1 },
+    "eligibility": { "eligible": true, "code": null, "reasons": [], "expectedGuardHash": "guard-1", "manualResolutionAvailable": false }
+  }
+}

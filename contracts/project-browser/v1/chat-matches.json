@@ -1,0 +1,20 @@
+{
+  "schema": "wisp.project-browser.v1",
+  "id": "history",
+  "type": "project_chat_matches",
+  "project_id": "research-1",
+  "query": "100%_",
+  "page": {
+    "items": [{
+      "session_id": "shelved",
+      "session_title": "方法 <old>",
+      "message_seq": 42,
+      "role": "tool",
+      "ts": 100,
+      "before": "…<script>",
+      "matched": "100%_",
+      "after": "</script>\nnext…"
+    }],
+    "next_cursor": {"ts": 100, "session_id": "shelved", "message_seq": 42}
+  }
+}

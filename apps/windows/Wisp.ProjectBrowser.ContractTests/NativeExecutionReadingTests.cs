@@ -15,6 +15,10 @@ internal static class NativeExecutionReadingTests
     }), ConversationSnapshot.JsonOptions)!;
     public static async Task RunAsync()
     {
+        Check(NativeTranscriptRows.ReadingAnchorIsCurrent(1, 1, 1), "polling may retain the applied reading position");
+        Check(!NativeTranscriptRows.ReadingAnchorIsCurrent(2, 2, 1), "opening nested details for a pending explicit jump cannot capture the old viewport");
+        Check(!NativeTranscriptRows.ReadingAnchorIsCurrent(1, 2, 2), "a queued old anchor cannot undo a newer completed jump");
+        Check(NativeTranscriptRows.ReadingAnchorIsCurrent(2, 2, 2), "polling may preserve the new target after navigation completes");
         var accepted = new ConversationItem("tool", "raw", "update_plan", null, true, null,
             PlanSteps: [new("done", "Inspect"), new("running", "Analyze\n[x] nested"), new("cancelled", "Optional")]);
         var initial = Snapshot("s", [User("turn"), accepted]);
@@ -35,15 +39,37 @@ internal static class NativeExecutionReadingTests
         Check(sections.Length == 4 && sections[0].Text == "a.py:12" && sections[1].Text == "literal <script>" && sections[2].Text.Contains("修改后\nb"), "ACP structured sections preserve location, literal content, diff and terminal identity");
         Check(NativeToolPresentation.State(acp) == "执行中", "ACP in_progress cannot inherit completed state from a legacy ok flag");
         Check(NativeStructuredTool.Sections(acp with { Text = "not json", Locations = null }).Single().Text == "not json", "malformed ACP data remains readable as literal fallback");
+        var englishSections = NativeStructuredTool.Sections(acp, new NativeLocalization(new Dictionary<string, Dictionary<string, string>>(), "en"));
+        Check(englishSections[0].Label == "Location" && englishSections[1].Label == "Output" && englishSections[2].Text == "Before\na\n\nAfter\nb", "ACP labels translate without translating user paths or content");
         var key = NativeTranscriptRows.Keys(initial with { Items = [User("turn"), acp] })[1];
         Check(NativeTranscriptRows.Keys(initial with { Items = [User("turn"), accepted, acp] })[2] == key, "ACP identity survives nearby streaming-row insertion");
         var duplicateKeys = NativeTranscriptRows.Keys(initial with { Items = [User("turn"), acp, acp, acp with { CallId = "tool-1/occurrence:1" }] });
         Check(duplicateKeys.Distinct().Count() == 4 && duplicateKeys[1] == key, "duplicate or delimiter-bearing ACP call IDs cannot collide or replace the first row");
         var run = Run("running");
+        var monitorLocale = new NativeLocalization(new Dictionary<string, Dictionary<string, string>>
+        {
+            ["en"] = new() { ["runs.elapsed"] = "Elapsed {time}", ["runs.heartbeat"] = "Heartbeat {time} ago", ["runs.timeout"] = "Limit {time}", ["transfer.uploading"] = "Uploading", ["transfer.eta"] = "ETA {time}", ["transfer.files"] = "{done}/{total} files" }
+        }, "en");
+        var timed = run with { StartedAt = 100, EndedAt = null, TimeoutSecs = 3600, ExitCode = null };
+        Check(NativeRunPresentation.MonitorMetadata(timed, 165, 162, monitorLocale).EndsWith("Elapsed 1m 5s · Heartbeat 3s ago · Limit 1h 0m"),
+            "live metadata uses the current heartbeat independently of output changes");
+        Check(NativeRunPresentation.MonitorMetadata(timed with { Status = "succeeded", EndedAt = 123 }, 165, 162, monitorLocale).EndsWith("Elapsed 23s"),
+            "finished metadata holds elapsed time and drops the active heartbeat and timeout");
         Check(NativeRunPresentation.Output(run) == "3\nresult\n[stderr]\nwarning", "run output folds carriage-return frames and retains stderr");
-        var progress = NativeRunPresentation.Progress(run with { ProgressJson = """{"phase":"upload","completed_bytes":25,"total_bytes":100,"files_completed":1,"files_total":2}""" });
+        Check(NativeRunPresentation.Output(run with { StdoutTail = null, StderrTail = "  warning\n" }) == "  warning",
+            "stderr-only output preserves leading indentation and needs no stream separator");
+        var progress = NativeRunPresentation.Progress(run with { ProgressJson = """{"phase":"upload","completed_bytes":25,"total_bytes":100,"files_completed":1,"files_total":2}""" }, monitorLocale);
         Check(progress?.Percent == 25 && progress?.Label.Contains("1/2") == true, "run progress derives from recorded transfer bytes");
-        Check(NativeRunPresentation.Progress(run with { ProgressJson = """{"phase":"connecting","indeterminate":true,"completed_bytes":25,"total_bytes":100}""" })?.Percent == null, "indeterminate phases never invent completion percentages");
+        Check(NativeRunPresentation.Progress(run with { ProgressJson = """{"phase":"uploading","completed_bytes":1,"total_bytes":3,"files_completed":1,"files_total":2,"eta_seconds":4}""" }, monitorLocale)?.Label
+            == "Uploading · 1 B / 3 B · 34% · ETA 4s · 1/2 files", "an English environment card does not mix languages in transfer progress");
+        var unknown = NativeRunPresentation.Progress(run with { ProgressJson = """{"phase":"downloading","indeterminate":true,"current_file":"reads.csv","completed_bytes":25,"total_bytes":0,"eta_seconds":45,"files_total":2}""" }, monitorLocale);
+        Check(unknown is NativeTransferProgress { Percent: null, File: "reads.csv", Details.Length: 1 }, "unknown download size hides percentage, rate, ETA and file counts together");
+        Check(NativeRunPresentation.Progress(run with { ProgressJson = """{"phase":"downloaded","indeterminate":true,"completed_bytes":100,"total_bytes":100}""" }, monitorLocale)?.Percent == 100,
+            "a stale indeterminate flag does not animate a completed transfer");
+        Check(NativeRunPresentation.Progress(run with { Kind = "method_search", ProgressJson = """{"phase":"scoring","best_primary":0.125,"candidate_count":3,"successful_count":2}""" }, monitorLocale)
+            is NativeMethodProgress { Phase: "scoring", Counts: "3 / 2", Best: "0.125000" }, "method search keeps counts and six-decimal score separate from transfer progress");
+        Check(NativeRunPresentation.Progress(run with { Kind = "method_search", ProgressJson = "{}" }, monitorLocale)
+            is NativeMethodProgress { Counts: "0 / 0", Best: "—" }, "no score is not a zero best score");
         foreach (var status in new[] { "succeeded", "failed", "cancelled", "timed_out", "lost" })
         {
             var owned = new ConversationItem("tool", "result", "run_in_context", null, true, null, Run: new("r", status, 1, true));

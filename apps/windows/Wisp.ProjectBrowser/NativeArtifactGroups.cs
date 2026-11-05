@@ -56,4 +56,22 @@ public static class NativeArtifactGroups
         if (type == "application") return (subtype.Length > 0 ? "数据 · " + subtype : "其他", 5);
         return (value.Length > 0 ? value : "其他", 6);
     }
+
+    public static string EnglishLabel(string? kind)
+    {
+        var value = (kind ?? "").Trim().ToLowerInvariant(); var slash = value.IndexOf('/');
+        var subtype = slash > 0 ? value[(slash + 1)..] : "";
+        return Label(kind).Rank switch
+        {
+            0 => "Images · " + subtype.ToUpperInvariant(),
+            1 => "PDF documents",
+            2 => "Office documents",
+            3 => "Archives",
+            4 => subtype switch { "plain" => "Plain text", "markdown" => "Markdown", "csv" => "CSV", "html" => "HTML",
+                "x-r" => "R code", "x-python" or "x-python3" => "Python code", "x-sh" or "x-shellscript" => "Shell",
+                "" => "Text", _ => "Text · " + subtype },
+            5 => subtype.Length > 0 ? "Data · " + subtype : "Other",
+            _ => value.Length > 0 ? value : "Other",
+        };
+    }
 }

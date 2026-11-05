@@ -14,11 +14,14 @@ use std::rc::Rc;
 pub mod codex_login;
 pub mod execution_plan;
 pub mod native_assistant;
+pub mod native_branch_merge;
 pub mod native_calendar;
 pub mod native_conversations;
+pub mod native_runtimes;
 pub mod native_files;
 pub mod native_history;
 pub mod native_journey;
+pub mod native_memos;
 pub mod native_library;
 pub mod native_projects;
 pub mod native_publication;
@@ -2723,7 +2726,7 @@ pub struct SessionBranchDeltaMessage {
     pub text: String,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct SessionBranchLink {
     pub id: String,
     pub title: String,
@@ -2755,7 +2758,7 @@ pub struct SessionBranchMerge {
     pub summary_message_seq: i64,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct Exploration {
     pub id: String,
     pub checkpoint_id: String,
@@ -2770,7 +2773,7 @@ pub struct Exploration {
     pub updated_at: i64,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct ExplorationSummary {
     pub exploration: Exploration,
     pub source_frame_id: String,
@@ -2789,7 +2792,7 @@ impl ExplorationSummary {
     }
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct ExplorationFileDelta {
     pub path: String,
     pub kind: String,
@@ -2799,7 +2802,7 @@ pub struct ExplorationFileDelta {
     pub after: Option<serde_json::Value>,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ExplorationArtifactDelta {
     pub logical_key: String,
@@ -2809,7 +2812,7 @@ pub struct ExplorationArtifactDelta {
     pub after_version_id: String,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct ExplorationExternalResource {
     pub id: String,
     pub kind: String,
@@ -2818,7 +2821,7 @@ pub struct ExplorationExternalResource {
     pub checksum: Option<String>,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct ExplorationEffect {
     pub id: String,
     pub effect_kind: String,
@@ -2828,7 +2831,7 @@ pub struct ExplorationEffect {
     pub created_at: i64,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ExplorationDiff {
     pub exploration_id: String,
@@ -2841,7 +2844,7 @@ pub struct ExplorationDiff {
     pub external_effects: Vec<ExplorationEffect>,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ExplorationMainlineChanges {
     pub files: Vec<ExplorationFileDelta>,
@@ -2852,14 +2855,14 @@ pub struct ExplorationMainlineChanges {
     pub state_generation: i64,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PromotionBlocker {
     pub code: String,
     pub message: String,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PromotionEligibility {
     pub eligible: bool,
@@ -2869,7 +2872,7 @@ pub struct PromotionEligibility {
     pub manual_resolution_available: bool,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ExplorationPromotionPreview {
     pub exploration: Exploration,
@@ -2878,7 +2881,7 @@ pub struct ExplorationPromotionPreview {
     pub eligibility: PromotionEligibility,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ExplorationPromotionResult {
     pub mainline_frame_id: String,
@@ -3616,7 +3619,7 @@ impl ReviewBackendConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewerBackendTestResult {
     pub backend: String,
@@ -4519,7 +4522,7 @@ pub struct OnboardingState {
 /// Mirrors `wisp_store::ResearchNode`. `kind` stays a plain string because the
 /// backend enum serializes to snake_case and the pane only ever groups on it.
 /// `metadata_json` arrives as the store's raw JSON string, not an object.
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct ResearchNode {
     pub id: String,
     pub kind: String,
@@ -4528,7 +4531,7 @@ pub struct ResearchNode {
     pub metadata_json: String,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct ResearchEdge {
     pub source_id: String,
     pub target_id: String,
@@ -5736,8 +5739,8 @@ pub struct RunProgress {
 }
 
 /// Provenance for a produced file — mirrors the `get_artifact_provenance`
-/// Tauri command output (src-tauri `ArtifactProvenance`). Deserialize only.
-#[derive(Clone, Deserialize, Default)]
+/// Tauri command output (src-tauri `ArtifactProvenance`) and native scoped replies.
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct ArtifactProvenance {
     pub code: String,
     pub language: String,
@@ -5747,19 +5750,19 @@ pub struct ArtifactProvenance {
     pub env: Option<ProvEnv>,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ProvInput {
     pub path: String,
     pub produced_here: bool,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ProvEnv {
     #[serde(default)]
     pub packages: Vec<ProvPkg>,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ProvPkg {
     pub name: String,
     #[serde(default)]

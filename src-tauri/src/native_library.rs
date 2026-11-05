@@ -1,4 +1,4 @@
-//! Native library search and delete. The desktop host uses the app-global
+//! Native library search, detail and immutable code versions. The host uses the app-global
 //! library store. No WebView window is selected, and a project id is rejected
 //! so the call cannot retarget one.
 
@@ -26,18 +26,45 @@ pub(crate) async fn execute(
                 .map_err(|error| error.to_string())?;
             serde_json::to_value(rows).map_err(|error| error.to_string())
         }
-        "native_library_delete" => {
-            let input: wisp_dto::native_library::DeleteRequest =
+        "native_library_get" | "native_library_versions" | "native_library_delete" => {
+            let input: wisp_dto::native_library::ItemRequest =
                 serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
             let id = input.id.trim();
             if id.is_empty() {
                 return Err("A library item id is required".into());
+            }
+            if request.command == "native_library_get" {
+                let detail = crate::library_commands::read_detail(library, id).await?;
+                return serde_json::to_value(detail).map_err(|error| error.to_string());
+            }
+            if request.command == "native_library_versions" {
+                let versions = library
+                    .list_versions(id)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                return serde_json::to_value(versions).map_err(|error| error.to_string());
             }
             let deleted = library
                 .delete(id)
                 .await
                 .map_err(|error| error.to_string())?;
             Ok(serde_json::Value::Bool(deleted))
+        }
+        "native_library_update_code" => {
+            let input: wisp_dto::native_library::UpdateCodeRequest =
+                serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+            let id = input.id.trim();
+            if id.is_empty() {
+                return Err("A library item id is required".into());
+            }
+            let version = crate::library_commands::append_code_version(
+                library,
+                id,
+                input.language,
+                input.code,
+            )
+            .await?;
+            serde_json::to_value(version).map_err(|error| error.to_string())
         }
         _ => Err("Unsupported native library command".into()),
     }
@@ -111,6 +138,96 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.root);
         }
+    }
+
+    #[tokio::test]
+    async fn detail_and_versions_share_webview_snapshot_rules() {
+        let fixture = Fixture::open().await;
+        let item = fixture
+            .library
+            .insert(code_item("Original", "print(1)\n"))
+            .await
+            .unwrap();
+        let detail = execute(
+            &fixture.library,
+            &request(None, "native_library_get", json!({"id": item.id})),
+        )
+        .await
+        .unwrap();
+        let shared: wisp_dto::LibraryItemDetail = serde_json::from_value(detail).unwrap();
+        assert_eq!(shared.item.code.as_ref(), "print(1)\n");
+        let saved = execute(
+            &fixture.library,
+            &request(
+                None,
+                "native_library_update_code",
+                json!({"id": item.id, "code": "print(2)\n"}),
+            ),
+        )
+        .await
+        .unwrap();
+        let saved: wisp_dto::LibraryItemVersion = serde_json::from_value(saved).unwrap();
+        assert_eq!(saved.version_number, 2);
+        assert_eq!(saved.language.as_deref(), Some("python"));
+        assert_eq!(
+            fixture
+                .library
+                .get(&item.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .item
+                .code,
+            "print(1)\n"
+        );
+        let versions = execute(
+            &fixture.library,
+            &request(None, "native_library_versions", json!({"id": item.id})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(versions.as_array().unwrap().len(), 2);
+        for command in [
+            "native_library_get",
+            "native_library_versions",
+            "native_library_update_code",
+        ] {
+            assert!(execute(
+                &fixture.library,
+                &request(Some("other"), command, json!({"id": item.id}))
+            )
+            .await
+            .is_err());
+            assert!(execute(
+                &fixture.library,
+                &request(None, command, json!({"id": " ", "code": "x"}))
+            )
+            .await
+            .is_err());
+        }
+        assert!(execute(
+            &fixture.library,
+            &request(
+                None,
+                "native_library_update_code",
+                json!({"id": item.id, "code": "  "})
+            )
+        )
+        .await
+        .is_err());
+        let mut highlight = code_item("Highlight", "verbatim");
+        highlight.kind = "text".into();
+        let highlight = fixture.library.insert(highlight).await.unwrap();
+        assert!(execute(
+            &fixture.library,
+            &request(
+                None,
+                "native_library_update_code",
+                json!({"id": highlight.id, "code": "edited"})
+            )
+        )
+        .await
+        .is_err());
     }
 
     #[tokio::test]

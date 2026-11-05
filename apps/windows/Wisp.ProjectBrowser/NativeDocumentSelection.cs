@@ -15,11 +15,13 @@ public sealed record NativeDocumentLocation(string Kind, int? Page = null, int? 
             && Cells != null && Regex.IsMatch(Cells, @"^[A-Z]{1,3}[1-9][0-9]{0,6}(:[A-Z]{1,3}[1-9][0-9]{0,6})?$")
             && Page == null && EndPage == null && Line == null && EndLine == null && !Unsaved,
         "source" => Position(Line) && Position(EndLine) && EndLine >= Line && Page == null && EndPage == null && Sheet == null && Cells == null,
+        "preview" => Page == null && EndPage == null && Sheet == null && Cells == null && Line == null && EndLine == null && !Unsaved,
         _ => false,
     };
     public string Label => Kind switch {
         "xlsx" => $"工作表 {Sheet} · {Cells}",
         "source" => $"源文本第 {Line}{(EndLine == Line ? "" : "–" + EndLine)} 行" + (Unsaved ? "（未保存草稿）" : ""),
+        "preview" => "预览选区",
         _ => $"{(Kind == "docx" ? "预览" : "")}第 {Page}{(EndPage == null || EndPage == Page ? "" : "–" + EndPage)} {(Kind == "pptx" ? "张幻灯片" : "页")}",
     };
 }
@@ -29,6 +31,11 @@ public sealed record NativeDocumentSelection(string Text, NativeDocumentLocation
     public NativeDocumentSelection(string text, int page, bool jump) : this(text, new NativeDocumentLocation("pdf", Page: page), jump) { }
     public int Page => Location.Page ?? 0;
     public bool Valid => !string.IsNullOrWhiteSpace(Text) && Text.Length <= 32768 && Location.Valid;
+    public static NativeDocumentSelection? FromPreview(string text, bool jump = false)
+    {
+        var value = new NativeDocumentSelection(text.Replace("\r\n", "\n").Replace('\r', '\n'), new NativeDocumentLocation("preview"), jump);
+        return value.Valid && !value.Text.Contains('\uFFFC') ? value : null;
+    }
     public static NativeDocumentSelection? Parse(JsonElement value, string expectedKind = "pdf")
     {
         try {

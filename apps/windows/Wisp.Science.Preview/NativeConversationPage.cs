@@ -18,13 +18,13 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
 {
     public void FocusComposer()
     {
-        var owner = model.Snapshot;
+        var project = model.CurrentProjectId; var session = model.CurrentSessionId;
         // Closing a narrow panel reparents the page; its SizeChanged handler
         // re-enables the conversation after layout. Focus only that same session.
         DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
         {
-            if (!disposed && IsLoaded && owner?.ProjectId == model.Snapshot?.ProjectId
-                && owner?.SessionId == model.Snapshot?.SessionId) composer.Focus(FocusState.Keyboard);
+            if (!disposed && IsLoaded && project == model.CurrentProjectId
+                && session == model.CurrentSessionId) composer.Focus(FocusState.Keyboard);
         });
     }
     // Keep native Button focus/pressed states and accessible text.
@@ -38,6 +38,7 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
             Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
             Foreground = design.Brush("text-muted")
         };
+        design.BindTypography(button, size: 14);
         AutomationProperties.SetName(button, label);
         var pointerInside = false;
         void UpdateEmphasis() => button.Foreground = design.Brush(
@@ -51,55 +52,69 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
     private readonly WorkspaceConversationModel model;
     private readonly WispDesign design;
     private readonly Action<string> quote;
+    private readonly Action<string>? openBranch;
+    private readonly Action<string, string>? openBranchResult;
+    private readonly Dictionary<string, bool> branchDisclosures = new();
+    private string? explorationBannerKey;
+    private NativeExplorationBanner? explorationBanner;
+    private readonly Action<NativeExplorationSummary>? reviewExploration;
+    private readonly Action<NativeHistoryTarget>? startExploration;
     private readonly Func<Task> create;
-    private readonly StackPanel transcript = new() { Spacing = 18, MaxWidth = PreviewLayout.ConversationMaxWidth, Margin = new Thickness(16) };
+    private readonly StackPanel transcript = new() { Spacing = 20, MaxWidth = PreviewLayout.ConversationMaxWidth,
+        HorizontalAlignment = HorizontalAlignment.Center, Padding = new Thickness(16, 26, 16, 40) };
     private readonly StackPanel approvals = new() { Spacing = 12, MaxWidth = PreviewLayout.ConversationMaxWidth, Margin = new Thickness(16, 0, 16, 12) };
     private readonly TextBox composer = new() { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 44, PlaceholderText = "请输入问题 — @ 附加产物，# 附加会话，/ 选择技能…" };
-    private readonly ComboBox models = new() { MaxWidth = 230 };
-    private readonly ComboBox efforts = new() { MaxWidth = 100, MinWidth = 72, Visibility = Visibility.Collapsed };
-    private bool updatingEfforts;
+    private readonly Button models = new() { MaxWidth = 220 };
+    private readonly Button efforts = new() { MaxWidth = 180, MinWidth = 0, Visibility = Visibility.Collapsed };
     private readonly ToggleSwitch planMode = new();
     private readonly Microsoft.UI.Xaml.Controls.Primitives.ToggleButton fastMode = new() { Content = "Fast", Visibility = Visibility.Collapsed };
     private readonly Button send = new() { Content = "发送" };
     private readonly Button stop = new() { Content = "停止" };
     private readonly Button createSession = new() { Content = "新建会话" };
     private readonly Button attach = new() { Content = "对话附件" };
-    private readonly Flyout composerOptions = new();
+    private readonly Flyout composerOptions = new() { Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.TopEdgeAlignedLeft };
+    private readonly NativeComposerResizeGrip composerResize;
     private bool composerOptionsOpen;
-    private readonly Button queue = new() { Content = "排队后续" };
+    private Action? refreshComposerFocus;
+    private readonly Border stoppingNotice = new();
+    private readonly SolidColorBrush stopFill = new() { Opacity = .78 };
+    private readonly ProgressRing stoppingSpinner = new() { Width = 16, Height = 16, IsActive = false, VerticalAlignment = VerticalAlignment.Top };
+    private readonly TextBlock stoppingTitle, stoppingDetail;
     private readonly Button retry = new() { Content = "重新读取" };
+    private readonly StackPanel retryActions;
     private readonly Button acknowledge = new() { Content = "已检查，允许再次发送或排队…" };
-    private readonly StackPanel attachments = new() { Spacing = 4 };
+    private readonly NativeActionWrap attachments = new() { Gap = 7, Margin = new Thickness(0, 2, 0, 9) };
+    private readonly Button assistantContext = new() { HorizontalAlignment = HorizontalAlignment.Left, Padding = new Thickness(8, 4, 8, 4), Margin = new Thickness(0, 0, 0, 8) };
+    private readonly TextBlock assistantContextLabel = new() { TextTrimming = TextTrimming.CharacterEllipsis };
     private readonly TextBlock status = new() { TextWrapping = TextWrapping.Wrap, FontSize = 12 };
     private readonly TextBlock hint = new() { FontSize = 11 };
-    private readonly Grid composerBar = new();
-    private readonly ScrollViewer scroll = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+    private readonly Grid composerBar = new() { Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
+    private readonly ScrollViewer welcomeScroll = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+        HorizontalScrollMode = ScrollMode.Disabled, HorizontalContentAlignment = HorizontalAlignment.Stretch };
+    private readonly Image welcomeMark;
+    private readonly TextBlock emptyHeading;
+    private readonly TextBlock emptyDescription;
+    private readonly TextBlock tipLabel;
+    private readonly TextBlock tipText;
+    private readonly Button hideTip;
+    private readonly Border tipCard;
+    private readonly ScrollViewer scroll = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+        HorizontalScrollMode = ScrollMode.Disabled, HorizontalContentAlignment = HorizontalAlignment.Stretch };
     private readonly CancellationTokenSource lifetime = new();
     private readonly TextBlock slashHint = new() { FontSize = 11, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
     private readonly ListView commandChoices = new() { MaxHeight = 170, SelectionMode = ListViewSelectionMode.Single,
         IsItemClickEnabled = true, Visibility = Visibility.Collapsed };
-    private bool composing, compositionJustEnded, commandsDismissed, updatingModels;
+    private bool composing, compositionJustEnded, commandsDismissed;
     private string? attachmentFingerprint;
     private string? pickerSession;
     private bool disposed, followLatest = true;
     private bool userScrollPending;
     private readonly Button follow = new() { Content = "回到最新", Visibility = Visibility.Collapsed };
-    private readonly Dictionary<string, (string Fingerprint, FrameworkElement Element, bool TerminalRun)> renderedRows = [];
-    private sealed class ActivityDisclosure
-    {
-        public Microsoft.UI.Xaml.Controls.Primitives.ToggleButton Button { get; } = new();
-        public StackPanel Header { get; } = new() { Spacing = 4, HorizontalAlignment = HorizontalAlignment.Left };
-        public StackPanel Reviews { get; } = new() { Spacing = 4 };
-        public string[] ReviewIds { get; set; } = [];
-        public List<FrameworkElement> Rows { get; } = [];
-        public ActivityDisclosure() { Header.Children.Add(Button); Header.Children.Add(Reviews); }
-        public void Update()
-        {
-            var expanded = Button.IsChecked == true;
-            Button.Content = $"{(expanded ? "收起" : "显示")}已完成过程 · {Rows.Count} 条";
-            foreach (var row in Rows) row.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
-        }
-    }
+    private readonly Dictionary<string, (string Fingerprint, FrameworkElement Element, bool TerminalRun, string? ProcessKey)> renderedRows = [];
+    private readonly NativeGeneratedArtifacts generatedOutputs = new();
+    private readonly Dictionary<string, bool> generatedChoices = [];
+    private readonly Action<NativeGeneratedOutput>? openGenerated;
+    private readonly Func<string>? generatedProjectRoot;
     private readonly Dictionary<string, ActivityDisclosure> activityDisclosures = [];
     private string? approvalFingerprint;
     private string? readingSession;
@@ -107,41 +122,134 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
     private readonly Action? openHosts;
     private readonly Action<string>? openRun;
     private readonly Func<Task<string?>>? pickAttachment;
+    private readonly Func<Task<IReadOnlyList<string>>>? pickAttachments;
+    private bool CanPickAttachments => pickAttachment != null || pickAttachments != null;
     private readonly Func<string, Task>? createAcp;
     private readonly Func<string, string, string, Task>? openHistoryBranch;
+    private readonly Func<Task<bool>> ensureSession;
+    private readonly Button composerSettingsButton = new();
+    private bool preparingSession;
+    private void RefreshFastButton()
+    {
+        var state = model.ComposerFastMode;
+        fastMode.Visibility = state == null ? Visibility.Collapsed : Visibility.Visible;
+        if (state == null) return;
+        var on = state.Enabled;
+        var tip = design.T(model.Snapshot?.Running == true ? "composer.fast.running"
+            : model.SavingFastMode ? "composer.fast.saving"
+            : (on, state.Inherited) switch { (true, true) => "composer.fast.on_profile", (true, false) => "composer.fast.on_session",
+                (false, true) => "composer.fast.off_profile", _ => "composer.fast.off_session" });
+        AutomationProperties.SetName(fastMode, tip); ToolTipService.SetToolTip(fastMode, tip);
+        fastMode.IsChecked = on; fastMode.IsEnabled = model.CanChangeFastMode && !preparingSession;
+        fastMode.Opacity = model.SavingFastMode ? .62 : 1;
+        var fill = design.Brush(on ? "warn-soft" : "bg-elev");
+        var edge = on ? MixBrush("warn", "border-strong", .52) : design.Brush("border-strong");
+        fastMode.BorderThickness = new(1); fastMode.Background = fill; fastMode.BorderBrush = edge;
+        foreach (var suffix in new[] { "Checked", "CheckedPointerOver", "CheckedPressed", "CheckedDisabled", "Disabled" })
+        {
+            fastMode.Resources["ToggleButtonBackground" + suffix] = fill;
+            fastMode.Resources["ToggleButtonBorderBrush" + suffix] = edge;
+        }
+        fastMode.Resources["ToggleButtonBackgroundPointerOver"] = design.Brush("surface-hover");
+        fastMode.Content = design.Icon("bolt", fastMode.Width == 28 ? 15 : 17, design.ColorText(on ? "warn" : "text-faint"), filled: on);
+    }
+    private void RefreshSendAppearance()
+    {
+        var hasContent = model.HasComposerContent;
+        var showStop = model.ShowStopButton;
+        stop.Visibility = showStop ? Visibility.Visible : Visibility.Collapsed;
+        send.Visibility = showStop ? Visibility.Collapsed : Visibility.Visible;
+        stop.IsEnabled = model.CanStop;
+        send.IsEnabled = !preparingSession && !clipboardBusy && (model.CanSubmit
+            || !hasContent && model.CanCompose && (model.CanPrepareProjectDraft || model.CanAttach));
+        var sendLabel = design.T(model.Snapshot?.Running == true ? "composer.queue_button" : "composer.send");
+        AutomationProperties.SetName(send, sendLabel); ToolTipService.SetToolTip(send, sendLabel);
+        var stopLabel = design.T(model.IsStopping ? "composer.stopping" : "composer.stop");
+        AutomationProperties.SetName(stop, stopLabel); ToolTipService.SetToolTip(stop, stopLabel);
+        stopFill.Color = design.Brush("text").Color;
+        stop.Content = design.Icon("stop", stop.Width == 28 ? 16 : 18, design.ColorText("bg-app"));
+        stop.Opacity = stop.IsEnabled ? 1 : .45;
+        var fill = hasContent ? design.Brush("clay") : MixBrush("text", "bg-app", .14);
+        var hover = hasContent ? design.Brush("clay-strong") : fill;
+        send.Background = fill; send.Resources["ButtonBackgroundDisabled"] = fill;
+        send.Resources["ButtonBackgroundPointerOver"] = hover; send.Resources["ButtonBackgroundPressed"] = hover;
+        send.Opacity = send.IsEnabled ? 1 : .45;
+        send.Content = design.Icon("arrow-up", send.Width == 28 ? 16 : 18, design.ColorText(hasContent ? "on-clay" : "text-faint"));
+        send.BorderThickness = new Thickness(0);
+    }
+    private async Task<bool> EnsureSessionForActionAsync()
+    {
+        if (disposed || preparingSession) return false;
+        preparingSession = true; Refresh();
+        try { return await ensureSession(); }
+        finally { preparingSession = false; Refresh(); }
+    }
 
     public NativeConversationPage(WorkspaceConversationModel model, WispDesign design, Action<string> quote, Func<Task> create,
         Func<Task<string?>>? pickAttachment = null, Func<string, bool>? slashCommand = null, Action? openHosts = null,
         Action<string>? openRun = null, Func<string, Task>? createAcp = null,
-        Func<string, string, string, Task>? openHistoryBranch = null, Func<string, Task>? reviewRun = null, Func<bool>? canShowRunReview = null)
+        Func<string, string, string, Task>? openHistoryBranch = null, Func<string, Task>? reviewRun = null, Func<bool>? canShowRunReview = null,
+        Func<Task<bool>>? ensureSession = null, Func<Task<IReadOnlyList<string>>>? pickAttachments = null, Action<string>? composeNavigate = null,
+        Func<NativeSessionReferenceScope?>? sessionReferenceScope = null,
+        Action<string>? openBranch = null, Action<string, string>? openBranchResult = null, Action<NativeExplorationSummary>? reviewExploration = null,
+        Action<NativeHistoryTarget>? startExploration = null, Func<string, string, string, Task>? openExcerpt = null,
+        Func<NativeQueueTarget, string, bool>? sendQueuedSideChat = null, Func<bool>? canSendQueuedSideChat = null, Action? openAgentSettings = null, Action? openComputeSettings = null, Action? addComputeHost = null, Action? openModelSettings = null,
+        Func<bool>? modelSwitchWarningDisabled = null, Action? disableModelSwitchWarning = null,
+        Func<NativeHandoffLaunch, Task>? startHandoff = null, Func<NativeContextRecoveryLaunch, Task>? startContextRecovery = null,
+        Func<bool>? canShowContextRecovery = null, Action<NativeGeneratedOutput>? openGenerated = null, Func<string>? generatedProjectRoot = null)
     {
+        this.openGenerated = openGenerated; this.generatedProjectRoot = generatedProjectRoot;
         this.model = model; this.design = design; this.quote = quote; this.create = create;
+        this.startHandoff = startHandoff;
+        this.startContextRecovery = startContextRecovery;
+        this.canShowContextRecovery = canShowContextRecovery;
+        model.Handoff.Changed += RefreshHandoffDialog;
+        this.ensureSession = ensureSession ?? (() => Task.FromResult(model.Snapshot is { ReadOnly: false }));
         this.slashCommand = slashCommand; this.openHosts = openHosts; this.pickAttachment = pickAttachment;
+        this.pickAttachments = pickAttachments;
+        this.openAgentSettings = openAgentSettings;
+        this.openComputeSettings = openComputeSettings;
+        this.addComputeHost = addComputeHost;
+        this.openModelSettings = openModelSettings;
+        this.modelSwitchWarningDisabled = modelSwitchWarningDisabled; this.disableModelSwitchWarning = disableModelSwitchWarning;
+        this.composeNavigate = composeNavigate;
+        this.sessionReferenceScope = sessionReferenceScope;
+        this.openBranch = openBranch; this.openBranchResult = openBranchResult;
+        this.reviewExploration = reviewExploration;
+        this.startExploration = startExploration;
+        this.openExcerpt = openExcerpt;
+        this.sendQueuedSideChat = sendQueuedSideChat; this.canSendQueuedSideChat = canSendQueuedSideChat;
         this.openRun = openRun;
         this.reviewRun = reviewRun;
         this.canShowRunReview = canShowRunReview;
         this.createAcp = createAcp;
         this.openHistoryBranch = openHistoryBranch;
+        HorizontalContentAlignment = HorizontalAlignment.Stretch;
+        VerticalContentAlignment = VerticalAlignment.Stretch;
         design.BindTypography(status, 12); design.BindTypography(hint, 11);
         var root = new Grid();
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         root.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         status.Margin = new Thickness(24, 12, 24, 0);
         retry.Click += async (_, _) =>
         {
+            model.ShowCompaction();
+            if (model.HasProjectDraft) await model.ReloadComposerCatalogAsync(lifetime.Token);
             if (model.Effort.Error != null) await model.Effort.ReloadAsync(lifetime.Token);
             await model.RefreshAsync(lifetime.Token);
         };
-        acknowledge.Click += (_, _) => model.AcknowledgeUncertainSend();
-        var banner = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(24, 8, 24, 0) };
+        acknowledge.Click += (_, _) => { if (model.DraftCreationUncertain) model.AcknowledgeDraftCreation(); else model.AcknowledgeUncertainSend(); };
+        var banner = retryActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(24, 8, 24, 0) };
         banner.Children.Add(retry); banner.Children.Add(acknowledge);
         acknowledgeHistory.Click += (_, _) => model.AcknowledgeHistoryResult();
         banner.Children.Add(acknowledgeHistory);
         var header = new StackPanel(); header.Children.Add(status); header.Children.Add(banner);
         root.Children.Add(header);
         scroll.Content = transcript; Grid.SetRow(scroll, 1); root.Children.Add(scroll);
+        scroll.SizeChanged += (_, e) => transcript.Width = PreviewLayout.ConversationThreadWidth(e.NewSize.Width);
         scroll.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler((_, _) => PauseFollowing()), true);
         scroll.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, _) => PauseFollowing()), true);
         scroll.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler((_, e) =>
@@ -160,7 +268,8 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
         Grid.SetRow(approvals, 2); root.Children.Add(approvals);
         composer.TextChanged += (_, _) =>
         {
-            model.Draft = composer.Text; send.IsEnabled = model.CanSend; queue.IsEnabled = model.CanQueue;
+            model.Draft = composer.Text;
+            RefreshSendAppearance();
             commandsDismissed = false;
             UpdateSlashHint();
         };
@@ -171,11 +280,15 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
             composing = false; compositionJustEnded = true;
             DispatcherQueue.TryEnqueue(() => compositionJustEnded = false);
         };
+        composer.Paste += (_, e) => { if (TryPasteComposerContent()) e.Handled = true; };
+        ConfigureComposerClipboardMenu();
         composer.PreviewKeyDown += (_, e) =>
         {
             if (composing || compositionJustEnded) return;
             var shift = (InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift) & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
             var control = (InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control) & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
+            if ((control && !shift && e.Key == VirtualKey.V || shift && !control && e.Key == VirtualKey.Insert) && TryPasteComposerContent())
+            { e.Handled = true; return; }
             if (commandChoices.Visibility == Visibility.Visible && !control && !shift)
             {
                 if (e.Key is VirtualKey.Up or VirtualKey.Down)
@@ -194,39 +307,42 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
         AutomationProperties.SetName(commandChoices, "命令与引用候选，方向键选择，Enter 填入");
         send.Click += (_, _) => Submit();
         stop.Click += async (_, _) => await model.StopAsync(lifetime.Token);
-        models.SelectionChanged += async (_, _) =>
-        {
-            if (!updatingModels && models.SelectedItem is ComboBoxItem item && item.Tag is string id && id != model.Snapshot?.ModelId)
-                await model.SelectModelAsync(id, lifetime.Token);
-        };
+        BuildModelPicker();
         createSession.Click += async (_, _) => await create();
-        attach.Click += async (_, _) => await DoAttachAsync();
-        attach.Visibility = pickAttachment == null ? Visibility.Collapsed : Visibility.Visible;
-        queue.Click += async (_, _) => await model.QueueAsync(lifetime.Token);
-        var hosts = design.ToolButton("执行环境", "server", showLabel: true);
-        hosts.Click += (_, _) => openHosts?.Invoke();
-        hosts.Visibility = openHosts == null ? Visibility.Collapsed : Visibility.Visible;
-        hosts.HorizontalAlignment = HorizontalAlignment.Left;
+        BuildComposeMenu();
         attach.Content = design.Icon("plus", 18);
-        AutomationProperties.SetName(attach, "添加附件"); ToolTipService.SetToolTip(attach, "添加附件");
-        var options = new Button { Content = design.Icon("adjustments", 18) };
-        AutomationProperties.SetName(options, "对话选项"); ToolTipService.SetToolTip(options, "对话选项");
+        AutomationProperties.SetName(attach, design.T("composer.add")); ToolTipService.SetToolTip(attach, design.T("composer.add"));
+        AutomationProperties.SetAutomationId(attach, "composer-add");
+        var options = composerSettingsButton; options.Content = design.Icon("controls", 18);
+        AutomationProperties.SetName(options, design.L("对话选项", "Agent options")); ToolTipService.SetToolTip(options, design.L("对话选项", "Agent options"));
         BuildComposerOptions();
-        composerOptions.Opened += async (_, _) => { composerOptionsOpen = true; await model.Options.LoadAsync(lifetime.Token); };
-        composerOptions.Closed += (_, _) => { composerOptionsOpen = false; optionSubmenu.Hide(); };
-        options.Flyout = composerOptions;
-        fastMode.Content = design.Icon("bolt", 18);
-        AutomationProperties.SetName(fastMode, "Fast 优先服务");
-        fastMode.Click += async (_, _) => await model.SetFastModeAsync(fastMode.IsChecked == true, lifetime.Token);
-        send.Content = design.Icon("arrow-up", 18);
-        send.Opacity = send.IsEnabled ? 1 : 0.35;
-        send.RegisterPropertyChangedCallback(Control.IsEnabledProperty, (sender, _) =>
+        composerOptions.Opened += async (_, _) => { composerOptionsOpen = true; refreshComposerFocus?.Invoke(); await model.Options.LoadAsync(lifetime.Token); };
+        composerOptions.Closed += (_, _) =>
         {
-            var button = (Button)sender;
-            button.Opacity = button.IsEnabled ? 1 : 0.35;
-        });
-        AutomationProperties.SetName(send, "发送"); ToolTipService.SetToolTip(send, "发送");
-        foreach (var button in new[] { attach, options, send })
+            composerOptionsOpen = false; refreshComposerFocus?.Invoke(); optionSubmenu.Hide();
+            if (!restoreComposerOptionsTrigger) return;
+            restoreComposerOptionsTrigger = false;
+            DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+            {
+                if (!disposed && !composerOptionsOpen && composerSettingsButton.IsLoaded)
+                    composerSettingsButton.Focus(FocusState.Keyboard);
+            });
+        };
+        options.Click += (_, _) =>
+        {
+            modelMenu.Hide(); effortMenu.Hide();
+            var ready = model.Snapshot != null && model.CurrentSessionId != null || model.HasProjectDraft && !model.Loading && !model.Busy;
+            // Both menus start at the left edge of the same toolbar in WebView.
+            if (ready && !disposed && attach.IsLoaded) composerOptions.ShowAt(attach);
+        };
+        AutomationProperties.SetAutomationId(fastMode, "composer-fast-toggle");
+        fastMode.Click += async (_, _) =>
+        {
+            if (model.ComposerFastMode is { } fast) await model.SetFastModeAsync(!fast.Enabled, lifetime.Token);
+        };
+        send.Content = design.Icon("arrow-up", 18);
+        AutomationProperties.SetAutomationId(send, "composer-send"); AutomationProperties.SetAutomationId(stop, "composer-stop");
+        foreach (var button in new[] { attach, options, send, stop })
         {
             design.QuietButton(button);
             button.Width = button.Height = button.MinWidth = button.MinHeight = 32;
@@ -234,106 +350,220 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
             button.BorderThickness = new Thickness(1); button.BorderBrush = design.Brush("border");
             button.VerticalAlignment = VerticalAlignment.Center;
         }
-        send.Background = design.Brush("bg-sunken");
         fastMode.Width = fastMode.Height = fastMode.MinWidth = fastMode.MinHeight = 32;
         fastMode.Padding = new Thickness(6); fastMode.CornerRadius = new CornerRadius(16);
         fastMode.VerticalAlignment = VerticalAlignment.Center;
-        foreach (var button in new[] { queue, stop }) { design.QuietButton(button); button.VerticalAlignment = VerticalAlignment.Center; }
-        models.HorizontalAlignment = HorizontalAlignment.Right; models.MinWidth = 144;
-        foreach (var picker in new[] { models, efforts })
+        stop.BorderThickness = new Thickness(0);
+        stop.Background = stopFill; stop.Resources["ButtonBackgroundDisabled"] = stopFill;
+        stop.Resources["ButtonBackgroundPointerOver"] = stop.Resources["ButtonBackgroundPressed"] = design.Brush("text");
+        models.HorizontalAlignment = HorizontalAlignment.Stretch;
+        foreach (var picker in new Control[] { models, efforts })
         {
+            picker.MinWidth = 0;
             picker.Height = picker.MinHeight = 32; picker.CornerRadius = new CornerRadius(16);
             picker.VerticalAlignment = VerticalAlignment.Center;
         }
-        AutomationProperties.SetName(models, "对话模型");
-        AutomationProperties.SetName(efforts, "模型默认思考强度");
-        ToolTipService.SetToolTip(efforts, "更改此模型的默认思考强度；没有会话覆盖时，在下一轮使用。");
-        efforts.SelectionChanged += async (_, _) =>
-        {
-            if (!updatingEfforts && efforts.SelectedItem is ComboBoxItem item && item.Tag is string value && value != model.Effort.Value)
-                await model.SelectEffortAsync(value, lifetime.Token);
-        };
-        var actions = new Grid { ColumnSpacing = 12, RowSpacing = 8 };
-        actions.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        actions.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        actions.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        actions.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        BuildEffortPicker();
         var leading = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
-        leading.Children.Add(attach); leading.Children.Add(options); actions.Children.Add(leading);
-        var tools = new Grid { ColumnSpacing = 6, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right };
-        tools.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        tools.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        for (var i = 0; i < 3; i++) tools.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        SetupReading(); SetupAcpSettings();
-        tools.Children.Add(contextUsage);
-        Grid.SetColumn(models, 1); tools.Children.Add(models);
-        Grid.SetColumn(efforts, 2); tools.Children.Add(efforts);
-        Grid.SetColumn(fastMode, 3); tools.Children.Add(fastMode);
-        var primary = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
-        primary.Children.Add(queue); primary.Children.Add(send); primary.Children.Add(stop);
-        Grid.SetColumn(primary, 4); tools.Children.Add(primary);
-        Grid.SetColumn(tools, 1); actions.Children.Add(tools);
-        actions.SizeChanged += (_, e) =>
+        leading.Children.Add(attach); leading.Children.Add(options);
+        SetupReading();
+        var primary = new Grid { VerticalAlignment = VerticalAlignment.Center };
+        primary.Children.Add(send); primary.Children.Add(stop);
+        var actions = new NativeComposerToolbar(leading, models, efforts) { Margin = new Thickness(0, 8, 0, 0) };
+        foreach (var c in new UIElement[] { leading, contextUsage, models, efforts, fastMode, primary }) actions.Children.Add(c);
+        root.SizeChanged += (_, e) =>
         {
-            var narrow = PreviewLayout.StackComposerSend(e.NewSize.Width);
-            Grid.SetColumn(tools, narrow ? 0 : 1); Grid.SetColumnSpan(tools, narrow ? 2 : 1);
-            Grid.SetRow(tools, narrow ? 1 : 0);
-            tools.HorizontalAlignment = narrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
-            models.MinWidth = narrow ? 80 : 144;
+            var compact = PreviewLayout.CompactComposer(e.NewSize.Width);
+            var viewportWidth = XamlRoot?.Size.Width ?? e.NewSize.Width;
+            actions.Compact = compact; leading.Spacing = compact ? 4 : 6;
+            foreach (var b in new ContentControl[] { attach, options, fastMode, send, stop })
+            {
+                b.Width = b.Height = b.MinWidth = b.MinHeight = compact ? 28 : 32;
+                if (b.Content is Image glyph) glyph.Width = glyph.Height = compact ? (b == send || b == stop ? 16 : 15) : b == fastMode ? 17 : 18;
+            }
+            models.Height = models.MinHeight = efforts.Height = efforts.MinHeight = contextUsage.Height = contextUsage.MinHeight = compact ? 28 : 32;
+            models.MaxWidth = compact ? 104 : Math.Min(viewportWidth <= 640 ? 126 : 220, viewportWidth * .38);
+            efforts.MaxWidth = compact ? 104 : Math.Min(180, viewportWidth * .3);
+            models.Padding = new(compact ? 8 : 11, 0, compact ? 8 : 11, 0);
+            efforts.Padding = new(compact ? 8 : 10, 0, compact ? 8 : 10, 0);
         };
-        var card = new StackPanel { Spacing = 8, Padding = new Thickness(14) };
+        var card = new StackPanel { Spacing = 0, Padding = new Thickness(14, 0, 12, 10) };
+        composerResize = new(() => design.ComposerTextHeight, ApplyComposerHeight, height =>
+        {
+            design.ComposerTextHeight = height;
+            ApplyComposerHeight(height); design.SaveComposerTextHeight?.Invoke(height); FollowAfterLayout();
+        });
+        AutomationProperties.SetAutomationId(composerResize, "composer-resizer");
+        card.Children.Add(composerResize);
         InitializeQueue();
-        card.Children.Add(queueCard);
-        composer.MinHeight = 56;
+        composer.MinHeight = 50;
         composer.BorderThickness = new Thickness(0);
         composer.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         composer.Padding = new Thickness(0, 4, 0, 6);
-        composer.Resources["TextControlBackgroundFocused"] = design.Brush("bg-elev");
-        composer.Resources["TextControlBorderBrushFocused"] = design.Brush("clay");
-        composer.MaxHeight = 240;
-        card.Children.Add(followUpQuestions); card.Children.Add(commandChoices); card.Children.Add(attachments); card.Children.Add(composer);
+        composer.Resources["TextControlBackgroundFocused"] = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        composer.Resources["TextControlBackgroundPointerOver"] = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        composer.Resources["TextControlBorderBrushFocused"] = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        composer.Resources["TextControlBorderBrushPointerOver"] = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        ApplyComposerHeight(design.ComposerTextHeight);
+        design.QuietButton(assistantContext);
+        var contextContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7 };
+        contextContent.Children.Add(design.Icon("folder", 14)); contextContent.Children.Add(assistantContextLabel); contextContent.Children.Add(design.Icon("close", 14));
+        assistantContext.Content = contextContent;
+        assistantContext.Click += (_, _) => model.SetAssistantContext(null, model.ContextReady);
+        card.Children.Add(followUpQuestions); card.Children.Add(commandChoices); card.Children.Add(attachments); card.Children.Add(assistantContext); card.Children.Add(composer);
         design.BindTypography(slashHint, 11);
         slashHint.Foreground = design.Brush("text-faint");
         slashHint.Text = "方向键选择 · Enter 填入 · Ctrl+Enter 执行";
         slashHint.Visibility = Visibility.Collapsed;
         follow.Click += (_, _) => { followLatest = true; userScrollPending = false; FollowAfterLayout(); UpdateFollowButton(); };
-        var footer = new Grid { Margin = new Thickness(24, 0, 24, 10), MaxWidth = PreviewLayout.ConversationMaxWidth };
+        var footer = new Grid { Margin = new Thickness(20, 0, 20, 0), MaxWidth = PreviewLayout.ConversationMaxWidth };
         footer.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         footer.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var footerHints = new StackPanel { Spacing = 2 };
         footerHints.Children.Add(slashHint);
-        hint.Text = model.InputPreferences.Hint;
+        hint.Text = model.InputPreferences.LocalizedHint(design.Localization);
         hint.Foreground = design.Brush("text-faint");
-        hint.HorizontalAlignment = HorizontalAlignment.Center; hint.TextAlignment = TextAlignment.Center;
+        hint.HorizontalAlignment = HorizontalAlignment.Stretch; hint.TextAlignment = TextAlignment.Center;
+        design.BindLineHeight(hint, 11, 1.35); hint.Margin = new Thickness(54, 2, 2, 0); hint.MinHeight = 20;
+        hint.TextTrimming = TextTrimming.CharacterEllipsis; hint.Opacity = 0;
         card.Children.Add(hint); card.Children.Add(actions);
         footer.Children.Add(footerHints); Grid.SetColumn(follow, 1); footer.Children.Add(follow);
         composerBar.RowDefinitions.Add(new() { Height = GridLength.Auto });
         composerBar.RowDefinitions.Add(new() { Height = GridLength.Auto });
         composerBar.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        var empty = new StackPanel { Spacing = 12, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(24) };
-        var emptyHeading = design.Text("开始新的研究对话", 22); emptyHeading.HorizontalAlignment = HorizontalAlignment.Center; empty.Children.Add(emptyHeading);
-        empty.Children.Add(createSession);
-        composerBar.Children.Add(empty);
+        // Welcome belongs to the flexible reading region, not the bottom composer.
+        var welcome = new Grid { Padding = new Thickness(16, 26, 16, 40) };
+        var empty = new StackPanel { Spacing = 12, MaxWidth = PreviewLayout.ConversationMaxWidth, HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(24, 40, 24, 40) };
+        welcomeMark = design.Wordmark();
+        welcomeMark.Width = 208; welcomeMark.Height = 208 * HomeLayout.WordmarkHeight / HomeLayout.WordmarkWidth;
+        welcomeMark.HorizontalAlignment = HorizontalAlignment.Center;
+        AutomationProperties.SetName(welcomeMark, "Wisp Science"); empty.Children.Add(welcomeMark);
+        emptyHeading = design.Text("", PreviewLayout.WelcomeHeadingSize);
+        emptyHeading.FontSize = PreviewLayout.WelcomeHeadingSize;
+        emptyHeading.FontFamily = new FontFamily("ms-appx:///Assets/Fonts/wisp-serif.ttf#Wisp Serif, Noto Serif SC, SimSun, Georgia, Times New Roman");
+        emptyHeading.Margin = new Thickness(0, 4, 0, 0);
+        emptyHeading.TextAlignment = TextAlignment.Center; emptyHeading.FontWeight = Microsoft.UI.Text.FontWeights.Medium;
+        emptyHeading.Foreground = design.Brush("text");
+        empty.Children.Add(emptyHeading);
+        emptyDescription = design.Text("", 14);
+        // .empty p uses the fixed --text-md token, not the scalable body size.
+        emptyDescription.FontSize = 14;
+        emptyDescription.MaxWidth = 420;
+        emptyDescription.TextAlignment = TextAlignment.Center; emptyDescription.Foreground = design.Brush("text-muted");
+        emptyDescription.LineStackingStrategy = LineStackingStrategy.MaxHeight;
+        emptyDescription.LineHeight = 14 * 1.55;
+        empty.Children.Add(emptyDescription);
+        var tip = new Grid { ColumnSpacing = 8 };
+        tip.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        tip.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        tip.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        tip.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var tipIcon = design.Icon("lightbulb", 16); tipIcon.VerticalAlignment = VerticalAlignment.Top; tipIcon.Margin = new Thickness(0, 2, 0, 0);
+        tip.Children.Add(tipIcon);
+        tipLabel = design.Text("", 13); tipLabel.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+        tipLabel.Foreground = design.Brush("text"); design.BindLineHeight(tipLabel, 13, 1.5);
+        Grid.SetColumn(tipLabel, 1); tip.Children.Add(tipLabel);
+        tipText = design.Text("", 13); tipText.Foreground = design.Brush("text-muted");
+        design.BindLineHeight(tipText, 13, 1.5);
+        Grid.SetColumn(tipText, 2); tip.Children.Add(tipText);
+        hideTip = design.ToolButton("", "close"); hideTip.Padding = new Thickness(2, 0, 2, 0);
+        hideTip.Width = hideTip.Height = 20; hideTip.MinWidth = hideTip.MinHeight = 0;
+        hideTip.Content = design.Icon("close", 16);
+        hideTip.VerticalAlignment = VerticalAlignment.Top;
+        hideTip.Click += (_, _) => design.Welcome.DismissTips();
+        Grid.SetColumn(hideTip, 3); tip.Children.Add(hideTip);
+        tipCard = new Border { Child = tip, MaxWidth = 460, CornerRadius = new CornerRadius(10), BorderThickness = new Thickness(1),
+            BorderBrush = design.Brush("border"), Padding = new Thickness(12, 8, 8, 8), Margin = new Thickness(0, 8, 0, 0) };
+        AutomationProperties.SetAutomationId(tipCard, "usage-tip"); empty.Children.Add(tipCard);
+        design.ActionButton(createSession, primary: true);
+        if (createSession.Content is TextBlock startLabel) startLabel.Foreground = new SolidColorBrush(Microsoft.UI.Colors.White);
+        createSession.HorizontalAlignment = HorizontalAlignment.Center;
+        createSession.Margin = new Thickness(0, 8, 0, 0); empty.Children.Add(createSession);
+        welcome.Children.Add(new NativeWelcomeBackdrop(design, empty)); welcomeScroll.Content = welcome;
+        welcomeScroll.SizeChanged += (_, e) => welcome.MinHeight = Math.Max(0, e.NewSize.Height);
+        AutomationProperties.SetAutomationId(welcomeScroll, "conversation-welcome");
+        Grid.SetRow(welcomeScroll, 1); root.Children.Add(welcomeScroll);
         var border = new Border { Child = card, CornerRadius = new CornerRadius(16), BorderThickness = new Thickness(1),
-            BorderBrush = design.Brush("border-strong"), Background = design.Brush("bg-elev"),
-            Margin = new Thickness(20, 0, 20, 8), MaxWidth = PreviewLayout.ConversationMaxWidth };
-        var inputArea = new StackPanel { Spacing = 4, MaxWidth = PreviewLayout.ConversationMaxWidth + 40 };
+            BorderBrush = design.Brush("border"), Background = design.Brush("bg-input") };
+        var frame = new Grid { Margin = model.AssistantMode ? new Thickness(24, 0, 24, 18) : new Thickness(16, 0, 16, 12),
+            MaxWidth = PreviewLayout.ConversationMaxWidth };
+        var ring = new Border { Margin = new(-3), BorderThickness = new(3), CornerRadius = new(19), IsHitTestVisible = false };
+        frame.Children.Add(ring); frame.Children.Add(border);
+        var pointerInsideComposer = false; var fileDragOverComposer = false;
+        void UpdateComposerFocus()
+        {
+            if (disposed) return;
+            var focused = XamlRoot == null ? null : FocusManager.GetFocusedElement(XamlRoot) as DependencyObject;
+            while (focused != null && focused != border) focused = VisualTreeHelper.GetParent(focused);
+            // WebView's toolbar menus are children of the composer. WinUI flyouts
+            // own a separate visual tree, but still belong to the same input area.
+            var focusWithin = focused != null || composeMenuOpen || composerOptionsOpen;
+            hint.Opacity = focusWithin || pointerInsideComposer ? 1 : 0;
+            var showRing = focusWithin || fileDragOverComposer;
+            ring.BorderBrush = showRing ? design.Brush("focus-ring") : null;
+            border.BorderBrush = showRing ? MixBrush("clay", "border-strong", .45) : design.Brush("border");
+        }
+        refreshComposerFocus = UpdateComposerFocus;
+        border.PointerEntered += (_, _) => { pointerInsideComposer = true; UpdateComposerFocus(); };
+        border.PointerExited += (_, _) => { pointerInsideComposer = false; UpdateComposerFocus(); };
+        border.GotFocus += (_, _) => UpdateComposerFocus();
+        border.LostFocus += (_, _) => DispatcherQueue.TryEnqueue(() => UpdateComposerFocus());
+        var inputArea = new StackPanel { Spacing = 4, MaxWidth = PreviewLayout.ConversationMaxWidth + 32 };
+        inputArea.Children.Add(excerptArea);
         inputArea.Children.Add(planProgress);
-        hosts.Margin = new Thickness(20, 0, 20, 0); inputArea.Children.Add(hosts);
-        inputArea.Children.Add(border);
-        Grid.SetRow(inputArea, 1); composerBar.Children.Add(inputArea);
-        Grid.SetRow(footer, 2); composerBar.Children.Add(footer);
-        Grid.SetRow(composerBar, 3); root.Children.Add(composerBar);
+        inputArea.Children.Add(queueCard);
+        var stopBody = new Grid { ColumnSpacing = 12 };
+        stopBody.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); stopBody.ColumnDefinitions.Add(new());
+        stoppingSpinner.Foreground = design.Brush("err"); stopBody.Children.Add(stoppingSpinner);
+        var stopCopy = new StackPanel { Spacing = 3 };
+        stoppingTitle = design.Text("", 13.5); stoppingTitle.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+        stoppingDetail = design.Text("", 12); stoppingDetail.Foreground = design.Brush("text-muted");
+        design.BindLineHeight(stoppingDetail, 12, 1.4);
+        stopCopy.Children.Add(stoppingTitle); stopCopy.Children.Add(stoppingDetail); Grid.SetColumn(stopCopy, 1); stopBody.Children.Add(stopCopy);
+        stoppingNotice.Child = stopBody; stoppingNotice.Margin = new Thickness(16, 0, 16, 6); stoppingNotice.Padding = new Thickness(16, 12, 16, 12);
+        stoppingNotice.Background = design.Brush("bg-elev"); stoppingNotice.BorderBrush = design.Brush("border-strong");
+        stoppingNotice.BorderThickness = new Thickness(1); stoppingNotice.CornerRadius = new CornerRadius(8);
+        AutomationProperties.SetAutomationId(stoppingNotice, "stopping-toast");
+        AutomationProperties.SetLiveSetting(stoppingTitle, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
+        inputArea.Children.Add(stoppingNotice);
+        inputArea.Children.Add(runtimeStrip);
+        inputArea.Children.Add(frame);
+        Grid.SetRow(inputArea, 0); composerBar.Children.Add(inputArea);
+        Grid.SetRow(footer, 1); composerBar.Children.Add(footer);
+        var composerViewport = new ScrollViewer { Content = composerBar, HorizontalScrollMode = ScrollMode.Disabled,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        void FitComposer()
+        {
+            composerViewport.MaxHeight = PreviewLayout.ComposerViewportHeight(root.ActualHeight - header.ActualHeight - approvals.ActualHeight, composer.Height);
+            FitComposerHint();
+        }
+        root.SizeChanged += (_, _) => FitComposer(); header.SizeChanged += (_, _) => FitComposer(); approvals.SizeChanged += (_, _) => FitComposer();
+        composer.SizeChanged += (_, _) => FitComposer();
+        Grid.SetRow(contextUsageSlot, 3); root.Children.Add(contextUsageSlot);
+        Grid.SetRow(composerViewport, 4); root.Children.Add(composerViewport);
+        // TextBox owns its drag/drop hit target; allow the parent handler to
+        // receive workspace paths over the editable surface as well as its rim.
+        composer.AllowDrop = true; border.AllowDrop = true;
+        EnableFileReferenceDrop(border, active => { fileDragOverComposer = active; UpdateComposerFocus(); });
         Content = root;
         Refresh();
         // Subscribe only after the controls have been constructed successfully.
         // A failed constructor must not leave a half-built page observing resets.
         model.Changed += Refresh;
+        model.ModelContext.Changed += ModelContextChanged;
         model.Effort.Changed += Refresh;
+        model.Runtimes.Changed += RefreshRuntimeStrip;
+        model.Runtimes.Inspector.Changed += RefreshRuntimeEnvironment;
+        Unloaded += (_, _) => DismissRuntimeSurfaces();
+        Unloaded += (_, _) => { CloseIdleCompactionDialog(); CloseContextRecoveryDialog(); };
+        Loaded += (_, _) => { RefreshContextRecoveryDialog(); RefreshIdleCompactionDialog(); };
         model.Options.Changed += Refresh;
         model.ReferencePicker.Changed += RenderComposerChoices;
         design.TypographyChanged += Refresh;
-        _ = PollAsync();
+        design.Welcome.Changed += Refresh;
+        if (!model.ExampleMode) _ = PollAsync();
     }
 
     private async Task PollAsync()
@@ -345,6 +575,7 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
                 var delay = model.ConnectionError != null ? 2000 : model.Snapshot?.Running == true ? 350 : 1500;
                 await Task.Delay(delay, lifetime.Token);
                 await model.RefreshAsync(lifetime.Token);
+                await model.Runtimes.RefreshAsync(lifetime.Token);
             }
         }
         catch (OperationCanceledException) { }
@@ -352,13 +583,22 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
 
     private async Task DoAttachAsync(string? commandDraft = null)
     {
-        if (pickAttachment == null || !model.CanAttach) return;
-        var session = model.Snapshot;
-        if (await pickAttachment() is not { } path || disposed || model.Snapshot?.SessionId != session?.SessionId
-            || model.Snapshot?.ProjectId != session?.ProjectId || !model.CanAttach) return;
-        var attached = await model.AttachAsync(path, lifetime.Token);
-        if (commandDraft != null && attached && model.Draft == commandDraft
-            && model.Snapshot?.SessionId == session?.SessionId && model.Snapshot?.ProjectId == session?.ProjectId)
+        if (clipboardBusy || !CanPickAttachments || !(model.CanAttach || model.CanPrepareProjectDraft)) return;
+        var project = model.CurrentProjectId; var session = model.CurrentSessionId;
+        IReadOnlyList<string> paths;
+        try { paths = pickAttachments != null ? await pickAttachments() : await pickAttachment!() is { } path ? [path] : []; }
+        catch (Exception ex)
+        {
+            if (!disposed && model.CurrentProjectId == project && model.CurrentSessionId == session)
+                model.ReportAttachmentSelectionError(design.L("无法选择附件：", "Could not choose attachments: ") + ex.Message);
+            return;
+        }
+        if (paths.Count == 0 || disposed || model.CurrentSessionId != session
+            || model.CurrentProjectId != project || !await EnsureSessionForActionAsync() || disposed || !model.CanAttach) return;
+        var attachedSession = model.CurrentSessionId;
+        var attached = await model.AttachFilesAsync(paths, lifetime.Token);
+        if (commandDraft != null && attached > 0 && model.OperationError == null && model.Draft == commandDraft
+            && model.CurrentSessionId == attachedSession && model.CurrentProjectId == project)
         { model.Draft = ""; Refresh(); }
     }
 
@@ -380,7 +620,8 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
         var choices = new List<object>();
         if (!commandsDismissed && composer.IsEnabled && !composing)
         {
-            choices.AddRange(NativeComposerCommands.Match(composer.Text, pickAttachment != null, slashCommand != null));
+            choices.AddRange(NativeComposerCommands.Match(composer.Text, CanPickAttachments, slashCommand != null, model.CanCompose)
+                .Select(command => command.Command == "/compact" ? command with { Label = design.T("compact.title") } : command));
             if (model.ReferencePicker.Token == NativeComposerToken.Find(composer.Text, composer.SelectionStart))
                 choices.AddRange(model.ReferencePicker.Options);
         }
@@ -390,9 +631,9 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
         commandChoices.Visibility = choices.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         slashHint.Visibility = !commandsDismissed && (model.ReferencePicker.Token != null || composer.Text.TrimStart().StartsWith('/'))
             ? Visibility.Visible : Visibility.Collapsed;
-        slashHint.Text = model.ReferencePicker.Error ?? (model.ReferencePicker.Loading ? "正在查找引用…"
-            : choices.Count > 0 ? "方向键选择 · Enter/Tab 添加引用或填入命令 · Esc 关闭"
-            : "没有匹配项；草稿已保留。输入 @、# 或 / 查找引用与命令。");
+        slashHint.Text = model.ReferencePicker.Error ?? (model.ReferencePicker.Loading ? design.L("正在查找引用…", "Looking up references…")
+            : choices.Count > 0 ? design.L("方向键选择 · Enter/Tab 添加引用或填入命令 · Esc 关闭", "Arrow keys to select · Enter/Tab to insert · Esc to close")
+            : design.L("没有匹配项；草稿已保留。输入 @、# 或 / 查找引用与命令。", "No matches; your draft is kept. Type @, # or / to find references and commands."));
     }
 
     private void ChooseComposerItem(object choice)
@@ -416,19 +657,30 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
         composer.SelectionStart = composer.Text.Length;
         commandsDismissed = true; commandChoices.Visibility = Visibility.Collapsed;
         model.ReferencePicker.Dismiss();
-        slashHint.Text = model.InputPreferences.SendWithModifier ? "Ctrl+Enter 执行命令" : "Enter 执行命令";
+        slashHint.Text = model.InputPreferences.SendWithModifier ? design.L("Ctrl+Enter 执行命令", "Ctrl+Enter to run the command") : design.L("Enter 执行命令", "Enter to run the command");
         composer.Focus(FocusState.Programmatic);
     }
 
     public bool HandleEscape()
     {
+        if (HandleContextRecoveryEscape()) return true;
+        if (HandleIdleCompactionEscape()) return true;
+        if (HandleHandoffEscape()) return true;
+        if (HandleHistoryEscape()) return true;
+        if (HandleCompactionEscape()) return true;
+        if (HandleModelSwitchEscape()) return true;
+        if (HandleRuntimeEscape()) return true;
+        if (HandleComposerTextEscape()) return true;
+        if (HandleAttachmentEscape()) return true;
         if (HandleReadingEscape()) return true;
         if (HandleAcpEscape()) return true;
+        if (HandleComposeMenuEscape()) return true;
         if (HandleComposerOptionsEscape()) return true;
-        if (efforts.IsDropDownOpen) { efforts.IsDropDownOpen = false; return true; }
+        if (effortMenuOpen) { effortMenu.Hide(); return true; }
         if (composing || compositionJustEnded) return false;
-        if (models.IsDropDownOpen) { models.IsDropDownOpen = false; return true; }
-        if (commandChoices.Visibility != Visibility.Visible && model.ReferencePicker.Token == null) return false;
+        if (modelMenuOpen) { modelMenu.Hide(); models.Focus(FocusState.Programmatic); return true; }
+        if (HandleContextUsageEscape()) return true;
+        if (commandChoices.Visibility != Visibility.Visible && model.ReferencePicker.Token == null) return CancelExcerptSelection() || HandleCompactionRecordEscape();
         commandsDismissed = true; commandChoices.Visibility = slashHint.Visibility = Visibility.Collapsed;
         model.ReferencePicker.Dismiss();
         return true;
@@ -437,14 +689,17 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
     /// <summary>Send attempt. A leading slash routes to a client-side command
     /// mapping instead of the send API; unknown commands keep the draft and
     /// surface the available set. Real sends are untouched.</summary>
-    private void Submit()
+    private void Submit() => _ = SubmitAsync();
+    private async Task SubmitAsync()
     {
+        if (preparingSession || clipboardBusy || !model.HasComposerContent || !(model.CanSubmit || model.CanAttach)) return;
         var draft = model.Draft.Trim();
         if (draft.StartsWith('/'))
         {
+            if (model.HandleCompactionCommand(model.Draft)) { commandsDismissed = true; commandChoices.Visibility = slashHint.Visibility = Visibility.Collapsed; Refresh(); return; }
             var command = NativeComposerCommands.Exact(draft)?.Command;
             if (command == null) { commandsDismissed = false; UpdateSlashHint(); return; }
-            if (command == "/upload" && pickAttachment != null)
+            if (command == "/upload" && CanPickAttachments)
             {
                 _ = DoAttachAsync(model.Draft); return;
             }
@@ -456,123 +711,128 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
             UpdateSlashHint();
             return;
         }
-        _ = model.SendAsync(lifetime.Token);
+        if (model.Snapshot?.Running == true) { await model.QueueAsync(lifetime.Token); return; }
+        if (await EnsureSessionForActionAsync() && !disposed && model.CanSend) await model.SendAsync(lifetime.Token);
     }
+
+    private void ApplyComposerHeight(double? height)
+    {
+        composer.MaxHeight = height.HasValue ? PreviewLayout.ComposerMaxTextHeight : PreviewLayout.ComposerAutoHeightLimit;
+        composer.Height = height.HasValue ? PreviewLayout.ResizeComposer(height, 0) : double.NaN;
+    }
+    private void FitComposerHint() => hint.Visibility = model.Snapshot?.ReadOnly == true || XamlRoot?.Size.Width <= 640
+        ? Visibility.Collapsed : Visibility.Visible;
 
     public void Refresh()
     {
-        RefreshHistoryActions();
-        hint.Text = model.InputPreferences.Hint;
         if (disposed) return;
+        RefreshHistoryActions();
+        RefreshExcerpt();
+        follow.Content = design.T("chat.jump_bottom");
+        hint.Text = model.InputPreferences.LocalizedHint(design.Localization);
+        FitComposerHint();
+        if (!composerResize.Dragging) ApplyComposerHeight(design.ComposerTextHeight);
+        var resizeHint = design.T("composer.resize_hint");
+        if (AutomationProperties.GetName(composerResize) != resizeHint)
+        {
+            AutomationProperties.SetName(composerResize, resizeHint);
+            ToolTipService.SetToolTip(composerResize, resizeHint);
+        }
+        composer.PlaceholderText = model.Snapshot?.Exploration?.SourceFrozen == true ? design.T("exploration.mainline_frozen_placeholder")
+            : model.AssistantMode ? design.L("聊聊研究进展，或安排下一步…", "Ask about your research, or plan the next step…")
+            : design.Localization.Format("composer.placeholder", ("modifier", "Ctrl"));
+        assistantContext.Visibility = model.ContextReference == null ? Visibility.Collapsed : Visibility.Visible;
+        assistantContextLabel.Text = model.ContextReference?.Label ?? "";
+        AutomationProperties.SetName(assistantContext, design.L("清除项目上下文：", "Clear project context: ") + model.ContextReference?.Label);
+        AutomationProperties.SetName(composer, composer.PlaceholderText);
+        if (createSession.Content is TextBlock startLabel) startLabel.Text = design.T("sidebar.new_session");
+        else createSession.Content = design.T("sidebar.new_session");
+        AutomationProperties.SetName(createSession, design.T("sidebar.new_session"));
         var session = model.Snapshot is { } snapshot ? snapshot.ProjectId + "/" + snapshot.SessionId : null;
         if (session != readingSession)
         {
             optionSubmenu.Hide(); composerOptions.Hide();
-            selectionFlyout?.Hide(); contextUsageFlyout.Hide();
-            acpCreationMenu?.Hide();
+            CloseSelectionActions(); CloseContextUsage();
+            modelMenu.Hide();
             readingSession = session; followLatest = true; userScrollPending = false;
+            design.Welcome.Rotate();
         }
+        emptyHeading.Text = model.AssistantMode ? design.T("assistant.title") : design.Welcome.Title(design.Localization);
+        emptyHeading.CharacterSpacing = PreviewLayout.WelcomeHeadingTracking(design.Localization.Locale);
+        emptyDescription.Text = model.AssistantMode ? design.T("assistant.empty") : design.Welcome.Subtitle(design.Localization);
+        tipLabel.Text = design.T("tips.title"); tipText.Text = design.Welcome.Tip(design.Localization);
+        tipText.LineHeight = design.FontSize(13) * 1.5;
+        AutomationProperties.SetName(hideTip, design.T("tips.close")); ToolTipService.SetToolTip(hideTip, design.T("tips.close"));
+        tipCard.Visibility = !model.AssistantMode && design.Welcome.ShowTips ? Visibility.Visible : Visibility.Collapsed;
         FontFamily = design.Font(); FontSize = design.FontSize(14);
         composer.FontFamily = design.Font(); composer.FontSize = design.FontSize(14);
-        var error = model.ConnectionError ?? model.OperationError ?? model.Effort.Error ?? model.Snapshot?.Error;
+        var inlineTurnError = !model.ShowingHistory && !model.ModelContext.Active && model.Snapshot is { Running: false, Stopping: false };
+        var error = model.ConnectionError ?? model.Compaction?.Error ?? (model.HasInlineAttachmentError ? null : ConversationOperationError) ?? model.Effort.Error
+            ?? (inlineTurnError ? null : model.Snapshot?.Error);
+        if (model.ConnectionError == null && model.QueueUncertain)
+            error = design.L("队列操作结果未确认，请核对会话；不会自动重试。", "The queue result is unconfirmed. Check the conversation; it will not be retried automatically.")
+                + (model.QueueErrorDetail is { Length: > 0 } detail ? "\n" + detail : "");
         retry.Visibility = error != null ? Visibility.Visible : Visibility.Collapsed;
-        acknowledge.Visibility = model.UncertainSend || model.QueueUncertain ? Visibility.Visible : Visibility.Collapsed;
+        retry.Content = design.L("重新读取", "Reload");
+        acknowledge.Visibility = model.UncertainSend || model.QueueUncertain || model.DraftCreationUncertain ? Visibility.Visible : Visibility.Collapsed;
+        acknowledge.Content = model.DraftCreationUncertain ? design.L("已检查会话列表，允许重新创建", "I checked the session list; allow creation again")
+            : design.L("已检查，允许再次发送或排队…", "I checked; allow sending or queuing again…");
+        retryActions.Visibility = retryActions.Children.OfType<FrameworkElement>().Any(child => child.Visibility == Visibility.Visible)
+            ? Visibility.Visible : Visibility.Collapsed;
         status.Text = error ?? "";
         status.Foreground = design.Brush(error == null ? "text-muted" : "clay-strong");
         status.Visibility = error == null && !model.UncertainSend ? Visibility.Collapsed : Visibility.Visible;
-        var hasSession = model.Snapshot != null || model.Loading;
-        composerBar.Children[0].Visibility = hasSession ? Visibility.Collapsed : Visibility.Visible;
-        composerBar.Children[1].Visibility = hasSession ? Visibility.Visible : Visibility.Collapsed;
-        composerBar.Children[2].Visibility = hasSession ? Visibility.Visible : Visibility.Collapsed;
+        var hasSession = model.Snapshot != null || model.Loading || model.HasProjectDraft;
+        welcomeScroll.Visibility = model.ShowWelcome ? Visibility.Visible : Visibility.Collapsed;
+        scroll.Visibility = model.ShowWelcome ? Visibility.Collapsed : Visibility.Visible;
+        createSession.Visibility = hasSession || model.AssistantMode || model.ExampleMode ? Visibility.Collapsed : Visibility.Visible;
+        createSession.IsEnabled = !model.Busy;
+        composerBar.Visibility = hasSession && !model.ExampleMode ? Visibility.Visible : Visibility.Collapsed;
         if (composer.Text != model.Draft) composer.Text = model.Draft;
-        composer.IsEnabled = model.Snapshot is { ReadOnly: false } && !model.ShowingHistory;
-        send.Visibility = model.Snapshot?.Running == true ? Visibility.Collapsed : Visibility.Visible;
-        stop.Visibility = model.Snapshot?.Running == true ? Visibility.Visible : Visibility.Collapsed;
-        send.IsEnabled = model.CanSend; stop.IsEnabled = !model.Busy;
-        attach.IsEnabled = model.CanAttach; queue.IsEnabled = model.CanQueue;
-        queue.Content = model.Snapshot?.Queue != null || model.QueuedFollowUp == null ? "排队后续" : "后续已排队";
-        queue.Visibility = model.Snapshot?.Running == true || model.QueuedFollowUp != null ? Visibility.Visible : Visibility.Collapsed;
+        composer.IsEnabled = model.CanCompose && !preparingSession;
+        RefreshSendAppearance();
+        attach.IsEnabled = !preparingSession && !clipboardBusy; RefreshComposeActions();
+        composerSettingsButton.IsEnabled = (model.Snapshot != null || model.HasProjectDraft && !model.Loading && !model.Busy) && !preparingSession && !clipboardBusy;
+        stoppingSpinner.IsActive = model.IsStopping; stoppingNotice.Visibility = model.IsStopping ? Visibility.Visible : Visibility.Collapsed;
+        stoppingTitle.Text = design.T("composer.stopping"); stoppingDetail.Text = design.T("composer.stopping_hint");
         var nextAttachments = JsonSerializer.Serialize(model.Attachments) + JsonSerializer.Serialize(model.References)
-            + JsonSerializer.Serialize(model.Quotes) + $"/{model.CanAttach}";
+            + JsonSerializer.Serialize(model.Quotes) + JsonSerializer.Serialize(model.AttachmentUploads) + $"/{model.CanAttach}/{model.CanRemoveReference}/{model.FileReferenceRevision}/{design.Localization.Locale}/{design.Typography}/{design.Dark}/{design.LightPalette}/{design.DarkPalette}";
+        if (attachmentDialog != null && attachmentDialogRevision != model.FileReferenceRevision) attachmentDialog.Hide();
         if (nextAttachments != attachmentFingerprint)
         {
             attachmentFingerprint = nextAttachments;
             attachments.Children.Clear();
             foreach (var file in model.Attachments)
-            {
-                var remove = new Button { Content = file.Name + " · 移除", IsEnabled = !model.Busy && !model.UncertainSend };
-                AutomationProperties.SetName(remove, "移除附件 " + file.Name);
-                remove.Click += (_, _) => model.RemoveAttachment(file.Path); attachments.Children.Add(remove);
-            }
+                attachments.Children.Add(AttachmentCard(file));
+            foreach (var upload in model.AttachmentUploads)
+                attachments.Children.Add(AttachmentCard(upload.Name, null, upload));
             foreach (var reference in model.References)
-            {
-                var remove = new Button { Content = reference.Label + " · 移除", IsEnabled = model.CanAttach };
-                AutomationProperties.SetName(remove, "移除引用 " + reference.Label);
-                ToolTipService.SetToolTip(remove, reference.Detail);
-                remove.Click += (_, _) => model.RemoveReference(reference.Reference.Key);
-                attachments.Children.Add(remove);
-            }
+                attachments.Children.Add(ComposerReferenceCard(reference));
             foreach (var quote in model.Quotes)
-            {
-                var chip = new StackPanel { Spacing = 3 };
-                chip.Children.Add(design.Text(quote.Source, 11));
-                chip.Children.Add(new TextBlock { Text = quote.Text, MaxLines = 2, TextWrapping = TextWrapping.Wrap,
-                    TextTrimming = TextTrimming.CharacterEllipsis, FontSize = design.FontSize(12) });
-                var remove = new Button { Content = "移除引用片段", IsEnabled = model.CanAttach };
-                remove.Click += (_, _) => model.RemoveQuote(quote); chip.Children.Add(remove);
-                attachments.Children.Add(chip);
-            }
+                attachments.Children.Add(ComposerQuoteCard(quote));
         }
-        attachments.Visibility = model.Attachments.Length > 0 || model.References.Length > 0 || model.Quotes.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        attachments.Visibility = model.Attachments.Length > 0 || model.AttachmentUploads.Length > 0 || model.References.Length > 0 || model.Quotes.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         var referenceSession = model.Snapshot?.SessionId + "/" + model.Snapshot?.ComposerReferences + "/" + model.CanAttach;
         if (pickerSession != referenceSession) { pickerSession = referenceSession; UpdateSlashHint(); }
-        stop.Content = model.Snapshot?.Stopping == true ? "正在停止…" : "停止";
-        updatingModels = true;
-        try
-        {
-            if (!models.Items.Cast<ComboBoxItem>().Select(item => ((string)item.Tag, (string)item.Content))
-                .SequenceEqual(model.Models.Select(option => (option.Id, option.Label))))
-            {
-                models.Items.Clear();
-                foreach (var option in model.Models) models.Items.Add(new ComboBoxItem { Content = option.Label, Tag = option.Id });
-            }
-            models.SelectedItem = models.Items.Cast<ComboBoxItem>().FirstOrDefault(item => (string)item.Tag == model.Snapshot?.ModelId);
-        }
-        finally { updatingModels = false; }
-        models.IsEnabled = !model.Busy && !model.Effort.Busy && model.Snapshot is { Running: false, ReadOnly: false }
-            && model.Snapshot.ModelId.StartsWith("acp:", StringComparison.Ordinal) != true && model.Snapshot.AcpAgentId == null;
-        updatingEfforts = true;
-        try
-        {
-            var values = new[] { "" }.Concat(model.Effort.Options).ToArray();
-            if (!efforts.Items.Cast<ComboBoxItem>().Select(item => (string)item.Tag).SequenceEqual(values))
-            {
-                efforts.Items.Clear();
-                foreach (var value in values) efforts.Items.Add(new ComboBoxItem { Content = value.Length == 0 ? "默认强度" : value, Tag = value });
-            }
-            efforts.SelectedItem = efforts.Items.Cast<ComboBoxItem>().FirstOrDefault(item => (string)item.Tag == model.Effort.Value);
-            efforts.PlaceholderText = model.Effort.Value;
-        }
-        finally { updatingEfforts = false; }
-        efforts.Visibility = model.Effort.Options.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        efforts.IsEnabled = models.IsEnabled && model.CanAttach;
+        RefreshModelPicker();
+        RefreshEffortPicker();
+        RefreshRuntimeStrip();
         RefreshComposerOptions();
-        fastMode.Visibility = model.Snapshot?.FastMode is null ? Visibility.Collapsed : Visibility.Visible;
-        fastMode.IsChecked = model.Snapshot?.FastMode?.Enabled == true;
-        fastMode.IsEnabled = model.CanChangeFastMode;
-        ToolTipService.SetToolTip(fastMode, "请求优先服务等级，费用以提供方为准。" +
-            (model.Snapshot?.FastMode?.Inherited == true ? "当前继承模型默认值。" : "当前使用此会话的覆盖值。"));
+        RefreshFastButton();
         if (!composer.IsEnabled) { commandChoices.Visibility = Visibility.Collapsed; slashHint.Visibility = Visibility.Collapsed; }
         RenderPlanProgress();
         RenderQueue();
         RenderTranscript();
         ApplyReadingTarget();
         UpdateRunClocks();
+        RefreshContextRecoveryDialog();
+        RefreshIdleCompactionDialog();
         _ = MaybeShowRunReviewPrompt();
         RenderApprovals();
         RefreshReading();
-        RefreshAcpCreation();
         RefreshAcpSettings();
+        RefreshCompactionDialog();
+        RefreshHandoffDialog();
         design.ApplyTypography(this);
         FollowAfterLayout();
         UpdateFollowButton();
@@ -599,11 +859,32 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
     {
         var desired = new List<UIElement>();
         var retained = new HashSet<string>();
-        var snapshot = model.ShowingHistory ? model.History : model.Snapshot;
-        var keys = snapshot == null ? [] : NativeTranscriptRows.Keys(snapshot);
-        var style = $"{design.Dark}/{design.LightPalette}/{design.DarkPalette}/{design.Typography}/{model.InputPreferences.SelectionPopupEnabled}";
-        var older = (model.ShowingHistory ? model.History : model.Snapshot)?.NextBeforeSeq != null;
-        if (older || model.ShowingHistory)
+        var modelView = model.ModelContext.Active && !model.ShowingHistory;
+        var snapshot = modelView ? model.ModelContext.DisplaySnapshot : model.ShowingHistory ? model.History : model.Snapshot;
+        if (!modelView && !model.ShowingHistory && snapshot != null) snapshot = NativeErrorPresentation.WithLiveError(snapshot);
+        var keys = snapshot == null ? [] : NativeTranscriptRows.Keys(snapshot).Select(key => modelView ? "context:" + key : key).ToArray();
+        generatedOutputs.Update(modelView ? null : snapshot, design.Localization);
+        if (generatedChoices.Count > 0)
+            foreach (var choice in generatedChoices.Keys.Where(choice => !keys.Any(key => choice == key || choice.StartsWith(key + "/", StringComparison.Ordinal))).ToArray()) generatedChoices.Remove(choice);
+        // Model view exposes the working set in raw order, without transcript narrative folding.
+        var processGroups = snapshot == null ? [] : NativeTranscriptActivity.DisplayGroups(snapshot.Items, snapshot.Running || snapshot.Stopping, openRun != null, modelView);
+        string GroupKey(NativeActivityGroup group) => (group.CompletedTurn ? "activity:" : "steps:") + keys[group.Start];
+        int[] Members(NativeActivityGroup group) => NativeTranscriptActivity.Members(snapshot!.Items, group, openRun != null);
+        var processRows = processGroups.SelectMany(Members).ToHashSet();
+        var style = $"{design.Dark}/{design.LightPalette}/{design.DarkPalette}/{design.Typography}/{design.Localization.Locale}/{model.InputPreferences.SelectionPopupEnabled}";
+        if (!modelView && model.Snapshot?.Exploration is { } exploration && (exploration.Summary != null || exploration.SourceFrozen))
+        {
+            var roundTarget = model.CurrentExplorationRoundTarget;
+            var canStartRound = roundTarget != null && model.CanStartExploration(roundTarget);
+            var key = JsonSerializer.Serialize(exploration) + style + canStartRound;
+            if (key != explorationBannerKey) { explorationBannerKey = key; explorationBanner = new(exploration, design,
+                exploration.Summary is { } summary && reviewExploration != null ? () => reviewExploration(summary) : null,
+                roundTarget != null && startExploration != null ? () => startExploration(roundTarget) : null, canStartRound); }
+            desired.Add(explorationBanner!);
+        }
+        else { explorationBannerKey = null; explorationBanner = null; }
+        var older = !modelView && (model.ShowingHistory ? model.History : model.Snapshot)?.NextBeforeSeq != null;
+        if (!modelView && (older || model.ShowingHistory))
         {
             var nav = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             if (older)
@@ -621,15 +902,42 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
             desired.Add(nav);
         }
         var index = 0;
-        foreach (var item in model.VisibleItems)
+        if (modelView && (model.ModelContext.Busy || model.ModelContext.Error != null)) desired.Add(ModelContextStatus());
+        foreach (var item in snapshot?.Items ?? [])
         {
             var captured = index;
+            if (NativeTranscriptRows.RendersNothing(item, modelView)) { index++; continue; }
+            var errorMessage = NativeErrorPresentation.Message(item);
+            var errorTarget = errorMessage == null || snapshot == null ? null : model.ErrorTarget(snapshot, captured);
+            if (!modelView && model.ErrorWasResumed(errorTarget)) { index++; continue; }
             var key = keys[index];
+            var outputs = generatedOutputs.At(key);
+            var processGroup = processGroups.FirstOrDefault(group => captured >= group.Start && captured < group.End);
+            var processKey = processGroup == null ? null : GroupKey(processGroup);
+            var stepLive = processGroup?.Live == true;
+            var branches = snapshot == null ? [] : NativeBranchResults.At(snapshot, index);
+            var compaction = NativeCompactionRecord.Parse(item);
+            var compactionTarget = snapshot == null || compaction == null ? null : model.CompactionTarget(snapshot, compaction);
+            var exploreTarget = modelView || snapshot == null ? null : model.ExplorationTarget(snapshot, captured);
+            var messageActions = modelView || snapshot == null ? [] : model.MessageActions(snapshot, captured, startExploration != null)
+                .Where(action => action.Kind != "excerpt" || openExcerpt != null).ToArray();
+            var excerptSelected = snapshot != null && item.Role == "user" && model.ExcerptStart is { } excerpt
+                && excerpt.Turn == model.HistoryTurn(snapshot, captured);
             var runRecord = item.Run is { } link ? snapshot?.RunCards?.FirstOrDefault(run => run.Id == link.Id && run.FrameId == snapshot.SessionId && run.Status == link.Status) : null;
             var terminalRun = item.Run is { } terminal && WorkspaceConversationModel.RunTerminal(terminal.Status);
             retained.Add(key);
             var fingerprint = JsonSerializer.Serialize(item) + JsonSerializer.Serialize(runRecord) + (runRecord == null ? "" : $"/{model.IsRunHidden(runRecord.Id)}/{model.RunBusy(runRecord.Id)}/{model.RunError(runRecord.Id)}/{model.RunReadError(runRecord.Id)}/{model.CanCancelRun(runRecord)}") + style + $"/{snapshot?.HistoryState != null}"
                 + (snapshot == null ? "" : JsonSerializer.Serialize(model.HistoryTurn(snapshot, captured)))
+                + JsonSerializer.Serialize(branches)
+                + (exploreTarget == null ? "/no-explore" : "/explore/" + model.CanStartExploration(exploreTarget))
+                + JsonSerializer.Serialize(messageActions)
+                + string.Join("|", outputs.Select(output => output.Id + ":" + output.Name + ":" + output.Superseded))
+                + (errorMessage == null ? "" : JsonSerializer.Serialize(errorTarget) + model.ShowsErrorResume(errorTarget) + model.CanResumeError(errorTarget))
+                + excerptSelected
+                + (compaction == null || snapshot == null ? "" : JsonSerializer.Serialize(model.CompactionUndoOutcome(compactionTarget))
+                    + model.CanUndoCompaction(compactionTarget) + (model.CompactionRewindTarget(snapshot, CompactionRecord(snapshot, compaction)) != null))
+                + $"/process:{processRows.Contains(captured)}/{processKey}/live:{stepLive}/{snapshot?.Stopping}"
+                + (item.Role == "review" ? $"/{snapshot?.UserOffset}/{snapshot?.NextBeforeSeq}/" + JsonSerializer.Serialize(snapshot?.Items.Take(captured + 1)) : "")
                 + (item.Role == "plan" ? $"/{model.ShowingHistory}/{model.Snapshot?.Running}/{model.Snapshot?.ReadOnly}/{model.Busy}/{model.ConnectionError}/{model.Snapshot?.PlanMode}/{model.Snapshot?.AcpState?.CurrentMode}/{model.LatestProposal?.Key}"
                     + (model.LatestProposal is { } proposal ? $"/{model.CanDecidePlan(proposal)}/{model.PlanDecisionUncertain(proposal)}" : "") : "")
                 + (item.Role == "question" ? $"/{model.ShowingHistory}/{model.Snapshot?.ReadOnly}/{model.Busy}/{model.ConnectionError}/"
@@ -640,15 +948,49 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
             }
             void Add(FrameworkElement element)
             {
-                if (previous.Element != null && previous.TerminalRun == terminalRun && (terminalRun || !NativeToolPresentation.RequiresAttention(item)))
+                if (previous.Element != null && previous.TerminalRun == terminalRun && NativeToolPresentation.PreserveDisclosureChoice(item))
                 {
                     var states = Expanders(previous.Element).Select(expander => expander.IsExpanded).ToArray();
                     var expanders = Expanders(element).ToArray();
                     for (var n = 0; n < Math.Min(states.Length, expanders.Length); n++) expanders[n].IsExpanded = states[n];
+                    if (previous.ProcessKey == processKey)
+                    {
+                        var steps = TranscriptDisclosures(previous.Element).Select(disclosure => disclosure.Choice).ToArray();
+                        var nextSteps = TranscriptDisclosures(element).ToArray();
+                        for (var n = 0; n < Math.Min(steps.Length, nextSteps.Length); n++) nextSteps[n].Choice = steps[n];
+                    }
                 }
-                renderedRows[key] = (fingerprint, element, terminalRun); desired.Add(element);
+                if (branches.Length > 0 && openBranch != null && openBranchResult != null)
+                {
+                    var wrap = new StackPanel(); wrap.Children.Add(element);
+                    wrap.Children.Add(NativeBranchResultsView.Links(branches, design, branchDisclosures.GetValueOrDefault(key, true),
+                        expanded => branchDisclosures[key] = expanded,
+                        id => { if (CurrentBranchScope()) openBranch(id); },
+                        (title, summary) => { if (CurrentBranchScope()) openBranchResult(title, summary); }));
+                    element = wrap;
+                }
+                renderedRows[key] = (fingerprint, element, terminalRun, processKey); desired.Add(element);
             }
-            if (TranscriptPresentation.UsageSummary(item.Role, item.Text) is { } usage)
+            bool CurrentBranchScope() => !disposed && snapshot != null && model.CurrentProjectId == snapshot.ProjectId && model.CurrentSessionId == snapshot.SessionId;
+            if (errorMessage != null)
+            {
+                Add(ErrorCard(errorMessage, errorTarget, modelView)); index++; continue;
+            }
+            if (modelView && ContextSpecialRow(item) is { } contextRow)
+            {
+                Add(contextRow); index++; continue;
+            }
+            if (compaction != null && snapshot != null)
+            {
+                Add(CompactionRow(key, snapshot, compaction)); index++; continue;
+            }
+            if (NativeBranchResults.IsStandalone(item) && openBranchResult != null)
+            {
+                var title = NativeBranchResults.Title(item.ToolName, design.T("branch.merged_result"));
+                Add(NativeBranchResultsView.Card(item.ToolName, design, () => { if (CurrentBranchScope()) openBranchResult(title, item.Text); }));
+                index++; continue;
+            }
+            if (TranscriptPresentation.UsageSummary(item.Role, item.Text, design.Localization) is { } usage)
             {
                 // Usage rows stay bare like the WebView's metadata line: no card, no actions.
                 Add(new TextBlock { Text = usage, FontSize = design.FontSize(12),
@@ -656,25 +998,40 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
                 index++;
                 continue;
             }
-            var card = new StackPanel { Spacing = 8, Padding = new Thickness(16) };
-            var role = item.Role == "user" ? "你" : NativeTranscriptActivity.Completion(item) ? "Wisp Science"
-                : item.Role is "tool" or "acp_tool" ? item.ToolName ?? "工具" : item.Role == "reasoning" ? "思考" : "Wisp Science";
-            card.Children.Add(new TextBlock { Text = role, FontSize = 12, Foreground = design.Brush("text-muted") });
-            foreach (var path in item.Attachments ?? []) card.Children.Add(new TextBlock { Text = "附件 · " + path, TextWrapping = TextWrapping.Wrap });
-            if (item.Role == "question" && JsonNode.Parse(item.Text) is JsonObject question)
+            if (snapshot != null && NativeReviewPresentation.Parse(item) is { } reviewReport)
             {
-                card.Children.Add(new TextBlock { Text = question["question"]?.GetValue<string>() ?? item.Text, TextWrapping = TextWrapping.Wrap });
-                if (!RenderAcpQuestion(card, question)) foreach (var option in question["options"]?.AsArray() ?? [])
+                Add(ReviewCard(snapshot, captured, reviewReport)); index++; continue;
+            }
+            if (snapshot != null && (item.Role == "reasoning" || item.Role == "assistant" && processRows.Contains(captured) && !string.IsNullOrWhiteSpace(item.Text)))
+            {
+                Add(ProseStep(item, captured, snapshot, modelView)); index++; continue;
+            }
+            var plainMessage = item.Role is "user" or "assistant";
+            var toolStep = item.Role == "acp_tool" || item.Role == "tool" && (!NativeTranscriptActivity.Completion(item)
+                || snapshot != null && NativeTranscriptActivity.RepeatedCompletion(snapshot.Items, captured));
+            var card = new StackPanel { Spacing = 8, Padding = new Thickness(plainMessage || toolStep ? 0 : 16) };
+            var question = item.Role == "question" ? JsonNode.Parse(item.Text) as JsonObject : null;
+            var isAcpQuestion = question != null && NativeAcpQuestion.Parse(question) != null;
+            var role = NativeTranscriptLabels.Role(item, design.Localization);
+            var roleLabel = design.Text(role, plainMessage ? 11 : 12); roleLabel.Foreground = design.Brush("text-faint");
+            if (item.Role != "user" && !toolStep && !isAcpQuestion) card.Children.Add(item.Role == "assistant" || NativeTranscriptActivity.Completion(item) ? AssistantHeader(item) : roleLabel);
+            if (item.Role != "user") foreach (var path in item.Attachments ?? []) card.Children.Add(new TextBlock { Text = "附件 · " + path, TextWrapping = TextWrapping.Wrap });
+            if (question != null)
+            {
+                if (!RenderAcpQuestion(card, question))
                 {
-                    var label = option?["label"]?.GetValue<string>() ?? "";
-                    var choice = new Button { Content = label, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left };
-                    choice.IsEnabled = !model.ShowingHistory && model.Snapshot?.ReadOnly != true;
-                    choice.Click += (_, _) => { model.Draft = label; Refresh(); };
-                    card.Children.Add(choice);
+                    card.Children.Add(new TextBlock { Text = question["question"]?.GetValue<string>() ?? item.Text, TextWrapping = TextWrapping.Wrap });
+                    foreach (var option in question["options"]?.AsArray() ?? [])
+                    {
+                        var label = option?["label"]?.GetValue<string>() ?? "";
+                        var choice = new Button { Content = label, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left };
+                        choice.IsEnabled = !model.ShowingHistory && model.Snapshot?.ReadOnly != true;
+                        choice.Click += (_, _) => { model.Draft = label; Refresh(); };
+                        card.Children.Add(choice);
+                    }
                 }
             }
-            else if (RenderHistoryReview(card, item)) { }
-            else if (RenderPlanProposal(card, item, captured) || RenderPlanTool(card, item) || RenderAcpTool(card, item)) { }
+            else if (RenderPlanProposal(card, item, captured) || RenderPlanTool(card, item) || RenderAcpTool(card, item, stepLive)) { }
             else if (item.Role == "tool" && (!NativeTranscriptActivity.Completion(item)
                 || NativeTranscriptActivity.RepeatedCompletion(snapshot!.Items, captured)))
             {
@@ -701,19 +1058,9 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
                 else
                 {
                     if (!string.IsNullOrEmpty(item.Input)) body.Children.Add(ToolText(item.Input));
-                    body.Children.Add(ToolText(item.Text));
+                    if (!string.IsNullOrEmpty(item.Text)) body.Children.Add(ToolText(item.Text));
                 }
-                var heading = new StackPanel { Spacing = 4 };
-                heading.Children.Add(new TextBlock { Text = NativeToolPresentation.Heading(item),
-                    Foreground = design.Brush(NativeToolPresentation.IsFailure(item) ? "clay-strong" : "text-muted") });
-                if (item.Run is { } run) heading.Children.Add(new TextBlock { Text = "Run · " + run.Id,
-                    TextWrapping = TextWrapping.Wrap, Foreground = design.Brush("text-muted"), FontSize = design.FontSize(12) });
-                if (NativeToolPresentation.Preview(item) is { Length: > 0 } preview) heading.Children.Add(new TextBlock {
-                    Text = preview, MaxLines = 2, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis,
-                    Foreground = design.Brush("text-muted"), FontSize = design.FontSize(12) });
-                card.Children.Add(new Expander { Header = heading, HorizontalAlignment = HorizontalAlignment.Stretch,
-                    HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = body,
-                    IsExpanded = NativeToolPresentation.InitiallyExpanded(item, captured) });
+                card.Children.Add(ToolStep(item, body, stepLive));
                 if (item.Run is { } linkedRun && openRun is not null)
                 {
                     var detail = MessageAction("查看运行详情");
@@ -723,30 +1070,70 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
             }
             else
             {
-                var message = TranscriptView.Create(new BrowserMessage(captured, item.Role, item.Text, item.ToolName), design);
-                if (snapshot != null) AttachSelectionActions(message, snapshot, captured);
+                var message = item.Role == "user" ? UserMessageBody(item, modelView) : TranscriptView.Create(new BrowserMessage(captured, item.Role, item.Text, item.ToolName), design);
+                if (!modelView && !model.ExampleMode && snapshot != null) AttachSelectionActions(message, snapshot, captured);
                 card.Children.Add(message);
-                var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
-                var copy = MessageAction("复制");
-                copy.Click += (_, _) =>
+                if (!modelView && outputs.Length > 0 && (item.Role == "assistant" || NativeTranscriptActivity.Completion(item)) && openGenerated != null)
+                    card.Children.Add(new NativeGeneratedDirectory(outputs, generatedProjectRoot?.Invoke() ?? "", design,
+                        output => { if (generatedOutputs.Find(output.Id) is { Superseded: false } current) openGenerated(current); }, generatedChoices, key));
+                var actions = new NativeActionWrap { Gap = 2, RowGap = 2, RightAligned = item.Role == "user",
+                    Margin = new Thickness(item.Role == "assistant" ? -4 : 0, -4, 0, 0) };
+                if (modelView) { }
+                else if (plainMessage && snapshot != null)
+                    AddMessageActions(actions, snapshot, captured, messageActions);
+                else
                 {
-                    try { var package = new DataPackage { RequestedOperation = DataPackageOperation.Copy }; package.SetText(item.Text); Clipboard.SetContent(package); }
-                    catch { }
-                };
-                var quoteButton = MessageAction("引用");
-                quoteButton.Click += (_, _) => { if (snapshot != null) AddQuote(snapshot, captured, item.Text); };
-                var sideQuote = MessageAction("辅助聊天");
-                sideQuote.Click += (_, _) => quote(snapshot != null && NativeComposerQuote.From(snapshot, captured, item.Text) is { } source ? source.Message : item.Text);
-                var star = MessageAction("收藏");
-                star.Click += async (_, _) => await model.SaveSelectionAsync(item.Text, lifetime.Token);
-                actions.Children.Add(copy); actions.Children.Add(quoteButton); actions.Children.Add(sideQuote); actions.Children.Add(star);
-                if (snapshot != null) AddHistoryActions(actions, snapshot, captured);
-                card.Children.Add(actions);
+                    var labels = NativeTranscriptLabels.Actions(design.Localization);
+                    var copy = MessageAction(labels.Copy);
+                    copy.Click += (_, _) =>
+                    {
+                        try { var package = new DataPackage { RequestedOperation = DataPackageOperation.Copy }; package.SetText(item.Text); Clipboard.SetContent(package); }
+                        catch { }
+                    };
+                    var quoteButton = MessageAction(labels.AddToChat);
+                    quoteButton.Click += (_, _) => { if (snapshot != null) AddQuote(snapshot, captured, item.Text); };
+                    var sideQuote = MessageAction(labels.SideChat);
+                    sideQuote.Click += (_, _) => quote(snapshot != null && NativeComposerQuote.From(snapshot, captured, item.Text) is { } source ? source.Message : item.Text);
+                    var star = MessageAction(labels.Highlight);
+                    star.Click += async (_, _) => await model.SaveSelectionAsync(item.Text, lifetime.Token);
+                    actions.Children.Add(copy);
+                    if (!model.ExampleMode) { actions.Children.Add(quoteButton); actions.Children.Add(sideQuote); actions.Children.Add(star); }
+                }
+                if (actions.Children.Count > 0) card.Children.Add(actions);
             }
-            Add(new Border
+            if (item.Role == "user")
             {
-                Child = card, CornerRadius = new CornerRadius(12), Padding = new Thickness(4),
-                Background = design.Brush(item.Role == "user" ? "bg-sunken" : "bg-app")
+                card.HorizontalAlignment = HorizontalAlignment.Right;
+                var rowHost = new Grid(); rowHost.Children.Add(card);
+                if (excerptSelected)
+                {
+                    var outline = new Border { BorderBrush = design.Brush("clay"), BorderThickness = new(2), CornerRadius = new(12),
+                        IsHitTestVisible = false };
+                    // An outline must not participate in measuring the bubble:
+                    // a stretched Border would widen short messages to 760 DIP.
+                    var overlay = new Canvas { IsHitTestVisible = false };
+                    overlay.Children.Add(outline); rowHost.Children.Add(overlay);
+                    void FitOutline()
+                    {
+                        var parts = card.Children.SelectMany(child => child is NativeActionWrap wrap
+                            ? wrap.Children.OfType<FrameworkElement>() : new[] { (FrameworkElement)child })
+                            .Where(child => child.IsLoaded && child.ActualWidth > 0).ToArray();
+                        if (parts.Length == 0) return;
+                        var left = parts.Min(child => child.TransformToVisual(rowHost).TransformPoint(new()).X);
+                        var right = parts.Max(child => child.TransformToVisual(rowHost).TransformPoint(new()).X + child.ActualWidth);
+                        outline.Width = right - left + 12; outline.Height = card.ActualHeight + 12;
+                        Canvas.SetLeft(outline, left - 6); Canvas.SetTop(outline, -6);
+                    }
+                    rowHost.LayoutUpdated += (_, _) => FitOutline();
+                }
+                rowHost.SizeChanged += (_, e) => card.MaxWidth = PreviewLayout.UserMessageMaxWidth(e.NewSize.Width);
+                Add(rowHost);
+            }
+            else Add(new Border
+            {
+                Child = card, CornerRadius = new CornerRadius(12), Padding = new Thickness(plainMessage || toolStep || isAcpQuestion ? 0 : 4),
+                BorderBrush = design.Brush("border"), BorderThickness = new Thickness(isAcpQuestion ? 1 : 0),
+                Background = design.Brush(isAcpQuestion ? "bg-elev" : "bg-app")
             });
             index++;
         }
@@ -754,17 +1141,22 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
         // not rebuild Markdown, clear selection on other rows or reset tools.
         foreach (var key in retained) renderedRows[key].Element.Visibility = Visibility.Visible;
         var retainedGroups = new HashSet<string>();
+        // Release only rows that changed ownership. Stable polls keep the same
+        // body, child instances, text selection and keyboard focus mounted.
+        foreach (var (key, disclosure) in activityDisclosures)
+        {
+            var group = processGroups.FirstOrDefault(group => GroupKey(group) == key);
+            disclosure.ReleaseExcept(group == null ? [] : Members(group).Select(row => renderedRows[keys[row]].Element).ToArray());
+        }
         if (snapshot != null)
         {
-            foreach (var group in NativeTranscriptActivity.Groups(snapshot.Items, snapshot.Running || snapshot.Stopping, openRun != null))
+            foreach (var group in processGroups)
             {
-                var groupKey = keys[group.Start];
+                var groupKey = GroupKey(group);
                 retainedGroups.Add(groupKey);
                 if (!activityDisclosures.TryGetValue(groupKey, out var disclosure))
                 {
-                    disclosure = new ActivityDisclosure();
-                    var capturedDisclosure = disclosure;
-                    disclosure.Button.Click += (_, _) => capturedDisclosure.Update();
+                    disclosure = new ActivityDisclosure(design, group.CompletedTurn);
                     activityDisclosures[groupKey] = disclosure;
                 }
                 var reviewIds = NativeTranscriptActivity.ReviewRuns(snapshot.Items, group);
@@ -774,7 +1166,7 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
                     disclosure.Reviews.Children.Clear();
                     foreach (var id in reviewIds)
                     {
-                        var review = MessageAction("查看待审阅运行");
+                        var review = MessageAction(design.L("查看待审阅运行", "Review completed run"));
                         ToolTipService.SetToolTip(review, "Run · " + id);
                         review.Click += (_, _) => openRun?.Invoke(id);
                         disclosure.Reviews.Children.Add(review);
@@ -782,23 +1174,36 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
                 }
                 disclosure.Reviews.Visibility = reviewIds.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
                 disclosure.Rows.Clear();
-                for (var row = group.Start; row < group.End; row++) disclosure.Rows.Add(renderedRows[keys[row]].Element);
-                disclosure.Update();
-                desired.Insert(desired.IndexOf(disclosure.Rows[0]), disclosure.Header);
+                foreach (var row in Members(group)) disclosure.Rows.Add(renderedRows[keys[row]].Element);
+                disclosure.Update(group, NativeTranscriptActivity.Summary(snapshot.Items, group, groupKey, design.Localization));
+                if (model.ScrollTarget is { } target && target >= group.Start && target < group.End
+                    && appliedReadingRevision != model.ScrollRevision) disclosure.Disclosure.IsExpanded = true;
+                disclosure.MountRows();
+                var position = desired.IndexOf(disclosure.Rows[0]);
+                foreach (var row in Enumerable.Range(group.Start, group.End - group.Start))
+                    if (renderedRows.TryGetValue(keys[row], out var rendered)) desired.Remove(rendered.Element);
+                desired.Insert(position, disclosure.Header);
             }
         }
         foreach (var key in activityDisclosures.Keys.Where(key => !retainedGroups.Contains(key)).ToArray()) activityDisclosures.Remove(key);
         if (model.Loading) desired.Add(new ProgressBar { IsIndeterminate = true, Width = 180 });
-        else if (model.VisibleItems.Length == 0 && hasSession())
-            desired.Add(new TextBlock { Text = "向 Wisp Science 提问，开始这个会话。", FontSize = 14, Foreground = design.Brush("text-faint") });
-        if (model.Snapshot?.Running == true && !model.ShowingHistory)
-            desired.Add(new TextBlock { Text = model.Snapshot.Stopping ? "正在停止…" : "正在处理…", FontSize = 12, Foreground = design.Brush("text-muted") });
+        else if (!modelView && model.VisibleItems.Length == 0 && hasSession() && model.Snapshot?.Exploration == null && model.Snapshot?.Error == null)
+            desired.Add(new TextBlock { Text = design.L("向 Wisp Science 提问，开始这个会话。", "Ask Wisp Science a question to start this conversation."), FontSize = design.FontSize(14), Foreground = design.Brush("text-faint") });
+        if (model.Snapshot?.Running == true && !model.ShowingHistory && (model.Snapshot.Stopping || !processGroups.Any(group => group.Live)))
+        {
+            var working = design.Text(model.Snapshot.Stopping ? design.L("正在停止…", "Stopping…") : design.L("正在处理…", "Working…"), 12);
+            working.Foreground = design.Brush("text-muted"); desired.Add(working);
+        }
         foreach (var key in renderedRows.Keys.Where(key => !retained.Contains(key)).ToArray()) renderedRows.Remove(key);
+        foreach (var key in compactionCards.Keys.Where(key => !retained.Contains(key)).ToArray()) compactionCards.Remove(key);
+        foreach (var key in branchDisclosures.Keys.Where(key => !retained.Contains(key)).ToArray()) branchDisclosures.Remove(key);
         foreach (var id in runClocks.Keys.Where(id => snapshot?.RunCards?.Any(run => run.Id == id) != true).ToArray()) runClocks.Remove(id);
         // Keep unchanged controls attached: rebuilding their parents would still
         // discard text selection, keyboard focus and nested disclosure state.
         var wanted = desired.ToHashSet();
-        var anchor = !followLatest ? transcript.Children.OfType<FrameworkElement>()
+        var anchorRevision = model.ScrollRevision;
+        var anchor = !followLatest && NativeTranscriptRows.ReadingAnchorIsCurrent(anchorRevision, model.ScrollRevision, appliedReadingRevision)
+            ? transcript.Children.OfType<FrameworkElement>()
             .Where(element => wanted.Contains(element) && element.Visibility == Visibility.Visible && element.ActualHeight > 0)
             .Select(element => (Element: element, Y: element.TransformToVisual(scroll).TransformPoint(new Windows.Foundation.Point()).Y))
             .FirstOrDefault(item => item.Y + item.Element.ActualHeight > 0) : default;
@@ -818,7 +1223,8 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
             restore = (_, _) =>
             {
                 transcript.LayoutUpdated -= restore;
-                if (disposed || followLatest || userScrollPending || session != readingSession || !transcript.Children.Contains(anchor.Element)) return;
+                if (disposed || followLatest || userScrollPending || session != readingSession || !transcript.Children.Contains(anchor.Element)
+                    || !NativeTranscriptRows.ReadingAnchorIsCurrent(anchorRevision, model.ScrollRevision, appliedReadingRevision)) return;
                 var current = anchor.Element.TransformToVisual(scroll).TransformPoint(new Windows.Foundation.Point()).Y;
                 if (Math.Abs(current - anchor.Y) > 1) scroll.ChangeView(null, scroll.VerticalOffset + current - anchor.Y, null, true);
             };
@@ -857,7 +1263,7 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
             card.Children.Add(new TextBlock { Text = "需要确认 · " + approval.Tool, FontSize = 13 });
             card.Children.Add(new TextBlock { Text = approval.Message, TextWrapping = TextWrapping.Wrap });
             if (approval.Preview.Length > 0)
-                card.Children.Add(new TextBox { Text = approval.Preview, IsReadOnly = true, AcceptsReturn = true, FontFamily = design.Font(true), FontSize = design.FontSize(12, true), MaxHeight = 130 });
+                card.Children.Add(new TextBox { AcceptsReturn = true, Text = approval.Preview, IsReadOnly = true, FontFamily = design.Font(true), FontSize = design.FontSize(12, true), MaxHeight = 130 });
             var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
             var deny = new Button { Content = "拒绝", IsEnabled = !model.Busy && model.ConnectionError == null };
             deny.Click += async (_, _) => await model.ApproveAsync(captured, false, lifetime.Token);
@@ -871,14 +1277,31 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
     public void Dispose()
     {
         if (disposed) return;
-        historyMenu?.Hide(); historyDialog?.Hide();
-        queueMenu?.Hide(); queueDialog?.Hide();
+        CloseModelSwitchConfirmation(false);
+        CloseFullPermissionConfirmation(false);
+        CloseCompactionDialog();
+        CloseIdleCompactionDialog();
+        CloseContextRecoveryDialog();
+        CloseHandoffDialog();
+        model.Handoff.Changed -= RefreshHandoffDialog;
+        acpDraftNotice.Hide();
+        composerTextMenu.Hide();
+        attachmentDialog?.Hide();
+        historyDialog?.Hide();
+        queueMenu?.Hide();
         composerOptions.Hide();
-        selectionFlyout?.Hide(); contextUsageFlyout.Hide();
-        acpCreationMenu?.Hide();
+        effortMenu.Hide();
+        CloseRuntimeInterpreter(false); CloseRuntimeEnvironment(false); CloseRuntimeDialog(false);
+        composeMenu.Hide();
+        CloseSelectionActions(); CloseContextUsage(); contextUsageSurface?.Dispose();
+        modelMenu.Hide();
         optionSubmenu.Hide();
         disposed = true; lifetime.Cancel(); model.Changed -= Refresh; model.Effort.Changed -= Refresh; model.Options.Changed -= Refresh;
+        model.Runtimes.Changed -= RefreshRuntimeStrip;
+        model.ContextDetails.Changed -= RefreshContextDetails;
+        model.ModelContext.Changed -= ModelContextChanged;
+        model.Runtimes.Inspector.Changed -= RefreshRuntimeEnvironment;
         if (readingTargetLayout != null) transcript.LayoutUpdated -= readingTargetLayout;
-        model.ReferencePicker.Changed -= RenderComposerChoices; design.TypographyChanged -= Refresh; model.Pause(); lifetime.Dispose();
+        model.ReferencePicker.Changed -= RenderComposerChoices; design.TypographyChanged -= Refresh; design.Welcome.Changed -= Refresh; model.Pause(); lifetime.Dispose();
     }
 }

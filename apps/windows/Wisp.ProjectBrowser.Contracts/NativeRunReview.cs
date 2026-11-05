@@ -15,7 +15,10 @@ public sealed class NativeRunReviewClient(INativeSettingsClient transport) : INa
     {
         var result = await transport.InvokeAsync("native_conversation_panel_run_review", new()
         { ["session_id"] = session, ["run_id"] = runId, ["operation"] = operation.DeepClone() }, project, token);
-        var reply = result?.Deserialize<NativeRunReviewReply>(ConversationSnapshot.JsonOptions);
+        return Validate(result?.Deserialize<NativeRunReviewReply>(ConversationSnapshot.JsonOptions), runId, operation);
+    }
+    internal static NativeRunReviewReply Validate(NativeRunReviewReply? reply, string runId, JsonObject operation)
+    {
         if (reply == null || reply.RunId != runId || !reply.Acknowledged
             || operation["action"]?.GetValue<string>() == "check_prompt" && reply.ShouldPrompt == null
             || operation["action"]?.GetValue<string>() == "list" && reply.Listing?.Entries == null

@@ -7,8 +7,8 @@ namespace Wisp.Science.Preview;
 internal sealed class NativeConnectionPage : WorkspaceSheet
 {
     private readonly Action retry;
-    public NativeConnectionPage(WispDesign design, string title, Action close, Action retry)
-        : base(design, title, close)
+    public NativeConnectionPage(WispDesign design, string title, Action close, Action retry, bool modal = false)
+        : base(design, title, close, modal)
     {
         this.retry = retry;
         Body.Children.Add(new ProgressBar { IsIndeterminate = true, Height = 3 });

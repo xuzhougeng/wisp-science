@@ -1,0 +1,7 @@
+{
+  "request": { "session_id": "main-1" },
+  "stale": { "project_id": "research-1", "session_id": "main-1", "stale_prompt": true },
+  "current": { "project_id": "research-1", "session_id": "main-1", "stale_prompt": false },
+  "reloaded": { "project_id": "research-1", "session_id": "main-1", "changed": true },
+  "unchanged": { "project_id": "research-1", "session_id": "main-1", "changed": false }
+}

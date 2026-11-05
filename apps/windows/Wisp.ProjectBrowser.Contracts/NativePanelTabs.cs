@@ -6,7 +6,7 @@ namespace Wisp.ProjectBrowser.Contracts;
 public sealed class NativePanelTabs
 {
     public static IReadOnlyList<string> Defaults { get; } = Array.AsReadOnly(new[] { "artifacts", "agents", "files", "hosts" });
-    public static IReadOnlyList<string> All { get; } = Array.AsReadOnly(new[] { "artifacts", "agents", "notebook", "highlights", "files", "provenance", "hosts", "sidechat" });
+    public static IReadOnlyList<string> All { get; } = Array.AsReadOnly(new[] { "artifacts", "agents", "runs", "notebook", "highlights", "files", "provenance", "hosts", "sidechat", "memos" });
     private readonly List<string> open;
     public IReadOnlyList<string> Open => open.AsReadOnly();
     public IReadOnlyList<string> Available { get; }

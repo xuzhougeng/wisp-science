@@ -121,6 +121,36 @@ pub(crate) async fn dispatch(
     Ok(json!({"session_id":session,"target":request.target,"result":result}))
 }
 
+pub(crate) async fn excerpt(
+    broker: &Broker,
+    project: &str,
+    request: wisp_dto::native_history::ExcerptRequest,
+) -> Result<Value, String> {
+    let state = broker.app.state::<crate::AppState>();
+    let session = &request.session_id;
+    crate::native_conversations::require_owner(&state.store, project, session).await?;
+    // Branches and private explorations are valid read sources. Do not apply
+    // mutation guards or wait on a later running turn's workflow lock.
+    let _activity = state.begin_project_activity(project)?;
+    let runtime = state.session_runtime(session).await;
+    let workflow = runtime.workflow.clone().try_lock_owned().ok();
+    let before = identities(&state.store.load_session_user_messages(session).await.map_err(|e| e.to_string())?);
+    request.validate(&before, workflow.is_none() || state.running_turns.lock().await.contains(session))?;
+    let excerpt = crate::session_commands::render_session_excerpt(
+        broker.app.state(), session.clone(), request.start.user_index, request.end.user_index,
+    ).await?;
+    let after = identities(&state.store.load_session_user_messages(session).await.map_err(|e| e.to_string())?);
+    request.validate(&after, workflow.is_none() || state.running_turns.lock().await.contains(session))?;
+    let range = request.start.user_index..=request.end.user_index;
+    if before[range.clone()] != after[range] {
+        return Err("The selected turns changed while quoting; reload before continuing".into());
+    }
+    crate::native_conversations::require_owner(&state.store, project, session).await?;
+    serde_json::to_value(wisp_dto::native_history::ConversationExcerpt {
+        project_id: project.into(), start: request.start, end: request.end, excerpt,
+    }).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

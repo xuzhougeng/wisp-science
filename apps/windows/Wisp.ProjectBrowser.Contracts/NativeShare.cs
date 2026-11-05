@@ -12,7 +12,7 @@ public static class NativeShareDraft
         .Select(word => word.Trim()).Where(word => word.Length > 0).Distinct().OrderByDescending(word => word.Length).ThenBy(word => word).ToArray();
     public static string Redact(string text, IEnumerable<string> keywords) =>
         keywords.Aggregate(text, (current, word) => current.Replace(word, "xxx", StringComparison.OrdinalIgnoreCase));
-    public static int Width(string raw) => int.TryParse(raw.Trim(), out var value) ? Math.Min(2400, Math.Max(320, value)) : 840;
+    public static int Width(string raw) => uint.TryParse(raw.Trim(), out var value) ? (int)Math.Clamp(value, 320u, 2400u) : 840;
     public static NativeShareRow[] Selected(IEnumerable<NativeShareDraftRow> draft, string keywords)
     {
         var words = Keywords(keywords);

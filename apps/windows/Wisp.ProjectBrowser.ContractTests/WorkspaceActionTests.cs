@@ -342,8 +342,8 @@ internal static class WorkspaceActionTests
             Task.FromResult(Array.Empty<NativePanelArtifact>());
         public Task<NativePanelFile[]> FilesAsync(string project, string session, string path = ".", CancellationToken token = default) =>
             PendingFiles?.Task ?? Task.FromResult(new[] { new NativePanelFile("data", true, 0, null), new NativePanelFile("README.md", false, 12, null) });
-        public Task SaveFileAsync(string project, string session, string path, string originalText, string text, CancellationToken token = default) => Task.CompletedTask;
-        public Task FileActionAsync(string project, string session, NativePanelFileAction action, string path, string? newPath = null, CancellationToken token = default)
+        public Task SaveFileAsync(string project, string? session, string path, string originalText, string text, CancellationToken token = default) => Task.CompletedTask;
+        public Task FileActionAsync(string project, string? session, NativePanelFileAction action, string path, string? newPath = null, CancellationToken token = default)
         {
             Actions++;
             if (Fail) throw new IOException("lost action");

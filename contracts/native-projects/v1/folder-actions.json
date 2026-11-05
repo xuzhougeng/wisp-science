@@ -1,0 +1,15 @@
+{
+  "schema": "wisp.native-projects.v1",
+  "delete": {
+    "command": "native_project_folder_delete",
+    "project_id": "research-1",
+    "args": { "folder_id": "methods" },
+    "result": { "project_id": "research-1", "folder_id": "methods", "deleted": true }
+  },
+  "reorder": {
+    "command": "native_project_folders_reorder",
+    "project_id": "research-1",
+    "args": { "ids": ["results", "methods"] },
+    "result": { "project_id": "research-1", "ids": ["results", "methods"] }
+  }
+}

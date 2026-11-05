@@ -43,7 +43,20 @@ internal static class NativeLibraryContractTests
         try { await client.DeleteAsync("item-1"); throw new InvalidOperationException("Expected lost library delete"); }
         catch (IOException) { }
         if (fake.Calls != beforeFailure + 1) throw new InvalidOperationException("Library delete was retried");
-        Console.WriteLine("Native library search and delete fixtures, explicit empty scope and no-retry tests passed.");
+        fake.Fail = false;
+        var detail = new LibraryItemDetail("item-1", "code", "Full code", "python", "a\nb\nc\nd\ne", null, "p", "P", "s", "S", null, 1, null);
+        fake.Reply = JsonSerializer.SerializeToNode(detail);
+        var full = await client.GetAsync("item-1");
+        if (full.Code != detail.Code || fake.ProjectId != null || fake.Command != "native_library_get") throw new InvalidOperationException("Library detail must use full flattened shared DTO");
+        var version = new LibraryItemVersion("v2", "item-1", 2, "item-1", "python", "new\ncode\n", "edit", 2);
+        fake.Reply = JsonSerializer.SerializeToNode(new[] { version });
+        if ((await client.VersionsAsync("item-1")).Single().VersionNumber != 2 || fake.Command != "native_library_versions") throw new InvalidOperationException("Version list drift");
+        fake.Reply = JsonSerializer.SerializeToNode(version); await client.SaveCodeAsync("item-1", version.Code);
+        if (fake.Command != "native_library_update_code" || fake.ProjectId != null || fake.Args?["code"]?.GetValue<string>() != version.Code || fake.Args?.ContainsKey("language") == true) throw new InvalidOperationException("Version edit must preserve full code and default item language");
+        beforeFailure = fake.Calls; fake.Fail = true;
+        try { await client.SaveCodeAsync("item-1", "new code"); throw new InvalidOperationException("Expected lost edit"); } catch (IOException) { }
+        if (fake.Calls != beforeFailure + 1) throw new InvalidOperationException("Library edit was retried");
+        Console.WriteLine("Native library shared projections, explicit empty scope and no-retry tests passed.");
     }
 
     sealed class FakeLibraryTransport : INativeSettingsClient

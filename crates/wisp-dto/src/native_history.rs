@@ -26,6 +26,40 @@ pub struct HistoryRequest {
     pub action: HistoryAction,
 }
 
+/// A read-only range, anchored to the persisted turns shown by the client.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExcerptRequest {
+    pub session_id: String,
+    pub start: TurnIdentity,
+    pub end: TurnIdentity,
+}
+
+impl ExcerptRequest {
+    pub fn validate(&self, turns: &[TurnIdentity], running: bool) -> Result<(), &'static str> {
+        if self.session_id.trim().is_empty() || self.start.user_index > self.end.user_index {
+            return Err("Invalid excerpt range");
+        }
+        if turns.get(self.start.user_index) != Some(&self.start)
+            || turns.get(self.end.user_index) != Some(&self.end)
+        {
+            return Err("The selected turns changed; reload before quoting");
+        }
+        if running && self.end.user_index + 1 == turns.len() {
+            return Err("Only completed historical turns can be quoted while running");
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ConversationExcerpt {
+    pub project_id: String,
+    pub start: TurnIdentity,
+    pub end: TurnIdentity,
+    pub excerpt: crate::SessionExcerpt,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HistoryAction {
@@ -120,6 +154,27 @@ impl HistoryRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn excerpt_ranges_reject_stale_reversed_and_running_tail_turns() {
+        let turns: Vec<_> = (0..3).map(|user_index| TurnIdentity {
+            user_index, user_seq: user_index as i64 + 1, digest: format!("turn-{user_index}"),
+        }).collect();
+        let mut request = ExcerptRequest { session_id: "s".into(), start: turns[0].clone(), end: turns[1].clone() };
+        assert!(request.validate(&turns, true).is_ok());
+        request.end = turns[2].clone();
+        assert!(request.validate(&turns, true).is_err());
+        assert!(request.validate(&turns, false).is_ok());
+        request.start = request.end.clone();
+        assert!(request.validate(&turns, false).is_ok());
+        request.end = turns[0].clone();
+        assert!(request.validate(&turns, false).is_err());
+        request.start = turns[0].clone();
+        request.start.digest = "replaced".into();
+        assert!(request.validate(&turns, false).is_err());
+        assert!(serde_json::from_value::<ExcerptRequest>(serde_json::json!({
+            "session_id":"s", "start_user_index":0, "end_user_index":1
+        })).is_err());
+    }
     #[test]
     fn historical_actions_preserve_running_and_checkpoint_boundaries() {
         let state = HistoryState {

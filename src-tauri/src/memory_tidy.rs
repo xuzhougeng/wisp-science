@@ -202,7 +202,7 @@ async fn save(store: &Store, tidy: &MemoryTidyAutomation) -> Result<(), String> 
 }
 
 /// What the page shows: proposals overtaken by an edit are left out.
-async fn current(store: &Store) -> MemoryTidyAutomation {
+pub(crate) async fn current(store: &Store) -> MemoryTidyAutomation {
     let mut tidy = load(store).await;
     if !tidy.proposals.is_empty() {
         let memories = store.list_global_memories(100).await.unwrap_or_default();

@@ -17,6 +17,25 @@ async function fits(locator: Locator) {
 
 for (const locale of ["en", "zh"]) {
   const zh = locale === "zh";
+  test(`compact settings search keeps the empty hint and detail navigation reachable (${locale})`, async ({ page }) => {
+    await page.setViewportSize({ width: 470, height: 760 });
+    await open(page, zh ? "常规" : "General", locale);
+    const nav = page.locator(".settings-nav");
+    const search = nav.getByRole("searchbox");
+    await search.fill("no-such-setting");
+    await expect(nav.getByRole("status")).toBeVisible();
+    await fits(nav);
+    await search.fill("credentials");
+    const category = nav.getByTestId("settings-nav-credentials");
+    await category.click();
+    const service = page.locator('[data-credential-service="openalex"]');
+    await service.click();
+    await expect(service).toHaveCount(0);
+    await category.click();
+    await expect(service).toBeVisible();
+    await expect(search).toHaveValue("credentials");
+  });
+
   test(`settings navigation groups and searches without changing the open page (${locale})`, async ({ page }) => {
     await open(page, zh ? "模型" : "Models", locale);
     const nav = page.locator(".settings-nav");
@@ -175,6 +194,48 @@ test("conversation groups and browser lists use content height", async ({ page }
   const prefer = (await cards.nth(1).boundingBox())!;
   expect(prefer.y - block.y - block.height).toBeLessThan(40);
   await fits(page.getByTestId("browser-url-filters"));
+});
+
+test("session number labels activate the field without enabling disabled dependents", async ({ page }) => {
+  await open(page, "对话", "zh");
+  const maximum = page.getByTestId("max-iter");
+  await page.getByText("每轮最大 Agent 迭代次数", { exact: true }).click();
+  await expect(maximum).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(maximum).toHaveValue("101");
+  const row = page.locator(".session-number-field").filter({ has: maximum });
+  await row.locator(".settings-field-hint").click();
+  await expect(maximum).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(maximum).toHaveValue("100");
+  const enabled = page.getByTestId("auto-continue-enabled");
+  await enabled.setChecked(false);
+  const dependent = page.getByTestId("auto-continue-limit");
+  const prior = await dependent.inputValue();
+  // Click the visible label even though its associated input is disabled.
+  await page.getByText("每轮自动继续次数上限", { exact: true }).click({ force: true });
+  await expect(dependent).toBeDisabled();
+  await expect(dependent).not.toBeFocused();
+  await expect(dependent).toHaveValue(prior);
+  await enabled.locator("..").click();
+  await page.getByText("每轮自动继续次数上限", { exact: true }).click();
+  await expect(dependent).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(dependent).toHaveValue(String(Number(prior) + 1));
+});
+
+test("session card keeps its bottom inset when scrolled to the last action", async ({ page }) => {
+  await page.setViewportSize({ width: 780, height: 760 });
+  await open(page, "对话", "zh");
+  await page.getByRole("button", { name: "取消", exact: true }).press("Tab");
+  await expect(page.getByRole("button", { name: "保存", exact: true })).toBeFocused();
+  const pane = page.locator(".session-settings-pane");
+  await pane.hover();
+  await page.mouse.wheel(0, 2000);
+  await expect.poll(async () => pane.evaluate(el => {
+    const card = el.querySelector(".session-preferences")!;
+    return el.getBoundingClientRect().bottom - card.getBoundingClientRect().bottom;
+  })).toBeCloseTo(22, 0);
 });
 
 test("a failed default model change preserves the selection and can be retried", async ({ page }) => {

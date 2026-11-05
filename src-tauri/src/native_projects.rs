@@ -3,6 +3,46 @@
 
 use wisp_dto::native_settings::Request;
 
+/// A matching runtime/visibility revision avoids scanning project histories on idle polls.
+/// The caller omits its revision on entry, explicit refresh, and periodically for disk-only changes.
+pub(crate) async fn home_activity(
+    store: &wisp_store::Store,
+    running: &std::collections::HashSet<String>,
+    awaiting: &std::collections::HashSet<String>,
+    input: wisp_dto::native_projects::HomeActivityRequest,
+) -> Result<Option<wisp_dto::native_projects::HomeActivity>, String> {
+    use std::hash::{Hash, Hasher};
+    use wisp_dto::native_projects::{HomeActivity, HomeActivityCount};
+
+    let privacy = crate::privacy_mode::load(store).await?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for ids in [running, awaiting] {
+        let mut ordered: Vec<_> = ids.iter().collect();
+        ordered.sort_unstable();
+        ordered.hash(&mut hasher);
+    }
+    privacy.active.hash(&mut hasher);
+    privacy.project_ids.hash(&mut hasher);
+    let revision = format!("{:016x}", hasher.finish());
+    if input.known_revision.as_deref() == Some(&revision) {
+        return Ok(None);
+    }
+    let visible = |id: &str| !privacy.active || !privacy.project_ids.iter().any(|p| p == id);
+    let mut recent = crate::session_commands::recent_home_sessions(store, running, awaiting).await?;
+    recent.retain(|s| visible(&s.project_id));
+    let mut projects = Vec::new();
+    for (project_id, ..) in store.list_projects().await.map_err(|e| e.to_string())? {
+        if visible(&project_id) {
+            let (running, needs_you) = wisp_app::projects::project_status_counts(store, &project_id, running, awaiting).await;
+            projects.push(HomeActivityCount { project_id, running, needs_you });
+        }
+    }
+    if crate::privacy_mode::load(store).await? != privacy {
+        return Err("Project visibility changed during the home read".into());
+    }
+    Ok(Some(HomeActivity { revision, privacy, projects, recent }))
+}
+
 pub(crate) async fn execute(
     store: &wisp_store::Store,
     app_data: &std::path::Path,
@@ -28,10 +68,15 @@ pub(crate) async fn execute(
             if archive.as_os_str().is_empty() {
                 return Err("A project archive is required".into());
             }
-            let parent = archive
-                .parent()
+            let destination = input.destination_parent.map(std::path::PathBuf::from);
+            if destination.as_ref().is_some_and(|path| !path.is_absolute()) {
+                return Err("Choose an existing absolute import destination".into());
+            }
+            let parent = destination
+                .as_deref()
+                .or_else(|| archive.parent())
                 .filter(|parent| parent.is_dir())
-                .ok_or_else(|| "The archive's folder is not an import destination".to_string())?;
+                .ok_or_else(|| "Choose an existing import destination".to_string())?;
             crate::project_transfer::import_archived_project(store, app_data, &archive, parent)
                 .await
         }
@@ -94,6 +139,29 @@ pub(crate) async fn execute_export(
         format: input.format,
     })
     .map_err(|error| error.to_string())
+}
+
+pub(crate) fn validate_delete_request(
+    request: &Request,
+) -> Result<(&str, wisp_dto::native_projects::DeleteProjectRequest), String> {
+    if request.command != "native_project_delete" {
+        return Err("Unsupported native project deletion command".into());
+    }
+    let id = request.project_id.as_deref().filter(|id| !id.trim().is_empty())
+        .ok_or("A project is required")?;
+    let input = serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+    Ok((id, input))
+}
+
+pub(crate) async fn execute_delete(
+    state: &crate::AppState,
+    request: &Request,
+) -> Result<serde_json::Value, String> {
+    let (id, input) = validate_delete_request(request)?;
+    crate::project_commands::delete_project_record(state, id, input.delete_data, None).await?;
+    serde_json::to_value(wisp_dto::native_projects::DeleteProjectResult {
+        project_id: id.into(), delete_data: input.delete_data, deleted: true,
+    }).map_err(|error| error.to_string())
 }
 
 pub(crate) async fn execute_recovery(
@@ -173,6 +241,60 @@ pub(crate) async fn execute_folders(
                 .collect::<Vec<_>>();
             serde_json::to_value(folders).map_err(|error| error.to_string())
         }
+        "native_project_shelved_sessions" => {
+            use wisp_dto::native_projects::{
+                ShelvedSession, ShelvedSessionCursor, ShelvedSessionPage, ShelvedSessionsRequest,
+            };
+            let input: ShelvedSessionsRequest =
+                serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+            let mut rows = store
+                .list_sessions_page_with_visibility(
+                    project_id,
+                    input
+                        .cursor
+                        .as_ref()
+                        .map(|cursor| (cursor.ts, cursor.id.as_str())),
+                    51,
+                    Some(true),
+                    &input.query,
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let more = rows.len() > 50;
+            rows.truncate(50);
+            let next_cursor = if more {
+                rows.last().map(|row| ShelvedSessionCursor {
+                    ts: row.2,
+                    id: row.0.clone(),
+                })
+            } else {
+                None
+            };
+            serde_json::to_value(ShelvedSessionPage {
+                project_id: project_id.to_owned(),
+                items: rows
+                    .into_iter()
+                    .map(|(id, title, ts, _, _)| ShelvedSession { id, title, ts })
+                    .collect(),
+                next_cursor,
+            })
+            .map_err(|error| error.to_string())
+        }
+        "native_project_session_shelve" => {
+            use wisp_dto::native_projects::{SessionShelveRequest, SessionShelveResult};
+            let input: SessionShelveRequest =
+                serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+            store
+                .set_session_shelved(&input.session_id, project_id, input.shelved)
+                .await
+                .map_err(|error| error.to_string())?;
+            serde_json::to_value(SessionShelveResult {
+                project_id: project_id.to_owned(),
+                session_id: input.session_id,
+                shelved: input.shelved,
+            })
+            .map_err(|error| error.to_string())
+        }
         "native_project_folder_create" => {
             let input: wisp_dto::native_projects::FolderCreateRequest =
                 serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
@@ -193,6 +315,44 @@ pub(crate) async fn execute_folders(
                 .await
                 .map_err(|error| error.to_string())?;
             Ok(serde_json::Value::Bool(true))
+        }
+        "native_project_folder_delete" => {
+            let input: wisp_dto::native_projects::FolderDeleteRequest =
+                serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+            store
+                .delete_folder(&input.folder_id, project_id)
+                .await
+                .map_err(|error| error.to_string())?;
+            serde_json::to_value(wisp_dto::native_projects::FolderDeleteResult {
+                project_id: project_id.to_owned(),
+                folder_id: input.folder_id,
+                deleted: true,
+            })
+            .map_err(|error| error.to_string())
+        }
+        "native_project_folders_reorder" => {
+            let input: wisp_dto::native_projects::FolderReorderRequest =
+                serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+            let folders = store
+                .list_folders(project_id)
+                .await
+                .map_err(|error| error.to_string())?;
+            let owned: std::collections::HashSet<_> = folders.iter().map(|row| &row.0).collect();
+            let requested: std::collections::HashSet<_> = input.ids.iter().collect();
+            if input.ids.len() != requested.len() || requested != owned {
+                return Err(
+                    "Folder order is stale or contains a folder outside this project".into(),
+                );
+            }
+            store
+                .reorder_folders(project_id, &input.ids)
+                .await
+                .map_err(|error| error.to_string())?;
+            serde_json::to_value(wisp_dto::native_projects::FolderReorderResult {
+                project_id: project_id.to_owned(),
+                ids: input.ids,
+            })
+            .map_err(|error| error.to_string())
         }
         "native_project_session_move" => {
             let input: wisp_dto::native_projects::SessionMoveRequest =
@@ -217,6 +377,28 @@ mod tests {
     use super::*;
     use serde_json::json;
     use wisp_dto::native_settings::{Request, SCHEMA};
+
+    #[test]
+    fn deletion_requires_project_scope_and_never_infers_a_window_or_data_choice() {
+        let mut command = request(Some("research-1"), json!({"delete_data": false}));
+        command.command = "native_project_delete".into();
+        let (project, input) = validate_delete_request(&command).unwrap();
+        assert_eq!(project, "research-1");
+        assert!(!input.delete_data);
+        for project_id in [None, Some("".into()), Some(" ".into())] {
+            command.project_id = project_id;
+            assert!(validate_delete_request(&command).is_err());
+        }
+        command.project_id = Some("research-1".into());
+        command.args = json!({});
+        assert!(validate_delete_request(&command).is_err());
+        command.args = json!({"delete_data": false, "id": "other"});
+        assert!(validate_delete_request(&command).is_err());
+        command.args = json!({"delete_data": true});
+        assert!(validate_delete_request(&command).unwrap().1.delete_data);
+        command.command = "native_project_create".into();
+        assert!(validate_delete_request(&command).is_err());
+    }
 
     fn request(project_id: Option<&str>, args: serde_json::Value) -> Request {
         Request {
@@ -292,6 +474,35 @@ mod tests {
         assert!(validate_sync_request(&call).is_ok());
         call.args["strategy"] = json!("merge");
         assert!(validate_sync_request(&call).is_err());
+    }
+
+    #[tokio::test]
+    async fn home_activity_prefers_approval_and_excludes_private_projects() {
+        use std::collections::HashSet;
+        use wisp_dto::native_projects::HomeActivityRequest;
+        let fixture = Fixture::open().await;
+        let store = &fixture.store;
+        for (pid, sid) in [("lab", "analysis"), ("hidden", "private-turn")] {
+            store.create_project(pid, pid, "").await.unwrap();
+            store.create_frame(sid, pid, "OPERON", "model").await.unwrap();
+            store.append_message(sid, 1, &wisp_llm::Message::user("question")).await.unwrap();
+        }
+        crate::privacy_mode::save(store, true, &["hidden".into()]).await.unwrap();
+        let running = HashSet::from(["analysis".into(), "private-turn".into()]);
+        let initial = super::home_activity(store, &running, &HashSet::new(), Default::default()).await.unwrap().unwrap();
+        assert_eq!(initial.projects.len(), 1);
+        assert_eq!((initial.projects[0].project_id.as_str(), initial.projects[0].running), ("lab", 1));
+        assert_eq!(initial.recent.len(), 1);
+        assert_eq!(initial.recent[0].status, "running");
+        let known = || HomeActivityRequest { known_revision: Some(initial.revision.clone()) };
+        assert!(super::home_activity(store, &running, &HashSet::new(), known()).await.unwrap().is_none());
+        let approval = HashSet::from(["analysis".into()]);
+        let next = super::home_activity(store, &running, &approval, known()).await.unwrap().unwrap();
+        assert_eq!((next.projects[0].running, next.projects[0].needs_you), (0, 1));
+        assert_eq!(next.recent[0].status, "needs_you");
+        let finished = super::home_activity(store, &HashSet::new(), &HashSet::new(), known()).await.unwrap().unwrap();
+        assert_eq!(finished.recent[0].status, "complete");
+        assert_eq!(finished.projects[0].running, 0);
     }
 
     #[tokio::test]
@@ -651,13 +862,13 @@ mod tests {
         .unwrap();
 
         let destination = Fixture::open().await;
-        let imported = execute(
-            &destination.store,
-            &destination.root,
-            &import_request(None, &archive),
-        )
-        .await
-        .unwrap();
+        let parent = destination.workspace("selected-parent");
+        std::fs::create_dir(&parent).unwrap();
+        let mut import = import_request(None, &archive);
+        import.args["destination_parent"] = json!(parent);
+        let imported = execute(&destination.store, &destination.root, &import)
+            .await
+            .unwrap();
         assert_eq!(imported, created);
         let meta = destination
             .store
@@ -667,6 +878,7 @@ mod tests {
             .unwrap();
         assert_eq!(meta.0, "Imported study");
         assert_eq!(meta.1, "from archive");
+        assert!(std::path::Path::new(&meta.2).starts_with(std::fs::canonicalize(&parent).unwrap()));
         assert_eq!(
             std::fs::read(std::path::Path::new(&meta.2).join("notes.txt")).unwrap(),
             b"hello"
@@ -695,6 +907,109 @@ mod tests {
         let mut value = request(project_id, args);
         value.command = command.into();
         value
+    }
+
+    #[tokio::test]
+    async fn shelved_sessions_filter_before_paging_and_restore_in_the_owned_project() {
+        use wisp_dto::native_projects::{CreateProjectRequest, ShelvedSessionPage};
+        let fixture = Fixture::open().await;
+        let mut projects = Vec::new();
+        for name in ["shelf", "other"] {
+            projects.push(
+                crate::project_commands::create_project_record(
+                    &fixture.store,
+                    CreateProjectRequest {
+                        name: name.into(),
+                        workspace_dir: fixture.workspace(name).to_string_lossy().into_owned(),
+                        description: String::new(),
+                        agent_context: String::new(),
+                        standard_layout: false,
+                    },
+                )
+                .await
+                .unwrap(),
+            );
+        }
+        let project = &projects[0];
+        for i in 0..53 {
+            let id = format!("shelf-{i:03}");
+            fixture
+                .store
+                .create_frame(&id, project, "OPERON", "model")
+                .await
+                .unwrap();
+            fixture
+                .store
+                .rename_session(&id, project, &format!("RNA {i:03}"))
+                .await
+                .unwrap();
+            fixture
+                .store
+                .set_session_shelved(&id, project, i < 52)
+                .await
+                .unwrap();
+        }
+        let read = |scope: Option<&str>, args| {
+            folder_request(scope, "native_project_shelved_sessions", args)
+        };
+        assert!(execute_folders(&fixture.store, &read(None, json!({})))
+            .await
+            .is_err());
+        let first: ShelvedSessionPage = serde_json::from_value(
+            execute_folders(&fixture.store, &read(Some(project), json!({})))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(first.items.len(), 50);
+        assert!(first.next_cursor.is_some());
+        let second: ShelvedSessionPage = serde_json::from_value(
+            execute_folders(
+                &fixture.store,
+                &read(Some(project), json!({"cursor": first.next_cursor})),
+            )
+            .await
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(second.items.len(), 2);
+        assert!(second.next_cursor.is_none());
+        assert!(second
+            .items
+            .iter()
+            .all(|s| !first.items.iter().any(|a| a.id == s.id)));
+        let filtered: ShelvedSessionPage = serde_json::from_value(
+            execute_folders(
+                &fixture.store,
+                &read(Some(project), json!({"query":"RNA 001"})),
+            )
+            .await
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(filtered.items[0].id, "shelf-001");
+        assert_eq!(filtered.items.len(), 1);
+        let crossed = folder_request(
+            Some(&projects[1]),
+            "native_project_session_shelve",
+            json!({"session_id":"shelf-001", "shelved":false}),
+        );
+        assert!(execute_folders(&fixture.store, &crossed).await.is_err());
+        let restored = execute_folders(
+            &fixture.store,
+            &folder_request(
+                Some(project),
+                "native_project_session_shelve",
+                json!({"session_id":"shelf-001", "shelved":false}),
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(restored["project_id"], project.as_str());
+        assert_eq!(restored["shelved"], false);
+        let visible = fixture.store.list_sessions(project).await.unwrap();
+        assert!(visible.iter().any(|row| row.0 == "shelf-001"));
+        assert!(visible.iter().any(|row| row.0 == "shelf-052"));
     }
 
     #[tokio::test]
@@ -833,5 +1148,83 @@ mod tests {
         .unwrap();
         assert_eq!(listed[0]["name"], "Week 1");
         assert_eq!(listed.as_array().unwrap().len(), 1);
+
+        fixture
+            .store
+            .create_folder("second", &project, "Second")
+            .await
+            .unwrap();
+        for ids in [
+            json!([folder_id]),
+            json!([folder_id, folder_id]),
+            json!([folder_id, "foreign"]),
+        ] {
+            assert!(execute_folders(
+                &fixture.store,
+                &folder_request(
+                    Some(&project),
+                    "native_project_folders_reorder",
+                    json!({"ids":ids})
+                )
+            )
+            .await
+            .is_err());
+        }
+        let reordered = execute_folders(
+            &fixture.store,
+            &folder_request(
+                Some(&project),
+                "native_project_folders_reorder",
+                json!({"ids":["second", folder_id]}),
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(reordered["project_id"], project);
+        assert_eq!(
+            fixture.store.list_folders(&project).await.unwrap()[0].0,
+            "second"
+        );
+        assert!(execute_folders(
+            &fixture.store,
+            &folder_request(
+                Some(&other),
+                "native_project_folder_delete",
+                json!({"folder_id":folder_id})
+            )
+        )
+        .await
+        .is_err());
+        assert_eq!(
+            fixture.store.list_sessions(&project).await.unwrap()[0]
+                .3
+                .as_deref(),
+            Some(folder_id.as_str())
+        );
+        let deleted = execute_folders(
+            &fixture.store,
+            &folder_request(
+                Some(&project),
+                "native_project_folder_delete",
+                json!({"folder_id":folder_id}),
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(deleted["project_id"], project);
+        assert_eq!(deleted["deleted"], true);
+        let retained = fixture.store.list_sessions(&project).await.unwrap();
+        assert_eq!(retained[0].0, "session-a");
+        assert!(retained[0].3.is_none());
+        assert!(execute_folders(
+            &fixture.store,
+            &folder_request(
+                Some(&project),
+                "native_project_folder_delete",
+                json!({"folder_id":folder_id})
+            )
+        )
+        .await
+        .is_err());
     }
 }

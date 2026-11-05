@@ -17,7 +17,7 @@ internal sealed partial class NativeConversationPage
         foreach (var (_, (run, label)) in runClocks)
         {
             var elapsed = Math.Max(0, (run.EndedAt ?? DateTimeOffset.UtcNow.ToUnixTimeSeconds()) - (run.StartedAt ?? run.CreatedAt));
-            label.Text = $"{run.ContextId} · {run.Kind} · {NativeToolPresentation.Duration((ulong)elapsed * 1000)}"
+            label.Text = $"{run.ContextId} · {run.Kind} · {NativeToolPresentation.Duration((ulong)elapsed * 1000, design.Localization)}"
                 + (run.ExitCode is { } exit ? $" · 退出码 {exit}" : "")
                 + (run.LastPolledAt is { } poll ? $"\n最近轮询 {DateTimeOffset.FromUnixTimeSeconds(poll).ToLocalTime():HH:mm:ss}" : "");
         }
@@ -26,10 +26,10 @@ internal sealed partial class NativeConversationPage
     {
         var body = new StackPanel { Spacing = 6, Padding = new Thickness(10), Background = design.Brush("bg-sunken"), CornerRadius = new CornerRadius(8) };
         body.Children.Add(design.Text(string.IsNullOrWhiteSpace(run.Title) ? run.Id : run.Title, 14));
-        body.Children.Add(design.Text(NativeToolPresentation.RunState(run.Status), 12));
+        body.Children.Add(design.Text(NativeToolPresentation.RunState(run.Status, design.Localization), 12));
         var clock = new TextBlock { FontSize = design.FontSize(11), Foreground = design.Brush("text-muted"), TextWrapping = TextWrapping.Wrap };
         runClocks[run.Id] = (run, clock); body.Children.Add(clock);
-        if (NativeRunPresentation.Progress(run) is { } progress)
+        if (NativeRunPresentation.Progress(run, design.Localization) is { } progress)
         {
             body.Children.Add(new TextBlock { Text = progress.Label, TextWrapping = TextWrapping.Wrap, FontSize = design.FontSize(12) });
             body.Children.Add(new ProgressBar { Minimum = 0, Maximum = 100, Value = progress.Percent ?? 0,
@@ -65,8 +65,8 @@ internal sealed partial class NativeConversationPage
     private async Task MaybeShowRunReviewPrompt()
     {
         if (disposed || openingRunReview || reviewRun == null || canShowRunReview?.Invoke() == false
-            || historyDialog != null || queueDialog != null || queueMenu != null || historyMenu != null
-            || composerOptionsOpen || acpSettingsOpen || acpCreationOpen || contextUsageOpen || selectionFlyout != null || XamlRoot == null
+            || historyDialog != null || queueMenu != null || idleCompactDialog != null || contextRecoveryDialog != null || model.ContextRecovery != null
+            || composerOptionsOpen || modelMenuOpen || contextUsageOpen || selectionFlyout != null || XamlRoot == null
             || model.RunReviewPrompt is not { } prompt) return;
         openingRunReview = true;
         try

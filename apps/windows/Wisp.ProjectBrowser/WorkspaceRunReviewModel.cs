@@ -3,8 +3,10 @@ using Wisp.ProjectBrowser.Contracts;
 namespace Wisp.ProjectBrowser;
 
 /// <summary>Explicitly scoped review. Reads may refresh; writes never replay.</summary>
-public sealed class WorkspaceRunReviewModel(INativeRunReviewClient client, string project, string session)
+public sealed class WorkspaceRunReviewModel(Func<string, JsonObject, CancellationToken, Task<NativeRunReviewReply>> invoke, bool dismissPromptOnClose = false, NativeLocalization? locale = null)
 {
+    public WorkspaceRunReviewModel(INativeRunReviewClient client, string project, string session)
+        : this((run, op, token) => client.InvokeAsync(project, session, run, op, token), true) { }
     public event Action? Changed;
     public bool Visible { get; private set; }
     public string RunId { get; private set; } = "";
@@ -40,14 +42,14 @@ public sealed class WorkspaceRunReviewModel(INativeRunReviewClient client, strin
     {
         if (!Visible) return;
         var run = RunId;
-        var persist = Visible && !ReadOnly && dismissed.Add(run);
+        var persist = dismissPromptOnClose && Visible && !ReadOnly && dismissed.Add(run);
         generation++; Visible = false; Loading = false; Ready = false; Confirmation = null; Selection.Clear();
         var current = generation;
         Changed?.Invoke();
         if (!persist) return;
         // Closing the view must not cancel this already authorized scoped write.
         // A lost acknowledgement is reported, never replayed on a later close.
-        try { await client.InvokeAsync(project, session, run, new() { ["action"] = "dismiss" }); }
+        try { await invoke(run, new() { ["action"] = "dismiss" }, default); }
         catch (Exception ex)
         {
             if (current == generation) DismissalError = "运行 " + run + " 的审阅关闭状态未确认，不会自动重试。" + ex.Message;
@@ -86,16 +88,16 @@ public sealed class WorkspaceRunReviewModel(INativeRunReviewClient client, strin
         Changed?.Invoke();
         try
         {
-            var reply = await client.InvokeAsync(project, session, run, new() { ["action"] = "list", ["path"] = Path, ["name_filter"] = Filter.Trim(), ["offset"] = append ? offset : 0 }, token);
+            var reply = await invoke(run, new() { ["action"] = "list", ["path"] = Path, ["name_filter"] = Filter.Trim(), ["offset"] = append ? offset : 0 }, token);
             if (!Visible || current != generation || revision != mutationRevision || Mutating) return;
             var page = reply.Listing ?? throw new InvalidDataException("缺少运行文件列表。");
             if (append && page.Truncated && page.Entries.Length == 0) throw new InvalidDataException("运行文件分页没有推进，请刷新。");
             offset = append ? offset + page.Entries.Length : page.Entries.Length;
             Entries = (append ? Entries.Concat(page.Entries) : page.Entries).DistinctBy(e => e.Path, StringComparer.Ordinal).ToArray();
             Truncated = page.Truncated; ReadOnly = reply.ReadOnly; Cleaned = reply.Cleaned; Ready = true;
-            if (Cleaned) { Selection.Clear(); Status = "服务器工作目录已清理。"; }
+            if (Cleaned) { Selection.Clear(); Status = locale?.Text("runs.cleanup_done") ?? "服务器工作目录已清理。"; }
         }
-        catch (Exception ex) { if (Visible && current == generation) Error = ex is OperationCanceledException ? "读取已取消。" : ex.Message; }
+        catch (Exception ex) { if (Visible && current == generation) Error = ex is OperationCanceledException ? locale?.Choose("读取已取消。", "Read cancelled.") ?? "读取已取消。" : ex.Message; }
         finally { if (current == generation) Loading = false; Changed?.Invoke(); }
     }
     public Task DownloadAsync(CancellationToken token = default)
@@ -120,17 +122,17 @@ public sealed class WorkspaceRunReviewModel(INativeRunReviewClient client, strin
         var refresh = false;
         try
         {
-            var result = await client.InvokeAsync(project, session, run, operation, token);
+            var result = await invoke(run, operation, token);
             if (!Visible || current != generation) return;
             Selection.Clear(); Cleaned = result.Cleaned; Ready = false;
             Status = operation["action"]!.GetValue<string>() switch
-            { "download" => $"已下载并登记 {result.Downloaded} 项产物。", "delete" => "已删除所选内容。", _ => "服务器工作目录已清理。" };
+            { "download" => locale?.Text("run_review.downloaded") ?? $"已下载并登记 {result.Downloaded} 项产物。", "delete" => locale?.Text("run_review.deleted") ?? "已删除所选内容。", _ => locale?.Text("runs.cleanup_done") ?? "服务器工作目录已清理。" };
             refresh = true;
         }
         catch (Exception ex)
         {
             if (Visible && current == generation)
-            { Ready = false; Error = "操作结果未确认，不会自动重试。请先刷新并核对结果。\n" + ex.Message; }
+            { Ready = false; Error = (locale?.Choose("操作结果未确认，不会自动重试。请先刷新并核对结果。", "Result not confirmed. Refresh and check before trying again.") ?? "操作结果未确认，不会自动重试。请先刷新并核对结果。") + "\n" + ex.Message; }
         }
         finally { mutationRevision++; Mutating = false; Changed?.Invoke(); }
         if (refresh && Visible && current == generation) await ReadAsync(false, token);

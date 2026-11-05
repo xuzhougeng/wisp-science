@@ -7,6 +7,7 @@ public sealed record NativeComposerReference(string Kind, string? Id = null, str
 {
     public bool Valid => Kind switch
     {
+        "file-path" => NativeFilePathRules.Relative(Id) || NativeFilePathRules.WindowsClipboardPath(Id),
         "artifact" or "session" or "project" or "workflow" or "context" => !string.IsNullOrWhiteSpace(Id),
         "skill" => !string.IsNullOrWhiteSpace(Name),
         "runtime" => !string.IsNullOrWhiteSpace(ContextId) && Language is "python" or "r",
@@ -16,6 +17,7 @@ public sealed record NativeComposerReference(string Kind, string? Id = null, str
     public JsonObject ToJson()
     {
         if (!Valid) throw new InvalidDataException("Invalid composer reference");
+        if (Kind == "file-path") throw new InvalidOperationException("File paths are represented in message text, not structured host references");
         var value = new JsonObject { ["kind"] = Kind };
         if (Kind == "skill") value["name"] = Name;
         else if (Kind == "runtime") { value["context_id"] = ContextId; value["language"] = Language; }
@@ -29,3 +31,13 @@ public sealed record NativeReferenceOption(NativeComposerReference Reference, st
     public override string ToString() => Label + (string.IsNullOrWhiteSpace(Detail) ? "" : " · " + Detail);
 }
 public sealed record NativeReferenceCatalog(string SessionId, NativeReferenceOption[] Options);
+
+/// <summary>Local drag identity only. Resolve labels and membership from the current sidebar.</summary>
+public sealed record NativeSessionDrag(string ProjectId, string Kind, string Id)
+{
+    public const string Format = "application/x-wisp-native-session-reference";
+    public bool Valid => !string.IsNullOrWhiteSpace(ProjectId) && !string.IsNullOrWhiteSpace(Id)
+        && Kind is "session" or "folder";
+}
+
+public sealed record NativeSessionReferenceScope(string ProjectId, string ProjectName, IReadOnlyList<BrowserSession> Sessions);

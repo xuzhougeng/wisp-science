@@ -95,6 +95,8 @@ async fn handle_request(
                     "list_projects".into(),
                     "list_sessions".into(),
                     "get_transcript".into(),
+                    "search_project_chats".into(),
+                    "locate_project_chat_match".into(),
                     "capabilities".into(),
                 ]
                 .into_iter()
@@ -116,15 +118,11 @@ async fn handle_request(
                         let writer = Store::open_existing_for_commands(database).await?;
                         wisp_app::projects::set_project_starred(&writer, &project_id, starred)
                             .await?;
-                        wisp_app::projects::list_projects(store, &HashSet::new(), &HashSet::new())
-                            .await
+                        project_snapshot(store).await
                     }
                     .await;
                     match result {
-                        Ok(projects) => Reply::Projects {
-                            projects,
-                            activity_source: ActivitySource::PersistedOnly,
-                        },
+                        Ok(reply) => reply,
                         Err(error) => Reply::Error {
                             code: ErrorCode::CommandFailed,
                             message: format!(
@@ -170,12 +168,19 @@ async fn handle_request(
                     },
                 }
             }
-            Command::ListProjects => {
-                let idle = HashSet::new();
-                match wisp_app::projects::list_projects(store, &idle, &idle).await {
-                    Ok(projects) => Reply::Projects {
-                        projects,
-                        activity_source: ActivitySource::PersistedOnly,
+            Command::SearchProjectChats {
+                project_id,
+                query,
+                cursor,
+            } => {
+                match store
+                    .search_project_chats(&project_id, &query, cursor.as_ref(), 50)
+                    .await
+                {
+                    Ok(page) => Reply::ProjectChatMatches {
+                        project_id,
+                        query,
+                        page,
                     },
                     Err(error) => Reply::Error {
                         code: ErrorCode::QueryFailed,
@@ -183,6 +188,34 @@ async fn handle_request(
                     },
                 }
             }
+            Command::LocateProjectChatMatch {
+                project_id,
+                session_id,
+                message_seq,
+            } => {
+                match store
+                    .locate_project_chat_match(&project_id, &session_id, message_seq)
+                    .await
+                {
+                    Ok(target) => Reply::ProjectChatLocation {
+                        project_id,
+                        session_id,
+                        message_seq,
+                        target,
+                    },
+                    Err(error) => Reply::Error {
+                        code: ErrorCode::QueryFailed,
+                        message: error.to_string(),
+                    },
+                }
+            }
+            Command::ListProjects => match project_snapshot(store).await {
+                Ok(reply) => reply,
+                Err(error) => Reply::Error {
+                    code: ErrorCode::QueryFailed,
+                    message: error.to_string(),
+                },
+            },
         }
     };
     Response {
@@ -190,4 +223,14 @@ async fn handle_request(
         id: Some(request.id),
         reply,
     }
+}
+
+async fn project_snapshot(store: &Store) -> Result<Reply> {
+    let idle = HashSet::new();
+    let projects = wisp_app::projects::list_projects(store, &idle, &idle).await?;
+    Ok(Reply::Projects {
+        projects,
+        privacy: store.project_privacy().await?,
+        activity_source: ActivitySource::PersistedOnly,
+    })
 }

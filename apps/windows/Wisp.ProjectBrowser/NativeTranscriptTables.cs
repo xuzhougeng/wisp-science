@@ -81,7 +81,7 @@ public sealed class NativeTranscriptTables
     public static int ColumnCount(Table table) => Math.Max(1, table.OfType<TableRow>()
         .Select(row => row.OfType<TableCell>().Sum(cell => Math.Max(1, cell.ColumnSpan))).DefaultIfEmpty().Max());
 
-    private static string CellText(TableCell cell)
+    public static string CellText(TableCell cell)
     {
         var text = new StringBuilder();
         foreach (var block in cell.Descendants<LeafBlock>())

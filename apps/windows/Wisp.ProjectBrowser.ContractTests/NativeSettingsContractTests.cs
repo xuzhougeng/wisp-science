@@ -16,7 +16,7 @@ internal static class NativeSettingsContractTests
         Require(response?["theme"]?.GetValue<string>() == "dark", "Settings response drift");
         Require(NativeSettingsProtocol.DecodeResponse(File.ReadAllText(Path.Combine(fixtures, "void.json")), "settings-2") is null, "Void save rejected");
         Throws<InvalidDataException>(() => NativeSettingsProtocol.DecodeResponse(File.ReadAllText(Path.Combine(fixtures, "response.json")), "stale"));
-        Throws<InvalidOperationException>(() => NativeSettingsProtocol.DecodeResponse(File.ReadAllText(Path.Combine(fixtures, "error.json")), "settings-3"));
+        Throws<NativeSettingsCommandException>(() => NativeSettingsProtocol.DecodeResponse(File.ReadAllText(Path.Combine(fixtures, "error.json")), "settings-3"));
         var database = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "native-settings-test.sqlite"));
         var host = new NativeSettingsHost(NativeSettingsProtocol.Schema, "http://127.0.0.1:12345/invoke", new string('a', 64), database, 1);
         NativeSettingsProtocol.ValidateHost(host, database);
@@ -36,7 +36,15 @@ internal static class NativeSettingsContractTests
         var catalog = JsonNode.Parse(File.ReadAllText(Path.Combine(fixtures, "commands.json")))!["commands"]!.AsArray();
         Require(catalog.Any(c => c?["command"]?.GetValue<string>() == "import_wsl_contexts"), "Missing Windows environment seam");
         Require(catalog.Any(c => c?["command"]?.GetValue<string>() == "list_notification_sounds"), "Missing native notification sound catalog");
+        var projectInfo = catalog.Single(c => c?["command"]?.GetValue<string>() == "get_project_info")!;
+        Require(projectInfo["arguments"]!.AsArray().Count == 0
+            && projectInfo["result"]?.GetValue<string>() == "Result<ProjectInfo, String>",
+            "Home skills require the existing read-only restored-workspace command in the host allowlist");
         var preview = catalog.Single(c => c?["command"]?.GetValue<string>() == "preview_notification_sound")!;
+        var skillOrigin = catalog.Single(c => c?["command"]?.GetValue<string>() == "get_skill_install_source")!;
+        Require(skillOrigin["arguments"]!.AsArray().Count == 1 && skillOrigin["arguments"]![0]?["name"]?.GetValue<string>() == "name"
+            && skillOrigin["result"]?.GetValue<string>() == "Result<Option<SkillInstallSource>, String>",
+            "Installed skill provenance uses the existing optional shared source DTO and skill-name argument");
         Require(preview["arguments"]!.AsArray().Count == 1 && preview["arguments"]![0]?["name"]?.GetValue<string>() == "sound",
             "Notification preview must accept only the selected sound ID");
         Require(!catalog.Any(c => c?["command"]?.GetValue<string>() == "send_message"), "Non-settings capability leaked");

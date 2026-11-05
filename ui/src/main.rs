@@ -1850,10 +1850,40 @@ fn App() -> impl IntoView {
         project_chat_search_open.set(false);
     });
     let action_palette_open = create_rw_signal(false);
-    let (privacy_active_initial, privacy_projects_initial) = load_privacy_mode();
-    mirror_privacy_mode(privacy_active_initial, &privacy_projects_initial);
-    let privacy_mode_active = create_rw_signal(privacy_active_initial);
-    let privacy_hidden_project_ids = create_rw_signal(privacy_projects_initial);
+    let privacy_mode_active = create_rw_signal(false);
+    let privacy_hidden_project_ids = create_rw_signal(HashSet::<String>::new());
+    let privacy_ready = create_rw_signal(false);
+    let privacy_busy = create_rw_signal(false);
+    let privacy_error = create_rw_signal(false);
+    let privacy_revision = store_value(0_u64);
+    let apply_privacy = move |active, ids: HashSet<String>| {
+        cache_privacy_mode(active, &ids);
+        batch(move || {
+            if privacy_hidden_project_ids.with_untracked(|old| old != &ids) { privacy_hidden_project_ids.set(ids); }
+            privacy_mode_active.set(active);
+            privacy_ready.set(true);
+            privacy_error.set(false);
+        });
+    };
+    let read_privacy = move |seed: bool| {
+        let seed = seed || !privacy_ready.get_untracked();
+        if privacy_busy.get_untracked() { return; }
+        privacy_revision.update_value(|n| *n += 1);
+        let ticket = privacy_revision.get_value();
+        spawn_local(async move {
+            let mode = read_shared_privacy(seed).await;
+            if ticket != privacy_revision.get_value() { return; }
+            if let Some(mode) = mode {
+                apply_privacy(mode.active, mode.project_ids.into_iter().collect());
+            } else {
+                privacy_ready.set(false);
+                privacy_error.set(true);
+            }
+        });
+    };
+    read_privacy(true);
+    let focus_listener = window_event_listener(ev::focus, move |_| read_privacy(false));
+    on_cleanup(move || focus_listener.remove());
     let assistant_workspace = assistant_workspace::use_assistant_workspace(
         assistant_mode,
         Signal::derive(move || busy.get()),
@@ -1885,6 +1915,28 @@ fn App() -> impl IntoView {
         let _ = automation_projects.get();
     });
     let privacy_mode_modal_open = create_rw_signal(false);
+    create_effect(move |_| {
+        if privacy_mode_modal_open.get() && !privacy_ready.get_untracked() && privacy_error.get_untracked() {
+            read_privacy(false);
+        }
+    });
+    let commit_privacy = move |active: bool, ids: HashSet<String>| {
+        if !privacy_ready.get_untracked() || privacy_busy.get_untracked() { return; }
+        privacy_revision.update_value(|n| *n += 1);
+        privacy_busy.set(true);
+        spawn_local(async move {
+            let args = serde_wasm_bindgen::to_value(&privacy_host_args(active, &ids)).unwrap();
+            if crate::bindings::invoke_checked("set_privacy_mode", args).await.is_ok() {
+                apply_privacy(active, ids);
+                privacy_mode_modal_open.set(false);
+            } else {
+                privacy_ready.set(false);
+                privacy_error.set(true);
+            }
+            privacy_busy.set(false);
+        });
+    };
+
     // Top-nav project switcher dropdown + Project Settings modal.
     let show_proj_menu = create_rw_signal(false);
     let proj_list = create_rw_signal::<Vec<ProjectSummary>>(vec![]);
@@ -10859,7 +10911,7 @@ fn App() -> impl IntoView {
         }
         if privacy_mode_modal_open.get() {
             ev.prevent_default();
-            privacy_mode_modal_open.set(false);
+            if !privacy_busy.get_untracked() { privacy_mode_modal_open.set(false); }
             return;
         }
         if action_palette_open.get() {
@@ -12790,6 +12842,7 @@ fn App() -> impl IntoView {
         <CommandPalette open=command_palette_open current_project_id=palette_project_id
             can_search_project=Signal::derive(move || has_current_project.get() && !assistant_mode.get())
             on_search_project=Callback::new(move |_| project_chat_search_open.set(true))
+            privacy_ready=privacy_ready
             privacy_mode_active=privacy_mode_active
             privacy_hidden_project_ids=privacy_hidden_project_ids
             on_open_project=command_palette_open_project on_open_session=command_palette_open_session on_open_artifact=palette_open_artifact
@@ -12805,17 +12858,9 @@ fn App() -> impl IntoView {
             open=privacy_mode_modal_open
             active=privacy_mode_active
             hidden_project_ids=privacy_hidden_project_ids
-            on_hide=Callback::new(move |project_ids: HashSet<String>| {
-                save_privacy_mode(true, &project_ids);
-                privacy_hidden_project_ids.set(project_ids);
-                privacy_mode_active.set(true);
-                privacy_mode_modal_open.set(false);
-            })
-            on_restore=Callback::new(move |_| {
-                privacy_mode_active.set(false);
-                privacy_hidden_project_ids.with_untracked(|ids| save_privacy_mode(false, ids));
-                privacy_mode_modal_open.set(false);
-            })
+            ready=privacy_ready busy=privacy_busy error=privacy_error
+            on_hide=Callback::new(move |ids| commit_privacy(true, ids))
+            on_restore=Callback::new(move |_| commit_privacy(false, privacy_hidden_project_ids.get_untracked()))
         />
         <ProjectExportPrompt
             state=ProjectExportPromptState { locale, prompt: project_export_prompt }
@@ -12998,7 +13043,7 @@ fn App() -> impl IntoView {
                 show_projects, demo_mode, items, active_session, project_open_error,
                 demos, modal_artifact, locale, running, approval_pending,
                 sync_actions_available, command_palette_open, project_transfer,
-                privacy_mode_active, privacy_hidden_project_ids,
+                privacy_mode_active, privacy_hidden_project_ids, privacy_ready,
                 menu_new_project, menu_import_project, home_calendar_open, home_dialog_open,
             }
             open_project=switch_project

@@ -21,6 +21,7 @@ pub(crate) fn ProjectsScreen(
     on_search: Callback<()>,
     on_export_project: Callback<(String, String)>,
     project_transfer: RwSignal<Option<ProjectTransferProgress>>,
+    privacy_ready: RwSignal<bool>,
     privacy_mode_active: RwSignal<bool>,
     privacy_hidden_project_ids: RwSignal<HashSet<String>>,
     // One-shot requests from the Windows titlebar File menu, which lives
@@ -36,7 +37,7 @@ pub(crate) fn ProjectsScreen(
     let search_query = create_rw_signal(String::new());
     let search_active = create_rw_signal(0usize);
     let project_is_hidden = move |id: &str| {
-        privacy_mode_active.get() && privacy_hidden_project_ids.with(|ids| ids.contains(id))
+        !privacy_ready.get() || privacy_mode_active.get() && privacy_hidden_project_ids.with(|ids| ids.contains(id))
     };
     let demo_count = create_rw_signal(0usize);
     let creating = create_rw_signal(false);

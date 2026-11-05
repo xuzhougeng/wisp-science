@@ -102,7 +102,8 @@ pub(crate) async fn execute(
         let root = std::path::PathBuf::from(artifact.project_root);
         let path = context.version.storage_path.clone();
         let content = tokio::task::spawn_blocking(move || {
-            crate::file_browser::read_file_at(&root, path, Some(2 * 1024 * 1024))
+            if input.thumbnail { read_thumbnail(&root, path) }
+            else { crate::file_browser::read_file_at(&root, path, Some(2 * 1024 * 1024)) }
         })
         .await
         .map_err(|error| error.to_string())?;
@@ -145,6 +146,38 @@ pub(crate) async fn execute(
     serde_json::to_value(page).map_err(|error| error.to_string())
 }
 
+fn read_thumbnail(root: &std::path::Path, path: String) -> Result<wisp_dto::FileContent, String> {
+    use base64::Engine;
+    let real = wisp_tools::safety::validate_file_path(root, &path)?;
+    let mime = crate::file_browser::mime_for_path(&real);
+    if !mime.starts_with("image/") {
+        return crate::file_browser::read_file_at(root, path, Some(2048));
+    }
+    let bytes = crate::file_browser::read_file_bytes_at(root, &path, None)?;
+    let (bytes, mime) = if mime == "image/svg+xml" {
+        // The local renderer decodes this as an inert image, preserving SVG text.
+        (bytes, mime)
+    } else {
+        (raster_thumbnail(&bytes)?, "image/png")
+    };
+    Ok(wisp_dto::FileContent {
+        path: real.to_string_lossy().into_owned(), mime: mime.into(), text: None,
+        total_bytes: Some(bytes.len() as u64), base64: Some(base64::engine::general_purpose::STANDARD.encode(bytes)), truncated: false,
+    })
+}
+
+fn raster_thumbnail(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    use std::io::Cursor;
+    let mut reader = image::ImageReader::new(Cursor::new(bytes)).with_guessed_format().map_err(|e| e.to_string())?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(16384); limits.max_image_height = Some(16384); limits.max_alloc = Some(128 * 1024 * 1024);
+    reader.limits(limits);
+    let image = reader.decode().map_err(|e| e.to_string())?;
+    let image = if image.width() > 384 || image.height() > 384 { image.thumbnail(384, 384) } else { image };
+    let mut output = Cursor::new(Vec::new()); image.to_rgba8().write_to(&mut output, image::ImageFormat::Png).map_err(|e| e.to_string())?;
+    Ok(output.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,6 +185,36 @@ mod tests {
     use wisp_dto::native_settings::{Request, SCHEMA};
     use wisp_dto::ResearchJournalInput;
     use wisp_store::{StateScope, Store};
+
+    #[test]
+    fn card_rasters_are_bounded_without_upscaling() {
+        use std::io::Cursor;
+        for (width, height, expected) in [(1200, 600, (384, 192)), (20, 10, (20, 10))] {
+            let mut bytes = Cursor::new(Vec::new());
+            image::RgbaImage::from_pixel(width, height, image::Rgba([10, 20, 30, 0])).write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+            let result = image::load_from_memory(&raster_thumbnail(bytes.get_ref()).unwrap()).unwrap().to_rgba8();
+            assert_eq!(result.dimensions(), expected);
+            assert_eq!(result.get_pixel(0, 0)[3], 0);
+        }
+        assert!(raster_thumbnail(b"invalid image").is_err());
+    }
+
+    #[test]
+    fn card_reads_preserve_svg_and_bound_text() {
+        let root = std::env::temp_dir().join(format!("journey-thumbnails-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\"><text>Evidence</text></svg>";
+        std::fs::write(root.join("figure.svg"), svg).unwrap();
+        std::fs::write(root.join("large.txt"), "x".repeat(9000)).unwrap();
+        let text = read_thumbnail(&root, "large.txt".into()).unwrap();
+        assert!(text.truncated); assert_eq!(text.text.unwrap().len(), 2048);
+        let figure = read_thumbnail(&root, "figure.svg".into()).unwrap();
+        assert_eq!(figure.mime, "image/svg+xml");
+        use base64::Engine;
+        assert_eq!(base64::engine::general_purpose::STANDARD.decode(figure.base64.unwrap()).unwrap(), svg.as_bytes());
+        assert!(read_thumbnail(&root, "../outside.txt".into()).is_err());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     fn request(project_id: Option<&str>, args: serde_json::Value) -> Request {
         Request {
@@ -251,6 +314,10 @@ mod tests {
         let mut read = request(Some("p"), json!({"version_id": ids[0]}));
         read.command = "native_research_journey_artifact".into();
         let result = execute(&store, &read).await.unwrap();
+        read.args["thumbnail"] = json!(true);
+        let thumbnail = execute(&store, &read).await.unwrap();
+        assert_eq!(thumbnail["text"], "original evidence");
+        assert_eq!(thumbnail["version_id"], ids[0]);
         assert_eq!(result["version_id"], ids[0]);
         assert_eq!(result["version_number"], 1);
         assert_eq!(result["text"], "original evidence");

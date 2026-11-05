@@ -8,6 +8,67 @@
 
 use serde_json::json;
 
+#[tokio::test]
+async fn reviewer_probe_uses_only_the_selected_projects_session_binding() {
+    let store = wisp_store::Store::open(std::path::Path::new(":memory:"))
+        .await
+        .unwrap();
+    store.create_project("a", "A", "").await.unwrap();
+    store.create_project("b", "B", "").await.unwrap();
+    store
+        .create_frame("s", "a", "OPERON", "model")
+        .await
+        .unwrap();
+    store
+        .save_acp_session(&wisp_store::AcpSessionBinding {
+            frame_id: "s".into(),
+            agent_profile_id: "session-agent".into(),
+            profile_fingerprint: "fake".into(),
+            agent_session_id: "remote-session".into(),
+            cwd: "".into(),
+            protocol_version: 1,
+            agent_info_json: "{}".into(),
+            capabilities_json: "{}".into(),
+            created_at: 1,
+            updated_at: 1,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        crate::reviewer_test_session_profile(&store, "a", Some("s"))
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("session-agent")
+    );
+    assert_eq!(
+        crate::reviewer_test_session_profile(&store, "a", None)
+            .await
+            .unwrap(),
+        None
+    );
+    for (project, session) in [("b", "s"), ("a", "missing"), ("a", "")] {
+        assert!(
+            crate::reviewer_test_session_profile(&store, project, Some(session))
+                .await
+                .is_err()
+        );
+    }
+    let result = wisp_dto::ReviewerBackendTestResult {
+        backend: "acp_agent".into(),
+        model: "session-agent".into(),
+        status: "needs_correction".into(),
+        summary: "Check evidence".into(),
+    };
+    assert_eq!(
+        serde_json::from_value::<wisp_dto::ReviewerBackendTestResult>(
+            serde_json::to_value(&result).unwrap()
+        )
+        .unwrap(),
+        result
+    );
+}
+
 #[test]
 fn project_chat_search_preserves_literal_snippets_and_paging_locator() {
     let wire = json!({

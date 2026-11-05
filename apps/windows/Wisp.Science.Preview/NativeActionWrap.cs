@@ -7,11 +7,18 @@ namespace Wisp.Science.Preview;
 
 internal sealed class NativeActionWrap : Panel
 {
+    public bool RightAligned { get; init; }
+    public bool VerticallyCentered { get; init; }
+    public bool SpaceBetween { get; init; }
+    public bool FirstItemLeading { get; init; }
+    public double Gap { get; init; } = 8;
+    public double? RowGap { get; init; }
     protected override Size MeasureOverride(Size available)
     {
-        foreach (var child in Children) child.Measure(new Size(available.Width, double.PositiveInfinity));
-        var slots = Layout(available.Width);
-        return new Size(slots.Length == 0 ? 0 : slots.Max(s => s.X + s.Width),
+        var width = NativeActionLayout.MeasureConstraint(available.Width);
+        foreach (var child in Children) child.Measure(new Size(width, double.PositiveInfinity));
+        var slots = Layout(width);
+        return new Size(NativeActionLayout.DesiredWidth(slots, width, RightAligned || SpaceBetween),
             slots.Length == 0 ? 0 : slots.Max(s => s.Y + s.Height));
     }
     protected override Size ArrangeOverride(Size final)
@@ -22,7 +29,7 @@ internal sealed class NativeActionWrap : Panel
         return final;
     }
     private NativeActionLayout.Slot[] Layout(double width) => NativeActionLayout.Arrange(
-        Children.Select(c => new NativeActionLayout.Size(c.DesiredSize.Width, c.DesiredSize.Height)).ToArray(), width);
+        Children.Select(c => new NativeActionLayout.Size(c.DesiredSize.Width, c.DesiredSize.Height)).ToArray(), width, gap: Gap, rightAligned: RightAligned, rowGap: RowGap, verticallyCentered: VerticallyCentered, spaceBetween: SpaceBetween, firstItemLeading: FirstItemLeading);
 
     public static void GroupButtons(StackPanel stack)
     {

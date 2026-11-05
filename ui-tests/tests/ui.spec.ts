@@ -1723,6 +1723,25 @@ test("Full Permission requires a warning and stays scoped to the conversation", 
   await expect(menu).toBeVisible();
   await expect(toggle).not.toBeChecked();
 
+  // The visible label and the switch open the same centered confirmation.
+  // Cancelling it in an empty project must not materialize the draft session.
+  const sessionCreates = (await invokeArgsList(page, "new_session")).length;
+  await row.getByText("Full Permission", { exact: true }).click();
+  const warning = page.locator(".confirm-modal").filter({ has: page.getByRole("heading", { name: "Enable Full Permission?" }) });
+  const viewport = page.viewportSize()!;
+  await expect.poll(async () => {
+    const bounds = await warning.boundingBox();
+    return bounds ? Math.max(
+      Math.abs(bounds.x + bounds.width / 2 - viewport.width / 2),
+      Math.abs(bounds.y + bounds.height / 2 - viewport.height / 2),
+    ) : Infinity;
+  }).toBeLessThan(2);
+  await warning.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(menu).toBeVisible();
+  await expect(toggle).not.toBeChecked();
+  expect(await invokeArgsList(page, "set_session_full_permission")).toHaveLength(0);
+  expect(await invokeArgsList(page, "new_session")).toHaveLength(sessionCreates);
+
   await row.click();
   await page.getByRole("button", { name: "Enable Full Permission" }).click();
   await expect.poll(() => lastInvokeArgs(page, "set_session_full_permission")).toMatchObject({
@@ -3836,6 +3855,29 @@ test("privacy mode hides selected projects and recent sessions, then restores th
   await expect(privateProject).toBeVisible();
   await expect(page.getByTestId("recent-session-card")).toHaveCount(2);
   await expect.poll(() => page.evaluate(() => localStorage.getItem("wisp-privacy-mode-active"))).toBeNull();
+});
+
+test("a saved host privacy choice takes precedence over a stale window, and refreshes on focus", async ({ page }) => {
+  await page.addInitScript(() => {
+    sessionStorage.setItem("mock-host-privacy", JSON.stringify({ active: true, project_ids: ["default"] }));
+    localStorage.removeItem("wisp-privacy-mode-active");
+    localStorage.setItem("wisp-privacy-mode-projects", "[]");
+  });
+  await page.goto("/");
+  const privateCard = page.locator(".proj-card", { hasText: "wisp-science" });
+  await expect(page.locator(".proj-card", { hasText: "Other project" })).toBeVisible();
+  await expect(privateCard).toHaveCount(0);
+  await expect(page.getByTestId("recent-session-card")).toHaveCount(0);
+  await page.evaluate(() => {
+    sessionStorage.setItem("mock-host-privacy", JSON.stringify({ active: false, project_ids: ["default"] }));
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(privateCard).toBeVisible();
+  await expect(page.getByTestId("recent-session-card")).toHaveCount(2);
+  await page.keyboard.press("Control+Shift+h");
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "Privacy mode" })).toBeHidden();
+  await expect(privateCard).toBeVisible();
 });
 
 test("privacy mode select all toggles every project at once", async ({ page }) => {
@@ -9942,8 +9984,13 @@ test("appearance settings persist separate light and dark palettes and font size
   await expect(page.getByTestId("appearance-palette-select")).toHaveValue("catppuccin");
   await expect(page.locator("html")).toHaveAttribute("data-light-palette", "catppuccin");
 
-  await page.getByTestId("theme-mode-dark").click();
+  const dark = page.getByTestId("theme-mode-dark");
+  await dark.focus();
+  await dark.press("Space");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(dark).toBeFocused();
+  await dark.press("Tab");
+  await expect(page.getByRole("combobox", { name: "Color palette" })).toBeFocused();
   await page.getByTestId("appearance-palette-select").selectOption("gruvbox");
   await expect(page.getByTestId("appearance-palette-select")).toHaveValue("gruvbox");
   await expect(page.locator("html")).toHaveAttribute("data-dark-palette", "gruvbox");
@@ -11478,8 +11525,26 @@ test("credentials settings add, replace, clear, and remove a custom credential",
     .toMatchObject({ id: "custom-1" });
 });
 
+test("a short capabilities dialog scrolls to its environment actions", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 580 });
+  await enterApp(page);
+  await page.getByRole("button", { name: "Capabilities", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Capabilities" });
+  const setup = dialog.getByRole("button", { name: "Set up environment" });
+  await expect(setup).not.toBeInViewport();
+  await dialog.getByRole("heading", { name: "Capabilities" }).hover();
+  await page.mouse.wheel(0, 900);
+  await expect(setup).toBeInViewport();
+});
+
 test("capability counts open skills, connections, and editable project memory", async ({ page }) => {
   await enterApp(page);
+
+  const open = page.getByRole("button", { name: "Capabilities", exact: true });
+  await open.click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "Capabilities" })).toBeHidden();
+  await expect(open).toBeVisible();
 
   await page.getByRole("button", { name: "Capabilities" }).click();
   let capabilities = page.getByRole("dialog", { name: "Capabilities" });
@@ -11667,6 +11732,15 @@ test("skill manager reloads manually copied skills and shows their scope", async
   await expect(page.getByText("Skills reloaded. 5 available.")).toBeVisible();
 });
 
+test("a skill install without a receipt is not shown as confirmed", async ({ page }) => {
+  await enterApp(page, "/?mockSkillImport=1&mockSkillMissingReceipt=1");
+  await openSettingsSection(page, "Skills");
+  await page.getByText("Add skill", { exact: true }).click();
+  await page.getByRole("button", { name: "Add SKILL.md or ZIP" }).click();
+  await expect(page.getByText(/Could not confirm where the skill was installed/)).toBeVisible();
+  await expect.poll(() => lastInvokeArgs(page, "install_skill")).toMatchObject({scope:"global"});
+});
+
 test("skill manager updates and deletes user-added skills", async ({ page }) => {
   await enterApp(page, "/?mockSkillImport=1");
   await openSettingsSection(page, "Skills");
@@ -11678,14 +11752,17 @@ test("skill manager updates and deletes user-added skills", async ({ page }) => 
   await expect(page.locator(".settings-page")).toBeVisible();
 
   await page.getByText("Add skill", { exact: true }).click();
+  const location = page.getByTestId("skill-install-scope");
+  await expect(location.getByRole("radio", { name: /All projects/ })).toBeChecked();
+  await expect(location).toContainText("/mock/root/project/.wisp/skills");
+  await location.getByRole("radio", { name: /This project only/ }).check();
+  await expect(location.getByRole("note")).toContainText("Moving or deleting");
   await addFile.click();
   await expect.poll(() => lastInvokeArgs(page, "install_skill")).toMatchObject({
     srcPath: "/downloads/paper-narrative.zip",
-    scope: "global",
+    scope: "project",
   });
-  await expect(page.getByText(
-    "Installed paper-narrative as a Global skill at /home/me/.wisp/skills/paper-narrative. Every project can discover it.",
-  )).toBeVisible();
+  await expect(page.getByText(/Installed paper-narrative.*Only this project can discover it/)).toBeVisible();
 
   const skill = page.locator('[data-skill-name="paper-narrative"]');
   await skill.locator(".skill-row-open").click();
@@ -15502,6 +15579,28 @@ test("new project form reports an unreadable create_project response instead of 
   await expect(page.locator("#new-project-name")).toHaveCount(0);
 });
 
+test("project form hints focus the matching editor and the standard layout preserves custom notes", async ({ page }) => {
+  await page.setViewportSize({ width: 588, height: 760 });
+  await page.goto("/?mockProjectFolder=valid");
+  await page.getByRole("button", { name: /New project/ }).click();
+  const form = page.getByRole("dialog").filter({ has: page.locator("#new-project-name") });
+  const description = form.locator("textarea").first();
+  const context = form.locator("textarea.ps-ctx");
+  await form.locator("label:has(textarea:not(.ps-ctx)) .ps-hint").click();
+  await expect(description).toBeFocused();
+  await page.keyboard.type("Measure draft");
+  await expect(form.locator("#new-project-name")).toHaveValue("");
+  await form.locator("label:has(textarea.ps-ctx) .ps-hint").click();
+  await expect(context).toBeFocused();
+  await page.keyboard.type("Keep this note.");
+  const toggle = form.locator(".pn-layout .ps-hint");
+  await toggle.click();
+  await expect(context).toHaveValue(/Keep this note\.[\s\S]*figures\//);
+  await toggle.click();
+  await expect(context).toHaveValue("Keep this note.");
+  await expect(description).toHaveValue("Measure draft");
+});
+
 test("project folder import restores records and opens its workspace in place", async ({ page }, testInfo) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -18621,6 +18720,39 @@ test("general settings show discovered paths and can recheck without installing"
   await expect(page.locator(".settings-page")).toBeHidden();
 });
 
+test("general field captions keep focus and drafts through a pending path check", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "General");
+  const pane = page.getByTestId("general-settings-pane");
+  for (const [caption, id] of [["Language", "settings-language"], ["Send and newline shortcuts", "send-shortcut"]]) {
+    await pane.getByText(caption, { exact: true }).click();
+    await expect(pane.getByTestId(id)).toBeFocused();
+  }
+  await page.evaluate(() => {
+    const w = window as any;
+    const core = w.__TAURI__.core, original = core.invoke.bind(core);
+    const gate = new Promise<void>(resolve => { w.__finishPathCheck = resolve; });
+    core.invoke = async (cmd: string, args: unknown) => {
+      if (cmd === "detect_local_environment") await gate;
+      return original(cmd, args);
+    };
+  });
+  const check = pane.getByRole("button", { name: "Check paths again" });
+  await check.click();
+  await expect(check).toBeDisabled();
+  const path = pane.getByRole("textbox", { name: /^Workspace folder/ });
+  await pane.getByText(/^Workspace folder/).click({ position: { x: 12, y: 8 } });
+  await expect(path).toBeFocused();
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.type("D:/Research/one");
+  await page.keyboard.press("ArrowLeft");
+  await page.evaluate(() => (window as any).__finishPathCheck());
+  await expect(check).toBeEnabled();
+  await expect(path).toBeFocused();
+  await page.keyboard.type("X");
+  await expect(path).toHaveValue("D:/Research/onXe");
+});
+
 for (const platform of ["Linux x86_64", "MacIntel"]) {
   test(`command palette reopens quick setup without resetting settings (${platform})`, async ({ page }) => {
     await page.addInitScript((value) => {
@@ -18653,6 +18785,25 @@ for (const platform of ["Linux x86_64", "MacIntel"]) {
       .filter((call: any) => call.cmd === "detect_local_environment").length)).toBe(2);
   });
 }
+
+test("quick setup above General follows the preview language and preserves its draft", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "General");
+  const folder = page.locator(".general-field .settings-path-input");
+  await folder.fill("draft-workspace");
+  await page.getByTestId("settings-language").selectOption("zh");
+  await page.keyboard.press("Control+p");
+  const search = page.locator("#action-palette-input");
+  await expect(search).toHaveAttribute("placeholder", "搜索命令...");
+  await search.fill("快速配置");
+  await search.press("Enter");
+  const setup = page.locator(".onboard-overlay");
+  await expect(setup.getByRole("heading")).toHaveText("欢迎使用 wisp-science");
+  await page.keyboard.press("Escape");
+  await expect(setup).toBeHidden();
+  await expect(folder).toHaveValue("draft-workspace");
+  await expect(page.getByTestId("settings-language")).toHaveValue("zh");
+});
 
 test("onboarding Enter advances once, respects composition and controls, and finishes", async ({ page }) => {
   await page.goto("/?mockOnboarding=1");

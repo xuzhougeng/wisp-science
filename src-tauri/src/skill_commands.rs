@@ -236,6 +236,28 @@ pub(super) fn project_skills_dir(root: &Path) -> PathBuf {
     root.join(".wisp").join("skills")
 }
 
+// A project can be imported from elsewhere; a link in its metadata must not
+// redirect a project-only install outside the chosen workspace.
+fn checked_project_skills_dir(root: &Path) -> Result<PathBuf, String> {
+    let canonical_root = root.canonicalize().map_err(|e| e.to_string())?;
+    let target = project_skills_dir(root);
+    for directory in [root.join(".wisp"), target.clone()] {
+        match directory.symlink_metadata() {
+            Ok(_)
+                if !directory
+                    .canonicalize()
+                    .map_err(|e| e.to_string())?
+                    .starts_with(&canonical_root) =>
+            {
+                return Err("project skills directory resolves outside the project".into())
+            }
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.to_string()),
+            _ => {}
+        }
+    }
+    Ok(target)
+}
+
 /// Discovery precedence, lowest first; mirrors the order in `skill_sources`.
 fn scope_rank(scope: SkillSource) -> u8 {
     match scope {
@@ -360,10 +382,21 @@ pub(super) async fn install_skill(
     src_path: String,
     scope: Option<String>,
 ) -> Result<wisp_dto::SkillInstallReceipt, String> {
-    let scope = install_scope(scope.as_deref())?;
+    install_scoped_skill(state, window, src_path, scope.unwrap_or_else(|| "global".into())).await
+}
+
+#[tauri::command]
+pub(super) async fn install_scoped_skill(
+    state: State<'_, AppState>,
+    window: crate::workspace_surface::WorkspaceSurface,
+    src_path: String,
+    scope: String,
+) -> Result<wisp_dto::SkillInstallReceipt, String> {
+    let scope = install_scope(Some(&scope))?;
     let src = PathBuf::from(&src_path);
+    let owner = state.require_active(window.label())?;
     let skills_dir = match scope {
-        SkillSource::Project => project_skills_dir(&state.require_active(window.label())?.root),
+        SkillSource::Project => checked_project_skills_dir(&owner.root)?,
         _ => user_skills_dir()?,
     };
     let target_dir = skills_dir.clone();
@@ -373,6 +406,9 @@ pub(super) async fn install_skill(
     let skill_name = tokio::task::spawn_blocking(move || install_skill_source(&src, &skills_dir))
         .await
         .map_err(|e| format!("{e}"))??;
+    if state.require_active(window.label())?.id != owner.id {
+        return Err("Skill installed, but the project changed before refreshing.".into());
+    }
     reload_host_skill_index(&state, window.label())?;
     let ap = state.require_active(window.label())?;
     if let Some(mut enabled) = load_enabled_skill_names(&state.store, &ap.id).await {
@@ -399,11 +435,13 @@ pub(super) async fn promote_skill_to_global(
 ) -> Result<wisp_dto::SkillInstallReceipt, String> {
     validate_skill_name(&name)?;
     let ap = state.require_active(window.label())?;
-    let records = ap.skills.catalog_records();
+    let index = load_skill_index(&ap.root);
+    let records = index.catalog_records();
     let source = named_records(records, &name)
         .find(|record| record.scope == SkillSource::Project)
         .map(record_dir)
         .ok_or("skill_not_in_project")?;
+    check_project_package(&source, &checked_project_skills_dir(&ap.root)?)?;
     if let Some(existing) =
         named_records(records, &name).find(|record| record.scope == SkillSource::Global)
     {
@@ -430,12 +468,20 @@ pub(super) async fn promote_skill_to_global(
 
 /// Never overwrite: an occupied global folder is a conflict the user resolves.
 fn promote_skill_dir(from: &Path, to: &Path) -> Result<(), String> {
-    if to.exists() {
-        return Err(format!("skill_global_exists:{}", to.display()));
+    let parent = to.parent().ok_or("missing global skills directory")?;
+    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    if parent.canonicalize().map_err(|e| e.to_string())?.starts_with(from.canonicalize().map_err(|e| e.to_string())?) {
+        return Err("the skill source contains the install directory".into());
     }
-    install_skill_dir(from, to)
-        .map(|_| ())
-        .map_err(|error| format!("promote skill: {error}"))
+    // Reserve this name atomically. The normal installer may replace an existing tree.
+    std::fs::create_dir(to).map_err(|e| if e.kind() == std::io::ErrorKind::AlreadyExists {
+        format!("skill_global_exists:{}", to.display())
+    } else { e.to_string() })?;
+    if let Err(error) = copy_dir_recursive(from, to) {
+        let _ = std::fs::remove_dir_all(to);
+        return Err(format!("promote skill: {error}"));
+    }
+    Ok(())
 }
 
 /// Delete the project copy of a Skill only when another copy keeps the name
@@ -446,15 +492,14 @@ pub(super) async fn remove_project_skill_copy(
     window: crate::workspace_surface::WorkspaceSurface,
     name: String,
 ) -> Result<(), String> {
-    let ap = state.require_active(window.label())?;
-    let dir = removable_project_copy(
-        ap.skills.catalog_records(),
-        &name,
-        &project_skills_dir(&ap.root),
-    )?;
-    tokio::fs::remove_dir_all(&dir)
-        .await
-        .map_err(|e| format!("{e}"))?;
+    validate_skill_name(&name)?;
+    let mut ap = state.require_active(window.label())?;
+    let project_dir = checked_project_skills_dir(&ap.root)?;
+    // Another window may have removed the surviving copy since the detail opened.
+    ap.skills = Arc::new(load_skill_index(&ap.root));
+    let (index, _) = project_skill_catalog(&state.store, &ap).await;
+    let dir = removable_project_copy(index.catalog_records(), &name, &project_dir)?;
+    tokio::fs::remove_dir_all(&dir).await.map_err(|e| e.to_string())?;
     reload_host_skill_index(&state, window.label())?;
     clear_idle_agents_for_project(&state, &ap.id).await;
     Ok(())
@@ -500,6 +545,16 @@ pub(super) async fn list_project_skill_packages(
         .map_err(|e| format!("{e}"))
 }
 
+fn check_project_package(dir: &Path, base: &Path) -> Result<PathBuf, String> {
+    let actual = dir.canonicalize().map_err(|e| e.to_string())?;
+    let root = base.canonicalize().map_err(|e| e.to_string())?;
+    // Reject aliases, including directory junctions to siblings within the project.
+    if dir.parent() != Some(base) || dir.file_name().is_none_or(|leaf| actual != root.join(leaf)) {
+        return Err("skill_not_in_project".into());
+    }
+    Ok(actual)
+}
+
 fn removable_project_copy(
     records: &[SkillCatalogRecord],
     name: &str,
@@ -509,11 +564,10 @@ fn removable_project_copy(
         .find(|record| record.scope == SkillSource::Project)
         .ok_or("skill_not_in_project")?;
     let dir = record_dir(project);
-    if !dir.starts_with(project_dir) || dir == project_dir {
-        return Err("skill_not_in_project".into());
-    }
+    let actual = check_project_package(&dir, project_dir)?;
     let kept = named_records(records, name).any(|record| {
         record.scope != SkillSource::Project
+            && record_dir(record).canonicalize().is_ok_and(|other| !other.starts_with(&actual) && !actual.starts_with(other))
             && (record.scope == SkillSource::Global
                 || (project.skill_md_sha256.is_some()
                     && record.skill_md_sha256 == project.skill_md_sha256))
@@ -690,6 +744,14 @@ fn install_skill_dir(from: &Path, to: &Path) -> Result<bool, String> {
         }
     }
 
+    if parent
+        .canonicalize()
+        .map_err(|e| e.to_string())?
+        .starts_with(from.canonicalize().map_err(|e| e.to_string())?)
+    {
+        return Err("the skill source contains the install directory".into());
+    }
+
     let name = to
         .file_name()
         .and_then(|value| value.to_str())
@@ -758,6 +820,50 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    fn write_skill(base: &Path, dir: &str, name: &str, body: &str) -> PathBuf {
+        let dir = base.join(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: Test skill\n---\n{body}"),
+        )
+        .unwrap();
+        dir
+    }
+
+    #[test]
+    fn install_scope_defaults_to_global_and_rejects_unknown_scopes() {
+        assert_eq!(install_scope(None), Ok(SkillSource::Global));
+        assert_eq!(install_scope(Some("project")), Ok(SkillSource::Project));
+        assert!(install_scope(Some("bundled")).is_err());
+    }
+
+    #[test]
+    fn project_install_writes_under_the_project_skills_directory() {
+        let temp = TestDir::new();
+        let source = write_skill(&temp.0, "source", "local-only", "body");
+        let project_root = temp.0.join("project");
+        let target = project_skills_dir(&project_root);
+
+        assert_eq!(
+            install_skill_source(&source, &target),
+            Ok("local-only".into())
+        );
+        assert!(project_root
+            .join(".wisp/skills/local-only/SKILL.md")
+            .is_file());
+    }
+
+    #[test]
+    fn importing_a_project_root_does_not_copy_the_staging_tree_into_itself() {
+        let temp = TestDir::new();
+        let destination = project_skills_dir(&temp.0).join("sample");
+        assert!(install_skill_dir(&temp.0, &destination)
+            .unwrap_err()
+            .contains("contains the install directory"));
+        assert!(!destination.exists());
     }
 
     #[test]
@@ -856,17 +962,6 @@ mod tests {
         assert_eq!(error, "skill ZIP contains more than one skill folder");
     }
 
-    fn write_skill(base: &Path, dir: &str, name: &str, body: &str) -> PathBuf {
-        let dir = base.join(dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join("SKILL.md"),
-            format!("---\nname: {name}\ndescription: Test skill\n---\n{body}"),
-        )
-        .unwrap();
-        dir
-    }
-
     fn scoped_index(temp: &TestDir) -> (wisp_skills::SkillIndex, PathBuf, PathBuf, PathBuf) {
         let bundled = temp.0.join("bundled");
         let project = temp.0.join("project").join(".wisp").join("skills");
@@ -926,30 +1021,6 @@ mod tests {
         assert_eq!(active.shadowed_by, None);
     }
 
-    #[test]
-    fn install_scope_defaults_to_global_and_rejects_unknown_scopes() {
-        assert_eq!(install_scope(None), Ok(SkillSource::Global));
-        assert_eq!(install_scope(Some("project")), Ok(SkillSource::Project));
-        assert!(install_scope(Some("bundled")).is_err());
-    }
-
-    #[test]
-    fn project_install_writes_under_the_project_skills_directory() {
-        let temp = TestDir::new();
-        let source = write_skill(&temp.0, "source", "local-only", "body");
-        let project_root = temp.0.join("project");
-        let target = project_skills_dir(&project_root);
-
-        assert_eq!(
-            install_skill_source(&source, &target),
-            Ok("local-only".into())
-        );
-        assert!(project_root
-            .join(".wisp/skills/local-only/SKILL.md")
-            .is_file());
-    }
-
-    #[test]
     fn promoting_never_overwrites_an_existing_global_folder() {
         let temp = TestDir::new();
         let source = write_skill(&temp.0, "project/notes", "notes", "project");

@@ -233,13 +233,21 @@ pub async fn browser_transcript(
     session_id: &str,
     before_seq: Option<i64>,
 ) -> Result<(Vec<wisp_dto::project_browser::BrowserMessage>, Option<i64>)> {
-    anyhow::ensure!(
-        list_browser_sessions(store, Some(project_id))
+    let visible = list_browser_sessions(store, Some(project_id))
+        .await?
+        .iter()
+        .any(|s| s.id == session_id);
+    // An explicit shelf entry remains readable without restoring it. The exact
+    // reference lookup still excludes archived, subagent and non-listable frames.
+    let owned_shelved = if visible {
+        false
+    } else {
+        store
+            .get_session_reference(session_id)
             .await?
-            .iter()
-            .any(|s| s.id == session_id),
-        "Session not found in project"
-    );
+            .is_some_and(|session| session.project_id == project_id && session.shelved)
+    };
+    anyhow::ensure!(visible || owned_shelved, "Session not found in project");
     let page = store
         .load_session_transcript_page(session_id, before_seq, 20)
         .await?;

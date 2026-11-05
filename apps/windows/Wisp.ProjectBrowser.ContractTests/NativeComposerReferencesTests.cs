@@ -89,6 +89,18 @@ internal static class NativeComposerReferencesTests
         await model.SendAsync();
         Check(!model.Busy && model.UncertainSend && model.References.Length == 1 && model.Draft == "keep after cancellation",
             "cancelled send releases Busy and preserves uncertain typed context");
+        client = new Fake(); model = new WorkspaceConversationModel(new NativeConversationClient(client)); await model.OpenAsync("project-a", "plugin-session");
+        var launch = new NativePluginLaunch("project-a", "plugin-session", "Open the plugin workbench", ["plugin-guide"]);
+        Check(!model.StagePluginLaunch(launch with { ProjectId = "elsewhere" }) && model.Draft.Length == 0, "plugin launch cannot write into another project's composer");
+        client.SupportsReferences = false; await model.RefreshAsync(); Check(!model.StagePluginLaunch(launch), "plugin guidance is never silently dropped by older hosts");
+        client.SupportsReferences = true; await model.RefreshAsync(); Check(model.StagePluginLaunch(launch) && !model.StagePluginLaunch(launch), "plugin prompt and skill references stage once into an empty new conversation");
+        await model.SendAsync(); Check(client.Sent?["references"]?[0]?["name"]?.GetValue<string>() == "plugin-guide" && client.Sent?["message"]?.GetValue<string>().Contains("Open the plugin workbench") == true, "plugin startup uses the normal typed-reference send path");
+        client = new Fake(); model = new WorkspaceConversationModel(new NativeConversationClient(client)); await model.OpenAsync("project-a", "specialist-session");
+        var specialist = new NativeSpecialistChat("project-a", "specialist-session", "Shared specialist interview prompt");
+        Check(!model.StageSpecialistChat(specialist with { SessionId = "other" }) && !model.StageSpecialistChat(specialist with { ProjectId = "other" }), "specialist chat cannot stage into another session or project");
+        model.Draft = "User draft"; Check(!model.StageSpecialistChat(specialist) && model.Draft == "User draft", "specialist launch never replaces a user draft"); model.Draft = "";
+        Check(model.StageSpecialistChat(specialist) && !model.StageSpecialistChat(specialist) && model.References.Length == 0, "specialist interview stages once without invented attachments or plugin skills");
+        await model.SendAsync(); Check(client.Sent?["message"]?.GetValue<string>() == specialist.Prompt, "specialist interview uses the normal conversation send path");
         Console.WriteLine("Native composer references: caret, identity, stale reads, drafts, sends and queue passed.");
     }
 

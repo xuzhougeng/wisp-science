@@ -11,7 +11,9 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / 'contracts/native-settings/v1/commands.json'
+COMMAND_ALIASES = {'copy_demo_to_project': 'copy_demo_to_project_cmd'}
 ADAPTERS = {
+    'native_workflow_conversion_progress': ([{'name': 'conversionId', 'rust_type': 'String', 'optional': False}], 'Option<WorkflowConversionProgress>'),
     'native_settings_capabilities': ([], 'NativeSettingsCapabilities'),
     'native_download_update': ([], '()'),
     'native_terminal_snapshot': ([{'name': 'sessionId', 'rust_type': 'String', 'optional': False}], 'TerminalSnapshot'),
@@ -31,12 +33,15 @@ def export():
             args, result = ADAPTERS[name]
             location = 'src-tauri/src/native_settings.rs'
         else:
-            if not re.search(r'\b' + name + r'\s*,', handlers):
+            handler = COMMAND_ALIASES.get(name, name)
+            if not re.search(r'\b' + handler + r'\s*,', handlers):
                 raise ValueError(f'{name} is not registered in Tauri')
-            matches = [(p, re.search(r'#\[tauri::command(?:\([^\]]*\))?\]\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+' + name + r'\s*\((.*?)\)\s*(?:->\s*(.*?))?\s*\{', text, re.S)) for p, text in sources]
+            matches = [(p, re.search(r'#\[tauri::command(?:\([^\]]*\))?\]\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+' + handler + r'\s*\((.*?)\)\s*(?:->\s*(.*?))?\s*\{', text, re.S)) for p, text in sources]
             matches = [(p, m) for p, m in matches if m]
             if len(matches) != 1: raise ValueError(f"Expected one Tauri command definition for {name}, got {len(matches)}")
             path, match = matches[0]
+            if handler != name and f'rename = "{name}"' not in match[0]:
+                raise ValueError(f'{handler} does not declare the {name} command alias')
             args = []
             for line in match[1].splitlines():
                 m = re.match(r'\s*(?:mut\s+)?(\w+)\s*:\s*(.*?)\s*,?\s*$', line)

@@ -24,6 +24,9 @@ pub struct JourneyRequest {
 #[serde(deny_unknown_fields)]
 pub struct ArtifactRequest {
     pub version_id: String,
+    /// Small read-only card preview; omitted by existing detail clients.
+    #[serde(default)]
+    pub thumbnail: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -48,6 +51,24 @@ pub struct JourneyArtifact {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn artifact_thumbnail_mode_preserves_existing_detail_requests() {
+        let detail: ArtifactRequest = serde_json::from_str(r#"{"version_id":"v1"}"#).unwrap();
+        assert!(!detail.thumbnail);
+        let card: ArtifactRequest =
+            serde_json::from_str(r#"{"version_id":"v1","thumbnail":true}"#).unwrap();
+        assert!(card.thumbnail);
+        assert_eq!(card.version_id, detail.version_id);
+        assert!(serde_json::from_str::<ArtifactRequest>(
+            r#"{"version_id":"v1","thumbnail":"true"}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<ArtifactRequest>(
+            r#"{"version_id":"v1","path":"other-project/file.txt"}"#
+        )
+        .is_err());
+    }
 
     #[test]
     fn journey_fixture_requires_a_project_id() {

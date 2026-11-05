@@ -8,6 +8,14 @@ internal static class NativeComposerCommandsTests
         Check(NativeComposerCommands.Match("  /FI", true, true).Single().Command == "/files", "case insensitive prefix");
         Check(NativeComposerCommands.Match("/", false, false).Count == 0, "unavailable routes not advertised");
         Check(NativeComposerCommands.Match("/", false, true).All(item => item.Command != "/upload"), "attachment capability gate");
+        Check(NativeComposerCommands.Match("/com", false, false, true).Single().Command == "/compact",
+            "local compaction is discoverable without host navigation routes");
+        Check(NativeComposerCommands.Match("/", true, true, true).Count == 12, "all navigation and local commands are discoverable");
+        Check(NativeComposerCommands.TryCompaction(" /COMPACT \n preserve paths ", out var instruction) && instruction == "preserve paths",
+            "compaction recognizes a whole command token and optional instruction");
+        Check(NativeComposerCommands.TryCompaction("/compact", out instruction) && instruction == "", "bare command opens regular mode");
+        foreach (var text in new[] { "/compact2", "/compactor", "mention /compact", "/compact-extra" })
+            Check(!NativeComposerCommands.TryCompaction(text, out _), "partial command names and prose are not intercepted");
         foreach (var text in new[] { "ordinary /files", "/files retain this", "/files\nmore", "/unknown" })
         {
             Check(NativeComposerCommands.Match(text, true, true).Count == 0, "prose and arguments not consumed: " + text);

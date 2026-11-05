@@ -1841,6 +1841,16 @@ impl RunManager {
     }
 
     pub async fn cancel(&self, store: &wisp_store::Store, run_id: &str) -> Result<(), String> {
+        self.cancel_with_intent(store, run_id, None).await
+    }
+
+    /// With an explicit button intent a stale normal click cannot escalate to force.
+    pub async fn cancel_with_intent(
+        &self,
+        store: &wisp_store::Store,
+        run_id: &str,
+        force: Option<bool>,
+    ) -> Result<(), String> {
         let run = store
             .get_run(run_id)
             .await
@@ -1850,6 +1860,19 @@ impl RunManager {
             return Err(format!("Run is already {}", run.status.as_str()));
         }
         let already_cancelling = run.status == wisp_store::RunStatus::Cancelling;
+        if let Some(force) = force {
+            if run.kind == "method_search"
+                || !matches!(
+                    run.status,
+                    wisp_store::RunStatus::Submitted
+                        | wisp_store::RunStatus::Running
+                        | wisp_store::RunStatus::Cancelling
+                )
+                || force != already_cancelling
+            {
+                return Err("Run state changed; refresh before cancelling".into());
+            }
+        }
         let requested = if already_cancelling {
             false
         } else {

@@ -167,30 +167,74 @@ public sealed partial class WorkspaceConversationModel
     }
 }
 
+public abstract record NativeRunProgress(double? Percent, string Label);
+public sealed record NativeTransferProgress(string Phase, string? File, string[] Details, double? Completion)
+    : NativeRunProgress(Completion, string.Join(" · ", new[] { Phase, File }.Concat(Details).Where(s => !string.IsNullOrEmpty(s))));
+public sealed record NativeMethodProgress(string Phase, string Counts, string Best)
+    : NativeRunProgress(null, $"{Phase} · {Counts} · {Best}");
+
 public static class NativeRunPresentation
 {
+    public static string MonitorMetadata(NativeRun run, long now, long? heartbeat, NativeLocalization locale)
+    {
+        static string Duration(long seconds) => seconds < 60 ? $"{seconds}s" :
+            seconds < 3600 ? $"{seconds / 60}m {seconds % 60}s" : $"{seconds / 3600}h {seconds % 3600 / 60}m";
+        string Time(string key, long seconds) => locale.Format(key, ("time", Duration(Math.Max(0, seconds))));
+        var elapsed = Time("runs.elapsed", (run.EndedAt ?? now) - (run.StartedAt ?? run.CreatedAt));
+        var text = $"{run.ContextId} · {run.Kind} · {elapsed}";
+        if (run.Status is "submitted" or "running" or "cancelling")
+        {
+            if (heartbeat is { } last) text += " · " + Time("runs.heartbeat", now - last);
+            if (run.TimeoutSecs is > 0) text += " · " + Time("runs.timeout", run.TimeoutSecs.Value);
+        }
+        return run.ExitCode is { } exit ? text + " · exit " + exit : text;
+    }
     public static string Output(NativeRun run)
     {
         static string Fold(string? text) => string.Join("\n", (text ?? "").Replace("\r\n", "\n").Split('\n').Select(line => line.Split('\r').Last()));
         var stdout = Fold(run.StdoutTail); var stderr = Fold(run.StderrTail);
-        return string.Join("\n", (stdout + (stderr.Length > 0 ? "\n[stderr]\n" + stderr : "")).Trim().Split('\n').TakeLast(8));
+        var output = stdout.Length == 0 ? stderr : stderr.Length == 0 ? stdout : stdout + "\n[stderr]\n" + stderr;
+        return string.Join("\n", output.TrimEnd('\n').Split('\n').TakeLast(8));
     }
-    public static (double? Percent, string Label)? Progress(NativeRun run)
+    public static NativeRunProgress? Progress(NativeRun run, NativeLocalization locale)
     {
         if (string.IsNullOrWhiteSpace(run.ProgressJson)) return null;
         try
         {
             var value = JsonNode.Parse(run.ProgressJson);
             if (value is not JsonObject) return null;
-            var message = value["phase"]?.GetValue<string>() ?? "";
+            var phase = value["phase"]?.GetValue<string>();
+            if (run.Kind == "method_search")
+            {
+                var best = value["best_primary"]?.GetValue<double>().ToString("F6", System.Globalization.CultureInfo.InvariantCulture) ?? "—";
+                return new NativeMethodProgress(phase ?? "", $"{value["candidate_count"]?.GetValue<ulong>() ?? 0} / {value["successful_count"]?.GetValue<ulong>() ?? 0}", best);
+            }
+            if (string.IsNullOrEmpty(phase) || value["total_bytes"] == null || value["completed_bytes"] == null) return null;
             var done = value["completed_bytes"]?.GetValue<ulong>() ?? 0;
             var total = value["total_bytes"]?.GetValue<ulong>() ?? 0;
-            double? percent = value["indeterminate"]?.GetValue<bool>() != true && total > 0 ? Math.Min(100, done * 100d / total) : null;
-            if (value["files_completed"] is { } files && value["files_total"] is { } count) message += $" · 文件 {files}/{count}";
-            if (value["current_file"]?.GetValue<string>() is { Length: > 0 } file) message += " · " + file;
-            if (value["bytes_per_second"] is { } speed) message += $" · {speed} 字节/秒";
-            if (value["eta_seconds"] is { } eta) message += $" · 预计剩余 {eta} 秒";
-            return percent != null || message.Length > 0 ? (percent, message) : null;
+            double? percent = phase is ("uploading" or "downloading") && (value["indeterminate"]?.GetValue<bool>() == true || total == 0)
+                ? null : total == 0 ? 0 : (double)Math.Min(100m, Math.Ceiling(done * 100m / total));
+            var key = phase is "uploading" or "uploaded" or "downloading" or "downloaded" or "cancelled" or "failed" ? phase : "transferring";
+            var label = locale.Text("transfer." + key);
+            var file = value["current_file"]?.GetValue<string>();
+            static string Size(ulong bytes)
+            {
+                string[] units = ["B", "KB", "MB", "GB", "TB"]; int i = 0; double n = bytes;
+                while (n >= 1024 && i + 1 < units.Length) { n /= 1024; i++; }
+                return i == 0 ? $"{bytes} B" : FormattableString.Invariant($"{n:F2} {units[i]}");
+            }
+            if (!percent.HasValue) return new NativeTransferProgress(label, file, [total == 0 ? locale.Text("transfer.byte_progress_unavailable")
+                : locale.Format("transfer.total", ("size", Size(total)))], null);
+            var details = new List<string> { $"{Size(done)} / {Size(total)} · {percent}%" };
+            if (value["bytes_per_second"]?.GetValue<ulong>() is { } speed) details.Add($"{Size(speed)}/s");
+            if (value["eta_seconds"]?.GetValue<ulong>() is { } eta)
+            {
+                var time = eta < 60 ? $"{eta}s" : eta < 3600 ? $"{eta / 60}m {eta % 60}s" : $"{eta / 3600}h {eta % 3600 / 60}m";
+                details.Add(locale.Format("transfer.eta", ("time", time)));
+            }
+            if (value["files_total"]?.GetValue<ulong>() is > 1 and var count)
+                details.Add(locale.Format("transfer.files", ("done", (value["files_completed"]?.GetValue<ulong>() ?? 0).ToString()), ("total", count.ToString())));
+            return new NativeTransferProgress(label, file, details.ToArray(), percent);
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException) { return null; }
     }

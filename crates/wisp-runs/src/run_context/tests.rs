@@ -897,7 +897,20 @@ async fn second_cancel_force_finishes_a_wedged_cancelling_run() {
     *runner.rpc_gate.lock().unwrap() = Some(cancel_gate);
     let manager = RunManager::with_runner(runner);
 
-    manager.cancel(&store, "stuck-run").await.unwrap();
+    // A second stale normal button must not act as the force button, even if the
+    // run entered Cancelling between rendering the card and handling its click.
+    assert!(manager
+        .cancel_with_intent(&store, "stuck-run", Some(false))
+        .await
+        .is_err());
+    assert_eq!(
+        store.get_run("stuck-run").await.unwrap().unwrap().status,
+        wisp_store::RunStatus::Cancelling
+    );
+    manager
+        .cancel_with_intent(&store, "stuck-run", Some(true))
+        .await
+        .unwrap();
     assert_eq!(
         store.get_run("stuck-run").await.unwrap().unwrap().status,
         wisp_store::RunStatus::Cancelled

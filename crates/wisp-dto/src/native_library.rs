@@ -4,7 +4,13 @@ use serde::{Deserialize, Serialize};
 
 pub const SCHEMA: &str = "wisp.native-library.v1";
 
-pub const COMMANDS: &[&str] = &["native_library_search", "native_library_delete"];
+pub const COMMANDS: &[&str] = &[
+    "native_library_search",
+    "native_library_delete",
+    "native_library_get",
+    "native_library_versions",
+    "native_library_update_code",
+];
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -18,6 +24,17 @@ pub struct SearchRequest {
 #[serde(deny_unknown_fields)]
 pub struct DeleteRequest {
     pub id: String,
+}
+
+pub type ItemRequest = DeleteRequest;
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateCodeRequest {
+    pub id: String,
+    pub code: String,
+    #[serde(default)]
+    pub language: Option<String>,
 }
 
 #[cfg(test)]

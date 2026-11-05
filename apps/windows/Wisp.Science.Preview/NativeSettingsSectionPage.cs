@@ -16,109 +16,290 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
     private INativeSettingsClient? settingsClient;
     private readonly Func<bool, Task<string?>>? pickPath;
     private readonly List<ComboBox> choices = [];
+    private readonly SettingsTextMenus textMenus = new();
     private readonly StackPanel confirmation = new() { Spacing = 8 };
     private Action? pendingConfirmation;
     private readonly Button cancelAuthorization = new() { Content = "取消 OAuth 授权", Visibility = Visibility.Collapsed };
     private readonly TextBlock saveFeedback = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly Grid preferenceFooter = new() { ColumnSpacing = 12, RowSpacing = 8 };
     private readonly StackPanel editorActions = new() { Orientation = Orientation.Horizontal, Spacing = 12 };
     private readonly List<StackPanel> settingCards = [];
-    public bool HasChanges => model.HasChanges || model.Draft != null && invalidFields.Count > 0;
-    public bool Busy => model.Busy || channelBinding?.Busy == true;
+    public event Action<string>? WorkflowRequested;
+    public event Action<string>? ProjectRequested;
+    public event Action? LanguageChanged;
+    private string T(string key) => Design.T(key);
+    private string L(string chinese, string english) => Design.L(chinese, english);
+    public NativeWindowPreferences WindowPreferences { private get; init; } = new();
+    protected override bool ErrorHandledInline => section is "permissions" or "credentials" or "environments" || acpNotice != null
+        || model?.EditingWindowPreferences == true && !model.LoadFailed && !showInlineValidation
+            && preferenceFooter.Parent is Panel inline && inline != Footer;
+    private void RestoreLanguage(bool includeWindowDraft = false)
+    {
+        var changed = includeWindowDraft && WindowPreferences.PreviewLocale is { } locale
+            ? Design.Localization.Preview(locale) : Design.Localization.ApplyCommittedSettings(model.Values["get_settings"]);
+        if (changed) LanguageChanged?.Invoke();
+    }
+    internal static string SectionTitle(WispDesign design, string section)
+    {
+        if (section == "project") return design.T("proj_settings.title");
+        var key = "settings.nav." + section.Replace('-', '_');
+        var title = design.T(key);
+        return title == key ? Titles.GetValueOrDefault(section, section) : title;
+    }
+    private Button? quickActionSave;
+    private Button? specialistSave;
+    public bool HasChanges => model.HasChanges || model.HasCredentialChanges || ChannelHasChanges || localEnvironment?.HasChanges == true || networkSettings?.HasChanges == true || decisionSettings?.HasChanges == true || subscriptionSettings?.HasChanges == true || subscriptionRoutes?.HasChanges == true || model.Draft != null && invalidFields.Count > 0;
+    private bool pageBusy => model.Busy || channelBinding?.Busy == true || syncJoin?.Busy == true || networkSettings?.Busy == true || specialistTransfer?.Busy == true || decisionSettings?.Busy == true || subscriptionSettings?.Busy == true || subscriptionRoutes?.Busy == true;
+    public bool Busy => pageBusy || localEnvironment?.Saving == true;
     private static string S(JsonNode? row, string key) => row?[key]?.GetValue<string>() ?? "";
     private static bool B(JsonNode? row, string key) => row?[key]?.GetValue<bool>() == true;
     private static IEnumerable<JsonObject> Rows(JsonNode? value) => (value as JsonArray)?.OfType<JsonObject>() ?? [];
-    public NativeSettingsSectionPage(INativeSettingsClient client, string? project, string section, WispDesign design, Action close, Func<bool, Task<string?>>? pickPath = null)
-        : this(new NativeSettingsEditorModel(client, project), project, section, design, close, pickPath)
+    public NativeSettingsSectionPage(INativeSettingsClient client, string? project, string section, WispDesign design, Action close, Func<bool, Task<string?>>? pickPath = null, string? sessionId = null,
+        NativeLiveAppearanceModel? liveInputPreferences = null, Action<JsonObject>? applyInputPreferences = null)
+        : this(new NativeSettingsEditorModel(client, project, sessionId), project, section, design, close, pickPath)
     {
         settingsClient = client;
-        if (section == "channels") { channelBinding = new(client, project); channelBinding.Changed += ChannelChanged; }
-        _ = Reload();
+        model.Localization = design.Localization;
+        if (section == "usage") { usagePager = new(client, project); usagePager.Changed += UsageChanged; }
+        if (section == "specialists") { specialistTransfer = new(client, project); specialistTransfer.Changed += RefreshSpecialistTransfer; }
+        if (section == "general")
+        {
+            localEnvironment = new(client, project); localEnvironment.Changed += LockConfirmation;
+            inputPreferences = liveInputPreferences ?? new(client, project);
+            this.applyInputPreferences = applyInputPreferences;
+            inputPreferences.Changed += RefreshInputPreferences;
+            Notices.Children.Add(inputPreferenceNotice);
+        }
+        if (section == "network") { networkSettings = new(client, project); networkSettings.Changed += LockConfirmation; }
+        if (section == "channels")
+        {
+            channelBinding = new(client, project, design.Localization); channelBinding.Changed += ChannelChanged;
+            syncJoin = new(client, project, design.Localization); syncJoin.Changed += RefreshSyncJoin;
+        }
+        if (section == "models")
+        {
+            decisionSettings = new(client, project, JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Assets", "decision-model.json")))!.AsObject());
+            decisionSettings.Changed += LockConfirmation;
+            subscriptionSettings = new(client, project); subscriptionSettings.Changed += LockConfirmation;
+            subscriptionRoutes = new(client, project); subscriptionRoutes.Changed += LockConfirmation;
+            subscriptionPoll = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1500) };
+            subscriptionPoll.Tick += async (_, _) =>
+            {
+                var before = subscriptionSettings.LoginStatus;
+                await subscriptionSettings.PollAsync();
+                if (!model.Closed && subscriptionSettings.FormOpen && before != subscriptionSettings.LoginStatus) Render();
+            };
+            subscriptionPoll.Start();
+        }
+        if (section is "general" or "network" or "session" or "pet" or "channels" or "permissions" or "credentials" or "environments" or "quick-actions" or "specialists" or "storage")
+        {
+            // These pages arrange the shared footer and need a mounted root
+            // even when a cached/in-memory reply completes immediately.
+            var started = false;
+            Loaded += async (_, _) =>
+            {
+                if (started || model.Closed) return;
+                started = true; await LoadInitialAsync();
+            };
+        }
+        else _ = LoadInitialAsync();
     }
-    private NativeSettingsSectionPage(NativeSettingsEditorModel model, string? project, string section, WispDesign design, Action close, Func<bool, Task<string?>>? pickPath)
-        : base(design, Titles[section], model, close)
+    private async Task LoadInitialAsync()
+    {
+        try { await Reload(); }
+        catch (Exception ex) { if (!model.Closed) model.Fail(ex.Message); }
+    }
+    private NativeSettingsSectionPage(NativeSettingsEditorModel model, string? project, string section, WispDesign design, Action close, Func<bool, Task<string?>>? pickPath, bool modal = false)
+        : base(design, SectionTitle(design, section), model, close, modal: modal)
     {
         this.model = model; this.projectScoped = project != null; settingsProjectId = project; this.section = section;
         this.pickPath = pickPath;
-        UseSettingsLayout(); Form.MaxWidth = double.PositiveInfinity; Form.Spacing = 18;
+        UseSettingsLayout(section is "general" or "network", reserveScrollbar: section is "general" or "session", reserveOverflowScrollbar: NativeSettingsLayout.ReservesOverflowScrollbar(section)); Form.MaxWidth = double.PositiveInfinity; Form.Spacing = 18;
+        if (section == "session")
+        {
+            // This page has one card and no results list. An empty results host
+            // otherwise adds the body's 20px spacing after the card.
+            HideResults();
+            Body.Padding = new Thickness(24, 24, 24, 22);
+        }
+        SizeChanged += (_, _) => { ResizeGeneralGroups(); ResizeNetworkCard(); };
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetLiveSetting(saveFeedback, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
-        Footer.Children.Add(new ScrollViewer { Content = saveFeedback, MaxHeight = 110, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
-        Footer.Children.Add(editorActions);
-        Footer.SizeChanged += (_, e) => editorActions.Orientation = e.NewSize.Width < 340 ? Orientation.Vertical : Orientation.Horizontal;
+        preferenceFooter.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        preferenceFooter.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        preferenceFooter.RowDefinitions.Add(new() { Height = GridLength.Auto }); preferenceFooter.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        var feedbackHost = new ScrollViewer { Content = saveFeedback, MaxHeight = 110, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalAlignment = VerticalAlignment.Center };
+        preferenceFooter.Children.Add(feedbackHost); preferenceFooter.Children.Add(editorActions);
+        preferenceFooter.SizeChanged += (_, e) =>
+        {
+            var stacked = e.NewSize.Width < 420;
+            preferenceFooter.RowSpacing = stacked ? 8 : 0;
+            Grid.SetColumn(editorActions, stacked ? 0 : 1); Grid.SetRow(editorActions, stacked ? 1 : 0);
+            Grid.SetColumnSpan(feedbackHost, stacked ? 2 : 1);
+            editorActions.Orientation = e.NewSize.Width < 180 ? Orientation.Vertical : Orientation.Horizontal;
+        };
+        Footer.Children.Add(preferenceFooter);
         cancelAuthorization.Click += async (_, _) => await model.CancelOAuthAsync();
         Notices.Children.Add(cancelAuthorization); Notices.Children.Add(confirmation); model.Changed += LockConfirmation;
     }
     private string[] Reads => section switch
     {
-        "skills" => ["list_skills"], "connections" => ["list_connectors", "list_mcp_connections"],
-        "memory" => ["get_memory_view", "get_auto_failure_analysis_settings"],
-        "general" => ["get_settings", "get_appearance_prefs", "get_bootstrap_status", "get_update_check_enabled"],
+        "connections" => ["list_connectors", "list_mcp_connections"],
+        "general" => ["get_settings", "get_bootstrap_status", "get_update_check_enabled"],
         "network" => ["get_network_settings"],
-        "session" => ["get_settings", "get_auto_review_enabled"],
-        "pet" => ["get_settings", "get_pet_runtime_status", "get_pet"],
-        "plugins" => ["list_plugins"],
-        "browser" => ["get_browser_auto_launch", "get_browser_auto_close_tabs", "get_browser_url_filters", "browser_extension_status"],
+        "session" => ["get_settings"],
+        "pet" => ["get_settings", "get_pet"],
+        "browser" => ["get_browser_auto_launch", "get_browser_auto_close_tabs", "get_browser_url_filters"],
         "credentials" => ["credential_status", "list_custom_credentials"],
         "permissions" => ["list_approval_grants", "list_connectors"],
         "environments" => ["list_execution_contexts", "list_ssh_hosts", "get_default_execution_context", "list_ssh_trust_edges"],
-        "storage" => projectScoped ? ["get_storage_usage", "get_project_run_retention"] : ["get_storage_usage"],
         "usage" => ["get_token_usage"],
         "quick-actions" => ["list_quick_actions", "list_workflow_templates"],
-        "specialists" => ["list_specialists", "list_models"],
-        "workflows" => ["list_workflow_templates", "list_models", "list_skills"],
+        "specialists" => ["list_specialists", "list_models", "list_acp_agents", "list_skills"],
+        "workflows" or "workflow-conversion" => ["list_workflow_templates", "list_models", "list_skills"],
         "models" => ["list_models", "list_acp_agents"],
         "channels" => ["channels_status", "get_settings"],
-        "project" => projectScoped ? ["get_project_settings"] : [],
+        "project" => projectScoped ? ["get_project_settings", "get_project_run_retention"] : [],
         _ => throw new InvalidOperationException("Unknown settings section")
     };
-    private async Task Reload()
+    private readonly CancellationTokenSource sectionLifetime = new();
+    private async Task Reload(bool reconnect = false)
     {
-        if (model.Draft != null) return;
-        var loaded = await model.LoadAsync(Reads);
+        if (section == "storage") { await RefreshStorageAsync(); return; }
+        if (!reconnect && model.Draft != null && !model.InlinePreferences) return;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(sectionLifetime.Token);
+        deadline.CancelAfter(TimeSpan.FromSeconds(15));
+        var loaded = reconnect ? await model.RetryLoadAsync(Reads, () => settingsClient is NativeSettingsClient host
+            ? host.ReconnectAsync(deadline.Token) : Task.CompletedTask, deadline.Token) : await model.LoadAsync(Reads, deadline.Token);
+        if (loaded && !model.Closed && inputPreferences?.Draft == null && inputPreferences != null)
+        {
+            try { await inputPreferences.LoadAsync(); }
+            catch (Exception ex) { if (!model.Closed) model.Fail(model.ReadFailure(ex)); }
+        }
+        if (loaded && !model.Closed) localEnvironment?.AcceptSnapshot(model.Values["get_bootstrap_status"]);
+        if (loaded && !model.Closed) networkSettings?.AcceptSnapshot(model.Values["get_network_settings"]);
+        if (loaded && !model.Closed && !model.HasChanges) RestoreLanguage(includeWindowDraft: true);
         if (loaded && section == "general" && model.Values["get_settings"] is JsonObject prefs
             && prefs.ContainsKey("notification_sound_enabled")) await model.LoadNotificationSoundsAsync();
-        if (!model.Closed) Render();
+        if (loaded && section == "channels") await model.LoadChannelCapabilitiesAsync();
+        if (loaded && section == "usage" && settingsClient != null)
+        {
+            // Optional display names must not hide valid usage when the catalog is unavailable.
+            try { var profiles = await settingsClient.InvokeAsync("list_models", new(), settingsProjectId); if (!model.Closed) model.Values["list_models"] = profiles?.DeepClone(); }
+            catch { /* Usage falls back to the recorded model IDs, like WebView. */ }
+        }
+        if (loaded && section == "models" && showDecision && decisionSettings != null) await decisionSettings.LoadAsync();
+        if (loaded && section == "models" && showSubscriptions && subscriptionSettings != null && !subscriptionSettings.FormOpen) await LoadSubscriptions();
+        if (!model.Closed) { Render(); if (loaded) OpenRequestedSpecialist(); }
     }
     private void Confirm(string text, Action action)
     {
         pendingConfirmation = action; confirmation.Children.Clear();
         confirmation.Children.Add(Warn(text));
-        confirmation.Children.Add(Button("确认", () => { var next = pendingConfirmation; ClearConfirmation(); next?.Invoke(); return Task.CompletedTask; }));
-        confirmation.Children.Add(Button("取消", () => { ClearConfirmation(); return Task.CompletedTask; }));
+        confirmation.Children.Add(Button(L("确认", "Confirm"), () => { var next = pendingConfirmation; ClearConfirmation(); next?.Invoke(); return Task.CompletedTask; }));
+        confirmation.Children.Add(Button(T("settings.cancel"), () => { ClearConfirmation(); return Task.CompletedTask; }));
         LockConfirmation();
     }
     private void LockConfirmation()
     {
-        SetContentEnabled(!Busy && pendingConfirmation == null);
+        UpdateAcpNotice();
+        SetContentEnabled(!pageBusy && pendingConfirmation == null && specialistTransfer?.ModalOpen != true && syncJoin?.ModalOpen != true && model.EnvironmentEditor == null,
+            resultsEnabled: localEnvironment?.Busy != true);
+        RefreshEnvironmentModal();
         cancelAuthorization.Visibility = model.OAuthPending ? Visibility.Visible : Visibility.Collapsed;
-        Notices.Visibility = pendingConfirmation != null || model.OAuthPending ? Visibility.Visible : Visibility.Collapsed;
-        Footer.Visibility = model.Draft != null || model.SaveConfirmed ? Visibility.Visible : Visibility.Collapsed;
+        Notices.Visibility = pendingConfirmation != null || model.OAuthPending || inputPreferences?.Error != null ? Visibility.Visible : Visibility.Collapsed;
+        Footer.Visibility = preferenceFooter.Parent == Footer && section is not ("quick-actions" or "specialists" or "channels" or "models") && (model.Draft != null && section != "connections" || model.SaveConfirmed) ? Visibility.Visible : Visibility.Collapsed;
+        if (quickActionSave != null) quickActionSave.IsEnabled = !Busy && pendingConfirmation == null && model.Draft is { } action && NativeQuickActions.SaveBlockReason(action) == null;
+        if (specialistSave != null) specialistSave.IsEnabled = !Busy && pendingConfirmation == null && model.Draft is { } specialist && NativeSpecialists.SaveBlockReason(specialist) == null;
+        if (credentialAdd != null) credentialAdd.IsEnabled = model.CanAddCredential && pendingConfirmation == null;
+        UpdateReviewerTest();
+        refreshNetworkFeedback?.Invoke();
+        UpdateDecisionFeedback();
+        UpdateSubscriptionFeedback();
+        UpdateSubscriptionRoutes();
         editorActions.Visibility = model.Draft != null ? Visibility.Visible : Visibility.Collapsed;
         foreach (var button in editorActions.Children.OfType<Button>()) button.IsEnabled = !Busy && pendingConfirmation == null;
-        saveFeedback.Text = model.Saving ? "正在保存…" : model.SaveConfirmed
-            ? model.Error == null ? "已保存。" : "上次设置已保存。当前操作未确认，请查看页面中的错误详情。"
-            : model.Error ?? "修改后点击保存。";
+        if (invalidFields.Count == 0) showInlineValidation = false;
+        saveFeedback.Text = showInlineValidation ? L("请检查字段格式：", "Please check the field format: ") + string.Join(L("、", ", "), invalidFields)
+            : model.Saving ? L("正在保存…", "Saving…") : model.SaveConfirmed
+            ? model.Error == null ? L("已保存。", "Saved.") : L("上次设置已保存。请查看页面中的错误详情。", "Previous settings were saved. See the error above.")
+            : model.Error ?? (GeneralInlineFooter ? T("settings.general.save_hint") : section is "session" or "pet" or "channels" ? "" : L("修改后点击保存。", "Save to apply your changes."));
     }
     private void ClearConfirmation() { pendingConfirmation = null; confirmation.Children.Clear(); LockConfirmation(); }
     public override void Dispose()
     {
-        ClearDeviceToken(); authTerminal?.Dispose();
+        sectionLifetime.Cancel(); sectionLifetime.Dispose();
+        storageScan?.Cancel();
+        CloseUpdateDialog(restoreFocus: false);
+        if (usagePager != null) { usagePager.Changed -= UsageChanged; usagePager.Dispose(); }
+        petPreviewVersion++;
+        connectionTransports.Clear(); discoveredTools.Clear();
+        textMenus.Dispose();
+        if (inputPreferences != null) inputPreferences.Changed -= RefreshInputPreferences;
+        if (specialistTransfer != null) { specialistTransfer.Changed -= RefreshSpecialistTransfer; specialistTransfer.Dispose(); HideSpecialistTransfer(); }
+        if (localEnvironment != null) { localEnvironment.Changed -= LockConfirmation; localEnvironment.Dispose(); }
+        if (networkSettings != null) { networkSettings.Changed -= LockConfirmation; networkSettings.Dispose(); }
+        if (decisionSettings != null) { decisionSettings.Changed -= LockConfirmation; decisionSettings.Dispose(); }
+        subscriptionPoll?.Stop();
+        if (subscriptionSettings != null) { subscriptionSettings.Changed -= LockConfirmation; subscriptionSettings.Dispose(); }
+        if (subscriptionRoutes != null) { subscriptionRoutes.Changed -= LockConfirmation; subscriptionRoutes.Dispose(); }
+        ClearCredentialControls();
+        HideEnvironmentModal();
+        ClearChannelSecrets(); authTerminal?.Dispose();
         if (channelBinding != null) { channelBinding.Changed -= ChannelChanged; channelBinding.Dispose(); }
+        if (syncJoin != null) { syncJoin.Changed -= RefreshSyncJoin; syncJoin.Dispose(); HideSyncJoin(); }
         model.Changed -= LockConfirmation; base.Dispose();
     }
-    public void RequestLeave(Action leave)
+    public void RequestLeave(Action leave, bool switchingCategory = false, bool closingSettings = false)
     {
-        if (Busy) return;
-        void Leave() { _ = LeaveChannelsAsync(leave); }
-        if (HasChanges) Confirm("放弃尚未保存的修改？", Leave); else Leave();
+        if (updateDialog != null) { updateDialog.HandleEscape(); return; }
+        if (model.EnvironmentEditor != null) { model.CancelEnvironmentEditor(); return; }
+        if (syncJoin?.ModalOpen == true) { syncJoin.Dismiss(); return; }
+        if (Busy || pendingConfirmation != null) return;
+        if (specialistTransfer?.ModalOpen == true) { specialistTransfer.Cancel(); return; }
+        var sharedForm = model.EditingWindowPreferences;
+        var leavingSharedForm = sharedForm && (switchingCategory || closingSettings);
+        async void Leave()
+        {
+            if (subscriptionSettings?.FormOpen == true && !await subscriptionSettings.CloseFormAsync()) return;
+            if (model.Closed) return;
+            if (switchingCategory && sharedForm && invalidFields.Count == 0) model.KeepWindowPreferences();
+            model.DiscardCredentialInputs(); RestoreLanguage(includeWindowDraft: switchingCategory); localEnvironment?.Cancel(); networkSettings?.Discard(); decisionSettings?.Discard(); subscriptionRoutes?.Discard(); _ = LeaveChannelsAsync(leave);
+        }
+        if (leavingSharedForm && invalidFields.Count == 0 && localEnvironment?.HasChanges == true)
+            Confirm(L("放弃尚未保存的路径修改？", "Discard unsaved path changes?"), Leave);
+        else if (leavingSharedForm ? invalidFields.Count > 0 : HasChanges)
+            Confirm(L("放弃尚未保存的修改？", "Discard unsaved changes?"), Leave);
+        else Leave();
     }
     public override void HandleEscape()
     {
+        if (updateDialog != null) { updateDialog.HandleEscape(); return; }
+        if (textMenus.CloseTop()) return;
+        if (syncJoin?.ModalOpen == true) { syncJoin.Dismiss(); return; }
         if (choices.LastOrDefault(c => c.IsDropDownOpen) is { } choice) { choice.IsDropDownOpen = false; return; }
+        if (model.EnvironmentEditor != null) { model.CancelEnvironmentEditor(); return; }
         if (pendingConfirmation != null) { ClearConfirmation(); return; }
+        if (section == "credentials" && credentialGroup != null) { BackToCredentials(); return; }
+        if (section == "credentials") { RequestLeave(() => base.HandleEscape()); return; }
+        if (section == "usage" && usagePager?.Selected != null) { BackToUsage(); return; }
         if (Busy) return;
+        if (specialistTransfer?.ModalOpen == true) { specialistTransfer.Cancel(); return; }
+        if (HandleChannelEscape()) return;
+        if (subscriptionManual?.IsExpanded == true) { subscriptionManual.IsExpanded = false; return; }
+        if (subscriptionSettings?.FormOpen == true) { RequestLeave(Render); return; }
+        if (networkSettings?.MirrorsOpen == true) { CloseNetworkMirrors(); return; }
+        if (section == "network") { RequestLeave(() => base.HandleEscape()); return; }
+        if (localEnvironment?.Editing == true)
+        {
+            void CancelEnvironment() { localEnvironment.Cancel(); LocalEnvironment(); }
+            if (localEnvironment.HasChanges) Confirm(L("放弃尚未保存的路径修改？", "Discard unsaved path changes?"), CancelEnvironment);
+            else CancelEnvironment();
+            return;
+        }
+        if (model.InlinePreferences) { RequestLeave(() => base.HandleEscape(), closingSettings: true); return; }
+        if (section == "models" && (showDecision || showSubscriptions) && model.Draft == null) { RequestLeave(() => base.HandleEscape()); return; }
         if (model.Draft != null) { RequestLeave(() => { model.Discard(); Render(); }); return; }
-        if (channelBinding?.Active == true) { _ = CancelChannelBinding(); return; }
-        if (section == "channels" && channelDetail.Length > 0) { channelDetail = ""; Render(); return; }
+        if (section == "connections" && connectionDetail != null) { BackToConnections(); return; }
         base.HandleEscape();
     }
     private async Task Run(string command, JsonObject args)
@@ -135,24 +316,41 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
     private void Render()
     {
         if (model.Closed) return;
-        ClearDeviceToken();
+        acpNotice = null;
+        petPreviewVersion++;
+        MovePreferenceFooter(Footer);
+        SettingsHeading(SectionTitle(Design, section));
+        ClearCredentialControls();
+        ClearChannelSecrets();
         authTerminal?.Dispose(); authTerminal = null;
         Form.Children.Clear(); Results.Children.Clear(); choices.Clear(); settingCards.Clear();
+        refreshNetworkFeedback = null;
+        inputShortcut = null; inputSelection = null;
+        quickActionSave = null;
+        specialistSave = null;
+        reviewerTest = null; reviewerFeedback = null;
+        decisionFeedback = null;
+        subscriptionFeedback = null; subscriptionSave = null; subscriptionManual = null;
+        subscriptionRouteSaves.Clear(); subscriptionRouteFeedback.Clear();
+        transferNotice = null;
         editorActions.Children.Clear();
         HeaderActions.Children.Clear();
-        var refresh = Design.ToolButton("刷新", "refresh");
-        refresh.Click += async (_, _) => await Reload();
-        HeaderActions.Children.Add(refresh);
+        if (model.LoadFailed)
+        {
+            Form.Children.Add(Button(L("重新连接并读取", "Reconnect and reload"), () => Reload(reconnect: true)));
+            if (model.Values.Count == 0) { Update(); LockConfirmation(); return; }
+        }
+        var refresh = Design.ToolButton(L("刷新", "Refresh"), "refresh");
+        refresh.Click += (_, _) => RequestLeave(() => { model.Discard(); _ = Reload(); });
+        if (!model.LoadFailed && (section is not ("general" or "network" or "session" or "pet" or "browser" or "models" or "connections" or "storage" or "usage" or "permissions" or "credentials" or "environments" or "quick-actions" or "specialists") || model.Error != null || storageError != null))
+            HeaderActions.Children.Add(refresh);
         switch (section)
         {
-            case "skills": Skills(); break;
             case "connections": Connections(); break;
-            case "memory": Memory(); break;
             case "general": General(); break;
             case "network": Network(); break;
             case "session": Session(); break;
             case "pet": Pet(); break;
-            case "plugins": Plugins(); break;
             case "browser": Browser(); break;
             case "credentials": Credentials(); break;
             case "permissions": Permissions(); break;
@@ -162,12 +360,15 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
             case "quick-actions": QuickActions(); break;
             case "specialists": Specialists(); break;
             case "workflows": Workflows(); break;
+            case "workflow-conversion": WorkflowConversion(Rows(model.Values["list_workflow_templates"]).ToArray()); break;
             case "models": Models(); break;
             case "channels": Channels(); break;
             case "project": ProjectSettings(); break;
         }
         foreach (var card in settingCards) NativeActionWrap.GroupButtons(card);
         NativeActionWrap.GroupButtons(Form);
+        PreferenceFieldAppearance.ApplyTree(Form, Design);
+        PreferenceFieldAppearance.ApplyTree(Results, Design);
         Update();
         LockConfirmation();
     }
@@ -187,24 +388,31 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
         control.Toggled += async (_, _) => { args["enabled"] = control.IsOn; await Run(command, args); };
         card.Children.Add(control);
     }
-    private void Editor(string title, JsonObject draft, string command, string? parameter, Action<JsonObject> fields, JsonObject? extra = null)
+    private void Editor(string title, JsonObject draft, string command, string? parameter, Action<JsonObject> fields, JsonObject? extra = null, bool styleActions = true)
     {
         model.Edit(draft, command, parameter, extra);
         if (model.Draft == null) return;
-        ClearDeviceToken();
+        MovePreferenceFooter(Footer);
+        ClearCredentialControls();
+        ClearChannelSecrets();
         authTerminal?.Dispose(); authTerminal = null;
         invalidFields.Clear();
         Form.Children.Clear(); Results.Children.Clear(); choices.Clear();
         HeaderActions.Children.Clear();
-        if (title != Titles[section]) Form.Children.Add(Design.Text(title, 20));
+        SettingsHeading(SectionTitle(Design, section) + " / " + title, () => RequestLeave(() => { model.Discard(); Render(); }));
         fields(model.Draft);
         editorActions.Children.Clear();
-        editorActions.Children.Add(Button("保存", async () =>
+        editorActions.HorizontalAlignment = HorizontalAlignment.Right;
+        Button ActionButton(string label, Func<Task> action) => styleActions ? Button(label, action) : ModelButton(label, action);
+        editorActions.Children.Add(ActionButton(T("settings.cancel"), () => { RequestLeave(() => { model.Discard(); Render(); }); return Task.CompletedTask; }));
+        editorActions.Children.Add(ActionButton(T("settings.save"), async () =>
         {
             if (invalidFields.Count > 0) { model.Fail("请检查字段格式：" + string.Join("、", invalidFields.Select(key => key.Contains(':') ? key[(key.IndexOf(':') + 1)..] : key).Distinct())); return; }
+            if (model.Draft is { } proxyDraft && NativeProxyRoutes.ErrorKey(proxyDraft) is { } routeError) { model.Fail(T(routeError)); return; }
             if (await model.SaveAsync()) await Reload();
         }));
-        editorActions.Children.Add(Button("取消编辑", () => { RequestLeave(() => { model.Discard(); Render(); }); return Task.CompletedTask; }));
+        BodyScroll.ChangeView(null, 0, null, true);
+        Design.ApplyTypography(Form);
         LockConfirmation();
     }
     private void Text(JsonObject draft, string key, string title, bool multiline = false)
@@ -232,156 +440,5 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
         combo.SelectionChanged += (_, _) => { if (combo.SelectedItem is ComboBoxItem item) changed((string)item.Tag); };
         Design.ApplyTypography(combo);
         choices.Add(combo); target.Children.Add(combo);
-    }
-    private void Memory()
-    {
-        var view = model.Values["get_memory_view"];
-        if (view == null) return;
-        var card = Card(projectScoped ? "项目记忆" : "工作区记忆");
-        if (!projectScoped) card.Children.Add(Mute("选择左侧项目作用域后可编辑项目记忆文件。"));
-        Toggle(card, "启用记忆", B(view, "enabled"), "set_memory_enabled", new());
-        void EditFile(string name, string content) => Editor("记忆文件", new() { ["name"] = name, ["content"] = content }, "write_memory_file", null,
-            d => { Text(d, "name", "文件名"); Text(d, "content", "内容", true); });
-        card.Children.Add(Button("添加记忆文件", () => { EditFile("", ""); return Task.CompletedTask; }));
-        Action(card, "清空记忆", "clear_memory", new(), true);
-        foreach (var file in Rows(view["files"]))
-        {
-            var name = S(file, "name");
-            var fileRow = new StackPanel { Spacing = 8, IsHitTestVisible = projectScoped };
-            var edit = Button(name + " · 编辑", async () =>
-            {
-                string? content = null;
-                if (await model.InvokeAsync("read_memory_file", new() { ["name"] = name }, v => content = v?.GetValue<string>()) && content != null)
-                    EditFile(name, content);
-            });
-            edit.IsEnabled = projectScoped; fileRow.Children.Add(edit);
-            Action(fileRow, "删除 " + name, "delete_memory_file", new() { ["name"] = name }, true);
-            foreach (var button in fileRow.Children.OfType<Button>()) button.IsEnabled = projectScoped;
-            NativeActionWrap.GroupButtons(fileRow); card.Children.Add(fileRow);
-        }
-        if (!projectScoped) foreach (var button in card.Children.OfType<Button>()) button.IsEnabled = false;
-        var global = Card("全局记忆");
-        global.Children.Add(Button("添加全局记忆", () => { Editor("全局记忆", new() { ["content"] = "" }, "create_global_memory", null, d => Text(d, "content", "内容", true)); return Task.CompletedTask; }));
-        foreach (var row in Rows(view["global_memories"]))
-        {
-            global.Children.Add(Mute(S(row, "content")));
-            global.Children.Add(Button("编辑", () => { Editor("全局记忆", new() { ["content"] = S(row, "content") }, "update_global_memory", null,
-                d => Text(d, "content", "内容", true), new() { ["id"] = row["id"]?.DeepClone() }); return Task.CompletedTask; }));
-            Action(global, "删除全局记忆", "delete_global_memory", new() { ["id"] = row["id"]?.DeepClone() }, true);
-        }
-        if (model.Values["get_auto_failure_analysis_settings"] is JsonObject settings)
-        {
-            var failure = Card("自动失败分析");
-            failure.Children.Add(Button("编辑失败分析设置", () =>
-            {
-                Editor("自动失败分析", settings, "set_auto_failure_analysis_settings", "settings", d =>
-                {
-                    var enabled = new CheckBox { Content = "启用", IsChecked = B(d, "enabled") };
-                    enabled.Checked += (_, _) => d["enabled"] = true; enabled.Unchecked += (_, _) => d["enabled"] = false; Form.Children.Add(enabled);
-                    foreach (var (key, label, maximum) in new[] { ("failure_rate_threshold", "失败率阈值（%）", 100), ("minimum_failures", "最少失败次数", int.MaxValue) })
-                    {
-                        var input = new NumberBox { Header = label, Minimum = 0, Maximum = maximum, Value = d[key]?.GetValue<double>() ?? 0, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
-                        input.ValueChanged += (_, _) => { if (!double.IsNaN(input.Value)) d[key] = (long)input.Value; }; Form.Children.Add(input);
-                    }
-                }); return Task.CompletedTask;
-            }));
-        }
-    }
-    private void Skills()
-    {
-        Form.Children.Add(Button("导入技能", () => { Editor("导入技能", new() { ["src_path"] = "" }, "install_skill", null, d => PathField(d, "src_path", "目录或 ZIP 路径", either: true)); return Task.CompletedTask; }));
-        Action(Form, "重新扫描", "reload_skills", new());
-        var search = Field("搜索技能与标签", "", _ => { });
-        var cards = new List<(StackPanel Card, string Text)>();
-        foreach (var skill in Rows(model.Values["list_skills"]))
-        {
-            var name = S(skill, "name"); var card = Card(name);
-            var tags = string.Join(" · ", (skill["tags"] as JsonArray ?? []).Select(n => n?.GetValue<string>()));
-            cards.Add((card, name + " " + S(skill, "description") + " " + tags));
-            card.Children.Add(Mute(S(skill, "description")));
-            if (tags.Length > 0) card.Children.Add(Mute(tags));
-            Toggle(card, "启用", B(skill, "enabled"), "set_skill_enabled", new() { ["name"] = name });
-            card.Children.Add(Button("编辑标签", () => { Editor(name, new() { ["tags"] = skill["tags"]?.DeepClone() ?? new JsonArray() }, "set_skill_tags", null,
-                d => Lines(d, "tags", "标签"), new() { ["name"] = name }); return Task.CompletedTask; }));
-            card.Children.Add(Button("查看文件", async () =>
-            {
-                JsonNode? files = null;
-                if (!await model.InvokeAsync("list_skill_files", new() { ["name"] = name }, v => files = v)) return;
-                foreach (var file in files as JsonArray ?? [])
-                {
-                    var path = file!.GetValue<string>();
-                    card.Children.Add(Button(path, async () =>
-                    {
-                        string content = "";
-                        if (await model.InvokeAsync("read_skill_file", new() { ["name"] = name, ["path"] = path }, v => content = S(v, "content")))
-                            card.Children.Add(new TextBox { Text = content, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 350 });
-                    }));
-                }
-            }));
-            if (!B(skill, "builtin") && !B(skill, "managed")) Action(card, "删除技能", "remove_skill", new() { ["name"] = name }, true);
-        }
-        search.TextChanged += (_, _) => { foreach (var entry in cards) entry.Card.Visibility = entry.Text.Contains(search.Text.Trim(), StringComparison.CurrentCultureIgnoreCase) ? Visibility.Visible : Visibility.Collapsed; };
-        SkillStore();
-    }
-    private void Connections()
-    {
-        foreach (var row in Rows(model.Values["list_connectors"]?["connectors"]))
-        {
-            var card = Card(S(row, "name")); card.Children.Add(Mute(S(row, "description_zh") is { Length: > 0 } zh ? zh : S(row, "description")));
-            Toggle(card, "启用", B(row, "enabled"), "set_connector_enabled", new() { ["key"] = S(row, "key") });
-            Toggle(card, "跳过连接器审批", B(row, "skip_approvals"), "set_connector_skip_approvals", new() { ["key"] = S(row, "key") });
-            var tools = Rows(row["tools"]).ToArray();
-            var permissions = new StackPanel { Spacing = 12 };
-            foreach (var tool in tools) Choice(permissions, S(tool, "name"), S(tool, "mode"), [("allow", "允许"), ("ask", "询问"), ("deny", "禁止")],
-                mode => _ = Run("set_tool_approval", new() { ["tool"] = S(tool, "name"), ["mode"] = mode }));
-            if (tools.Length > 0) card.Children.Add(Disclosure($"工具权限 · {tools.Length}", permissions));
-        }
-        foreach (var kind in new[] { "stdio", "http" }) Form.Children.Add(Button(kind == "stdio" ? "添加命令连接" : "添加 HTTP 连接", () =>
-        {
-            EditConnection(new() { ["id"] = Guid.NewGuid().ToString(), ["name"] = "", ["enabled"] = true,
-                ["transport"] = kind == "stdio" ? new JsonObject { ["kind"] = kind, ["command"] = "", ["args"] = new JsonArray(), ["env"] = new JsonArray() }
-                    : new JsonObject { ["kind"] = kind, ["url"] = "", ["auth"] = "none", ["headers"] = new JsonArray() } }, true);
-            return Task.CompletedTask;
-        }));
-        foreach (var conn in Rows(model.Values["list_mcp_connections"]?["connections"]))
-        {
-            var card = Card(S(conn, "name"));
-            Toggle(card, "启用", B(conn, "enabled"), "set_mcp_connection_enabled", new() { ["id"] = S(conn, "id") });
-            card.Children.Add(Button("编辑连接", () => { EditConnection(conn, false); return Task.CompletedTask; }));
-            Action(card, "测试连接", S(conn["transport"], "auth") == "oauth" ? "test_oauth_mcp_connection" : "test_mcp_connection", new() { ["conn"] = conn.DeepClone() });
-            Action(card, "删除连接", "delete_mcp_connection", new() { ["id"] = S(conn, "id") }, true);
-        }
-    }
-    private void EditConnection(JsonObject conn, bool create) => Editor("MCP 连接", conn, create ? "add_mcp_connection" : "update_mcp_connection", "conn", d =>
-    {
-        Text(d, "name", "名称");
-        var transport = d["transport"]!.AsObject();
-        if (S(transport, "kind") == "stdio")
-        { PathField(transport, "command", "启动命令"); Lines(transport, "args", "参数"); PathField(transport, "cwd", "工作目录", directory: true); Secrets(transport, "env", "环境变量"); }
-        else
-        {
-            Text(transport, "url", "服务 URL");
-            Choice(Form, "认证", S(transport, "auth"), [("none", "无 / 自定义请求头"), ("oauth", "OAuth 浏览器授权")], v => transport["auth"] = v);
-            Secrets(transport, "headers", "请求头");
-        }
-    });
-    private void Secrets(JsonObject parent, string key, string label)
-    {
-        var rows = parent[key] as JsonArray;
-        if (rows == null) { rows = new JsonArray(); parent[key] = rows; }
-        Form.Children.Add(Mute(label + "：新值留空保留已有凭据；移除项目会删除该凭据。"));
-        var list = new StackPanel { Spacing = 8 }; Form.Children.Add(list);
-        void Add(JsonObject row)
-        {
-            var line = new StackPanel { Spacing = 6 };
-            var name = new TextBox { Header = "名称", Text = S(row, "name") };
-            name.TextChanged += (_, _) => row["name"] = name.Text;
-            var value = new PasswordBox { Header = "新值", Password = S(row, "value") };
-            value.PasswordChanged += (_, _) => row["value"] = value.Password;
-            line.Children.Add(name); line.Children.Add(value);
-            line.Children.Add(Button("移除", () => { rows.Remove(row); list.Children.Remove(line); return Task.CompletedTask; })); list.Children.Add(line);
-        }
-        foreach (var row in Rows(rows)) Add(row);
-        Form.Children.Add(Button("添加" + label, () => { var row = new JsonObject { ["name"] = "", ["value"] = "" }; rows.Add(row); Add(row); return Task.CompletedTask; }));
     }
 }

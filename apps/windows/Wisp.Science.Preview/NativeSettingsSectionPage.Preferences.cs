@@ -10,10 +10,11 @@ internal sealed partial class NativeSettingsSectionPage
     internal static IReadOnlyDictionary<string, string> Titles { get; } = new Dictionary<string, string>
     {
         ["general"] = "常规", ["network"] = "网络", ["session"] = "对话", ["pet"] = "宠物",
-        ["skills"] = "技能", ["connections"] = "连接", ["memory"] = "记忆",
+        ["skills"] = "技能", ["connections"] = "连接", ["memory"] = "记忆", ["hooks"] = "钩子",
+        ["skill-store"] = "社区技能", ["skill-github"] = "从 GitHub 添加",
         ["plugins"] = "插件", ["browser"] = "浏览器", ["credentials"] = "凭据", ["permissions"] = "权限",
         ["environments"] = "环境", ["storage"] = "存储", ["usage"] = "用量",
-        ["quick-actions"] = "快捷操作", ["specialists"] = "专家", ["workflows"] = "工作流", ["models"] = "模型", ["channels"] = "远程接入", ["project"] = "项目设置"
+        ["quick-actions"] = "快捷动作", ["specialists"] = "专家", ["workflows"] = "工作流", ["workflow-conversion"] = "从技能创建工作流", ["models"] = "模型", ["channels"] = "远程接入", ["project"] = "项目设置"
     };
     private readonly HashSet<string> invalidFields = [];
     private void Boolean(JsonObject draft, string key, string label)
@@ -52,49 +53,195 @@ internal sealed partial class NativeSettingsSectionPage
             _ => ""
         };
         if (description.Length > 0) card.Children.Add(Mute(description));
-        card.Children.Add(Button("编辑" + title, () => { Editor(title, prefs, write, parameter, fields); return Task.CompletedTask; }));
+        card.Children.Add(Button(L("编辑", "Edit ") + title, () => { Editor(title, prefs, write, parameter, fields); return Task.CompletedTask; }));
     }
     private void Immediate(StackPanel card, string label, string read, string write)
     {
         if (model.Values[read] is JsonValue value && value.TryGetValue<bool>(out var enabled))
             Toggle(card, label, enabled, write, new());
     }
+    private Grid? generalGroups;
+    private Border? generalNotifications;
+    private Border? generalPreferenceFrame, generalEnvironmentFrame;
+    private NativeLocalEnvironmentModel? localEnvironment;
+    private void LocalEnvironment()
+    {
+        if (localEnvironment is not { } environment) return;
+        var local = new StackPanel { Spacing = 16 };
+        var title = Design.Text(T("env.title"), 15); title.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+        local.Children.Add(title);
+        var description = Mute(T("env.optional")); Design.BindTypography(description, 12);
+        description.Margin = new Thickness(0, -4, 0, 0); description.LineHeight = Design.Typography.Scale(12) * 1.6;
+        local.Children.Add(description);
+        var rows = new StackPanel();
+        foreach (var (label, key) in NativeLocalEnvironmentModel.Fields)
+        {
+            var row = new Grid { ColumnSpacing = 8, Padding = new Thickness(12, 9, 12, 9) };
+            row.ColumnDefinitions.Add(new() { Width = new GridLength(70) }); row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+            var caption = Mute(label); Design.BindTypography(caption, 12); caption.FontWeight = Microsoft.UI.Text.FontWeights.Medium;
+            caption.VerticalAlignment = VerticalAlignment.Center; row.Children.Add(caption);
+            FrameworkElement value;
+            if (environment.Draft is { } draft)
+            {
+                var input = new TextBox { Text = S(draft, key), PlaceholderText = T("env.missing"), CornerRadius = new CornerRadius(10),
+                    MinHeight = 0, Padding = new Thickness(8, 6, 8, 6),
+                    Background = Design.Brush("bg-input"), BorderBrush = Design.Brush("border-strong") };
+                Design.BindTypography(input, code: true, size: 11);
+                PreferenceFieldAppearance.UsePlainTextField(input);
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(input, label);
+                textMenus.Register(input);
+                input.TextChanged += (_, _) => { draft[key] = input.Text; LockConfirmation(); };
+                value = input;
+            }
+            else
+            {
+                var text = Design.Text(S(environment.Paths, key) is { Length: > 0 } path ? path : T(environment.Paths == null ? "env.checking" : "env.missing"), 11);
+                text.FontFamily = Design.Font(true); text.LineHeight = Design.Typography.Scale(11) * 1.6;
+                text.IsTextSelectionEnabled = true; value = text;
+            }
+            Grid.SetColumn(value, 1); row.Children.Add(value);
+            rows.Children.Add(new Border { Child = row, BorderBrush = Design.Brush("border"), BorderThickness = new Thickness(0, 0, 0, key == NativeLocalEnvironmentModel.Fields[^1].Key ? 0 : 1) });
+        }
+        local.Children.Add(new Border { Child = rows, BorderBrush = Design.Brush("border"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8) });
+        if (environment.Warning is { Length: > 0 } warning) local.Children.Add(Mute(warning));
+        if (environment.Error is { } error) local.Children.Add(Warn(error));
+        if (environment.Saved) local.Children.Add(Mute(T("env.saved")));
+        var actions = new NativeActionWrap();
+        if (environment.Editing)
+        {
+            local.Children.Add(Mute(T("env.edit_hint")));
+            actions.Children.Add(Button(T("env.save"), async () => { await environment.SaveAsync(); if (!model.Closed) LocalEnvironment(); }));
+            actions.Children.Add(Button(T("settings.cancel"), () => { environment.Cancel(); LocalEnvironment(); return Task.CompletedTask; }));
+        }
+        else
+        {
+            actions.Children.Add(Button(T("env.check_again"), async () => { await environment.DetectAsync(); if (!model.Closed) LocalEnvironment(); }));
+            var edit = Button(T("env.edit"), () => { environment.Edit(); LocalEnvironment(); return Task.CompletedTask; });
+            edit.IsEnabled = edit.IsEnabled && environment.CanEdit; actions.Children.Add(edit);
+        }
+        foreach (var button in actions.Children.OfType<Button>())
+        {
+            button.MinHeight = 0; button.Padding = new Thickness(12, 6, 12, 6); button.CornerRadius = new CornerRadius(8);
+            if (button.Content is TextBlock label) Design.BindTypography(label, 13.5);
+        }
+        local.Children.Add(actions);
+        // The environment request owns only this card. Updating the whole page
+        // would replace the workspace input and lose the user's focus/selection.
+        if (generalEnvironmentFrame?.Parent == Results) generalEnvironmentFrame.Child = local;
+        else { generalEnvironmentFrame = Design.Card(local); Results.Children.Add(generalEnvironmentFrame); }
+        Design.ApplyTypography(local); PreferenceFieldAppearance.ApplyTree(local, Design); ResizeGeneralGroups();
+    }
+    private void ResizeGeneralGroups()
+    {
+        if (generalGroups == null || generalNotifications == null) return;
+        var compact = (XamlRoot?.Size.Width ?? ActualWidth) <= 850;
+        var padding = compact ? new Thickness(16, 18, 16, 18) : new Thickness(24, 22, 24, 22);
+        if (generalPreferenceFrame != null) generalPreferenceFrame.Padding = padding;
+        if (generalEnvironmentFrame != null) generalEnvironmentFrame.Padding = padding;
+        var columns = NativeSettingsLayout.GeneralColumns(ActualWidth);
+        generalGroups.ColumnSpacing = columns ? 28 : 0;
+        generalGroups.ColumnDefinitions[1].Width = columns ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+        Grid.SetColumn(generalNotifications, columns ? 1 : 0);
+        Grid.SetRow(generalNotifications, columns ? 0 : 1);
+        generalNotifications.BorderThickness = columns ? new Thickness(1, 0, 0, 0) : new Thickness(0, 1, 0, 0);
+        generalNotifications.Padding = columns ? new Thickness(28, 0, 0, 0) : new Thickness(0, 20, 0, 0);
+        generalNotifications.Margin = columns ? new Thickness(0) : new Thickness(0, 20, 0, 0);
+    }
     private void General()
     {
-        Preference("工作区与通知", "get_settings", "set_settings", "settings", d =>
+        if (model.Values["get_settings"] is not JsonObject) return;
+        model.EditWindowPreferences(WindowPreferences);
+        var draft = model.Draft!;
+        var prefs = draft["get_settings"]!.AsObject();
+        var card = new StackPanel();
+        var workspaceHeading = Design.Text(T("settings.general.workspace"), 15);
+        workspaceHeading.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold; workspaceHeading.Margin = new Thickness(0, 0, 0, 16);
+        card.Children.Add(workspaceHeading);
+        generalGroups = new Grid();
+        generalGroups.ColumnDefinitions.Add(new() { Width = new GridLength(1.2, GridUnitType.Star) });
+        generalGroups.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        generalGroups.RowDefinitions.Add(new() { Height = GridLength.Auto }); generalGroups.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        generalGroups.Children.Add(card);
+        var preferences = new StackPanel(); preferences.Children.Add(generalGroups);
+        var frame = Design.Card(preferences); frame.Padding = new Thickness(24, 22, 24, 22); Form.Children.Add(frame);
+        generalPreferenceFrame = frame;
+        InlineChoice(card, T("settings.language"), S(prefs, "locale"), [("en", "English"), ("zh", T("settings.language.zh"))], v =>
         {
-            Form.Children.Add(Mute("这些设置应用于整个工作区。编辑后点击下方保存；切换分类前可取消离开并继续编辑。"));
-            Choice(Form, "语言", S(d, "locale"), [("zh", "简体中文"), ("en", "English")], v => d["locale"] = v);
-            PathField(d, "workspace_dir", "工作目录（留空使用默认目录，下次启动生效）", directory: true);
-            Boolean(d, "decentralized_project_storage", "项目去中心化存储");
-            Form.Children.Add(Mute("开启后，新项目的数据保存在各自文件夹；关闭后，新项目共用应用数据库。已有项目位置不变。默认关闭，从 v1.15.0 升级时保留开启。"));
-            Form.Children.Add(Design.Text("启动与通知", 16));
-            Boolean(d, "resume_last_session", "恢复最近会话"); Boolean(d, "notifications_enabled", "桌面通知");
-            NotificationSoundFields(d);
+            prefs["locale"] = v;
+            if (Design.Localization.Preview(v)) { LanguageChanged?.Invoke(); Render(); }
         });
-        Preference("输入与选择", "get_appearance_prefs", "set_appearance_prefs", "prefs", d =>
-        { Boolean(d, "send_with_modifier", "使用 Ctrl+Enter 发送"); Boolean(d, "selection_popup_enabled", "选中文本快捷菜单"); });
-        var local = Card("本地运行环境");
-        if (model.Values["get_bootstrap_status"]?["local_environment"] is JsonObject environment)
+        InlineText(card, prefs, "workspace_dir", T("settings.workspace_dir"), S(model.Values["get_bootstrap_status"], "workspace"));
+        InlineToggle(card, T("settings.decentralized_project_storage"), T("settings.decentralized_project_storage_hint"), B(prefs, "decentralized_project_storage"), v => prefs["decentralized_project_storage"] = v);
+        InlineToggle(card, T("settings.resume_last_session"), T("settings.resume_last_session_hint"), B(prefs, "resume_last_session"), v => prefs["resume_last_session"] = v);
+        if (inputPreferences?.Draft is JsonObject appearance)
         {
-            if (S(environment, "warning").Length > 0) local.Children.Add(Warn(S(environment, "warning")));
-            if (environment["paths"] is JsonObject paths) local.Children.Add(Button("编辑解释器路径", () =>
-            {
-                Editor("本地运行环境", paths, "save_local_environment_paths", "paths", d =>
-                {
-                    foreach (var (key, label) in new[] { ("python_executable", "Python"), ("rscript_executable", "Rscript"), ("node_executable", "Node.js"),
-                        ("npm_executable", "npm"), ("uv_executable", "uv"), ("pixi_executable", "Pixi"), ("sci_executable", "sci"), ("cua_driver_executable", "Cua Driver") }) PathField(d, key, label);
-                }); return Task.CompletedTask;
-            }));
+            var interaction = NativeInputPreferences.From(appearance);
+            inputShortcut = InlineChoice(card, T("settings.send_shortcut"), interaction.SendWithModifier ? "modifier" : "enter",
+                [("enter", T("settings.send_shortcut.enter")), ("modifier", Design.Localization.Format("settings.send_shortcut.modifier_enter", ("modifier", "Ctrl")))], v => ChangeInputPreference("send_with_modifier", v == "modifier"));
+            inputSelection = InlineToggle(card, T("settings.selection_popup"), T("settings.selection_popup_hint"), interaction.SelectionPopupEnabled,
+                v => ChangeInputPreference("selection_popup_enabled", v), divider: false);
         }
-        Action(local, "重新检测", "detect_local_environment", new());
-        var updates = Card("桌面宿主更新");
-        Immediate(updates, "自动检查更新", "get_update_check_enabled", "set_update_check_enabled");
-        updates.Children.Add(Button("检查更新", async () =>
+        RefreshInputPreferences();
+        card = new StackPanel();
+        var notificationHeading = Design.Text(T("settings.general.notifications"), 15);
+        notificationHeading.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold; notificationHeading.Margin = new Thickness(0, 0, 0, 16);
+        card.Children.Add(notificationHeading);
+        generalNotifications = new Border { Child = card, BorderBrush = Design.Brush("border") };
+        generalGroups.Children.Add(generalNotifications); ResizeGeneralGroups();
+        InlineToggle(card, T("settings.notifications"), T("settings.notifications_hint"), B(prefs, "notifications_enabled"), v => prefs["notifications_enabled"] = v);
+        if (prefs.ContainsKey("notification_sound_enabled"))
         {
-            JsonNode? update = null;
-            if (await model.InvokeAsync("check_for_updates", new(), v => update = v)) ShowUpdate(updates, update);
-        }));
+            var catalog = model.Values["list_notification_sounds"];
+            var sounds = NativeNotificationSounds.Choices(catalog, S(prefs, "notification_sound"), Design.Localization.Locale);
+            var picker = new Grid { Margin = new Thickness(0, 10, 0, 0), ColumnSpacing = 8 };
+            picker.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star), MaxWidth = 220 });
+            picker.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+            if (sounds.Length > 0)
+            {
+                var combo = new ComboBox { MaxWidth = 220, HorizontalAlignment = HorizontalAlignment.Stretch,
+                    Padding = new Thickness(11, 8, 0, 8), CornerRadius = new CornerRadius(8),
+                    Background = Design.Brush("bg-input"), BorderBrush = Design.Brush("border-strong") };
+                foreach (var sound in sounds)
+                {
+                    var item = new ComboBoxItem { Content = sound.Label, Tag = sound.Id };
+                    Design.BindTypography(item, size: 13); combo.Items.Add(item);
+                }
+                combo.SelectedItem = combo.Items.Cast<ComboBoxItem>().FirstOrDefault(i => (string)i.Tag == S(prefs, "notification_sound"));
+                combo.SelectionChanged += (_, _) => { if (combo.SelectedItem is ComboBoxItem item) { prefs["notification_sound"] = (string)item.Tag; LockConfirmation(); } };
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(combo, T("settings.notification_sound_choice"));
+                Design.BindTypography(combo, size: 13); choices.Add(combo); picker.Children.Add(combo);
+                var preview = Button(T("settings.notification_sound_preview"), async () => await model.PreviewNotificationSoundAsync());
+                StyleGeneralButton(preview, compact: true); Grid.SetColumn(preview, 1); picker.Children.Add(preview);
+                picker.MaxWidth = 306; picker.HorizontalAlignment = HorizontalAlignment.Left;
+            }
+            InlineToggle(card, T("settings.notification_sound"), T("settings.notification_sound_hint"), B(prefs, "notification_sound_enabled"), v => prefs["notification_sound_enabled"] = v, details: picker);
+        }
+        if (model.Values["get_update_check_enabled"] is JsonValue updateValue && updateValue.TryGetValue<bool>(out var enabled))
+            updateCheckToggle = InlineToggle(card, T("settings.update_check"), T("settings.update_check_hint"), enabled, async v =>
+            {
+                if (refreshingUpdatePreference) return;
+                await model.SetUpdateCheckEnabledAsync(v);
+                if (!model.Closed) Render();
+            }, divider: false);
+        var updateActions = new Grid { ColumnSpacing = 10, RowSpacing = 10, Margin = new Thickness(0, 12, 0, 0),
+            Padding = new Thickness(0, 16, 0, 0), BorderBrush = Design.Brush("border"), BorderThickness = new Thickness(0, 1, 0, 0) };
+        updateActions.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        updateActions.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        updateActions.RowDefinitions.Add(new() { Height = GridLength.Auto }); updateActions.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        var version = Mute(model.HostVersion is { } hostVersion ? "wisp-science v" + hostVersion : "");
+        Design.BindTypography(version, 12); version.VerticalAlignment = VerticalAlignment.Center;
+        updateActions.Children.Add(version);
+        var check = Button(T("settings.check_updates"), () => { OpenUpdateDialog(); return Task.CompletedTask; });
+        StyleGeneralButton(check, compact: true); Grid.SetColumn(check, 1); updateActions.Children.Add(check);
+        updateActions.SizeChanged += (_, e) =>
+        {
+            var stacked = e.NewSize.Width < 290;
+            Grid.SetColumn(check, stacked ? 0 : 1); Grid.SetRow(check, stacked ? 1 : 0);
+            check.HorizontalAlignment = stacked ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        };
+        card.Children.Add(updateActions);
+        InlineSaveActions(); MovePreferenceFooter(preferences);
+        LocalEnvironment();
     }
     private void NotificationSoundFields(JsonObject draft)
     {
@@ -121,88 +268,32 @@ internal sealed partial class NativeSettingsSectionPage
         preview.IsEnabled = NativeNotificationSounds.CanPreview(catalog, S(draft, "notification_sound"));
         Form.Children.Add(preview);
     }
-    private void ShowUpdate(StackPanel target, JsonNode? update)
-    {
-        if (model.Closed || update == null) return;
-        target.Children.Add(Mute(B(update, "update_available") ? "发现版本 " + S(update, "latest_version") : "当前已是最新版本"));
-        target.Children.Add(Mute(S(update, "notes")));
-        if (Uri.TryCreate(S(update, "release_url"), UriKind.Absolute, out var url) && url.Scheme == "https")
-            target.Children.Add(new HyperlinkButton { Content = "发布说明", NavigateUri = url });
-        if (!B(update, "update_available") || !B(update, "install_supported")) return;
-        if (B(update, "downloaded")) target.Children.Add(Button("安装并重启桌面宿主", () =>
-        { Confirm("安装更新将重启桌面宿主。继续？", () => _ = Run("install_update", new())); return Task.CompletedTask; }));
-        else target.Children.Add(Button("下载并验证更新", async () =>
-        {
-            if (!await model.InvokeAsync("native_download_update", new())) return;
-            JsonNode? next = null;
-            if (await model.InvokeAsync("check_for_updates", new(), v => next = v)) { target.Children.Clear(); ShowUpdate(target, next); }
-        }));
-    }
-    private void Network()
-    {
-        Preference("网络与软件源", "get_network_settings", "set_network_settings", "settings", d =>
-        {
-            Form.Children.Add(Mute("代理留空跟随系统，none 为直连。支持 HTTP、HTTPS 和 SOCKS5。"));
-            Form.Children.Add(Design.Text("连接代理", 16));
-            foreach (var (key, title) in new[] { ("model_proxy_url", "模型 API 代理"), ("subscription_proxy_url", "订阅账号登录代理"), ("mcp_proxy_url", "MCP 代理"),
-                ("command_proxy_url", "代码与命令代理"), ("conda_mirror_url", "Conda 镜像"), ("pip_index_url", "Python 软件源"), ("ca_bundle_path", "CA 证书路径") })
-            {
-                if (key == "conda_mirror_url") Form.Children.Add(Design.Text("软件源与证书", 16));
-                Text(d, key, title);
-                if (key == "subscription_proxy_url") Form.Children.Add(Mute("订阅代理用于 ChatGPT / xAI 登录与令牌刷新，保存后重新开始登录。对话请求使用模型 API 代理；浏览器使用自身网络设置。"));
-            }
-        });
-    }
     private void Session()
     {
-        Preference("对话运行限制", "get_settings", "set_settings", "settings", d =>
-        {
-            Integer(d, "max_iter", "最大迭代次数（0 表示不限）");
-            Boolean(d, "auto_continue", "达到迭代上限后自动继续"); Integer(d, "auto_continue_limit", "自动继续轮次");
-            Boolean(d, "auto_compact", "自动压缩上下文"); Integer(d, "auto_compact_percent", "自动压缩阈值（%）", 10, 95); Boolean(d, "follow_up_questions", "建议后续问题");
-        });
-        Immediate(Card("新会话默认设置"), "自动审核", "get_auto_review_enabled", "set_auto_review_enabled");
-    }
-    private void Pet()
-    {
-        Preference("桌宠", "get_settings", "set_settings", "settings", d =>
-        { Boolean(d, "pet_enabled", "启用桌宠"); PathField(d, "pet_directory", "资源目录", directory: true); });
-        var card = Card("运行状态");
-        if (S(model.Values["get_pet"], "error").Length > 0) card.Children.Add(Warn(S(model.Values["get_pet"], "error")));
-        var runtime = model.Values["get_pet_runtime_status"];
-        if (runtime != null) card.Children.Add(Mute($"运行中 {(runtime["running"] as JsonArray)?.Count ?? 0} · 等待审批 {(runtime["waiting"] as JsonArray)?.Count ?? 0} · 审核中 {(runtime["reviewing"] as JsonArray)?.Count ?? 0}"));
-    }
-    private void Plugins()
-    {
-        foreach (var remote in new[] { false, true }) Form.Children.Add(Button(remote ? "从 URL 安装插件" : "从本地安装插件", () =>
-        {
-            Editor("安装插件", new JsonObject(), remote ? "install_plugin_url" : "install_plugin", null, d =>
-            { if (remote) Text(d, "source_url", "下载地址"); else PathField(d, "src_path", "插件目录或归档路径", either: true); Text(d, "expected_sha256", remote ? "SHA-256" : "SHA-256（可选）"); }); return Task.CompletedTask;
-        }));
-        foreach (var row in Rows(model.Values["list_plugins"]))
-        {
-            var card = Card(S(row, "display_name") + " " + S(row, "version"));
-            card.Children.Add(Mute(S(row, "description"))); card.Children.Add(Mute(S(row, "runtime_status"))); card.Children.Add(Mute(S(row, "source_uri")));
-            foreach (var error in row["runtime_errors"] as JsonArray ?? []) card.Children.Add(Warn(error?.GetValue<string>() ?? ""));
-            var args = new JsonObject { ["pluginId"] = S(row, "id"), ["version"] = S(row, "version") };
-            Toggle(card, "在此项目启用", B(row, "enabled"), "set_plugin_enabled", (JsonObject)args.DeepClone());
-            Action(card, "移除插件", "remove_plugin", args, true);
-        }
-    }
-    private void Browser()
-    {
-        var card = Card("真实浏览器"); var status = model.Values["browser_extension_status"];
-        if (status != null)
-        {
-            card.Children.Add(Mute(B(status, "connected") ? "扩展已连接" : "扩展未连接"));
-            card.Children.Add(Mute("当前版本 " + S(status, "current_version") + " · 内置版本 " + S(status, "bundled_version")));
-            if (S(status, "error").Length > 0) card.Children.Add(Warn(S(status, "error")));
-        }
-        Action(card, "打开扩展管理页", "open_browser_extension_page", new()); Action(card, "更新扩展", "update_browser_extension", new());
-        Immediate(card, "需要时自动启动浏览器", "get_browser_auto_launch", "set_browser_auto_launch");
-        Immediate(card, "自动关闭任务标签页", "get_browser_auto_close_tabs", "set_browser_auto_close_tabs");
-        Preference("URL 访问规则", "get_browser_url_filters", "set_browser_url_filters", "filters", d =>
-        { Records(d, "block", "阻止访问", [("host", "域名"), ("reason", "原因")]); Records(d, "prefer", "优先访问", [("host", "域名"), ("reason", "原因")]); });
+        if (model.Values["get_settings"] is not JsonObject) return;
+        model.EditWindowPreferences(WindowPreferences);
+        var d = model.Draft!["get_settings"]!.AsObject();
+        var card = InlineCard(T("settings.session.limits"));
+        SessionInteger(card, d, "max_iter", T("settings.max_iter"), T("settings.max_iter_hint"));
+        Action<bool>? continuations = null;
+        InlineToggle(card, T("settings.auto_continue"), T("settings.auto_continue_hint"), B(d, "auto_continue"), v =>
+        { d["auto_continue"] = v; continuations?.Invoke(v); });
+        continuations = SessionInteger(card, d, "auto_continue_limit", T("settings.auto_continue_limit"), T("settings.auto_continue_limit_hint"), dependent: true);
+        continuations(B(d, "auto_continue"));
+        InlineHeading(card, T("settings.session.context"));
+        Action<bool>? threshold = null;
+        InlineToggle(card, T("settings.auto_compact"), T("settings.auto_compact_hint"), B(d, "auto_compact"), v =>
+        { d["auto_compact"] = v; threshold?.Invoke(v); });
+        threshold = SessionInteger(card, d, "auto_compact_percent", T("settings.auto_compact_percent"), T("settings.auto_compact_percent_hint"));
+        threshold(B(d, "auto_compact"));
+        if (d.ContainsKey("semantic_compact_on_model_switch"))
+            InlineToggle(card, T("settings.semantic_compact_on_model_switch"), T("settings.semantic_compact_on_model_switch_hint"), B(d, "semantic_compact_on_model_switch"), v => d["semantic_compact_on_model_switch"] = v);
+        if (d.ContainsKey("semantic_compact_idle_hours"))
+            SessionInteger(card, d, "semantic_compact_idle_hours", T("settings.semantic_compact_idle_hours"), T("settings.semantic_compact_idle_hours_hint"));
+        InlineHeading(card, T("settings.session.followup"));
+        InlineToggle(card, T("settings.follow_up_questions"), T("settings.follow_up_questions_hint"), B(d, "follow_up_questions"), v => d["follow_up_questions"] = v, divider: d.ContainsKey("show_tips"));
+        if (d.ContainsKey("show_tips")) InlineToggle(card, T("settings.show_tips"), T("settings.show_tips_hint"), B(d, "show_tips"), v => d["show_tips"] = v, divider: false);
+        InlineSaveActions(); MovePreferenceFooter(card);
     }
     private void Records(JsonObject draft, string key, string title, (string Key, string Label)[] fields)
     {
@@ -221,44 +312,5 @@ internal sealed partial class NativeSettingsSectionPage
         }
         foreach (var row in Rows(rows)) Add(row);
         Form.Children.Add(Button("添加" + title, () => { var row = new JsonObject(); rows.Add(row); Add(row); return Task.CompletedTask; }));
-    }
-    private void Credentials()
-    {
-        Form.Children.Add(Mute("凭据由桌面宿主保存到现有密钥存储；这里仅显示配置状态。"));
-        foreach (var entry in model.Values["credential_status"] as JsonArray ?? [])
-        {
-            if (entry is not JsonArray row || row.Count != 2) continue;
-            var id = row[0]!.GetValue<string>(); var card = Card(id);
-            card.Children.Add(Mute(row[1]?.GetValue<bool>() == true ? "已配置" : "未配置"));
-            card.Children.Add(Button("配置", () =>
-            {
-                Editor(id, new() { ["value"] = "" }, "set_credential", null, d =>
-                { Form.Children.Add(Mute("提交空值会清除此服务凭据。")); if (id == "ncbi_email") Text(d, "value", "联系邮箱"); else Secure(d, "value", "新密钥 / Token"); }, new() { ["id"] = id });
-                return Task.CompletedTask;
-            }));
-        }
-        void EditCustom(JsonObject source) => Editor("自定义凭据", source, "add_custom_credential", null, d =>
-        { Text(d, "name", "名称"); Text(d, "env_var", "环境变量名"); Secure(d, "value", "新值"); });
-        Form.Children.Add(Button("添加自定义凭据", () => { EditCustom(new() { ["name"] = "", ["env_var"] = "", ["value"] = "" }); return Task.CompletedTask; }));
-        foreach (var row in Rows(model.Values["list_custom_credentials"]))
-        {
-            var card = Card(S(row, "name")); card.Children.Add(Mute(S(row, "env_var")));
-            card.Children.Add(Button("编辑", () => { EditCustom(new() { ["name"] = S(row, "name"), ["env_var"] = S(row, "env_var"), ["value"] = "" }); return Task.CompletedTask; }));
-            Action(card, "移除凭据", "remove_custom_credential", new() { ["id"] = S(row, "id") }, true);
-        }
-    }
-    private void Permissions()
-    {
-        var card = Card("工具权限");
-        if (model.Values["list_connectors"] is JsonObject connectors)
-            Choice(card, "审批模式", S(connectors, "scope"), [("ask", "按工具设置询问"), ("auto", "自动批准安全操作"), ("full", "完全自动批准")],
-                scope => Confirm("更改审批模式？完全自动批准也会放行危险命令，已禁止的工具仍保持禁止。", () => _ = Run("set_approval_scope", new() { ["scope"] = scope })));
-        Action(card, "撤销所有授权", "revoke_all_approval_grants", new(), true);
-        foreach (var grant in Rows(model.Values["list_approval_grants"]))
-        {
-            var item = Card(S(grant, "label")); item.Children.Add(Mute(S(grant, "scope") + " · " + S(grant, "target")));
-            Action(item, "撤销授权", "revoke_approval_grant", new() { ["scope"] = grant["scope"]?.DeepClone(), ["kind"] = grant["kind"]?.DeepClone(),
-                ["target"] = grant["target"]?.DeepClone(), ["sessionId"] = grant["session_id"]?.DeepClone(), ["projectId"] = grant["project_id"]?.DeepClone() }, true);
-        }
     }
 }

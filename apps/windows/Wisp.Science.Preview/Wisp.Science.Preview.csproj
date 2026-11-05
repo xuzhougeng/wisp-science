@@ -16,6 +16,17 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Content Include="Assets/Fonts/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Assets/Share/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="../../../ui/src/share-renderer.js;../../../ui/src/highlight.js;../../../ui/src/styles/share-export.css">
+      <Link>Assets/Share/%(Filename)%(Extension)</Link><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory><CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="Assets/Fonts/*">
+      <Link>Assets/Share/fonts/%(Filename)%(Extension)</Link><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory><CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="../../../ui/vendor-src/highlight*;../../../ui/vendor-src/katex*;../../../ui/vendor-src/KaTeX*">
+      <Link>Assets/Share/vendor-runtime/%(Filename)%(Extension)</Link><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory><CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
     <Content Include="Assets/RichPreview/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="../../../LICENSES/Apache-2.0.txt" Link="Assets/RichPreview/pdf.LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="../../../ui/vendor-src/katex*;../../../ui/vendor-src/KaTeX*;../../../ui/vendor-src/pdf*.mjs">
@@ -24,7 +35,7 @@
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
     <Content Include="Assets/Terminal/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="../../../ui/vendor-src/office-preview-runtime.mjs;../../../ui/vendor-src/docx-preview.*;../../../ui/vendor-src/pptx-preview.mjs;../../../ui/vendor-src/pptx-renderer.LICENSE;../../../ui/vendor-src/xlsx*;../../../ui/vendor-src/sheetjs.LICENSE;../../../ui/vendor-src/jszip.LICENSE;../../../ui/vendor-src/office-build.json;../../../ui/vendor-src/pdf*.mjs">
+    <Content Include="../../../ui/vendor-src/office-preview-runtime.mjs;../../../ui/vendor-src/docx-preview.*;../../../ui/vendor-src/pptx-preview.mjs;../../../ui/vendor-src/pptx-renderer.LICENSE;../../../ui/vendor-src/xlsx*;../../../ui/vendor-src/sheetjs.LICENSE;../../../ui/vendor-src/jszip.LICENSE;../../../ui/vendor-src/office-build.json;../../../ui/vendor-src/pdf*.mjs;../../../ui/vendor-src/openjpeg.wasm;../../../ui/vendor-src/qcms_bg.wasm">
       <Link>Assets/RichPreview/vendor-runtime/%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
@@ -46,6 +57,7 @@
     </Content>
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.3916" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250228001" />
+    <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.3.2" />
     <ProjectReference Include="../Wisp.ProjectBrowser/Wisp.ProjectBrowser.csproj" />
     <Content Include="../../macos/Sources/WispProjectBrowserUI/Resources/*">
       <Link>Assets/%(Filename)%(Extension)</Link>

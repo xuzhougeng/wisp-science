@@ -1,38 +1,9 @@
-//! Privacy mode shared by the WebView and the native calendar.
-//!
-//! The WebView writes `set_privacy_mode`. The calendar reads `get_privacy_mode`
-//! before it builds a project list. Both use these settings rows.
+//! Shared project visibility for the desktop renderers and native readers.
 
-use serde::{Deserialize, Serialize};
-
-pub const ACTIVE_KEY: &str = "wisp-privacy-mode-active";
-pub const PROJECTS_KEY: &str = "wisp-privacy-mode-projects";
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PrivacyMode {
-    pub active: bool,
-    pub project_ids: Vec<String>,
-}
+pub use wisp_dto::project_browser::PrivacyMode;
 
 pub async fn load(store: &wisp_store::Store) -> Result<PrivacyMode, String> {
-    let raw = store
-        .get_setting(PROJECTS_KEY)
-        .await
-        .map_err(|error| error.to_string())?
-        .unwrap_or_else(|| "[]".into());
-    let mut project_ids = serde_json::from_str::<Vec<String>>(&raw).unwrap_or_default();
-    project_ids = normalize_ids(project_ids);
-    let active = store
-        .get_setting(ACTIVE_KEY)
-        .await
-        .map_err(|error| error.to_string())?
-        .as_deref()
-        == Some("1")
-        && !project_ids.is_empty();
-    Ok(PrivacyMode {
-        active,
-        project_ids,
-    })
+    store.project_privacy().await.map_err(|e| e.to_string())
 }
 
 pub async fn save(
@@ -40,24 +11,16 @@ pub async fn save(
     active: bool,
     project_ids: &[String],
 ) -> Result<(), String> {
-    let project_ids = normalize_ids(project_ids.iter().cloned());
-    let encoded = serde_json::to_string(&project_ids).map_err(|error| error.to_string())?;
     store
-        .set_setting(PROJECTS_KEY, &encoded)
+        .write_project_privacy(
+            PrivacyMode {
+                active,
+                project_ids: project_ids.to_vec(),
+            },
+            false,
+        )
         .await
-        .map_err(|error| error.to_string())?;
-    if active && !project_ids.is_empty() {
-        store
-            .set_setting(ACTIVE_KEY, "1")
-            .await
-            .map_err(|error| error.to_string())?;
-    } else {
-        store
-            .delete_setting(ACTIVE_KEY)
-            .await
-            .map_err(|error| error.to_string())?;
-    }
-    Ok(())
+        .map_err(|e| e.to_string())
 }
 
 /// Native calendar read. A project id is rejected and nothing is changed.
@@ -77,8 +40,16 @@ pub async fn read(
 
 #[tauri::command]
 pub async fn get_privacy_mode(
+    legacy: Option<PrivacyMode>,
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<PrivacyMode, String> {
+    if let Some(legacy) = legacy {
+        state
+            .store
+            .write_project_privacy(legacy, true)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
     load(&state.store).await
 }
 
@@ -91,20 +62,11 @@ pub async fn set_privacy_mode(
     save(&state.store, active, &project_ids).await
 }
 
-fn normalize_ids(ids: impl IntoIterator<Item = String>) -> Vec<String> {
-    let mut project_ids = ids
-        .into_iter()
-        .map(|id| id.trim().to_string())
-        .filter(|id| !id.is_empty())
-        .collect::<Vec<_>>();
-    project_ids.sort();
-    project_ids.dedup();
-    project_ids
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    const ACTIVE_KEY: &str = "wisp-privacy-mode-active";
+    const PROJECTS_KEY: &str = "wisp-privacy-mode-projects";
 
     #[tokio::test]
     async fn webview_privacy_write_is_what_the_calendar_reads() {
@@ -135,6 +97,16 @@ mod tests {
             store.get_setting(ACTIVE_KEY).await.unwrap().as_deref(),
             Some("1")
         );
+        store
+            .write_project_privacy(
+                PrivacyMode {
+                    active: false,
+                    project_ids: vec![],
+                },
+                true,
+            )
+            .await
+            .unwrap();
         let loaded = read(&store, None, &serde_json::json!({})).await.unwrap();
         assert!(loaded.active);
         assert_eq!(loaded.project_ids, vec!["hidden", "research-1"]);

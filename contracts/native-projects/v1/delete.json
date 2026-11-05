@@ -1,0 +1,7 @@
+{
+  "schema": "wisp.native-projects.v1",
+  "command": "native_project_delete",
+  "project_id": "research-1",
+  "args": { "delete_data": false },
+  "result": { "project_id": "research-1", "delete_data": false, "deleted": true }
+}

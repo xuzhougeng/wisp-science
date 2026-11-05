@@ -4,11 +4,27 @@ use std::collections::HashMap;
 
 pub const SCHEMA: &str = "wisp.native-conversations.v1";
 pub const COMMANDS: &[&str] = &[
+    "native_conversation_explorations",
+    "native_conversation_exploration_open",
+    "native_conversation_exploration_start",
+    "native_conversation_exploration_preview",
+    "native_conversation_exploration_promote",
+    "native_conversation_exploration_discard",
+    "native_conversation_exploration_manual_open",
+    "native_conversation_exploration_manual_finish",
+    "native_conversation_rules_status",
+    "native_conversation_rules_reload",
+    "native_conversation_branch_preview",
+    "native_conversation_branch_generate",
+    "native_conversation_branch_merge",
     "native_conversation_image",
     "native_conversation_queue_action",
     "native_conversation_history_action",
+    "native_conversation_excerpt",
+    "native_conversation_review",
     "native_conversation_context",
     "native_conversation_context_undo",
+    "native_conversation_handoff",
     "native_conversation_references",
     "native_conversation_options",
     "native_conversation_options_set",
@@ -52,6 +68,9 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_panel_savefile",
     "native_conversation_panel_file_action",
     "native_conversation_panel_readartifact",
+    "native_conversation_panel_artifact_provenance",
+    "native_conversation_panel_file_provenance",
+    "native_conversation_panel_artifact_library",
     "native_conversation_terminal_list",
     "native_conversation_terminal_open",
     "native_conversation_terminal_read",
@@ -76,6 +95,7 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_transfer",
     "native_conversation_export_preview",
     "native_conversation_export",
+    "native_conversation_debug_request",
     "native_conversation_pin",
     "native_conversation_delete",
     "native_conversation_exists",
@@ -94,6 +114,115 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_plan",
     "native_conversation_fast",
 ];
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RulesRequest {
+    pub session_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Explorations {
+    pub project_id: String,
+    pub explorations: Vec<crate::ExplorationSummary>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExplorationOpenRequest {
+    pub session_id: String,
+    pub exploration_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ExplorationOpen {
+    pub project_id: String,
+    pub summary: crate::ExplorationSummary,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExplorationStartRequest {
+    pub session_id: String,
+    pub target: crate::native_history::TurnIdentity,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ExplorationStarted {
+    pub project_id: String,
+    pub source_session_id: String,
+    pub target: crate::native_history::TurnIdentity,
+    pub summary: crate::ExplorationSummary,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+pub struct ExplorationPreview {
+    pub project_id: String,
+    pub session_id: String,
+    pub source_session_id: String,
+    pub preview: crate::ExplorationPromotionPreview,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExplorationPromoteRequest {
+    pub session_id: String,
+    pub exploration_id: String,
+    pub expected_guard_hash: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ExplorationActionResult {
+    pub project_id: String,
+    pub session_id: String,
+    pub source_session_id: String,
+    pub exploration_id: String,
+    pub action: String,
+    pub completed: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ExplorationState {
+    pub summary: Option<crate::ExplorationSummary>,
+    pub active_count: usize,
+    pub source_frozen: bool,
+    #[serde(default)]
+    pub round_source_frame_id: Option<String>,
+    #[serde(default)]
+    pub round_user_index: Option<usize>,
+    #[serde(default)]
+    pub candidate_count: usize,
+}
+
+impl ExplorationState {
+    pub fn for_session(rows: &[crate::ExplorationSummary], session: &str) -> Self {
+        Self {
+            summary: rows.iter().find(|row| row.exploration.frame_id == session).cloned(),
+            active_count: rows.iter().filter(|row| row.source_frame_id == session
+                && matches!(row.exploration.status.as_str(), "creating" | "active" | "promoting")).count(),
+            // Failed candidates still freeze their source until the round is resolved.
+            source_frozen: rows.iter().any(|row| row.source_frame_id == session),
+            round_source_frame_id: rows.first().map(|row| row.source_frame_id.clone()),
+            round_user_index: rows.first().map(|row| row.checkpoint_user_index),
+            candidate_count: rows.iter().filter(|row| row.source_frame_id == session).count(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RulesStatus {
+    pub project_id: String,
+    pub session_id: String,
+    pub stale_prompt: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RulesReloadResult {
+    pub project_id: String,
+    pub session_id: String,
+    pub changed: bool,
+}
 
 /// Reply to clients that still try to switch delegation per conversation.
 pub const DELEGATION_ALWAYS_ON: &str =
@@ -139,6 +268,20 @@ pub struct ContextUndoResponse {
     pub session_id: String,
     /// The removed epoch, matching the shared CompactionUndone event.
     pub undone_epoch: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HandoffRequest {
+    pub session_id: String,
+    pub instruction: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct HandoffResponse {
+    pub project_id: String,
+    pub session_id: String,
+    pub note: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -309,6 +452,37 @@ pub struct PanelRequest {
     pub artifact_id: Option<String>,
 }
 
+/// Provenance for a validated artifact in an explicitly addressed frame.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PanelArtifactProvenance {
+    pub schema: String,
+    pub project_id: String,
+    pub session_id: String,
+    pub artifact_id: String,
+    pub path: String,
+    pub provenance: Option<crate::ArtifactProvenance>,
+}
+
+/// Provenance addressed by a file path in an explicitly validated frame.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PanelFileProvenance {
+    pub schema: String,
+    pub project_id: String,
+    pub session_id: String,
+    pub path: String,
+    pub provenance: Option<crate::ArtifactProvenance>,
+}
+
+/// Confirmed personal-library state for one validated artifact.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PanelArtifactLibrary {
+    pub schema: String,
+    pub project_id: String,
+    pub session_id: String,
+    pub artifact_id: String,
+    pub library_item_id: Option<String>,
+}
+
 /// Validated local source for an explicit native Save As operation. No data is
 /// copied until the user chooses a destination in the platform save dialog.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -466,6 +640,18 @@ pub struct SessionRequest {
     #[serde(default)]
     pub before_seq: Option<i64>,
 }
+
+/// Deletion choices come from the native preview of the same project/selection.
+/// Older clients omit them and retain the backend's refuse-children default.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteRequest {
+    pub session_id: String,
+    pub include_children: Option<bool>,
+    pub include_artifacts: Option<bool>,
+    pub artifact_fingerprint: Option<String>,
+    pub child_artifact_fingerprints: Option<HashMap<String, String>>,
+}
 /// Exactly one source: a message-bound immutable resource or a legacy project
 /// path. Image reads never download a remote URL.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -493,6 +679,12 @@ pub struct SendRequest {
     pub session_id: String,
     pub request_id: String,
     pub message: String,
+    /// Resume the persisted turn without appending another user message.
+    #[serde(default)]
+    pub resume: bool,
+    /// Settled turn or compaction request to resume from; rejects stale/restarted hosts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_after: Option<String>,
     /// Project-relative paths already copied into the workspace. Empty for a
     /// text-only send. The host folds these into the same `Uploaded files:`
     /// message the WebView persists.
@@ -500,6 +692,9 @@ pub struct SendRequest {
     pub attachments: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub references: Vec<crate::ComposerReferenceArg>,
+    /// A native composer's unbound ACP choice, committed by the first send.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acp_agent_id: Option<String>,
 }
 
 /// Durable acceptance of a turn; completion arrives through snapshots.
@@ -904,6 +1099,11 @@ impl PlanProposal {
 /// host epoch. Reconnects fetch another snapshot; mutations are never replayed.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Snapshot {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exploration: Option<ExplorationState>,
+    /// Same checkpoint links and reviewed summaries used by the WebView transcript.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub branches: Vec<crate::SessionBranchLink>,
     /// Current records for exact session-owned runs linked by this transcript.
     /// Tails are bounded; the detail command remains the full read interface.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -962,6 +1162,106 @@ pub struct Snapshot {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rules_fixture_requires_explicit_status_and_rejects_history_cursors() {
+        let data: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/rules.json"
+        )).unwrap();
+        let request: super::RulesRequest = serde_json::from_value(data["request"].clone()).unwrap();
+        let stale: super::RulesStatus = serde_json::from_value(data["stale"].clone()).unwrap();
+        assert_eq!(request.session_id, stale.session_id);
+        assert!(stale.stale_prompt);
+        let unchanged: super::RulesReloadResult = serde_json::from_value(data["unchanged"].clone()).unwrap();
+        assert!(!unchanged.changed);
+        assert_eq!(unchanged.project_id, stale.project_id);
+        assert!(serde_json::from_value::<super::RulesRequest>(serde_json::json!({"session_id":"main-1","before_seq":5})).is_err());
+        assert!(serde_json::from_value::<super::RulesStatus>(serde_json::json!({"project_id":"research-1","session_id":"main-1"})).is_err());
+        assert!(super::COMMANDS.contains(&"native_conversation_rules_status"));
+        assert!(super::COMMANDS.contains(&"native_conversation_rules_reload"));
+    }
+    #[test]
+    fn exploration_navigation_preserves_private_scope_and_freeze() {
+        let rows: super::Explorations = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/explorations.json"
+        )).unwrap();
+        assert_eq!(rows.project_id, "research-1");
+        assert!(rows.explorations[0].isolation_is_full());
+        assert!(!rows.explorations[1].isolation_is_full());
+        let source = super::ExplorationState::for_session(&rows.explorations, "main-1");
+        assert!(source.source_frozen);
+        assert_eq!(source.active_count, 1);
+        assert!(source.summary.is_none());
+        let failed_only = super::ExplorationState::for_session(&rows.explorations[1..], "main-1");
+        assert!(failed_only.source_frozen);
+        assert_eq!(failed_only.active_count, 0);
+        let private = super::ExplorationState::for_session(&rows.explorations, "private-1");
+        assert!(!private.source_frozen);
+        assert_eq!(private.summary.unwrap().exploration.id, "explore-1");
+        let other = super::ExplorationState::for_session(&rows.explorations, "other");
+        assert!(!other.source_frozen && other.summary.is_none());
+        assert!(serde_json::from_value::<super::ExplorationOpenRequest>(serde_json::json!({
+            "session_id":"private-1", "exploration_id":"explore-1", "before_seq":10
+        })).is_err());
+        assert!(super::COMMANDS.contains(&"native_conversation_exploration_open"));
+    }
+    #[test]
+    fn exploration_start_keeps_response_identity_and_round_checkpoint() {
+        let data: super::ExplorationStarted = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/exploration-started.json"
+        )).unwrap();
+        assert_eq!(data.target.user_index, data.summary.checkpoint_user_index);
+        assert_eq!(data.source_session_id, data.summary.source_frame_id);
+        let state = super::ExplorationState::for_session(&[data.summary], "main-1");
+        assert_eq!(state.round_source_frame_id.as_deref(), Some("main-1"));
+        assert_eq!(state.round_user_index, Some(3));
+        assert_eq!(state.candidate_count, 1);
+        assert!(serde_json::from_value::<super::ExplorationStartRequest>(serde_json::json!({
+            "session_id":"main-1", "name":"Example", "turn_index":3
+        })).is_err());
+        assert!(serde_json::from_value::<super::ExplorationStartRequest>(serde_json::json!({
+            "session_id":"main-1", "name":"Example", "target":data.target, "workspace_dir":"C:/other"
+        })).is_err());
+    }
+    #[test]
+    fn exploration_preview_keeps_mixed_serde_shapes_and_guards() {
+        let data: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/exploration-preview.json"
+        )).unwrap();
+        let preview: super::ExplorationPreview = serde_json::from_value(data).unwrap();
+        assert_eq!(preview.source_session_id, "main-1");
+        assert_eq!(preview.preview.diff.exploration_id, preview.preview.exploration.id);
+        assert_eq!(preview.preview.diff.runs[0].frame_id.as_deref(), Some("private-1"));
+        assert_eq!(preview.preview.diff.research_edges[0].source_id, "decision-1");
+        let serialized = serde_json::to_value(preview).unwrap();
+        assert_eq!(serialized["preview"]["eligibility"]["expectedGuardHash"], "guard-1");
+        assert!(serialized["preview"]["diff"].get("externalEffects").is_some());
+        assert!(serialized["preview"]["diff"]["externalEffects"][0].get("target_summary").is_some());
+        assert!(serde_json::from_value::<super::ExplorationPromoteRequest>(serde_json::json!({
+            "session_id":"private-1", "exploration_id":"explore-1"
+        })).is_err());
+        assert!(serde_json::from_value::<super::ExplorationOpenRequest>(serde_json::json!({
+            "session_id":"private-1", "exploration_id":"explore-1", "expected_guard_hash":"guard-1"
+        })).is_err());
+        assert!(serde_json::from_value::<super::ExplorationActionResult>(serde_json::json!({
+            "project_id":"research-1", "session_id":"private-1", "source_session_id":"main-1",
+            "exploration_id":"explore-1", "action":"discard"
+        })).is_err());
+    }
+    #[test]
+    fn branch_results_keep_checkpoint_and_exact_summary() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/branch-results.json"
+        )).unwrap();
+        let snapshot: super::Snapshot = serde_json::from_value(fixture.clone()).unwrap();
+        assert_eq!(snapshot.branches.len(), 2);
+        assert_eq!(snapshot.branches[1].source_session_id, snapshot.session_id);
+        assert_eq!(snapshot.branches[1].checkpoint_user_index, 2);
+        assert_eq!(snapshot.branches[1].checkpoint_kind, "after_response");
+        assert_eq!(serde_json::to_value(&snapshot).unwrap()["branches"], fixture["branches"]);
+        let mut legacy = fixture;
+        legacy.as_object_mut().unwrap().remove("branches");
+        assert!(serde_json::from_value::<super::Snapshot>(legacy).unwrap().branches.is_empty());
+    }
     #[test]
     fn context_fixture_preserves_shared_head_and_model_details() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
@@ -1095,6 +1395,13 @@ mod tests {
         );
         let old: super::SendRequest = serde_json::from_value(fixture["old_send"].clone()).unwrap();
         assert!(old.references.is_empty() && old.attachments.is_empty());
+        assert!(old.acp_agent_id.is_none());
+        assert!(!old.resume && old.resume_after.is_none(), "old clients keep ordinary send behavior");
+        let mut selected = fixture["old_send"].clone();
+        selected["acp_agent_id"] = serde_json::json!("agent-exact");
+        let selected: super::SendRequest = serde_json::from_value(selected).unwrap();
+        assert_eq!(selected.acp_agent_id.as_deref(), Some("agent-exact"));
+        assert_eq!(serde_json::to_value(selected).unwrap()["acp_agent_id"], "agent-exact");
         let mut invalid = fixture["request"].clone();
         invalid["kind"] = "shell".into();
         assert!(serde_json::from_value::<super::ReferenceRequest>(invalid).is_err());
@@ -1758,6 +2065,72 @@ mod tests {
         .is_err());
         assert!(!COMMANDS.contains(&"send_message"));
         assert!(COMMANDS.contains(&"native_conversation_attach"));
+    }
+    #[test]
+    fn artifact_library_read_and_explicit_set_round_trip() {
+        assert!(COMMANDS.contains(&"native_conversation_panel_artifact_library"));
+        let read: PanelRequest =
+            serde_json::from_value(serde_json::json!({"session_id":"s", "artifact_id":"a"}))
+                .unwrap();
+        assert!(read.enabled.is_none());
+        for enabled in [false, true] {
+            let request: PanelRequest = serde_json::from_value(
+                serde_json::json!({"session_id":"s", "artifact_id":"a", "enabled":enabled}),
+            )
+            .unwrap();
+            assert_eq!(request.enabled, Some(enabled));
+            let reply = PanelArtifactLibrary {
+                schema: SCHEMA.into(),
+                project_id: "p".into(),
+                session_id: "s".into(),
+                artifact_id: "a".into(),
+                library_item_id: enabled.then(|| "item".into()),
+            };
+            let round: PanelArtifactLibrary =
+                serde_json::from_value(serde_json::to_value(reply).unwrap()).unwrap();
+            assert_eq!(round.library_item_id.is_some(), enabled);
+            assert_eq!(round.artifact_id, "a");
+        }
+    }
+
+    #[test]
+    fn artifact_provenance_reply_preserves_scope_and_optional_metadata() {
+        let reply: PanelArtifactProvenance = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/artifact-provenance.json"
+        ))
+        .unwrap();
+        assert_eq!(reply.schema, SCHEMA);
+        assert_eq!(reply.project_id, "project-a");
+        assert_eq!(reply.session_id, "session-a");
+        assert_eq!(reply.artifact_id, "figure-a");
+        let encoded = serde_json::to_value(reply).unwrap();
+        assert_eq!(encoded["provenance"]["inputs"][0]["produced_here"], true);
+        assert_eq!(
+            encoded["provenance"]["env"]["packages"][0]["version"],
+            "1.0"
+        );
+        let empty = serde_json::json!({"schema":SCHEMA, "project_id":"p", "session_id":"s", "artifact_id":"a", "path":"x.png", "provenance":null});
+        assert!(serde_json::from_value::<PanelArtifactProvenance>(empty)
+            .unwrap()
+            .provenance
+            .is_none());
+        assert!(COMMANDS.contains(&"native_conversation_panel_artifact_provenance"));
+    }
+    #[test]
+    fn file_provenance_reply_uses_a_path_without_inventing_an_artifact_id() {
+        let reply: PanelFileProvenance = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/file-provenance.json"
+        )).unwrap();
+        assert_eq!(reply.schema, SCHEMA);
+        assert_eq!(reply.project_id, "project-a");
+        assert_eq!(reply.session_id, "session-a");
+        assert_eq!(reply.path, "figures/generated.png");
+        let encoded = serde_json::to_value(reply).unwrap();
+        assert!(encoded.get("artifact_id").is_none());
+        assert_eq!(encoded["provenance"]["inputs"][0]["produced_here"], true);
+        let empty = serde_json::json!({"schema":SCHEMA, "project_id":"p", "session_id":"s", "path":"x.png", "provenance":null});
+        assert!(serde_json::from_value::<PanelFileProvenance>(empty).unwrap().provenance.is_none());
+        assert!(COMMANDS.contains(&"native_conversation_panel_file_provenance"));
     }
     #[test]
     fn native_approval_scope_defaults_once_and_accepts_only_the_shared_names() {

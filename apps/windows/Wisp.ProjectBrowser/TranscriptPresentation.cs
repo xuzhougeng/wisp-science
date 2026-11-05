@@ -108,7 +108,7 @@ public static partial class TranscriptPresentation
     /// <summary>Compact per-turn usage row matching the WebView's usage-line
     /// wording and token formatting. Returns null for non-usage or malformed
     /// rows so callers fall back to plain text instead of losing data.</summary>
-    public static string? UsageSummary(string role, string text)
+    public static string? UsageSummary(string role, string text, NativeLocalization? locale = null)
     {
         if (role != "usage") return null;
         try
@@ -117,9 +117,12 @@ public static partial class TranscriptPresentation
             var root = json.RootElement;
             if (root.ValueKind != JsonValueKind.Object) return null;
             long Input(string name) => root.TryGetProperty(name, out var v) && v.TryGetInt64(out var n) ? n : 0;
-            var summary = $"输入 {FmtTokens(Input("input"))} · 输出 {FmtTokens(Input("output"))} tokens";
-            if (Input("cached") > 0) summary += $" · 缓存 {FmtTokens(Input("cached"))}";
-            if (Input("reasoning") > 0) summary += $" · 思考 {FmtTokens(Input("reasoning"))}";
+            var summary = locale?.Format("msg.usage", ("in", FmtTokens(Input("input"))), ("out", FmtTokens(Input("output"))))
+                ?? $"输入 {FmtTokens(Input("input"))} · 输出 {FmtTokens(Input("output"))} tokens";
+            if (Input("cached") > 0) summary += locale?.Format("msg.usage.cached", ("c", FmtTokens(Input("cached"))))
+                ?? $" · 缓存 {FmtTokens(Input("cached"))}";
+            if (Input("reasoning") > 0) summary += locale?.Format("msg.usage.reasoning", ("r", FmtTokens(Input("reasoning"))))
+                ?? $" · 思考 {FmtTokens(Input("reasoning"))}";
             return summary;
         }
         catch (JsonException) { return null; }

@@ -6,6 +6,11 @@ internal static class NativeTranscriptRowsTests
     public static void Run()
     {
         ConversationItem Row(string role, string text) => new(role, text, null, null, null, null);
+        var tombstone = Row("tool", "[compacted; full content archived at wisp-history:abc — retrieve narrow ranges]");
+        Check(NativeTranscriptRows.IsContextTombstone(tombstone) && NativeTranscriptRows.ContextArchiveReference(tombstone.Text) == "wisp-history:abc", "Compacted tools retain their archive reference.");
+        Check(!NativeTranscriptRows.IsContextTombstone(tombstone with { Role = "user" })
+            && NativeTranscriptRows.ContextArchiveReference("wisp-history:") == null
+            && NativeTranscriptRows.ContextArchiveReference("[compacted; wisp-history:abc]") == null, "Only context output rows become tombstones; references require the shared archive wording.");
         var snapshot = new ConversationSnapshot(ConversationSnapshot.SchemaId, "epoch", 1, "project", "session",
             [Row("user", "重复问题"), Row("tool", "结果"), Row("assistant", "回答")], null, false, false, false, "model", null, null, [], 2);
         var first = NativeTranscriptRows.Keys(snapshot);
@@ -13,6 +18,10 @@ internal static class NativeTranscriptRowsTests
         Check(first.SequenceEqual(polling), "polling must not change row identity");
         var streaming = NativeTranscriptRows.Keys(snapshot with { Items = [snapshot.Items[0], snapshot.Items[1], Row("assistant", "回答继续")] });
         Check(first.SequenceEqual(streaming), "streaming changes content, not identity");
+        var acp = snapshot with { Items = [snapshot.Items[0], Row("acp_tool", "output") with { ToolName = "Read", CallId = "call:7" }] };
+        Check(NativeTranscriptRows.Keys(acp).SequenceEqual(NativeTranscriptRows.Keys(acp with {
+            Items = [acp.Items[0], acp.Items[1] with { ToolName = "Updated title", Text = "new output", Locations = "source.csv:12", Status = "failed" }] })),
+            "ACP title, location, output and failure updates preserve the call identity used for manual disclosure choice");
         var prepend = NativeTranscriptRows.Keys(snapshot with { UserOffset = 1,
             Items = [Row("user", "重复问题"), Row("assistant", "先前回答"), .. snapshot.Items] });
         Check(first.SequenceEqual(prepend.Skip(2)), "history prepending preserves canonical turn identity");

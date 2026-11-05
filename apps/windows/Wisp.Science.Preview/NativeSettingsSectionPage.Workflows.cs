@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Wisp.ProjectBrowser;
 
 namespace Wisp.Science.Preview;
@@ -144,65 +145,408 @@ internal sealed partial class NativeSettingsSectionPage
     }
     private void QuickActions()
     {
+        DefinitionListLayout();
+        Results.Spacing = 0;
         var rows = Rows(model.Values["list_quick_actions"]).ToArray();
-        Form.Children.Add(Button("添加快捷操作", () => { EditQuickAction(NativeWorkflowDrafts.QuickAction(rows.Length)); return Task.CompletedTask; }));
-        if (rows.Length == 0) Results.Children.Add(Mute("尚无快捷操作，可添加配置。"));
+        var workflows = Rows(model.Values["list_workflow_templates"]).ToArray();
+        var introduction = new StackPanel { Spacing = 5, Margin = new Thickness(0, 4, 0, 8) };
+        var heading = Design.Text(T("quick_actions.title"), 17); heading.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold; introduction.Children.Add(heading);
+        var hint = Design.Text(T("quick_actions.help"), 12); hint.Foreground = Design.Brush("text-faint"); hint.MaxWidth = 680;
+        hint.HorizontalAlignment = HorizontalAlignment.Left; hint.LineHeight = 18 * Design.Typography.UiSize / 14; introduction.Children.Add(hint);
+        var add = Button(T("quick_actions.new"), () => { EditQuickAction(NativeQuickActions.Create(rows, workflows)); return Task.CompletedTask; });
+        var addContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        var addIcon = Design.Icon("plus", 12); addIcon.VerticalAlignment = VerticalAlignment.Center;
+        addContent.Children.Add(addIcon); addContent.Children.Add(Design.Text(T("quick_actions.new"), 12.5)); add.Content = addContent;
+        add.Padding = new Thickness(12, 6, 12, 6); add.MinHeight = 30;
+        add.IsEnabled = workflows.Length > 0;
+        Form.Children.Add(QuickActionRow(introduction, add, 720, viewportBreakpoint: true));
+        if (model.Draft is { } draft) QuickActionForm(draft, workflows);
+        if (rows.Length == 0) Results.Children.Add(new Border { Height = 1, Background = Design.Brush("border") });
         foreach (var row in rows)
         {
-            var card = Card(S(row, "name") + (B(row, "builtin") ? " · 内置" : ""));
-            card.Children.Add(Mute(S(row, "description")));
-            var toggle = new ToggleSwitch { Header = "启用", IsOn = B(row, "enabled") };
+            var title = new NativeActionWrap { Gap = 7 };
+            var icon = S(row, "icon");
+            if (icon.Length == 0 || icon.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '-') || !File.Exists(Path.Combine(AppContext.BaseDirectory, "Assets", $"icon-{icon}.svg"))) icon = "sparkles";
+            title.Children.Add(Design.Icon(icon, 15, Design.ColorText("clay")));
+            var displayName = NativeQuickActions.Label(row, Design.Localization);
+            var name = DefinitionLeading(Design.Text(displayName, 14), 1.35); name.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold; title.Children.Add(name);
+            if (B(row, "builtin"))
+            {
+                var badge = Design.Text(T("quick_actions.builtin"), 9.5); badge.Foreground = Design.Brush("clay"); badge.FontWeight = Microsoft.UI.Text.FontWeights.Bold;
+                title.Children.Add(new Border { Child = badge, Background = Design.Brush("clay-soft"), CornerRadius = new CornerRadius(12), Padding = new Thickness(7, 2, 7, 2) });
+            }
+            var description = DefinitionLeading(Design.Text(S(row, "description"), 12), 1.4);
+            description.Foreground = Design.Brush("text-faint"); description.MaxLines = 2; description.TextTrimming = TextTrimming.CharacterEllipsis;
+            description.Visibility = description.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+            var workflowName = Design.Text(NativeQuickActions.WorkflowName(row, workflows), 10.5); workflowName.Foreground = Design.Brush("text-faint");
+            workflowName.FontFamily = Design.Font(true);
+            var actions = new NativeActionWrap { Gap = 6 };
+            var toggle = new ToggleSwitch { IsOn = B(row, "enabled"), OnContent = "", OffContent = "", MinWidth = 0, MinHeight = 20, VerticalAlignment = VerticalAlignment.Center };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(toggle, T("quick_actions.enabled") + ": " + displayName);
+            PreferenceToggleSwitch.Apply(toggle, Design);
             toggle.Toggled += async (_, _) =>
             {
                 var action = (JsonObject)row.DeepClone(); action["enabled"] = toggle.IsOn;
                 await Run("save_quick_action", new() { ["action"] = action });
             };
-            card.Children.Add(toggle);
-            card.Children.Add(Button("编辑", () => { EditQuickAction(row); return Task.CompletedTask; }));
-            card.Children.Add(Button("复制", () => { EditQuickAction(NativeWorkflowDrafts.Copy(row)); return Task.CompletedTask; }));
-            if (!B(row, "builtin")) Action(card, "删除快捷操作", "remove_quick_action", new() { ["actionId"] = S(row, "id") }, true);
+            // A retained inline draft must not become stale through a list-side write.
+            toggle.IsEnabled = model.Draft == null; actions.Children.Add(toggle);
+            var open = Button(T("quick_actions.open_workflow"), () => { RequestLeave(() => WorkflowRequested?.Invoke(S(row, "workflow_template_id"))); return Task.CompletedTask; });
+            Design.BindTypography(open, size: 12); open.Padding = new Thickness(10, 4, 10, 4); open.MinHeight = 24; open.CornerRadius = new CornerRadius(12);
+            open.IsEnabled = WorkflowRequested != null && workflows.Any(workflow => S(workflow, "id") == S(row, "workflow_template_id")); actions.Children.Add(open);
+            var edit = DefinitionToolButton(T("quick_actions.edit") + ": " + displayName, "edit"); edit.Click += (_, _) => EditQuickAction(row); actions.Children.Add(edit);
+            var revealed = new List<Button> { edit };
+            if (!B(row, "builtin"))
+            {
+                var remove = DefinitionToolButton(T("quick_actions.delete") + ": " + displayName, "close", destructive: true);
+                remove.Click += (_, _) => RequestLeave(() => { model.Discard(); Render(); Confirm(L("删除快捷动作？此操作不可撤销。", "Delete this Quick Action? This cannot be undone."), () => _ = Run("remove_quick_action", new() { ["actionId"] = S(row, "id") })); });
+                actions.Children.Add(remove); revealed.Add(remove);
+            }
+            var grid = new Grid { ColumnSpacing = 12 };
+            grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+            for (var i = 0; i < 4; i++) grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
+            title.VerticalAlignment = actions.VerticalAlignment = VerticalAlignment.Center;
+            grid.Children.Add(title); grid.Children.Add(actions);
+            description.Margin = new Thickness(0, 4, 0, 0); workflowName.Margin = new Thickness(0, 4, 0, 0);
+            Grid.SetColumnSpan(description, 2); Grid.SetRow(description, 1); grid.Children.Add(description);
+            Grid.SetColumnSpan(workflowName, 2); Grid.SetRow(workflowName, 2); grid.Children.Add(workflowName);
+            void ArrangeRow()
+            {
+                var cells = NativeSettingsLayout.QuickActionCells(XamlRoot?.Size.Width ?? ActualWidth);
+                Grid.SetColumnSpan(title, cells.TitleSpan); Grid.SetRow(actions, cells.ActionRow);
+                Grid.SetColumn(actions, cells.ActionColumn); Grid.SetColumnSpan(actions, cells.ActionSpan);
+                actions.HorizontalAlignment = cells.ActionRow == 0 ? HorizontalAlignment.Right : HorizontalAlignment.Left;
+                actions.Margin = new Thickness(0, cells.ActionRow == 0 ? 0 : 4, 0, 0);
+            }
+            grid.SizeChanged += (_, _) => ArrangeRow(); grid.Loaded += (_, _) => ArrangeRow();
+            var frame = new Border { Child = grid, Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderBrush = Design.Brush("border"), BorderThickness = new Thickness(0, 1, 0, 0), Padding = new Thickness(2, 13, 2, 13) };
+            RevealDefinitionActions(frame, revealed);
+            Results.Children.Add(frame);
         }
     }
-    private void EditQuickAction(JsonObject source) => Editor("快捷操作", source, "save_quick_action", "action", d =>
+    private void DefinitionListLayout()
     {
-        Text(d, "name", "名称"); Text(d, "description", "说明", true);
-        ReferenceChoice(d, "workflow_template_id", "工作流模板", Rows(model.Values["list_workflow_templates"]), "name", false);
-        Boolean(d, "enabled", "启用"); Integer(d, "sort_order", "排序", long.MinValue, long.MaxValue);
+        Body.Padding = new Thickness(24, 14, 24, 32); Body.Spacing = 12;
+        Form.Spacing = Results.Spacing = 12;
+    }
+    private static TextBlock DefinitionLeading(TextBlock text, double multiple)
+    {
+        text.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+        void Apply() => text.LineHeight = text.FontSize * multiple;
+        text.RegisterPropertyChangedCallback(TextBlock.FontSizeProperty, (_, _) => Apply()); Apply(); return text;
+    }
+    private Button DefinitionToolButton(string label, string icon, bool destructive = false)
+    {
+        var button = Design.ToolButton(label, icon); StyleDefinitionToolButton(button, icon, destructive); return button;
+    }
+    private void StyleDefinitionToolButton(Button button, string icon, bool destructive = false)
+    {
+        button.Width = button.Height = button.MinWidth = button.MinHeight = 28; button.Padding = new Thickness(0); button.CornerRadius = new CornerRadius(6);
+        button.Content = Design.Icon(icon, 15, Design.ColorText("text-faint"));
+        button.Resources["ButtonBackgroundPointerOver"] = destructive
+            ? new SolidColorBrush(Mix(Microsoft.UI.Colors.Transparent, Design.Brush("err").Color, .1)) : Design.Brush("bg-sunken");
+        button.PointerEntered += (_, _) => button.Content = Design.Icon(icon, 15, Design.ColorText(destructive ? "err" : "text"));
+        button.PointerExited += (_, _) => button.Content = Design.Icon(icon, 15, Design.ColorText("text-faint"));
+    }
+    private static void RevealDefinitionActions(FrameworkElement row, IReadOnlyList<Button> buttons)
+    {
+        var over = false;
+        void Refresh() { foreach (var button in buttons) button.Opacity = over || button.FocusState != FocusState.Unfocused ? 1 : 0; }
+        row.PointerEntered += (_, _) => { over = true; Refresh(); };
+        row.PointerExited += (_, _) => { over = false; Refresh(); };
+        foreach (var button in buttons) { button.GotFocus += (_, _) => Refresh(); button.LostFocus += (_, _) => Refresh(); }
+        // Keep tab stops, automation and pointer targets available while hidden,
+        // as CSS opacity does; keyboard focus must reveal its action immediately.
+        Refresh();
+    }
+    private static Grid QuickActionRow(FrameworkElement copy, FrameworkElement actions, double breakpoint, bool viewportBreakpoint = false)
+    {
+        var grid = new Grid { ColumnSpacing = 18, RowSpacing = 12 };
+        grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        grid.RowDefinitions.Add(new() { Height = GridLength.Auto }); grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        grid.Children.Add(copy); Grid.SetColumn(actions, 1); actions.VerticalAlignment = VerticalAlignment.Top; grid.Children.Add(actions);
+        grid.SizeChanged += (_, e) =>
+        {
+            var narrow = viewportBreakpoint ? NativeSettingsLayout.QuickActionsStack(grid.XamlRoot?.Size.Width ?? e.NewSize.Width) : e.NewSize.Width < breakpoint;
+            grid.RowSpacing = narrow ? 12 : 0;
+            Grid.SetColumnSpan(copy, narrow ? 2 : 1); Grid.SetRow(actions, narrow ? 1 : 0); Grid.SetColumn(actions, narrow ? 0 : 1); Grid.SetColumnSpan(actions, narrow ? 2 : 1);
+            actions.HorizontalAlignment = narrow ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        };
+        return grid;
+    }
+    private void EditQuickAction(JsonObject source) => RequestLeave(() =>
+    {
+        model.Edit(source, "save_quick_action", "action"); invalidFields.Clear(); Render(); BodyScroll.ChangeView(null, 0, null, true);
     });
+    private void QuickActionForm(JsonObject draft, JsonObject[] workflows)
+    {
+        var body = new StackPanel { Spacing = 12 }; var fields = new Grid { ColumnSpacing = 14, RowSpacing = 12 };
+        fields.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); fields.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        fields.RowDefinitions.Add(new() { Height = GridLength.Auto }); fields.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        StackPanel Field(string key, Control input)
+        {
+            var label = Design.Text(T(key), 12); label.Foreground = Design.Brush("text-muted");
+            var group = new StackPanel { Spacing = 4 };
+            group.Children.Add(label); input.MinHeight = 36; Design.BindTypography(input, size: 14);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetLabeledBy(input, label);
+            group.Children.Add(input); return group;
+        }
+        var name = new TextBox { Text = S(draft, "name"), CornerRadius = new CornerRadius(8), Background = Design.Brush("bg-input") };
+        name.TextChanged += (_, _) => { draft["name"] = name.Text; LockConfirmation(); }; textMenus.Register(name);
+        var nameField = Field("quick_actions.name", name); fields.Children.Add(nameField);
+        var workflow = new ComboBox { IsEnabled = !B(draft, "builtin"), HorizontalAlignment = HorizontalAlignment.Stretch, CornerRadius = new CornerRadius(8), Background = Design.Brush("bg-input") };
+        foreach (var row in workflows) workflow.Items.Add(new ComboBoxItem { Tag = S(row, "id"), Content = S(row, "name") });
+        if (S(draft, "workflow_template_id") is { Length: > 0 } id && workflows.All(row => S(row, "id") != id)) workflow.Items.Add(new ComboBoxItem { Tag = id, Content = id + L("（当前不可用）", " (unavailable)") });
+        workflow.SelectedItem = workflow.Items.Cast<ComboBoxItem>().FirstOrDefault(item => (string)item.Tag == S(draft, "workflow_template_id"));
+        workflow.SelectionChanged += (_, _) => { if (workflow.SelectedItem is ComboBoxItem item) { draft["workflow_template_id"] = (string)item.Tag; LockConfirmation(); } };
+        choices.Add(workflow); var workflowField = Field("quick_actions.workflow", workflow); Grid.SetColumn(workflowField, 1); fields.Children.Add(workflowField);
+        fields.SizeChanged += (_, e) => { var narrow = NativeSettingsLayout.DefinitionFieldsStack(XamlRoot?.Size.Width ?? e.NewSize.Width); fields.RowSpacing = narrow ? 12 : 0; Grid.SetColumnSpan(nameField, narrow ? 2 : 1); Grid.SetColumn(workflowField, narrow ? 0 : 1); Grid.SetRow(workflowField, narrow ? 1 : 0); Grid.SetColumnSpan(workflowField, narrow ? 2 : 1); };
+        body.Children.Add(fields);
+        var description = new TextBox { Text = S(draft, "description"), IsEnabled = !B(draft, "builtin"), CornerRadius = new CornerRadius(8), Background = Design.Brush("bg-input") };
+        description.TextChanged += (_, _) => { draft["description"] = description.Text; LockConfirmation(); }; textMenus.Register(description); body.Children.Add(Field("quick_actions.description", description));
+        var enabled = DefinitionCheck(T("quick_actions.enabled"), B(draft, "enabled"), 16);
+        enabled.Content = Design.Text(T("quick_actions.enabled"), 12);
+        enabled.Checked += (_, _) => { draft["enabled"] = true; LockConfirmation(); }; enabled.Unchecked += (_, _) => { draft["enabled"] = false; LockConfirmation(); }; body.Children.Add(enabled);
+        var actions = new NativeActionWrap { RightAligned = true };
+        actions.Children.Add(Button(T("settings.cancel"), CancelDefinitionEdit));
+        quickActionSave = Button(T("settings.save"), async () => { if (await model.SaveAsync()) await Reload(); }); Design.ActionButton(quickActionSave, primary: true);
+        var save = quickActionSave;
+        save.Resources["ButtonForegroundDisabled"] = save.Foreground; save.Resources["ButtonBackgroundDisabled"] = save.Background;
+        save.Resources["ButtonBorderBrushDisabled"] = save.BorderBrush;
+        save.IsEnabledChanged += (_, _) => save.Opacity = save.IsEnabled ? 1 : .55;
+        actions.Children.Add(save); body.Children.Add(actions);
+        var card = Design.Card(body); card.Padding = new Thickness(14); card.CornerRadius = new CornerRadius(10); card.BorderBrush = Design.Brush("border-strong"); Form.Children.Add(card); Design.ApplyTypography(card);
+    }
     private void Specialists()
     {
-        Form.Children.Add(Button("添加专家", () => { EditSpecialist(NativeWorkflowDrafts.Specialist()); return Task.CompletedTask; }));
+        if (model.Draft is { } draft) { SpecialistForm(draft); return; }
+        DefinitionListLayout();
         var rows = Rows(model.Values["list_specialists"]).ToArray();
-        if (rows.Length == 0) Results.Children.Add(Mute("尚无专家，可添加配置。"));
-        foreach (var row in rows)
+        var count = new Border { Child = Design.Text($"{T("settings.nav.specialists")} ({rows.Length})", 13), BorderBrush = Design.Brush("border"), BorderThickness = new Thickness(1),
+            Background = Design.Brush("bg-elev"), CornerRadius = new CornerRadius(8), Padding = new Thickness(10, 6, 10, 6), HorizontalAlignment = HorizontalAlignment.Left };
+        Form.Children.Add(QuickActionRow(count, SpecialistAddMenu(), 380));
+        SpecialistTransferNotice(Form);
+        foreach (var builtin in new[] { true, false })
         {
-            var card = Card(S(row, "name") + (B(row, "builtin") ? " · 内置" : ""));
-            card.Children.Add(Mute(S(row, "description")));
-            card.Children.Add(Button("编辑", () => { EditSpecialist(row); return Task.CompletedTask; }));
-            card.Children.Add(Button("复制", () => { EditSpecialist(NativeWorkflowDrafts.Copy(row)); return Task.CompletedTask; }));
-            if (!B(row, "builtin")) Action(card, "删除专家", "remove_specialist", new() { ["id"] = S(row, "id") }, true);
+            var group = new StackPanel { Spacing = 0 }; var caption = T(builtin ? "specialists.builtin" : "specialists.custom");
+            var label = Design.Text(Design.Localization.Locale == "en" ? caption.ToUpperInvariant() : caption, 11);
+            label.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold; label.CharacterSpacing = 60;
+            label.Foreground = Design.Brush("text-faint"); label.Margin = new Thickness(2, builtin ? 16 : 20, 0, 18); group.Children.Add(label);
+            var list = new StackPanel(); group.Children.Add(new Border { Child = list, BorderBrush = Design.Brush("border"), BorderThickness = new Thickness(0, 1, 0, 0) });
+            var members = rows.Where(row => B(row, "builtin") == builtin).ToArray();
+            foreach (var row in members)
+            {
+                var content = new Grid { ColumnSpacing = 14, MinHeight = 40 };
+                content.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); content.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+                var copy = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
+                var title = DefinitionLeading(Design.Text(S(row, "name"), 14), 1.35); title.FontWeight = Microsoft.UI.Text.FontWeights.Medium; copy.Children.Add(title);
+                if (S(row, "description").Length > 0) { var description = DefinitionLeading(Design.Text(S(row, "description"), 12), 1.4); description.Foreground = Design.Brush("text-faint"); description.TextWrapping = TextWrapping.NoWrap; description.TextTrimming = TextTrimming.CharacterEllipsis; copy.Children.Add(description); }
+                content.Children.Add(copy); var arrow = Design.Icon("chevron-right", 14, Design.ColorText("text-faint")); Grid.SetColumn(arrow, 1); content.Children.Add(arrow);
+                var edit = Button(L("编辑专家：", "Edit specialist: ") + S(row, "name"), () => { EditSpecialist(row); return Task.CompletedTask; });
+                edit.Content = content; Design.QuietButton(edit); edit.HorizontalAlignment = edit.HorizontalContentAlignment = HorizontalAlignment.Stretch; edit.Padding = new Thickness(2, 13, 2, 13); edit.CornerRadius = new CornerRadius(0);
+                edit.Resources["ButtonBackgroundPointerOver"] = Design.Brush("bg-elev");
+                var line = new Grid(); line.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); line.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); line.Children.Add(edit);
+                var frame = new Border { Child = line, Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderBrush = Design.Brush("border"), BorderThickness = new Thickness(0, 0, 0, ReferenceEquals(row, members[^1]) ? 0 : 1) };
+                if (!builtin)
+                {
+                    var remove = DefinitionToolButton(T("specialists.remove") + ": " + S(row, "name"), "close", destructive: true);
+                    remove.Click += (_, _) => Confirm(L("删除专家？此操作不可撤销。", "Remove this specialist? This cannot be undone."), () => _ = Run("remove_specialist", new() { ["id"] = S(row, "id") }));
+                    var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+                    var export = SpecialistExportButton(row, iconOnly: true); StyleDefinitionToolButton(export, "download");
+                    actions.Children.Add(export); actions.Children.Add(remove); RevealDefinitionActions(frame, [export, remove]);
+                    Grid.SetColumn(actions, 1); line.Children.Add(actions);
+                }
+                list.Children.Add(frame);
+            }
+            Results.Children.Add(group);
         }
+        // The edit form and collection share a scroller. Returning from its footer
+        // must not leave the collection's count and Add action above the viewport.
+        BodyScroll.ChangeView(null, 0, null, true);
     }
-    private void EditSpecialist(JsonObject source) => Editor("专家", source, "save_specialist_cmd", "spec", d =>
+    private bool specialistSaved;
+    private string? requestedSpecialist;
+    public void OpenSpecialist(string id)
     {
-        Text(d, "name", "名称"); Text(d, "description", "说明", true); Text(d, "instructions", "系统提示词", true);
-        ReferenceChoice(d, "model_id", "模型", Rows(model.Values["list_models"]), "label", true);
-        Whitelist(d, "skills", "技能白名单"); Whitelist(d, "connectors", "连接器白名单");
-        if (S(d, "id") != "reviewer") return;
-        Form.Children.Add(Mute("审核后端：保留现有配置可继续使用旧版模型绑定；选择其他后端后按配置执行。"));
-        var backend = d["review_backend"] as JsonObject;
-        var profile = new TextBox { Header = "模型 / ACP 配置 ID", Text = S(backend, "profile_id"),
-            Visibility = backend != null && S(backend, "kind") != "follow_session" ? Visibility.Visible : Visibility.Collapsed };
-        var originalBackend = backend?.DeepClone();
-        Choice(Form, "审核后端", S(backend, "kind"), [("", "保留现有配置"), ("follow_session", "跟随会话"), ("http_model", "HTTP 模型"), ("acp_agent", "ACP 智能体")], kind =>
-        {
-            d["review_backend"] = kind.Length == 0 ? originalBackend?.DeepClone() : kind == "follow_session"
-                ? new JsonObject { ["kind"] = kind } : new JsonObject { ["kind"] = kind, ["profile_id"] = profile.Text };
-            profile.Visibility = kind is "http_model" or "acp_agent" ? Visibility.Visible : Visibility.Collapsed;
-        });
-        profile.TextChanged += (_, _) => { if (d["review_backend"] is JsonObject current && S(current, "kind") is "http_model" or "acp_agent") current["profile_id"] = profile.Text; };
-        Form.Children.Add(profile);
+        if (section != "specialists" || model.Closed) return;
+        requestedSpecialist = id; OpenRequestedSpecialist();
+    }
+    private void OpenRequestedSpecialist()
+    {
+        if (requestedSpecialist is not { } id || model.Busy || model.Values["list_specialists"] is not JsonArray) return;
+        requestedSpecialist = null;
+        if (Rows(model.Values["list_specialists"]).FirstOrDefault(s => S(s, "id") == id) is { } specialist) EditSpecialist(specialist);
+    }
+    private void EditSpecialist(JsonObject source, bool saved = false) => RequestLeave(() =>
+    {
+        specialistSaved = saved; model.Edit(source, "save_specialist_cmd", "spec"); invalidFields.Clear(); Render(); BodyScroll.ChangeView(null, 0, null, true);
     });
+    private void SpecialistForm(JsonObject draft)
+    {
+        HeaderActions.Children.Clear();
+        Body.Padding = new Thickness(24, 16, 24, 32);
+        SettingsBreadcrumb(T("settings.nav.specialists"), S(draft, "name").Length > 0 ? S(draft, "name") : T("specialists.add"), () => RequestLeave(() => { model.Discard(); Render(); }));
+        var original = (JsonObject)draft.DeepClone();
+        var body = new StackPanel { Spacing = 12 };
+        void Field(string label, Control control)
+        {
+            var group = new StackPanel { Spacing = 5 };
+            var caption = DefinitionLeading(Design.Text(label, 12), 1.2); caption.Foreground = Design.Brush("text-muted"); caption.FontWeight = Microsoft.UI.Text.FontWeights.Medium;
+            group.Children.Add(caption); group.Children.Add(control); body.Children.Add(group);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(control, label);
+        }
+        TextBox Input(string key, string label, double height = 0, bool readOnly = false)
+        {
+            var multiline = height > 0;
+            var input = new TextBox { AcceptsReturn = multiline, Text = S(draft, key), TextWrapping = multiline ? TextWrapping.Wrap : TextWrapping.NoWrap,
+                IsReadOnly = readOnly, CornerRadius = new CornerRadius(multiline ? 0 : 8), Background = Design.Brush("bg-input"),
+                BorderBrush = Design.Brush("border-strong"), BorderThickness = new Thickness(1), MinHeight = multiline ? 0 : 36,
+                Padding = multiline ? new Thickness(2, 1, 2, 1) : new Thickness(11, 8, 11, 8) };
+            Design.BindTypography(input, size: multiline ? 12 : 14);
+            if (multiline) { input.Height = Design.FontSize(height); ScrollViewer.SetVerticalScrollBarVisibility(input, ScrollBarVisibility.Auto); }
+            if (readOnly) { input.Background = Design.Brush("bg-sunken"); input.Foreground = Design.Brush("text-muted"); }
+            input.TextChanged += (_, _) => { if (!readOnly) draft[key] = input.Text; LockConfirmation(); };
+            textMenus.Register(input); Field(label, input); return input;
+        }
+        Input("name", T("specialists.name")); Input("description", T("specialists.description"), 34); Input("instructions", T("specialists.instructions"), 90, B(draft, "builtin"));
+        body.Children.Add(SpecialistHint(T(B(draft, "builtin") ? "specialists.builtin_locked" : "specialists.instructions.hint")));
+        var options = NativeSpecialists.BackendOptions(draft, Rows(model.Values["list_models"]), Rows(model.Values["list_acp_agents"]), Design.Localization);
+        var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, CornerRadius = new CornerRadius(8), Background = Design.Brush("bg-input"),
+            BorderBrush = Design.Brush("border-strong"), BorderThickness = new Thickness(1), MinHeight = 36, Padding = new Thickness(11, 8, 0, 8) };
+        foreach (var option in options) combo.Items.Add(new ComboBoxItem { Tag = option.Id, Content = option.Label, IsEnabled = option.Available });
+        combo.SelectedItem = combo.Items.Cast<ComboBoxItem>().FirstOrDefault(item => (string)item.Tag == NativeSpecialists.BackendKey(draft));
+        string BackendLabel(string label) => Design.Localization.Format("specialists.reviewer.selected_backend", ("backend", label));
+        var backendLabel = SpecialistHint(BackendLabel(options.First(o => o.Id == NativeSpecialists.BackendKey(draft)).Label));
+        combo.SelectionChanged += (_, _) =>
+        {
+            if (combo.SelectedItem is not ComboBoxItem item) return;
+            NativeSpecialists.SelectBackend(draft, (string)item.Tag, original); backendLabel.Text = BackendLabel(item.Content?.ToString() ?? ""); LockConfirmation();
+        };
+        choices.Add(combo); Field(T("specialists.model"), combo);
+        if (S(draft, "id") == "reviewer") { body.Children.Add(backendLabel); body.Children.Add(SpecialistHint(T("specialists.reviewer.test_hint"))); }
+        SpecialistSkills(body, draft);
+        if (specialistSaved) body.Children.Add(SpecialistHint(T("specialists.saved")));
+        var actions = new NativeActionWrap { RightAligned = true };
+        if (!B(draft, "builtin") && Rows(model.Values["list_specialists"]).FirstOrDefault(row => S(row, "id") == S(draft, "id") && !B(row, "builtin")) is { } exportSaved)
+            actions.Children.Add(SpecialistExportButton(exportSaved, iconOnly: false));
+        SpecialistTransferNotice(body);
+        if (S(draft, "id") == "reviewer")
+        {
+            reviewerFeedback = SpecialistHint("");
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetLiveSetting(reviewerFeedback, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
+            body.Children.Add(reviewerFeedback);
+            reviewerTest = Button(T("specialists.reviewer.test"), async () => { await model.TestReviewerAsync(); });
+            actions.Children.Add(reviewerTest);
+        }
+        actions.Children.Add(Button(T("settings.cancel"), CancelDefinitionEdit));
+        specialistSave = Button(T("settings.save"), async () =>
+        {
+            var keepOpen = S(draft, "id") == "reviewer";
+            if (!await model.SaveAsync()) return;
+            await Reload();
+            if (keepOpen && !model.Closed && model.Error == null && Rows(model.Values["list_specialists"]).FirstOrDefault(s => S(s, "id") == "reviewer") is { } saved)
+                EditSpecialist(saved, saved: true);
+        }); Design.ActionButton(specialistSave, primary: true); actions.Children.Add(specialistSave);
+        foreach (var action in actions.Children.OfType<Button>()) { StyleModelButton(action, primary: action == specialistSave); action.MinWidth = 84; }
+        var content = new StackPanel { Spacing = 10 }; content.Children.Add(body);
+        content.Children.Add(new Border { Child = actions, BorderBrush = Design.Brush("border"), BorderThickness = new Thickness(0, 1, 0, 0), Padding = new Thickness(0, 14, 0, 0), Margin = new Thickness(0, 4, 0, 0) });
+        var card = Design.Card(content); card.Background = Design.Brush("bg-sunken"); card.Padding = new Thickness(16, 14, 16, 14); card.CornerRadius = new CornerRadius(8); card.Margin = new Thickness(0, 4, 0, 0); Form.Children.Add(card); Design.ApplyTypography(card);
+    }
+    private void SpecialistSkills(StackPanel target, JsonObject draft)
+    {
+        target.Children.Add(Design.Text(T("specialists.skills"), 14));
+        var inherit = DefinitionCheck(T("specialists.inherit"), draft["skills"] == null, 16); inherit.Content = Design.Text(T("specialists.inherit"), 12); target.Children.Add(inherit);
+        var group = new StackPanel { Spacing = 12 }; target.Children.Add(group);
+        group.Children.Add(SpecialistHint(T("specialists.skills.whitelist_hint")));
+        var picker = new StackPanel { Spacing = 8 }; group.Children.Add(picker);
+        var chips = new NativeActionWrap { Gap = 5 }; picker.Children.Add(chips);
+        var search = new TextBox { PlaceholderText = T("specialists.skills.search"), CornerRadius = new CornerRadius(6), Background = Design.Brush("bg-app"),
+            BorderBrush = Design.Brush("border-strong"), BorderThickness = new Thickness(1), Padding = new Thickness(10, 8, 10, 8), MinHeight = 0 };
+        Design.BindTypography(search, size: 12.5); textMenus.Register(search); picker.Children.Add(search);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(search, T("specialists.skills.search"));
+        var results = new StackPanel();
+        picker.Children.Add(new Border { Child = new ScrollViewer { Content = results, MaxHeight = 220, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled },
+            Background = Design.Brush("bg-sunken"), BorderBrush = Design.Brush("border"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6) });
+        var catalog = Rows(model.Values["list_skills"]).ToArray();
+        var checks = new Dictionary<string, CheckBox>(StringComparer.Ordinal); var syncing = false;
+        void RefreshSelection()
+        {
+            group.Visibility = draft["skills"] == null ? Visibility.Collapsed : Visibility.Visible;
+            chips.Children.Clear();
+            var selected = (draft["skills"] as JsonArray ?? []).Select(n => n?.GetValue<string>() ?? "").Distinct(StringComparer.Ordinal).ToArray();
+            foreach (var name in selected)
+            {
+                var label = Design.Localization.Format("specialists.skills.remove", ("skill", name));
+                var remove = Button(label, () => { NativeSpecialists.SetSkill(draft, name, false); RefreshSelection(); LockConfirmation(); return Task.CompletedTask; });
+                var copy = new Grid { ColumnSpacing = 5 }; copy.ColumnDefinitions.Add(new()); copy.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+                var caption = DefinitionLeading(Design.Text(name, 12), 1.2); caption.TextWrapping = TextWrapping.NoWrap; caption.TextTrimming = TextTrimming.CharacterEllipsis; caption.Foreground = Design.Brush("clay-strong"); copy.Children.Add(caption);
+                var icon = Design.Icon("close", 12, Design.ColorText("clay-strong")); Grid.SetColumn(icon, 1); copy.Children.Add(icon); remove.Content = copy;
+                remove.HorizontalContentAlignment = HorizontalAlignment.Stretch; remove.MinHeight = 0; remove.Padding = new Thickness(9, 5, 9, 5);
+                remove.Background = Design.Brush("clay-soft"); remove.BorderBrush = new SolidColorBrush(Mix(Design.Brush("border").Color, Design.Brush("clay").Color, .28));
+                remove.Resources["ButtonBackgroundPointerOver"] = new SolidColorBrush(Mix(Design.Brush("bg-elev").Color, Design.Brush("clay").Color, .14)); remove.Resources["ButtonBorderBrushPointerOver"] = Design.Brush("clay");
+                remove.SizeChanged += (_, e) => remove.CornerRadius = new CornerRadius(e.NewSize.Height / 2);
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(remove, label); ToolTipService.SetToolTip(remove, label); chips.Children.Add(remove);
+            }
+            chips.Visibility = selected.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+            // Updating selected chips must not replace the focused result or reset its scroll position.
+            syncing = true; foreach (var (name, check) in checks) check.IsChecked = selected.Contains(name, StringComparer.Ordinal); syncing = false;
+            Design.ApplyTypography(chips);
+        }
+        void Draw()
+        {
+            results.Children.Clear(); checks.Clear();
+            var matches = NativeSpecialists.SearchSkills(catalog, search.Text);
+            if (matches.Count == 0)
+                results.Children.Add(new Border { Padding = new Thickness(12, 10, 12, 10), Child = SpecialistHint(string.IsNullOrWhiteSpace(search.Text)
+                    ? Design.Localization.Format("specialists.skills.search_hint", ("count", catalog.Length.ToString())) : T("specialists.skills.no_results")) });
+            foreach (var skill in matches)
+            {
+                var name = S(skill, "name"); var check = DefinitionCheck(name, false, 13); check.Padding = new Thickness(9, 0, 0, 0);
+                check.HorizontalAlignment = check.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+                var copy = new Grid { ColumnSpacing = 9 }; copy.ColumnDefinitions.Add(new()); copy.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+                var caption = DefinitionLeading(Design.Text(name, 12.5), 1.4); caption.TextWrapping = TextWrapping.NoWrap; caption.TextTrimming = TextTrimming.CharacterEllipsis; caption.Foreground = Design.Brush("text-muted"); copy.Children.Add(caption);
+                var scope = DefinitionLeading(Design.Text(S(skill, "scope"), 10), 1.4); scope.Foreground = Design.Brush("text-faint");
+                var badge = new Border { Child = scope, Padding = new Thickness(5, 2, 5, 2), Background = Design.Brush("bg-elev"), VerticalAlignment = VerticalAlignment.Center };
+                badge.SizeChanged += (_, e) => badge.CornerRadius = new CornerRadius(e.NewSize.Height / 2); Grid.SetColumn(badge, 1); copy.Children.Add(badge); check.Content = copy;
+                ToolTipService.SetToolTip(check, S(skill, "description"));
+                void Changed(bool selected) { if (syncing) return; NativeSpecialists.SetSkill(draft, name, selected); RefreshSelection(); LockConfirmation(); }
+                check.Checked += (_, _) => Changed(true); check.Unchecked += (_, _) => Changed(false); checks[name] = check;
+                var frame = new Border { Child = check, Padding = new Thickness(10, 8, 10, 8), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderBrush = Design.Brush("border"), BorderThickness = new Thickness(0, 0, 0, ReferenceEquals(skill, matches[^1]) ? 0 : 1) };
+                frame.PointerEntered += (_, _) => { frame.Background = Design.Brush("surface-hover"); caption.Foreground = Design.Brush("text"); };
+                frame.PointerExited += (_, _) => { frame.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent); caption.Foreground = Design.Brush("text-muted"); };
+                results.Children.Add(frame);
+            }
+            RefreshSelection();
+            Design.ApplyTypography(picker);
+        }
+        inherit.Checked += (_, _) => { draft["skills"] = null; Draw(); LockConfirmation(); };
+        inherit.Unchecked += (_, _) => { draft["skills"] = new JsonArray(); Draw(); LockConfirmation(); };
+        search.TextChanged += (_, _) => Draw(); Draw();
+    }
+    private TextBlock SpecialistHint(string text)
+    {
+        var hint = DefinitionLeading(Design.Text(text, 12), 1.4); hint.Foreground = Design.Brush("text-faint"); return hint;
+    }
+    private CheckBox DefinitionCheck(string label, bool selected, double size) => PreferenceCheckBox.Create(Design, label, selected, size);
+    private Button? reviewerTest;
+    private TextBlock? reviewerFeedback;
+    private void UpdateReviewerTest()
+    {
+        if (reviewerTest == null || reviewerFeedback == null) return;
+        reviewerTest.IsEnabled = model.CanTestReviewer && pendingConfirmation == null;
+        reviewerFeedback.Text = model.ReviewerTesting ? T("specialists.reviewer.testing")
+            : model.ReviewerReport is { } report ? NativeSpecialists.ReviewerResult(report, Design.Localization)
+            : model.ReviewerTestAttempted && model.Error != null ? Design.Localization.Format("specialists.reviewer.test_failed", ("msg", model.Error))
+            : !projectScoped ? L("请先选择项目，以测试 Reviewer 后端。", "Select a project to test the Reviewer backend.") : "";
+        reviewerFeedback.Visibility = reviewerFeedback.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+    }
+    private Task CancelDefinitionEdit()
+    {
+        // The explicit Cancel button discards only this local form, like WebView.
+        // Navigating elsewhere and Escape still use the window's discard stack.
+        if (!Busy) { model.Discard(); invalidFields.Clear(); Render(); }
+        return Task.CompletedTask;
+    }
     private void ReferenceChoice(JsonObject draft, string key, string title, IEnumerable<JsonObject> rows, string labelKey, bool allowDefault)
     {
         var options = rows.Select(row => (S(row, "id"), S(row, labelKey) is { Length: > 0 } label ? label : S(row, "model"))).ToList();
