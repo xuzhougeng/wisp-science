@@ -19,6 +19,7 @@ parity-ledger` 检查这一点（`scripts/check_native_parity.py`）。
 
 | WebView 改动 | SwiftUI 状态 | 说明 |
 | --- | --- | --- |
+| 示例只读会话仅保留复制消息；能力弹窗每次打开重新读取当前工作区快照 | 待补 | WinUI 示例已限制为复制，本轮统一 WebView 并修正 WinUI 本地路径样式、右栏启动器、空状态和子智能体模型选择。SwiftUI 仍需核对示例消息操作与能力快照刷新；资源同步不代表 macOS 已验证。 |
 | 右侧面板按对话分别记忆：每个对话有自己的开关状态、工具标签和当前标签，切换对话时恢复该对话的右侧栏；新对话的右侧栏默认关闭（未开对话时打开的右侧栏归属于由此新建的对话）。切换对话不再自动切到「产物」 | 待补 | WebView 内存中按 frame id 暂存（`RightPaneState` / `right_pane_after_switch`），与中间标签、侧边对话的暂存方式一致；SwiftUI 的检查器需按对话保存同样的状态 |
 | 右侧「文件」面板：从访达拖入文件时读取系统拖拽剪贴板中的路径并复制到当前目录；读不到路径时提示改用「上传」（#1674） | 不需要 | 修的是 WebView 主窗口关闭 Tauri 原生拖拽后 DOM drop 拿不到路径；新命令 `read_drag_file_paths`，文案键 `files.drop_paths_unavailable`。SwiftUI 直接接收 AppKit 拖拽，不受影响 |
 | 右侧面板：关闭后再打开，恢复上次打开的工具标签和当前标签，只有没有打开任何工具时才显示导航首页；切换会话时只在「产物」已打开时才切到它 | 待补 | WebView 启动器的重开行为（`right_tab_to_reopen`）；SwiftUI 尚无导航首页，补导航首页时一并按此行为实现 |

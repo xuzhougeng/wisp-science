@@ -33,6 +33,7 @@ ICONS += ("stop",)
 ICONS += ("history",)
 ICONS += ("undo-compact",)
 ICONS += ("type-increase", "type-decrease", "code-increase", "code-decrease")
+ICONS += ("compass", "swarm")
 # WebView-only settings sections the native preview has no page for yet.
 WEBVIEW_ONLY_SECTIONS = set()
 COLORS = ("bg-app", "bg-elev", "bg-sunken", "bg-panel", "bg-input", "surface-hover", "text", "text-muted", "text-faint", "border", "border-strong", "clay", "clay-strong", "clay-soft", "ok", "warn", "err", "on-clay")

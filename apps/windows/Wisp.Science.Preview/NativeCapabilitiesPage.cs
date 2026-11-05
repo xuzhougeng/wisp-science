@@ -98,7 +98,6 @@ internal sealed class NativeCapabilitiesPage : WorkspaceSheet
         }
     }
     private bool started;
-    protected override double ScrollGutter => 0; // The overlay scrollbar leaves room for four 120-DIP tiles.
     protected override double ModalHeightLimit(double viewportHeight) => Math.Min(640, viewportHeight * .8);
     private void RenderEnvironment() => PopulateLocalEnvironment(environmentRows, environment, rowSpacing: 6);
     private void UpdateSetup() => start.IsEnabled = conversation?.CanStartPromptSession(projectId) == true;

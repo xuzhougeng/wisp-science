@@ -23,6 +23,12 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
     private readonly TextBox filter = new() { PlaceholderText = "筛选名称" };
     private readonly StackPanel body = new() { Spacing = 8 };
     private readonly ScrollViewer scroll = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+    private readonly ContentControl panelEmpty = new() { Visibility = Visibility.Collapsed,
+        HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
+    private readonly ContentControl sideChatHost = new() { Visibility = Visibility.Collapsed,
+        HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch };
+    private readonly Action? manageWorkflows;
+    private readonly ContentControl agentsFooter = new() { Visibility = Visibility.Collapsed, HorizontalContentAlignment = HorizontalAlignment.Stretch };
     private readonly NativePanelViewState viewState = new();
     private NativePanelViewState.ReadingState? readingState;
     private bool syncingFilter;
@@ -100,10 +106,12 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
         Func<Task<IReadOnlyList<string>>>? pickFiles = null, Func<string, Task<string?>>? pickDownload = null,
         Action<WorkspaceArtifactModel, string>? openCenter = null, Func<string, bool>? insertArtifactDraft = null,
         WorkspaceMemosModel? memos = null, Func<string, bool>? insertMemo = null, Func<string>? projectRoot = null,
-        Action? manageEnvironments = null, Func<string, Button, bool, Task>? openContextRuntimes = null, Action<NativeRun>? useRunInPublication = null)
+        Action? manageEnvironments = null, Func<string, Button, bool, Task>? openContextRuntimes = null, Action<NativeRun>? useRunInPublication = null,
+        Action? manageWorkflows = null)
     {
         this.openCenter = openCenter; this.insertArtifactDraft = insertArtifactDraft;
         this.manageEnvironments = manageEnvironments;
+        this.manageWorkflows = manageWorkflows;
         this.openContextRuntimes = openContextRuntimes;
         this.useRunInPublication = useRunInPublication;
         this.projectRoot = projectRoot ?? (() => "");
@@ -127,6 +135,7 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         root.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         InitializeGenerated(root);
         tabStrip = new(model.Tabs, design, Label, ShowTabAsync,
             () => tabChanged?.Invoke(model.Tabs.Selected, model.Tabs.Saved), close);
@@ -164,10 +173,14 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
         scroll.LayoutUpdated += RestoreScroll;
         Grid.SetRow(scroll, 2); root.Children.Add(scroll);
         Grid.SetRow(runsEmpty, 2); root.Children.Add(runsEmpty);
+        Grid.SetRow(panelEmpty, 2); root.Children.Add(panelEmpty);
+        Grid.SetRow(sideChatHost, 1); Grid.SetRowSpan(sideChatHost, 2); root.Children.Add(sideChatHost);
+        Grid.SetRow(agentsFooter, 3); root.Children.Add(agentsFooter);
         if (memos != null)
         {
             memosPane = new(memos, design, insertMemo); Grid.SetRow(memosPane, 2); root.Children.Add(memosPane);
         }
+        InitializeLauncher(root);
         Content = root;
         _ = StartAsync();
     }
@@ -204,7 +217,17 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
     {
         if (disposed) return;
         runsEmpty.Visibility = Visibility.Collapsed;
+        panelEmpty.Visibility = sideChatHost.Visibility = agentsFooter.Visibility = Visibility.Collapsed;
         sourceSelectionActions?.Dispose(); sourceSelectionActions = null;
+        var showingLauncher = model.Tabs.Selected == NativePanelTabs.Home;
+        launcherHost.Visibility = showingLauncher ? Visibility.Visible : Visibility.Collapsed;
+        tabStrip.Visibility = showingLauncher ? Visibility.Collapsed : Visibility.Visible;
+        if (showingLauncher)
+        {
+            generatedHost.Visibility = panelFilters.Visibility = scroll.Visibility = Visibility.Collapsed;
+            if (memosPane != null) memosPane.Visibility = Visibility.Collapsed;
+            RenderLauncher(); return;
+        }
         var showingGenerated = model.Tabs.Selected == "artifacts";
         tabStrip.ViewModes.Visibility = showingGenerated ? Visibility.Visible : Visibility.Collapsed;
         generatedHost.Visibility = showingGenerated ? Visibility.Visible : Visibility.Collapsed;
@@ -220,6 +243,11 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
         panelFilters.Visibility = scroll.Visibility = showingMemos ? Visibility.Collapsed : Visibility.Visible;
         if (memosPane != null) memosPane.Visibility = showingMemos ? Visibility.Visible : Visibility.Collapsed;
         if (showingMemos) { memosPane!.Activate(); return; }
+        if (model.Tabs.Selected == "sidechat")
+        {
+            panelFilters.Visibility = scroll.Visibility = Visibility.Collapsed;
+            sideChatHost.Visibility = Visibility.Visible; RenderSideChat(); design.ApplyTypography(this); return;
+        }
         restoreScroll = true;
         readingState = viewState.For(model.Tabs.Selected, model.FileContext + "|" + model.Path);
         syncingFilter = true;
@@ -235,12 +263,12 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
         if (model.HasPendingFileTransfers && model.FileTransferReadError == null) transferTimer.Start(); else transferTimer.Stop();
         var runsTab = model.Tabs.Selected == "runs";
         var hostsTab = model.Tabs.Selected == "hosts";
-        panelFilters.Visibility = runsTab || hostsTab ? Visibility.Collapsed : Visibility.Visible;
+        panelFilters.Visibility = runsTab || hostsTab || model.Tabs.Selected == "agents" ? Visibility.Collapsed : Visibility.Visible;
         scroll.Margin = runsTab || hostsTab ? new Thickness(12) : new Thickness(20, 0, 20, 12);
         scroll.VerticalContentAlignment = VerticalAlignment.Stretch;
         body.HorizontalAlignment = HorizontalAlignment.Stretch;
         body.Spacing = runsTab ? 14 : body.Spacing;
-        if (Content is Grid panelRoot) panelRoot.Background = design.Brush(hostsTab || runsTab && !model.SessionRuns.Empty ? "bg-sunken" : "bg-elev");
+        if (Content is Grid panelRoot) panelRoot.Background = design.Brush(hostsTab || model.Tabs.Selected == "agents" || runsTab && !model.SessionRuns.Empty ? "bg-sunken" : "bg-elev");
         if (runReview?.Visible == true && runsTab)
         { RenderRunReview(); design.ApplyTypography(this); return; }
         if (model.Loading) body.Children.Add(new ProgressBar { IsIndeterminate = true, Height = 3 });
@@ -257,7 +285,7 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
             foreach (var row in NativeProvenanceRow.Collect(Transcript?.Items ?? []).Where(item => item.Matches(query)))
             {
                 var detail = new StackPanel { Spacing = 8 };
-                foreach (var (label, value) in new[] { ("输入", row.Input), ("输出", row.Output) })
+                foreach (var (label, value) in new[] { (design.L("输入", "Input"), row.Input), (design.L("输出", "Output"), row.Output) })
                 {
                     if (value.Length == 0) continue;
                     detail.Children.Add(Mute(label));
@@ -269,10 +297,12 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
                 AutomationProperties.SetName(disclosure, row.Name); body.Children.Add(disclosure);
             }
         }
-        else if (model.Tabs.Selected == "sidechat") RenderSideChat();
-        if (!runsTab && body.Children.Count == 0 && !model.Loading && model.Error == null)
-            body.Children.Add(design.EmptyState(TabIcon(model.Tabs.Selected), query.Length > 0 ? "没有匹配的记录" : "暂无" + Label(model.Tabs.Selected),
-                query.Length > 0 ? "尝试其他关键词，或清空筛选查看全部记录。" : "会话中的相关内容会显示在这里。"));
+        if (model.Tabs.Selected is not ("files" or "runs") && body.Children.Count == 0 && !model.Loading && model.Error == null)
+        {
+            panelEmpty.Content = new NativePanelEmptyState(design, model.Tabs.Selected, query.Length > 0);
+            panelEmpty.Visibility = Visibility.Visible; scroll.Visibility = Visibility.Collapsed;
+            if (query.Length == 0) panelFilters.Visibility = Visibility.Collapsed;
+        }
         RenderPreview();
         design.ApplyTypography(this);
     }
@@ -376,13 +406,29 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
 
     private void RenderAgents(string query)
     {
+        if (manageWorkflows != null)
+        {
+            var manage = design.ToolButton(design.T("agents.manage_workflows"), "branch");
+            var label = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            label.Children.Add(design.Icon("branch", 14)); label.Children.Add(design.Text(design.T("agents.manage_workflows"), 12));
+            manage.Content = label; manage.HorizontalAlignment = HorizontalAlignment.Stretch;
+            manage.Click += (_, _) => manageWorkflows();
+            agentsFooter.Content = new Border { Child = manage, Padding = new(12, 8, 12, 8), BorderThickness = new(0, 1, 0, 0), BorderBrush = design.Brush("border") };
+            agentsFooter.Visibility = Visibility.Visible;
+        }
+        if (model.Agents.Length == 0)
+        {
+            var empty = design.Text(design.T("agents.activity.empty"), 12, "text-faint");
+            empty.MaxWidth = 260; empty.TextAlignment = TextAlignment.Center; empty.HorizontalAlignment = HorizontalAlignment.Center;
+            empty.Margin = new(12, 24, 12, 24); body.Children.Add(empty); return;
+        }
         // Explanation card mirrors the macOS alignment: delegation is opt-in and
         // never implies auto-approval; approval actions below stay version-checked.
         var intro = new StackPanel { Spacing = 4, Padding = new Thickness(10), Background = design.Brush("bg-elev"), CornerRadius = new CornerRadius(8) };
-        intro.Children.Add(new TextBlock { Text = "Agent 工作流", FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        intro.Children.Add(new TextBlock { Text = design.L("Agent 工作流", "Agent workflows"), FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         intro.Children.Add(new TextBlock
         {
-            Text = "工作流由会话中的 Agent 创建。需要确认的工作流必须先批准；开启委派不会自动批准任何操作。",
+            Text = design.L("工作流由会话中的 Agent 创建。需要确认的工作流必须先批准；开启委派不会自动批准任何操作。", "The conversation's agent creates workflows. Workflows requiring confirmation must be approved first; delegation does not automatically approve operations."),
             FontSize = 11, Foreground = design.Brush("text-muted"), TextWrapping = TextWrapping.Wrap
         });
         body.Children.Add(intro);
@@ -391,12 +437,12 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
             var delegationCard = new StackPanel { Spacing = 4, Padding = new Thickness(10), Background = design.Brush(delegation ? "bg-elev" : "bg-sunken"), CornerRadius = new CornerRadius(8) };
             delegationCard.Children.Add(new TextBlock
             {
-                Text = delegation ? "委派已开启：会话可把子任务委派给工作流。" : "委派已关闭：会话不会创建新的委派任务。",
+                Text = delegation ? design.L("委派已开启：会话可把子任务委派给工作流。", "Delegation is on: this conversation can delegate subtasks to workflows.") : design.L("委派已关闭：会话不会创建新的委派任务。", "Delegation is off: this conversation will not create new delegated tasks."),
                 FontSize = 12, TextWrapping = TextWrapping.Wrap
             });
             var toggle = new Button
             {
-                Content = delegation ? "关闭委派" : "开启委派",
+                Content = delegation ? design.L("关闭委派", "Turn off delegation") : design.L("开启委派", "Turn on delegation"),
                 IsEnabled = !model.DelegationBusy && model.Tabs.Selected == "agents"
             };
             toggle.Click += async (_, _) => { await model.SetDelegationAsync(!delegation, lifetime.Token); Render(); };
@@ -407,11 +453,11 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
         {
             var captured = agent;
             var card = new StackPanel { Spacing = 4 };
-            card.Children.Add(Row(captured.Workflow.Name, captured.Workflow.Status + (captured.Workflow.Depth > 0 ? " · 子工作流" : ""), "sparkles"));
+            card.Children.Add(Row(captured.Workflow.Name, captured.Workflow.Status + (captured.Workflow.Depth > 0 ? design.L(" · 子工作流", " · Subworkflow") : ""), "sparkles"));
             if (captured.Workflow.Depth == 0)
             {
                 var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-                foreach (var (label, action) in new (string, NativeAgentAction)[] { ("批准", NativeAgentAction.Approve), ("运行", NativeAgentAction.Run), ("取消", NativeAgentAction.Cancel) })
+                foreach (var (label, action) in new (string, NativeAgentAction)[] { (design.L("批准", "Approve"), NativeAgentAction.Approve), (design.L("运行", "Run"), NativeAgentAction.Run), (design.L("取消", "Cancel"), NativeAgentAction.Cancel) })
                 {
                     var button = new Button { Content = label };
                     button.Click += async (_, _) => { await model.ActAgentAsync(captured, action, lifetime.Token); Render(); };
@@ -421,7 +467,6 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
             }
             body.Children.Add(card);
         }
-        if (model.Agents.Length == 0) body.Children.Add(Mute("这个会话暂无工作流"));
     }
 
     private void RenderNotebook(string query)
@@ -441,7 +486,7 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
             if (captured.Output.Length > 0)
                 card.Children.Add(new Expander
                 {
-                    Header = new TextBlock { Text = "输出", FontSize = 11, Foreground = design.Brush("text-muted") },
+                    Header = new TextBlock { Text = design.L("输出", "Output"), FontSize = 11, Foreground = design.Brush("text-muted") },
                     Content = new TextBox
                     {
                         AcceptsReturn = true, Text = captured.Output, IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
@@ -449,17 +494,16 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
                     },
                     IsExpanded = cell.OutputInitiallyExpanded
                 });
-            var star = new Button { Content = model.NotebookStars.Any(item => item.Matches(captured)) ? "取消收藏" : "收藏代码" };
+            var star = new Button { Content = model.NotebookStars.Any(item => item.Matches(captured)) ? design.L("取消收藏", "Unsave code") : design.L("收藏代码", "Save code") };
             design.QuietButton(star);
             star.Click += async (_, _) => { await model.ToggleNotebookStarAsync(captured, lifetime.Token); Render(); };
             card.Children.Add(star); body.Children.Add(card);
         }
-        if (!NativeNotebookCell.Collect(Transcript?.Items ?? []).Any()) body.Children.Add(design.EmptyState("book", "暂无代码单元", "对话中的代码及运行输出会自动整理到笔记本。"));
     }
 
-    private static string StatusLabel(NativeNotebookCell cell) => cell.Status switch
+    private string StatusLabel(NativeNotebookCell cell) => cell.Status switch
     {
-        "ok" => "执行完成", "error" => "执行出错", "source" => "草稿", _ => "运行中"
+        "ok" => design.L("执行完成", "Completed"), "error" => design.L("执行出错", "Failed"), "source" => design.L("草稿", "Draft"), _ => design.L("运行中", "Running")
     };
 
     private void RenderHighlights(string query)
@@ -469,7 +513,7 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
             var captured = row;
             var card = new StackPanel { Spacing = 4 };
             card.Children.Add(Row(captured.Title, captured.Code, "book"));
-            var remove = new Button { Content = "移除" };
+            var remove = new Button { Content = design.L("移除", "Remove") };
             remove.Click += async (_, _) => { await model.RemoveHighlightAsync(captured.Id, lifetime.Token); Render(); };
             card.Children.Add(remove); body.Children.Add(card);
         }
@@ -477,28 +521,60 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
 
     private void RenderSideChat()
     {
-        if (sideChat is null) { body.Children.Add(Mute("侧聊尚未连接")); return; }
-        var picker = new ComboBox { Header = "侧聊模型", HorizontalAlignment = HorizontalAlignment.Stretch,
-            IsEnabled = !sideChat.Busy && !sideChat.ChangingModel };
+        var root = new Grid { Background = design.Brush("bg-elev") };
+        root.RowDefinitions.Add(new() { Height = GridLength.Auto }); root.RowDefinitions.Add(new()); root.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        sideChatHost.Content = root;
+        var header = new Grid { Padding = new(14, 8, 10, 8) };
+        header.ColumnDefinitions.Add(new()); header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var title = design.Text(design.T("sidechat.title"), 13); title.VerticalAlignment = VerticalAlignment.Center; header.Children.Add(title);
+        var dismiss = design.ToolButton(design.T("sidechat.close"), "close");
+        dismiss.Click += async (_, _) =>
+        {
+            model.Tabs.Remove("sidechat");
+            await ShowTabAsync(model.Tabs.Open.Count == 0 ? NativePanelTabs.Home : model.Tabs.Selected);
+        };
+        Grid.SetColumn(dismiss, 1); header.Children.Add(dismiss); root.Children.Add(header);
+        if (sideChat is null)
+        {
+            var unavailable = Mute(design.L("侧聊尚未连接", "Side chat is not connected yet."));
+            unavailable.Margin = new(18); Grid.SetRow(unavailable, 1); root.Children.Add(unavailable); return;
+        }
+        var history = new StackPanel { Spacing = 14, Padding = new(14) };
+        var messages = new ScrollViewer { Content = history, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        Grid.SetRow(messages, 1); root.Children.Add(messages);
+        if (sideChat.Rows.Count == 0)
+        {
+            messages.Visibility = Visibility.Collapsed;
+            var empty = Mute(design.T("sidechat.empty")); empty.TextAlignment = TextAlignment.Center; empty.MaxWidth = 280;
+            empty.HorizontalAlignment = HorizontalAlignment.Center; empty.VerticalAlignment = VerticalAlignment.Center;
+            Grid.SetRow(empty, 1); root.Children.Add(empty);
+        }
+        foreach (var row in sideChat.Rows)
+        {
+            var question = design.Text(row.Question, 13); question.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold; history.Children.Add(question);
+            history.Children.Add(design.Text(row.Error ?? row.Answer?.Answer ?? "…", 13, row.Error == null ? "text" : "clay-strong"));
+            if (row.Model is { Length: > 0 } label) history.Children.Add(design.Text(label, 11, "text-faint"));
+        }
+        if (sideChat.Busy) history.Children.Add(Mute(design.L("正在回复…", "Replying…")));
+        var composer = new StackPanel { Spacing = 8, Padding = new(14, 12, 12, 10) };
+        var picker = new ComboBox { HorizontalAlignment = HorizontalAlignment.Left, MinWidth = 0, MaxWidth = 250,
+            CornerRadius = new(16), FontSize = 12, IsEnabled = !sideChat.Busy && !sideChat.ChangingModel };
         sideChatModelPicker = picker;
         foreach (var option in sideChat.Options) picker.Items.Add(new ComboBoxItem { Content = option.Label, Tag = option });
         picker.SelectedItem = picker.Items.Cast<ComboBoxItem>().FirstOrDefault(item => ((NativeSideChatOption)item.Tag).Key == sideChat.Selected?.Key);
-        AutomationProperties.SetName(picker, "侧聊模型");
+        AutomationProperties.SetName(picker, design.L("侧聊模型", "Side chat model"));
+        AutomationProperties.SetAutomationId(picker, "sidechat-model-trigger");
         picker.SelectionChanged += async (_, _) =>
         {
             if (picker.SelectedItem is not ComboBoxItem { Tag: NativeSideChatOption selected }) return;
             var change = sideChat.SelectAsync(selected, lifetime.Token); Render(); await change; Render();
         };
-        body.Children.Add(picker);
-        if (sideChat.Rows.Count == 0) body.Children.Add(Mute("围绕当前会话补充提问，侧聊内容单独保留。"));
-        foreach (var row in sideChat.Rows)
-        {
-            body.Children.Add(new TextBlock { Text = row.Question, TextWrapping = TextWrapping.Wrap });
-            body.Children.Add(new TextBlock { Text = row.Error ?? row.Answer?.Answer ?? "…", TextWrapping = TextWrapping.Wrap, Foreground = design.Brush(row.Error == null ? "text" : "clay-strong") });
-        }
-        var draft = new TextBox { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, Text = sideChat.Draft, PlaceholderText = "侧聊问题", MinHeight = 100 };
-        var send = new Button { Content = "发送", IsEnabled = sideChat.CanSend };
+        var draft = new TextBox { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, Text = sideChat.Draft,
+            PlaceholderText = design.T("sidechat.placeholder"), MinHeight = 50, MaxHeight = 180, BorderThickness = new(0), Padding = new(0, 4, 0, 4), IsEnabled = !sideChat.Busy };
+        AutomationProperties.SetName(draft, design.T("sidechat.placeholder"));
+        var send = design.ToolButton(design.L("发送", "Send"), "arrow-up"); send.IsEnabled = sideChat.CanSend;
         design.ActionButton(send, true);
+        send.Width = send.Height = 30; send.MinWidth = send.MinHeight = 0; send.Padding = new(6); send.CornerRadius = new(15);
         draft.TextChanged += (_, _) => { sideChat.Draft = draft.Text; send.IsEnabled = sideChat.CanSend; };
         var composing = false;
         var compositionJustEnded = false;
@@ -514,11 +590,23 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
             var shift = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift) & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
             var control = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control) & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
             if (NativeSideChatKeyboard.ResolveReturn(shift, composing || compositionJustEnded, control, inputPreferences().SendWithModifier) != NativeSideChatReturnAction.Send) return;
-            e.Handled = true; await sideChat.SendAsync(lifetime.Token); Render();
+            e.Handled = true; await SendSideChatAsync();
         };
-        send.Click += async (_, _) => { await sideChat.SendAsync(lifetime.Token); Render(); };
-        body.Children.Add(draft); body.Children.Add(send);
-        if (sideChat.Error is { } error) body.Children.Add(new TextBlock { Text = error, TextWrapping = TextWrapping.Wrap, Foreground = design.Brush("clay-strong") });
+        send.Click += async (_, _) => await SendSideChatAsync();
+        composer.Children.Add(draft);
+        var actions = new Grid { ColumnSpacing = 8 }; actions.ColumnDefinitions.Add(new()); actions.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        actions.Children.Add(picker); Grid.SetColumn(send, 1); actions.Children.Add(send); composer.Children.Add(actions);
+        if (sideChat.Error is { } error) composer.Children.Add(design.Text(error, 12, "clay-strong"));
+        var footer = new Border { Padding = new(14, 12, 14, 12), Background = design.Brush("bg-app"),
+            Child = new Border { Child = composer, BorderBrush = design.Brush("border"), BorderThickness = new(1), CornerRadius = new(16), Background = design.Brush("bg-input") } };
+        Grid.SetRow(footer, 2); root.Children.Add(footer);
+    }
+
+    private async Task SendSideChatAsync()
+    {
+        if (disposed || sideChat?.CanSend != true) return;
+        var sending = sideChat.SendAsync(lifetime.Token); Render();
+        await sending; Render();
     }
 
     public async Task OpenSearchArtifactAsync(string id)

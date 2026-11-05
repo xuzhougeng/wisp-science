@@ -326,6 +326,24 @@ internal sealed partial class NativeSettingsSectionPage
             Background = Design.Brush("bg-elev"), CornerRadius = new CornerRadius(8), Padding = new Thickness(10, 6, 10, 6), HorizontalAlignment = HorizontalAlignment.Left };
         Form.Children.Add(QuickActionRow(count, SpecialistAddMenu(), 380));
         SpecialistTransferNotice(Form);
+        var subagent = new StackPanel { Spacing = 8 };
+        subagent.Children.Add(Design.Text(T("specialists.subagent_model"), 13));
+        var current = model.Values["get_subagent_model"]?.GetValue<string>() ?? "";
+        var picker = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, MinWidth = 0 };
+        foreach (var option in NativeSpecialists.SubagentOptions(current, Rows(model.Values["list_models"]), Design.Localization))
+            picker.Items.Add(new ComboBoxItem { Content = option.Label, Tag = option.Id, IsEnabled = option.Available });
+        picker.SelectedItem = picker.Items.Cast<ComboBoxItem>().FirstOrDefault(item => (string)item.Tag == current);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(picker, T("specialists.subagent_model"));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(picker, "subagent-model-select");
+        picker.SelectionChanged += async (_, _) =>
+        {
+            if (picker.SelectedItem is not ComboBoxItem { Tag: string id } || id == current) return;
+            await model.SetSubagentModelAsync(id);
+            if (!model.Closed) Render();
+        };
+        choices.Add(picker); subagent.Children.Add(picker);
+        subagent.Children.Add(SpecialistHint(T("specialists.subagent_model.hint")));
+        Form.Children.Add(subagent);
         foreach (var builtin in new[] { true, false })
         {
             var group = new StackPanel { Spacing = 0 }; var caption = T(builtin ? "specialists.builtin" : "specialists.custom");
