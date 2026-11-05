@@ -710,6 +710,56 @@ pub(crate) fn save_sidebar_w(w: f64) {
     }
 }
 
+pub(crate) const RIGHT_PANE_W_DEFAULT: f64 = 400.0;
+
+pub(crate) const RIGHT_PANE_W_KEY: &str = "rightPaneWidth";
+
+/// The width the user last dragged the right pane to. Rendering still caps it
+/// to the current window (max_right_pane_width), so a width saved on a large
+/// display cannot squeeze the chat on a small one.
+pub(crate) fn parse_right_pane_w(saved: Option<&str>) -> f64 {
+    saved
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|w| w.is_finite())
+        .unwrap_or(RIGHT_PANE_W_DEFAULT)
+        .clamp(crate::RIGHT_PANE_MIN_WIDTH, crate::RIGHT_PANE_MAX_WIDTH)
+}
+
+pub(crate) fn load_right_pane_w() -> f64 {
+    let saved = web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|s| s.get_item(RIGHT_PANE_W_KEY).ok().flatten());
+    parse_right_pane_w(saved.as_deref())
+}
+
+pub(crate) fn save_right_pane_w(w: f64) {
+    if let Some(s) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+        let _ = s.set_item(RIGHT_PANE_W_KEY, &w.to_string());
+    }
+}
+
+#[cfg(test)]
+mod right_pane_width_tests {
+    use super::{parse_right_pane_w, RIGHT_PANE_W_DEFAULT};
+
+    #[test]
+    fn missing_or_unreadable_widths_fall_back_to_the_default() {
+        assert_eq!(parse_right_pane_w(None), RIGHT_PANE_W_DEFAULT);
+        assert_eq!(parse_right_pane_w(Some("wide")), RIGHT_PANE_W_DEFAULT);
+        assert_eq!(parse_right_pane_w(Some("NaN")), RIGHT_PANE_W_DEFAULT);
+    }
+
+    #[test]
+    fn saved_widths_stay_inside_the_pane_limits() {
+        assert_eq!(parse_right_pane_w(Some("520")), 520.0);
+        assert_eq!(parse_right_pane_w(Some("40")), crate::RIGHT_PANE_MIN_WIDTH);
+        assert_eq!(
+            parse_right_pane_w(Some("5000")),
+            crate::RIGHT_PANE_MAX_WIDTH
+        );
+    }
+}
+
 /// Docked sits in the composer column. Floating is a free window the user
 /// dragged off the dock. Last mode is in-memory only: a restart always
 /// reopens docked, while saved geometry is reused the next time it undocks.

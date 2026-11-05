@@ -515,7 +515,31 @@ pub(crate) fn scroll_active_right_tab_into_view() {
         } else if tab_right > viewport_right {
             scroller.set_scroll_left(tab_right - viewport_width + 4);
         }
+        mark_tab_strip_overflow(&scroller);
     });
+}
+
+/// Which ends of a horizontally scrolled tab strip hide tabs, as
+/// `(start, end)`. A 1px slack absorbs sub-pixel scroll positions.
+pub(crate) fn tab_strip_overflow(
+    scroll_left: i32,
+    scroll_width: i32,
+    client_width: i32,
+) -> (bool, bool) {
+    let hidden = (scroll_width - client_width).max(0);
+    (scroll_left > 1, hidden - scroll_left > 1)
+}
+
+/// Fades the strip edge that hides tabs, so a scrolled-off tab reads as
+/// "more this way" instead of a label clipped mid-word.
+pub(crate) fn mark_tab_strip_overflow(scroller: &web_sys::HtmlElement) {
+    let (start, end) = tab_strip_overflow(
+        scroller.scroll_left(),
+        scroller.scroll_width(),
+        scroller.client_width(),
+    );
+    let _ = scroller.set_attribute("data-overflow-start", if start { "true" } else { "false" });
+    let _ = scroller.set_attribute("data-overflow-end", if end { "true" } else { "false" });
 }
 
 pub(crate) fn ensure_right_tab(
@@ -603,6 +627,30 @@ pub(crate) fn right_pane_after_switch(
         Some(restored.unwrap_or_default())
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tab_strip_overflow_tests {
+    use super::tab_strip_overflow;
+
+    #[test]
+    fn a_strip_that_fits_fades_neither_edge() {
+        assert_eq!(tab_strip_overflow(0, 300, 300), (false, false));
+        assert_eq!(tab_strip_overflow(0, 200, 300), (false, false));
+    }
+
+    #[test]
+    fn scrolled_strips_fade_the_edges_that_hide_tabs() {
+        assert_eq!(tab_strip_overflow(0, 500, 300), (false, true));
+        assert_eq!(tab_strip_overflow(100, 500, 300), (true, true));
+        assert_eq!(tab_strip_overflow(200, 500, 300), (true, false));
+    }
+
+    #[test]
+    fn sub_pixel_scroll_positions_do_not_flash_a_fade() {
+        assert_eq!(tab_strip_overflow(1, 500, 300), (false, true));
+        assert_eq!(tab_strip_overflow(199, 500, 300), (true, false));
     }
 }
 
@@ -810,6 +858,7 @@ pub(crate) fn FileSortControl(
         <div class="fb-sort">
             <button type="button"
                 data-testid="files-sort"
+                class="fb-icon-action"
                 class:active=move || menu_open.get()
                 aria-expanded=move || menu_open.get().to_string()
                 aria-haspopup="menu"

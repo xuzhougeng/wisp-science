@@ -157,6 +157,221 @@ test("right-pane tabs keep their labels and scroll instead of ellipsizing", asyn
   expect(scrollerOverflows).toBe(true);
 });
 
+test("right-pane tab strip fades only the edges that hide tabs", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 700 });
+  await enterApp(page);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+
+  const panel = page.locator(".rightpane");
+  const scroller = panel.locator(".rp-tab-scroll");
+  await panel.getByTestId("right-launcher-artifacts").click();
+  // One tab fits: neither edge fades.
+  await expect(scroller).toHaveAttribute("data-overflow-start", "false");
+  await expect(scroller).toHaveAttribute("data-overflow-end", "false");
+
+  const addPanel = panel.getByRole("button", { name: "Add panel" });
+  for (const name of [/^Notebook/, /^Highlights/, /^Provenance/, /^Side chat$/]) {
+    await addPanel.click();
+    await panel.locator(".rp-tab-add-menu").getByRole("button", { name }).click();
+  }
+  // The newest tab is active and scrolled into view, so the hidden tabs sit
+  // off the start edge only.
+  await expect(scroller).toHaveAttribute("data-overflow-start", "true");
+  await expect(scroller).toHaveAttribute("data-overflow-end", "false");
+  const mask = await scroller.evaluate((el) => {
+    const style = getComputedStyle(el);
+    return style.maskImage || style.webkitMaskImage;
+  });
+  expect(mask).toContain("gradient");
+
+  await scroller.evaluate((el) => { el.scrollLeft = 0; });
+  await expect(scroller).toHaveAttribute("data-overflow-start", "false");
+  await expect(scroller).toHaveAttribute("data-overflow-end", "true");
+});
+
+test("sidebar, chat topbar and right-pane tabs share one header height", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await enterApp(page);
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  await expect(page.locator(".rp-files")).toBeVisible();
+
+  const bottoms = await page.evaluate(() => {
+    const bottom = (selector: string) => document.querySelector(selector)!.getBoundingClientRect().bottom;
+    return [bottom(".sidebar-head"), bottom(".center .topbar"), bottom(".rightpane .rp-tabs")];
+  });
+  for (const value of bottoms) expect(Math.abs(value - bottoms[0])).toBeLessThanOrEqual(1);
+});
+
+test("sidebar footer puts Capabilities, Feedback and Settings in one icon row under the skills line", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await enterApp(page);
+  const foot = page.locator(".sidebar .side-foot");
+  const names = ["Capabilities", "Feedback", "Settings"];
+  const buttons = names.map((name) => foot.getByRole("button", { name, exact: true }));
+  for (const button of buttons) await expect(button).toBeVisible();
+  for (const [i, name] of names.entries()) await expect(buttons[i]).toHaveAttribute("title", name);
+
+  const boxes = await Promise.all(buttons.map((button) => button.boundingBox()));
+  for (const box of boxes) {
+    expect(Math.abs(box!.y - boxes[0]!.y)).toBeLessThanOrEqual(1);
+    expect(box!.width).toBeLessThanOrEqual(36);
+  }
+  expect(boxes[1]!.x).toBeGreaterThan(boxes[0]!.x);
+  expect(boxes[2]!.x).toBeGreaterThan(boxes[1]!.x);
+
+  const meta = await foot.locator(".proj-meta").boundingBox();
+  expect(meta!.y + meta!.height).toBeLessThanOrEqual(boxes[0]!.y + 1);
+
+  // At 800px tall the nav folds into More; its icon is the outlined circle.
+  const more = page.locator(".sidebar .nav-more");
+  await expect(more).toBeVisible();
+  await expect(more.locator("> svg circle[r='9']")).toHaveCount(1);
+});
+
+test("the compact rail stacks the footer icons in one column", async ({ page }) => {
+  await page.setViewportSize({ width: 860, height: 900 });
+  await enterApp(page);
+  const foot = page.locator(".sidebar .side-foot");
+  const settings = foot.getByRole("button", { name: "Settings", exact: true });
+  const capabilities = foot.getByRole("button", { name: "Capabilities", exact: true });
+  await expect(settings).toBeVisible();
+  const [top, bottom] = await Promise.all([capabilities.boundingBox(), settings.boundingBox()]);
+  expect(Math.abs(top!.x - bottom!.x)).toBeLessThanOrEqual(1);
+  expect(bottom!.y).toBeGreaterThan(top!.y);
+});
+
+test("a lone conversation tab reads as the title and the welcome uses the UI face", async ({ page }) => {
+  await enterApp(page);
+  const title = page.locator(".center-tabs > .center-tab").first();
+  await expect(title).toBeVisible();
+  const look = await title.evaluate((el) => {
+    const style = getComputedStyle(el);
+    return { border: style.borderTopColor, shadow: style.boxShadow, background: style.backgroundColor };
+  });
+  expect(look.border).toBe("rgba(0, 0, 0, 0)");
+  expect(look.shadow).toBe("none");
+  expect(look.background).toBe("rgba(0, 0, 0, 0)");
+
+  const heading = page.locator(".empty h1");
+  await expect(heading).toBeVisible();
+  const font = await heading.evaluate((el) => getComputedStyle(el).fontFamily);
+  expect(font).not.toMatch(/Source Serif|Songti|STSong|Noto Serif/);
+});
+
+test("an open file keeps flat tabs, a quiet sub-header, and one header rule", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await enterApp(page);
+  await page.locator(".composer-inner textarea").first().fill("open report.md");
+  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
+  await page.locator('.rp-tile[data-artifact-name="report.md"]').click({ button: "right" });
+  await page.getByRole("button", { name: "Open in center" }).click();
+  const preview = page.locator('.center-file-preview[data-file-path="report.md"]');
+  await expect(preview.locator("h1")).toHaveText("Draft manuscript");
+
+  // Both tabs size to their labels and read left-aligned; the active one is
+  // a flat tile in the center strip and the right-pane strip alike.
+  const tabs = await page.evaluate(() => {
+    const look = (el: Element) => {
+      const style = getComputedStyle(el);
+      return { align: style.textAlign, shadow: style.boxShadow, width: el.getBoundingClientRect().width };
+    };
+    return {
+      conversation: look(document.querySelector(".center-tabs > .center-tab")!),
+      file: look(document.querySelector(".center-tab-wrap .center-tab.active")!),
+      rightActive: getComputedStyle(document.querySelector(".rp-tab-wrap:has(.rp-tab.active)")!).boxShadow,
+    };
+  });
+  expect(tabs.conversation.align).toBe("left");
+  expect(tabs.file.align).toBe("left");
+  expect(tabs.file.shadow).toBe("none");
+  expect(tabs.file.width).toBeLessThanOrEqual(201);
+  expect(tabs.rightActive).toBe("none");
+
+  // An open right pane tints the toolbar toggle neutrally, not with the accent.
+  const toggle = page.getByRole("button", { name: "Toggle panel" });
+  const toggleColors = await toggle.evaluate((el) => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--clay)";
+    document.body.append(probe);
+    const accent = getComputedStyle(probe).color;
+    probe.remove();
+    return { color: getComputedStyle(el).color, accent };
+  });
+  expect(toggleColors.color).not.toBe(toggleColors.accent);
+
+  // The file sub-header uses flat icon buttons; pressing split tints it.
+  const split = preview.locator("[data-center-split]");
+  await expect(split).toHaveAttribute("aria-pressed", "false");
+  await expect(split).toHaveAccessibleName("Chat beside the document");
+  const flat = await split.evaluate((el) => {
+    const style = getComputedStyle(el);
+    return { border: style.borderTopColor, background: style.backgroundColor };
+  });
+  expect(flat.border).toBe("rgba(0, 0, 0, 0)");
+  expect(flat.background).toBe("rgba(0, 0, 0, 0)");
+  await split.click();
+  await expect(split).toHaveAttribute("aria-pressed", "true");
+  const pressedBorder = await split.evaluate((el) => getComputedStyle(el).borderTopColor);
+  expect(pressedBorder).toBe("rgba(0, 0, 0, 0)");
+
+  // The sidebar header rule runs edge to edge, level with the topbar rule.
+  const rules = await page.evaluate(() => {
+    const head = document.querySelector(".sidebar-head")!;
+    const sidebar = document.querySelector(".sidebar")!.getBoundingClientRect();
+    const box = head.getBoundingClientRect();
+    return {
+      border: getComputedStyle(head).borderBottomWidth,
+      left: box.left - sidebar.left,
+      headBottom: box.bottom,
+      topbarBottom: document.querySelector(".center .topbar")!.getBoundingClientRect().bottom,
+    };
+  });
+  expect(rules.border).toBe("1px");
+  expect(rules.left).toBeLessThanOrEqual(1);
+  expect(Math.abs(rules.headBottom - rules.topbarBottom)).toBeLessThanOrEqual(1);
+});
+
+test("Files panel keeps one toolbar row, no hint paragraph, and dense rows", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 800 });
+  await enterApp(page);
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  const files = page.locator(".rp-files");
+  await expect(files.locator('.fb-row[data-workspace-path="report.csv"]')).toBeVisible();
+
+  // Root: the select names the location, so there is no "." crumb.
+  await expect(files.getByRole("combobox", { name: "File location" })).toBeVisible();
+  await expect(files.locator(".fb-crumb")).toHaveCount(0);
+  await expect(files.locator(".fb-upload-hint")).toHaveCount(0);
+  await expect(files.getByTestId("files-local-upload")).toHaveAttribute("title", /drop files/i);
+
+  // Icon-only actions keep their names for assistive tech and as tooltips.
+  for (const name of ["New file", "New folder", "Refresh", "Sort", "Select"]) {
+    const button = files.locator(".fb-actions").getByRole("button", { name, exact: true });
+    await expect(button).toBeVisible();
+    await expect(button).toHaveAttribute("title", name);
+  }
+  const toolbar = (await files.locator(".fb-actions").boundingBox())!;
+  expect(toolbar.height).toBeLessThanOrEqual(32);
+
+  const row = files.locator('.fb-row[data-workspace-path="report.csv"]');
+  const rowLook = await row.evaluate((el) => {
+    const style = getComputedStyle(el);
+    return { height: el.getBoundingClientRect().height, border: style.borderTopColor };
+  });
+  expect(rowLook.height).toBeLessThanOrEqual(38);
+  expect(rowLook.border).toBe("rgba(0, 0, 0, 0)");
+
+  // Inside a subfolder the crumb shows the path beside the location select.
+  await files.locator('.fb-row.dir[data-workspace-path="DEG"]').click();
+  await expect(files.locator(".fb-bar .fb-path")).toHaveText("DEG");
+  const bar = (await files.locator(".fb-bar").boundingBox())!;
+  expect(bar.height).toBeLessThanOrEqual(32);
+  await files.getByRole("button", { name: "Parent directory" }).click();
+  await expect(files.locator(".fb-crumb")).toHaveCount(0);
+});
+
 test("generated artifact cards render as compact rows", async ({ page }) => {
   await enterApp(page);
   await page.locator(".composer-inner textarea").first().fill("ARTIFACTATTRIBUTION");

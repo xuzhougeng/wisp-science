@@ -5,7 +5,9 @@
   background: var(--bg-sunken);
   border-right: 1px solid var(--border);
   display: flex; flex-direction: column;
-  padding: 12px 10px;
+  /* No top padding: .sidebar-head is var(--toolbar-h) tall, matching the
+     chat topbar and right-pane tabs. */
+  padding: 0 10px 12px;
   gap: 6px;
   overflow: hidden;
   transition:
@@ -73,7 +75,9 @@
    ResizeObserver if very large UI fonts still crowd the session list. */
 .nav-more, .nav-more-menu .side-btn { display: none; }
 .nav-more.open { background: var(--bg-elev); color: var(--text); }
-.nav-more-caret { display: inline-flex; margin-left: auto; opacity: .55; }
+.nav-more-caret { display: inline-flex; margin-left: auto; opacity: .35; transition: opacity .12s ease; }
+.nav-more:hover .nav-more-caret,
+.nav-more.open .nav-more-caret { opacity: .7; }
 .nav-more-caret svg { width: 14px; height: 14px; }
 .nav-more-backdrop { position: fixed; inset: 0; z-index: 80; }
 .nav-more-menu {
@@ -235,7 +239,9 @@ button.session-select-mark:disabled { cursor: default; opacity: .4; }
 .folder-actions:hover, .folder-actions:focus-visible { color: var(--text); background: var(--bg-input); }
 .session-actions svg, .folder-actions svg { width: 14px; height: 14px; }
 .session-actions.selection-hidden { display: none; }
-.side-item.active { background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow-sm); }
+/* A flat fill, not a raised white card, so the current item belongs to the
+   sunken sidebar surface instead of floating above it. */
+.side-item.active { background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text); box-shadow: none; }
 @keyframes ses-spin { to { transform: rotate(360deg); } }
 @keyframes ses-breathe {
   0%, 100% { transform: scale(.92); opacity: .82; }
@@ -308,6 +314,16 @@ button.session-select-mark:disabled { cursor: default; opacity: .4; }
 .side-load-more:disabled { cursor: default; opacity: .6; }
 
 .side-foot { margin-top: auto; padding-top: 8px; border-top: 1px solid var(--border); }
+/* Capabilities / Feedback / Settings sit in one row of icons under the
+   skills line; the tooltip and accessible name carry the label. Icons line up
+   with the 12px inset of the meta text above. */
+.side-foot-actions { display: flex; align-items: center; gap: 2px; padding: 0 4px; }
+.side-foot-actions .side-btn { flex: 0 0 auto; width: 34px; height: 34px; padding: 0; gap: 0; justify-content: center; }
+.side-foot-actions .side-btn > svg { width: 17px; height: 17px; }
+.side-foot-actions .side-btn-label {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
+}
 
 /* Update-available prompt card (footer). Mirrors the "Relaunch to update" chip. */
 .update-card {
@@ -348,7 +364,10 @@ button.session-select-mark:disabled { cursor: default; opacity: .4; }
     justify-content: flex-start;
     align-items: center;
     gap: 6px;
+    min-height: 0;
+    margin: 0;
     padding: 2px 0 4px;
+    border-bottom: 0;
   }
   .sidebar-head .icon-btn { display: none; }
   .sidebar .proj-name,
@@ -447,6 +466,8 @@ button.session-select-mark:disabled { cursor: default; opacity: .4; }
   .sidebar .side-exploration-copy { display: none; }
   .sidebar .side-exploration { justify-content: center; padding: 8px; }
   .sidebar .side-foot { padding-top: 8px; }
+  .sidebar .side-foot-actions { flex-direction: column; gap: 4px; padding: 0; }
+  .sidebar .side-foot-actions .side-btn { width: 100%; height: auto; padding: 8px; }
   .sidebar .nav { gap: 4px; }
 }
 
