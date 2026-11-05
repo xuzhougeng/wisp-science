@@ -9653,7 +9653,7 @@ async fn create_exploration_checkpoint_fixture(store: &Store) {
             source_ui_event_seq: 0,
             source_ui_event_head_seq: 0,
             source_family_generation: 0,
-            source_state_generation: 0,
+            source_state_generation: store.project_state_generation("p").await.unwrap(),
             workspace_snapshot_id: "snapshot".into(),
             context_archive_id: "archive".into(),
             guard_hash: "c".repeat(64),
