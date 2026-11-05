@@ -4,7 +4,9 @@
    ================================================================ */
 
 /* --- Sidebar header: back arrow + project switcher + collapse --- */
-.sidebar-head { position: relative; display: flex; align-items: center; gap: 4px; padding: 4px 4px 6px; }
+/* Bleeds to the sidebar edges so its bottom rule continues the topbar and
+   right-pane rules as one line across the window. */
+.sidebar-head { position: relative; display: flex; flex: 0 0 auto; align-items: center; gap: 4px; min-height: var(--toolbar-h); margin: 0 -10px 4px; padding: 0 14px; border-bottom: 1px solid var(--border); }
 .side-back {
   flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; padding: 0; border: 1px solid transparent; border-radius: var(--radius-xs);

@@ -64,6 +64,9 @@
   --radius-sm: 10px; /* cards / inputs */
   --radius-xs: 8px; /* tabs / chips / icon buttons */
 
+  /* One header height for sidebar, chat topbar and right pane, so the three
+     columns share a baseline and their bottom rules line up. */
+  --toolbar-h: 48px;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -292,6 +295,8 @@
 }
 
 * { box-sizing: border-box; }
+/* Accessible name without a visible label (e.g. a self-describing select). */
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 :where(button, a, input, select, textarea, [tabindex]):focus-visible {
   outline: 2px solid var(--clay);
   outline-offset: 2px;

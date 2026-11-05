@@ -58,7 +58,8 @@ test("a slow older directory listing cannot replace the current folder", async (
   await page.locator('.fb-row.dir[data-workspace-path="DEG"]').click();
   await page.locator(".fb-up").click();
   await afterStaleReply(page);
-  await expect(page.locator(".fb-path")).toHaveText(".");
+  // The project root has no crumb: the location select already names it.
+  await expect(page.locator(".fb-crumb")).toHaveCount(0);
   await expect(page.locator('.fb-row[data-workspace-path="report.csv"]')).toBeVisible();
   await expect(page.locator('.fb-row[data-workspace-path="DEG/scripts"]')).toHaveCount(0);
 });

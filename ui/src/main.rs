@@ -2585,6 +2585,9 @@ fn App() -> impl IntoView {
         if show_right.get() {
             let _ = right_tab.get();
             let _ = open_right_tabs.get();
+            // Width changes reveal or hide tabs, so the edge fades re-sync.
+            let _ = right_w.get();
+            let _ = locale.get();
             scroll_active_right_tab_into_view();
         }
     });
@@ -11474,6 +11477,9 @@ fn App() -> impl IntoView {
     window_event_listener(ev::resize, move |_| {
         model_menu_open.set(false);
         composer_effort_open.set(false);
+        if show_right.get_untracked() {
+            scroll_active_right_tab_into_view();
+        }
         let (viewport_w, viewport_h) = viewport_size();
         if let Some(geom) = context_usage_geom.get_untracked() {
             let clamped =
@@ -13791,7 +13797,9 @@ fn App() -> impl IntoView {
                             // right. Collapses the right pane so the two share its width.
                             <button type="button" class="center-file-btn" data-center-split=""
                                 class:primary=move || center_split.get()
+                                aria-pressed=move || center_split.get().to_string()
                                 title=move || t(locale.get(), "center.split")
+                                aria-label=move || t(locale.get(), "center.split")
                                 on:click=move |_| {
                                     center_split.update(|on| *on = !*on);
                                     if center_split.get_untracked() { show_right.set(false); }
@@ -17468,7 +17476,15 @@ fn App() -> impl IntoView {
                             right_tab_add_menu_open.set(false);
                             right_launcher_open.set(true);
                         }>{compose_icon("compass")}</button>
-                    <div class="rp-tab-scroll">
+                    <div class="rp-tab-scroll"
+                        on:scroll=move |ev: web_sys::Event| {
+                            if let Some(scroller) = ev
+                                .target()
+                                .and_then(|target| target.dyn_into::<web_sys::HtmlElement>().ok())
+                            {
+                                mark_tab_strip_overflow(&scroller);
+                            }
+                        }>
                         {move || {
                             let loc = locale.get();
                             let active = right_tab.get();
@@ -17916,8 +17932,11 @@ fn App() -> impl IntoView {
                                 .collect::<Vec<_>>();
                             view! {
                                 <div class="rp-files" class:drop-target=move || files_drag_over.get()>
+                                    // Location and path share one row: the select names the
+                                    // root, the crumb only appears once inside a subfolder.
+                                    <div class="fb-bar">
                                     <label class="fb-source-label">
-                                        <span>{t(loc, "files.source")}</span>
+                                        <span class="sr-only">{t(loc, "files.source")}</span>
                                         <select class="fb-source" aria-label=t(loc, "files.source")
                                             prop:value=move || file_source.get()
                                             on:change=move |event| {
@@ -17955,25 +17974,86 @@ fn App() -> impl IntoView {
                                     {move || {
                                         let source = file_source.get();
                                         if source == "local" {
-                                        let cwd = file_cwd.get();
-                                        let parent = if cwd == "." { None } else { Some(parent_path(&cwd)) };
+                                            let cwd = file_cwd.get();
+                                            if cwd == "." {
+                                                return ().into_view();
+                                            }
+                                            let p_click = parent_path(&cwd);
+                                            view! {
+                                                <div class="fb-crumb">
+                                                    <button class="fb-up" aria-label=t(loc, "files.up")
+                                                        title=t(loc, "files.up") on:click=move |_| {
+                                                        selected_workspace_paths.set(HashSet::new());
+                                                        file_query.set(String::new());
+                                                        file_cwd.set(p_click.clone());
+                                                        refresh_dir(file_cwd, file_entries);
+                                                    }>{compose_icon("up")}</button>
+                                                    <span class="fb-path" title=cwd.clone()>{cwd.clone()}</span>
+                                                </div>
+                                            }.into_view()
+                                        } else {
+                                            let source_for_path = source.clone();
+                                            view! {
+                                                <div class="fb-crumb remote">
+                                                    // Only the up button follows the typed path; the
+                                                    // input itself must not remount mid-typing.
+                                                    {move || {
+                                                        let cwd = remote_file_cwd.get();
+                                                        let parent = if cwd == "/" || cwd == "~" {
+                                                            None
+                                                        } else {
+                                                            Some(parent_path(&cwd))
+                                                        };
+                                                        let source = source.clone();
+                                                        parent.map(move |path| {
+                                                        let path_click = path.clone();
+                                                        let context_id = source.clone();
+                                                        view! {
+                                                            <button class="fb-up" aria-label=t(loc, "files.up")
+                                                                title=t(loc, "files.up") on:click=move |_| {
+                                                                remote_file_cwd.set(path_click.clone());
+                                                                refresh_remote_dir(
+                                                                    context_id.clone(),
+                                                                    remote_file_cwd,
+                                                                    remote_file_entries,
+                                                                    remote_file_loading,
+                                                                    remote_file_error,
+                                                                    file_source,
+                                                                );
+                                                            }>{compose_icon("up")}</button>
+                                                        }.into_view()
+                                                    })
+                                                    }}
+                                                    <input class="fb-path fb-path-input" type="text"
+                                                        aria-label=t(loc, "files.go_to")
+                                                        prop:value=move || remote_file_cwd.get()
+                                                        on:input=move |event| remote_file_cwd.set(event_target_value(&event))
+                                                        on:keydown=move |event: web_sys::KeyboardEvent| {
+                                                            if event.key() == "Enter" {
+                                                                event.prevent_default();
+                                                                refresh_remote_dir(
+                                                                    source_for_path.clone(),
+                                                                    remote_file_cwd,
+                                                                    remote_file_entries,
+                                                                    remote_file_loading,
+                                                                    remote_file_error,
+                                                                    file_source,
+                                                                );
+                                                            }
+                                                        } />
+                                                </div>
+                                            }.into_view()
+                                        }
+                                    }}
+                                    </div>
+                                    {move || {
+                                        let source = file_source.get();
+                                        if source == "local" {
                                         view! {
-                                            <div class="fb-crumb">
-                                                {parent.map(|p| {
-                                                    let p_click = p.clone();
-                                                    view! {
-                                                        <button class="fb-up" on:click=move |_| {
-                                                            selected_workspace_paths.set(HashSet::new());
-                                                            file_query.set(String::new());
-                                                            file_cwd.set(p_click.clone());
-                                                            refresh_dir(file_cwd, file_entries);
-                                                        }>{compose_icon("up")}</button>
-                                                    }.into_view()
-                                                })}
-                                                <span class="fb-path">{cwd.clone()}</span>
-                                            </div>
                                             <div class="fb-actions">
                                                 <button type="button" data-testid="files-local-upload"
+                                                    class="fb-primary-action"
+                                                    title=t(loc, "files.local_upload_hint")
                                                     disabled=move || local_file_uploading.get()
                                                     on:click=move |_| upload_to_local_directory(
                                                         file_cwd.get_untracked(), None, local_file_uploading,
@@ -17984,47 +18064,59 @@ fn App() -> impl IntoView {
                                                         "files.uploading"
                                                     } else { "files.upload" })}</span>
                                                 </button>
-                                                <button type="button" on:click=move |_| {
+                                                <button type="button" class="fb-icon-action"
+                                                    title=t(loc, "files.new_file")
+                                                    on:click=move |_| {
                                                     file_entry_input.set(String::new());
                                                     file_entry_error.set(None);
                                                     file_entry_modal.set(Some(FileEntryModal::CreateFile));
                                                 }>
-                                                    {compose_icon("doc")}
+                                                    {compose_icon("note-plus")}
                                                     <span>{t(loc, "files.new_file")}</span>
                                                 </button>
-                                                <button type="button" on:click=move |_| {
+                                                <button type="button" class="fb-icon-action"
+                                                    title=t(loc, "files.new_directory")
+                                                    on:click=move |_| {
                                                     file_entry_input.set(String::new());
                                                     file_entry_error.set(None);
                                                     file_entry_modal.set(Some(FileEntryModal::CreateDirectory));
                                                 }>
-                                                    {compose_icon("folder")}
+                                                    {compose_icon("folder-plus")}
                                                     <span>{t(loc, "files.new_directory")}</span>
                                                 </button>
-                                                <button type="button" on:click=move |_| {
+                                                <button type="button" class="fb-icon-action"
+                                                    title=t(loc, "files.refresh")
+                                                    on:click=move |_| {
                                                     refresh_dir(file_cwd, file_entries);
                                                     if !file_query.get_untracked().trim().is_empty() {
                                                         refresh_file_search(file_query, file_search_hits);
                                                     }
                                                 }>
-                                                    {compose_icon("sync")}
+                                                    {compose_icon("refresh")}
                                                     <span>{t(loc, "files.refresh")}</span>
                                                 </button>
-                                                <button type="button"
+                                                <FileSortControl sort_by=file_sort menu_open=file_sort_menu_open />
+                                                <span class="fb-actions-spacer"></span>
+                                                <button type="button" class="fb-icon-action"
+                                                    title=move || t(locale.get(), if selecting_workspace_entries.get() {
+                                                        "settings.cancel"
+                                                    } else {
+                                                        "files.select_entries"
+                                                    })
                                                     aria-pressed=move || selecting_workspace_entries.get().to_string()
                                                     on:click=move |_| {
                                                         let selecting = !selecting_workspace_entries.get_untracked();
                                                         selecting_workspace_entries.set(selecting);
                                                         selected_workspace_paths.set(HashSet::new());
                                                     }>
+                                                    {compose_icon("check-square")}
                                                     <span>{move || t(locale.get(), if selecting_workspace_entries.get() {
                                                         "settings.cancel"
                                                     } else {
                                                         "files.select_entries"
                                                     })}</span>
                                                 </button>
-                                                <FileSortControl sort_by=file_sort menu_open=file_sort_menu_open />
                                             </div>
-                                            <div class="hint fb-upload-hint">{t(loc, "files.local_upload_hint")}</div>
                                             <input class="fb-search" type="text"
                                                 placeholder=move || t(locale.get(), "files.search")
                                                 prop:value=move || file_query.get()
@@ -18181,60 +18273,17 @@ fn App() -> impl IntoView {
                                                 }}
                                             </div>
                                             {move || project_info.get().map(|p| view! {
-                                                <div class="hint fb-root">{tf(loc, "files.root", &[("path", &p.root)])}</div>
+                                                <div class="hint fb-root" title=p.root.clone()>{tf(loc, "files.root", &[("path", &p.root)])}</div>
                                             })}
                                         }.into_view()
                                     } else {
-                                        let cwd = remote_file_cwd.get();
-                                        let parent = if cwd == "/" || cwd == "~" {
-                                            None
-                                        } else {
-                                            Some(parent_path(&cwd))
-                                        };
-                                        let source_for_up = source.clone();
-                                        let source_for_path = source.clone();
                                         let source_for_upload = source.clone();
                                         let source_for_refresh = source.clone();
                                         view! {
-                                            <div class="fb-crumb remote">
-                                                {parent.map(|path| {
-                                                    let path_click = path.clone();
-                                                    let context_id = source_for_up.clone();
-                                                    view! {
-                                                        <button class="fb-up" aria-label=t(loc, "files.up") on:click=move |_| {
-                                                            remote_file_cwd.set(path_click.clone());
-                                                            refresh_remote_dir(
-                                                                context_id.clone(),
-                                                                remote_file_cwd,
-                                                                remote_file_entries,
-                                                                remote_file_loading,
-                                                                remote_file_error,
-                                                                file_source,
-                                                            );
-                                                        }>{compose_icon("up")}</button>
-                                                    }.into_view()
-                                                })}
-                                                <input class="fb-path fb-path-input" type="text"
-                                                    aria-label=t(loc, "files.go_to")
-                                                    prop:value=move || remote_file_cwd.get()
-                                                    on:input=move |event| remote_file_cwd.set(event_target_value(&event))
-                                                    on:keydown=move |event: web_sys::KeyboardEvent| {
-                                                        if event.key() == "Enter" {
-                                                            event.prevent_default();
-                                                            refresh_remote_dir(
-                                                                source_for_path.clone(),
-                                                                remote_file_cwd,
-                                                                remote_file_entries,
-                                                                remote_file_loading,
-                                                                remote_file_error,
-                                                                file_source,
-                                                            );
-                                                        }
-                                                    } />
-                                            </div>
                                             <div class="fb-actions">
                                                 <button type="button"
                                                     data-testid="files-remote-upload"
+                                                    class="fb-primary-action"
                                                     disabled=move || remote_file_uploading.get()
                                                     on:click=move |_| {
                                                         upload_to_remote_context(
@@ -18252,7 +18301,9 @@ fn App() -> impl IntoView {
                                                         "files.upload"
                                                     })}</span>
                                                 </button>
-                                                <button type="button" on:click=move |_| {
+                                                <button type="button" class="fb-icon-action"
+                                                    title=t(loc, "files.refresh")
+                                                    on:click=move |_| {
                                                     refresh_remote_dir(
                                                         source_for_refresh.clone(),
                                                         remote_file_cwd,
@@ -18262,7 +18313,7 @@ fn App() -> impl IntoView {
                                                         file_source,
                                                     );
                                                 }>
-                                                    {compose_icon("sync")}
+                                                    {compose_icon("refresh")}
                                                     <span>{t(loc, "files.refresh")}</span>
                                                 </button>
                                                 <FileSortControl sort_by=file_sort menu_open=file_sort_menu_open />
@@ -19113,7 +19164,7 @@ fn App() -> impl IntoView {
         {move || dragging.get().then(|| view! {
             <div class="drag-overlay"
                 on:mousemove=on_resize_move
-                on:mouseup=move |_| dragging.set(false)></div>
+                on:mouseup=move |_| pane_layout.right_resize_end()></div>
         })}
 
         {move || center_split_dragging.get().then(|| view! {

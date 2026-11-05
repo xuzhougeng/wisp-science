@@ -44,7 +44,7 @@ impl PaneLayoutState {
             sidebar_dragging: create_rw_signal(false),
             sidebar_drag_start_x: create_rw_signal(0.0_f64),
             sidebar_drag_start_w: create_rw_signal(0.0_f64),
-            right_w: create_rw_signal(400.0_f64),
+            right_w: create_rw_signal(load_right_pane_w()),
             right_dragging: create_rw_signal(false),
             right_drag_start_x: create_rw_signal(0.0_f64),
             right_drag_start_w: create_rw_signal(0.0_f64),
@@ -99,6 +99,13 @@ impl PaneLayoutState {
             let max_width = max_right_pane_width(sidebar_open, self.sidebar_w.get());
             self.right_w
                 .set((self.right_drag_start_w.get() + dx).clamp(RIGHT_PANE_MIN_WIDTH, max_width));
+        }
+    }
+
+    pub(crate) fn right_resize_end(self) {
+        if self.right_dragging.get_untracked() {
+            save_right_pane_w(self.right_w.get_untracked());
+            self.right_dragging.set(false);
         }
     }
 

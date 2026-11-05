@@ -5,31 +5,48 @@
 .modal-wide { max-width: 560px; max-height: min(80vh, 640px); overflow-x: hidden; overflow-y: auto; }
 .fb-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .fb-head h2 { margin: 0; }
-.fb-source-label { display: flex; flex-direction: column; gap: 4px; font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-faint); }
-.fb-source { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-input); color: var(--text); font: inherit; font-size: calc(13px * var(--ui-font-scale, 1)); }
-.fb-source:focus { outline: none; border-color: var(--clay); }
-.fb-crumb { display: flex; align-items: center; gap: 8px; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-muted); }
-.fb-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.fb-actions button { display: inline-flex; align-items: center; gap: 5px; padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--bg-input); color: var(--text-muted); font: inherit; font-size: calc(11.5px * var(--ui-font-scale, 1)); cursor: pointer; }
-.fb-actions button:hover, .fb-actions button:focus-visible { border-color: var(--clay); color: var(--text); }
+/* Location select + path crumb share one row. The select reads as a quiet
+   picker (no box until hover); the crumb only exists inside a subfolder. */
+.fb-bar { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.fb-source-label { display: flex; flex: 0 1 auto; min-width: 0; max-width: 60%; }
+.fb-bar .fb-crumb { flex: 1 1 auto; min-width: 0; }
+.fb-bar .fb-crumb:not(.remote)::before { content: "/"; flex: 0 0 auto; color: var(--text-faint); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.fb-source { max-width: 100%; box-sizing: border-box; height: 28px; padding: 0 26px 0 8px; border: 1px solid transparent; border-radius: var(--radius-xs); appearance: none; -webkit-appearance: none; background: transparent var(--select-chevron) no-repeat right 9px center / 10px 6px; color: var(--text); font: inherit; font-size: calc(13px * var(--ui-font-scale, 1)); font-weight: 600; text-overflow: ellipsis; cursor: pointer; }
+.fb-source:hover { background-color: var(--surface-hover); }
+.fb-source:focus-visible { outline: none; border-color: var(--clay); }
+.fb-crumb { display: flex; align-items: center; gap: 4px; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-muted); }
+/* One non-wrapping toolbar: Upload keeps its label, the rest are icon
+   buttons whose label stays in the accessible name and the tooltip. */
+.fb-actions { display: flex; align-items: center; gap: 2px; flex-wrap: nowrap; min-width: 0; }
+.fb-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 28px; min-width: 28px; padding: 0 8px; border: 1px solid transparent; border-radius: var(--radius-xs); background: transparent; color: var(--text-muted); font: inherit; font-size: calc(12px * var(--ui-font-scale, 1)); white-space: nowrap; cursor: pointer; transition: background .12s ease, color .12s ease; }
+.fb-actions button:hover:not(:disabled), .fb-actions button.active { background: var(--surface-hover); color: var(--text); }
+.fb-actions button[aria-pressed="true"] { background: var(--clay-soft); color: var(--clay-strong); }
 .fb-actions button:disabled { opacity: 0.55; cursor: default; }
-.fb-actions button svg { width: 14px; height: 14px; }
-.fb-search { width: 100%; box-sizing: border-box; padding: 8px 12px; margin: 6px 0 2px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-input); color: var(--text); font: inherit; font-size: calc(13px * var(--ui-font-scale, 1)); }
+.fb-actions button svg { width: 15px; height: 15px; flex: 0 0 auto; }
+.fb-actions .fb-primary-action { padding: 0 10px 0 8px; border-color: var(--border); background: var(--bg-elev); color: var(--text); margin-right: 4px; }
+.fb-actions .fb-icon-action { width: 28px; padding: 0; }
+.fb-icon-action > span { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.fb-actions-spacer { flex: 1 1 auto; }
+.fb-search { width: 100%; box-sizing: border-box; padding: 7px 10px; margin: 0; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-input); color: var(--text); font: inherit; font-size: calc(12.5px * var(--ui-font-scale, 1)); }
 .fb-search:focus { outline: none; border-color: var(--clay); }
-.fb-up { background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-xs); padding: 4px 8px; cursor: pointer; font: inherit; color: var(--text); }
+.fb-up { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 26px; height: 26px; padding: 0; background: transparent; border: 1px solid transparent; border-radius: var(--radius-xs); cursor: pointer; font: inherit; color: var(--text-muted); }
+.fb-up:hover { background: var(--surface-hover); color: var(--text); }
+.fb-up svg { width: 15px; height: 15px; }
 .fb-path { font-family: var(--font-mono); font-size: calc(11.5px * var(--ui-font-scale, 1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fb-path-input { min-width: 0; flex: 1 1 auto; box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--bg-input); color: var(--text); font: inherit; }
 .fb-path-input:focus { outline: none; border-color: var(--clay); }
-.fb-list { display: flex; flex-direction: column; gap: 4px; max-height: 360px; overflow-y: auto; margin: 4px -2px; padding: 2px; }
-.fb-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; cursor: pointer; font: inherit; color: var(--text); transition: border-color .12s ease; }
-.fb-row:hover { border-color: var(--clay); }
-.fb-row.dir { background: var(--bg-sunken); }
-.fb-row.selected, .fb-row.dir.selected { border-color: color-mix(in srgb, var(--clay) 52%, var(--border-strong)); background: var(--surface-active); box-shadow: 0 0 0 1px var(--focus-ring); }
+/* Dense list rows: no per-row card, hover/selection carry the state. */
+.fb-list { display: flex; flex-direction: column; gap: 1px; max-height: 360px; overflow-y: auto; margin: 0; padding: 0; }
+.fb-row { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 32px; text-align: left; background: transparent; border: 1px solid transparent; border-radius: var(--radius-xs); padding: 5px 8px; cursor: pointer; font: inherit; color: var(--text); transition: background .12s ease, border-color .12s ease; }
+.fb-row:hover { background: var(--surface-hover); }
+.fb-row.selected, .fb-row.dir.selected { border-color: color-mix(in srgb, var(--clay) 40%, transparent); background: var(--clay-soft); }
 .fb-row-action { width: 26px; height: 26px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 1px solid transparent; border-radius: var(--radius-xs); background: transparent; color: var(--text-faint); cursor: pointer; }
 .fb-row-action:hover, .fb-row-action:focus-visible { border-color: var(--border-strong); background: var(--bg-sunken); color: var(--clay-strong); }
 .fb-row-action svg { width: 15px; height: 15px; }
-.fb-icon { flex: 0 0 auto; font-size: calc(14px * var(--ui-font-scale, 1)); }
-.fb-name { flex: 1 1 auto; font-size: calc(13.5px * var(--ui-font-scale, 1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fb-icon { display: inline-flex; flex: 0 0 auto; color: var(--text-faint); font-size: calc(14px * var(--ui-font-scale, 1)); }
+.fb-list:not(.grid) .fb-icon svg { width: 16px; height: 16px; }
+.fb-row.dir .fb-icon { color: var(--clay); }
+.fb-name { flex: 1 1 auto; font-size: calc(13px * var(--ui-font-scale, 1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fb-size { flex: 0 0 auto; font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .fb-sort { position: relative; }
 .fb-sort-backdrop { position: fixed; inset: 0; z-index: 71; }
@@ -52,13 +69,13 @@
 .fb-sort-check { display: inline-flex; opacity: 0; color: var(--clay); }
 .fb-sort-check.on { opacity: 1; }
 .fb-sort-check svg { width: 15px; height: 15px; }
-.fb-root { margin-top: 4px; font-family: var(--font-mono); font-size: calc(11px * var(--ui-font-scale, 1)); }
+.fb-root { margin: 0; font-family: var(--font-mono); font-size: calc(10.5px * var(--ui-font-scale, 1)); color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fb-path-rel { flex: 0 0 auto; font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-faint); font-family: var(--font-mono); max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-entry-location { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
 
 .rp-files {
-  flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 8px;
-  padding: 10px 12px 12px; overflow: hidden;
+  flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px;
+  padding: 8px 12px 10px; overflow: hidden;
 }
 .rp-files.drop-target { box-shadow: inset 0 0 0 2px var(--clay); border-radius: var(--radius-sm); }
 .rp-files .fb-list { max-height: none; flex: 1 1 auto; margin: 0; min-height: 0; }
@@ -71,7 +88,7 @@
 
 /* Tiled/grid mode: lay file rows out as centered cards with a large icon */
 .fb-list.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; align-content: start; }
-.fb-list.grid .fb-row { flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 14px 8px; }
+.fb-list.grid .fb-row { flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 14px 8px; border-radius: var(--radius-sm); }
 .fb-list.grid .fb-icon svg { width: 30px; height: 30px; }
 .fb-list.grid .fb-name { flex: 0 0 auto; width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .fb-list.grid .fb-size, .fb-list.grid .fb-path-rel { display: none; }

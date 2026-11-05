@@ -5,7 +5,9 @@
   background: var(--bg-sunken);
   border-right: 1px solid var(--border);
   display: flex; flex-direction: column;
-  padding: 12px 10px;
+  /* No top padding: .sidebar-head is var(--toolbar-h) tall, matching the
+     chat topbar and right-pane tabs. */
+  padding: 0 10px 12px;
   gap: 6px;
   overflow: hidden;
   transition:
@@ -235,7 +237,9 @@ button.session-select-mark:disabled { cursor: default; opacity: .4; }
 .folder-actions:hover, .folder-actions:focus-visible { color: var(--text); background: var(--bg-input); }
 .session-actions svg, .folder-actions svg { width: 14px; height: 14px; }
 .session-actions.selection-hidden { display: none; }
-.side-item.active { background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow-sm); }
+/* A flat fill, not a raised white card, so the current item belongs to the
+   sunken sidebar surface instead of floating above it. */
+.side-item.active { background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text); box-shadow: none; }
 @keyframes ses-spin { to { transform: rotate(360deg); } }
 @keyframes ses-breathe {
   0%, 100% { transform: scale(.92); opacity: .82; }
@@ -348,7 +352,10 @@ button.session-select-mark:disabled { cursor: default; opacity: .4; }
     justify-content: flex-start;
     align-items: center;
     gap: 6px;
+    min-height: 0;
+    margin: 0;
     padding: 2px 0 4px;
+    border-bottom: 0;
   }
   .sidebar-head .icon-btn { display: none; }
   .sidebar .proj-name,
