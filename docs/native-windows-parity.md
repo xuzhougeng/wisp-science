@@ -2917,6 +2917,8 @@ first quote click marks its persisted turn and shows the shared selection banner
 above the composer. The second click selects an inclusive range, including the
 same turn or a range selected in reverse. Cancel and window-level Escape clear
 the range without a read or creation and restore the original action's focus.
+If a refresh invalidates the selected turn, that selection is cleared even if
+the turn later reappears. The next click starts a new range.
 Menus and dialogs consume Escape before this selection. ACP and the running
 tail omit the action; completed history, transcript branches and private
 explorations remain valid read sources. Navigation or a replaced turn invalidates

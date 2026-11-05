@@ -169,6 +169,7 @@ public sealed partial class WorkspaceConversationModel(INativeConversationClient
             if (cursor is null || !cursor.TryAccept(value)) return;
             var previous = Snapshot;
             Snapshot = value; ConnectionError = null;
+            if (excerptStart is { } start && !ValidExcerptTurn(start)) excerptStart = null;
             ModelContext.Bind(value, ContextReady);
             ReconcileCompaction(value);
             if (value.AcpAgentId != null || value.Items.Length > 0) provisionalAgents.Remove((project, session));

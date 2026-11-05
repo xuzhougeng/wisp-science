@@ -34,6 +34,7 @@ internal static class NativeConversationExcerptTests
         host.Acp = false; await model.RefreshAsync(); await model.SelectExcerptAsync(first, Locale);
         host.Replace = true; await model.RefreshAsync(); Check(model.ExcerptStart == null && !model.CanExcerpt(first), "replaced persisted identity invalidates the range");
         host.Replace = false; await model.RefreshAsync();
+        Check(model.ExcerptStart == null, "restoring a replaced turn does not restore a cancelled excerpt selection");
 
         host.PendingRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
         await model.SelectExcerptAsync(first, Locale); var pending = model.SelectExcerptAsync(last, Locale);
