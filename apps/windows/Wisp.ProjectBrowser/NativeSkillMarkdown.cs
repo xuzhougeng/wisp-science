@@ -1,4 +1,5 @@
 using Markdig;
+using Markdig.Extensions.Tables;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
 using System.Text;
@@ -13,6 +14,7 @@ public static class NativeSkillMarkdown
     public static MarkdownDocument Parse(string text)
     {
         var document = Markdown.Parse(text, Pipeline);
+        foreach (var table in document.Descendants<Table>()) NativeTranscriptTables.UnescapeCodePipes(table);
         foreach (var link in document.Descendants<LinkInline>().Where(link => link.IsImage))
         { link.IsImage = false; link.Url = ""; }
         return document;

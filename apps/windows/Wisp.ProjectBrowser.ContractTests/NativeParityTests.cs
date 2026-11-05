@@ -117,7 +117,9 @@ internal static class NativeParityTests
         Check(transport.Calls.Any(c => c.Command == "native_project_folder_rename" && c.Project == "project-a" && c.Args["folder_id"]!.GetValue<string>() == "f1"), "rename explicitly scopes both project and folder");
         groups.RenamingId = "f1"; groups.Draft = "keep rename";
         transport.Handler = (_, _, _) => throw new IOException("lost rename"); await groups.SaveAsync();
-        Check(groups.CanSave, "failed save retains an editable draft for explicit retry");
+        var renameCalls = transport.Calls.Count;
+        Check(groups.FolderSaveUnconfirmed && !groups.CanSave && !await groups.SaveAsync() && transport.Calls.Count == renameCalls,
+            "an unconfirmed rename cannot be replayed from the same edit");
         Check(groups.Draft == "keep rename" && groups.RenamingId == "f1", "lost rename keeps the draft and target");
         groups.Selecting = true; groups.Selected.UnionWith(["s1", "s2"]);
         transport.Handler = (_, args, _) => args["session_id"]!.GetValue<string>() == "s2" ? throw new IOException("lost move") : Task.FromResult<JsonNode?>(JsonValue.Create(true));

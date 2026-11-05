@@ -46,6 +46,8 @@ internal static class NativeSkillMarkdownTests
         var table = document.Descendants<Table>().Single();
         Check(NativeTranscriptTables.ColumnCount(table) == 2 && NativeTranscriptTables.Copy(table).Contains("cell|count\t23"),
             "table cells retain escaped pipes, inline code and emphasis without extra columns");
+        Check(NativeSkillMarkdown.Parse(@"`cell\|count`").Descendants<CodeInline>().Single().Content == @"cell\|count",
+            "a pipe in ordinary inline code keeps its literal backslash");
         Check(document.Descendants<FencedCodeBlock>().Single().Lines.ToString() == "print(\"<unchanged>\")",
             "fenced code is not interpreted as HTML or inline markup");
         Check(document.Descendants<EmphasisInline>().Any(e => e.DelimiterChar == '~' && e.DelimiterCount == 2)

@@ -15,6 +15,9 @@ and added code sit side by side, with the color stripe inside the number gutter.
 Compare the 588 px [WinUI capture](assets/native-windows/appearance-compact-winui.jpg)
 and [WebView capture](assets/native-windows/appearance-compact-webview.jpg).
 
+Skill and transcript tables display and copy a pipe escaped inside inline code
+as a literal pipe. Code outside tables keeps its backslashes.
+
 On the project landing page the five shortcuts stay together. Their group and
 the three project commands share a row as soon as both fit beside the brand;
 the wrap point follows the measured, localized buttons. At 820 px and below

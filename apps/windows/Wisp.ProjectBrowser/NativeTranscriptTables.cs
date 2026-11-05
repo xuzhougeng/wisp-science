@@ -66,9 +66,18 @@ public sealed class NativeTranscriptTables
 
     private static ParsedTable Parse(Table table)
     {
+        UnescapeCodePipes(table);
         var text = Copy(table);
         return new(table, table.OfType<TableRow>().Count(row => !row.IsHeader), ColumnCount(table), text,
             Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))));
+    }
+
+    // A pipe escaped for table syntax is still one character inside a code
+    // span. Apply this to the parsed cell, never to code elsewhere in a document.
+    internal static void UnescapeCodePipes(Table table)
+    {
+        foreach (var code in table.Descendants<CodeInline>())
+            code.Content = code.Content.Replace(@"\|", "|", StringComparison.Ordinal);
     }
 
     /// <summary>Visible cell text as TSV, including the header; formatting and
