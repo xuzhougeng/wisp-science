@@ -20,6 +20,7 @@ parity-ledger` 检查这一点（`scripts/check_native_parity.py`）。
 | WebView 改动 | SwiftUI 状态 | 说明 |
 | --- | --- | --- |
 | 右侧「文件」面板：从访达拖入文件时读取系统拖拽剪贴板中的路径并复制到当前目录；读不到路径时提示改用「上传」（#1674） | 不需要 | 修的是 WebView 主窗口关闭 Tauri 原生拖拽后 DOM drop 拿不到路径；新命令 `read_drag_file_paths`，文案键 `files.drop_paths_unavailable`。SwiftUI 直接接收 AppKit 拖拽，不受影响 |
+| `/share` PNG：在 #1678 按 DOM 行盒逐行光栅化的基础上，改为按词 / 中文单字落在各自的 DOM 位置、按字体基线对齐，跳过 KaTeX 的隐藏 MathML 副本，代码长行在块内折行；新增「出图方式」单张长图 / 多张 3:4 分页，分页只在行间断开（#1677） | 待补 | 光栅化修复（含 #1678）只在 WebView（`ui/src/api.js`），SwiftUI 用 `ImageRenderer` 出图，不受影响；多张分页需要 SwiftUI 分享页加同样的选项，保存走新命令 `save_share_images`（`pngsBase64` + `defaultName`，返回各页路径），文案键 `share.layout_*` / `share.pages_hint` / `share.export_pages` / `share.saved_pages` |
 | 接入 Magpie 时，输入框、侧边对话、审查模型和子智能体模型的选择只列出 `Magpie · <模型>`（ACP Agent 保留），隐藏 Fast；设置 › 模型顶部提示个人模型断开后才生效 | 待补 | 读 `magpie_model_info`；SwiftUI 的模型选择尚未识别 Magpie，仍列出个人模型。文案键 `composer.magpie_managed`、`models.magpie_connected` |
 | 浏览器离线横幅 / 扩展更新横幅：点「一键安装引导」或需手动重载时，横幅内联显示扩展路径和分平台的「加载已解压的扩展程序」步骤（macOS 为 ⌘⇧G 前往文件夹） | 待补 | 文案键 `browser.offline.step_*`；SwiftUI 横幅尚无步骤列表 |
 | 设置 › 远程接入 › 网页远程访问：联机链接二维码 | 待补 | `RemoteAccessStatus` 新增 `qr`（SVG data URL），SwiftUI 读同一字段即可 |

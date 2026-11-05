@@ -5768,6 +5768,10 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             return "/mock/wisp-trajectory.html";
           case "save_share_image":
             return "/mock/wisp-share.png";
+          case "save_share_images": {
+            const pages = Array.isArray(arg("pngsBase64")) ? arg("pngsBase64") : [];
+            return pages.map((_: unknown, index: number) => `/mock/share/wisp-share-${index + 1}.png`);
+          }
           case "save_share_html":
             return "/mock/wisp-share.html";
           case "generate_share_social_copy": {
@@ -6384,6 +6388,29 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
                 emit("agent", { kind: "Compaction", frame_id: fid, before: 1, after: 10, strategy: "auto_continue" });
                 emit("agent", { kind: "Text", frame_id: fid, delta: "Final segment." });
                 emit("agent", { kind: "Done", frame_id: fid });
+              }, 30);
+              return fid;
+            }
+            if (String(msg).includes("SHARELINES")) {
+              // Fixture for #1677: every text node here wraps in the DOM. Text
+              // after bold/inline code, narrow table cells with long text,
+              // and multi-line ordered items each used to paint as one
+              // overflowing line, with list numbers below the first line.
+              const drift = "The calibration run drifted after the detector warmed up, so every reading taken past the first hour needs the temperature correction before it can be compared with the reference spectrum. ";
+              const cell = "long cell text that must wrap inside its own column instead of spilling into the next one ";
+              setTimeout(() => {
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+                emit("agent", {
+                  kind: "Text",
+                  frame_id: fid,
+                  delta: `${drift.repeat(3)}Then **the corrected peaks** line up with \`fit(spectrum)\` and the residual stays below the noise floor across the whole band, which is the result we wanted.\n\n`
+                    + "校准运行在探测器升温后出现漂移，因此第一个小时之后的每一次读数都需要先做温度校正，才能与参考光谱进行比较。校正之后，各个峰的位置与拟合结果一致，残差在整个波段内都低于噪声水平。\n\n"
+                    + `| 样本 | 说明 | 结论 |\n| --- | --- | --- |\n| A | ${cell.repeat(2)}| ok |\n| B | 第二个样本的说明文字也很长，需要在单元格内部换行，而不是压到右侧相邻的列上。 | 通过 |\n\n`
+                    + `1. ${"First step: warm the detector for an hour and record the baseline at every wavelength. ".repeat(2)}\n`
+                    + `2. ${"Second step: apply the temperature correction to each reading taken after warm-up. ".repeat(2)}\n`
+                    + "3. 第三步：把校正后的读数与参考光谱逐点比较，并记录残差最大的波段，这一步的说明同样需要折成好几行才能放下。",
+                });
+                emit("agent", { kind: "Done", frame_id: fid, stop_reason: "end_turn" });
               }, 30);
               return fid;
             }
