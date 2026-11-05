@@ -5,6 +5,19 @@ namespace Wisp.ProjectBrowser;
 /// Specialist bindings share the WebView's HTTP/ACP keys and nullable skill inheritance.
 public static class NativeSpecialists
 {
+    public static IReadOnlyList<SpecialistBackendOption> SubagentOptions(string current, IEnumerable<JsonObject> models, NativeLocalization? localization = null)
+    {
+        var options = new List<SpecialistBackendOption>
+        {
+            new("", localization?.Text("specialists.subagent_model.follow") ?? "Follow the conversation model")
+        };
+        options.AddRange(models.Where(NativeModelPresentation.IsChat)
+            .Select(model => new SpecialistBackendOption(S(model, "id"), NativeModelPresentation.Label(model))));
+        if (!options.Any(option => option.Id == current)) options.Add(new(current,
+            (localization?.Choose("当前配置不可用：", "Current configuration unavailable: ") ?? "Current configuration unavailable: ") + current, false));
+        return options;
+    }
+
     public static string ReviewerResult(JsonObject report, NativeLocalization localization)
     {
         var backend = S(report, "backend") switch { "acp_agent" => "ACP", "http_model" => "HTTP", var other => other };

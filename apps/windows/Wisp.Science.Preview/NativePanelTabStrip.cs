@@ -33,18 +33,22 @@ internal sealed class NativePanelTabStrip : UserControl, IDisposable
         this.select = select; this.layoutChanged = layoutChanged; this.close = close;
         var root = new Grid { ColumnSpacing = 4, Padding = new(10, 8, 8, 8), Background = design.Brush("bg-sunken"),
             BorderBrush = design.Brush("border"), BorderThickness = new(0, 0, 0, 1) };
-        root.ColumnDefinitions.Add(new()); root.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); root.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); root.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        root.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); root.ColumnDefinitions.Add(new()); root.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); root.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); root.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var home = Tool(design.T("right.launcher.home"), "compass", 28);
+        AutomationProperties.SetAutomationId(home, "right-pane-home");
+        home.Click += async (_, _) => await select(NativePanelTabs.Home);
+        root.Children.Add(home);
         scroller = new() { Content = items, HorizontalScrollMode = ScrollMode.Enabled, VerticalScrollMode = ScrollMode.Disabled,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled };
         scroller.LayoutUpdated += RevealSelected;
-        root.Children.Add(scroller);
+        Grid.SetColumn(scroller, 1); root.Children.Add(scroller);
         var add = Tool(design.T("right.add_tab"), "plus", 28);
         add.BorderBrush = design.Brush("border-strong"); add.BorderThickness = new(1); add.Background = design.Brush("bg-elev");
         add.Click += (_, _) => { BuildMenu(); menuOpen = true; menu.ShowAt(add); };
-        Grid.SetColumn(add, 1); root.Children.Add(add);
+        Grid.SetColumn(add, 2); root.Children.Add(add);
         var hide = Tool(design.T("right.close"), "close", 28); hide.Click += (_, _) => close();
-        Grid.SetColumn(ViewModes, 2); root.Children.Add(ViewModes);
-        Grid.SetColumn(hide, 3); root.Children.Add(hide);
+        Grid.SetColumn(ViewModes, 3); root.Children.Add(ViewModes);
+        Grid.SetColumn(hide, 4); root.Children.Add(hide);
         var style = new Style(typeof(FlyoutPresenter));
         style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(6)));
         style.Setters.Add(new Setter(Control.BackgroundProperty, design.Brush("bg-elev")));

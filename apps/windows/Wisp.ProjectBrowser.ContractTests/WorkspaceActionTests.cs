@@ -106,6 +106,9 @@ internal static class WorkspaceActionTests
 
         var panelClient = new FakePanel();
         var panel = new WorkspacePanelModel(panelClient, "project-a", "session-a", new NativePanelTabs(available: NativePanelTabs.All));
+        await panel.RefreshAsync(NativePanelTabs.Home);
+        Check(panel.Tabs.Selected == NativePanelTabs.Home && panel.Tabs.Open.Count == 0 && !panel.Loading,
+            "opening Start does not read a tool or create phantom tabs");
         await panel.RefreshAsync("files");
         Check(panel.Files.Length == 2 && panel.Parent == ".", "file listing starts at workspace root");
         Check(WorkspacePanelModel.Child("data", "a") == "data/a", "file actions keep displayed directory");
@@ -132,6 +135,14 @@ internal static class WorkspaceActionTests
         await abandonedListing;
         Check(panel.Tabs.Selected == "provenance" && panel.Path == "new" && panel.Files.Single().Name == "new.txt",
             "switching tabs preserves the last accepted directory against a late response");
+
+        var leavingForHome = panelClient.PendingFiles = new();
+        var homeListing = panel.RefreshAsync("files", "leaving");
+        var openTabs = panel.Tabs.Saved;
+        await panel.RefreshAsync(NativePanelTabs.Home);
+        leavingForHome.SetResult([new("stale.txt", false, 1, null)]); await homeListing;
+        Check(panel.Tabs.Selected == NativePanelTabs.Home && panel.Tabs.Saved == openTabs && panel.Files.Single().Name == "new.txt",
+            "returning to Start preserves tool tabs and ignores a late tool read");
 
         var abandonedContexts = panelClient.PendingContexts = new();
         var hostRead = panel.RefreshAsync("hosts");

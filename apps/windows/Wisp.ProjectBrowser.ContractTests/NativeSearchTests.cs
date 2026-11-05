@@ -14,6 +14,23 @@ internal static class NativeSearchTests
         Check(NativePaletteActions.Match("", true, false, false).Select(a => a.Id)
             .SequenceEqual(new[] { "new-project", "check-updates", "star-us", "project-settings", "skills" }),
             "workspace search adds project settings and skills in the reference order");
+        using var homeSearch = new WorkspaceSearchModel(() => Task.FromResult<INativeSearchClient?>(null), null);
+        var restoredHost = new RestoredWorkspace();
+        await homeSearch.LoadCommandProjectAsync(restoredHost, [("project-b", "C:/other"), ("project-a", "c:/work/")]);
+        Check(homeSearch.CommandProjectId == "project-a" && NativePaletteActions.Match("", homeSearch.CommandProjectId != null, false, false)
+            .Select(a => a.Id).SequenceEqual(["new-project", "check-updates", "star-us", "project-settings", "skills"]),
+            "home settings shortcuts bind to the restored host project rather than the first project");
+        using var hiddenSearch = new WorkspaceSearchModel(() => Task.FromResult<INativeSearchClient?>(null), null);
+        await hiddenSearch.LoadCommandProjectAsync(restoredHost, [("project-b", "C:/other")]);
+        Check(hiddenSearch.CommandProjectId == null, "hidden or foreign restored projects do not acquire settings shortcuts");
+        using var ambiguousSearch = new WorkspaceSearchModel(() => Task.FromResult<INativeSearchClient?>(null), null);
+        await ambiguousSearch.LoadCommandProjectAsync(restoredHost, [("project-a", "C:/work"), ("project-b", "C:/work")]);
+        Check(ambiguousSearch.CommandProjectId == null, "an ambiguous workspace path never chooses a project by list order");
+        restoredHost.Pending = new();
+        using var closedSearch = new WorkspaceSearchModel(() => Task.FromResult<INativeSearchClient?>(null), null);
+        var resolving = closedSearch.LoadCommandProjectAsync(restoredHost, [("project-a", "C:/work")]); closedSearch.Dispose();
+        restoredHost.Pending.SetResult(new JsonObject { ["workspace"] = "C:/work" }); await resolving;
+        Check(closedSearch.CommandProjectId == null, "a delayed restored-project lookup cannot reopen a closed palette scope");
         var p = new NativeSearchItem("project", "p", "p", "project", "project", "", null);
         var a = new NativeSearchItem("artifact", "a", "p", "project", "file", "", "s");
         var s = new NativeSearchItem("session", "s", "p", "project", "session", "", "s");
@@ -97,6 +114,15 @@ internal static class NativeSearchTests
         var cancelled = debounced.SearchAsync("cancelled", TimeSpan.FromSeconds(10));
         await debounced.SearchAsync("current"); await cancelled;
         Check(client.Calls == calls + 1 && debounced.Items.Single().Title == "current", "superseded debounce never reaches the host");
+    }
+    private sealed class RestoredWorkspace : INativeSettingsClient
+    {
+        public TaskCompletionSource<JsonNode?>? Pending;
+        public Task<JsonNode?> InvokeAsync(string command, JsonObject arguments, string? projectId = null, CancellationToken cancellationToken = default)
+        {
+            if (command != "get_bootstrap_status" || projectId != null || arguments.Count != 0) throw new InvalidOperationException("Unexpected workspace lookup");
+            return Pending?.Task ?? Task.FromResult<JsonNode?>(new JsonObject { ["workspace"] = "C:\\work" });
+        }
     }
     private sealed class Fake : INativeSearchClient
     {

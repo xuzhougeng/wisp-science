@@ -22,6 +22,8 @@ internal sealed class NativeArtifactsPane : UserControl, IDisposable
     private readonly StackPanel groups = new() { Spacing = 12 };
     private readonly ScrollViewer list;
     private readonly Border previewHost = new();
+    private readonly ContentControl emptyHost = new() { Visibility = Visibility.Collapsed,
+        HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
     private readonly Dictionary<string, Border> tiles = [];
     private readonly HashSet<string> collapsed = [];
     private readonly Button listMode, gridMode;
@@ -44,7 +46,7 @@ internal sealed class NativeArtifactsPane : UserControl, IDisposable
         root.RowDefinitions.Add(new()); root.RowDefinitions.Add(new() { Height = new GridLength(0) });
         list = new() { Content = groups, Padding = new(12), HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             HorizontalContentAlignment = HorizontalAlignment.Stretch, Background = design.Brush("bg-sunken") };
-        root.Children.Add(list); Grid.SetRow(previewHost, 1); root.Children.Add(previewHost);
+        root.Children.Add(list); root.Children.Add(emptyHost); Grid.SetRow(previewHost, 1); root.Children.Add(previewHost);
         previewHost.BorderBrush = design.Brush("border"); previewHost.BorderThickness = new(0, 1, 0, 0);
         var modes = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
         listMode = Mode("right.view.list", "list", false); gridMode = Mode("right.view.grid", "grid", true);
@@ -143,8 +145,12 @@ internal sealed class NativeArtifactsPane : UserControl, IDisposable
         }
         if (loading) groups.Children.Add(new ProgressBar { IsIndeterminate = true, Height = 3 });
         if (error.Length > 0) groups.Children.Add(design.Text(error, 12));
-        if (entries.Length == 0 && !loading && error.Length == 0)
-        { groups.Children.Add(design.EmptyState("doc", design.T("right.no_artifacts.title"), design.T("right.no_artifacts.body"))); return; }
+        var empty = entries.Length == 0 && !loading && error.Length == 0;
+        emptyHost.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
+        list.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
+        ViewModes.Visibility = entries.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        root.Background = design.Brush(empty ? "bg-elev" : "bg-sunken");
+        if (empty) { emptyHost.Content = new NativePanelEmptyState(design, "artifacts"); return; }
         var first = true;
         foreach (var group in NativeArtifactCatalog.Groups(entries, design.Localization))
         {

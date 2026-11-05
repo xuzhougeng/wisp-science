@@ -272,15 +272,20 @@ internal sealed partial class NativeWorkspacePanel
         {
             if (query.Length == 0 && !model.RemoteFiles)
             {
-                var empty = design.EmptyState("folder", design.T("right.no_file.title"), design.T("right.no_file.body"));
+                var empty = new NativePanelEmptyState(design, "files");
                 var label = design.Text(design.T("right.browse_files"), 13); label.Foreground = design.Brush("clay");
-                ((StackPanel)empty.Child).Children.Add(label);
+                label.HorizontalAlignment = HorizontalAlignment.Center; label.TextDecorations = Windows.UI.Text.TextDecorations.Underline;
+                empty.Children.Add(label);
                 var browse = new Button { Content = empty, Padding = new Thickness(0), BorderThickness = new Thickness(0),
                     HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch };
+                design.QuietButton(browse);
                 AutomationProperties.SetName(browse, design.T("right.browse_files"));
                 AutomationProperties.SetAutomationId(browse, "files-empty-browse");
                 browse.Click += async (_, _) => await FileReadAsync(model.RefreshAsync("files", cancellationToken: lifetime.Token));
-                fileRows.Children.Add(browse);
+                if (model.Preview == null)
+                {
+                    panelEmpty.Content = browse; panelEmpty.Visibility = Visibility.Visible; scroll.Visibility = Visibility.Collapsed;
+                }
                 return;
             }
             fileRows.Children.Add(design.EmptyState("folder", query.Length > 0 ? design.T("files.no_matches")

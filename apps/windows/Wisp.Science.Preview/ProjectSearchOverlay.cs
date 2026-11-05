@@ -175,7 +175,7 @@ internal sealed class ProjectSearchOverlay : Grid, IDisposable
                         result.Kind is "project" or "session" ? "Ctrl↵ " + design.T("command.hint.open_new_window") : null, true);
                 }
             }
-            var actions = NativePaletteActions.Match(query.Text, hasProject, hasSession, commandsOnly, design.Localization);
+            var actions = NativePaletteActions.Match(query.Text, hasProject || !commandsOnly && model.CommandProjectId != null, hasSession, commandsOnly, design.Localization);
             string? lastGroup = null;
             foreach (var action in actions)
             {

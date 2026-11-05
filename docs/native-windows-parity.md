@@ -5,6 +5,55 @@ range to the existing Rust desktop host. No second database writer or WebView
 project activation was added. Build with `scripts/build_native_windows.ps1`.
 An alternate browser database still requires a matching running host descriptor.
 
+## Inspector and example parity (2026-11-05)
+
+The inspector has a **Start** page with common tools and a **More tools** group.
+Only tools actually opened appear in its tab strip; existing saved tabs remain
+available. The compass returns to Start without discarding the open tabs.
+Agents, Notebook, Highlights, Provenance and Side chat follow the selected
+language. Empty file, artifact and transcript panels use the shared WebView
+copy and centered layout. Side chat keeps its composer at the bottom, with
+the model picker and send action together. Agents includes **Manage workflows**.
+
+**Settings → Specialists → Default subagent model** lists chat models and
+**Follow conversation model**. An unavailable saved model remains visible;
+failed saves keep the last acknowledged selection. Home search offers project
+settings and skills only after the host's restored project is confirmed among
+the user's visible projects.
+
+Capabilities reserves its scroll gutter so the five summary cards wrap to
+three plus two at the standard dialog width. WebView refreshes the runtime
+snapshot when this dialog opens, including the active workspace path.
+Example transcripts retain Copy but hide editing, review, memory, branch,
+excerpt, exploration and undo actions. Native local Markdown links without a
+verified opener use the same code appearance as unavailable WebView paths;
+external web links keep their link appearance.
+
+Regression coverage was added for model persistence and failures, launcher
+restoration, search scope, localized empty states, local link rendering,
+read-only example actions and refreshed capabilities. Tests require explicit
+authorization under `AGENTS.md`; a successful build alone does not verify UI
+behavior. Manual comparison should cover both languages, Start → tool → Start,
+empty Files/Artifacts/Notebook/Highlights/Provenance, Side chat's bottom input,
+Specialists model selection, home search, and immediate Escape from capabilities
+and the model picker. Small font rasterization and spacing differences between
+WinUI and WebView are outside this correction.
+
+Validated on Windows with the local ContractTests runner (mock hosts only) and
+the two Playwright cases **Example project shows bundled demos as read-only
+transcripts** and **capabilities refreshes the workspace snapshot when reopened**.
+Both cases ran in parallel against the compiled WASM assets and mocked Tauri
+bridge. WinUI Release x64 and the WebView desktop host were also rebuilt and
+checked through Computer Use. Dark/high-contrast themes and macOS were not
+visually checked in this pass.
+
+| Surface | Before | After |
+| --- | --- | --- |
+| Specialists default model | ![Missing default model](assets/native-windows-parity-20261105/specialists-before.jpg) | ![Default model selector](assets/native-windows-parity-20261105/specialists-after.png) |
+| Side chat | ![Top-aligned Chinese controls](assets/native-windows-parity-20261105/sidechat-before.jpg) | ![Localized empty state and bottom composer](assets/native-windows-parity-20261105/sidechat-after.png) |
+
+![Inspector Start page](assets/native-windows-parity-20261105/start.png)
+
 In Settings → Appearance, switching between System, Light, and Dark keeps the
 chosen theme card focused. Tab from Dark reaches the color palette; System and
 Light share the light palette and Dark retains its own choice. The selected

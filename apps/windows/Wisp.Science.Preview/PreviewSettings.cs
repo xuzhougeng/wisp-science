@@ -36,7 +36,7 @@ internal sealed class PreviewSettings
     // WebView keeps the inspector width for this window only; each launch starts at 400.
     [System.Text.Json.Serialization.JsonIgnore]
     public double PanelWidth { get; set; } = Wisp.ProjectBrowser.PreviewLayout.DefaultPanelWidth;
-    public string PanelTab { get; set; } = "artifacts";
+    public string PanelTab { get; set; } = Wisp.ProjectBrowser.Contracts.NativePanelTabs.Home;
     public string PanelTabs { get; set; } = "";
     public bool AssistantProjectsVisible { get; set; } = true;
     public bool AssistantCalendarVisible { get; set; } = true;

@@ -2730,6 +2730,7 @@ pub(crate) fn render_item(
     can_excerpt: Signal<bool>,
     excerpt_start: Signal<Option<usize>>,
     show_actions: Signal<bool>,
+    read_only: Signal<bool>,
     can_undo: Signal<bool>,
     show_explore: Signal<bool>,
     can_explore: Signal<bool>,
@@ -2850,6 +2851,7 @@ pub(crate) fn render_item(
                 on_branch=Callback::new(on_branch)
                 can_branch=can_branch
                 show_actions=show_actions
+                read_only=read_only
                 can_undo=can_undo
                 on_undo=on_undo
                 show_explore=show_explore
