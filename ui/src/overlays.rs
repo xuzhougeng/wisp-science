@@ -1,10 +1,13 @@
 use crate::app_support::{
     compose_icon, js_error_text, parse_redact_keywords, redact_text, refresh_execution_contexts,
-    refresh_runs, refresh_runtimes, share_html_document, share_png_payload, share_png_row,
-    share_png_width, show_toast, RunRefreshHealth, ShareExportFormat, ShareHtmlRow, ShareHtmlTheme,
-    ShareMessage, ShareRole,
+    refresh_runs, refresh_runtimes, share_html_document, share_png_file_name, share_png_payload,
+    share_png_row, share_png_width, share_saved_folder, show_toast, RunRefreshHealth,
+    ShareExportFormat, ShareHtmlRow, ShareHtmlTheme, ShareImageLayout, ShareMessage, ShareRole,
 };
-use crate::bindings::{invoke_checked, open_external_url, render_share_png, snapshot_share_theme};
+use crate::bindings::{
+    invoke_checked, open_external_url, render_share_png, render_share_png_pages,
+    snapshot_share_theme,
+};
 use crate::dto::*;
 use crate::i18n::{localize_backend, t, tf, Locale};
 use crate::text::{dom_value, event_target_value, file_kind, format_bytes, ime_composing};
@@ -238,6 +241,72 @@ fn live_share_theme() -> ShareHtmlTheme {
     serde_json::from_str(&snapshot_share_theme()).unwrap_or_default()
 }
 
+/// What the share dialog's export button does once the payload is built.
+enum ShareExportJob {
+    Html(wasm_bindgen::JsValue),
+    Png(String),
+    Pages(String),
+}
+
+/// A save command's path result; `None` when the user cancelled the dialog.
+fn saved_share_path(value: &wasm_bindgen::JsValue) -> Option<String> {
+    value.as_string().filter(|path| !path.is_empty())
+}
+
+/// Render, save, and describe one export. `Ok(None)` means the user
+/// cancelled the save dialog; `Ok(Some(_))` is the toast for the saved files.
+async fn run_share_export(
+    loc: Locale,
+    job: ShareExportJob,
+    default_name: String,
+) -> Result<Option<String>, wasm_bindgen::JsValue> {
+    let saved_one = |value: wasm_bindgen::JsValue| {
+        saved_share_path(&value).map(|path| tf(loc, "share.saved", &[("path", &path)]))
+    };
+    match job {
+        ShareExportJob::Html(args) => invoke_checked("save_share_html", args).await.map(saved_one),
+        ShareExportJob::Png(payload) => {
+            let png = render_share_png(&payload)
+                .await?
+                .as_string()
+                .unwrap_or_default();
+            let args = to_value(&serde_json::json!({
+                "pngBase64": png,
+                "defaultName": default_name,
+            }))
+            .unwrap();
+            invoke_checked("save_share_image", args)
+                .await
+                .map(saved_one)
+        }
+        ShareExportJob::Pages(payload) => {
+            let pages = render_share_png_pages(&payload).await?;
+            let pngs: Vec<String> = js_sys::Array::from(&pages)
+                .iter()
+                .filter_map(|page| page.as_string())
+                .collect();
+            let args = to_value(&serde_json::json!({
+                "pngsBase64": pngs,
+                "defaultName": default_name,
+            }))
+            .unwrap();
+            let value = invoke_checked("save_share_images", args).await?;
+            let paths: Option<Vec<String>> =
+                serde_wasm_bindgen::from_value(value).unwrap_or_default();
+            Ok(paths.filter(|paths| !paths.is_empty()).map(|paths| {
+                tf(
+                    loc,
+                    "share.saved_pages",
+                    &[
+                        ("count", &paths.len().to_string()),
+                        ("path", share_saved_folder(&paths[0])),
+                    ],
+                )
+            }))
+        }
+    }
+}
+
 fn share_png_rows(
     loc: Locale,
     selected: &[&ShareMessage],
@@ -269,6 +338,7 @@ pub(super) fn ShareOverlay(
     let busy = create_rw_signal(false);
     let error = create_rw_signal(None::<String>);
     let format = create_rw_signal(ShareExportFormat::Png);
+    let image_layout = create_rw_signal(ShareImageLayout::Single);
     // Render from the open flag, not the editable draft, so checkbox toggles
     // and keyword input do not rebuild the dialog DOM and drop focus.
     let open = create_memo(move |_| draft.with(|value| value.is_some()));
@@ -280,6 +350,7 @@ pub(super) fn ShareOverlay(
             busy.set(false);
             error.set(None);
             format.set(ShareExportFormat::Png);
+            image_layout.set(ShareImageLayout::Single);
         }
         now
     });
@@ -315,7 +386,7 @@ pub(super) fn ShareOverlay(
         let html_format = format.get_untracked() == ShareExportFormat::Html;
         // Build the export payload up front (pure CPU); the spawned task only
         // awaits the optional canvas render and the native save call.
-        let (png_payload, html_args) = if html_format {
+        let job = if html_format {
             let rows: Vec<ShareHtmlRow> = selected
                 .iter()
                 .map(|message| ShareHtmlRow {
@@ -331,7 +402,7 @@ pub(super) fn ShareOverlay(
                 "defaultName": format!("wisp-share-{stamp}.html"),
             }))
             .unwrap();
-            (String::new(), Some(args))
+            ShareExportJob::Html(args)
         } else {
             let payload = share_png_payload(
                 "wisp-science",
@@ -340,41 +411,22 @@ pub(super) fn ShareOverlay(
                 &share_png_rows(loc, &selected, &redact),
                 png_width,
             );
-            (payload, None)
+            match image_layout.get_untracked() {
+                ShareImageLayout::Single => ShareExportJob::Png(payload),
+                ShareImageLayout::Pages => ShareExportJob::Pages(payload),
+            }
         };
         spawn_local(async move {
-            let result = match html_args {
-                Some(args) => invoke_checked("save_share_html", args).await,
-                None => {
-                    async {
-                        let png = render_share_png(&png_payload)
-                            .await?
-                            .as_string()
-                            .unwrap_or_default();
-                        let args = to_value(&serde_json::json!({
-                            "pngBase64": png,
-                            "defaultName": format!("wisp-share-{stamp}.png"),
-                        }))
-                        .unwrap();
-                        invoke_checked("save_share_image", args).await
-                    }
-                    .await
-                }
-            };
+            let result = run_share_export(loc, job, share_png_file_name(&stamp)).await;
             busy.set(false);
             match result {
-                // A string result is the saved path; null means the user
+                // The toast names what was saved; `None` means the user
                 // cancelled the save dialog — keep the overlay open silently.
-                Ok(value) => {
-                    if let Some(path) = value.as_string().filter(|path| !path.is_empty()) {
-                        show_toast(&tf(
-                            locale.get_untracked(),
-                            "share.saved",
-                            &[("path", &path)],
-                        ));
-                        draft.set(None);
-                    }
+                Ok(Some(message)) => {
+                    show_toast(&message);
+                    draft.set(None);
                 }
+                Ok(None) => {}
                 Err(value) => error.set(Some(localize_backend(
                     locale.get_untracked(),
                     &js_error_text(value),
@@ -474,6 +526,26 @@ pub(super) fn ShareOverlay(
                         </div>
                     </div>
                     {move || (format.get() == ShareExportFormat::Png).then(|| view! {
+                        <div class="share-format">
+                            <span class="share-format-label">{move || t(locale.get(), "share.layout_label")}</span>
+                            <div class="share-format-seg" role="group"
+                                aria-label=move || t(locale.get(), "share.layout_label")>
+                                <button type="button" data-testid="share-layout-single"
+                                    class:active=move || image_layout.get() == ShareImageLayout::Single
+                                    aria-pressed=move || (image_layout.get() == ShareImageLayout::Single).to_string()
+                                    on:click=move |_| image_layout.set(ShareImageLayout::Single)>
+                                    {move || t(locale.get(), "share.layout_single")}</button>
+                                <button type="button" data-testid="share-layout-pages"
+                                    class:active=move || image_layout.get() == ShareImageLayout::Pages
+                                    aria-pressed=move || (image_layout.get() == ShareImageLayout::Pages).to_string()
+                                    on:click=move |_| image_layout.set(ShareImageLayout::Pages)>
+                                    {move || t(locale.get(), "share.layout_pages")}</button>
+                            </div>
+                        </div>
+                        {move || (image_layout.get() == ShareImageLayout::Pages).then(|| view! {
+                            <p class="hint share-layout-hint" data-testid="share-layout-hint">
+                                {move || t(locale.get(), "share.pages_hint")}</p>
+                        })}
                         <label class="share-redact" for="share-width-input">
                             {move || t(locale.get(), "share.width_label")}
                             <input id="share-width-input" data-testid="share-width-input"
@@ -494,6 +566,8 @@ pub(super) fn ShareOverlay(
                                 t(locale.get(), "share.exporting")
                             } else if format.get() == ShareExportFormat::Html {
                                 t(locale.get(), "share.export_html")
+                            } else if image_layout.get() == ShareImageLayout::Pages {
+                                t(locale.get(), "share.export_pages")
                             } else {
                                 t(locale.get(), "share.export")
                             }}</button>

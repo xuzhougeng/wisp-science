@@ -8143,6 +8143,7 @@ pub fn run() {
             app_commands::download_file,
             app_commands::upload_to_context,
             app_commands::save_share_image,
+            app_commands::save_share_images,
             app_commands::save_share_html,
             share_social::generate_share_social_copy,
             export_session,
