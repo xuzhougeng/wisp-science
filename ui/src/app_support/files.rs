@@ -559,6 +559,47 @@ pub(crate) fn close_right_tab(
     }
 }
 
+/// The tab the panel toggle reopens: the one the user left active, else the
+/// last tab still open. `None` means nothing is open and the launcher shows.
+pub(crate) fn right_tab_to_reopen(open: &[RightTab], active: RightTab) -> Option<RightTab> {
+    if open.contains(&active) {
+        Some(active)
+    } else {
+        open.last().copied()
+    }
+}
+
+/// Session switches bring Artifacts forward only when the user has it open.
+/// Selecting a tab missing from the strip would show its panel with no tab
+/// highlighted, and would dismiss the launcher.
+pub(crate) fn focus_artifacts_if_open(
+    open_right_tabs: RwSignal<Vec<RightTab>>,
+    right_tab: RwSignal<RightTab>,
+) {
+    if open_right_tabs.with_untracked(|tabs| tabs.contains(&RightTab::Artifacts)) {
+        right_tab.set(RightTab::Artifacts);
+    }
+}
+
+#[cfg(test)]
+mod right_tab_reopen_tests {
+    use super::{right_tab_to_reopen, RightTab};
+
+    #[test]
+    fn reopens_the_active_tab_or_the_last_open_one() {
+        let open = [RightTab::Hosts, RightTab::Agents];
+        assert!(right_tab_to_reopen(&open, RightTab::Hosts) == Some(RightTab::Hosts));
+        assert!(right_tab_to_reopen(&open, RightTab::Agents) == Some(RightTab::Agents));
+        // A session switch may leave the active tab outside the strip.
+        assert!(right_tab_to_reopen(&open, RightTab::Artifacts) == Some(RightTab::Agents));
+    }
+
+    #[test]
+    fn shows_the_launcher_when_no_tab_is_open() {
+        assert!(right_tab_to_reopen(&[], RightTab::Artifacts).is_none());
+    }
+}
+
 pub(crate) fn reveal_in_files(
     path: &str,
     file_source: RwSignal<String>,
