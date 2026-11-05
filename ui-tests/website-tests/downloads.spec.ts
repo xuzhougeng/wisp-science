@@ -7,13 +7,12 @@ const suffixes = {
   "linux-x64-appimage": "amd64.AppImage", "linux-arm64-appimage": "aarch64.AppImage",
   "android-universal-apk": "android.apk",
   "macos-arm64-swiftui": "aarch64.dmg", "macos-x64-swiftui": "x86_64.dmg",
-  "windows-x64-winui-framework": "x64-framework-dependent-setup.exe",
-  "windows-x64-winui-self-contained": "x64-self-contained-setup.exe",
+  "windows-x64-winui-self-contained": "x64-setup.exe",
 };
 const manifest = {
   schema: 1, tag: "v1.12.0",
   packages: Object.entries(suffixes).map(([id, suffix]) => {
-    const prefix = id.includes("swiftui") ? "Wisp-Science-SwiftUI" : id.includes("winui") ? "Wisp-Science-WinUI-Preview" : "wisp-science";
+    const prefix = id.includes("swiftui") ? "Wisp-Science-SwiftUI" : id.includes("winui") ? "Wisp-Science-WinUI" : "wisp-science";
     const name = `${prefix}_1.12.0_${suffix}`;
     return { id, name, sha256: "a".repeat(64), size: 24000000, key: `releases/v1.12.0/${"a".repeat(64)}/${name}` };
   }),
@@ -54,6 +53,7 @@ test("Mac never guesses architecture, and switching languages preserves selectio
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "platform", { value: "MacIntel" });
     Object.defineProperty(navigator, "userAgent", { value: "Mozilla/5.0 Macintosh" });
+    Object.defineProperty(navigator, "maxTouchPoints", { value: 0 });
   });
   await page.goto("/index.html#download");
   await expect(page.locator("#download-os")).toHaveValue("macos");
@@ -136,11 +136,32 @@ test("native builds keep their own version, installation guidance and language s
   await expect(page.locator("#release-status")).toHaveText("Available release v1.12.0 · Latest release v1.20.0");
   await expect(page.locator("#download-github")).toHaveAttribute("href", /\/v1\.12\.0\/Wisp-Science-SwiftUI_1\.12\.0_aarch64\.dmg$/);
   await page.locator("#download-os").selectOption("windows");
-  await page.locator("#download-format").selectOption("winui-framework");
-  await expect(page.locator("#install-help")).toContainText("downloads missing");
   await page.locator("#download-format").selectOption("winui-self-contained");
   await expect(page.locator("#install-help")).toContainText("Includes .NET");
-  await expect(page.locator("#download-primary")).toHaveAttribute("href", /Wisp-Science-WinUI-Preview_1\.12\.0_x64-self-contained-setup\.exe$/);
+  await expect(page.locator("#install-help")).toContainText("WebView edition is not required");
+  await expect(page.locator("#install-help")).toContainText("automatically downloads and installs it if missing");
+  await expect(page.locator("#install-help")).toContainText("internet is required only for a missing runtime");
+  await expect(page.locator('#download-format option[value^="winui"]')).toHaveCount(1);
+  await expect(page.locator('#download-format option[value^="winui"]')).not.toContainText("Preview");
+  await expect(page.locator("#download-primary")).toHaveAttribute("href", /Wisp-Science-WinUI_1\.12\.0_x64-setup\.exe$/);
+  await page.getByRole("button", { name: "中文", exact: true }).click();
+  await expect(page.locator("#install-help")).toContainText("缺失时联网下载安装");
+  await expect(page.locator("#install-help")).toContainText("无需另装 WebView 版");
+});
+
+test("historical WinUI Preview fallback does not promise automatic WebView2 setup", async ({ page }) => {
+  const legacy = { ...manifest, packages: manifest.packages.map(asset => {
+    if (!asset.id.includes("winui")) return asset;
+    const name = "Wisp-Science-WinUI-Preview_1.12.0_x64-self-contained-setup.exe";
+    return { ...asset, name, key: asset.key.replace(asset.name, name) };
+  }) };
+  await page.route("https://wisp-science.sfl.bio/downloads/latest.json", route => route.fulfill({ json: legacy }));
+  await page.goto("/index.html?lang=en#download");
+  await page.locator("#download-os").selectOption("windows");
+  await page.locator("#download-format").selectOption("winui-self-contained");
+  await expect(page.locator("#install-help")).toContainText("requires Microsoft WebView2 Runtime to be installed already");
+  await expect(page.locator("#install-help")).not.toContainText("automatically downloads");
+  await expect(page.locator("#download-primary")).toHaveAttribute("href", /WinUI-Preview_1\.12\.0_x64-self-contained-setup\.exe$/);
 });
 
 test("missing native packages preserve standard downloads and a clear GitHub fallback", async ({ page }) => {
@@ -149,7 +170,7 @@ test("missing native packages preserve standard downloads and a clear GitHub fal
   await page.goto("/index.html?lang=en#download");
   await page.locator("#download-os").selectOption("windows");
   await expect(page.locator("#download-primary")).toHaveAttribute("href", /x64-setup\.exe$/);
-  await page.locator("#download-format").selectOption("winui-framework");
+  await page.locator("#download-format").selectOption("winui-self-contained");
   await expect(page.locator("#download-primary")).not.toHaveAttribute("href");
   await expect(page.locator("#package-name")).toContainText("does not include this package");
   await expect(page.locator("#download-github")).toHaveAttribute("href", "https://github.com/xuzhougeng/wisp-science/releases");

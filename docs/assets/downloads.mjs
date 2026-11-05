@@ -24,8 +24,7 @@ function render() {
     : os.value === "android" ? [["universal", text("通用 · 手机与平板", "Universal · phones and tablets")]] : [];
   options(arch, architectures.length > 1 ? [["", text("请选择芯片", "Choose a processor")], ...architectures] : architectures, arch.value);
   const formats = os.value === "windows" ? [["exe", text("常规版 · EXE · 推荐", "Standard · EXE · Recommended")], ["msi", text("常规版 · MSI", "Standard · MSI")],
-      ["winui-framework", text("WinUI 预览版 · 轻量安装包", "WinUI Preview · Lightweight installer")],
-      ["winui-self-contained", text("WinUI 预览版 · 含运行时", "WinUI Preview · Runtimes included")]]
+      ["winui-self-contained", text("WinUI 原生版 · 含运行时", "WinUI native · Runtimes included")]]
     : os.value === "macos" ? [["dmg", text("常规版 · DMG · 推荐", "Standard · DMG · Recommended")], ["swiftui", text("SwiftUI 原生版 · DMG", "SwiftUI native · DMG")]]
     : os.value === "linux" ? [["deb", "DEB · Debian / Ubuntu"], ["appimage", "AppImage"]]
     : os.value === "android" ? [["apk", "APK"]] : [];
@@ -62,8 +61,9 @@ function render() {
   if (asset) primary.href = `${DOWNLOAD_ORIGIN}/downloads/${asset.key}`;
   setText("install-help", !pkg ? "" : pkg.format === "swiftui"
     ? text("需要 macOS 13 或更高版本。打开 DMG，将 Wisp Science SwiftUI 拖入 Applications；可与常规版并存，更新需手动下载。", "Requires macOS 13 or later. Open the DMG and drag Wisp Science SwiftUI into Applications. It installs alongside the standard app and updates by manual download.")
-    : pkg.format === "winui-framework" ? text("WinUI 预览版。安装时会从 Microsoft 下载缺少的 .NET 和 Windows App Runtime；请保持联网。", "WinUI Preview. Setup downloads missing .NET and Windows App Runtime dependencies from Microsoft; keep an internet connection available.")
-    : pkg.format === "winui-self-contained" ? text("WinUI 预览版。已包含 .NET 和 Windows App SDK 运行时，安装包较大；功能仍在持续补充。", "WinUI Preview. Includes .NET and Windows App SDK runtimes in a larger installer. Feature coverage is still growing.")
+    : pkg.format === "winui-self-contained" ? text("无需另装 WebView 版。已包含 .NET、Windows App SDK 和应用服务。", "The WebView edition is not required. Includes .NET, Windows App SDK and app services.") + " " + (asset?.name.startsWith("Wisp-Science-WinUI-Preview_")
+      ? text("此历史 Preview 安装包需要系统已有 Microsoft WebView2 Runtime。", "This historical Preview installer requires Microsoft WebView2 Runtime to be installed already.")
+      : text("安装时自动检测 Microsoft WebView2 Runtime，缺失时联网下载安装；已有运行时则直接使用。", "Setup detects Microsoft WebView2 Runtime and automatically downloads and installs it if missing; internet is required only for a missing runtime."))
     : pkg.os === "macos"
     ? text("打开 DMG，将 Wisp Science 拖入 Applications。", "Open the DMG and drag Wisp Science into Applications.")
     : pkg.os === "windows" ? text("运行安装包并按提示完成安装。", "Run the installer and follow the setup steps.")

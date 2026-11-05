@@ -68,7 +68,7 @@ test("GitHub Pages finishes its artifact job before deployment", () => {
 test("Windows signing workflows only use contexts job-level env allows", () => {
   for (const path of [
     ".github/workflows/release-windows.yml",
-    ".github/workflows/release-winui-preview.yml",
+    ".github/workflows/release-winui.yml",
     ".github/workflows/test-windows-signing.yml",
   ]) {
     const workflow = readRepositoryFile(path);

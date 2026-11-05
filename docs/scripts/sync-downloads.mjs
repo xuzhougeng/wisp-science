@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { PACKAGES, RELEASES, assetName, compareTags, contentType, downloadKey, validTag, validateManifest } from "../assets/download-catalog.mjs";
+import { PACKAGES, RELEASES, assetName, assetNames, compareTags, contentType, downloadKey, validTag, validateManifest } from "../assets/download-catalog.mjs";
 
 const repo = "xuzhougeng/wisp-science";
 
@@ -15,8 +15,10 @@ export function selectAssets(release, fallbackReleases = []) {
     !item.isDraft && !item.isPrerelease && compareTags(item.tagName, release.tagName) < 0)
     .sort((a, b) => compareTags(b.tagName, a.tagName))];
   return PACKAGES.flatMap(pkg => {
-    const source = candidates.find(item => item.assets.some(asset => asset.name === assetName(item.tagName, pkg))) || release;
-    const name = assetName(source.tagName, pkg);
+    const source = candidates.find(item => item.assets.some(asset => assetNames(item.tagName, pkg).includes(asset.name))) || release;
+    // Prefer the formal name when an old tag has been rebuilt; otherwise retain
+    // the last self-contained Preview package until the new installer is ready.
+    const name = assetNames(source.tagName, pkg).find(name => source.assets.some(asset => asset.name === name)) ?? assetName(source.tagName, pkg);
     const matches = source.assets.filter(asset => asset.name === name);
     if (pkg.optional && matches.length === 0) return [];
     if (matches.length !== 1 || matches[0].size <= 0) throw new Error(`Missing or ambiguous installer: ${name}`);
@@ -55,7 +57,7 @@ async function main() {
   const release = latest();
   const fallbackReleases = [];
   const missing = () => PACKAGES.some(pkg => ![release, ...fallbackReleases].some(item =>
-    item.assets.some(asset => asset.name === assetName(item.tagName, pkg))));
+    item.assets.some(asset => assetNames(item.tagName, pkg).includes(asset.name))));
   if (missing()) {
     const older = JSON.parse(gh(["release", "list", "--repo", repo, "--limit", "20", "--json", "tagName,isDraft,isPrerelease"]))
       .filter(item => validTag(item.tagName) && !item.isDraft && !item.isPrerelease && compareTags(item.tagName, release.tagName) < 0)

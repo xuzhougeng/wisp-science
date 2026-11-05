@@ -167,7 +167,7 @@ mocked packaging tests do not establish them.
 
 ## Windows code signing
 
-Windows Release and Windows WinUI Preview Release Authenticode-sign with an
+Windows Release and Windows WinUI Release Authenticode-sign with an
 SSL.com Personal ID (IV) code signing certificate enrolled in eSigner. The
 credential id is `44eb788c-2a80-4f18-ae58-912d3298c053`. That id is not a secret;
 the values below exist only as GitHub Actions secrets:
@@ -199,8 +199,8 @@ fails the job and prints sanitized stdout, stderr, and
 `logs/code_signing_tool.log`. An
 invalid OTP is retried up to four times into later TOTP windows even when the
 process exits 0. Windows Release (`WISP_SIGN_SLOT=windows`) and Windows WinUI
-Preview Release (`WISP_SIGN_SLOT=winui`) sign in parallel with the same
-credential, so the preview job waits one extra TOTP window before its first
+Release (`WISP_SIGN_SLOT=winui`) sign in parallel with the same
+credential, so the WinUI job waits one extra TOTP window before its first
 sign and on each OTP retry.
 
 Tauri's `signCommand` runs on the main `wisp-science.exe` after the bundler
@@ -208,10 +208,10 @@ patches it and before that copy is packed, then on the MSI and the NSIS setup
 executable. The loose `target/release/wisp-science.exe` is unsigned again after
 packaging because Tauri restores the unpatched binary. NSIS plugin DLLs and WiX
 extension DLLs are left unsigned; the signed installer covers those build-tool
-binaries. The WinUI preview signs `Wisp.Science.Preview.exe`, `wisp-service.exe`,
+binaries. The WinUI installer signs `Wisp.Science.Preview.exe`, `wisp-service.exe`,
 and `settings-host/wisp-tauri.exe` before NSIS packages them, then signs each
 setup executable. Microsoft runtime DLLs are not re-signed. The NSIS-generated
-preview uninstaller is unsigned.
+WinUI uninstaller is unsigned.
 
 A tag push or a dispatch with `publish=true` fails the job when signing fails,
 and does not upload unsigned installers. `SKIP_WINDOWS_SIGNING` is no longer
@@ -223,14 +223,14 @@ Signing dry-run (artifacts only, no release upload):
 
 ```bash
 gh workflow run "Windows Release" --ref main -f tag=vX.Y.Z -f publish=false
-gh workflow run release-winui-preview.yml --ref main -f tag=vX.Y.Z -f publish=false
+gh workflow run release-winui.yml --ref main -f tag=vX.Y.Z -f publish=false
 ```
 
 Publish after the GitHub Release exists:
 
 ```bash
 gh workflow run "Windows Release" --ref main -f tag=vX.Y.Z -f publish=true
-gh workflow run release-winui-preview.yml --ref main -f tag=vX.Y.Z -f publish=true
+gh workflow run release-winui.yml --ref main -f tag=vX.Y.Z -f publish=true
 ```
 
 SmartScreen reputation is built from download volume. An IV certificate does not
@@ -249,98 +249,98 @@ Get-AuthenticodeSignature .\wisp-science_1.21.0_x64_en-US.msi | Format-List Stat
 `Status` is `Valid` and `TimeStamperCertificate` is present when the RFC 3161
 timestamp verified.
 
-## WinUI 3 Preview alongside the Windows release
+<a id="winui-3-preview-alongside-the-windows-release"></a>
 
-**Windows WinUI Preview Release** (`release-winui-preview.yml`) builds a separate
-x64 preview on `v*` tag pushes. It attaches both installer variants to the existing release:
+## WinUI alongside the Windows WebView release
 
-- `Wisp-Science-WinUI-Preview_<version>_x64-framework-dependent-setup.exe`: lightweight; checks and installs missing runtimes.
-- `Wisp-Science-WinUI-Preview_<version>_x64-self-contained-setup.exe`: includes .NET and Windows App SDK runtimes.
-- A matching `.exe.sha256` checksum for each, calculated **after** signing.
-- A `.size.json` report for each, with compressed/installed bytes and the largest files.
+**Windows WinUI Release** (`release-winui.yml`) builds one standalone x64
+installer on `v*` tag pushes, alongside the existing Windows WebView EXE/MSI.
+Its naming follows macOS SwiftUI:
 
-The NSIS installer uses a per-user location under
-`%LOCALAPPDATA%/Programs/Wisp Science WinUI Preview` and a distinct Start menu
-shortcut/uninstall entry. It can coexist with the stable Tauri application.
-Windows 10 1809+ x64 and the WebView2 Evergreen Runtime are required. Both variants
-include app-local MSVC DLLs and require no .NET SDK. The self-contained variant
-includes .NET 8 and Windows App SDK, so those runtimes need no download at install
-time. The lightweight variant checks compatible .NET 8 x64 and Windows App Runtime
-1.6 packages for the current user, including Main, Singleton and DDLM dependencies.
-Missing or outdated runtimes are downloaded from Microsoft; .NET uses the latest
-8.0 runtime metadata and SHA-512, and both downloads require a valid Microsoft
-Authenticode signature. .NET installation may prompt for administrator permission;
-Windows App Runtime registration keeps the installing user's identity. Network,
-signature, UAC or installer failures stop setup before removing an existing app.
-The installer rechecks dependencies after installation and preserves a reboot
-request. Shared runtimes remain installed when Wisp is uninstalled.
+- `Wisp-Science-WinUI_<version>_x64-setup.exe`, for example
+  `Wisp-Science-WinUI_1.24.0_x64-setup.exe`.
+- A matching `.exe.sha256`, calculated **after** signing.
+- The `.size.json` report stays in Actions artifacts, rather than adding another
+  download choice to the GitHub release.
 
-The two variants share one installation directory and can replace each other;
-they are alternatives, not separate side-by-side apps. WebView2 is not bundled
-in either variant. This preview shares the existing desktop
-database/settings/keyring; its installation directory does not isolate user
-data. Uninstall removes packaged files and its shortcut/registration, preserving
-user data. Exit the preview and its helpers before installing an update.
+Only the self-contained variant is built and published by PR/release CI. The
+framework-dependent variant is no longer a release download. Package sizes vary
+with the source and dependencies; the v1.24.0 self-contained payload produced an
+approximately 58 MiB installer, not a fixed 50 MB size guarantee.
 
-Updates are manual. The workflow only uploads assets, without creating releases,
-rewriting their title/notes or changing `latest.json`. It uses the same eSigner
-signing as [Windows code signing](#windows-code-signing). A signing failure
-blocks publication. SmartScreen can still warn until the certificate has
-download reputation.
+The WinUI installer works independently: it includes the native executable and
+managed files, `wisp-service.exe`, its own `settings-host/wisp-tauri.exe`, host
+resources, rich-preview assets, .NET 8, Windows App SDK and app-local MSVC DLLs.
+Users do **not** need to download or install the WebView edition. Packaging fails
+if required app files, either helper, bundled runtimes or host resources are
+missing. Windows 10 1809+ x64 is required. Setup detects Microsoft WebView2
+Evergreen Runtime in the machine and current-user registry locations and reuses
+an installed runtime. If absent, it automatically runs the bundled Microsoft
+bootstrapper to download and install the runtime. **Internet is required when
+WebView2 is missing**, but users only download the WinUI installer themselves.
+No separate Wisp WebView application, .NET SDK or .NET runtime download is needed.
 
-The build explicitly selects Release for both Rust helpers and .NET, x64,
-separate .NET/Windows App SDK deployment modes, and fresh publish directories.
-`-RuntimeMode Both` compiles Rust once and publishes both .NET variants. Rust uses
-`opt-level=s`, LTO, one codegen unit, stripped symbols and no debug information.
-.NET disables ReadyToRun and debug symbols. Trimming, single-file publishing
-and NativeAOT are not enabled because this WinUI/XAML/reflection application has
-not been validated for them. The installer uses solid LZMA compression, excludes
-symbol files/Python caches, and enforces separate ceilings:
+CI downloads the small official Evergreen bootstrapper and verifies its Microsoft
+Authenticode signature; packaging rechecks the exact staged bytes before embedding
+them. The full WebView2 runtime is not bundled, keeping the installer small.
+Setup rechecks runtime availability after installation and stops with a clear
+error before touching an existing WinUI installation if setup fails. Uninstall
+leaves the shared Microsoft runtime in place. This follows Microsoft's
+[WebView2 distribution guidance](https://learn.microsoft.com/microsoft-edge/webview2/concepts/distribution).
+Historical Preview installers do not gain this behavior unless rebuilt with the
+current packager.
 
-| Variant | Installer | Installed app payload |
-| --- | ---: | ---: |
-| Framework-dependent | 40 MiB | 150 MiB |
-| Self-contained | 100 MiB | 350 MiB |
+Fresh installs use `%LOCALAPPDATA%/Programs/Wisp Science WinUI` and the Start menu
+entry **Wisp Science WinUI**. An existing WinUI Preview installation is upgraded
+in its existing directory using its own uninstall manifest. Its stable uninstall
+registry key and internal executable name are retained for compatibility; the
+display name and shortcut no longer say Preview. The WebView installation is not
+used or removed. Both editions share the desktop database/settings/keyring.
+Uninstall removes packaged files and the shortcut/registration, preserving user
+data. Close WinUI and its helpers before installing an update.
 
-Shared runtime downloads/installations are additional to the lightweight package
-sizes. These are regression ceilings, not expected download sizes.
-Review the size report before changing the budgets. Both PR CI and release CI
-exercise the actual installer build and size gates.
+Updates remain manual. The workflow uploads assets without creating releases,
+rewriting title/notes or changing `latest.json`. All three product executables
+are signed before packaging, the installer is signed afterward, and final
+signatures/checksums are verified before upload. Signing failures block release.
+See [Windows code signing](#windows-code-signing).
 
-To rebuild an existing supported tag, dispatch the workflow **from main** as
-shown in [Windows code signing](#windows-code-signing). `publish=false` keeps
-the signed installers as Actions artifacts.
+The build explicitly uses Release, x64 and `-RuntimeMode SelfContained` for .NET
+and Windows App SDK. Rust helpers use `opt-level=s`, LTO, one codegen unit and
+stripped symbols. .NET disables ReadyToRun/debug symbols. Trimming, single-file
+publishing and NativeAOT remain disabled. Solid LZMA compression excludes symbols
+and Python caches. The regression ceilings remain **100 MiB installer / 350 MiB
+installed payload**; review the size report before changing them.
 
-The build locates the x64 MSVC CRT redistributable folder using Visual Studio's
-`vswhere`; a custom toolchain can pass `-VCRedistDirectory` to the build script.
-The small DLL set is copied beside both Rust executables, avoiding a separate
-VC++ runtime installer or administrator requirement.
+To rebuild an existing tag, dispatch `release-winui.yml` **from main** as shown
+above. `publish=false` keeps signed output in Actions without publishing it.
+The requested tag supplies all application binaries and its version; the workflow
+revision supplies the packaging/naming policy. `--source-root .` checks the tag
+against that source's `Cargo.toml`, so an older tag can receive the formal filename
+without being rebuilt from current-main app code. Tags predating native packaging
+are skipped. Historical Preview release assets are not deleted automatically.
 
-Older tags without `scripts/package_native_windows.py` are skipped. The workflow
-checks out the requested tag; it does not package current-main binaries under an
-older version. A local package requires Python 3.11+ and NSIS 3:
+The build locates MSVC redistributables with `vswhere`; custom toolchains can pass
+`-VCRedistDirectory`. Local packaging requires Python 3.11+ and NSIS 3:
 
 ```powershell
-pwsh -File scripts/build_native_windows.ps1 -Configuration Release -RuntimeMode Both
-python scripts/package_native_windows.py target/native-windows-release --variant self-contained --tag vX.Y.Z --makensis 'C:/Program Files (x86)/NSIS/makensis.exe'
-python scripts/package_native_windows.py target/native-windows-release-framework-dependent --variant framework-dependent --tag vX.Y.Z --makensis 'C:/Program Files (x86)/NSIS/makensis.exe'
+pwsh -File scripts/build_native_windows.ps1 -Configuration Release -RuntimeMode SelfContained
+powershell -NoProfile -File scripts/prepare_native_windows_webview2.ps1 -Path target/MicrosoftEdgeWebview2Setup.exe
+python scripts/package_native_windows.py target/native-windows-release --tag vX.Y.Z --makensis 'C:/Program Files (x86)/NSIS/makensis.exe' --webview2-bootstrapper target/MicrosoftEdgeWebview2Setup.exe
 ```
 
-The default build remains `SelfContained`; `-RuntimeMode FrameworkDependent`
-builds only the lightweight app. The runtime policy is checked against the pinned
-Windows App SDK NuGet version. Update `scripts/native_windows_runtimes.json` when
-upgrading that dependency, using Microsoft's [runtime download archive](https://learn.microsoft.com/en-us/windows/apps/windows-app-sdk/downloads-archive)
-and the NuGet `WindowsAppSDK-VersionInfo.h` version/package identities.
+Framework-dependent/Both modes remain available for local development, with
+distinct filenames. CI does not build or publish them.
 
-Before shipping the first installer, test on a clean x64 Windows account with
-WebView2 but without .NET/Windows App SDK development tools: verify the downloaded
-SHA-256/signature, install, launch from Start, load projects/settings, open a rich
-preview, exit and switch between variants, then uninstall. For the lightweight
-variant also test already-installed runtimes, missing/old/x86-only runtimes,
-offline download failure and UAC cancellation; for the self-contained variant,
-test without .NET/Windows App Runtime installed. Confirm the stable app and user data
-remain available. Mocked packaging tests and successful NSIS compilation do not
-prove clean-machine launch or that eSigner accepted the installer.
+Clean-machine acceptance: on a Windows x64 account **without WebView2, either
+Wisp edition or .NET/Windows App SDK development tools**, verify SHA-256 and
+Authenticode, connect to the internet and install this EXE alone. Confirm WebView2
+is installed automatically, launch from Start, create/open a project, load
+settings, and open a rich preview. Then exit and uninstall, preserving user data
+and WebView2. Separately verify an account with existing WebView2 can install
+offline; a missing-runtime offline failure must leave the previous WinUI intact.
+Upgrade an old Preview and verify the formal shortcut/display name. Mock packaging
+tests do not prove this clean-machine acceptance or signing.
 
 ## Manual smoke test
 

@@ -26,7 +26,7 @@ GitHub Releases remains the fallback and the home for older releases.
 
 | System | Processor | Formats |
 | --- | --- | --- |
-| Windows | Intel / AMD x64 | Standard EXE / MSI; WinUI Preview EXE (lightweight or with runtimes) |
+| Windows | Intel / AMD x64 | Standard EXE / MSI; WinUI native EXE (runtimes included) |
 | macOS | Apple Silicon / Intel | Standard DMG; SwiftUI native DMG |
 | Linux | Intel / AMD x64 / ARM64 | DEB, AppImage |
 | Android 8.0+ | Universal | APK (optional, see below) |
@@ -37,7 +37,7 @@ visitors choose the target desktop system. There is no native Windows ARM64
 package. The page shows the mirrored version,
 filename, size and SHA-256 checksum, along with installation guidance.
 The edition/package selector keeps the standard app as the default and exposes
-SwiftUI and both WinUI Preview variants. Each selection displays its actual
+SwiftUI and one standalone WinUI installer. Each selection displays its actual
 download version; an older build also shows the latest release for comparison.
 
 ## Local deployment
@@ -84,10 +84,17 @@ tags are excluded from fallback selection. Invalid or duplicate assets in the
 preferred release fail validation rather than falling back silently.
 
 All eight standard desktop packages must be available across those releases.
-The Android APK and four native installers are optional when no published
+The Android APK and three native installers are optional when no published
 version is found. Exact native names are
 `Wisp-Science-SwiftUI_<version>_{aarch64,x86_64}.dmg` and
-`Wisp-Science-WinUI-Preview_<version>_x64-{framework-dependent,self-contained}-setup.exe`.
+`Wisp-Science-WinUI_<version>_x64-setup.exe`.
+When a formal WinUI asset is not yet available, the last published self-contained
+Preview remains a fallback. If both names exist in a rebuilt release, the formal
+name wins. Cached manifests and immutable historical Preview links remain valid;
+the retired lightweight variant is filtered from the picker and new manifests.
+WinUI includes its application services and runtimes and does not require the
+WebView edition to be installed.
+
 The APK is served as `application/vnd.android.package-archive`. Source archives,
 signatures, size reports and `.app.tar.gz` updater bundles are excluded.
 
@@ -116,7 +123,7 @@ and must not be configured as a Tauri updater endpoint.
 - `Deploy website to Cloudflare`: deploys on website/skills changes to `main`, or
   manual dispatch. GitHub Pages continues deploying the same public build.
 - `Sync installers to Cloudflare R2`: runs after a successful Windows, macOS,
-  Linux, Android or Windows WinUI Preview release workflow, daily as a recovery
+  Linux, Android or Windows WinUI release workflow, daily as a recovery
   check, or manually. A platform completion without any usable version of a
   required desktop package waits; manual and scheduled runs fail visibly in
   that case. Newly published APK and native builds replace their older entries
