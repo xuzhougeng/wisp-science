@@ -9,6 +9,8 @@ internal static class NativeUpdateDialogTests
     {
         Check(NativeUpdateNotes.ForDisplay("<!-- release-title: version -->\n# Notes\nA <!-- hidden --> fix") == "\n# Notes\nA  fix",
             "release metadata and inline HTML comments are hidden like the WebView");
+        Check(NativeUpdateNotes.ForDisplay("Title\r\n\r\nKeep `<!-- literal -->` <!-- hide -->here") ==
+            "Title\r\n\r\nKeep `<!-- literal -->` here", "inline offsets preserve CRLF blocks and neighboring code spans");
         var codeComments = "```html\n<!-- example -->\n```\n\n`<!-- inline code -->`\n\n    <!-- indented code -->\n\n<div>inert HTML</div>";
         Check(NativeUpdateNotes.ForDisplay(codeComments) == codeComments, "code examples and non-comment HTML are preserved");
         Check(NativeUpdateNotes.ForDisplay("<!-- unfinished\nmetadata") == "", "unfinished HTML comment stays hidden");

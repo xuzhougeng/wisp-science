@@ -642,8 +642,9 @@ Help > Check for updates and General settings now share the WebView's centered
 up-to-date and failed states, independently scrolling Markdown release notes,
 and Windows actions: Don't remind me, Later and Open Releases. Windows opens
 the release page; the backend's in-app download/install path is macOS-only.
-HTML comments in release notes are hidden, while fenced, indented and inline
-code examples retain literal comment text. Release notes use the shared Markdown
+HTML comments in release notes are hidden without removing adjacent text or
+changing line endings. Fenced, indented and inline code examples retain literal
+comment text. Release notes use the shared Markdown
 body font (serif in English), heading scale, list indentation and inline-code
 treatment, with the update dialog's 13-pixel text and 1.55 line height.
 

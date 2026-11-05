@@ -8,9 +8,12 @@ namespace Wisp.ProjectBrowser;
 /// Release metadata comments are hidden by the WebView Markdown renderer.
 public static class NativeUpdateNotes
 {
+    // Inline offsets must refer to the original Markdown, including earlier blocks.
+    private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder().UsePreciseSourceLocation().Build();
+
     public static string ForDisplay(string markdown)
     {
-        var document = Markdown.Parse(markdown);
+        var document = Markdown.Parse(markdown, Pipeline);
         var comments = new List<(int Start, int Length)>();
         foreach (var block in document.Descendants<HtmlBlock>())
         {
