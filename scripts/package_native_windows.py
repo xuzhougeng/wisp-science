@@ -7,6 +7,7 @@ option. No trimming or UPX; symbols/caches are excluded.
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -301,9 +302,14 @@ def package(app, tag, output, makensis='makensis', *, version=None,
         # old-tag rebuilds. Reject unsigned/non-Microsoft downloads before NSIS.
         bootstrapper = staging / 'MicrosoftEdgeWebview2Setup.exe'
         shutil.copy2(webview2_bootstrapper, bootstrapper)
+        # pwsh -> Python -> Windows PowerShell bypasses pwsh's usual module-path
+        # cleanup. Let Windows PowerShell rebuild its own defaults instead of
+        # attempting to load incompatible PowerShell 7 security modules.
+        signature_env = {key: value for key, value in os.environ.items()
+                         if key.upper() != 'PSMODULEPATH'}
         subprocess.run(['powershell', '-NoProfile', '-File',
                         str(SCRIPT_ROOT / 'prepare_native_windows_webview2.ps1'),
-                        '-ValidateOnly', '-Path', str(bootstrapper)], check=True)
+                        '-ValidateOnly', '-Path', str(bootstrapper)], check=True, env=signature_env)
         payload = staging / 'payload'
         for relative in files:
             destination = payload / relative

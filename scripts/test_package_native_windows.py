@@ -145,6 +145,14 @@ class WindowsPackagingTests(unittest.TestCase):
             self.assertIn(prefix + 'scripts/test_prepare_native_windows_webview2.ps1', workflow)
             self.assertIn(prefix + 'scripts/prepare_native_windows_webview2.ps1 -Path', workflow)
             self.assertIn('--webview2-bootstrapper "$env:RUNNER_TEMP/MicrosoftEdgeWebview2Setup.exe"', workflow)
+        native = (workflows / 'native-preview.yml').read_text(encoding='utf-8')
+        prepare = native.index('name: Prepare NSIS and WebView2 bootstrapper')
+        validate = native.index('name: Validate installer before compiling WinUI')
+        build = native.index('pwsh -File scripts/build_native_windows.ps1')
+        self.assertLess(prepare, validate)
+        self.assertLess(validate, build)
+        self.assertIn('WISP_TEST_MAKENSIS', native[validate:build])
+        self.assertIn('WISP_TEST_WEBVIEW2_BOOTSTRAPPER', native[validate:build])
 
     def test_missing_runtime_or_resource_is_rejected(self):
         (self.app / 'settings-host/skills/resource.txt').unlink()
@@ -200,6 +208,23 @@ class WindowsPackagingTests(unittest.TestCase):
             self.assertEqual(run.call_count, 1, 'Signature failure must prevent NSIS compilation.')
             self.assertIn('-ValidateOnly', run.call_args.args[0])
         self.assertFalse(list(self.output.iterdir()), 'Rejected payload must not leave installer candidates.')
+
+    def test_signature_check_does_not_inherit_powershell_7_modules(self):
+        for key in ('PSModulePath', 'PSMODULEPATH', 'psmodulepath'):
+            with self.subTest(key=key), patch.dict(os.environ, {
+                key: 'C:/Program Files/PowerShell/7/Modules',
+                'WISP_PACKAGING_ENV_TEST': 'preserved',
+            }):
+                with patch.object(pkg.subprocess, 'run', side_effect=self.fake_compiler) as run:
+                    pkg.package(self.app, 'v1.2.3', self.output, version='1.2.3',
+                                webview2_bootstrapper=self.bootstrapper)
+                signature, compiler = run.call_args_list
+                child_env = signature.kwargs['env']
+                self.assertFalse(any(name.upper() == 'PSMODULEPATH' for name in child_env))
+                self.assertEqual(child_env['WISP_PACKAGING_ENV_TEST'], 'preserved')
+                self.assertEqual(os.environ[key], 'C:/Program Files/PowerShell/7/Modules',
+                                 'Only the child environment may change.')
+                self.assertNotIn('env', compiler.kwargs, 'NSIS keeps its normal environment.')
 
     def test_finalization_hashes_signed_bytes_and_rechecks_budget(self):
         installer = self.package()
