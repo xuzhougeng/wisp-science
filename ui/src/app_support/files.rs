@@ -569,21 +569,46 @@ pub(crate) fn right_tab_to_reopen(open: &[RightTab], active: RightTab) -> Option
     }
 }
 
-/// Session switches bring Artifacts forward only when the user has it open.
-/// Selecting a tab missing from the strip would show its panel with no tab
-/// highlighted, and would dismiss the launcher.
-pub(crate) fn focus_artifacts_if_open(
-    open_right_tabs: RwSignal<Vec<RightTab>>,
-    right_tab: RwSignal<RightTab>,
-) {
-    if open_right_tabs.with_untracked(|tabs| tabs.contains(&RightTab::Artifacts)) {
-        right_tab.set(RightTab::Artifacts);
+/// One conversation's right pane: whether it is open, its tabs, the active
+/// tab, and whether the tool home covers them.
+#[derive(Clone, PartialEq)]
+pub(crate) struct RightPaneState {
+    pub(crate) open: bool,
+    pub(crate) tabs: Vec<RightTab>,
+    pub(crate) active: RightTab,
+    pub(crate) launcher: bool,
+}
+
+impl Default for RightPaneState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            tabs: Vec::new(),
+            active: RightTab::Artifacts,
+            launcher: false,
+        }
+    }
+}
+
+/// The pane to show after switching conversations, or `None` to keep the
+/// current one. Each conversation keeps its own pane, and one never seen
+/// before starts closed. The exception is the pane set up with no
+/// conversation open: it belongs to the conversation lazily created from
+/// that draft, like the composer draft does.
+pub(crate) fn right_pane_after_switch(
+    leaving_conversation: bool,
+    restored: Option<RightPaneState>,
+) -> Option<RightPaneState> {
+    if leaving_conversation || restored.is_some() {
+        Some(restored.unwrap_or_default())
+    } else {
+        None
     }
 }
 
 #[cfg(test)]
 mod right_tab_reopen_tests {
-    use super::{right_tab_to_reopen, RightTab};
+    use super::{right_pane_after_switch, right_tab_to_reopen, RightPaneState, RightTab};
 
     #[test]
     fn reopens_the_active_tab_or_the_last_open_one() {
@@ -597,6 +622,33 @@ mod right_tab_reopen_tests {
     #[test]
     fn shows_the_launcher_when_no_tab_is_open() {
         assert!(right_tab_to_reopen(&[], RightTab::Artifacts).is_none());
+    }
+
+    fn agents_pane() -> RightPaneState {
+        RightPaneState {
+            open: true,
+            tabs: vec![RightTab::Agents],
+            active: RightTab::Agents,
+            launcher: false,
+        }
+    }
+
+    #[test]
+    fn a_new_conversation_starts_with_the_pane_closed() {
+        let next = right_pane_after_switch(true, None);
+        assert!(next == Some(RightPaneState::default()));
+        assert!(!RightPaneState::default().open);
+    }
+
+    #[test]
+    fn returning_to_a_conversation_restores_its_own_pane() {
+        assert!(right_pane_after_switch(true, Some(agents_pane())) == Some(agents_pane()));
+        assert!(right_pane_after_switch(false, Some(agents_pane())) == Some(agents_pane()));
+    }
+
+    #[test]
+    fn the_draft_pane_carries_into_the_conversation_created_from_it() {
+        assert!(right_pane_after_switch(false, None).is_none());
     }
 }
 
