@@ -34,11 +34,23 @@ class WindowsPackagingTests(unittest.TestCase):
         cache = self.app / 'settings-host/python/__pycache__'
         cache.mkdir()
         (cache / 'old.pyc').write_bytes(b'cache')
+        self.bootstrapper = self.root / 'MicrosoftEdgeWebview2Setup.exe'
+        self.bootstrapper.write_bytes(b'MZ bootstrapper fixture')
+        self.validated_bootstrapper = None
         self.script = ''
 
     def fake_compiler(self, args, **kwargs):
+        if args[0] == 'powershell':
+            self.assertIn('-ValidateOnly', args)
+            self.assertIn(str(pkg.SCRIPT_ROOT / 'prepare_native_windows_webview2.ps1'), args)
+            self.validated_bootstrapper = Path(args[-1])
+            self.assertEqual(self.validated_bootstrapper.read_bytes(), self.bootstrapper.read_bytes())
+            self.assertTrue(kwargs['check'])
+            return
         script = Path(args[-1])
         self.script = script.read_text(encoding='utf-8-sig')
+        self.assertEqual(self.validated_bootstrapper.parent, script.parent)
+        self.assertIn(f'File /oname=MicrosoftEdgeWebview2Setup.exe "{pkg.nsis_quote(self.validated_bootstrapper)}"', self.script)
         payload = script.parent / 'payload'
         self.assertFalse((payload / 'old.pdb').exists())
         self.assertFalse((payload / 'settings-host/python/__pycache__').exists())
@@ -48,7 +60,8 @@ class WindowsPackagingTests(unittest.TestCase):
 
     def package(self, **kwargs):
         with patch.object(pkg.subprocess, 'run', self.fake_compiler):
-            return pkg.package(self.app, 'v1.2.3', self.output, version='1.2.3', **kwargs)
+            return pkg.package(self.app, 'v1.2.3', self.output, version='1.2.3',
+                               webview2_bootstrapper=self.bootstrapper, **kwargs)
 
     def test_package_preserves_dependencies_and_controls_size(self):
         installer = self.package()
@@ -102,7 +115,8 @@ class WindowsPackagingTests(unittest.TestCase):
         source.mkdir()
         (source / 'Cargo.toml').write_text('[workspace.package]\nversion = "1.24.0"\n')
         with patch.object(pkg.subprocess, 'run', self.fake_compiler):
-            installer = pkg.package(self.app, 'v1.24.0', self.output, source_root=source)
+            installer = pkg.package(self.app, 'v1.24.0', self.output, source_root=source,
+                                    webview2_bootstrapper=self.bootstrapper)
             self.assertEqual(installer.name, 'Wisp-Science-WinUI_1.24.0_x64-setup.exe')
             with self.assertRaisesRegex(ValueError, 'does not match source'):
                 pkg.package(self.app, 'v1.25.0', self.output, source_root=source)
@@ -126,6 +140,11 @@ class WindowsPackagingTests(unittest.TestCase):
         self.assertFalse((workflows / 'release-winui-preview.yml').exists())
         sync = (workflows / 'docs-downloads-r2-sync.yml').read_text(encoding='utf-8')
         self.assertIn('Windows WinUI Release]', sync)
+        for name, prefix in (('release-winui.yml', '_release_ci/'), ('native-preview.yml', '')):
+            workflow = (workflows / name).read_text(encoding='utf-8')
+            self.assertIn(prefix + 'scripts/test_prepare_native_windows_webview2.ps1', workflow)
+            self.assertIn(prefix + 'scripts/prepare_native_windows_webview2.ps1 -Path', workflow)
+            self.assertIn('--webview2-bootstrapper "$env:RUNNER_TEMP/MicrosoftEdgeWebview2Setup.exe"', workflow)
 
     def test_missing_runtime_or_resource_is_rejected(self):
         (self.app / 'settings-host/skills/resource.txt').unlink()
@@ -156,10 +175,31 @@ class WindowsPackagingTests(unittest.TestCase):
         self.assertFalse(list(self.output.glob('*.exe*')))
 
     def test_compiler_failure_does_not_publish_candidate(self):
-        with patch.object(pkg.subprocess, 'run', side_effect=subprocess.CalledProcessError(1, ['makensis'])):
+        def fail_compiler(args, **kwargs):
+            if args[0] == 'powershell':
+                return self.fake_compiler(args, **kwargs)
+            raise subprocess.CalledProcessError(1, args)
+        with patch.object(pkg.subprocess, 'run', side_effect=fail_compiler):
             with self.assertRaises(subprocess.CalledProcessError):
-                pkg.package(self.app, 'v1.2.3', self.output, version='1.2.3')
+                pkg.package(self.app, 'v1.2.3', self.output, version='1.2.3',
+                            webview2_bootstrapper=self.bootstrapper)
         self.assertFalse(list(self.output.glob('*.exe*')))
+
+    def test_missing_or_untrusted_bootstrapper_cannot_be_packaged(self):
+        with patch.object(pkg.subprocess, 'run') as run:
+            for path in (None, self.root / 'absent.exe'):
+                with self.assertRaisesRegex(ValueError, '--webview2-bootstrapper'):
+                    pkg.package(self.app, 'v1.2.3', self.output, version='1.2.3',
+                                webview2_bootstrapper=path)
+            run.assert_not_called()
+        self.assertFalse(self.output.exists())
+        with patch.object(pkg.subprocess, 'run', side_effect=subprocess.CalledProcessError(1, ['powershell'])) as run:
+            with self.assertRaises(subprocess.CalledProcessError):
+                pkg.package(self.app, 'v1.2.3', self.output, version='1.2.3',
+                            webview2_bootstrapper=self.bootstrapper)
+            self.assertEqual(run.call_count, 1, 'Signature failure must prevent NSIS compilation.')
+            self.assertIn('-ValidateOnly', run.call_args.args[0])
+        self.assertFalse(list(self.output.iterdir()), 'Rejected payload must not leave installer candidates.')
 
     def test_finalization_hashes_signed_bytes_and_rechecks_budget(self):
         installer = self.package()
@@ -188,7 +228,7 @@ class WindowsPackagingTests(unittest.TestCase):
         self.make_framework_dependent()
         installer = self.package(variant='framework-dependent')
         self.assertIn('_x64-framework-dependent-setup.exe', installer.name)
-        self.assertLess(self.script.index('nsExec::ExecToLog'), self.script.index('ExecWait'))
+        self.assertLess(self.script.index('nsExec::ExecToLog'), self.script.index('ExecWait \'$\\"$INSTDIR'))
         self.assertIn('Sysnative', self.script)
         self.assertIn('SetErrorLevel 1', self.script)
         self.assertIn('SetRebootFlag true', self.script)
@@ -200,9 +240,28 @@ class WindowsPackagingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'contains bundled runtime'):
             self.package(variant='framework-dependent')
 
-    def test_self_contained_has_no_runtime_download_step(self):
+    def test_self_contained_only_bootstraps_webview2_before_touching_the_existing_app(self):
         self.package()
-        self.assertNotIn('nsExec::ExecToLog', self.script)
+        detection = self.script.split('Function CheckWebView2', 1)[1].split('FunctionEnd', 1)[0]
+        key = 'SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+        self.assertIn(f'ReadRegStr $1 HKLM32 "{key}" "pv"', detection)
+        self.assertIn(f'ReadRegStr $1 HKCU64 "{key}" "pv"', detection)
+        self.assertEqual(detection.count('${VersionCompare} "$1" "0.0.0.0" $0'), 2)
+        self.assertNotIn('SetRegView', detection, 'Detection must preserve the uninstall registration view.')
+        self.assertNotIn('/oname=ensure-runtimes.ps1', self.script, '.NET and Windows App SDK are already bundled.')
+        self.assertNotIn('powershell.exe', self.script, 'Use the verified Microsoft bootstrapper directly at install time.')
+        gate = self.script.split('Section "Install"', 1)[1].split('; Remove the previous payload', 1)[0]
+        self.assertIn('Call CheckWebView2\n  ${If} $0 != 1\n    InitPluginsDir', gate,
+                      'Installed runtime must skip extraction and execution entirely.')
+        self.assertIn('ExecWait \'$\\"$PLUGINSDIR\\MicrosoftEdgeWebview2Setup.exe$\\" /silent /install\' $0', gate)
+        self.assertEqual(gate.count('Call CheckWebView2'), 2, 'Installation must recheck runtime availability.')
+        self.assertLess(gate.index('ExecWait'), gate.rindex('Call CheckWebView2'))
+        for instruction in ('IfErrors webview2_failed', '${If} $0 == 3010', '${ElseIf} $0 != 0',
+                            'SetRebootFlag true', 'SetErrorLevel 1', 'Abort', '/SD IDOK'):
+            self.assertIn(instruction, gate)
+        self.assertIn('automatically downloads and installs it if missing', self.script)
+        self.assertNotIn('Webview2', self.script.split('Section "Uninstall"', 1)[1],
+                         'Uninstall must leave the shared Microsoft runtime installed.')
 
     def test_framework_dependent_validates_runtime_config(self):
         self.make_framework_dependent()
@@ -210,14 +269,17 @@ class WindowsPackagingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '.NET 8 runtime configuration'):
             self.package(variant='framework-dependent')
 
-    @unittest.skipUnless(os.environ.get('WISP_TEST_MAKENSIS'), 'Set WISP_TEST_MAKENSIS for real NSIS compilation.')
+    @unittest.skipUnless(os.environ.get('WISP_TEST_MAKENSIS') and os.environ.get('WISP_TEST_WEBVIEW2_BOOTSTRAPPER'),
+                         'Set WISP_TEST_MAKENSIS and WISP_TEST_WEBVIEW2_BOOTSTRAPPER for real NSIS compilation.')
     def test_real_nsis_compiles_fixture(self):
         installer = pkg.package(self.app, 'v1.2.3', self.output,
-                                os.environ['WISP_TEST_MAKENSIS'], version='1.2.3')
+                                os.environ['WISP_TEST_MAKENSIS'], version='1.2.3',
+                                webview2_bootstrapper=Path(os.environ['WISP_TEST_WEBVIEW2_BOOTSTRAPPER']))
         self.assertTrue(installer.read_bytes().startswith(b'MZ'))
         self.make_framework_dependent()
         thin = pkg.package(self.app, 'v1.2.3', self.output,
-                           os.environ['WISP_TEST_MAKENSIS'], version='1.2.3', variant='framework-dependent')
+                           os.environ['WISP_TEST_MAKENSIS'], version='1.2.3', variant='framework-dependent',
+                           webview2_bootstrapper=Path(os.environ['WISP_TEST_WEBVIEW2_BOOTSTRAPPER']))
         self.assertTrue(thin.read_bytes().startswith(b'MZ'))
 
 

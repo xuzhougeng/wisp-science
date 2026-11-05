@@ -143,6 +143,9 @@ Requires Windows 10 1809+ (x64), .NET 8+ SDK, Python 3, and the Rust toolchain.
 MSVC Build Tools supplies the app-local x64 VC runtime; use
 `-VCRedistDirectory C:/path/to/Microsoft.VC143.CRT` for a custom toolchain.
 Native settings also require the Microsoft Edge WebView2 Evergreen Runtime.
+The packaged WinUI installer detects and installs this runtime automatically if
+missing (requires internet); running the raw development output still requires it
+to be present. No separate Wisp WebView application is needed.
 The Windows App SDK and SDK build tools are restored from pinned NuGet packages;
 Visual Studio's packaging workload is not required. From the repository root:
 
@@ -665,7 +668,9 @@ XAML. `WISP_SETTINGS_HOST_PATH` can override the bundled host executable. The
 host uses the standard desktop database: selecting another database in the
 browser does not reconfigure the host. Alternate databases require an already
 running matching host descriptor; settings never fall back to another database.
-The preview does not install WebView2 or deliver an automatic update.
+The WinUI installer automatically installs missing Microsoft WebView2 Runtime
+using the bundled official bootstrapper; existing runtimes are reused. Application
+updates remain manual. See [WinUI packaging](app-updates.md#winui-alongside-the-windows-webview-release).
 
 Additional smoke checklist:
 

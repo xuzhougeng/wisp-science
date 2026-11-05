@@ -87,10 +87,41 @@ def payload_files(app, variant='self-contained'):
     return files
 
 
-def installer_script(payload, files, installer, version, size, variant='self-contained', runtime_files=None):
-    bootstrap = ''
+def installer_script(payload, files, installer, version, size, variant='self-contained', runtime_files=None,
+                     webview2_bootstrapper=None):
+    bootstrap = f'''
+  DetailPrint "Checking Microsoft WebView2 Runtime..."
+  Call CheckWebView2
+  ${{If}} $0 != 1
+    InitPluginsDir
+    SetOutPath "$PLUGINSDIR"
+    File /oname=MicrosoftEdgeWebview2Setup.exe "{nsis_quote(webview2_bootstrapper)}"
+    DetailPrint "Installing Microsoft WebView2 Runtime (internet connection required)..."
+    StrCpy $0 -1
+    ClearErrors
+    ExecWait '$\\"$PLUGINSDIR\\MicrosoftEdgeWebview2Setup.exe$\\" /silent /install' $0
+    IfErrors webview2_failed
+    ${{If}} $0 == 3010
+      SetRebootFlag true
+    ${{ElseIf}} $0 != 0
+      Goto webview2_failed
+    ${{EndIf}}
+    ; A successful process exit alone does not prove the runtime is available.
+    Call CheckWebView2
+    ${{If}} $0 != 1
+      Goto webview2_failed
+    ${{EndIf}}
+  ${{EndIf}}
+  Goto webview2_ready
+webview2_failed:
+  DetailPrint "WebView2 setup failed or the runtime is still unavailable (result: $0)."
+  MessageBox MB_OK|MB_ICONSTOP "Microsoft WebView2 Runtime could not be installed. Check your internet connection, restart Windows if requested, then run this installer again. Your existing Wisp installation has not been changed." /SD IDOK
+  SetErrorLevel 1
+  Abort
+webview2_ready:
+'''
     if variant == 'framework-dependent':
-        bootstrap = f'''
+        bootstrap += f'''
   InitPluginsDir
   SetOutPath "$PLUGINSDIR"
   File /oname=ensure-runtimes.ps1 "{nsis_quote(runtime_files[0])}"
@@ -115,6 +146,7 @@ def installer_script(payload, files, installer, version, size, variant='self-con
 !include "MUI2.nsh"
 !include "x64.nsh"
 !include "WinVer.nsh"
+!include "WordFunc.nsh"
 !define AtLeastWin1809 'U>= WinVer_BuildNumCheck 17763'
 Name "Wisp Science WinUI"
 OutFile "{nsis_quote(installer)}"
@@ -128,13 +160,31 @@ VIAddVersionKey "FileDescription" "Wisp Science WinUI Setup"
 VIAddVersionKey "FileVersion" "{version}"
 VIAddVersionKey "LegalCopyright" "Wisp Science contributors"
 !define MUI_ABORTWARNING
-{('!define MUI_WELCOMEPAGE_TEXT "This lightweight installer checks for .NET 8 and Windows App Runtime (x64). Missing runtimes are downloaded from Microsoft. Installing .NET may show a Windows administrator permission prompt. Use the self-contained installer for bundled runtimes."') if variant == 'framework-dependent' else ''}
+{('!define MUI_WELCOMEPAGE_TEXT "This lightweight installer checks for .NET 8, Windows App Runtime (x64), and WebView2 Runtime. Missing runtimes are downloaded from Microsoft. Installing .NET may show a Windows administrator permission prompt. Use the self-contained installer for bundled .NET and Windows App Runtime."') if variant == 'framework-dependent' else '!define MUI_WELCOMEPAGE_TEXT "Wisp Science WinUI includes its application services, .NET and Windows App SDK runtimes. No separate Wisp WebView installation is needed. Setup checks Microsoft WebView2 Runtime and automatically downloads and installs it if missing. An internet connection is required only when WebView2 Runtime is missing."'}
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
+
+; Microsoft's Evergreen runtime GUID, not an Edge browser channel. Use explicit
+; registry views without changing the existing WinUI uninstall registration view.
+; https://learn.microsoft.com/microsoft-edge/webview2/concepts/distribution
+Function CheckWebView2
+  ReadRegStr $1 HKLM32 "SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\{{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}}" "pv"
+  ${{If}} $1 != ""
+    ${{VersionCompare}} "$1" "0.0.0.0" $0
+    ${{If}} $0 == 1
+      Return
+    ${{EndIf}}
+  ${{EndIf}}
+  StrCpy $0 0
+  ReadRegStr $1 HKCU64 "SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\{{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}}" "pv"
+  ${{If}} $1 != ""
+    ${{VersionCompare}} "$1" "0.0.0.0" $0
+  ${{EndIf}}
+FunctionEnd
 
 Function .onInit
   ${{IfNot}} ${{RunningX64}}
@@ -208,7 +258,8 @@ def finalize(installer, max_installer_mib=None):
 
 
 def package(app, tag, output, makensis='makensis', *, version=None,
-            max_payload_mib=None, max_installer_mib=None, variant='self-contained', source_root=None):
+            max_payload_mib=None, max_installer_mib=None, variant='self-contained', source_root=None,
+            webview2_bootstrapper=None):
     source_root = Path(source_root) if source_root is not None else SCRIPT_ROOT.parent
     installer_limit, payload_limit = VARIANTS[variant]
     if max_payload_mib is None:
@@ -239,11 +290,20 @@ def package(app, tag, output, makensis='makensis', *, version=None,
     total = sum(size for _, size in sizes)
     if total > max_payload_mib * MIB:
         raise ValueError(f'Payload {total / MIB:.1f} MiB exceeds budget {max_payload_mib} MiB; largest files: {sorted(sizes, key=lambda p: p[1], reverse=True)[:10]}')
+    if webview2_bootstrapper is None or not Path(webview2_bootstrapper).is_file():
+        raise ValueError('Provide --webview2-bootstrapper prepared by prepare_native_windows_webview2.ps1.')
     output.mkdir(parents=True, exist_ok=True)
     variant_suffix = '' if variant == 'self-contained' else '-framework-dependent'
     name = f'Wisp-Science-WinUI_{version}_x64{variant_suffix}-setup.exe'
     with tempfile.TemporaryDirectory(prefix='wisp-winui-', dir=output) as temporary:
         staging = Path(temporary)
+        # Recheck the exact embedded bytes, including for local packaging and
+        # old-tag rebuilds. Reject unsigned/non-Microsoft downloads before NSIS.
+        bootstrapper = staging / 'MicrosoftEdgeWebview2Setup.exe'
+        shutil.copy2(webview2_bootstrapper, bootstrapper)
+        subprocess.run(['powershell', '-NoProfile', '-File',
+                        str(SCRIPT_ROOT / 'prepare_native_windows_webview2.ps1'),
+                        '-ValidateOnly', '-Path', str(bootstrapper)], check=True)
         payload = staging / 'payload'
         for relative in files:
             destination = payload / relative
@@ -255,7 +315,8 @@ def package(app, tag, output, makensis='makensis', *, version=None,
             config_path = staging / 'runtimes.json'
             config_path.write_text(json.dumps(config), encoding='utf-8')
             runtime_files = (SCRIPT_ROOT / 'ensure_native_windows_runtimes.ps1', config_path)
-        script.write_text(installer_script(payload, files, candidate, version, total, variant, runtime_files), encoding='utf-8-sig')
+        script.write_text(installer_script(payload, files, candidate, version, total, variant, runtime_files,
+                                           bootstrapper), encoding='utf-8-sig')
         subprocess.run([str(makensis), '/V2', str(script)], check=True)
         finalize(candidate, max_installer_mib)
         installer = output / name
@@ -274,6 +335,7 @@ def main():
     parser.add_argument('--source-root', type=Path, help='Tagged source checkout supplying Cargo.toml (defaults to this script\'s repository).')
     parser.add_argument('--output', type=Path, default=Path('target/winui-release'))
     parser.add_argument('--makensis', default='makensis')
+    parser.add_argument('--webview2-bootstrapper', type=Path, help='Microsoft-signed Evergreen bootstrapper to bundle.')
     parser.add_argument('--variant', choices=VARIANTS, default='self-contained')
     parser.add_argument('--max-payload-mib', type=int)
     parser.add_argument('--max-installer-mib', type=int)
@@ -284,7 +346,8 @@ def main():
     elif args.app and args.tag:
         print(package(args.app, args.tag, args.output, args.makensis,
                       max_payload_mib=args.max_payload_mib, max_installer_mib=args.max_installer_mib,
-                      variant=args.variant, source_root=args.source_root))
+                      variant=args.variant, source_root=args.source_root,
+                      webview2_bootstrapper=args.webview2_bootstrapper))
     else:
         parser.error('Provide APP --tag vX.Y.Z, or --finalize INSTALLER.')
 

@@ -273,9 +273,22 @@ managed files, `wisp-service.exe`, its own `settings-host/wisp-tauri.exe`, host
 resources, rich-preview assets, .NET 8, Windows App SDK and app-local MSVC DLLs.
 Users do **not** need to download or install the WebView edition. Packaging fails
 if required app files, either helper, bundled runtimes or host resources are
-missing. Windows 10 1809+ x64 and the system Microsoft WebView2 Evergreen Runtime
-are required for the bundled host and rich previews; that Microsoft runtime is
-separate from the Wisp WebView edition. No .NET SDK or runtime download is needed.
+missing. Windows 10 1809+ x64 is required. Setup detects Microsoft WebView2
+Evergreen Runtime in the machine and current-user registry locations and reuses
+an installed runtime. If absent, it automatically runs the bundled Microsoft
+bootstrapper to download and install the runtime. **Internet is required when
+WebView2 is missing**, but users only download the WinUI installer themselves.
+No separate Wisp WebView application, .NET SDK or .NET runtime download is needed.
+
+CI downloads the small official Evergreen bootstrapper and verifies its Microsoft
+Authenticode signature; packaging rechecks the exact staged bytes before embedding
+them. The full WebView2 runtime is not bundled, keeping the installer small.
+Setup rechecks runtime availability after installation and stops with a clear
+error before touching an existing WinUI installation if setup fails. Uninstall
+leaves the shared Microsoft runtime in place. This follows Microsoft's
+[WebView2 distribution guidance](https://learn.microsoft.com/microsoft-edge/webview2/concepts/distribution).
+Historical Preview installers do not gain this behavior unless rebuilt with the
+current packager.
 
 Fresh installs use `%LOCALAPPDATA%/Programs/Wisp Science WinUI` and the Start menu
 entry **Wisp Science WinUI**. An existing WinUI Preview installation is upgraded
@@ -312,18 +325,22 @@ The build locates MSVC redistributables with `vswhere`; custom toolchains can pa
 
 ```powershell
 pwsh -File scripts/build_native_windows.ps1 -Configuration Release -RuntimeMode SelfContained
-python scripts/package_native_windows.py target/native-windows-release --tag vX.Y.Z --makensis 'C:/Program Files (x86)/NSIS/makensis.exe'
+powershell -NoProfile -File scripts/prepare_native_windows_webview2.ps1 -Path target/MicrosoftEdgeWebview2Setup.exe
+python scripts/package_native_windows.py target/native-windows-release --tag vX.Y.Z --makensis 'C:/Program Files (x86)/NSIS/makensis.exe' --webview2-bootstrapper target/MicrosoftEdgeWebview2Setup.exe
 ```
 
 Framework-dependent/Both modes remain available for local development, with
 distinct filenames. CI does not build or publish them.
 
-Clean-machine acceptance: on a Windows x64 account with WebView2 but **without
-either Wisp edition or .NET/Windows App SDK development tools**, verify SHA-256
-and Authenticode, install this EXE alone, launch from Start, create/open a project,
-load settings, and open a rich preview. Then exit and uninstall, preserving user
-data. Separately upgrade an old Preview and verify the formal shortcut/display
-name. Mock packaging tests do not prove this clean-machine acceptance or signing.
+Clean-machine acceptance: on a Windows x64 account **without WebView2, either
+Wisp edition or .NET/Windows App SDK development tools**, verify SHA-256 and
+Authenticode, connect to the internet and install this EXE alone. Confirm WebView2
+is installed automatically, launch from Start, create/open a project, load
+settings, and open a rich preview. Then exit and uninstall, preserving user data
+and WebView2. Separately verify an account with existing WebView2 can install
+offline; a missing-runtime offline failure must leave the previous WinUI intact.
+Upgrade an old Preview and verify the formal shortcut/display name. Mock packaging
+tests do not prove this clean-machine acceptance or signing.
 
 ## Manual smoke test
 

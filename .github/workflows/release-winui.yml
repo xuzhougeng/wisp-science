@@ -99,6 +99,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Installer tests failed.' }
           powershell -NoProfile -File scripts/test_ensure_native_windows_runtimes.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Runtime bootstrap tests failed.' }
+          # Use the current bootstrapper policy even when rebuilding an old tag.
+          powershell -NoProfile -File _release_ci/scripts/test_prepare_native_windows_webview2.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'WebView2 bootstrap tests failed.' }
 
       - name: Cache CodeSignTool
         if: steps.winui.outputs.enabled == 'true'
@@ -146,7 +149,9 @@ jobs:
         run: |
           # Use this workflow's naming policy even when rebuilding an older tag.
           # Version and payload still come exclusively from the requested source.
-          python _release_ci/scripts/package_native_windows.py target/native-windows-release --source-root . --variant self-contained --tag $env:RELEASE_TAG --output "$env:RUNNER_TEMP/winui-release" --makensis "${env:ProgramFiles(x86)}/NSIS/makensis.exe"
+          powershell -NoProfile -File _release_ci/scripts/prepare_native_windows_webview2.ps1 -Path "$env:RUNNER_TEMP/MicrosoftEdgeWebview2Setup.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'WebView2 bootstrapper preparation failed.' }
+          python _release_ci/scripts/package_native_windows.py target/native-windows-release --source-root . --variant self-contained --tag $env:RELEASE_TAG --output "$env:RUNNER_TEMP/winui-release" --makensis "${env:ProgramFiles(x86)}/NSIS/makensis.exe" --webview2-bootstrapper "$env:RUNNER_TEMP/MicrosoftEdgeWebview2Setup.exe"
           if ($LASTEXITCODE -ne 0) { throw 'WinUI packaging failed.' }
 
       - name: Sign WinUI installer with eSigner

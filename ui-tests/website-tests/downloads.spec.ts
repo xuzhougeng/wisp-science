@@ -139,9 +139,29 @@ test("native builds keep their own version, installation guidance and language s
   await page.locator("#download-format").selectOption("winui-self-contained");
   await expect(page.locator("#install-help")).toContainText("Includes .NET");
   await expect(page.locator("#install-help")).toContainText("WebView edition is not required");
+  await expect(page.locator("#install-help")).toContainText("automatically downloads and installs it if missing");
+  await expect(page.locator("#install-help")).toContainText("internet is required only for a missing runtime");
   await expect(page.locator('#download-format option[value^="winui"]')).toHaveCount(1);
   await expect(page.locator('#download-format option[value^="winui"]')).not.toContainText("Preview");
   await expect(page.locator("#download-primary")).toHaveAttribute("href", /Wisp-Science-WinUI_1\.12\.0_x64-setup\.exe$/);
+  await page.getByRole("button", { name: "中文", exact: true }).click();
+  await expect(page.locator("#install-help")).toContainText("缺失时联网下载安装");
+  await expect(page.locator("#install-help")).toContainText("无需另装 WebView 版");
+});
+
+test("historical WinUI Preview fallback does not promise automatic WebView2 setup", async ({ page }) => {
+  const legacy = { ...manifest, packages: manifest.packages.map(asset => {
+    if (!asset.id.includes("winui")) return asset;
+    const name = "Wisp-Science-WinUI-Preview_1.12.0_x64-self-contained-setup.exe";
+    return { ...asset, name, key: asset.key.replace(asset.name, name) };
+  }) };
+  await page.route("https://wisp-science.sfl.bio/downloads/latest.json", route => route.fulfill({ json: legacy }));
+  await page.goto("/index.html?lang=en#download");
+  await page.locator("#download-os").selectOption("windows");
+  await page.locator("#download-format").selectOption("winui-self-contained");
+  await expect(page.locator("#install-help")).toContainText("requires Microsoft WebView2 Runtime to be installed already");
+  await expect(page.locator("#install-help")).not.toContainText("automatically downloads");
+  await expect(page.locator("#download-primary")).toHaveAttribute("href", /WinUI-Preview_1\.12\.0_x64-self-contained-setup\.exe$/);
 });
 
 test("missing native packages preserve standard downloads and a clear GitHub fallback", async ({ page }) => {
