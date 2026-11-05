@@ -54,7 +54,7 @@ test("APK downloads use the Android package type so the browser can open the ins
 
 test("SwiftUI and WinUI installers stream under their exact release filenames", async () => {
   const { env } = fixture();
-  for (const name of ["Wisp-Science-SwiftUI_1.12.0_x86_64.dmg", "Wisp-Science-WinUI-Preview_1.12.0_x64-framework-dependent-setup.exe"]) {
+  for (const name of ["Wisp-Science-SwiftUI_1.12.0_x86_64.dmg", "Wisp-Science-WinUI_1.12.0_x64-setup.exe"]) {
     const path = key.replace("wisp-science_1.12.0_x64.dmg", name);
     const response = await worker.fetch(request(`/downloads/${path}`), env);
     assert.equal(response.status, 200);

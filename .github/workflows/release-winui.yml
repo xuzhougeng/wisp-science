@@ -1,4 +1,4 @@
-name: Windows WinUI Preview Release
+name: Windows WinUI Release
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
         description: Existing release tag to build (vX.Y.Z)
         required: true
       publish:
-        description: Attach preview to the existing GitHub release (uncheck for a signing dry-run)
+        description: Attach WinUI to the existing GitHub release (uncheck for a signing dry-run)
         type: boolean
         required: true
         default: false
@@ -18,7 +18,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: winui-preview-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  group: winui-release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -32,7 +32,7 @@ jobs:
       ESIGNER_PASSWORD: ${{ secrets.ESIGNER_PASSWORD }}
       ESIGNER_TOTP_SECRET: ${{ secrets.ESIGNER_TOTP_SECRET }}
       ESIGNER_PIN: ${{ secrets.ESIGNER_PIN }}
-      ESIGNER_PROGRAM_NAME: Wisp Science WinUI Preview
+      ESIGNER_PROGRAM_NAME: Wisp Science WinUI
       # One TOTP window behind Windows Release. Both jobs share one eSigner credential.
       WISP_SIGN_SLOT: winui
       # Match Cargo.toml explicitly: runner environment must not inflate helpers.
@@ -52,16 +52,16 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
 
-      - name: Detect preview support in tagged source
-        id: preview
+      - name: Detect WinUI support in tagged source
+        id: winui
         shell: pwsh
         run: |
           $enabled = Test-Path scripts/package_native_windows.py
           "enabled=$($enabled.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
-          if (-not $enabled) { 'This tag predates WinUI preview packaging; skipping.' >> $env:GITHUB_STEP_SUMMARY }
+          if (-not $enabled) { 'This tag predates WinUI packaging; skipping.' >> $env:GITHUB_STEP_SUMMARY }
 
       - uses: actions/checkout@v4
-        if: steps.preview.outputs.enabled == 'true'
+        if: steps.winui.outputs.enabled == 'true'
         with:
           ref: ${{ github.sha }}
           sparse-checkout: |
@@ -70,28 +70,28 @@ jobs:
           path: _release_ci
 
       - name: Wait for existing GitHub release
-        if: steps.preview.outputs.enabled == 'true' && (github.event_name != 'workflow_dispatch' || inputs.publish)
+        if: steps.winui.outputs.enabled == 'true' && (github.event_name != 'workflow_dispatch' || inputs.publish)
         uses: ./_release_ci/.github/actions/wait-for-release
         with:
           tag: ${{ env.RELEASE_TAG }}
 
       - uses: actions/setup-python@v5
-        if: steps.preview.outputs.enabled == 'true'
+        if: steps.winui.outputs.enabled == 'true'
         with:
           python-version: '3.12'
       - uses: actions/setup-dotnet@v4
-        if: steps.preview.outputs.enabled == 'true'
+        if: steps.winui.outputs.enabled == 'true'
         with:
           dotnet-version: '8.0.x'
       - uses: dtolnay/rust-toolchain@stable
-        if: steps.preview.outputs.enabled == 'true'
+        if: steps.winui.outputs.enabled == 'true'
       - uses: swatinem/rust-cache@v2
-        if: steps.preview.outputs.enabled == 'true'
+        if: steps.winui.outputs.enabled == 'true'
         with:
-          shared-key: winui-preview-release
+          shared-key: winui-release
 
       - name: Test build and installer routing
-        if: steps.preview.outputs.enabled == 'true'
+        if: steps.winui.outputs.enabled == 'true'
         run: |
           pwsh -File scripts/test_build_native_windows.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Build routing tests failed.' }
@@ -101,25 +101,25 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Runtime bootstrap tests failed.' }
 
       - name: Cache CodeSignTool
-        if: steps.preview.outputs.enabled == 'true'
+        if: steps.winui.outputs.enabled == 'true'
         uses: actions/cache@v4
         with:
           path: ${{ runner.tool_cache }}/CodeSignTool
           key: codesigntool-1.3.2-windows
 
       - name: Install CodeSignTool
-        if: steps.preview.outputs.enabled == 'true'
+        if: steps.winui.outputs.enabled == 'true'
         shell: pwsh
         run: pwsh -NoProfile -File _release_ci/scripts/install_esigner_codesigntool.ps1
 
-      - name: Build both optimized x64 preview variants
-        if: steps.preview.outputs.enabled == 'true'
-        run: pwsh -File scripts/build_native_windows.ps1 -Configuration Release -RuntimeMode Both
+      - name: Build standalone x64 WinUI with runtimes
+        if: steps.winui.outputs.enabled == 'true'
+        run: pwsh -File scripts/build_native_windows.ps1 -Configuration Release -RuntimeMode SelfContained
 
       # Sign product executables before NSIS copies them into the installer.
       # Microsoft runtime DLLs stay as shipped; they are already signed.
-      - name: Sign preview executables with eSigner
-        if: steps.preview.outputs.enabled == 'true'
+      - name: Sign WinUI and its bundled host executables with eSigner
+        if: steps.winui.outputs.enabled == 'true'
         shell: pwsh
         run: |
           $sign = (Resolve-Path '_release_ci/scripts/esigner_sign.ps1').Path
@@ -128,7 +128,7 @@ jobs:
             'wisp-service.exe',
             (Join-Path 'settings-host' 'wisp-tauri.exe')
           )
-          foreach ($app in @('target/native-windows-release', 'target/native-windows-release-framework-dependent')) {
+          foreach ($app in @('target/native-windows-release')) {
             foreach ($name in $names) {
               & $sign (Join-Path $app $name)
               if ($LASTEXITCODE -ne 0) { throw "eSigner failed for $app $name" }
@@ -136,45 +136,44 @@ jobs:
           }
 
       - name: Install NSIS
-        if: steps.preview.outputs.enabled == 'true'
+        if: steps.winui.outputs.enabled == 'true'
         run: |
           choco install nsis --version=3.11 -y --no-progress
           if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed.' }
 
-      - name: Package preview and enforce size budgets
-        if: steps.preview.outputs.enabled == 'true'
+      - name: Package WinUI and enforce size budgets
+        if: steps.winui.outputs.enabled == 'true'
         run: |
-          foreach ($variant in @('self-contained', 'framework-dependent')) {
-            $app = if ($variant -eq 'self-contained') { 'target/native-windows-release' } else { 'target/native-windows-release-framework-dependent' }
-            python scripts/package_native_windows.py $app --variant $variant --tag $env:RELEASE_TAG --output "$env:RUNNER_TEMP/winui-release" --makensis "${env:ProgramFiles(x86)}/NSIS/makensis.exe"
-            if ($LASTEXITCODE -ne 0) { throw "Preview packaging failed: $variant" }
-          }
+          # Use this workflow's naming policy even when rebuilding an older tag.
+          # Version and payload still come exclusively from the requested source.
+          python _release_ci/scripts/package_native_windows.py target/native-windows-release --source-root . --variant self-contained --tag $env:RELEASE_TAG --output "$env:RUNNER_TEMP/winui-release" --makensis "${env:ProgramFiles(x86)}/NSIS/makensis.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'WinUI packaging failed.' }
 
-      - name: Sign preview installers with eSigner
-        if: steps.preview.outputs.enabled == 'true'
+      - name: Sign WinUI installer with eSigner
+        if: steps.winui.outputs.enabled == 'true'
         shell: pwsh
         run: |
           $sign = (Resolve-Path '_release_ci/scripts/esigner_sign.ps1').Path
-          $installers = @(Get-ChildItem "$env:RUNNER_TEMP/winui-release/*_x64-*-setup.exe")
-          if ($installers.Count -ne 2) { throw 'Expected both preview installers before signing.' }
+          $installers = @(Get-ChildItem "$env:RUNNER_TEMP/winui-release/Wisp-Science-WinUI_*_x64-setup.exe")
+          if ($installers.Count -ne 1) { throw 'Expected exactly one WinUI installer before signing.' }
           foreach ($installer in $installers) {
             & $sign $installer.FullName
             if ($LASTEXITCODE -ne 0) { throw "eSigner failed for $($installer.Name)" }
           }
 
       - name: Final checksum and size report after signing
-        if: steps.preview.outputs.enabled == 'true'
+        if: steps.winui.outputs.enabled == 'true'
         run: |
-          $installers = @(Get-ChildItem "$env:RUNNER_TEMP/winui-release/*_x64-*-setup.exe")
-          if ($installers.Count -ne 2) { throw 'Expected both preview variants.' }
+          $installers = @(Get-ChildItem "$env:RUNNER_TEMP/winui-release/Wisp-Science-WinUI_*_x64-setup.exe")
+          if ($installers.Count -ne 1) { throw 'Expected exactly one WinUI installer.' }
           foreach ($installer in $installers) {
-            python scripts/package_native_windows.py --finalize $installer.FullName
+            python _release_ci/scripts/package_native_windows.py --finalize $installer.FullName
             if ($LASTEXITCODE -ne 0) { throw 'Final installer validation failed.' }
             $report = Get-Content ($installer.FullName -replace '\.exe$', '.size.json') -Raw | ConvertFrom-Json
             "$($report.variant): $([math]::Round($report.installer_bytes / 1MB, 1)) MiB installer / $($report.installer_limit_mib) MiB budget; $([math]::Round($report.payload_bytes / 1MB, 1)) MiB installed / $($report.payload_limit_mib) MiB budget." >> $env:GITHUB_STEP_SUMMARY
           }
           $files = @($installers.FullName)
-          foreach ($app in @('target/native-windows-release', 'target/native-windows-release-framework-dependent')) {
+          foreach ($app in @('target/native-windows-release')) {
             $files += Join-Path $app 'Wisp.Science.Preview.exe'
             $files += Join-Path $app 'wisp-service.exe'
             $files += (Join-Path (Join-Path $app 'settings-host') 'wisp-tauri.exe')
@@ -183,29 +182,31 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Authenticode verification failed.' }
 
       - uses: actions/upload-artifact@v4
-        if: steps.preview.outputs.enabled == 'true'
+        if: steps.winui.outputs.enabled == 'true'
         with:
-          name: Wisp-Science-WinUI-Preview-${{ env.RELEASE_TAG }}-x64
+          name: Wisp-Science-WinUI-${{ env.RELEASE_TAG }}-x64
           path: ${{ runner.temp }}/winui-release/*
           if-no-files-found: error
           compression-level: 0
 
-      - name: Attach preview to existing release
-        if: steps.preview.outputs.enabled == 'true' && (github.event_name != 'workflow_dispatch' || inputs.publish)
+      - name: Attach WinUI installer to existing release
+        if: steps.winui.outputs.enabled == 'true' && (github.event_name != 'workflow_dispatch' || inputs.publish)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $files = @(Get-ChildItem "$env:RUNNER_TEMP/winui-release" -File | Where-Object { $_.Name -match '\.(exe|sha256|json)$' })
+          # Size reports remain in Actions artifacts; release assets match SwiftUI:
+          # one installer and its checksum, with no second runtime variant.
+          $files = @(Get-ChildItem "$env:RUNNER_TEMP/winui-release" -File | Where-Object { $_.Name -match '\.(exe|sha256)$' })
+          if ($files.Count -ne 2) { throw 'Expected one WinUI installer and its checksum.' }
           gh release upload $env:RELEASE_TAG --clobber @($files.FullName)
-          if ($LASTEXITCODE -ne 0) { throw 'Preview upload failed.' }
+          if ($LASTEXITCODE -ne 0) { throw 'WinUI upload failed.' }
           # Download the published bytes, rather than trusting asset names alone.
           $verify = Join-Path $env:RUNNER_TEMP 'winui-release-verify'
           New-Item -ItemType Directory -Force -Path $verify | Out-Null
-          foreach ($variant in @('self-contained', 'framework-dependent')) {
-            $installer = Get-Item "$env:RUNNER_TEMP/winui-release/*_x64-$variant-setup.exe"
+          foreach ($installer in @(Get-ChildItem "$env:RUNNER_TEMP/winui-release/Wisp-Science-WinUI_*_x64-setup.exe")) {
             gh release download $env:RELEASE_TAG --pattern $installer.Name --pattern "$($installer.Name).sha256" --dir $verify --clobber
-            if ($LASTEXITCODE -ne 0) { throw 'Published preview download failed.' }
+            if ($LASTEXITCODE -ne 0) { throw 'Published WinUI download failed.' }
             $actual = (Get-FileHash (Join-Path $verify $installer.Name) -Algorithm SHA256).Hash.ToLowerInvariant()
             $expected = (Get-Content (Join-Path $verify "$($installer.Name).sha256")).Split(' ')[0]
-            if ($actual -ne $expected) { throw 'Published preview checksum mismatch.' }
+            if ($actual -ne $expected) { throw 'Published WinUI checksum mismatch.' }
           }

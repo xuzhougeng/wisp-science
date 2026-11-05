@@ -168,8 +168,8 @@ The directory includes the .NET and Windows App SDK runtimes, `wisp-service.exe`
 and a full desktop settings host under `settings-host/`;
 copy the entire directory, not just the executable. This is an unsigned local x64
 preview, not an installer or an update to the installed Tauri application.
-For downloadable WinUI Preview installers, size limits and the separate release
-workflow, see [WinUI Preview releases](app-updates.md#winui-3-preview-alongside-the-windows-release).
+For the downloadable standalone WinUI installer, size limits and the separate release
+workflow, see [WinUI releases](app-updates.md#winui-alongside-the-windows-webview-release).
 
 The default database is `%APPDATA%/science.wisp-science/wisp-science/wisp.sqlite`.
 The preview caches its database selection, theme and palette in

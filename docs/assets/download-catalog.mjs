@@ -14,9 +14,15 @@ export const PACKAGES = [
   { id: "android-universal-apk", os: "android", arch: "universal", format: "apk", suffix: "android.apk", optional: true },
   { id: "macos-arm64-swiftui", os: "macos", arch: "arm64", format: "swiftui", prefix: "Wisp-Science-SwiftUI", suffix: "aarch64.dmg", optional: true },
   { id: "macos-x64-swiftui", os: "macos", arch: "x64", format: "swiftui", prefix: "Wisp-Science-SwiftUI", suffix: "x86_64.dmg", optional: true },
-  { id: "windows-x64-winui-framework", os: "windows", arch: "x64", format: "winui-framework", prefix: "Wisp-Science-WinUI-Preview", suffix: "x64-framework-dependent-setup.exe", optional: true },
-  { id: "windows-x64-winui-self-contained", os: "windows", arch: "x64", format: "winui-self-contained", prefix: "Wisp-Science-WinUI-Preview", suffix: "x64-self-contained-setup.exe", optional: true },
+  { id: "windows-x64-winui-self-contained", os: "windows", arch: "x64", format: "winui-self-contained", prefix: "Wisp-Science-WinUI", suffix: "x64-setup.exe", optional: true,
+    legacy: { prefix: "Wisp-Science-WinUI-Preview", suffix: "x64-self-contained-setup.exe" } },
 ];
+// Existing immutable links and cached manifests remain readable during rollout.
+// This retired package is never selected for a new manifest or offered by the UI.
+const RETIRED_PACKAGES = [
+  { id: "windows-x64-winui-framework", prefix: "Wisp-Science-WinUI-Preview", suffix: "x64-framework-dependent-setup.exe", optional: true },
+];
+const READABLE_PACKAGES = [...PACKAGES, ...RETIRED_PACKAGES];
 
 export function validTag(tag) {
   return typeof tag === "string" && /^v\d+\.\d+\.\d+$/.test(tag);
@@ -24,6 +30,10 @@ export function validTag(tag) {
 
 export function assetName(tag, pkg) {
   return `${pkg.prefix || "wisp-science"}_${tag.slice(1)}_${pkg.suffix}`;
+}
+
+export function assetNames(tag, pkg) {
+  return [assetName(tag, pkg), ...(pkg.legacy ? [assetName(tag, pkg.legacy)] : [])];
 }
 
 // A package may still be building for the latest release. Its last published
@@ -44,24 +54,26 @@ export function downloadKey(tag, name, sha256) {
 export function validDownloadKey(key) {
   const [prefix, tag, digest, name, ...rest] = key.split("/");
   return rest.length === 0 && prefix === "releases" && validTag(tag) &&
-    /^[a-f0-9]{64}$/.test(digest) && PACKAGES.some(pkg => assetName(tag, pkg) === name);
+    /^[a-f0-9]{64}$/.test(digest) && READABLE_PACKAGES.some(pkg => assetNames(tag, pkg).includes(name));
 }
 
 export function validateManifest(manifest) {
   if (manifest?.schema !== 1 || !validTag(manifest.tag) || !Array.isArray(manifest.packages) ||
-      manifest.packages.some(asset => !PACKAGES.some(pkg => pkg.id === asset?.id))) throw new Error("Invalid download manifest");
-  for (const pkg of PACKAGES) {
+      manifest.packages.some(asset => !READABLE_PACKAGES.some(pkg => pkg.id === asset?.id))) throw new Error("Invalid download manifest");
+  for (const pkg of READABLE_PACKAGES) {
     const matches = manifest.packages.filter(asset => asset.id === pkg.id);
     const asset = matches[0];
     if (pkg.optional && matches.length === 0) continue;
     const tag = asset?.tag ?? manifest.tag;
-    if (matches.length !== 1 || !validTag(tag) || compareTags(tag, manifest.tag) > 0 || asset.name !== assetName(tag, pkg) ||
+    if (matches.length !== 1 || !validTag(tag) || compareTags(tag, manifest.tag) > 0 || !assetNames(tag, pkg).includes(asset.name) ||
         !/^[a-f0-9]{64}$/.test(asset.sha256) || !Number.isSafeInteger(asset.size) || asset.size <= 0 ||
         asset.key !== downloadKey(tag, asset.name, asset.sha256)) {
       throw new Error(`Invalid package: ${pkg.id}`);
     }
   }
-  return manifest;
+  return manifest.packages.some(asset => RETIRED_PACKAGES.some(pkg => pkg.id === asset.id))
+    ? { ...manifest, packages: manifest.packages.filter(asset => PACKAGES.some(pkg => pkg.id === asset.id)) }
+    : manifest;
 }
 
 // Browser strings cannot reliably distinguish Intel and Apple Silicon Macs.

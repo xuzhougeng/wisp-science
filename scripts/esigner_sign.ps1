@@ -90,7 +90,7 @@ function Get-EsignerOtpRetryDelaySeconds([int]$BaseSeconds, [int]$Slot) {
     if ($BaseSeconds -le 0) { return 0 }
     if ($Slot -lt 0) { $Slot = 0 }
     # 35s leaves the current 30s TOTP window. Slot 1 waits one extra window
-    # so Windows Release and WinUI Preview retry with different codes.
+    # so Windows Release and WinUI retry with different codes.
     return ($BaseSeconds + ($Slot * 30))
 }
 

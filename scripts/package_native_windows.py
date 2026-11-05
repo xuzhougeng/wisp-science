@@ -1,7 +1,8 @@
-"""Build a separate, per-user WinUI preview installer (requires NSIS 3).
+"""Build a standalone, per-user Wisp Science WinUI installer (requires NSIS 3).
 
-Self-contained and framework-dependent variants. The latter installs missing
-Microsoft runtimes. No trimming or UPX; symbols/caches are excluded.
+Releases ship the self-contained package, including both Rust helpers and
+Microsoft runtimes. The framework-dependent mode remains a local development
+option. No trimming or UPX; symbols/caches are excluded.
 """
 import argparse
 import hashlib
@@ -27,6 +28,11 @@ REQUIRED = (
     'settings-host/vcruntime140.dll', 'settings-host/vcruntime140_1.dll', 'settings-host/msvcp140.dll',
 )
 RESOURCES = ('skills', 'python', 'r', 'browser-extension', 'seed')
+APP_FILES = (
+    'Wisp.Science.Preview.dll', 'Wisp.Science.Preview.deps.json',
+    'Wisp.Science.Preview.runtimeconfig.json', 'Assets/native-locales.json',
+    'Assets/RichPreview/index.html', 'Assets/Share/index.html', 'Assets/Terminal/index.html',
+)
 
 
 def nsis_quote(value):
@@ -53,6 +59,12 @@ def payload_files(app, variant='self-contained'):
                 raise ValueError(f'Framework-dependent payload contains bundled runtime: {relative}')
             continue
         validate_binary(app / relative)
+    # The native app must run from its own install tree, without a separately
+    # installed WebView edition supplying managed code or embedded UI assets.
+    for relative in APP_FILES:
+        path = app / relative
+        if not path.is_file() or path.stat().st_size == 0:
+            raise ValueError(f'Missing WinUI application file: {relative}')
     if variant == 'framework-dependent':
         validate_binary(app / 'Microsoft.WindowsAppRuntime.Bootstrap.dll')
         options = json.loads((app / 'Wisp.Science.Preview.runtimeconfig.json').read_text(encoding='utf-8'))['runtimeOptions']
@@ -104,15 +116,15 @@ def installer_script(payload, files, installer, version, size, variant='self-con
 !include "x64.nsh"
 !include "WinVer.nsh"
 !define AtLeastWin1809 'U>= WinVer_BuildNumCheck 17763'
-Name "Wisp Science WinUI Preview ({variant})"
+Name "Wisp Science WinUI"
 OutFile "{nsis_quote(installer)}"
-InstallDir "$LOCALAPPDATA\\Programs\\Wisp Science WinUI Preview"
+InstallDir "$LOCALAPPDATA\\Programs\\Wisp Science WinUI"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
 SetCompressorDictSize 64
 VIProductVersion "{version}.0"
-VIAddVersionKey "ProductName" "Wisp Science WinUI Preview"
-VIAddVersionKey "FileDescription" "Wisp Science WinUI Preview Setup ({variant})"
+VIAddVersionKey "ProductName" "Wisp Science WinUI"
+VIAddVersionKey "FileDescription" "Wisp Science WinUI Setup"
 VIAddVersionKey "FileVersion" "{version}"
 VIAddVersionKey "LegalCopyright" "Wisp Science contributors"
 !define MUI_ABORTWARNING
@@ -126,14 +138,20 @@ VIAddVersionKey "LegalCopyright" "Wisp Science contributors"
 
 Function .onInit
   ${{IfNot}} ${{RunningX64}}
-    Abort "This preview requires x64 Windows."
+    Abort "Wisp Science WinUI requires x64 Windows."
   ${{EndIf}}
   ${{IfNot}} ${{AtLeastWin10}}
-    Abort "This preview requires Windows 10 1809 or later."
+    Abort "Wisp Science WinUI requires Windows 10 1809 or later."
   ${{EndIf}}
   ${{IfNot}} ${{AtLeastWin1809}}
-    Abort "This preview requires Windows 10 1809 or later."
+    Abort "Wisp Science WinUI requires Windows 10 1809 or later."
   ${{EndIf}}
+  ; Upgrade an existing Preview in place using its own uninstall manifest.
+  ; A fresh install uses the formal name; never look for the WebView edition.
+  IfFileExists "$INSTDIR\\Uninstall.exe" winui_dir_ready 0
+  IfFileExists "$LOCALAPPDATA\\Programs\\Wisp Science WinUI Preview\\Uninstall.exe" 0 winui_dir_ready
+  StrCpy $INSTDIR "$LOCALAPPDATA\\Programs\\Wisp Science WinUI Preview"
+winui_dir_ready:
 FunctionEnd
 
 Section "Install"
@@ -145,14 +163,14 @@ Section "Install"
   StrCpy $0 1
   ExecWait '$\\"$INSTDIR\\Uninstall.exe$\\" /S _?=$INSTDIR' $0
   ${{If}} $0 != 0
-    Abort "Could not remove the previous preview. Close it and retry."
+    Abort "Could not remove the previous WinUI installation. Close it and retry."
   ${{EndIf}}
 fresh_install:
   SetOutPath "$INSTDIR"
   File /r "{nsis_quote(payload)}\\*"
   WriteUninstaller "$INSTDIR\\Uninstall.exe"
-  CreateShortcut "$SMPROGRAMS\\Wisp Science WinUI Preview.lnk" "$INSTDIR\\Wisp.Science.Preview.exe"
-  WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\WispScienceWinUIPreview" "DisplayName" "Wisp Science WinUI Preview"
+  CreateShortcut "$SMPROGRAMS\\Wisp Science WinUI.lnk" "$INSTDIR\\Wisp.Science.Preview.exe"
+  WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\WispScienceWinUIPreview" "DisplayName" "Wisp Science WinUI"
   WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\WispScienceWinUIPreview" "DisplayVersion" "{version}"
   WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\WispScienceWinUIPreview" "Publisher" "Wisp Science"
   WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\WispScienceWinUIPreview" "UninstallString" '$\\"$INSTDIR\\Uninstall.exe$\\"'
@@ -168,7 +186,7 @@ Section "Uninstall"
 {removes}
   Delete "$INSTDIR\\Uninstall.exe"
   RMDir "$INSTDIR"
-  Delete "$SMPROGRAMS\\Wisp Science WinUI Preview.lnk"
+  Delete "$SMPROGRAMS\\Wisp Science WinUI.lnk"
   DeleteRegKey HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\WispScienceWinUIPreview"
 SectionEnd
 '''
@@ -190,7 +208,8 @@ def finalize(installer, max_installer_mib=None):
 
 
 def package(app, tag, output, makensis='makensis', *, version=None,
-            max_payload_mib=None, max_installer_mib=None, variant='self-contained'):
+            max_payload_mib=None, max_installer_mib=None, variant='self-contained', source_root=None):
+    source_root = Path(source_root) if source_root is not None else SCRIPT_ROOT.parent
     installer_limit, payload_limit = VARIANTS[variant]
     if max_payload_mib is None:
         max_payload_mib = payload_limit
@@ -199,7 +218,7 @@ def package(app, tag, output, makensis='makensis', *, version=None,
     if not re.fullmatch(r'v\d+\.\d+\.\d+', tag):
         raise ValueError('Expected a release tag vX.Y.Z.')
     if version is None:
-        with (Path(__file__).resolve().parents[1] / 'Cargo.toml').open('rb') as source:
+        with (source_root / 'Cargo.toml').open('rb') as source:
             version = tomllib.load(source)['workspace']['package']['version']
     if tag != f'v{version}':
         raise ValueError(f'Tag {tag} does not match source version {version}.')
@@ -210,7 +229,7 @@ def package(app, tag, output, makensis='makensis', *, version=None,
     runtime_files = None
     if variant == 'framework-dependent':
         config = json.loads((SCRIPT_ROOT / 'native_windows_runtimes.json').read_text(encoding='utf-8'))
-        project = ET.parse(SCRIPT_ROOT.parent / 'apps/windows/Wisp.Science.Preview/Wisp.Science.Preview.csproj')
+        project = ET.parse(source_root / 'apps/windows/Wisp.Science.Preview/Wisp.Science.Preview.csproj')
         sdk = project.find(".//PackageReference[@Include='Microsoft.WindowsAppSDK']").get('Version')
         if sdk != config['windowsAppSdkVersion']:
             raise ValueError('Update the runtime installer policy for the new Windows App SDK version.')
@@ -221,7 +240,8 @@ def package(app, tag, output, makensis='makensis', *, version=None,
     if total > max_payload_mib * MIB:
         raise ValueError(f'Payload {total / MIB:.1f} MiB exceeds budget {max_payload_mib} MiB; largest files: {sorted(sizes, key=lambda p: p[1], reverse=True)[:10]}')
     output.mkdir(parents=True, exist_ok=True)
-    name = f'Wisp-Science-WinUI-Preview_{version}_x64-{variant}-setup.exe'
+    variant_suffix = '' if variant == 'self-contained' else '-framework-dependent'
+    name = f'Wisp-Science-WinUI_{version}_x64{variant_suffix}-setup.exe'
     with tempfile.TemporaryDirectory(prefix='wisp-winui-', dir=output) as temporary:
         staging = Path(temporary)
         payload = staging / 'payload'
@@ -230,7 +250,7 @@ def package(app, tag, output, makensis='makensis', *, version=None,
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(app / relative, destination)
         candidate = staging / name
-        script = staging / 'preview.nsi'
+        script = staging / 'winui.nsi'
         if variant == 'framework-dependent':
             config_path = staging / 'runtimes.json'
             config_path.write_text(json.dumps(config), encoding='utf-8')
@@ -251,6 +271,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('app', type=Path, nargs='?')
     parser.add_argument('--tag')
+    parser.add_argument('--source-root', type=Path, help='Tagged source checkout supplying Cargo.toml (defaults to this script\'s repository).')
     parser.add_argument('--output', type=Path, default=Path('target/winui-release'))
     parser.add_argument('--makensis', default='makensis')
     parser.add_argument('--variant', choices=VARIANTS, default='self-contained')
@@ -262,7 +283,8 @@ def main():
         print(json.dumps(finalize(args.finalize, args.max_installer_mib), indent=2))
     elif args.app and args.tag:
         print(package(args.app, args.tag, args.output, args.makensis,
-                      max_payload_mib=args.max_payload_mib, max_installer_mib=args.max_installer_mib, variant=args.variant))
+                      max_payload_mib=args.max_payload_mib, max_installer_mib=args.max_installer_mib,
+                      variant=args.variant, source_root=args.source_root))
     else:
         parser.error('Provide APP --tag vX.Y.Z, or --finalize INSTALLER.')
 

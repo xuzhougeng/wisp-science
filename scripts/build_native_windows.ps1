@@ -68,7 +68,7 @@ try {
             $publishArgs += @('-p:DebugType=None', '-p:DebugSymbols=false', '-p:CopyOutputSymbolsToPublishDirectory=false')
         }
         & dotnet @publishArgs
-        if ($LASTEXITCODE -ne 0) { throw 'WinUI preview build failed.' }
+        if ($LASTEXITCODE -ne 0) { throw 'WinUI build failed.' }
         Copy-Item -LiteralPath (Join-Path $repo "target/$rustProfile/wisp-service.exe") -Destination $output
         $hostOutput = Join-Path $output 'settings-host'
         New-Item -ItemType Directory -Force -Path $hostOutput | Out-Null
@@ -85,7 +85,7 @@ try {
             Copy-Item -LiteralPath (Join-Path $repo $resource) -Destination $targetResource -Recurse
         }
         Write-Host 'Settings host requires the Microsoft Edge WebView2 Evergreen Runtime installed on Windows.'
-        Write-Host "Native Windows preview: $output/Wisp.Science.Preview.exe"
+        Write-Host "Native Windows WinUI: $output/Wisp.Science.Preview.exe"
         if ($Launch) { Start-Process -FilePath (Join-Path $output 'Wisp.Science.Preview.exe') -WindowStyle Hidden }
     }
 } finally { Pop-Location }

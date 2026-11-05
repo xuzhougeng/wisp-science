@@ -11,7 +11,7 @@ from unittest.mock import patch
 import package_native_windows as pkg
 
 
-class WindowsPreviewPackagingTests(unittest.TestCase):
+class WindowsPackagingTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='winui test ')
         self.addCleanup(self.temp.cleanup)
@@ -26,6 +26,10 @@ class WindowsPreviewPackagingTests(unittest.TestCase):
             folder = self.app / 'settings-host' / name
             folder.mkdir(parents=True, exist_ok=True)
             (folder / 'resource.txt').write_text(name)
+        for relative in pkg.APP_FILES:
+            path = self.app / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('{}')
         (self.app / 'old.pdb').write_bytes(b'symbols')
         cache = self.app / 'settings-host/python/__pycache__'
         cache.mkdir()
@@ -48,15 +52,19 @@ class WindowsPreviewPackagingTests(unittest.TestCase):
 
     def test_package_preserves_dependencies_and_controls_size(self):
         installer = self.package()
-        self.assertEqual(installer.name, 'Wisp-Science-WinUI-Preview_1.2.3_x64-self-contained-setup.exe')
+        self.assertEqual(installer.name, 'Wisp-Science-WinUI_1.2.3_x64-setup.exe')
         self.assertEqual(installer.with_suffix('.exe.sha256').read_text(),
                          f'{hashlib.sha256(b"installer").hexdigest()}  {installer.name}\n')
         report = json.loads(installer.with_suffix('.size.json').read_text())
-        self.assertEqual(report['file_count'], len(pkg.REQUIRED) + len(pkg.RESOURCES))
+        self.assertEqual(report['file_count'], len(pkg.REQUIRED) + len(pkg.RESOURCES) + len(pkg.APP_FILES))
         self.assertEqual(report['installer_bytes'], len(b'installer'))
         self.assertIn('SetCompressor /SOLID lzma', self.script)
         self.assertIn('RequestExecutionLevel user', self.script)
         self.assertIn('WispScienceWinUIPreview', self.script)
+        self.assertIn('Name "Wisp Science WinUI"', self.script)
+        self.assertIn('InstallDir "$LOCALAPPDATA\\Programs\\Wisp Science WinUI"', self.script)
+        self.assertIn('CreateShortcut "$SMPROGRAMS\\Wisp Science WinUI.lnk"', self.script)
+        self.assertNotIn('"DisplayName" "Wisp Science WinUI Preview"', self.script)
         self.assertIn('ExecWait', self.script, 'Upgrade must remove the previous file manifest.')
         self.assertNotIn('RMDir /r', self.script)
         self.assertNotIn('$APPDATA', self.script)
@@ -69,6 +77,55 @@ class WindowsPreviewPackagingTests(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             self.package()
         self.assertFalse(self.output.exists())
+
+    def test_standalone_package_cannot_borrow_missing_files_from_another_install(self):
+        for relative in pkg.REQUIRED + pkg.APP_FILES:
+            path = self.app / relative
+            original = path.read_bytes()
+            with self.subTest(relative=relative):
+                path.unlink()
+                with self.assertRaises((FileNotFoundError, ValueError)):
+                    self.package()
+                self.assertFalse(self.output.exists())
+                path.write_bytes(original)
+
+    def test_preview_upgrade_keeps_its_existing_install_directory(self):
+        self.package()
+        init = self.script.split('Function .onInit', 1)[1].split('FunctionEnd', 1)[0]
+        self.assertIn('IfFileExists "$INSTDIR\\Uninstall.exe" winui_dir_ready 0', init)
+        self.assertIn('IfFileExists "$LOCALAPPDATA\\Programs\\Wisp Science WinUI Preview\\Uninstall.exe" 0 winui_dir_ready', init)
+        self.assertIn('StrCpy $INSTDIR "$LOCALAPPDATA\\Programs\\Wisp Science WinUI Preview"', init)
+        self.assertNotIn('wisp-science', init, 'Upgrade discovery must not borrow the WebView installation.')
+
+    def test_current_packager_uses_the_requested_tag_source_version(self):
+        source = self.root / 'tagged-source'
+        source.mkdir()
+        (source / 'Cargo.toml').write_text('[workspace.package]\nversion = "1.24.0"\n')
+        with patch.object(pkg.subprocess, 'run', self.fake_compiler):
+            installer = pkg.package(self.app, 'v1.24.0', self.output, source_root=source)
+            self.assertEqual(installer.name, 'Wisp-Science-WinUI_1.24.0_x64-setup.exe')
+            with self.assertRaisesRegex(ValueError, 'does not match source'):
+                pkg.package(self.app, 'v1.25.0', self.output, source_root=source)
+
+    def test_ci_only_publishes_the_standalone_variant(self):
+        workflows = Path(__file__).resolve().parents[1] / '.github/workflows'
+        for name in ('native-preview.yml', 'release-winui.yml'):
+            with self.subTest(workflow=name):
+                workflow = (workflows / name).read_text(encoding='utf-8')
+                self.assertIn('-RuntimeMode SelfContained', workflow)
+                self.assertNotIn('-RuntimeMode Both', workflow)
+                self.assertNotIn('framework-dependent', workflow)
+                self.assertNotIn('Wisp-Science-WinUI-Preview', workflow)
+        release = (workflows / 'release-winui.yml').read_text(encoding='utf-8')
+        self.assertIn('name: Windows WinUI Release', release)
+        self.assertIn('_release_ci/scripts/package_native_windows.py target/native-windows-release --source-root .', release)
+        self.assertIn('$installers.Count -ne 1', release)
+        self.assertIn('$files.Count -ne 2', release)
+        self.assertIn("'wisp-service.exe'", release)
+        self.assertIn("(Join-Path 'settings-host' 'wisp-tauri.exe')", release)
+        self.assertFalse((workflows / 'release-winui-preview.yml').exists())
+        sync = (workflows / 'docs-downloads-r2-sync.yml').read_text(encoding='utf-8')
+        self.assertIn('Windows WinUI Release]', sync)
 
     def test_missing_runtime_or_resource_is_rejected(self):
         (self.app / 'settings-host/skills/resource.txt').unlink()
