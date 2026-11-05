@@ -166,11 +166,13 @@ internal static class NativeWorkflowStudioTests
         Check(model.TaskKeyAt(0) == literatureKey && model.TaskInputError(literatureKey) == "Invalid number"
             && model.TaskForKey(dataKey) == null, "removing another node cannot shift invalid input state onto the wrong task");
         model.Select("builtin");
-        Check(!model.HasChanges && model.TaskForKey(literatureKey) == null && model.TaskInputError(literatureKey) == null,
+        Check(!model.HasChanges && S(model.Proposal, "context") != sharedContext
+            && model.TaskForKey(literatureKey) == null && model.TaskInputError(literatureKey) == null,
             "switching documents drops old field state and invalidates old edit keys");
         dataKey = model.TaskKeyAt(0); synthesisKey = model.TaskKeyAt(2);
         Check(!model.SetDraftDependency(dataKey, "synthesis", true) && !model.HasChanges && fake.Writes.Count == 0,
             "live dependency checkboxes reject cycles without changing the draft");
+        model.Change(model.Proposal!, "context", JsonValue.Create(sharedContext));
         Check(model.SetDraftDependency(synthesisKey, "literature", false)
             && NativeWorkflowGraph.Dependencies(model.TaskForKey(synthesisKey)!).SequenceEqual(["data"]), "dependency chips update the unsaved workflow immediately");
         var addedKey = model.AddTaskDraft(model.NewTask("data"));
