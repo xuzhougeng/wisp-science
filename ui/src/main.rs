@@ -16334,8 +16334,15 @@ fn App() -> impl IntoView {
                                         }>
                                         <span>{move || t(locale.get(), "composer.reviewer_model")}</span>
                                         <span class="agent-menu-value">{move || {
-                                            specialists.get().into_iter()
-                                                .find(|specialist| specialist.id == "reviewer")
+                                            let reviewer = specialists.get().into_iter()
+                                                .find(|specialist| specialist.id == "reviewer");
+                                            // Any HTTP reviewer runs on the Magpie model.
+                                            if let Some(magpie) = magpie_model.get().filter(|_| reviewer.as_ref()
+                                                .map_or(true, |reviewer| reviewer_backend_key(reviewer).starts_with("http:")))
+                                            {
+                                                return magpie.label();
+                                            }
+                                            reviewer
                                                 .and_then(|reviewer| reviewer_backend_label(
                                                     &reviewer,
                                                     &models.get(),
@@ -16357,6 +16364,10 @@ fn App() -> impl IntoView {
                                         }>
                                         <span>{move || t(locale.get(), "composer.subagent_model")}</span>
                                         <span class="agent-menu-value">{move || {
+                                            // Subagents only run on HTTP models, so all of them use Magpie.
+                                            if let Some(magpie) = magpie_model.get() {
+                                                return magpie.label();
+                                            }
                                             let profiles = models.get();
                                             let current = active_session.get().and_then(|session_id| {
                                                 session_subagent_models.with(|values| values.get(&session_id).cloned())
@@ -16414,34 +16425,52 @@ fn App() -> impl IntoView {
                                         <div class="compose-menu agent-submenu reviewer-model-menu" role="menu"
                                             aria-label=move || t(locale.get(), "composer.reviewer_model")>
                                             {{
+                                                // Magpie runs every HTTP reviewer, so one entry stands
+                                                // for all of them; ACP reviewers keep their own model.
+                                                let magpie = magpie_model.get();
                                                 let mut choices = vec![(
                                                     "http:".to_string(),
-                                                    t(locale.get(), "composer.reviewer.default_http"),
+                                                    magpie.as_ref().map(MagpieModelDto::label).unwrap_or_else(|| {
+                                                        t(locale.get(), "composer.reviewer.default_http")
+                                                    }),
                                                 ), (
                                                     "follow_session".to_string(),
                                                     t(locale.get(), "composer.reviewer.follow_session"),
                                                 )];
-                                                choices.extend(
-                                                    models
-                                                        .get()
-                                                        .into_iter()
-                                                        .filter(ModelProfile::is_chat_model)
-                                                        .map(|model| {
-                                                            (format!("http:{}", model.id), model.label)
-                                                        }),
-                                                );
+                                                if magpie.is_none() {
+                                                    choices.extend(
+                                                        models
+                                                            .get()
+                                                            .into_iter()
+                                                            .filter(ModelProfile::is_chat_model)
+                                                            .map(|model| {
+                                                                (format!("http:{}", model.id), model.label)
+                                                            }),
+                                                    );
+                                                }
                                                 choices.extend(acp_agents.get().into_iter().map(|agent| {
                                                     (format!("acp:{}", agent.id), format!("{} · ACP", agent.label))
                                                 }));
                                                 choices.into_iter().map(|(backend_key, label)| {
                                                     let selected_key = backend_key.clone();
-                                                    let current = specialists.get().into_iter()
+                                                    let mut current = specialists.get().into_iter()
                                                         .find(|specialist| specialist.id == "reviewer")
                                                         .map(|reviewer| reviewer_backend_key(&reviewer))
                                                         .unwrap_or_default();
+                                                    if magpie.is_some() && current.starts_with("http:") {
+                                                        current = "http:".into();
+                                                    }
+                                                    // Re-picking Magpie keeps the personal profile the
+                                                    // reviewer returns to after disconnecting.
+                                                    let unchanged = magpie.is_some() && current == backend_key;
                                                     view! {
                                                         <button type="button" class="agent-submenu-row"
                                                             on:click=move |_| {
+                                                                if unchanged {
+                                                                    agent_menu_open.set(false);
+                                                                    reviewer_model_menu_open.set(false);
+                                                                    return;
+                                                                }
                                                                 let Some(mut reviewer) = specialists.get_untracked().into_iter()
                                                                     .find(|specialist| specialist.id == "reviewer") else { return; };
                                                                 set_reviewer_backend(&mut reviewer, &selected_key);
@@ -16489,11 +16518,23 @@ fn App() -> impl IntoView {
                                                         .filter(ModelProfile::is_chat_model)
                                                         .map(|model| (Some(model.id), model.label)),
                                                 );
+                                                // Subagents only run on HTTP models, so Magpie runs all of
+                                                // them; the stored choice waits for a disconnect.
+                                                let pinned = magpie_model.get().map(|magpie| magpie.label());
+                                                if let Some(label) = pinned.clone() {
+                                                    choices = vec![(current.clone(), label)];
+                                                }
                                                 choices.into_iter().map(|(value, label)| {
                                                     let selected = value == current;
+                                                    let pinned = pinned.is_some();
                                                     view! {
                                                         <button type="button" class="agent-submenu-row"
                                                             on:click=move |_| {
+                                                                if pinned {
+                                                                    agent_menu_open.set(false);
+                                                                    subagent_model_menu_open.set(false);
+                                                                    return;
+                                                                }
                                                                 let value = value.clone();
                                                                 spawn_local(async move {
                                                                     // A choice made before the first message
@@ -16777,9 +16818,11 @@ fn App() -> impl IntoView {
                                     </button>
                                 }
                             })}
-                            {move || (!models.get().is_empty() || !acp_agents.get().is_empty()).then(|| view! {
+                            {move || (!models.get().is_empty() || !acp_agents.get().is_empty()
+                                || magpie_model.with(Option::is_some)).then(|| view! {
                                 <div class="model-picker">
                                     <button type="button" class="model-picker-btn" class:active=move || model_menu_open.get()
+                                        data-testid="composer-model-trigger"
                                         on:click=move |ev| {
                                             composer_menu_style.set(composer_menu_bounds(&ev));
                                             composer_effort_open.set(false);
@@ -16788,6 +16831,10 @@ fn App() -> impl IntoView {
                                         <span class="model-picker-label">{move || {
                                             if let Some(id) = active_acp_agent_id.get() {
                                                 acp_agents.get().into_iter().find(|agent| agent.id == id).map(|agent| agent.label).unwrap_or_else(|| "ACP Agent".into())
+                                            } else if let Some(magpie) = magpie_model.get() {
+                                                // Magpie runs every HTTP turn, so a personal
+                                                // profile's name would show a model that never runs.
+                                                magpie.label()
                                             } else {
                                                 let l = models.get();
                                                 let selected = active_session.get().and_then(|session_id| {
@@ -16808,6 +16855,37 @@ fn App() -> impl IntoView {
                                                 });
                                                 let acp_selected = active_acp_agent_id.get().is_some();
                                                 let acp_locked = acp_selected && session_has_items.get();
+                                                // Magpie overrides every personal profile, so it
+                                                // is the only HTTP choice; listing the profiles
+                                                // would offer switches that never take effect.
+                                                if let Some(magpie) = magpie_model.get() {
+                                                    let label = magpie.label();
+                                                    let is_active = !acp_selected;
+                                                    return view! {
+                                                        <div class="model-menu-row" class:active=is_active data-testid="composer-model-magpie">
+                                                            <button type="button" class="model-menu-pick"
+                                                                title=label.clone()
+                                                                disabled=acp_locked
+                                                                on:click=move |_| {
+                                                                if acp_locked {
+                                                                    show_warning_toast(&t(locale.get(), "models.locked_hint"));
+                                                                    return;
+                                                                }
+                                                                model_menu_open.set(false);
+                                                                // Back from an unsent ACP pick: the connected
+                                                                // model needs no profile switch.
+                                                                provisional_acp_selection.set(None);
+                                                                active_acp_agent_id.set(None);
+                                                            }>
+                                                                <span class="model-menu-text">
+                                                                    <span class="model-menu-label">{label.clone()}</span>
+                                                                    <span class="model-menu-sub">{move || t(locale.get(), "composer.magpie_managed")}</span>
+                                                                </span>
+                                                                {is_active.then(|| view! { <span class="model-menu-check">{compose_icon("check")}</span> })}
+                                                            </button>
+                                                        </div>
+                                                    }.into_view();
+                                                }
                                                 let profiles = list.clone();
                                                 list.into_iter().filter(ModelProfile::is_chat_model).map(|m| {
                                                     let pick_id = m.id.clone();
@@ -17210,7 +17288,8 @@ fn App() -> impl IntoView {
                                     </div>
                                 })
                             }}
-                            {move || fast_profile.get().map(|_| {
+                            // A Magpie turn sends no service tier, so Fast would do nothing.
+                            {move || fast_profile.get().filter(|_| magpie_model.with(Option::is_none)).map(|_| {
                                 let enabled = fast_enabled.get();
                                 let session_override = fast_is_session_override.get();
                                 let saving = service_tier_busy.get();
@@ -18676,14 +18755,18 @@ fn App() -> impl IntoView {
                                             }
                                         ></textarea>
                                         <div class="sidechat-actions">
-                                            {move || (!models.get().is_empty() || !acp_agents.get().is_empty()).then(|| view! {
+                                            {move || (!models.get().is_empty() || !acp_agents.get().is_empty()
+                                                || magpie_model.with(Option::is_some)).then(|| view! {
                                                 <div class="sidechat-model">
                                                     <button type="button" class="sidechat-model-btn"
                                                         class:active=move || side_chat_model_menu_open.get()
+                                                        data-testid="sidechat-model-trigger"
                                                         on:click=move |_| side_chat_model_menu_open.update(|o| *o = !*o)>
                                                         <span class="model-picker-label">{move || {
                                                             if let Some(id) = side_chat_acp_agent.get() {
                                                                 acp_agents.get().into_iter().find(|agent| agent.id == id).map(|agent| agent.label).unwrap_or_else(|| "ACP Agent".into())
+                                                            } else if let Some(magpie) = magpie_model.get() {
+                                                                magpie.label()
                                                             } else {
                                                                 let l = models.get();
                                                                 l.iter()
@@ -18698,7 +18781,24 @@ fn App() -> impl IntoView {
                                                     {move || side_chat_model_menu_open.get().then(|| view! {
                                                         <div class="sidechat-model-backdrop" on:click=move |_| side_chat_model_menu_open.set(false)></div>
                                                         <div class="sidechat-model-menu">
-                                                            {move || models.get().into_iter().filter(ModelProfile::is_chat_model).map(|m| {
+                                                            // Magpie overrides every personal profile here too.
+                                                            {move || magpie_model.get().map(|magpie| {
+                                                                let is_active = side_chat_acp_agent.get().is_none();
+                                                                view! {
+                                                                    <button type="button" class="sidechat-model-row" class:active=is_active
+                                                                        data-testid="sidechat-model-magpie"
+                                                                        title=move || t(locale.get(), "composer.magpie_managed")
+                                                                        on:click=move |_| {
+                                                                            side_chat_model_menu_open.set(false);
+                                                                            side_chat_acp_agent.set(None);
+                                                                        }>
+                                                                        <span>{magpie.label()}</span>
+                                                                        {is_active.then(|| compose_icon("check"))}
+                                                                    </button>
+                                                                }
+                                                            })}
+                                                            {move || models.get().into_iter()
+                                                                .filter(|m| magpie_model.with(Option::is_none) && m.is_chat_model()).map(|m| {
                                                                 let pick_id = m.id.clone();
                                                                 let is_active = m.active && side_chat_acp_agent.get().is_none();
                                                                 view! {
@@ -19402,6 +19502,7 @@ fn App() -> impl IntoView {
                 conn_form, memory_selected, specialist_form, specialist_transfer, settings, bootstrap, settings_message,
                 settings_busy, model_form_open, model_form_key, models, model_form_msg, show_acp_agents,
                 acp_agents, active_acp_agent_id, acp_form, acp_form_msg, acp_infos, specialists, subagent_model,
+                magpie_model,
                 quick_actions, workflow_templates, workflow_studio: workflow_studio_state,
                 selected_workflow_template,
                 specialist_form_open, memory_view, memory_editor, memory_msg, skills_list,
