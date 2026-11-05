@@ -7935,6 +7935,7 @@ pub fn run() {
             mcp_app_child_commands::mcp_app_child_action_reply,
             mcp_app_child_commands::close_mcp_app_child,
             clipboard_files::read_clipboard_file_paths,
+            clipboard_files::read_drag_file_paths,
             agent_turn::send_message,
             update_mcp_app_context,
             call_mcp_app_tool,

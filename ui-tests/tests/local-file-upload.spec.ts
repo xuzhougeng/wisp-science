@@ -149,3 +149,54 @@ test.describe("scaled desktop native drops", () => {
     await expect.poll(() => page.evaluate(() => (window as any).__localUploads)).toEqual([{ destinationDir: ".", sourcePaths: ["/external/local.csv"] }]);
   });
 });
+
+// The main window keeps Tauri's native drag handler off, so a Finder drop
+// reaches Files as DOM drag events with path-less `File`s (#1674).
+async function domFileDrag(page: Page, kind: string, names: string[], selector = ".rp-files") {
+  return page.locator(selector).evaluate((element, { kind, names }) => {
+    const rect = element.getBoundingClientRect();
+    const data = new DataTransfer();
+    for (const name of names) data.items.add(new File(["x"], name, { type: "text/csv" }));
+    const leaving = kind === "dragleave";
+    return element.dispatchEvent(new DragEvent(kind, {
+      bubbles: true, cancelable: true, dataTransfer: data,
+      clientX: leaving ? 0 : rect.left + rect.width / 2,
+      clientY: leaving ? 0 : rect.top + rect.height / 2,
+    }));
+  }, { kind, names });
+}
+
+test("Finder DOM drop on Files copies the drag pasteboard paths into the folder", async ({ page }) => {
+  await openFiles(page);
+  // Finder paths are NFD; WebKit's File.name may be NFC.
+  const paths = ["/Users/alice/研究 数据/café.csv", "/Users/alice/b.csv"];
+  await page.evaluate(paths => { (window as any).__dragFilePaths = paths; }, paths);
+  expect(await domFileDrag(page, "dragover", ["café.csv", "b.csv"])).toBe(false);
+  await expect(page.locator(".rp-files")).toHaveClass(/drop-target/);
+  expect(await domFileDrag(page, "drop", ["café.csv", "b.csv"])).toBe(false);
+  await expect.poll(() => page.evaluate(() => (window as any).__localUploads)).toEqual([{ destinationDir: ".", sourcePaths: paths }]);
+  await expect(page.locator(".rp-files")).not.toHaveClass(/drop-target/);
+  await expect(page.locator(".composer-attachment-row")).toHaveCount(0);
+  await expect(page.locator('.fb-row[data-workspace-path="uploaded.csv"]')).toBeVisible();
+});
+
+test("Finder DOM drop with a stale or empty drag pasteboard points to Upload instead of copying", async ({ page }) => {
+  await openFiles(page);
+  await page.evaluate(() => { (window as any).__dragFilePaths = ["/Users/alice/earlier-drag.csv"]; });
+  await domFileDrag(page, "dragover", ["new.csv"]);
+  await domFileDrag(page, "drop", ["new.csv"]);
+  await expect(page.locator("#copy-toast")).toContainText("Use Upload");
+  await page.evaluate(() => { (window as any).__dragFilePaths = []; });
+  await domFileDrag(page, "drop", ["new.csv"]);
+  await expect(page.locator("#copy-toast")).toContainText("Use Upload");
+  expect(await page.evaluate(() => (window as any).__localUploads)).toEqual([]);
+});
+
+test("Finder DOM drag leaving Files clears the highlight without importing", async ({ page }) => {
+  await openFiles(page);
+  await domFileDrag(page, "dragover", ["a.csv"]);
+  await expect(page.locator(".rp-files")).toHaveClass(/drop-target/);
+  await domFileDrag(page, "dragleave", ["a.csv"]);
+  await expect(page.locator(".rp-files")).not.toHaveClass(/drop-target/);
+  expect(await page.evaluate(() => (window as any).__localUploads)).toEqual([]);
+});

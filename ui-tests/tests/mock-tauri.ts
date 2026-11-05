@@ -3559,6 +3559,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             return { ...mockNetworkSettings };
           }
           case "read_clipboard_file_paths": return (window as any).__clipboardFilePaths ?? [];
+          case "read_drag_file_paths": return (window as any).__dragFilePaths ?? [];
           case "get_settings":
             return {
               provider: "",

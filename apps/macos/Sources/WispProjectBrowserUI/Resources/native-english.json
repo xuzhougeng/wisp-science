@@ -2220,6 +2220,7 @@
   "无法读取全局对话设置，请重试。": "Could not read global conversation settings. Try again.",
   "无法读取备忘录。": "Could not load memos.",
   "无法读取对话选项，请重试。": "Conversation options could not be loaded. Try again.",
+  "无法读取拖入文件的位置，请改用“上传”按钮选择文件。": "Couldn't read the dropped files' locations. Use Upload to choose them instead.",
   "无法读取搜索结果的引用，请重试。": "Could not read the reference for this search result. Please try again.",
   "无法读取撤销预览，请重新检查。": "Could not read the undo preview. Check again.",
   "无法读取来源会话列表。": "Could not read the source conversation list.",

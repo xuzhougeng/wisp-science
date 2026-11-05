@@ -5,6 +5,32 @@ pub(crate) fn read_clipboard_file_paths() -> Result<Vec<String>, String> {
     read_paths()
 }
 
+/// File paths of the drag that just ended over the webview. The main window
+/// keeps Tauri's native drag handler off so in-page HTML5 drags (tab and
+/// sidebar reordering) still work, which leaves the DOM `drop` with `File`
+/// objects that carry no path. On macOS the drag pasteboard still holds the
+/// Finder file URLs at drop time, so the Files panel can copy by path instead
+/// of streaming file bytes over IPC.
+#[tauri::command]
+pub(crate) fn read_drag_file_paths() -> Result<Vec<String>, String> {
+    read_drag_paths()
+}
+
+#[cfg(target_os = "macos")]
+fn read_drag_paths() -> Result<Vec<String>, String> {
+    use objc2_app_kit::{NSPasteboard, NSPasteboardNameDrag};
+    Ok(file_url_paths(&NSPasteboard::pasteboardWithName(unsafe {
+        NSPasteboardNameDrag
+    })))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn read_drag_paths() -> Result<Vec<String>, String> {
+    // Windows/Linux expose no drag pasteboard to read after the DOM drop; the
+    // UI falls back to pointing at the Upload button.
+    Ok(vec![])
+}
+
 #[cfg(windows)]
 fn read_paths() -> Result<Vec<String>, String> {
     use windows::Win32::{
@@ -52,12 +78,17 @@ unsafe fn read_drop_paths(drop: windows::Win32::UI::Shell::HDROP) -> Result<Vec<
 
 #[cfg(target_os = "macos")]
 fn read_paths() -> Result<Vec<String>, String> {
-    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeFileURL};
+    use objc2_app_kit::NSPasteboard;
+    Ok(file_url_paths(&NSPasteboard::generalPasteboard()))
+}
+
+#[cfg(target_os = "macos")]
+fn file_url_paths(pasteboard: &objc2_app_kit::NSPasteboard) -> Vec<String> {
+    use objc2_app_kit::NSPasteboardTypeFileURL;
     use objc2_foundation::NSURL;
 
-    let clipboard = NSPasteboard::generalPasteboard();
-    let Some(items) = clipboard.pasteboardItems() else {
-        return Ok(vec![]);
+    let Some(items) = pasteboard.pasteboardItems() else {
+        return vec![];
     };
     let mut paths = Vec::new();
     for index in 0..items.count() {
@@ -75,7 +106,7 @@ fn read_paths() -> Result<Vec<String>, String> {
             }
         }
     }
-    Ok(paths)
+    paths
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
