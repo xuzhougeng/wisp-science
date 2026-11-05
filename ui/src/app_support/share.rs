@@ -35,6 +35,14 @@ pub(crate) enum ShareExportFormat {
     Social,
 }
 
+/// How a PNG export is cut: one tall image, or 3:4 pages that break only
+/// between lines of text (for carousel posts).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ShareImageLayout {
+    Single,
+    Pages,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ShareRole {
     User,
@@ -469,6 +477,22 @@ pub(crate) fn share_png_width(raw: &str) -> u32 {
         .parse::<u32>()
         .unwrap_or(SHARE_PNG_DEFAULT_WIDTH)
         .clamp(SHARE_PNG_MIN_WIDTH, SHARE_PNG_MAX_WIDTH)
+}
+
+/// Folder of a saved page, for the "saved N images to …" toast. Accepts both
+/// `/` and `\` so Windows paths read the same; a bare name is returned as is.
+pub(crate) fn share_saved_folder(path: &str) -> &str {
+    match path.rfind(['/', '\\']) {
+        Some(0) => &path[..1],
+        Some(index) => &path[..index],
+        None => path,
+    }
+}
+
+/// Default file name for a PNG export; multi-image pages are numbered from
+/// this name by the save command.
+pub(crate) fn share_png_file_name(stamp: &str) -> String {
+    format!("wisp-share-{stamp}.png")
 }
 
 /// JSON payload consumed by the JS canvas renderer for the long PNG.
@@ -1014,6 +1038,28 @@ mod share_tests {
         assert_eq!(share_png_width(" 640 "), 640);
         assert_eq!(share_png_width("10"), SHARE_PNG_MIN_WIDTH);
         assert_eq!(share_png_width("99999"), SHARE_PNG_MAX_WIDTH);
+    }
+
+    #[test]
+    fn saved_folder_handles_unix_windows_and_bare_paths() {
+        assert_eq!(
+            share_saved_folder("/Users/me/Desktop/wisp-share-1.png"),
+            "/Users/me/Desktop"
+        );
+        assert_eq!(
+            share_saved_folder(r"C:\Users\me\Pictures\wisp-share-01.png"),
+            r"C:\Users\me\Pictures"
+        );
+        assert_eq!(share_saved_folder("/wisp-share-1.png"), "/");
+        assert_eq!(share_saved_folder("wisp-share-1.png"), "wisp-share-1.png");
+    }
+
+    #[test]
+    fn png_file_name_uses_the_date_stamp() {
+        assert_eq!(
+            share_png_file_name("2026-11-04"),
+            "wisp-share-2026-11-04.png"
+        );
     }
 
     #[test]

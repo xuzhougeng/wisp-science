@@ -406,6 +406,114 @@ pub(super) async fn save_share_image(
     Ok(Some(dest_path.to_string_lossy().into_owned()))
 }
 
+// Multi-image `/share` export: a carousel rarely needs more than a few dozen
+// pages; the total keeps one IPC payload bounded.
+const MAX_SHARE_PAGES: usize = 200;
+const MAX_SHARE_PAGES_BASE64_BYTES: usize = 256 * 1024 * 1024;
+
+/// Numbered page paths next to the name the user picked: `name.png` becomes
+/// `name-1.png` … `name-N.png` (zero-padded so they sort). The dialog only
+/// confirms overwriting the picked name, so when any page name is taken the
+/// set moves to `name (2)-1.png` … instead of replacing files.
+fn share_page_paths(
+    picked: &std::path::Path,
+    count: usize,
+    exists: impl Fn(&std::path::Path) -> bool,
+) -> Vec<std::path::PathBuf> {
+    let dir = picked
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_default();
+    // Drop only a `.png` suffix: "report.v2" keeps its dot.
+    let png = picked
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("png"));
+    let stem = if png {
+        picked.file_stem()
+    } else {
+        picked.file_name()
+    }
+    .map(|stem| stem.to_string_lossy().into_owned())
+    .filter(|stem| !stem.is_empty())
+    .unwrap_or_else(|| "wisp-share".to_string());
+    let digits = count.max(1).to_string().len();
+    let pages_for = |base: &str| -> Vec<std::path::PathBuf> {
+        (1..=count)
+            .map(|page| dir.join(format!("{base}-{page:0digits$}.png")))
+            .collect()
+    };
+    let mut paths = pages_for(&stem);
+    let mut copy = 2;
+    while paths.iter().any(|path| exists(path)) && copy < 1000 {
+        paths = pages_for(&format!("{stem} ({copy})"));
+        copy += 1;
+    }
+    paths
+}
+
+/// Save frontend-rendered `/share` pages through one native save dialog.
+/// Returns the saved paths in page order, or `None` when the user cancels.
+#[tauri::command]
+pub(super) async fn save_share_images(
+    app: AppHandle,
+    pngs_base64: Vec<String>,
+    default_name: String,
+) -> Result<Option<Vec<String>>, String> {
+    use base64::Engine;
+    use tauri_plugin_dialog::DialogExt;
+    if pngs_base64.is_empty() {
+        return Err("share image is empty".into());
+    }
+    if pngs_base64.len() > MAX_SHARE_PAGES {
+        return Err(format!(
+            "share export has more than {MAX_SHARE_PAGES} pages"
+        ));
+    }
+    let total: usize = pngs_base64.iter().map(String::len).sum();
+    if total > MAX_SHARE_PAGES_BASE64_BYTES
+        || pngs_base64
+            .iter()
+            .any(|png| png.len() > MAX_SHARE_PNG_BASE64_BYTES)
+    {
+        return Err("share image exceeds the size limit".into());
+    }
+    let mut pages = Vec::with_capacity(pngs_base64.len());
+    for png in &pngs_base64 {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(png.trim())
+            .map_err(|e| format!("invalid base64: {e}"))?;
+        if bytes.is_empty() {
+            return Err("share image is empty".into());
+        }
+        pages.push(bytes);
+    }
+    drop(pngs_base64);
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .add_filter("PNG", &["png"])
+        .set_file_name(&share_image_file_name(&default_name))
+        .save_file(move |p| {
+            let _ = tx.send(p);
+        });
+    let Some(dest) = rx.await.map_err(|e| format!("{e}"))? else {
+        return Ok(None); // user cancelled
+    };
+    let picked = std::path::PathBuf::from(dest.to_string());
+    let paths = share_page_paths(&picked, pages.len(), std::path::Path::exists);
+    for (path, bytes) in paths.iter().zip(pages) {
+        tokio::fs::write(path, bytes)
+            .await
+            .map_err(|e| format!("write failed: {e}"))?;
+    }
+    Ok(Some(
+        paths
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect(),
+    ))
+}
+
 // Generous ceiling for one self-contained share HTML document.
 const MAX_SHARE_HTML_BYTES: usize = 16 * 1024 * 1024;
 
@@ -802,7 +910,54 @@ pub(super) async fn dismiss_onboarding(state: State<'_, AppState>) -> Result<(),
 
 #[cfg(test)]
 mod share_image_tests {
-    use super::{share_html_destination, share_image_file_name};
+    use super::{share_html_destination, share_image_file_name, share_page_paths};
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn page_paths_number_pages_next_to_the_picked_name() {
+        let picked = Path::new("/out/wisp-share-2026-11-04.png");
+        assert_eq!(
+            share_page_paths(picked, 3, |_| false),
+            vec![
+                PathBuf::from("/out/wisp-share-2026-11-04-1.png"),
+                PathBuf::from("/out/wisp-share-2026-11-04-2.png"),
+                PathBuf::from("/out/wisp-share-2026-11-04-3.png"),
+            ]
+        );
+        // Ten or more pages are zero-padded so a file browser sorts them.
+        let many = share_page_paths(picked, 12, |_| false);
+        assert_eq!(many[0], PathBuf::from("/out/wisp-share-2026-11-04-01.png"));
+        assert_eq!(many[11], PathBuf::from("/out/wisp-share-2026-11-04-12.png"));
+        // A name typed without the extension still yields PNG pages.
+        assert_eq!(
+            share_page_paths(Path::new("/out/分析 结果"), 1, |_| false),
+            vec![PathBuf::from("/out/分析 结果-1.png")]
+        );
+        assert_eq!(
+            share_page_paths(Path::new("/out/report.v2"), 1, |_| false),
+            vec![PathBuf::from("/out/report.v2-1.png")]
+        );
+        assert_eq!(
+            share_page_paths(Path::new("/out/Share.PNG"), 1, |_| false),
+            vec![PathBuf::from("/out/Share-1.png")]
+        );
+    }
+
+    #[test]
+    fn page_paths_never_replace_existing_pages() {
+        let picked = Path::new("/out/share.png");
+        let taken = [
+            PathBuf::from("/out/share-2.png"),
+            PathBuf::from("/out/share (2)-1.png"),
+        ];
+        assert_eq!(
+            share_page_paths(picked, 2, |path| taken.iter().any(|t| t == path)),
+            vec![
+                PathBuf::from("/out/share (3)-1.png"),
+                PathBuf::from("/out/share (3)-2.png"),
+            ]
+        );
+    }
 
     #[test]
     fn keeps_only_a_safe_file_name_component() {

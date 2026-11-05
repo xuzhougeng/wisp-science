@@ -1591,6 +1591,9 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse var(--a
 /* Share PNG snapshots the live .md DOM; keep tables fully painted, not scroll-clipped. */
 .share-raster.md table { display: table; overflow: visible; width: 100%; }
 .share-raster.md .math-display { overflow: visible; }
+/* An image cannot scroll: wrap long code lines inside the block instead. */
+.share-raster.md pre { overflow: visible; }
+.share-raster.md pre code, .share-raster.md pre.md-code code { white-space: pre-wrap; overflow-wrap: anywhere; overflow: visible; }
 .md .md-table-card { margin: 0 0 10px; }
 .md .md-table-card table { width: 100%; margin: 0; display: table; overflow: visible; }
 .md .md-table-card .tbl-wrap { margin: 0; }
