@@ -8935,6 +8935,15 @@ fn App() -> impl IntoView {
     let open_capabilities = move |_| {
         show_capabilities.set(true);
         refresh_capabilities(caps);
+        // Project activation updates the host snapshot. Do not keep displaying
+        // the workspace captured once at application startup.
+        bootstrap.set(None);
+        spawn_local(async move {
+            let value = invoke("get_bootstrap_status", JsValue::UNDEFINED).await;
+            if let Ok(status) = serde_wasm_bindgen::from_value::<BootstrapStatus>(value) {
+                bootstrap.set(Some(status));
+            }
+        });
     };
 
     let start_specialist_chat = Callback::new(move |ev: web_sys::MouseEvent| {
@@ -14779,7 +14788,7 @@ fn App() -> impl IntoView {
                                         Vec::new()
                                     };
                                     let can_undo = Signal::derive(move || {
-                                        !model_view_active()
+                                        !demo_mode.get() && !model_view_active()
                                             && !compact_assistant
                                             && !matches!(active_branch_state.get().as_deref(), Some("merged" | "orphaned"))
                                             && undo_assistant_index.get() == Some(i)
@@ -14791,7 +14800,7 @@ fn App() -> impl IntoView {
                                             && (!busy.get() || latest_user_item.get().is_some_and(|latest| i < latest))
                                     });
                                     let can_branch = Signal::derive(move || {
-                                        show_actions.get()
+                                        !demo_mode.get() && show_actions.get()
                                             && active_branch_state.get().is_none()
                                             && active_acp_agent_id.get().is_none()
                                             && !active_is_exploration.get()
@@ -14799,7 +14808,7 @@ fn App() -> impl IntoView {
                                     // Quoting only reads the transcript, so branches and
                                     // explorations qualify; ACP transcripts have no rows to read.
                                     let can_excerpt = Signal::derive(move || {
-                                        show_actions.get() && active_acp_agent_id.get().is_none() && !excerpt_loading.get()
+                                        !demo_mode.get() && show_actions.get() && active_acp_agent_id.get().is_none() && !excerpt_loading.get()
                                     });
                                     let excerpt_start = Signal::derive(move || {
                                         excerpt_selection
@@ -14811,7 +14820,7 @@ fn App() -> impl IntoView {
                                             .map(|selection| selection.ui_index)
                                     });
                                     let show_explore = Signal::derive(move || {
-                                        if model_view_active() {
+                                        if demo_mode.get() || model_view_active() {
                                             return false;
                                         }
                                         if compact_assistant
@@ -14885,10 +14894,10 @@ fn App() -> impl IntoView {
                                                 render_item(
                                                     i, &item, timestamp, artifacts, on_artifact_select, on_file_link,
                                                     run_records, run_clock.read_only(), busy.read_only(), compact_assistant,
-                                                    !model_view_active_untracked()
+                                                    !demo_mode.get_untracked() && !model_view_active_untracked()
                                                         && active_acp_agent_id.get().is_none()
                                                         && !matches!(active_branch_state.get_untracked().as_deref(), Some("merged" | "orphaned")),
-                                                    can_branch, can_excerpt, excerpt_start, show_actions, can_undo, show_explore, can_explore, edit_message, branch_message, excerpt_message, undo_message, explore_turn_index.unwrap_or_default(), start_exploration_from_turn, session_id,
+                                                    can_branch, can_excerpt, excerpt_start, show_actions, Signal::derive(move || demo_mode.get()), can_undo, show_explore, can_explore, edit_message, branch_message, excerpt_message, undo_message, explore_turn_index.unwrap_or_default(), start_exploration_from_turn, session_id,
                                                     request_turn_memory, request_session_review, respond_confirm, on_resume,
                                                     step_disclosure_state,
                                                     plan_mode_active, plan_compat, on_plan_decision,

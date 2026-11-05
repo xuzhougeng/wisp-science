@@ -60,6 +60,25 @@ public sealed partial class NativeSettingsEditorModel(INativeSettingsClient clie
         () => client.InvokeAsync("native_settings_capabilities", new(), projectId),
         value => Values["native_settings_capabilities"] = value?.DeepClone(), ReadFailure);
 
+    public Task<bool> SetSubagentModelAsync(string id)
+    {
+        if (Busy || Closed || Draft != null || Values["get_subagent_model"] is not JsonValue value
+            || !value.TryGetValue<string>(out var current)) return Task.FromResult(false);
+        if (id == current) return Task.FromResult(true);
+        if (!NativeSpecialists.SubagentOptions(current, (Values["list_models"] as JsonArray)?.OfType<JsonObject>() ?? [], Localization)
+            .Any(option => option.Id == id && option.Available)) return Task.FromResult(false);
+        return RunAsync(async () =>
+        {
+            var reply = await client.InvokeAsync("set_subagent_model", new() { ["id"] = id }, projectId);
+            if (reply is not JsonValue acknowledged || !acknowledged.TryGetValue<string>(out var saved) || saved != id)
+                throw new InvalidDataException(Localization?.Choose("未能确认子智能体模型设置。", "Could not confirm the subagent model setting.")
+                    ?? "Could not confirm the subagent model setting.");
+            return saved;
+        }, saved => Values["get_subagent_model"] = saved,
+            ex => (Localization?.Choose("未能保存子智能体模型设置。", "Could not save the subagent model setting.")
+                ?? "Could not save the subagent model setting.") + "\n" + ex.Message);
+    }
+
     public Task<bool> SetUpdateCheckEnabledAsync(bool enabled)
     {
         if (Busy || Closed || Values["get_update_check_enabled"] is not JsonValue value

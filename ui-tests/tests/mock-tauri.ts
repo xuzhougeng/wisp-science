@@ -3517,7 +3517,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               os: "windows",
               arch: "x86_64",
               startup: "total=120ms store=90ms window_ready=600000ms",
-              workspace: project.root,
+              workspace: (window as any).__mockBootstrapWorkspace ?? project.root,
               errors: (window as any).__mockBootstrapErrors ?? [],
             };
           case "get_appearance_prefs":

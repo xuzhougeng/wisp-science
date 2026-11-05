@@ -31,6 +31,10 @@ internal static class AppearanceSettingsTests
             "copied Markdown code uses HTML line endings and syntax runs cannot split a CRLF into two visual line breaks");
         Check(NativeResponseMarkdown.MinimumWidthWords("alpha 中文 beta_identifier").SequenceEqual(new[] { "alpha", "中", "文", "beta_identifier" }),
             "table minimum widths preserve Latin words while allowing normal CJK glyph wrapping");
+        var links = Markdig.Markdown.Parse("[results/a.tsv](results/a.tsv) [**report**](file:///C:/work/report.md) [web](https://example.test) [mail](mailto:a@example.test) [anchor](#section) ![image](results/plot.png)")
+            .OfType<Markdig.Syntax.ParagraphBlock>().Single().Inline!.OfType<Markdig.Syntax.Inlines.LinkInline>().ToArray();
+        Check(links.Select(NativeResponseMarkdown.LocalLinkCode).SequenceEqual(new string?[] { "results/a.tsv", "report", null, null, null, null }),
+            "unverified local links become inert code while external links, anchors and images retain their rendering");
         Check(new NativeTypography().FontSource().StartsWith("ms-appx:///Assets/Fonts/inter-latin.ttf#Inter, Microsoft YaHei UI"),
             "default UI uses the bundled WebView font and an explicit Chinese sans-serif fallback");
         Check(new NativeTypography().FontSource(true).StartsWith("ms-appx:///Assets/Fonts/jetbrains-mono-400.ttf#JetBrains Mono, Cascadia Mono"),

@@ -126,10 +126,12 @@ internal static partial class TranscriptView
     private static XamlInline SkillInline(Markdig.Syntax.Inlines.Inline inline, WispDesign design, FrameworkElement owner, bool response = false, double? proseSize = null)
     {
         if (response && inline is LinkInline { IsImage: true }) return RenderInline(inline, design, true);
-        if (inline is CodeInline code)
+        var codeText = inline is CodeInline code ? code.Content
+            : response && inline is LinkInline localLink ? NativeResponseMarkdown.LocalLinkCode(localLink) : null;
+        if (codeText != null)
         {
             var size = (proseSize ?? design.Typography.MarkdownSize) * .86;
-            var text = new TextBlock { Text = code.Content, FontFamily = design.Font(true), FontSize = size,
+            var text = new TextBlock { Text = codeText, FontFamily = design.Font(true), FontSize = size,
                 Foreground = design.Brush("text"), TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
             var chip = new Border { Child = text, Padding = new Thickness(size * .35, size * .1, size * .35, size * .1),
                 Background = design.Brush("bg-sunken"), BorderBrush = design.Brush("border"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(5) };

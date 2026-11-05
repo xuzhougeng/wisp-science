@@ -199,7 +199,8 @@ public sealed partial class WorkspacePanelModel
 
     public async Task RefreshAsync(string tab, string? directory = null, CancellationToken cancellationToken = default)
     {
-        if (closed || sessionId == null && tab is not ("files" or "memos" or "runs") && !(tab == "hosts" && Tabs.Available.Contains("hosts"))) return;
+        if (closed || tab != NativePanelTabs.Home && !Tabs.Available.Contains(tab)
+            || sessionId == null && tab is not (NativePanelTabs.Home or "files" or "memos" or "runs") && !(tab == "hosts" && Tabs.Available.Contains("hosts"))) return;
         if (tab != "runs") { runRequest++; RunLoading = false; }
         var contextReadRevision = contextRevision;
         var activityReadRevision = activityRevision;
@@ -216,7 +217,7 @@ public sealed partial class WorkspacePanelModel
         var requested = directory ?? Path;
         try
         {
-            if (tab is "provenance" or "sidechat" or "memos") return;
+            if (tab is NativePanelTabs.Home or "provenance" or "sidechat" or "memos") return;
             if (tab == "runs" && sessionId == null) return;
             if (tab == "artifacts")
             {

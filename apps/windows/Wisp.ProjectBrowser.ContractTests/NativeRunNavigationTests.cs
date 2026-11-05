@@ -120,6 +120,12 @@ internal static class NativeRunNavigationTests
 
     private static async Task CheckPollingAsync()
     {
+        var homeHost = new Fake();
+        var home = new WorkspacePanelModel(new NativePanelClient(homeHost), "project-a", "session-a",
+            new NativePanelTabs(available: NativePanelTabs.All), activity: new NativeContextActivityClient(homeHost));
+        Check(await home.PollRunsAsync() && home.Tabs.Selected == NativePanelTabs.Home && home.Tabs.Open.Count == 0,
+            "background polling updates Start without opening a tool tab");
+        home.Close();
         var host = new Fake(); var panel = Create(host);
         Check(await panel.PollRunsAsync() && panel.Tabs.Selected == "files", "background read updates badge without navigating");
         var reply = (JsonObject)host.Default("native_conversation_panel_activity", new())!;
@@ -234,7 +240,7 @@ internal static class NativeRunNavigationTests
     }
 
     private static WorkspacePanelModel Create(Fake transport) => new(new NativePanelClient(transport), "project-a", "session-a",
-        new NativePanelTabs(selected: "files", available: NativePanelTabs.All), activity: new NativeContextActivityClient(transport));
+        new NativePanelTabs("[\"files\"]", "files", NativePanelTabs.All), activity: new NativeContextActivityClient(transport));
     private static JsonObject Run(string id) => new()
     {
         ["id"] = id, ["frame_id"] = "session-a", ["context_id"] = "local", ["title"] = id,

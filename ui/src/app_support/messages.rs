@@ -1143,6 +1143,7 @@ pub(crate) fn AssistantMessage(
     on_branch: Callback<usize>,
     can_branch: Signal<bool>,
     show_actions: Signal<bool>,
+    read_only: Signal<bool>,
     can_undo: Signal<bool>,
     on_undo: Callback<usize>,
     show_explore: Signal<bool>,
@@ -1319,6 +1320,7 @@ pub(crate) fn AssistantMessage(
                 let text_for_disabled = text_for_disabled.clone();
                 let text_for_click_copy = text_for_click_copy.clone();
                 show_actions.get().then(move || view! { <div class="msg-actions">
+                {move || (!read_only.get()).then(|| view! {
                 <button
                     type="button"
                     class="msg-icon-btn msg-memory-btn"
@@ -1339,6 +1341,7 @@ pub(crate) fn AssistantMessage(
                 >
                     {compose_icon("review")}
                 </button>
+                })}
                 {move || show_explore.get().then(|| view! { <button
                     type="button"
                     class="msg-icon-btn msg-explore-btn"

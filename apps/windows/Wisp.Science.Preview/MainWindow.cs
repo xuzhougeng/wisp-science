@@ -1234,10 +1234,13 @@ internal sealed partial class MainWindow : Window
         var project = model.ActiveProjectId;
         var session = model.ActiveSessionId;
         var paletteDesign = settingsPage?.OverlayDesign ?? design;
-        var search = new WorkspaceSearchModel(async () =>
+        WorkspaceSearchModel search = null!;
+        search = new WorkspaceSearchModel(async () =>
         {
             var host = await ConnectHostAsync();
-            return host == null || windowClosed || database != model.DatabasePath ? null : new NativeSearchClient(host);
+            if (host == null || windowClosed || database != model.DatabasePath) return null;
+            if (!commandsOnly) await search.LoadCommandProjectAsync(host, model.Projects.Select(p => (p.Id, p.WorkspaceDirectory)).ToArray());
+            return windowClosed || database != model.DatabasePath ? null : new NativeSearchClient(host);
         }, project, paletteDesign.Localization);
         searchOverlay = new ProjectSearchOverlay(search, paletteDesign, CloseSearch,
             (result, attach, newWindow) => { if (!newWindow) LeaveUnderlyingChatHistory(); _ = OpenSearchResultAsync(result, attach, newWindow, database, project, session); },
@@ -1255,6 +1258,10 @@ internal sealed partial class MainWindow : Window
                     return;
                 }
                 LeaveUnderlyingChatHistory();
+                if (action is "project-settings" or "skills" && search.CommandProjectId is { } commandProject)
+                {
+                    OpenSettingsSection(action == "project-settings" ? "project" : "skills", commandProject); return;
+                }
                 RunWindowCommand(action);
             }, project != null, session != null, commandsOnly, hostVersion,
             id => model.Projects.FirstOrDefault(p => p.Id == id)?.Description);
@@ -1551,7 +1558,7 @@ internal sealed partial class MainWindow : Window
         {
             var tabs = session == null ? new NativePanelTabs(settings.PanelTabs, settings.PanelTab, ["files", "memos", "runs", "hosts"])
                 : new NativePanelTabs(settings.PanelTabs, settings.PanelTab, NativePanelTabs.All);
-            if (session == null) tabs.Show(settings.PanelTab is "memos" or "runs" or "hosts" ? settings.PanelTab : "files");
+            if (session == null) tabs.Show(settings.PanelTab is NativePanelTabs.Home or "memos" or "runs" or "hosts" ? settings.PanelTab : "files");
             projectMemos ??= new WorkspaceMemosModel(new NativeMemosClient(host), project);
             if (session != null) sideChat ??= new WorkspaceSideChatModel(new NativeSideChatClient(host), project, session);
             panelPage = new NativeWorkspacePanel(new WorkspacePanelModel(panelClient, project, session, tabs,
@@ -1589,7 +1596,7 @@ internal sealed partial class MainWindow : Window
                 run => {
                     if (windowClosed || model.ActiveProjectId != project || model.ActiveSessionId != session || workspaceHost != host) return;
                     ShowPublication(host, project, new(project, run.Id, string.IsNullOrWhiteSpace(run.Title) ? run.Id : run.Title));
-                });
+                }, () => OpenSettingsSection("workflows"));
         }
         if (session != null && terminalVisible && terminalPage == null)
         {

@@ -328,6 +328,13 @@ test("Example project shows bundled demos as read-only transcripts", async ({ pa
   // Full transcript includes SSH/run operation cards, not just the summary.
   await expect(page.getByText("Re-run pipeline with fixed STAR index")).toBeVisible();
   await expect(page.getByTestId("run-monitor-card")).toBeVisible();
+  const actions = page.locator(".msg-actions");
+  await expect(actions.getByRole("button", { name: "Copy message", exact: true }).first()).toBeVisible();
+  await expect(page.getByTestId("remember-turn")).toHaveCount(0);
+  await expect(page.locator(".msg-review-btn, .msg-branch-btn, .msg-excerpt")).toHaveCount(0);
+  await expect(page.getByTestId("start-exploration")).toHaveCount(0);
+  await expect(actions.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
+  await expect(actions.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
   expect((await invokeArgsList(page, "new_session")).length).toBe(sessionsBefore);
   expect((await invokeArgsList(page, "send_message")).length).toBe(sendsBefore);
 });
@@ -11689,6 +11696,17 @@ test("capability counts open skills, connections, and editable project memory", 
     name: "2026-07-04.md",
     content: "Prefer editable, reproducible local workflows.",
   });
+});
+
+test("capabilities refreshes the workspace snapshot when reopened", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Capabilities", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Capabilities" });
+  await expect(dialog.locator(".cap-section").first()).toContainText("Workspace:");
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => { (window as any).__mockBootstrapWorkspace = "/mock/changed-workspace"; });
+  await page.getByRole("button", { name: "Capabilities", exact: true }).click();
+  await expect(dialog.locator(".cap-section").first()).toContainText("Workspace: /mock/changed-workspace");
 });
 
 test("capabilities lists each startup problem and scrolls to its lower rows", async ({ page }) => {

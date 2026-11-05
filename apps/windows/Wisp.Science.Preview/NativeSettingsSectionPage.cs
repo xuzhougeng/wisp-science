@@ -154,7 +154,7 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
         "environments" => ["list_execution_contexts", "list_ssh_hosts", "get_default_execution_context", "list_ssh_trust_edges"],
         "usage" => ["get_token_usage"],
         "quick-actions" => ["list_quick_actions", "list_workflow_templates"],
-        "specialists" => ["list_specialists", "list_models", "list_acp_agents", "list_skills"],
+        "specialists" => ["list_specialists", "list_models", "list_acp_agents", "list_skills", "get_subagent_model"],
         "workflows" or "workflow-conversion" => ["list_workflow_templates", "list_models", "list_skills"],
         "models" => ["list_models", "list_acp_agents"],
         "channels" => ["channels_status", "get_settings"],
