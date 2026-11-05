@@ -1796,7 +1796,11 @@ fn App() -> impl IntoView {
             .filter_map(|item| item.as_str().map(str::to_string))
             .collect::<Vec<_>>();
         if let Some((context_id, destination_dir)) = files_target {
-            if !paths.is_empty() {
+            if paths.is_empty() {
+                // A DOM drop whose paths could not be read (Windows/Linux, or a
+                // drag pasteboard that did not match the dropped files).
+                show_toast(&t(locale.get_untracked(), "files.drop_paths_unavailable"));
+            } else {
                 if context_id == "local" {
                     upload_to_local_directory(
                         destination_dir,

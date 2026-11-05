@@ -1451,10 +1451,100 @@ function normalizeNativeDropPayload(event) {
   };
 }
 
+const pathBaseName = (path) => String(path).split(/[\\/]/).filter(Boolean).pop() || "";
+
+/**
+ * Keep drag-pasteboard paths only when they account for every dropped `File`
+ * name, so a pasteboard left over from an earlier drag can never be copied in
+ * place of what the user actually dropped. Folders may be missing from
+ * `files`, hence "every name is covered" rather than an exact match.
+ * @param {string[]} paths @param {string[]} names
+ */
+export function drag_paths_matching_files(paths, names) {
+  if (!Array.isArray(paths) || !paths.length || !names.length) return [];
+  const available = new Map();
+  for (const path of paths) {
+    const key = pathBaseName(path).normalize("NFC");
+    available.set(key, (available.get(key) || 0) + 1);
+  }
+  for (const name of names) {
+    const key = String(name).normalize("NFC");
+    const left = available.get(key) || 0;
+    if (!left) return [];
+    available.set(key, left - 1);
+  }
+  return paths.map(String);
+}
+
+// The main window keeps Tauri's native drag handler off (it would swallow
+// in-page HTML5 drags such as tab and sidebar reordering), so Finder/Explorer
+// drops reach the page only as DOM events whose `File`s carry no path. Over
+// the Files panel, translate them into the native payload shape; the drop's
+// paths come from the OS drag pasteboard (macOS) and are empty elsewhere.
+function listenFilesPanelDomDrop(handle) {
+  const hasFiles = (event) => Array.from(event.dataTransfer?.types || []).includes("Files");
+  const panelAt = (event) => (event.target instanceof Element ? event.target.closest(".rp-files") : null);
+  const point = (event) => {
+    const scale = window.devicePixelRatio || 1;
+    return { x: event.clientX * scale, y: event.clientY * scale };
+  };
+  let hovering = false;
+  const leave = () => {
+    if (!hovering) return;
+    hovering = false;
+    handle({ kind: "leave", paths: [] });
+  };
+  const onOver = (event) => {
+    if (!hasFiles(event)) return;
+    if (!panelAt(event)) { leave(); return; }
+    event.preventDefault();
+    try { event.dataTransfer.dropEffect = "copy"; } catch (_) { /* read-only in synthetic events */ }
+    if (!hovering) {
+      hovering = true;
+      handle({ kind: "over", paths: [], ...point(event) });
+    }
+  };
+  const onLeave = (event) => {
+    if (!hovering || !hasFiles(event)) return;
+    // WebKit reports dragleave between children with a null relatedTarget;
+    // only a pointer that is no longer over the panel ends the hover.
+    const panel = document.querySelector(".rp-files");
+    const rect = panel?.getBoundingClientRect();
+    if (rect && event.clientX > rect.left && event.clientX < rect.right
+      && event.clientY > rect.top && event.clientY < rect.bottom) return;
+    leave();
+  };
+  const onDrop = async (event) => {
+    if (!hasFiles(event) || !panelAt(event)) return;
+    event.preventDefault();
+    hovering = false;
+    const at = point(event);
+    const names = Array.from(event.dataTransfer?.files || [], (file) => file.name);
+    let paths = [];
+    try {
+      paths = (await tauriCore()?.invoke("read_drag_file_paths", {})) ?? [];
+    } catch (err) {
+      console.warn("drag pasteboard unavailable", err);
+    }
+    handle({ kind: "drop", paths: drag_paths_matching_files(paths, names), ...at });
+  };
+  window.addEventListener("dragenter", onOver);
+  window.addEventListener("dragover", onOver);
+  window.addEventListener("dragleave", onLeave);
+  window.addEventListener("drop", onDrop);
+  return () => {
+    window.removeEventListener("dragenter", onOver);
+    window.removeEventListener("dragover", onOver);
+    window.removeEventListener("dragleave", onLeave);
+    window.removeEventListener("drop", onDrop);
+  };
+}
+
 export async function listen_native_file_drop(cb) {
   const unlisten = [];
   const push = (fn) => { if (typeof fn === "function") unlisten.push(fn); };
   const handle = (event) => cb(normalizeNativeDropPayload(event));
+  push(listenFilesPanelDomDrop(handle));
   try {
     const current =
       window.__TAURI__?.webviewWindow?.getCurrentWebviewWindow?.() ||
