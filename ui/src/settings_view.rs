@@ -1615,6 +1615,8 @@ pub(super) struct SettingsViewState {
     pub(super) specialists: RwSignal<Vec<Specialist>>,
     /// Global default subagent model profile id; "" follows the conversation.
     pub(super) subagent_model: RwSignal<String>,
+    /// Set while Magpie overrides every HTTP model for this process.
+    pub(super) magpie_model: RwSignal<Option<MagpieModelDto>>,
     pub(super) quick_actions: RwSignal<Vec<QuickAction>>,
     pub(super) workflow_templates: RwSignal<Vec<WorkflowTemplate>>,
     pub(super) workflow_studio: AgentPanelState,
@@ -2302,6 +2304,7 @@ pub(super) fn SettingsView(
         acp_infos,
         specialists,
         subagent_model,
+        magpie_model,
         quick_actions,
         workflow_templates,
         workflow_studio,
@@ -5644,6 +5647,13 @@ pub(super) fn SettingsView(
                                 }.into_view()
                             } else {
                                 view! {
+                                    // These profiles stay editable, but none of them runs
+                                    // while Magpie is connected.
+                                    {move || magpie_model.get().map(|magpie| view! {
+                                        <p class="hint" data-testid="models-magpie-notice">
+                                            {move || tf(locale.get(), "models.magpie_connected", &[("model", &magpie.label())])}
+                                        </p>
+                                    })}
                                     <p class="hint" data-testid="acp-models-list-hint">{move || t(locale.get(), "models.acp_hint")}</p>
                                     <div class="model-preset-row" data-testid="model-presets">
                                         <span class="model-preset-label">{move || t(locale.get(), "models.quick_add")}</span>

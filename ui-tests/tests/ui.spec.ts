@@ -2594,6 +2594,29 @@ test("/share PNG keeps markdown tables and KaTeX from the live thread", async ({
   expect(pngHeight).toBeGreaterThan(400);
 });
 
+test("/share PNG wraps paragraphs, table cells, and list items on the DOM line boxes", async ({ page }) => {
+  await enterApp(page);
+  const composerInput = composer(page);
+  await composerInput.fill("SHAREWRAP export wrapped prose");
+  await composerInput.press("Enter");
+  await expect(page.locator(".msg.assistant .body.md table")).toBeVisible({ timeout: 10_000 });
+
+  await composerInput.fill("/share");
+  await composerInput.press("Enter");
+  const overlay = page.getByTestId("share-overlay");
+  await expect(overlay).toBeVisible();
+  await overlay.getByTestId("share-width-input").fill("360");
+  await overlay.getByTestId("share-export").click();
+  await expect.poll(() => lastInvokeArgs(page, "save_share_image")).not.toBeNull();
+  const info = await page.evaluate(() => (window as any).__shareRasterInfo);
+  expect(info).toMatchObject({ usedHtml: true, fallback: false });
+  // A multi-line text node must paint one canvas line per DOM line box; with
+  // the union-rect bug each node collapsed into a single overflowing line.
+  expect(info.domLines).toBeGreaterThan(30);
+  expect(info.textLines).toBe(info.domLines);
+  expect(info.textOverflow).toBeLessThanOrEqual(1);
+});
+
 test("/share keeps a long picker at its scroll position and bounds exported prose", async ({ page }) => {
   await enterApp(page);
   const composerInput = composer(page);

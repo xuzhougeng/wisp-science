@@ -1557,6 +1557,11 @@ mod session_context_window_tests {
             None
         );
     }
+
+    #[test]
+    fn magpie_label_names_the_connected_model_like_the_session_label() {
+        assert_eq!(magpie(500_000).label(), "Magpie · fixture/reasoner");
+    }
 }
 
 /// Selection captured from a file preview by `api.js`'s `preview_selection`.
@@ -4281,6 +4286,14 @@ pub struct MagpieModelDto {
     pub max_tokens: u64,
     pub efforts: Vec<String>,
     pub default_effort: String,
+}
+
+impl MagpieModelDto {
+    /// The one model every HTTP picker offers while Magpie is connected, named
+    /// like the backend's runtime session label.
+    pub fn label(&self) -> String {
+        format!("Magpie · {}", self.model)
+    }
 }
 
 fn default_model_context_window() -> u64 {
