@@ -207,15 +207,18 @@ test('finished Reader progress can be dismissed and its results stay in Agents',
   await expect(page.getByTestId('swarm-dock')).toHaveCount(0);
 
   // Neither a snapshot refresh nor switching conversations revives this dock.
-  // Loading a conversation returns the right pane to Artifacts, so Agents is
-  // reopened after each switch; the child conversation has no batch of its own.
+  // Each conversation owns its right pane: the child starts closed and Agents
+  // is opened there; the parent comes back with its own Agents tab. The child
+  // conversation has no batch of its own.
   await emit(page, { ...progress, revision: 5 });
   await page.locator('.sidebar [data-session-id="subagent-child"]').click();
+  await expect(page.locator('.rightpane')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Toggle panel' }).click();
   await page.locator('.rightpane').getByRole('button', { name: 'Agents', exact: true }).click();
   await expect(agents).toContainText('No subagents in this conversation yet');
   await expect(card).toHaveCount(0);
   await page.locator(`.sidebar [data-session-id="${frame}"]`).click();
-  await page.locator('.rightpane').getByRole('button', { name: 'Agents', exact: true }).click();
+  await expect(page.locator('.rightpane .rp-tab.active')).toHaveText('Agents');
   await expect(card).toContainText('Session retrieval');
   await expect(page.getByTestId('swarm-dock')).toHaveCount(0);
   await emit(page, { ...batch('reader'), id: 'swarm-new', started_at_ms: 200 });

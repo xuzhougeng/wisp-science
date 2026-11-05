@@ -117,3 +117,39 @@ test("Chinese tool home fits a narrow drawer", async ({ page }, testInfo) => {
   expect(await panel.evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("right-pane-tool-home-zh.png"), animations: "disabled" });
 });
+
+test("each conversation keeps its own right pane and a new one starts closed", async ({ page }) => {
+  await page.addInitScript(tauriMock);
+  await page.goto("/?mockSessionModels=1");
+  await page.locator(".proj-card-main").first().click();
+  const toggle = page.getByRole("button", { name: "Toggle panel" });
+  const panel = page.locator(".rightpane");
+  const conversationA = page.locator('[data-session-id="s-model-a"]');
+  const conversationB = page.locator('[data-session-id="s-model-b"]');
+
+  await conversationA.click();
+  await toggle.click();
+  await panel.getByTestId("right-launcher-agents").click();
+  await expect(panel.locator(".rp-tab")).toHaveText(["Agents"]);
+
+  await page.getByRole("button", { name: "New session", exact: true }).click();
+  await expect(panel).toHaveCount(0);
+
+  await conversationB.click();
+  await expect(panel).toHaveCount(0);
+  await toggle.click();
+  await expect(panel.getByTestId("right-pane-launcher")).toBeVisible();
+  await panel.getByTestId("right-launcher-hosts").click();
+  await expect(panel.locator(".rp-tab")).toHaveText(["Environment"]);
+
+  await conversationA.click();
+  await expect(panel.locator(".rp-tab")).toHaveText(["Agents"]);
+  await expect(panel.locator(".rp-tab.active")).toHaveText("Agents");
+  await toggle.click();
+  await expect(panel).toHaveCount(0);
+
+  await conversationB.click();
+  await expect(panel.locator(".rp-tab")).toHaveText(["Environment"]);
+  await conversationA.click();
+  await expect(panel).toHaveCount(0);
+});

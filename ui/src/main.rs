@@ -2441,6 +2441,40 @@ fn App() -> impl IntoView {
         right_tab.track();
         right_launcher_open.set(false);
     });
+    // Each conversation owns its right pane, like its center tabs and side
+    // chat: stash the outgoing pane and restore the incoming one, so a new
+    // conversation starts with the pane closed. In-memory only.
+    let right_pane_by_session = create_rw_signal::<HashMap<String, RightPaneState>>(HashMap::new());
+    let previous_right_pane_session = Rc::new(RefCell::new(None::<String>));
+    create_effect(move |_| {
+        let current_session = active_session.get();
+        let mut previous_session = previous_right_pane_session.borrow_mut();
+        if *previous_session == current_session {
+            return;
+        }
+        if let Some(session_id) = previous_session.as_ref() {
+            let outgoing = RightPaneState {
+                open: show_right.get_untracked(),
+                tabs: open_right_tabs.get_untracked(),
+                active: right_tab.get_untracked(),
+                launcher: right_launcher_open.get_untracked(),
+            };
+            right_pane_by_session.update(|states| {
+                states.insert(session_id.clone(), outgoing);
+            });
+        }
+        let restored = current_session.as_ref().and_then(|session_id| {
+            right_pane_by_session.with_untracked(|states| states.get(session_id).cloned())
+        });
+        if let Some(pane) = right_pane_after_switch(previous_session.is_some(), restored) {
+            show_right.set(pane.open);
+            open_right_tabs.set(pane.tabs);
+            right_tab.set(pane.active);
+            // Last: selecting a tab above dismisses the tool home.
+            right_launcher_open.set(pane.launcher);
+        }
+        *previous_session = current_session;
+    });
     // An unsaved memo survives closing the Memos panel; it is dropped only on
     // an explicit discard or when another project becomes active.
     let memo_draft = create_rw_signal(None::<memos::MemoDraft>);
@@ -7144,7 +7178,6 @@ fn App() -> impl IntoView {
         }
         attachments.set(vec![]);
         sel_artifact.set(0);
-        focus_artifacts_if_open(open_right_tabs, right_tab);
         spawn_local(async move {
             // Guard the malformed-response case before moving the visible
             // transcript, so failure leaves the current session untouched (#15).
@@ -7191,7 +7224,6 @@ fn App() -> impl IntoView {
     let start_session_with_first_message = Callback::new(move |text: String| {
         attachments.set(vec![]);
         sel_artifact.set(0);
-        focus_artifacts_if_open(open_right_tabs, right_tab);
         let turn_model = active_model_label(&models.get_untracked());
         replace_visible_transcript(
             active_session.get_untracked(),
@@ -7303,7 +7335,6 @@ fn App() -> impl IntoView {
         let center_file = center_file;
         let active_session = active_session;
         let sel_artifact = sel_artifact;
-        let right_tab = right_tab;
         let models = models;
         let transcripts = transcripts;
         move |_| {
@@ -7321,7 +7352,6 @@ fn App() -> impl IntoView {
             composer_references.set(vec![]);
             composer_quotes.set(vec![]);
             sel_artifact.set(0);
-            focus_artifacts_if_open(open_right_tabs, right_tab);
             active_session.set(None);
             input.set(String::new());
             let model = active_model_label(&models.get_untracked())
@@ -7409,7 +7439,6 @@ fn App() -> impl IntoView {
                 show_settings.set(false);
                 attachments.set(vec![]);
                 sel_artifact.set(0);
-                focus_artifacts_if_open(open_right_tabs, right_tab);
                 active_session.set(Some(session_id.clone()));
                 running.update(|sessions| {
                     sessions.insert(session_id.clone());
@@ -7462,7 +7491,6 @@ fn App() -> impl IntoView {
         show_research_graph.set(false);
         attachments.set(vec![]);
         sel_artifact.set(0);
-        focus_artifacts_if_open(open_right_tabs, right_tab);
         restore_chat_session_scroll(&id);
         // Swap the visible transcript before changing the active id. Agent
         // events are app-wide and route by `active_session`; publishing the new
@@ -8638,7 +8666,6 @@ fn App() -> impl IntoView {
         );
         attachments.set(vec![]);
         sel_artifact.set(0);
-        focus_artifacts_if_open(open_right_tabs, right_tab);
         active_session.set(None);
         spawn_local(async move {
             let v = invoke(
@@ -12177,7 +12204,6 @@ fn App() -> impl IntoView {
         composer_references.set(vec![]);
         composer_quotes.set(vec![]);
         sel_artifact.set(0);
-        focus_artifacts_if_open(open_right_tabs, right_tab);
         spawn_local(async move {
             let id = match invoke_new_session().await {
                 Ok(id) => id,
@@ -16971,7 +16997,6 @@ fn App() -> impl IntoView {
                                                                     let agent_id = id.clone();
                                                                     demo_mode.set(false);
                                                                     sel_artifact.set(0);
-                                                                    focus_artifacts_if_open(open_right_tabs, right_tab);
                                                                     spawn_local(async move {
                                                                         let frame_id = match invoke_new_session().await {
                                                                             Ok(frame_id) => frame_id,

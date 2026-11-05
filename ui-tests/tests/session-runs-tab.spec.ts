@@ -86,16 +86,19 @@ test("switching sessions re-filters the Runs tab and resets the completed group"
   await panel.getByTestId("session-runs-completed").getByRole("button", { name: "Completed (1)" }).click();
   await expect(panel.locator('[data-run-id="a-done"]')).toBeVisible();
 
-  // Loading a session returns the pane to Artifacts; the Runs tab stays open.
+  // Each conversation owns its right pane: the other one starts closed.
   await page.locator('[data-session-id="s-model-b"]').click();
   await expect(page.locator("#composer-input")).toBeVisible();
-  await panel.locator(".rp-tab", { hasText: /^Runs/ }).click();
+  await expect(panel).toHaveCount(0);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await panel.getByTestId("right-launcher-more").locator("summary").click();
+  await panel.getByTestId("right-launcher-runs").click();
   await expect(panel.locator(".rp-tab.active")).toHaveText("Runs (1)");
   await expect.poll(() => cardIds(panel.getByTestId("session-runs-active"))).toEqual(["b-running"]);
   await expect(panel.getByTestId("session-runs-completed")).toHaveCount(0);
 
+  // Returning restores this conversation's own Runs tab without a click.
   await page.locator('[data-session-id="s-model-a"]').click();
-  await panel.locator(".rp-tab", { hasText: /^Runs/ }).click();
   await expect(panel.locator(".rp-tab.active")).toHaveText("Runs (2)");
   const toggle = panel.getByTestId("session-runs-completed").getByRole("button", { name: "Completed (1)" });
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
