@@ -251,6 +251,10 @@ pub(crate) async fn open_browser_extension_page() -> JsValue {
 extern "C" {
     #[wasm_bindgen(catch, js_name = render_share_png)]
     pub(crate) async fn render_share_png(payload_json: &str) -> Result<JsValue, JsValue>;
+    /// Same payload as `render_share_png`, cut into 3:4 pages; resolves to an
+    /// array of base64 PNGs in page order.
+    #[wasm_bindgen(catch, js_name = render_share_png_pages)]
+    pub(crate) async fn render_share_png_pages(payload_json: &str) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_name = snapshot_share_theme)]
     pub(crate) fn snapshot_share_theme() -> String;
 }

@@ -2617,6 +2617,85 @@ test("/share PNG wraps paragraphs, table cells, and list items on the DOM line b
   expect(info.textOverflow).toBeLessThanOrEqual(1);
 });
 
+test("/share PNG paints the DOM's line boxes and pages break between lines (#1677)", async ({ page }) => {
+  await enterApp(page);
+  const composerInput = composer(page);
+  await composerInput.fill("SHARELINES export the long reply");
+  await composerInput.press("Enter");
+  const assistant = page.locator(".msg.assistant .body.md");
+  await expect(assistant.locator("table")).toBeVisible({ timeout: 10_000 });
+  await expect(assistant.locator("ol > li")).toHaveCount(3);
+
+  const overlay = page.getByTestId("share-overlay");
+  await composerInput.fill("/share");
+  await composerInput.press("Enter");
+  await expect(overlay).toBeVisible();
+  // One long image is the default; the pages hint only shows for pages.
+  await expect(overlay.getByTestId("share-layout-single")).toHaveClass(/active/);
+  await expect(overlay.getByTestId("share-layout-pages")).not.toHaveClass(/active/);
+  await expect(overlay.getByTestId("share-layout-hint")).toHaveCount(0);
+  await expect(overlay.getByTestId("share-export")).toHaveText("Export PNG");
+  // A narrow canvas makes paragraphs, table cells and list items wrap.
+  await overlay.getByTestId("share-width-input").fill("420");
+  await overlay.getByTestId("share-export").click();
+  await expect.poll(() => lastInvokeArgs(page, "save_share_image")).not.toBeNull();
+  await expect(overlay).toHaveCount(0);
+  const single = await page.evaluate(() => (window as any).__shareRasterInfo);
+  expect(single).toMatchObject({ usedHtml: true, fallback: false, pages: 1 });
+  // The fixture really wraps, so the checks below are not vacuous.
+  expect(single.wrappedNodes).toBeGreaterThan(4);
+  expect(single.textLines).toBeGreaterThan(25);
+  // Every text node paints exactly the lines the browser laid out, and no
+  // run leaves the reply's width or its table cell.
+  expect(single.lineMismatches).toBe(0);
+  expect(single.overflowRuns).toBe(0);
+  // Each ordered-list number sits on its item's first line.
+  expect(single.markers).toBe(3);
+  expect(single.markersOffLine).toBe(0);
+
+  // Multiple pages: same content, equal 3:4 pages, no text line cut in half.
+  await composerInput.fill("/share");
+  await composerInput.press("Enter");
+  await expect(overlay).toBeVisible();
+  await overlay.getByTestId("share-layout-pages").click();
+  await expect(overlay.getByTestId("share-layout-pages")).toHaveClass(/active/);
+  await expect(overlay.getByTestId("share-layout-hint")).toBeVisible();
+  await expect(overlay.getByTestId("share-export")).toHaveText("Export pages");
+  // HTML has no layout choice; switching back to PNG keeps the pick.
+  await overlay.getByTestId("share-format-html").click();
+  await expect(overlay.getByTestId("share-layout-pages")).toHaveCount(0);
+  await overlay.getByTestId("share-format-png").click();
+  await expect(overlay.getByTestId("share-layout-pages")).toHaveClass(/active/);
+  await overlay.getByTestId("share-width-input").fill("420");
+  await overlay.getByTestId("share-export").click();
+  await expect.poll(() => lastInvokeArgs(page, "save_share_images")).not.toBeNull();
+  const args = await lastInvokeArgs(page, "save_share_images");
+  expect(String(args.defaultName)).toMatch(/^wisp-share-\d{4}-\d{2}-\d{2}\.png$/);
+  const pngs = (args.pngsBase64 as string[]).map(String);
+  expect(pngs.length).toBeGreaterThan(1);
+  const paged = await page.evaluate(() => (window as any).__shareRasterInfo);
+  expect(paged).toMatchObject({ usedHtml: true, pages: pngs.length, hardCuts: 0, lineMismatches: 0 });
+  // Each page is 420 × 560 CSS px at 2×.
+  const sizes = await page.evaluate((list) => list.map((raw) => {
+    const bytes = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
+    const view = new DataView(bytes.buffer);
+    return [view.getUint32(16, false), view.getUint32(20, false)];
+  }), pngs);
+  for (const size of sizes) expect(size).toEqual([840, 1120]);
+  await expect(page.locator("#copy-toast"))
+    .toContainText(`Saved ${pngs.length} share images to /mock/share`);
+  await expect(overlay).toHaveCount(0);
+
+  // Reopening resets the layout to one long image.
+  await composerInput.fill("/share");
+  await composerInput.press("Enter");
+  await expect(overlay).toBeVisible();
+  await expect(overlay.getByTestId("share-layout-single")).toHaveClass(/active/);
+  await page.keyboard.press("Escape");
+  await expect(overlay).toHaveCount(0);
+  await expect(composerInput).toBeVisible();
+});
+
 test("/share keeps a long picker at its scroll position and bounds exported prose", async ({ page }) => {
   await enterApp(page);
   const composerInput = composer(page);

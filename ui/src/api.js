@@ -1,7 +1,7 @@
 import { renderScientific } from "/vendor-runtime/scientific-preview.mjs";
 import { renderDocx as renderOfficeDocx, renderXlsx as renderOfficeXlsx, renderPptx as renderOfficePptx } from "/vendor-runtime/office-preview-runtime.mjs";
 // Tauri v2 shim + scientific preview mounts; Office DOM/worker rendering is shared with native.
-export { render_share_png, snapshot_share_theme } from "./share-renderer.js";
+export { render_share_png, render_share_png_pages, snapshot_share_theme } from "./share-renderer.js";
 import { injectMcpAppCsp, injectMotifWispBridge } from "/mcp_app_protocol.js";
 import { isolatedApps, mountIsolatedApp, suspendIsolatedApp, closeIsolatedApp, isolatedAction, useIsolatedHost } from "/mcp_app_isolated.js";
 
