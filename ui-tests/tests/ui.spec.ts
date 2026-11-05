@@ -3763,7 +3763,7 @@ test("artifact type badges stay neutral instead of rainbow pills", async ({ page
   expect(color).not.toMatch(/hsl\(\s*160/i);
 });
 
-test("Cmd+K opens search and the composer shows the macOS shortcut", async ({ page }) => {
+test("Cmd+K opens search and the sidebar shows the macOS shortcuts", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "userAgent", {
       configurable: true,
@@ -3775,7 +3775,9 @@ test("Cmd+K opens search and the composer shows the macOS shortcut", async ({ pa
     });
   });
   await enterApp(page);
-  await expect(composer(page)).toHaveAttribute("placeholder", /Cmd\+K/);
+  // The short placeholder no longer repeats the search shortcut; the sidebar
+  // Search entry carries it.
+  await expect(composer(page)).toHaveAttribute("placeholder", "Ask anything — @ artifacts, # sessions, / skills");
   const shortcuts = page.locator(".sidebar .side-shortcut");
   await expect(shortcuts.nth(0)).toHaveText("⌘N");
   await expect(shortcuts.nth(1)).toHaveText("⌘K");
@@ -13344,11 +13346,17 @@ test("long workspace scrolling keeps all headers visible across session switches
   }
   await page.locator(".rp-tabs").getByRole("button", { name: /^Artifacts/ }).click();
   await newSessionButton(page).click();
+  // A new conversation starts with its own, closed right pane (#1684);
+  // reopening it shows unscrolled artifacts with every header still in view.
+  await expect(page.locator(".rightpane")).toHaveCount(0);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
   await composer(page).fill("make second.png");
   await page.getByRole("button", { name: "Send" }).click();
+  await expect(tiles).toBeVisible();
   await expect.poll(() => tiles.evaluate((el) => el.scrollTop)).toBe(0);
-  for (const name of ["Agents", "Files", "Artifacts"]) {
-    await page.locator(".rp-tabs").getByRole("button", { name: new RegExp(`^${name}`) }).click();
+  for (const selector of [".sidebar-head", ".center > .topbar", ".rp-tabs"]) {
+    await expectInsideViewport(page.locator(selector), viewport.width, viewport.height);
   }
 });
 
@@ -14891,8 +14899,10 @@ test("reverse preview selections anchor the action popup above the first selecte
   // just under that (~117px), so the popup clamps to 120 instead of selection.top.
   const expectedY = Math.max(120, Math.round(selection.top));
   expect(anchorY).toBeCloseTo(expectedY, 0);
+  // The popup sits above its anchor. Compare with the anchor, not
+  // selection.top: when the clearance clamp applies the anchor is lower.
   await expect.poll(() => popup.evaluate((element) => element.getBoundingClientRect().bottom))
-    .toBeLessThan(selection.top);
+    .toBeLessThan(anchorY);
 });
 
 test("bound report links own file actions and copy file paths", async ({ page }) => {
@@ -15268,7 +15278,9 @@ test("empty session shows the branded chat empty state", async ({ page }) => {
     Math.round(el.getBoundingClientRect().width)
   )).toBe(208);
   await expect(empty.locator("h1")).not.toBeEmpty();
-  await expect(empty.locator("h1")).toHaveCSS("font-family", /Source Serif/);
+  // The welcome heading uses the UI sans face, not the serif display face.
+  const headingFont = await empty.locator("h1").evaluate((el) => getComputedStyle(el).fontFamily);
+  expect(headingFont).not.toMatch(/Source Serif/);
 });
 
 test("Windows uses the integrated title bar without covering the project landing", async ({ browser }) => {
