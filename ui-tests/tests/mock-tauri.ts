@@ -6398,6 +6398,24 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               }, 30);
               return fid;
             }
+            if (String(msg).includes("SHAREWRAP")) {
+              // Fixture for /share PNG line wrapping: one long paragraph with
+              // inline bold/code, a table whose cells must wrap, and a loose
+              // ordered list whose items span several lines.
+              const long = "按依赖强度排序后，**多数候选基因**在该谱系中呈现弱依赖，" +
+                "只有少数基因在 `CERES` 分数上低于阈值并且跨多个模型稳定复现，" +
+                "因此建议优先验证这些基因，再结合表达量与拷贝数一起解释差异来源。";
+              setTimeout(() => {
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+                emit("agent", {
+                  kind: "Text",
+                  frame_id: fid,
+                  delta: `${long}${long}\n\n| 基因 | 解释 |\n| --- | --- |\n| A | ${long} |\n| B | ${long} |\n\n1. ${long}\n\n2. ${long}\n\n3. ${long}`,
+                });
+                emit("agent", { kind: "Done", frame_id: fid, stop_reason: "end_turn" });
+              }, 30);
+              return fid;
+            }
             if (String(msg).includes("SHARETHINK")) {
               // Fixture for /share: a turn with a visible thinking block, so
               // the share dialog lists it (deselected by default). The reply
