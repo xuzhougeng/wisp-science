@@ -192,13 +192,17 @@ test('native Office renders DOCX math and images, workbook sheets and formulas, 
 test('native Office labels follow the shared English and Chinese catalog', async ({ page }) => {
   await nativePreview(page);
   const catalog = JSON.parse(await readFile(path.resolve('../apps/macos/Sources/WispProjectBrowserUI/Resources/native-locales.json'), 'utf8'));
-  const workbook = (await readFile(path.resolve('fixtures/office-multisheet.xlsx'))).toString('base64');
+  const workbookBytes = await readFile(path.resolve('fixtures/office-multisheet.xlsx'));
+  const workbook = workbookBytes.toString('base64');
+  // Plain text is a valid single-cell spreadsheet. Truncate an actual ZIP
+  // header so each Office parser receives an invalid archive instead.
+  const brokenArchive = workbookBytes.subarray(0, 8).toString('base64');
   for (const locale of ['en', 'zh']) {
     const strings = catalog[locale];
     for (const kind of ['docx', 'xlsx', 'pptx']) {
       const officeLabels = { loading: strings.loading, error: strings[`preview.${kind}_error`],
         formulaLabel: strings['preview.xlsx_formula'], truncated: strings['preview.xlsx_truncated'] };
-      await page.evaluate(data => (window as any).previewReceive({ data }), { kind, locale, officeLabels, base64: Buffer.from('broken archive').toString('base64') });
+      await page.evaluate(data => (window as any).previewReceive({ data }), { kind, locale, officeLabels, base64: brokenArchive });
       await expect(page.locator('.rp-error')).toHaveText(officeLabels.error);
       // Decode failures must also use the document-specific text, not a PDF error.
       await page.evaluate(data => (window as any).previewReceive({ data }), { kind, locale, officeLabels, base64: '!!!' });
@@ -412,8 +416,12 @@ test('native PDF fits width, preserves page and zoom on resize, and supports whe
   // Native dialog forwards page keys before focus enters the embedded document.
   await page.evaluate(() => (window as any).previewReceive({ data: { type: 'pdf-page', direction: 1 } }));
   await expect(page.locator('#page')).toHaveText('Page 2 of 2');
+  // The label updates at render start; native page keys are enabled after
+  // the canvas and text layer have finished rendering.
+  await expect(previous).toBeEnabled();
   await page.evaluate(() => (window as any).previewReceive({ data: { type: 'pdf-page', direction: -1 } }));
   await expect(page.locator('#page')).toHaveText('Page 1 of 2');
+  await expect(next).toBeEnabled();
   const geometry = () => viewport.evaluate(el => ({ available: el.clientWidth, width: el.querySelector('.pdf-page')!.getBoundingClientRect().width, height: el.clientHeight, fullHeight: el.scrollHeight }));
   const initial = await geometry();
   expect(initial.width).toBeCloseTo(initial.available, 0); expect(initial.fullHeight).toBeGreaterThan(initial.height);
