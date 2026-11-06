@@ -39,6 +39,8 @@ pub mod specialist_package;
 pub use project_chat_search::*;
 mod decision_model;
 pub use decision_model::*;
+mod docx_review;
+pub use docx_review::*;
 mod session_artifacts;
 pub use session_artifacts::*;
 mod session_excerpt;

@@ -1,0 +1,137 @@
+import { test, expect, type Page } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { tauriMock } from './mock-tauri';
+
+const fixture = readFileSync(resolve(__dirname, '../fixtures/docx-review.docx')).toString('base64');
+const plain = readFileSync(resolve(__dirname, '../fixtures/office-preview.docx')).toString('base64');
+
+async function setup(page: Page, options: { writable: boolean; conflict: boolean; modal?: boolean } = { writable: true, conflict: false }) {
+  await page.addInitScript(tauriMock);
+  await page.goto('/');
+  await expect(page.locator('.proj-card-main').first()).toBeVisible();
+  await page.evaluate(({ fixture, plain, options }) => {
+    const w = window as any, original = w.__TAURI__.core.invoke;
+    const fromJs = (value: any): any => value instanceof Map
+      ? Object.fromEntries([...value].map(([key, item]) => [key, fromJs(item)])) : value;
+    let version = 0;
+    let conflict = options.conflict;
+    let changes = [
+      { id: 'rewrite', paragraph_id: 'p2', kind: 'rewrite', old: 'Old conclusion', new: 'Revised conclusion' },
+      { id: 'deletion', paragraph_id: 'p3', kind: 'deletion', old: 'Remove this sentence', new: '' },
+      { id: 'insertion', paragraph_id: 'p4', kind: 'insertion', old: '', new: 'New supporting sentence' },
+    ].map(change => ({ ...change, author: 'Wisp', date: '2026-11-05T00:00:00Z' }));
+    const snapshot = () => ({ source_sha256: `version-${version}`, changes, unsupported_count: 1, writable: options.writable });
+    w.docxCalls = [];
+    w.__TAURI__.core.invoke = async (cmd: string, input: any) => {
+      const args = fromJs(input);
+      if (cmd === 'list_dir') return [{ name: 'review.docx', is_dir: false, size: 2000, modified_unix_millis: 0 }];
+      if (cmd === 'read_file') return { path: args.path, mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', text: null, base64: null };
+      if (cmd === 'read_file_bytes') return Uint8Array.from(atob(changes.length ? fixture : plain), c => c.charCodeAt(0));
+      if (cmd === 'read_docx_review') { w.docxCalls.push({ cmd, args }); return snapshot(); }
+      if (cmd === 'resolve_docx_review') {
+        w.docxCalls.push({ cmd, args });
+        if (conflict) { conflict = false; version++; throw new Error('DOCX changed; refresh the preview before reviewing'); }
+        if (args.sourceSha256 !== `version-${version}`) throw new Error('Stale hash');
+        changes = changes.filter(change => args.selection.type === 'kind' ? change.kind !== args.selection.value : change.id !== args.selection.value);
+        version++;
+        return snapshot();
+      }
+      return original(cmd, input);
+    };
+  }, { fixture, plain, options });
+  await page.locator('.proj-card-main').first().click();
+  await page.getByRole('button', { name: 'Files', exact: true }).click();
+  if (options.modal) {
+    await page.locator('[data-workspace-path="review.docx"]').click();
+  } else {
+    await page.locator('[data-workspace-path="review.docx"]').click({ button: 'right' });
+    await page.locator('.ctx-menu').getByRole('button', { name: 'Open in center', exact: true }).click();
+  }
+  await expect(page.getByTestId('docx-change')).toHaveCount(3);
+  if (options.writable) await expect(page.getByTestId('docx-accept-rewrites')).toBeEnabled();
+}
+
+const row = (page: Page, id: string) => page.locator(`[data-change-id="${id}"]`);
+const writes = (page: Page) => page.evaluate(() => (window as any).docxCalls.filter((c: any) => c.cmd === 'resolve_docx_review').map((c: any) => c.args));
+
+test('DOCX renders native revision markup and accepts deletions and rewrites as separate batches', async ({ page }) => {
+  await setup(page);
+  await expect(page.locator('.rp-docx del').first()).toContainText('Old conclusion');
+  await expect(page.locator('.rp-docx ins').first()).toContainText('Revised conclusion');
+  await page.getByTestId('docx-review').screenshot({ path: test.info().outputPath('docx-review.png') });
+  await expect(page.getByTestId('docx-review')).toContainText('Complex revisions are kept unchanged');
+  await page.getByTestId('docx-accept-deletions').click();
+  await expect(row(page, 'deletion')).toHaveCount(0);
+  await expect(row(page, 'rewrite')).toBeVisible();
+  await page.getByTestId('docx-accept-rewrites').click();
+  await expect(row(page, 'rewrite')).toHaveCount(0);
+  await expect(row(page, 'insertion')).toBeVisible();
+  await row(page, 'insertion').getByRole('button', { name: 'Accept', exact: true }).click();
+  await expect(page.getByTestId('docx-no-changes')).toBeVisible();
+  await expect(page.locator('.rp-docx')).toContainText('Word local fixture');
+  await expect(page.locator('.rp-docx ins, .rp-docx del')).toHaveCount(0);
+  expect(await writes(page)).toEqual([
+    { path: 'review.docx', sourceSha256: 'version-0', selection: { type: 'kind', value: 'deletion' }, action: 'accept' },
+    { path: 'review.docx', sourceSha256: 'version-1', selection: { type: 'kind', value: 'rewrite' }, action: 'accept' },
+    { path: 'review.docx', sourceSha256: 'version-2', selection: { type: 'change', value: 'insertion' }, action: 'accept' },
+  ]);
+});
+
+test('DOCX rejects a whole rewrite and accepts an individual deletion without resolving other changes', async ({ page }) => {
+  await setup(page);
+  await row(page, 'rewrite').getByRole('button', { name: 'Reject', exact: true }).click();
+  await expect(row(page, 'rewrite')).toHaveCount(0);
+  await row(page, 'deletion').getByRole('button', { name: 'Accept', exact: true }).click();
+  await expect(page.getByTestId('docx-change')).toHaveCount(1);
+  await expect(row(page, 'insertion')).toBeVisible();
+  expect(await writes(page)).toMatchObject([
+    { sourceSha256: 'version-0', selection: { type: 'change', value: 'rewrite' }, action: 'reject' },
+    { sourceSha256: 'version-1', selection: { type: 'change', value: 'deletion' }, action: 'accept' },
+  ]);
+});
+
+test('DOCX conflicts require refresh before another write uses the new snapshot', async ({ page }) => {
+  await setup(page, { writable: true, conflict: true });
+  await page.getByTestId('docx-accept-rewrites').click();
+  await expect(page.getByRole('alert')).toContainText('DOCX changed');
+  await expect(page.getByTestId('docx-accept-deletions')).toBeDisabled();
+  await expect(row(page, 'rewrite').getByRole('button', { name: 'Reject', exact: true })).toBeDisabled();
+  expect(await writes(page)).toHaveLength(1);
+  await page.getByRole('button', { name: 'Refresh revisions' }).click();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await page.getByTestId('docx-accept-rewrites').click();
+  await expect(row(page, 'rewrite')).toHaveCount(0);
+  expect((await writes(page))[1].sourceSha256).toBe('version-1');
+});
+
+test('DOCX in a read-only workspace shows revisions with all mutation actions disabled', async ({ page }) => {
+  await setup(page, { writable: false, conflict: false });
+  await expect(page.getByTestId('docx-review')).toContainText('This preview is read-only');
+  await expect(page.locator('.rp-docx del').first()).toContainText('Old conclusion');
+  await expect(page.getByTestId('docx-accept-deletions')).toBeDisabled();
+  await expect(page.getByTestId('docx-accept-rewrites')).toBeDisabled();
+  for (const action of ['Accept', 'Reject']) {
+    for (const button of await page.getByTestId('docx-change').getByRole('button', { name: action, exact: true }).all()) await expect(button).toBeDisabled();
+  }
+  expect(await writes(page)).toEqual([]);
+});
+
+test('DOCX review and document remain scrollable inside the ordinary preview dialog', async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 720 });
+  await setup(page, { writable: true, conflict: false, modal: true });
+  await expect(page.locator('.artifact-modal .rp-docx')).toContainText('Revision review fixture');
+  const bounds = await page.getByTestId('docx-review').evaluate(element => {
+    const outer = element.getBoundingClientRect();
+    const review = element.querySelector('.docx-review-panel')!.getBoundingClientRect();
+    const document = element.querySelector('.rp-heavy')!.getBoundingClientRect();
+    return { height: outer.height, review: review.height, document: document.height, bottom: document.bottom - outer.bottom };
+  });
+  expect(bounds.document).toBeGreaterThan(120);
+  expect(bounds.review).toBeLessThan(bounds.height * 0.6);
+  expect(bounds.bottom).toBeLessThanOrEqual(1);
+  await page.getByTestId('docx-accept-rewrites').click();
+  await expect(row(page, 'rewrite')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.artifact-modal')).toHaveCount(0);
+});

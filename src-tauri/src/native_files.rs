@@ -16,6 +16,9 @@ pub(crate) async fn dispatch(
     if matches!(action, "upload" | "download") {
         return dispatch_transfer(broker, request, project_id, session).await;
     }
+    if matches!(action, "docx_review" | "docx_resolve") {
+        return crate::docx_review::dispatch_native(broker, request, project_id, session, action == "docx_resolve").await;
+    }
     let args: dto::Request =
         serde_json::from_value(request.args.clone()).map_err(|e| e.to_string())?;
     if args.session_id.as_deref() != session {
@@ -167,7 +170,7 @@ pub(crate) async fn dispatch(
 }
 
 /// Resolve an explicit project without selecting a hidden WebView or creating a frame.
-async fn file_scope(state: &crate::AppState, project_id: &str, session: Option<&str>) -> Result<(std::path::PathBuf, wisp_store::StateScope), String> {
+pub(super) async fn file_scope(state: &crate::AppState, project_id: &str, session: Option<&str>) -> Result<(std::path::PathBuf, wisp_store::StateScope), String> {
     if let Some(session) = session {
         let (project, scope) = crate::exploration_commands::working_project_for_frame(state, session).await?;
         if project.id != project_id { return Err("Project scope mismatch".into()); }

@@ -62,7 +62,7 @@ window.nativePreviewReceive = async ({ data }) => {
         if (Object.hasOwn(office, data.kind)) {
             const bytes = Uint8Array.from(atob(data.base64), c => c.charCodeAt(0));
             if (bytes.length > 32 * 1024 * 1024) throw new Error(data.oversized);
-            await office[data.kind](content, { bytes, loading: data.loading, error: data.error, formulaLabel: data.formulaLabel, truncated: data.truncatedLabel }, async value => value.bytes);
+            await office[data.kind](content, { bytes, loading: data.loading, error: data.error, renderChanges: data.renderChanges === true, formulaLabel: data.formulaLabel, truncated: data.truncatedLabel }, async value => value.bytes);
         } else if (data.kind === 'html') {
             if (typeof data.text !== 'string' || new TextEncoder().encode(data.text).length > 32 * 1024 * 1024) throw new Error(data.oversized);
             const frame = document.createElement('iframe'); frame.className = 'rp-native-html'; frame.title = data.title;

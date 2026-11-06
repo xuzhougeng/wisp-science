@@ -60,6 +60,8 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_panel_file_directory",
     "native_conversation_panel_file_paths",
     "native_conversation_panel_file_read",
+    "native_conversation_panel_file_docx_review",
+    "native_conversation_panel_file_docx_resolve",
     "native_conversation_panel_file_upload",
     "native_conversation_panel_file_download",
     "native_conversation_panel_searchfiles",

@@ -63,7 +63,14 @@ const MAX_ENTRIES: usize = 20_000;
 pub fn is_producing(tool: &str) -> bool {
     matches!(
         tool,
-        "python" | "r" | "shell" | "write" | "edit" | "generate_image" | "generate_video"
+        "python"
+            | "r"
+            | "shell"
+            | "write"
+            | "edit"
+            | "generate_image"
+            | "generate_video"
+            | "suggest_docx_edit"
     )
 }
 
@@ -81,6 +88,7 @@ pub fn source_of(tool: &str, args: &serde_json::Value) -> String {
     let key = match tool {
         "python" | "r" => "code",
         "write" | "edit" | "generate_image" | "generate_video" => "path",
+        "suggest_docx_edit" => "output_path",
         _ => "cmd",
     };
     args.get(key)
@@ -686,7 +694,12 @@ pub fn augment_written_paths(
             }
         }
     }
-    if success && matches!(tool, "write" | "edit" | "generate_image" | "generate_video") {
+    if success
+        && matches!(
+            tool,
+            "write" | "edit" | "generate_image" | "generate_video" | "suggest_docx_edit"
+        )
+    {
         let source_path = Path::new(source);
         let path = if source_path.is_absolute() {
             source_path.to_path_buf()
@@ -919,6 +932,44 @@ mod tests {
                 "results/table.csv"
             );
         }
+        assert!(is_producing("suggest_docx_edit"));
+        assert_eq!(
+            source_of(
+                "suggest_docx_edit",
+                &serde_json::json!({
+                    "path": "original.docx", "output_path": "review.docx"
+                })
+            ),
+            "review.docx"
+        );
+    }
+
+    #[test]
+    fn docx_review_outputs_are_attributed_even_in_snapshot_excluded_uploads() {
+        let root = unique_tmp("docx_provenance");
+        std::fs::create_dir(root.join("uploads")).unwrap();
+        std::fs::write(root.join("uploads/review.docx"), b"PK").unwrap();
+        let mut written = Vec::new();
+        augment_written_paths(
+            "suggest_docx_edit",
+            &root,
+            "uploads/review.docx",
+            true,
+            &BTreeMap::new(),
+            &mut written,
+        );
+        assert_eq!(written, vec!["uploads/review.docx"]);
+        written.clear();
+        augment_written_paths(
+            "suggest_docx_edit",
+            &root,
+            "uploads/review.docx",
+            false,
+            &BTreeMap::new(),
+            &mut written,
+        );
+        assert!(written.is_empty());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

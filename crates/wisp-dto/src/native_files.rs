@@ -7,11 +7,14 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_panel_file_directory",
     "native_conversation_panel_file_paths",
     "native_conversation_panel_file_read",
+    "native_conversation_panel_file_docx_review",
+    "native_conversation_panel_file_docx_resolve",
     "native_conversation_panel_file_upload",
     "native_conversation_panel_file_download",
 ];
 /// Project files are available before the first conversation exists.
 pub const PROJECT_COMMANDS: &[&str] = &[
+    "native_project_file_docx_review", "native_project_file_docx_resolve",
     "native_project_file_locations", "native_project_file_directory",
     "native_project_file_paths", "native_project_file_read", "native_project_file_search",
     "native_project_file_upload", "native_project_file_download", "native_project_file_run",

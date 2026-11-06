@@ -1163,6 +1163,9 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
 
 #[component]
 pub(crate) fn FilePreview(dom_id: String, path: String, kind: String) -> impl IntoView {
+    if kind == "docx" {
+        return view! { <DocxReviewPreview dom_id=dom_id path=path/> }.into_view();
+    }
     let locale = use_locale();
     let id_for_effect = dom_id.clone();
     let path_for_effect = path.clone();
@@ -1290,6 +1293,7 @@ pub(crate) fn FilePreview(dom_id: String, path: String, kind: String) -> impl In
         });
     });
     view! { <div class="rp-heavy" id=dom_id>{move || t(locale.get(), "loading")}</div> }
+        .into_view()
 }
 
 pub(crate) fn artifact_preview(a: &Artifact, dom_id: String, locale: Locale) -> impl IntoView {

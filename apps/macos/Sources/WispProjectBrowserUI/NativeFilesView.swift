@@ -122,7 +122,8 @@ struct NativeFilesView: View {
                         }, documentQuote: quote == nil ? nil : { selection in
                             guard let source = model.documentQuote(selection, original: preview.content, identity: identity) else { return false }
                             quote?(source); model.dismissPreview(); return true
-                        }, loadImage: { try await model.readPreviewImage($0, original: preview.content) }).id(identity)
+                        }, loadImage: { try await model.readPreviewImage($0, original: preview.content) },
+                            docxTarget: preview.context_id == "local" ? NativeDocxReviewTarget(client: model.client, projectID: model.projectID, sessionID: model.sessionID, readOnly: model.readOnly || model.catalog?.read_only != false) : nil).id(identity)
                 }
             }
             .onDisappear { dropTask?.cancel(); chooser.close(); model.close() }

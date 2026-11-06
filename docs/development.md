@@ -435,6 +435,10 @@ changing the host environment. Detection falls back to the same directories
 after PATH. Tests use a fake host for pixi/uv and the download; nothing in
 them touches the network.
 
+The shared tool registry also provides a [DOCX revision prototype](docx-revisions.md):
+`read_docx` exposes snapshot-bound paragraphs and `suggest_docx_edit` saves a new
+Word file containing native text revisions for review in Word.
+
 For analysis or custom Python MCP servers, ask Wisp to load
 `skills/local-env-setup`. The skill prepares only the required environment and
 saves Python/R interpreters through `set_runtime_interpreter` or the existing

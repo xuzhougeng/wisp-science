@@ -16,7 +16,12 @@ dunce = { workspace = true }
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 anydoc = "0.1.6"
+roxmltree = "0.21"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+sha2 = { workspace = true }
+chrono = { workspace = true }
 wisp-llm = { workspace = true }
+wisp-dto = { workspace = true }
 
 # ProcessTree needs process groups on Unix and Job Objects on Windows.
 [target.'cfg(unix)'.dependencies]
