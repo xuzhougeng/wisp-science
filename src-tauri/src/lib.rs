@@ -48,6 +48,7 @@ mod desktop_lifecycle;
 mod device_bridge;
 mod device_hub;
 mod dispatch;
+mod docx_review;
 mod dynamic_workflow;
 mod exploration_commands;
 #[cfg(target_os = "macos")]
@@ -8323,6 +8324,8 @@ pub fn run() {
             read_file,
             read_file_bytes,
             save_file,
+            docx_review::read_docx_review,
+            docx_review::resolve_docx_review,
             append_review_note,
             artifact_commands::list_artifacts,
             artifact_commands::search_artifacts,

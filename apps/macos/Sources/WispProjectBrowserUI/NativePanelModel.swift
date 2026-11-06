@@ -29,6 +29,7 @@ final class NativePanelModel: ObservableObject {
     @Published var agentResult: NativeAgentResult?
     @Published private(set) var agentResultLoading = false
     @Published private(set) var previewEditable = false
+    @Published private(set) var previewIsLocalFile = false
     @Published private(set) var savingPreview = false
     @Published private(set) var fileActionBusy = false
     @Published var preview: NativePanelFileContent?
@@ -225,7 +226,8 @@ final class NativePanelModel: ObservableObject {
         do {
             let content = try decode(await call(action, args), as: NativePanelFileContent.self)
             guard previewGeneration == current, !Task.isCancelled else { return }
-            preview = content; previewEditable = action == "readfile" && content.text != nil && !content.truncated
+            preview = content; previewIsLocalFile = action == "readfile"
+            previewEditable = previewIsLocalFile && content.text != nil && !content.truncated
         } catch { if previewGeneration == current { self.error = error.localizedDescription } }
     }
     func savePreview(_ text: String, original: NativePanelFileContent) async throws {
@@ -260,7 +262,7 @@ final class NativePanelModel: ObservableObject {
         guard image.path == path, image.mime == "image/png", image.text == nil, image.base64 != nil, !image.truncated else { throw ProjectBrowserError.invalidResponse }
         return image
     }
-    func dismissPreview() { previewGeneration = UUID(); preview = nil; previewEditable = false; savingPreview = false; agentResult = nil; agentResultLoading = false }
+    func dismissPreview() { previewGeneration = UUID(); preview = nil; previewEditable = false; previewIsLocalFile = false; savingPreview = false; agentResult = nil; agentResultLoading = false }
     func close() {
         closed = true
         clearFileSearch(); agentEpoch = UUID(); notebookBusy = []; highlightRemoving = []; agentDelegationBusy = false; agentLaunching = []; agentActions = []; generation = UUID(); dismissPreview() }

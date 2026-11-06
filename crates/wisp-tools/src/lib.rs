@@ -7,6 +7,7 @@
 
 pub mod ask_user;
 pub mod attempt_completion;
+pub mod docx;
 pub mod edit;
 pub mod env;
 pub mod grep;
@@ -46,6 +47,8 @@ const BUILT_IN_SCHEMA_NAMES: &[&str] = &[
     "read",
     "write",
     "edit",
+    "read_docx",
+    "suggest_docx_edit",
     "search",
     "grep",
     "shell",
@@ -153,6 +156,8 @@ impl Registry {
             Box::new(read::ReadTool),
             Box::new(write::WriteTool),
             Box::new(edit::EditTool),
+            Box::new(docx::ReadDocxTool),
+            Box::new(docx::SuggestDocxEditTool),
             Box::new(search::SearchTool),
             Box::new(grep::GrepTool),
             Box::new(shell::ShellTool),

@@ -1,0 +1,48 @@
+{
+  "schema": "wisp.native-files.v1",
+  "project_id": "project-1",
+  "session_id": "session-1",
+  "path": "/project/review.docx",
+  "review": {
+    "source_sha256": "3034cad239bd2f97be04aae93a72c982cc137452437e876cbf48a13cd046b583",
+    "changes": [
+      {
+        "id": "change-190",
+        "paragraph_id": "p2",
+        "kind": "rewrite",
+        "author": "Wisp",
+        "date": "2026-11-05T00:00:00Z",
+        "old": "Old conclusion",
+        "new": "Revised conclusion"
+      },
+      {
+        "id": "change-429",
+        "paragraph_id": "p3",
+        "kind": "deletion",
+        "author": "Wisp",
+        "date": "2026-11-05T00:00:00Z",
+        "old": "Remove this sentence",
+        "new": ""
+      },
+      {
+        "id": "change-564",
+        "paragraph_id": "p4",
+        "kind": "insertion",
+        "author": "Wisp",
+        "date": "2026-11-05T00:00:00Z",
+        "old": "",
+        "new": "New supporting sentence"
+      }
+    ],
+    "unsupported_count": 0,
+    "writable": true
+  },
+  "content": {
+    "path": "/project/review.docx",
+    "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "text": null,
+    "base64": "UEsDBBQAAAAIABpwRV2koU420AAAAKgBAAATAAAAW0NvbnRlbnRfVHlwZXNdLnhtbH2RsU4DMQyGX+WUFfVcMTCgXhfoCgy8gJXz3UUkThS7pbw9ToEOVcsY///nT1Y271+FpDumyDK4RbU8AohfKKH0uRBbMuWaUO1ZZyjoP3AmuF+vH8BnVmJdadvhtptnmnAftdsdbSwh8+AqRXHd00+xuQaHpcTgUS2HA48XltWvoTfy1JElFLmzgoOrhpbcFtzmCs8XXEjtsjY34vVAtYaRujes+oLJcvjMdYQx+30ypv9ffOWyPE3B05lv20rNnkQCzyn25yRh4L+L4fRB229QSwMEFAAAAAgAGnBFXWF7L0OJAAAA8gAAAAsAAABfcmVscy8ucmVsc43POw4CIRAG4KsQDrCzWlgYoLLZ1ngBAsMjLo8MGPX2UlisxsJy5p98f0accdU9ltxCrI090pqb5KH3egRoJmDSbSoV80hcoaT7GMlD1eaqPcJ+ng9AW4MrsTXZYiWnxe44uzwr/mMX56LBUzG3hLn/qPi6GLImj13yeyEL9r2eBstBCfh4Ub0AUEsDBBQAAAAIABpwRV38JXDutwAAAJkBAAAcAAAAd29yZC9fcmVscy9kb2N1bWVudC54bWwucmVsc63RvQrCMBDA8VcpeYBedXCQtpMODi7iCxzpNT3MF0mU+vZGsVihg4PjkeOXP1x9Io2JnY0D+1iMRtvYiCElvwWIciCDsXSebH7pXTCY8hgUeJQXVATrqtpAmBuiredmcegawSbvrkRxvnv6RXd9z5J2Tl4N2bTwCbzEDGJQlBphqGMEzyPp0lslYCGCxkTBov5nxpCloNlePilPNmaXRjReU8n2hpq7NzbtHV2XE/ZTUu6Fr0u0D1BLAwQUAAAACAAacEVdx5FYYyEBAADDAgAAEQAAAHdvcmQvZG9jdW1lbnQueG1spVJNa8MwDP0rxvfUTraVEZL01uMGJWOwWxarjSH+wHY+9u8nl7ZZB92hAyPLlqX3nqViM6uejOC8NLqk6YpTAro1QupDSd/qbfJMN1Ux5cK0gwIdCL7XPp9K2oVgc8Z824Fq/MpY0BjbG6eagEd3YJNxwjrTgvdYTvUs43zNVCM1jSU/jfiKu43GRROqHYwyUiEOHZjIXs5hcFCwGIzWHa295AnoyZRLgdwpOs0QOuNK+i69jWfRBChpxrN1kqYJf6o5z4/rg15QsUQNc6hee0Fao9t+iAwizDmyAONNTJHan1Cze1FPWuE35k80hLkp9+G/cnegzAgkdNITj53FtsMfoq9oLPof79f/gv31g7XGBRyPKw43PoGdh4YtA1l9A1BLAwQUAAAACAAacEVdGHhaxz8AAABEAAAAFAAAAHdvcmQvbWVkaWEvcGl4ZWwucG5n6wzwc+flkuJiYGDg9fRwCQLSjCDMwQIkt8rwMAEpbk8Xx5CKW8l//sszMDMzMbyfZR8OFGbwdPVzWeeU0AQAUEsBAhQAFAAAAAgAGnBFXaShTjbQAAAAqAEAABMAAAAAAAAAAAAAAIABAAAAAFtDb250ZW50X1R5cGVzXS54bWxQSwECFAAUAAAACAAacEVdYXsvQ4kAAADyAAAACwAAAAAAAAAAAAAAgAEBAQAAX3JlbHMvLnJlbHNQSwECFAAUAAAACAAacEVd/CVw7rcAAACZAQAAHAAAAAAAAAAAAAAAgAGzAQAAd29yZC9fcmVscy9kb2N1bWVudC54bWwucmVsc1BLAQIUABQAAAAIABpwRV3HkVhjIQEAAMMCAAARAAAAAAAAAAAAAACAAaQCAAB3b3JkL2RvY3VtZW50LnhtbFBLAQIUABQAAAAIABpwRV0YeFrHPwAAAEQAAAAUAAAAAAAAAAAAAACAAfQDAAB3b3JkL21lZGlhL3BpeGVsLnBuZ1BLBQYAAAAABQAFAEUBAABlBAAAAAA=",
+    "truncated": false,
+    "total_bytes": 1472
+  }
+}

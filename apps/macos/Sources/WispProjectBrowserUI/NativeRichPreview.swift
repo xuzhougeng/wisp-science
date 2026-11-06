@@ -102,7 +102,17 @@ struct NativeRichPreviewSurface: NSViewRepresentable {
     func updateNSView(_ view: WKWebView, context: Context) {
         let old = context.coordinator.parent
         context.coordinator.parent = self
-        if old.html != html || old.scheme != scheme { context.coordinator.send() }
+        if old.html != html || old.scheme != scheme || old.content.path != content.path
+            || old.content.text != content.text || old.content.base64 != content.base64
+            || (old.quote == nil) != (quote == nil) {
+            // Publishing renderer state inside updateNSView can invalidate
+            // SwiftUI's current render. Send the latest parent after it ends.
+            Task { @MainActor [weak coordinator = context.coordinator] in
+                guard let coordinator, !coordinator.disposed else { return }
+                coordinator.parent.state.error = nil
+                coordinator.send()
+            }
+        }
     }
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
         coordinator.disposed = true; coordinator.parent.state.requestQuote = nil
@@ -161,7 +171,7 @@ struct NativeRichPreviewSurface: NSViewRepresentable {
                 return String(format: "#%02x%02x%02x", Int(color.redComponent * 255), Int(color.greenComponent * 255), Int(color.blueComponent * 255))
             }
             let payload: [String: Any] = ["kind": parent.kind.rawValue, "text": parent.kind == .html ? parent.html ?? "" : content.text ?? "", "base64": content.base64 ?? "", "format": parent.kind.format(path: content.path), "truncated": content.truncated,
-                "canQuote": parent.quote != nil, "background": color("bg-app"), "foreground": color("text"), "fontSize": 14,
+                "canQuote": parent.quote != nil, "renderChanges": parent.kind == .docx, "background": color("bg-app"), "foreground": color("text"), "fontSize": 14,
                 "title": (content.path as NSString).lastPathComponent, "loading": localized("正在加载文档…"), "error": localized("无法预览此文档。"), "oversized": localized("文件超过离线预览限制。"), "quoteLabel": localized("引用选中文字"), "formulaLabel": localized("公式"), "truncatedLabel": localized("工作簿较大，仅显示限定范围内的数据。")]
             guard let data = try? JSONSerialization.data(withJSONObject: payload), let json = String(data: data, encoding: .utf8) else { return }
             requestingQuote = false; parent.state.hasSelection = false

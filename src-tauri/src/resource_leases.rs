@@ -195,8 +195,8 @@ pub(crate) fn request_for_call(
     tool: &str,
     args: &serde_json::Value,
 ) -> Option<ResourceRequest> {
-    let path_request = |access| {
-        args.get("path")
+    let path_request = |key: &str, access| {
+        args.get(key)
             .and_then(serde_json::Value::as_str)
             .and_then(|path| normalized_project_path(root, path))
             .map(|path| ResourceRequest {
@@ -205,15 +205,19 @@ pub(crate) fn request_for_call(
             })
     };
     match tool {
-        "read" | "view_image" => path_request(ResourceAccess::Read),
-        "write" | "edit" | "generate_image" => path_request(ResourceAccess::Write),
+        "read" | "read_docx" | "view_image" => path_request("path", ResourceAccess::Read),
+        "write" | "edit" | "generate_image" => path_request("path", ResourceAccess::Write),
+        // The source is snapshot-checked again before publication; coordinate
+        // the new output against other project writers.
+        "suggest_docx_edit" => path_request("output_path", ResourceAccess::Write),
         _ => None,
     }
 }
 
 pub(crate) fn preview_for_call(tool: &str, args: &serde_json::Value) -> String {
     let key = match tool {
-        "read" | "view_image" | "write" | "edit" | "generate_image" => "path",
+        "read" | "read_docx" | "view_image" | "write" | "edit" | "generate_image" => "path",
+        "suggest_docx_edit" => "output_path",
         "python" | "r" => "code",
         _ => "cmd",
     };
@@ -310,6 +314,20 @@ mod tests {
                 if cfg!(windows) { "plot.r" } else { "plot.R" }
             )
         );
+        assert_eq!(
+            request_for_call(
+                &root,
+                "read_docx",
+                &serde_json::json!({"path":"source.docx"})
+            ),
+            Some(path(ResourceAccess::Read, "source.docx"))
+        );
+        let docx = serde_json::json!({"path":"source.docx", "output_path":"review.docx"});
+        assert_eq!(
+            request_for_call(&root, "suggest_docx_edit", &docx),
+            Some(path(ResourceAccess::Write, "review.docx"))
+        );
+        assert_eq!(preview_for_call("suggest_docx_edit", &docx), "review.docx");
         std::fs::remove_dir_all(root).ok();
     }
 }

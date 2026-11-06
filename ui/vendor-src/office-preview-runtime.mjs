@@ -48,6 +48,7 @@ export async function renderDocx(el, payload, previewBytes) {
       ignoreHeight: true,
       breakPages: true,
       experimental: true,
+      renderChanges: payload.renderChanges === true,
     });
     if (el.__wispPreviewToken !== renderToken) container.replaceChildren();
   } catch (error) {

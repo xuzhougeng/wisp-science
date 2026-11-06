@@ -157,7 +157,8 @@ struct NativePanelView: View {
                         sideChat.quotes.append(quote); model.dismissPreview()
                         var value = layout; value.show("sidechat"); store(value)
                         return true
-                    }, loadImage: { try await model.readPreviewImage($0, original: content) }).id(identity)
+                    }, loadImage: { try await model.readPreviewImage($0, original: content) },
+                        docxTarget: model.previewIsLocalFile ? NativeDocxReviewTarget(client: model.client, projectID: model.projectID, sessionID: model.sessionID, readOnly: readOnly) : nil).id(identity)
                 }
             }
             .sheet(item: $transcriptPreview) { artifact in
@@ -344,6 +345,7 @@ struct NativePanelFilePreview: View {
     var quote: ((String) -> Void)? = nil
     var documentQuote: ((NativeDocumentSelection) -> Bool)? = nil
     var loadImage: NativeFileImageLoader? = nil
+    var docxTarget: NativeDocxReviewTarget? = nil
     @State private var sourceMode = false
     @State private var editing = false
     @State private var draft = ""
@@ -394,6 +396,8 @@ struct NativePanelFilePreview: View {
             } else if !sourceMode, let kind = NativeDocumentKind.detect(content), !content.truncated {
                 if kind == .pdf, content.base64 != nil {
                     NativePDFPreview(content: content, quote: documentQuote.map { callback in { _ = callback($0) } })
+                } else if kind == .docx {
+                    NativeDocxReviewPreview(content: content, target: docxTarget, quote: documentQuote, saving: $saving)
                 } else if kind != .pdf {
                     NativeRichPreview(content: content, kind: kind, quote: documentQuote, loadImage: loadImage)
                 } else { Text(localized("当前宿主未提供 PDF 页面数据，请重新读取文件。")) }
