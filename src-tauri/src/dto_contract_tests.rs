@@ -1028,10 +1028,18 @@ fn research_calendar_contract_preserves_project_errors_and_truncation() {
 fn renderer_health_accepts_partial_numeric_snapshots() {
     let snapshot: wisp_dto::UiHealthSnapshot = serde_json::from_value(serde_json::json!({
         "timerLagMs": 850, "activeApps": 1, "parkedApps": 2, "scriptErrors": 3,
+        "recentLongestTaskMs": 75, "transcriptSwitchMs": 120, "transcriptRebuilds": 2,
+        "transcriptRetries": 1, "transcriptItems": 3700, "transcriptRows": 50,
         "mediaBlobUrls": 42, "mediaBlobBytes": 5_000_000_000_u64, "mediaOwners": 12
     }))
     .unwrap();
     assert_eq!(snapshot.timer_lag_ms, 850);
+    assert_eq!(snapshot.recent_longest_task_ms, 75);
+    assert_eq!(snapshot.transcript_switch_ms, 120);
+    assert_eq!(snapshot.transcript_rebuilds, 2);
+    assert_eq!(snapshot.transcript_retries, 1);
+    assert_eq!(snapshot.transcript_items, 3700);
+    assert_eq!(snapshot.transcript_rows, 50);
     assert_eq!(snapshot.active_apps, 1);
     assert_eq!(snapshot.parked_apps, 2);
     assert_eq!(snapshot.script_errors, 3);

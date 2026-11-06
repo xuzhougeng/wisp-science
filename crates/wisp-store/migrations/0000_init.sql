@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS messages (
     UNIQUE(frame_id, seq)
 );
 CREATE INDEX IF NOT EXISTS ix_messages_frame ON messages(frame_id);
+CREATE INDEX IF NOT EXISTS ix_messages_frame_ts ON messages(frame_id, ts);
 -- ix_messages_frame_epoch_seq lives in 0058_context_epochs.sql: a legacy
 -- messages table gains the epoch column only after this script has run.
 

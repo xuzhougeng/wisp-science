@@ -1,5 +1,5 @@
 //! A copy of each database, taken before another app version migrates it,
-//! and otherwise once a day when it is opened.
+//! and otherwise once a day during background maintenance.
 //! Migrations here only go forward; the pre-upgrade copy is the way back
 //! (#1175). The daily copy is what a damaged database is restored from
 //! (#1610); `Store::route_project` does that.
@@ -141,25 +141,8 @@ async fn copy_before_opening(
         .join(DIRECTORY);
     let label = label_of(&database, project)?;
     if last.abs() == current {
-        // Same version: one copy a day, of whatever kind (#1610).
-        let fresh = |path: &PathBuf| {
-            std::fs::metadata(path)
-                .and_then(|metadata| metadata.modified())
-                .map(|modified| modified.elapsed().is_ok_and(|age| age < DAY))
-                .unwrap_or(false)
-        };
-        if copies_in(&directory, &label, "").first().is_some_and(fresh) {
-            return Ok(());
-        }
-        // A damaged database must not rotate the copies it will be restored
-        // from. ponytail: a full scan once a day; sample pages if it shows.
-        let check: String = sqlx::query_scalar("PRAGMA quick_check(1)")
-            .fetch_one(pool)
-            .await?;
-        anyhow::ensure!(check == "ok", "Database failed quick_check: {check}");
-        let name = publish(pool, &database, &directory, &label, DAILY).await?;
-        prune(&directory, &label, DAILY);
-        tracing::info!(database = %database.display(), backup = %name, "Took the daily database copy");
+        // Daily maintenance is explicitly run after the window loads. Opening
+        // a routed database must never copy gigabytes under registry.pools.
         return Ok(());
     }
     if last.abs() > current {
@@ -190,6 +173,78 @@ async fn copy_before_opening(
         .await?;
     tracing::info!(database = %database.display(), backup = %name, "Backed up database before migration");
     Ok(())
+}
+
+/// Daily copies never run on the migration/open path. The caller serializes
+/// maintenance after first paint and passes cloned pools without registry locks.
+pub(crate) async fn daily_copy(
+    pool: &SqlitePool,
+    owner: &SqlitePool,
+    project: Option<&str>,
+) -> Result<()> {
+    // Do not back up a failed/incomplete migration as a known-good daily copy.
+    if stamp(pool).await? != stamp_of(VERSION) {
+        return Ok(());
+    }
+    let (Some(database), Some(owner)) = (database_file(pool).await?, database_file(owner).await?)
+    else {
+        return Ok(());
+    };
+    let directory = owner
+        .parent()
+        .context("database has no directory")?
+        .join(DIRECTORY);
+    let label = label_of(&database, project)?;
+    let now = chrono::Utc::now().naive_utc();
+    if copies_in(&directory, &label, "")
+        .first()
+        .is_some_and(|path| {
+            copy_time(path, &label).is_some_and(|created| {
+                let age = now.signed_duration_since(created).num_seconds();
+                (0..DAY.as_secs() as i64).contains(&age)
+            })
+        })
+    {
+        return Ok(());
+    }
+    let check: String = sqlx::query_scalar("PRAGMA quick_check(1)")
+        .fetch_one(pool)
+        .await?;
+    anyhow::ensure!(check == "ok", "Database failed quick_check: {check}");
+    let name = publish(pool, &database, &directory, &label, DAILY).await?;
+    prune(&directory, &label, DAILY);
+    tracing::info!(database = %database.display(), backup = %name, "Took the daily database copy");
+    Ok(())
+}
+
+fn copy_time(path: &Path, label: &str) -> Option<chrono::NaiveDateTime> {
+    let name = path.file_name()?.to_str()?;
+    let time = name.strip_prefix(label)?.strip_prefix('.')?.get(..15)?;
+    chrono::NaiveDateTime::parse_from_str(time, "%Y%m%d-%H%M%S").ok()
+}
+
+impl crate::Store {
+    /// Maintain only databases already opened by this process. Clone handles
+    /// under the registry mutex and release it before any checks or copies.
+    pub async fn maintain_daily_backups(&self) {
+        let mut pools = vec![(None, self.pool.clone())];
+        if let Some(registry) = &self.registry {
+            pools.extend(
+                registry
+                    .pools
+                    .lock()
+                    .await
+                    .iter()
+                    .map(|(id, pool)| (Some(id.clone()), pool.clone())),
+            );
+        }
+        for (project, pool) in pools {
+            if let Err(error) = daily_copy(&pool, &self.pool, project.as_deref()).await {
+                tracing::warn!(%error, "Daily database backup failed");
+            }
+            tokio::task::yield_now().await;
+        }
+    }
 }
 
 async fn publish(
@@ -254,7 +309,13 @@ async fn copy_file_while_quiet(pool: &SqlitePool, database: &Path, target: &Path
         Ok(metadata) => metadata.len() == 0,
         Err(error) => error.kind() == std::io::ErrorKind::NotFound,
     };
-    let copied = quiet.then(|| std::fs::copy(database, target));
+    let copied = if quiet {
+        let database = database.to_owned();
+        let target = target.to_owned();
+        Some(tokio::task::spawn_blocking(move || std::fs::copy(database, target)).await?)
+    } else {
+        None
+    };
     lock.rollback().await?;
     Ok(copied.transpose()?.is_some())
 }
@@ -379,21 +440,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn opening_defers_daily_copy_and_fresh_filename_ignores_old_mtime() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("wisp.sqlite");
+        written_by(&path, stamp_of(VERSION)).await;
+        let store = Store::open(&path).await.unwrap();
+        assert!(daily_copies(root.path()).is_empty());
+        store.maintain_daily_backups().await;
+        let first = daily_copies(root.path());
+        assert_eq!(first.len(), 1);
+        age(&root.path().join(DIRECTORY).join(&first[0]));
+        store.maintain_daily_backups().await;
+        assert_eq!(daily_copies(root.path()), first);
+        Store::close_pool(&store.pool).await;
+    }
+
+    #[tokio::test]
     async fn an_unchanged_database_is_copied_once_a_day() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("wisp.sqlite");
         written_by(&path, stamp_of(VERSION)).await;
-        Store::close_pool(&Store::open(&path).await.unwrap().pool).await;
+        let store = Store::open(&path).await.unwrap();
+        store.maintain_daily_backups().await;
+        Store::close_pool(&store.pool).await;
         let first = daily_copies(root.path());
         assert_eq!(first.len(), 1, "{first:?}");
         assert!(first[0].starts_with("wisp.") && first[0].ends_with(".daily.sqlite"));
         assert!(copies(root.path()).is_empty());
         // The same day: none.
-        Store::close_pool(&Store::open(&path).await.unwrap().pool).await;
+        let store = Store::open(&path).await.unwrap();
+        store.maintain_daily_backups().await;
+        Store::close_pool(&store.pool).await;
         assert_eq!(daily_copies(root.path()), first);
         // A day later: another, and the older one is what it was.
         let old = aged(&root.path().join(DIRECTORY), &first[0]);
-        Store::close_pool(&Store::open(&path).await.unwrap().pool).await;
+        let store = Store::open(&path).await.unwrap();
+        store.maintain_daily_backups().await;
+        Store::close_pool(&store.pool).await;
         let later = daily_copies(root.path());
         assert_eq!(later.len(), 2, "{later:?}");
         assert_eq!(later[1], old);
@@ -411,10 +494,14 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("wisp.sqlite");
         written_by(&path, 0).await;
-        Store::close_pool(&Store::open(&path).await.unwrap().pool).await;
+        let store = Store::open(&path).await.unwrap();
+        store.maintain_daily_backups().await;
+        Store::close_pool(&store.pool).await;
         assert_eq!(copies(root.path()).len(), 1);
         // Reopened by the same version within the day: still only that copy.
-        Store::close_pool(&Store::open(&path).await.unwrap().pool).await;
+        let store = Store::open(&path).await.unwrap();
+        store.maintain_daily_backups().await;
+        Store::close_pool(&store.pool).await;
         assert_eq!(copies(root.path()).len(), 1);
         assert!(daily_copies(root.path()).is_empty());
     }
@@ -424,11 +511,26 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("wisp.sqlite");
         written_by(&path, stamp_of(VERSION)).await;
-        // Page 1 stays readable; every table's pages are gone.
+        // Keep the schema readable so opening succeeds and daily maintenance
+        // itself has to reject the damaged table, rather than failing to open.
+        let pool = raw(&path).await;
+        let page: i64 =
+            sqlx::query_scalar("SELECT rootpage FROM sqlite_master WHERE name='settings'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let page_size: i64 = sqlx::query_scalar("PRAGMA page_size")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        Store::close_pool(&pool).await;
         let mut bytes = std::fs::read(&path).unwrap();
-        bytes[4096..].fill(0);
+        let start = ((page - 1) * page_size) as usize;
+        bytes[start..start + page_size as usize].fill(0);
         std::fs::write(&path, bytes).unwrap();
-        let _ = Store::open(&path).await;
+        let pool = raw(&path).await;
+        assert!(daily_copy(&pool, &pool, None).await.is_err());
+        Store::close_pool(&pool).await;
         assert!(daily_copies(root.path()).is_empty());
     }
 
@@ -448,7 +550,9 @@ mod tests {
             std::fs::write(directory.join(name), b"old").unwrap();
             age(&directory.join(name));
         }
-        Store::close_pool(&Store::open(&path).await.unwrap().pool).await;
+        let store = Store::open(&path).await.unwrap();
+        store.maintain_daily_backups().await;
+        Store::close_pool(&store.pool).await;
         let daily = daily_copies(root.path());
         assert_eq!(daily.len(), KEPT, "{daily:?}");
         assert!(!daily.contains(&"wisp.20200101-000001.daily.sqlite".to_string()));

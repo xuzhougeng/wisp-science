@@ -2357,6 +2357,7 @@ pub(super) async fn load_session(
     id: String,
     before_seq: Option<i64>,
 ) -> Result<SessionTranscriptPage, String> {
+    let started = std::time::Instant::now();
     let runtime = state.sessions.lock().await.get(&id).cloned();
     let page =
         read_session_transcript_page(&state.store, runtime.as_deref(), &id, before_seq).await?;
@@ -2425,6 +2426,7 @@ pub(super) async fn load_session(
         state.set_active(window.label(), project);
         state.set_active_frame(window.label(), Some(id.clone()));
         let _ = state.store.mark_frame_seen(&id).await;
+        state.needs_you_cache.invalidate();
         // Read the queue only now that this window is bound to the session:
         // every later transition reaches it as an event. Looked up again
         // because a first enqueue may have created the runtime meanwhile.
@@ -2448,7 +2450,7 @@ pub(super) async fn load_session(
         load_context_epoch_page(&state.store, &id, &mut items).await?;
     let in_context_from_user_index =
         in_context_from_user_index(&state.store, &id, &context_epochs, head_epoch).await?;
-    Ok(SessionTranscriptPage {
+    let response = SessionTranscriptPage {
         archived: state
             .store
             .research_archive(&id)
@@ -2487,7 +2489,29 @@ pub(super) async fn load_session(
         } else {
             Vec::new()
         },
-    })
+    };
+    let response_bytes = serialized_payload_bytes(&response);
+    tracing::info!(target: "wisp", total_ms = started.elapsed().as_millis() as u64,
+        items = response.items.len(), response_bytes, paginated = before_seq.is_some(),
+        "session transcript loaded");
+    Ok(response)
+}
+
+/// Count encoded bytes without allocating a second copy of a large transcript.
+fn serialized_payload_bytes(value: &impl serde::Serialize) -> u64 {
+    struct Counter(u64);
+    impl std::io::Write for Counter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 += bytes.len() as u64;
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut counter = Counter(0);
+    let _ = serde_json::to_writer(&mut counter, value);
+    counter.0
 }
 
 async fn load_context_epoch_page(
@@ -2760,10 +2784,13 @@ async fn read_session_transcript_page(
             flush_session_events(&runtime.ui_event_writer).await?;
         }
     }
+    let sql_started = std::time::Instant::now();
     let page = store
         .load_session_transcript_page(id, before_seq, SESSION_TRANSCRIPT_PAGE_TURNS)
         .await
         .map_err(|error| error.to_string())?;
+    tracing::info!(target: "wisp", sql_ms = sql_started.elapsed().as_millis() as u64,
+        messages = page.messages.len(), events = page.ui_events.len(), "session transcript queried");
     if before_seq.is_none() {
         if let Some(runtime) = runtime {
             // Deliver already-buffered live deltas before returning the snapshot
@@ -2930,7 +2957,9 @@ pub(super) async fn list_needs_you_sessions(
 ) -> Result<Vec<wisp_dto::SessionSearchInfo>, String> {
     let running = state.running_turns.lock().await.clone();
     let awaiting = state.awaiting_confirm.lock().unwrap().clone();
-    wisp_app::projects::list_needs_you_sessions(&state.store, &running, &awaiting)
+    state
+        .needs_you_cache
+        .list(&state.store, &running, &awaiting)
         .await
         .map_err(|error| error.to_string())
 }
@@ -2990,6 +3019,15 @@ mod branch_summary_tests {
     use super::{
         branch_summary_output_budget, branch_summary_payload, BRANCH_SUMMARY_OUTPUT_TOKENS,
     };
+
+    #[test]
+    fn response_size_counts_encoded_bytes_without_copying_the_response() {
+        let value = serde_json::json!({"text": "研究\nquoted \"text\"", "items": [1, 2, 3]});
+        assert_eq!(
+            super::serialized_payload_bytes(&value),
+            serde_json::to_vec(&value).unwrap().len() as u64
+        );
+    }
 
     #[test]
     fn output_budget_follows_the_profile_up_to_the_model_ceiling() {

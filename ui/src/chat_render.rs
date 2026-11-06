@@ -982,6 +982,8 @@ pub(crate) fn render_steps_group(
     let toggle_group_id = group_id.clone();
     let rows_group_id = group_id;
     let group_open = create_memo(move |_| disclosure_open(disclosure_state, &class_group_id, live));
+    let visible_steps = create_rw_signal(100usize);
+    let step_count = indices.len();
     // A settled group can contain failed or interrupted tools. Keep those
     // neutral instead of turning their activity indicator into a success tick.
     let settled_ok = source.with_untracked(|items| {
@@ -1021,9 +1023,14 @@ pub(crate) fn render_steps_group(
                 <span class="steps-chevron" aria-hidden="true">{compose_icon("chevron-right")}</span>
             </button>
             {move || group_open.get().then(|| view! {
-                <div class="steps-body">{
-                    render_step_rows(
-                        &indices,
+                <div class="steps-body">
+                    {move || (visible_steps.get() < step_count).then(|| view! {
+                        <button type="button" class="steps-more" on:click=move |_| visible_steps.update(|count| *count += 100)>
+                            {move || t(locale.get(), "chat.steps_earlier")}
+                        </button>
+                    })}
+                    {render_step_rows(
+                        &indices[indices.len().saturating_sub(visible_steps.get())..],
                         source,
                         live,
                         &rows_group_id,
@@ -1049,12 +1056,11 @@ fn render_step_rows(
     indices
         .iter()
         .copied()
-        .enumerate()
-        .map(|(position, index)| {
+        .map(|index| {
             render_step_row(
                 source,
                 index,
-                position,
+                index,
                 live,
                 group_id,
                 disclosure_state,

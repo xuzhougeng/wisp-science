@@ -920,6 +920,11 @@ impl Store {
         .fetch_one(pool)
         .await?;
         if notebook_tables == 3 {
+            sqlx::query(
+                "CREATE INDEX IF NOT EXISTS ix_messages_frame_ts ON messages(frame_id, ts)",
+            )
+            .execute(pool)
+            .await?;
             sqlx::raw_sql(include_str!("../migrations/0057_research_archives.sql"))
                 .execute(pool)
                 .await?;

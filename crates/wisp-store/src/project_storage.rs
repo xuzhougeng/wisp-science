@@ -2250,10 +2250,11 @@ mod tests {
             .append_message("frame", 1, &wisp_llm::Message::user("kept"))
             .await
             .unwrap();
-        // A project this version created has nothing older to keep; the day's
-        // copy of the project (#1610) is the only one.
+        // Neither project routing nor app opening performs daily backup I/O.
         assert!(backup_names(&backups, ".pre-").is_empty());
-        assert_eq!(backup_names(&backups, ".daily.").len(), 1);
+        assert!(backup_names(&backups, ".daily.").is_empty());
+        store.maintain_daily_backups().await;
+        assert_eq!(backup_names(&backups, ".daily.").len(), 2);
 
         let stamp = |version: Option<i64>| {
             let options = sqlx::sqlite::SqliteConnectOptions::new().filename(&database);

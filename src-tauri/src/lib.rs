@@ -7541,6 +7541,33 @@ fn spawn_deferred_startup(app: &tauri::AppHandle) {
     });
 }
 
+/// One sequential maintenance worker, started only after the main page loads.
+/// Later passes include projects opened since the first pass, without opening
+/// unused projects or holding their registry lock during backup I/O.
+fn spawn_database_maintenance(app: &tauri::AppHandle) {
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    if STARTED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        // Let the first page paint before starting disk-intensive work.
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        loop {
+            // A native host page can finish while setup is still migrating.
+            let stores = app.try_state::<AppState>()
+                .map(|state| (state.store.clone(), state.library.clone()));
+            let Some((store, library)) = stores else {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                continue;
+            };
+            store.maintain_daily_backups().await;
+            library.maintain_daily_backups().await;
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        }
+    });
+}
+
 /// Webview navigation guard. The app is a single-page UI, so any navigation
 /// away from its own origin means a clicked link slipped past the frontend
 /// click handlers — block it instead of replacing the whole session view
@@ -7651,6 +7678,7 @@ pub fn run() {
             if first {
                 update_startup_report(|report| report.window_ready_ms = Some(ms));
                 tracing::info!(target: "wisp", ms = ms as u64, "main window finished loading");
+                spawn_database_maintenance(webview.app_handle());
             }
         })
         .setup(move |app| {
@@ -7828,6 +7856,7 @@ pub fn run() {
                 acp_permissions: tokio::sync::Mutex::new(HashMap::new()),
                 acp_asks: tokio::sync::Mutex::new(HashMap::new()),
                 running_turns: tokio::sync::Mutex::new(HashSet::new()),
+                needs_you_cache: Default::default(),
                 completion_dispatches: tokio::sync::Mutex::new(HashSet::new()),
                 project_activity: ProjectActivityLocks::default(),
                 resource_leases: resource_leases::ProjectResourceCoordinator::default(),

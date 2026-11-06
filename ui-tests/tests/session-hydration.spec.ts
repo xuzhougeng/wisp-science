@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { tauriMock } from "./mock-tauri";
+import { clickInChat } from "./chat-scroll";
 
 async function setup(page: Page) {
   await page.addInitScript(tauriMock);
@@ -23,7 +24,7 @@ async function setup(page: Page) {
         if (state.snapshotGate) await state.snapshotGate;
         if (state.fail) throw new Error("snapshot unavailable");
         return {
-          items: [{ role: "user", text: "Analyze CRA002586" }, { role: "assistant", text: state.text }],
+          items: state.items ?? [{ role: "user", text: "Analyze CRA002586" }, { role: "assistant", text: state.text }],
           next_before_seq: null, user_offset: 0,
           pending_approvals: state.approval ? [w.approval] : [],
         };
@@ -147,4 +148,60 @@ test("a failed conversation does not hide the welcome screen in a new conversati
   await page.getByRole("button", { name: /New session/ }).first().click();
   await expect(page.locator(".empty-logo")).toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("a 3700-item running turn mounts a bounded tail and lazily pages older activity", async ({ page }) => {
+  await setup(page);
+  await page.evaluate(() => {
+    (window as any).hydration.items = [
+      { role: "user", text: "Long autonomous analysis" },
+      ...Array.from({ length: 3700 }, (_, index) => ({ role: "reasoning", text: `Reasoning phase ${index}` })),
+      { role: "assistant", text: "Current live response" },
+    ];
+  });
+  await open(page);
+  await expect(page.getByText("Current live response", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Deny", exact: true })).toBeVisible();
+  const older = page.locator(".steps.activity-summary").first();
+  await expect(older.locator(".steps-head")).toHaveAttribute("aria-expanded", "false");
+  await expect(older.locator(".steps-body")).toHaveCount(0);
+  expect(await page.locator(".chat .msg").count()).toBeLessThanOrEqual(52);
+  await clickInChat(older.locator(".steps-head"));
+  await expect(older.locator(".step")).toHaveCount(100);
+  await clickInChat(older.getByRole("button", { name: "Show 100 earlier activity items" }));
+  await expect(older.locator(".step")).toHaveCount(200);
+  await clickInChat(older.locator(".steps-head"));
+  await expect(older.locator(".steps-body")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => (window as any).hydration.loads)).toBe(1);
+});
+
+test("inbox invalidations share one in-flight request and retain a trailing refresh", async ({ page }) => {
+  await setup(page);
+  await open(page);
+  await expect(page.getByTestId("transcript-loading")).toHaveCount(0);
+  await page.evaluate(() => {
+    const w = window as any;
+    const invoke = w.__TAURI__.core.invoke;
+    w.inboxProbe = { calls: 0, active: 0, maxActive: 0, releases: [] };
+    w.__TAURI__.core.invoke = async (cmd: string, args: any) => {
+      if (cmd !== "list_needs_you_sessions") return invoke(cmd, args);
+      const probe = w.inboxProbe;
+      probe.calls++;
+      probe.maxActive = Math.max(probe.maxActive, ++probe.active);
+      await new Promise<void>(resolve => probe.releases.push(resolve));
+      probe.active--;
+      return [];
+    };
+  });
+  // Opening the inbox explicitly refreshes it, even with no runtime changes.
+  await page.locator(".inbox-wrap .icon-btn").click();
+  await expect.poll(() => page.evaluate(() => (window as any).inboxProbe.calls)).toBe(1);
+  await page.evaluate(() => {
+    const w = window as any;
+    for (let n = 0; n < 20; n++) w.__tauriEmit("confirm-resolved", w.approval);
+    w.inboxProbe.releases.shift()();
+  });
+  await expect.poll(() => page.evaluate(() => (window as any).inboxProbe.calls)).toBe(2);
+  expect(await page.evaluate(() => (window as any).inboxProbe.maxActive)).toBe(1);
+  await page.evaluate(() => (window as any).inboxProbe.releases.shift()());
 });
