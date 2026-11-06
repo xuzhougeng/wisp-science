@@ -55,6 +55,15 @@ async function setup(page: Page, options: { writable: boolean; conflict: boolean
 const row = (page: Page, id: string) => page.locator(`[data-change-id="${id}"]`);
 const writes = (page: Page) => page.evaluate(() => (window as any).docxCalls.filter((c: any) => c.cmd === 'resolve_docx_review').map((c: any) => c.args));
 
+test('DOCX review controls follow the UI font size preference', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('wisp-ui-font-size', '21'));
+  await setup(page);
+  // The 12px review labels and actions scale by 21/14, including nested buttons.
+  const controls = page.locator('.docx-review-toolbar button, .docx-review-change-head, .docx-review-change button');
+  await expect(controls).toHaveCount(12);
+  for (const control of await controls.all()) await expect(control).toHaveCSS('font-size', '18px');
+});
+
 test('DOCX renders native revision markup and accepts deletions and rewrites as separate batches', async ({ page }) => {
   await setup(page);
   await expect(page.locator('.rp-docx del').first()).toContainText('Old conclusion');

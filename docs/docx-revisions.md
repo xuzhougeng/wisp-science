@@ -67,6 +67,8 @@ Both WebView and SwiftUI previews display native deletion/insertion markup and a
   standalone deletions and insertions pending.
 - **Refresh revisions** reloads the document after another editor changes it.
 
+Review controls follow Wisp's UI font size setting.
+
 Each successful choice saves the currently opened local file and refreshes the
 list and preview. Before saving, Wisp keeps an exact copy of that version at
 `<project>/.wisp/docx-review/<source-sha256>.docx`. A suggestion's original source

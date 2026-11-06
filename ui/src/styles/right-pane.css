@@ -563,11 +563,11 @@ button.run-status:hover { filter:brightness(0.96); }
 .docx-review > .rp-heavy { display: flex; flex: 1 1 auto; min-height: 120px; flex-direction: column; overflow: auto; }
 .docx-review-panel { padding: 12px; border-bottom: 1px solid var(--border); background: var(--bg-elev); flex: 0 1 auto; max-height: 50%; overflow: auto; }
 .docx-review-toolbar, .docx-review-change-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.docx-review-toolbar button, .docx-review-change button { font: inherit; font-size: 12px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-sunken); color: var(--text); cursor: pointer; }
+.docx-review-toolbar button, .docx-review-change button { font: inherit; font-size: calc(12px * var(--ui-font-scale, 1)); padding: 4px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-sunken); color: var(--text); cursor: pointer; }
 .docx-review button:disabled { opacity: .45; cursor: default; }
 .docx-review-changes { max-height: 260px; overflow: auto; }
 .docx-review-change { padding: 8px 0; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
-.docx-review-change-head { margin-bottom: 5px; font-size: 12px; }
+.docx-review-change-head { margin-bottom: 5px; font-size: calc(12px * var(--ui-font-scale, 1)); }
 .docx-review-change-head span { color: var(--text-muted); flex: 1; }
 .docx-review :is(del, ins) { white-space: pre-wrap; }
 .docx-review del { color: #952424; background: #ffe1e1; text-decoration: line-through; }
