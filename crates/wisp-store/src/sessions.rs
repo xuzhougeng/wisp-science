@@ -2044,6 +2044,47 @@ impl Store {
         Ok(())
     }
 
+    /// Append a drained batch of UI events as consecutive rows
+    /// `first_seq..first_seq + events_json.len()` inside one transaction.
+    ///
+    /// Project databases use the rollback journal, where every autocommit
+    /// `INSERT` is its own fsync; a streaming turn that persisted each event
+    /// on its own paid one commit per event (#1690 W6.1). The batch commits
+    /// once, and either every row lands or none does, so a failed batch never
+    /// leaves a hole for later rows to be written past. An empty batch is a
+    /// no-op that touches no database.
+    pub async fn append_session_ui_events(
+        &self,
+        frame_id: &str,
+        first_seq: i64,
+        events_json: &[String],
+    ) -> Result<()> {
+        if events_json.is_empty() {
+            return Ok(());
+        }
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.append_session_ui_events(frame_id, first_seq, events_json))
+                .await;
+        }
+        // One stamp per batch: the rows were buffered together, and the
+        // single-row path already stamps write time rather than arrival time.
+        let created_at = chrono::Utc::now().timestamp_millis();
+        let mut tx = self.begin_write().await?;
+        for (offset, event_json) in events_json.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO session_ui_events(frame_id,seq,event_json,created_at) VALUES(?,?,?,?)",
+            )
+            .bind(frame_id)
+            .bind(first_seq + offset as i64)
+            .bind(event_json)
+            .bind(created_at)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     pub async fn load_session_ui_events(&self, frame_id: &str) -> Result<Vec<String>> {
         if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
             return Box::pin(store.load_session_ui_events(frame_id)).await;
