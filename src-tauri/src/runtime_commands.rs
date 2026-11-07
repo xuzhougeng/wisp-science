@@ -448,14 +448,18 @@ pub(super) async fn restart_runtime(
 pub(super) async fn list_runs(
     state: State<'_, AppState>,
     window: crate::workspace_surface::WorkspaceSurface,
+    active_only: Option<bool>,
 ) -> Result<Vec<wisp_store::RunSummary>, String> {
     let (_, scope) =
         exploration_commands::working_project_for_active_frame(&state, window.label()).await?;
-    state
-        .store
-        .list_run_summaries_in_scope(&scope)
-        .await
-        .map_err(|e| format!("{e}"))
+    // The WebView polls active Runs every second during a turn and reads the
+    // whole list less often; see `list_active_run_summaries_in_scope`.
+    let summaries = if active_only.unwrap_or(false) {
+        state.store.list_active_run_summaries_in_scope(&scope).await
+    } else {
+        state.store.list_run_summaries_in_scope(&scope).await
+    };
+    summaries.map_err(|e| format!("{e}"))
 }
 
 #[tauri::command]

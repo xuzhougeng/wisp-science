@@ -84,3 +84,41 @@ test('a running subagent can be stopped and a child conversation opened from the
   // Switching conversations leaves the detail page.
   await expect(detail).toHaveCount(0);
 });
+
+test('a slow subagent read is never stacked by the one-second poll', async ({ page }) => {
+  const panel = await openAgentsPane(page);
+  await expect(panel.getByTestId('agent-activity-running')).toContainText('Align the reads');
+  await page.evaluate(() => {
+    const w = window as any;
+    const original = w.__TAURI__.core.invoke;
+    const state = w.__agentPoll = { calls: 0, active: 0, peak: 0, hold: true, release: null };
+    w.__TAURI__.core.invoke = async (cmd: string, args: any) => {
+      if (cmd !== 'list_subagent_activity') return original(cmd, args);
+      state.calls += 1;
+      state.active += 1;
+      state.peak = Math.max(state.peak, state.active);
+      try {
+        const response = await original(cmd, args);
+        if (state.hold) await new Promise<void>((resolve) => { state.release = resolve; });
+        return response;
+      } finally {
+        state.active -= 1;
+      }
+    };
+  });
+  const poll = (key: string) => page.evaluate((name) => (window as any).__agentPoll[name], key);
+  await expect.poll(() => poll('active')).toBe(1);
+  // Several ticks pass while the read is held; none may start another read.
+  await page.waitForTimeout(2_500);
+  expect(await poll('calls')).toBe(1);
+  expect(await poll('peak')).toBe(1);
+  await page.evaluate(() => {
+    const state = (window as any).__agentPoll;
+    state.hold = false;
+    state.release?.();
+  });
+  // The ticks that were held back collapse into a read after the slow one.
+  await expect.poll(() => poll('calls')).toBeGreaterThan(1);
+  expect(await poll('peak')).toBe(1);
+  await expect(panel.getByTestId('agent-activity-running')).toContainText('Align the reads');
+});

@@ -11342,3 +11342,133 @@ async fn message_activity_index_is_repaired_idempotently_and_covers_max_timestam
     store.mark_frame_seen("f").await.unwrap();
     assert!(!store.list_session_last_roles("p").await.unwrap()[0].2);
 }
+
+#[tokio::test]
+async fn load_messages_since_appends_and_resets_when_history_is_rewritten() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&dir.path().join("since.sqlite")).await.unwrap();
+    store.create_project("p1", "proj", "").await.unwrap();
+    store
+        .create_frame("f1", "p1", "OPERON", "m3")
+        .await
+        .unwrap();
+    let texts = |delta: &MessageLogDelta| {
+        delta
+            .messages
+            .iter()
+            .map(|message| message.content.as_text())
+            .collect::<Vec<_>>()
+    };
+
+    let empty = store.load_messages_since("f1", None).await.unwrap();
+    assert!(empty.reset && empty.messages.is_empty() && empty.cursor.is_none());
+
+    store
+        .append_message("f1", 0, &Message::user("one"))
+        .await
+        .unwrap();
+    store
+        .append_message("f1", 1, &Message::assistant("two"))
+        .await
+        .unwrap();
+    let first = store.load_messages_since("f1", None).await.unwrap();
+    assert!(first.reset);
+    assert_eq!(texts(&first), ["one", "two"]);
+    let cursor = first.cursor.clone().unwrap();
+    assert_eq!((cursor.epoch, cursor.seq, cursor.rows), (0, 1, 2));
+
+    let idle = store
+        .load_messages_since("f1", Some(&cursor))
+        .await
+        .unwrap();
+    assert!(!idle.reset && idle.messages.is_empty());
+    assert_eq!(idle.cursor.as_ref(), Some(&cursor));
+
+    store
+        .append_message("f1", 2, &Message::assistant("three"))
+        .await
+        .unwrap();
+    let appended = store
+        .load_messages_since("f1", Some(&cursor))
+        .await
+        .unwrap();
+    assert!(!appended.reset);
+    assert_eq!(texts(&appended), ["three"]);
+    let cursor = appended.cursor.unwrap();
+    assert_eq!((cursor.seq, cursor.rows), (2, 3));
+
+    // Undo and a new reply at the same seq: the row at the cursor is new.
+    store.truncate_model_context("f1", 1).await.unwrap();
+    store
+        .append_message("f1", 2, &Message::assistant("again"))
+        .await
+        .unwrap();
+    let rewritten = store
+        .load_messages_since("f1", Some(&cursor))
+        .await
+        .unwrap();
+    assert!(rewritten.reset);
+    assert_eq!(texts(&rewritten), ["one", "two", "again"]);
+    let cursor = rewritten.cursor.unwrap();
+
+    // A row removed below the cursor (timer turn replacement) changes the count.
+    sqlx::query("DELETE FROM messages WHERE frame_id='f1' AND seq=0")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    let shrunk = store
+        .load_messages_since("f1", Some(&cursor))
+        .await
+        .unwrap();
+    assert!(shrunk.reset);
+    assert_eq!(texts(&shrunk), ["two", "again"]);
+    let cursor = shrunk.cursor.unwrap();
+
+    // Compaction moves the head to a new epoch.
+    sqlx::query("UPDATE frames SET head_epoch=1 WHERE id='f1'")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    let compacted = store
+        .load_messages_since("f1", Some(&cursor))
+        .await
+        .unwrap();
+    assert!(compacted.reset && compacted.messages.is_empty() && compacted.cursor.is_none());
+}
+
+#[tokio::test]
+async fn active_run_summaries_skip_finished_runs_in_scope() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&dir.path().join("runs.sqlite")).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    for (id, status) in [
+        ("queued", RunStatus::Submitted),
+        ("live", RunStatus::Running),
+        ("stopping", RunStatus::Cancelling),
+        ("paused", RunStatus::Paused),
+        ("done", RunStatus::Succeeded),
+        ("broken", RunStatus::Failed),
+    ] {
+        let mut run = RunRecord::new(id, "p", "local", id, "command");
+        run.status = status;
+        run.stdout_tail = Some("x".repeat(64 * 1024));
+        store.create_run(&run).await.unwrap();
+    }
+    let mut ids = store
+        .list_active_run_summaries_in_scope(&StateScope::mainline("p"))
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|run| run.id)
+        .collect::<Vec<_>>();
+    ids.sort();
+    assert_eq!(ids, ["live", "queued", "stopping"]);
+    assert_eq!(
+        store
+            .list_run_summaries_in_scope(&StateScope::mainline("p"))
+            .await
+            .unwrap()
+            .len(),
+        6
+    );
+}

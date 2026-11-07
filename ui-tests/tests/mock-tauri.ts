@@ -4734,8 +4734,11 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           case "resize_terminal":
           case "close_terminal":
             return null;
-          case "list_runs":
-            return runs.map(runSummary);
+          case "list_runs": {
+            const active = new Set(["submitted", "running", "cancelling"]);
+            const listed = arg("activeOnly") ? runs.filter((run) => active.has(run.status)) : runs;
+            return listed.map(runSummary);
+          }
           case "get_run_detail": {
             const run = runs.find((item) => item.id === String(arg("runId") ?? ""));
             if (!run) throw new Error("Run not found");

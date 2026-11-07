@@ -43,6 +43,26 @@ startup skips the exploration-promotion scan when no journal directories exist.
 Actual file recovery remains synchronous before tools can change workspace
 files; interrupted recovery and upgrades can therefore still delay startup.
 
+## Agents pane and Run list polling
+
+While open, the Agents pane refreshes every second. Only one read runs at a
+time; refreshes requested during a slow read collapse into a single read after
+it, and a reply for a conversation the pane has since left is dropped. The
+subagent feed keeps a per-conversation fold of what it needs (each child's
+latest instruction, answer, last activity time and tool count, and the parent's
+`explore` and `consult_expert` calls with their results) and reads only the
+messages appended since the previous poll. Compaction, undo, rewind and timer
+turn replacement change the head-epoch log below the saved position, so that
+conversation is folded again from its full history.
+
+While a turn or transfer runs, the Run list re-reads only submitted, running and
+cancelling Runs every second and merges them into the list it already shows. When
+a Run starts or stops being active, the whole list is read at once; otherwise the
+whole list is still read every five seconds. Each Run row stores up to 64 KiB each
+of stdout and stderr tail ahead of most summary columns, so a full read still
+touches every finished Run's tails; moving the tails out of the row needs its own
+schema design.
+
 ## Diagnostics and regression checks
 
 The application log includes `session transcript queried` with `sql_ms`, message
@@ -61,7 +81,10 @@ publication followed by a hydrated publication, so two projections can be normal
 
 With permission to run tests, use the store index/backup tests, shared app query
 tests, transcript projection/cache unit tests, and Playwright
-`session-hydration.spec.ts` and `performance-diagnostics.spec.ts`. The mocks need
+`session-hydration.spec.ts` and `performance-diagnostics.spec.ts`. For polling,
+use the `load_messages_since` and active Run summary store tests, the subagent
+fold tests, the UI refresh guard and Run merge tests, and the slow-read case in
+`subagent-activity.spec.ts`. The mocks need
 no model API, SSH host, GPU, or user database. Deterministic assertions cover the
 covering index, idempotent migration, lazy row counts, one in-flight inbox request,
 backup timing, and interval/cumulative diagnostics.

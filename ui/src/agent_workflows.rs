@@ -10,6 +10,7 @@ use crate::workflow_conversion::{ConversionProgress, ConversionState};
 use leptos::{ev, *};
 use serde_json::Value;
 use serde_wasm_bindgen::to_value;
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -894,35 +895,96 @@ pub(super) fn refresh_agent_resources(
     });
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AgentRefresh {
+    Idle,
+    Running,
+    /// Asked for again while a read was running; it runs once more after it.
+    Queued,
+}
+
+thread_local! {
+    static AGENT_REFRESH: Cell<AgentRefresh> = const { Cell::new(AgentRefresh::Idle) };
+}
+
+/// True when the caller should start reading; otherwise one more read is
+/// queued behind the running one.
+fn begin_agent_refresh() -> bool {
+    AGENT_REFRESH.with(|refresh| {
+        let idle = refresh.get() == AgentRefresh::Idle;
+        refresh.set(if idle {
+            AgentRefresh::Running
+        } else {
+            AgentRefresh::Queued
+        });
+        idle
+    })
+}
+
+/// After a read: true when another was asked for meanwhile.
+fn finish_agent_refresh() -> bool {
+    AGENT_REFRESH.with(|refresh| {
+        let queued = refresh.get() == AgentRefresh::Queued;
+        refresh.set(if queued {
+            AgentRefresh::Running
+        } else {
+            AgentRefresh::Idle
+        });
+        queued
+    })
+}
+
+/// The Agents tab polls this every second and actions call it directly. A
+/// slow read must not stack another on every tick, so at most one runs and
+/// requests that arrive meanwhile collapse into a single read after it.
 pub(super) fn refresh_agent_workflows(state: AgentPanelState) {
+    if !begin_agent_refresh() {
+        return;
+    }
     spawn_local(async move {
-        let args = serde_json::json!({ "sessionId": state.session_id.get_untracked() });
-        match invoke_checked("list_agent_workflows", to_value(&args).unwrap()).await {
-            Ok(value) => {
-                match serde_wasm_bindgen::from_value::<Vec<AgentWorkflowSnapshot>>(value) {
-                    Ok(items) => {
-                        // Polled every second while the Agents tab is open; an
-                        // unchanged snapshot must not rebuild every group.
-                        if state.workflows.with_untracked(|current| current != &items) {
-                            state.workflows.set(items);
-                        }
-                        state.error.set(None);
-                    }
-                    Err(parse_error) => state.error.set(Some(parse_error.to_string())),
-                }
-            }
-            Err(invoke_error) => state.error.set(Some(js_error_text(invoke_error))),
-        }
-        let args = serde_json::json!({ "sessionId": state.session_id.get_untracked() });
-        if let Ok(value) = invoke_checked("list_subagent_activity", to_value(&args).unwrap()).await
-        {
-            if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<SubagentActivity>>(value) {
-                if state.activity.with_untracked(|current| current != &items) {
-                    state.activity.set(items);
-                }
+        loop {
+            load_agent_panel(state).await;
+            if !finish_agent_refresh() {
+                break;
             }
         }
     });
+}
+
+async fn load_agent_panel(state: AgentPanelState) {
+    let session_id = state.session_id.get_untracked();
+    // A reply for a conversation the pane has since left is dropped; the
+    // switch queued its own read.
+    let still_current = || state.session_id.get_untracked() == session_id;
+    let args = serde_json::json!({ "sessionId": session_id });
+    let workflows = invoke_checked("list_agent_workflows", to_value(&args).unwrap()).await;
+    if !still_current() {
+        return;
+    }
+    match workflows {
+        Ok(value) => match serde_wasm_bindgen::from_value::<Vec<AgentWorkflowSnapshot>>(value) {
+            Ok(items) => {
+                // An unchanged snapshot must not rebuild every group.
+                if state.workflows.with_untracked(|current| current != &items) {
+                    state.workflows.set(items);
+                }
+                state.error.set(None);
+            }
+            Err(parse_error) => state.error.set(Some(parse_error.to_string())),
+        },
+        Err(invoke_error) => state.error.set(Some(js_error_text(invoke_error))),
+    }
+    let activity = invoke_checked("list_subagent_activity", to_value(&args).unwrap()).await;
+    if !still_current() {
+        return;
+    }
+    if let Ok(value) = activity {
+        if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<SubagentActivity>>(value) {
+            if state.activity.with_untracked(|current| current != &items) {
+                state.activity.set(items);
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -4846,6 +4908,18 @@ pub(super) fn agent_workflows_panel(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_refreshes_run_one_at_a_time_with_one_trailing_read() {
+        assert!(begin_agent_refresh());
+        // Ticks during a slow read start nothing and collapse into one more read.
+        assert!(!begin_agent_refresh());
+        assert!(!begin_agent_refresh());
+        assert!(finish_agent_refresh());
+        assert!(!finish_agent_refresh());
+        assert!(begin_agent_refresh());
+        assert!(!finish_agent_refresh());
+    }
 
     #[test]
     fn workflow_progress_counts_observed_states_without_estimating_time() {

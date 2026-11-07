@@ -10017,8 +10017,11 @@ fn App() -> impl IntoView {
                     && !run.progress_json.is_empty()
                     && run.progress_json != "{}"
             });
-            if tick == 0 || busy.get_untracked() || transfer_active {
+            if tick == 0 {
                 refresh_runs(run_records, locale, Some(run_refresh_health));
+            } else if busy.get_untracked() || transfer_active {
+                // Between full reads only active Runs can change on their own.
+                refresh_active_runs(run_records, locale, Some(run_refresh_health));
             }
         }) as Box<dyn FnMut()>);
         let _ = web_sys::window().and_then(|window| {
