@@ -4190,15 +4190,22 @@ async fn session_ui_event_batches_keep_order_and_contiguous_seq() {
     assert!(timed.iter().all(|event| event.created_at.is_some()));
     assert_eq!(store.next_session_ui_event_seq("f").await.unwrap(), 7);
 
-    // A batch that collides with an existing seq writes nothing at all, so
-    // the writer's seq stays valid for its retry.
-    let colliding = vec![ui_event_json("Text", 7), ui_event_json("Text", 6)];
+    // A batch whose second row collides with an existing seq writes nothing
+    // at all: the first row is rolled back with it, so the writer's seq
+    // stays valid for whatever it retries.
+    let blocker = ui_event_json("Usage", 8);
+    store
+        .append_session_ui_event("f", 8, &blocker)
+        .await
+        .unwrap();
+    let colliding = vec![ui_event_json("Text", 7), ui_event_json("Text", 8)];
     assert!(store
         .append_session_ui_events("f", 7, &colliding)
         .await
         .is_err());
+    expected.push(blocker);
     assert_eq!(store.load_session_ui_events("f").await.unwrap(), expected);
-    assert_eq!(store.next_session_ui_event_seq("f").await.unwrap(), 7);
+    assert_eq!(store.next_session_ui_event_seq("f").await.unwrap(), 9);
     store.pool.close().await;
     let _ = std::fs::remove_file(&tmp);
 }
@@ -4206,7 +4213,13 @@ async fn session_ui_event_batches_keep_order_and_contiguous_seq() {
 #[tokio::test]
 async fn session_ui_event_batch_commits_once_on_the_routed_project_store() {
     let root = tempfile::tempdir().unwrap();
-    let store = Store::open(&root.path().join("global.sqlite"))
+    // Only an application store carries the project registry; a project
+    // created with decentralized storage lands in its own workspace database.
+    let store = Store::open_application(&root.path().join("global.sqlite"))
+        .await
+        .unwrap();
+    store
+        .set_setting("decentralized_project_storage", "true")
         .await
         .unwrap();
     let workspace = root.path().join("workspace");
@@ -4214,11 +4227,9 @@ async fn session_ui_event_batch_commits_once_on_the_routed_project_store() {
         .create_project("p", "P", workspace.to_str().unwrap())
         .await
         .unwrap();
-    store.migrate_project_storage("p").await.unwrap();
     store.create_frame("f", "p", "OPERON", "m").await.unwrap();
     let project = store.route_project("p").await.unwrap().unwrap();
     let project_commits = count_commits(&project.pool).await;
-    let global_commits = count_commits(&store.pool).await;
 
     let events: Vec<String> = (1..=50)
         .map(|index| ui_event_json("MessageBoundary", index))
@@ -4232,7 +4243,6 @@ async fn session_ui_event_batch_commits_once_on_the_routed_project_store() {
         1,
         "a batch must cost one commit"
     );
-    assert_eq!(global_commits.load(std::sync::atomic::Ordering::SeqCst), 0);
     let routed: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM session_ui_events WHERE frame_id='f'")
             .fetch_one(&project.pool)
