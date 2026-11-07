@@ -2250,10 +2250,11 @@ mod tests {
             .append_message("frame", 1, &wisp_llm::Message::user("kept"))
             .await
             .unwrap();
-        // A project this version created has nothing older to keep; the day's
-        // copy of the project (#1610) is the only one.
+        // Neither project routing nor app opening performs daily backup I/O.
         assert!(backup_names(&backups, ".pre-").is_empty());
-        assert_eq!(backup_names(&backups, ".daily.").len(), 1);
+        assert!(backup_names(&backups, ".daily.").is_empty());
+        store.maintain_daily_backups().await;
+        assert_eq!(backup_names(&backups, ".daily.").len(), 2);
 
         let stamp = |version: Option<i64>| {
             let options = sqlx::sqlite::SqliteConnectOptions::new().filename(&database);
@@ -2311,13 +2312,15 @@ mod tests {
             .create_frame("frame", "study", "agent", "model")
             .await
             .unwrap();
+        // The desktop now schedules daily copies after first paint. Seed an
+        // empty copy explicitly, then verify recovery prefers the later one.
+        store.maintain_daily_backups().await;
         store
             .append_message("frame", 1, &wisp_llm::Message::user("kept"))
             .await
             .unwrap();
-        // The copy taken at creation is empty; make it a day old (by name too,
-        // since names carry whole seconds) so reopening takes another, which
-        // holds the message.
+        // Age the empty copy so the next maintenance pass takes another,
+        // which holds the message. Reopening alone must not create a copy.
         for name in backup_names(&backups, "project-study.") {
             let tail = name.splitn(3, '.').nth(2).unwrap().to_owned();
             let old = backups.join(format!("project-study.20200101-000001.{tail}"));
@@ -2332,6 +2335,9 @@ mod tests {
         close_everything(store).await;
         let reopened = Store::open_application(&path).await.unwrap();
         assert_eq!(reopened.message_count("frame").await.unwrap(), 1);
+        assert_eq!(backup_names(&backups, "project-study.").len(), 1);
+        reopened.maintain_daily_backups().await;
+        assert_eq!(backup_names(&backups, "project-study.").len(), 2);
         close_everything(reopened).await;
         if !keep_copy {
             std::fs::remove_dir_all(&backups).unwrap();

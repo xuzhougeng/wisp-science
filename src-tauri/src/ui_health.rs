@@ -129,6 +129,11 @@ pub(crate) fn ui_heartbeat(window: WorkspaceSurface, snapshot: Option<UiHealthSn
         tracing::warn!(target: "wisp", window = window.label(),
             invoke = %snapshot.first_invalid_args, "webview invalid args");
     }
+    // Heartbeats arrive more often than log lines; preserve the maximum of
+    // their intervals until the next log, then start a fresh minute.
+    snapshot.recent_longest_task_ms = snapshot
+        .recent_longest_task_ms
+        .max(health.snapshot.recent_longest_task_ms);
     health.snapshot = snapshot;
     if health
         .last_log
@@ -138,6 +143,7 @@ pub(crate) fn ui_heartbeat(window: WorkspaceSurface, snapshot: Option<UiHealthSn
         // Numeric summaries only: no prompts, tool arguments, URLs or error text.
         tracing::info!(target: "wisp", window = window.label(), focused = health.focused,
             diagnostics = ?health.snapshot, "webview health");
+        health.snapshot.recent_longest_task_ms = 0;
     }
 }
 

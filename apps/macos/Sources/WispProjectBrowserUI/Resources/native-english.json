@@ -2270,6 +2270,7 @@
   "显示在项目切换器中供你参考 —— 不会包含在 Agent 的提示词里。": "Shown in the project switcher for your reference — not included in the agent's prompt.",
   "显示宠物": "Show pet",
   "显示小贴士": "Show tips",
+  "显示更早的 100 条活动": "Show 100 earlier activity items",
   "显示更早的已加载消息": "Show earlier loaded messages",
   "显示此标签": "Show this tab",
   "显示较新的消息": "Show newer messages",

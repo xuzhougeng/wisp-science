@@ -95,6 +95,12 @@ const LIBRARY_ITEMS_DDL: &str = "CREATE TABLE IF NOT EXISTS library_items (\
            (kind='figure' AND content_blob IS NOT NULL)))";
 
 impl LibraryStore {
+    pub async fn maintain_daily_backups(&self) {
+        if let Err(error) = super::upgrade_backup::daily_copy(&self.pool, &self.pool, None).await {
+            tracing::warn!(%error, "Daily library backup failed");
+        }
+    }
+
     pub async fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;

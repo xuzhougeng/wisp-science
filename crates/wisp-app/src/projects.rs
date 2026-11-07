@@ -137,6 +137,57 @@ pub async fn list_needs_you_sessions(
     Ok(sessions)
 }
 
+/// Shared by all desktop windows. The mutex covers the query, so concurrent
+/// refreshes share one result. Runtime changes bypass the short idle cache.
+#[derive(Default)]
+pub struct NeedsYouCache {
+    cached: tokio::sync::Mutex<Option<NeedsYouSnapshot>>,
+    revision: std::sync::atomic::AtomicU64,
+}
+
+struct NeedsYouSnapshot {
+    revision: u64,
+    at: std::time::Instant,
+    running: HashSet<String>,
+    awaiting: HashSet<String>,
+    rows: Vec<SessionSearchInfo>,
+}
+
+impl NeedsYouCache {
+    pub fn invalidate(&self) {
+        // Viewing a reply must not wait for a cross-project query to finish.
+        self.revision
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub async fn list(
+        &self,
+        store: &Store,
+        running: &HashSet<String>,
+        awaiting: &HashSet<String>,
+    ) -> Result<Vec<SessionSearchInfo>> {
+        let mut cached = self.cached.lock().await;
+        let revision = self.revision.load(std::sync::atomic::Ordering::Relaxed);
+        if let Some(snapshot) = cached.as_ref().filter(|snapshot| {
+            snapshot.revision == revision
+                && snapshot.at.elapsed() < std::time::Duration::from_secs(1)
+                && snapshot.running == *running
+                && snapshot.awaiting == *awaiting
+        }) {
+            return Ok(snapshot.rows.clone());
+        }
+        let rows = list_needs_you_sessions(store, running, awaiting).await?;
+        *cached = Some(NeedsYouSnapshot {
+            revision,
+            at: std::time::Instant::now(),
+            running: running.clone(),
+            awaiting: awaiting.clone(),
+            rows: rows.clone(),
+        });
+        Ok(rows)
+    }
+}
+
 /// The home page uses the same five recent sessions as the WebView. A project
 /// scope returns its saved sidebar sessions, including named and ACP-selected drafts.
 /// This read-only snapshot deliberately does not claim live runtime activity.

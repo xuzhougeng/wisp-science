@@ -595,6 +595,7 @@ pub(crate) struct AppState {
     pub(crate) acp_asks: tokio::sync::Mutex<HashMap<String, String>>,
     /// Session ids with an in-flight agent turn (for the projects dashboard).
     pub(crate) running_turns: tokio::sync::Mutex<HashSet<String>>,
+    pub(crate) needs_you_cache: wisp_app::projects::NeedsYouCache,
     /// Frames currently owned by the persisted background-completion
     /// dispatcher. Prevents the polling loop from starting duplicate drains.
     pub(crate) completion_dispatches: tokio::sync::Mutex<HashSet<String>>,

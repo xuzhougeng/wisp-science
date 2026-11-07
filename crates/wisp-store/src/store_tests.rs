@@ -11113,3 +11113,39 @@ async fn project_star_persists_and_preserves_recency() {
     store.pool.close().await;
     let _ = std::fs::remove_file(tmp);
 }
+
+#[tokio::test]
+async fn message_activity_index_is_repaired_idempotently_and_covers_max_timestamp() {
+    let root = tempfile::tempdir().unwrap();
+    let store = Store::open(&root.path().join("index.sqlite"))
+        .await
+        .unwrap();
+    store.create_project("p", "Project", "").await.unwrap();
+    store
+        .create_frame("f", "p", "agent", "model")
+        .await
+        .unwrap();
+    store
+        .append_message("f", 1, &Message::user("question"))
+        .await
+        .unwrap();
+    store
+        .append_message("f", 2, &Message::assistant("answer"))
+        .await
+        .unwrap();
+    let expected = store.list_session_last_roles("p").await.unwrap();
+    sqlx::query("DROP INDEX ix_messages_frame_ts")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    Store::migrate(&store.pool).await.unwrap();
+    Store::migrate(&store.pool).await.unwrap();
+    let plan = sqlx::query("EXPLAIN QUERY PLAN SELECT f.id, (SELECT COALESCE(MAX(ts), f.updated_at) FROM messages m WHERE m.frame_id=f.id) > f.seen_at FROM frames f WHERE f.project_id=?")
+        .bind("p").fetch_all(&store.pool).await.unwrap();
+    assert!(plan.iter().any(|row| row
+        .get::<String, _>("detail")
+        .contains("COVERING INDEX ix_messages_frame_ts")));
+    assert_eq!(store.list_session_last_roles("p").await.unwrap(), expected);
+    store.mark_frame_seen("f").await.unwrap();
+    assert!(!store.list_session_last_roles("p").await.unwrap()[0].2);
+}

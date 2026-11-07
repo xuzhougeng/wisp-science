@@ -349,7 +349,66 @@ pub(crate) fn event_target_checked(ev: &web_sys::Event) -> bool {
 /// Render agent/assistant Markdown to HTML for `inner_html`. GFM tables,
 /// strikethrough, task lists and footnotes are on; the source is trusted
 /// (local agent output rendered in the desktop WebView).
+const MARKDOWN_CACHE_BYTES: usize = 2 * 1024 * 1024;
+const MARKDOWN_CACHE_ENTRIES: usize = 64;
+
+#[derive(Default)]
+struct MarkdownCache {
+    entries: std::collections::VecDeque<(u64, String, String)>,
+    bytes: usize,
+}
+
+impl MarkdownCache {
+    fn get(&mut self, hash: u64, source: &str) -> Option<String> {
+        // Verify content as well as the hash: a collision cannot substitute
+        // another message's rendered HTML.
+        let index = self
+            .entries
+            .iter()
+            .position(|(key, text, _)| *key == hash && text == source)?;
+        let entry = self.entries.remove(index)?;
+        let html = entry.2.clone();
+        self.entries.push_back(entry);
+        Some(html)
+    }
+
+    fn insert(&mut self, hash: u64, source: &str, html: &str) {
+        let bytes = source.len() + html.len();
+        if bytes > MARKDOWN_CACHE_BYTES {
+            return;
+        }
+        while self.bytes + bytes > MARKDOWN_CACHE_BYTES
+            || self.entries.len() >= MARKDOWN_CACHE_ENTRIES
+        {
+            let Some((_, source, html)) = self.entries.pop_front() else {
+                break;
+            };
+            self.bytes -= source.len() + html.len();
+        }
+        self.bytes += bytes;
+        self.entries
+            .push_back((hash, source.to_owned(), html.to_owned()));
+    }
+}
+
+thread_local! {
+    static MARKDOWN_CACHE: std::cell::RefCell<MarkdownCache> = std::cell::RefCell::new(MarkdownCache::default());
+}
+
 pub(crate) fn md_to_html(src: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    src.hash(&mut hash);
+    let hash = hash.finish();
+    if let Some(html) = MARKDOWN_CACHE.with(|cache| cache.borrow_mut().get(hash, src)) {
+        return html;
+    }
+    let html = md_to_html_uncached(src);
+    MARKDOWN_CACHE.with(|cache| cache.borrow_mut().insert(hash, src, &html));
+    html
+}
+
+fn md_to_html_uncached(src: &str) -> String {
     use pulldown_cmark::{html, Options, Parser};
     let src = preprocess_markdown(src);
     let src = fence_identifier_line_runs(src.as_ref());
@@ -3312,5 +3371,27 @@ mod provider_defaults_tests {
             provider_defaults("openai"),
             ("https://api.deepseek.com", DEEPSEEK_FLASH_MODEL)
         );
+    }
+}
+
+#[cfg(test)]
+mod markdown_cache_tests {
+    use super::*;
+
+    #[test]
+    fn cache_verifies_content_and_bounds_retained_bytes_and_entries() {
+        let mut cache = MarkdownCache::default();
+        cache.insert(7, "first", "<p>first</p>");
+        assert!(cache.get(7, "collision").is_none());
+        assert_eq!(cache.get(7, "first").as_deref(), Some("<p>first</p>"));
+        for n in 0..100 {
+            cache.insert(n, &format!("source {n}"), &"x".repeat(40_000));
+        }
+        assert!(cache.bytes <= MARKDOWN_CACHE_BYTES);
+        assert!(cache.entries.len() <= MARKDOWN_CACHE_ENTRIES);
+        assert!(cache.get(7, "first").is_none());
+        let entries = cache.entries.len();
+        cache.insert(999, "oversized", &"x".repeat(MARKDOWN_CACHE_BYTES));
+        assert_eq!(cache.entries.len(), entries);
     }
 }

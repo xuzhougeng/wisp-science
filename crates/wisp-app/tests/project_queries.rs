@@ -672,3 +672,36 @@ async fn native_sidebar_restores_an_unsent_acp_choice_without_marking_it_recent(
     assert!(reader.get_acp_session("chosen").await.unwrap().is_none());
     assert!(reader.load_messages("chosen").await.unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn inbox_cache_shares_results_and_refreshes_after_seen_or_runtime_changes() {
+    let db = TestDb::new().await;
+    db.project("p").await;
+    db.session("f", "p").await;
+    db.store
+        .append_message("f", 2, &Message::assistant("done"))
+        .await
+        .unwrap();
+    let cache = wisp_app::projects::NeedsYouCache::default();
+    let idle = HashSet::new();
+    let (first, second) = tokio::join!(
+        cache.list(&db.store, &idle, &idle),
+        cache.list(&db.store, &idle, &idle)
+    );
+    assert_eq!(first.unwrap().len(), 1);
+    assert_eq!(second.unwrap().len(), 1);
+    // Running state must bypass a fresh idle result.
+    assert!(cache
+        .list(&db.store, &HashSet::from(["f".into()]), &idle)
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(cache.list(&db.store, &idle, &idle).await.unwrap().len(), 1);
+    db.store.mark_frame_seen("f").await.unwrap();
+    cache.invalidate();
+    assert!(cache
+        .list(&db.store, &idle, &idle)
+        .await
+        .unwrap()
+        .is_empty());
+}

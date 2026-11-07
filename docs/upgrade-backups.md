@@ -4,7 +4,7 @@
 
 Wisp's database migrations only go forward. So that an upgrade which goes
 wrong can be undone, Wisp keeps a copy of each database before a different
-app version migrates it. It also keeps a copy a day of each database it
+app version migrates it. The desktop also keeps a daily background copy of each database it
 opens, and a project database that SQLite reports as damaged is restored
 from the newest copy automatically.
 
@@ -12,14 +12,21 @@ from the newest copy automatically.
 
 Each database records the app version that last migrated it. When another
 version, newer or older, is about to open it, Wisp first copies it. Otherwise
-it copies the database when it opens it and the newest copy is older than a
-day:
+the desktop copies already-open databases in a sequential background pass after
+the main window loads, when the newest copy is older than 24 hours:
 
 | Database | Copied when |
 | --- | --- |
-| `wisp.sqlite` (application database) | at startup |
-| `library.sqlite` (global library) | at startup |
-| a project's `.wisp/project.sqlite` | the first time that project is opened |
+| `wisp.sqlite` (application database) | background maintenance after the main page loads |
+| `library.sqlite` (global library) | the same background pass |
+| a project's `.wisp/project.sqlite` | the next background pass after that project opens |
+
+The first pass starts five seconds after the main page loads; subsequent passes
+check once a minute and include projects opened since the previous pass. Backup
+age comes from the UTC timestamp in its filename, independent of preserved file
+modification times. Maintenance does not open unused project databases or hold
+the project-pool registry lock during a copy. Pre-upgrade copies still finish
+before migration. Headless store users can call `maintain_daily_backups` explicitly.
 
 Copies are written to `backups/` in the application data directory, never into
 a project folder:

@@ -15,7 +15,7 @@ function tauriEvent() {
 
 let uiHealthStarted = false;
 let reportUiHealth = () => {};
-const uiHealth = { timerLagMs: 0, longTasks: 0, longestTaskMs: 0, scriptErrors: 0, unhandledRejections: 0, appMessages: 0, firstFault: "", firstInvalidArgs: "" };
+const uiHealth = { timerLagMs: 0, longTasks: 0, longestTaskMs: 0, recentLongestTaskMs: 0, transcriptSwitchMs: 0, transcriptRebuilds: 0, transcriptRetries: 0, transcriptItems: 0, transcriptRows: 0, scriptErrors: 0, unhandledRejections: 0, appMessages: 0, firstFault: "", firstInvalidArgs: "" };
 const boundedHealthCount = (value) => Math.min(1_000_000, Math.max(0, Math.round(value) || 0));
 const FAULT_MAX_CHARS = 160;
 
@@ -45,6 +45,38 @@ function recordInvalidArgs(error) {
   if (match) uiHealth.firstInvalidArgs = match[0].slice(0, FAULT_MAX_CHARS);
 }
 
+let transcriptSwitch = null;
+let transcriptSwitchToken = 0;
+export function begin_transcript_switch() {
+  const token = ++transcriptSwitchToken;
+  transcriptSwitch = { token, started: performance.now(), rebuilds: 0 };
+  return token;
+}
+export function record_transcript_projection(rows) {
+  uiHealth.transcriptRows = boundedHealthCount(rows);
+  if (transcriptSwitch) transcriptSwitch.rebuilds += 1;
+}
+export function finish_transcript_switch(token, retries, items) {
+  // Include the frame that paints the hydrated list, not just IPC latency.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (transcriptSwitch?.token !== token) return;
+    uiHealth.transcriptSwitchMs = boundedHealthCount(performance.now() - transcriptSwitch.started);
+    uiHealth.transcriptRebuilds = boundedHealthCount(transcriptSwitch.rebuilds);
+    uiHealth.transcriptRetries = boundedHealthCount(retries);
+    uiHealth.transcriptItems = boundedHealthCount(items);
+    transcriptSwitch = null;
+    void reportUiHealth();
+  }));
+}
+
+/** Only numeric performance fields may enter the feedback prompt. */
+export function ui_performance_summary() {
+  const { longTasks, longestTaskMs, recentLongestTaskMs, transcriptSwitchMs,
+    transcriptRebuilds, transcriptRetries, transcriptItems, transcriptRows } = uiHealth;
+  return JSON.stringify({ longTasks, longestTaskMs, recentLongestTaskMs, transcriptSwitchMs,
+    transcriptRebuilds, transcriptRetries, transcriptItems, transcriptRows });
+}
+
 export function report_ui_health() { void reportUiHealth(); }
 
 /** Bounded diagnostics: counters plus the first fault line. The heartbeat is
@@ -60,6 +92,7 @@ export function start_ui_health() {
       for (const entry of list.getEntries()) {
         uiHealth.longTasks = boundedHealthCount(uiHealth.longTasks + 1);
         uiHealth.longestTaskMs = Math.max(uiHealth.longestTaskMs, boundedHealthCount(entry.duration));
+        uiHealth.recentLongestTaskMs = Math.max(uiHealth.recentLongestTaskMs, boundedHealthCount(entry.duration));
       }
     }).observe({ type: "longtask" });
   }
@@ -81,10 +114,11 @@ export function start_ui_health() {
     const snapshot = { ...uiHealth, activeApps, parkedApps,
       mediaBlobUrls, mediaBlobBytes, mediaOwners: mediaOwners.size,
       dragOverlays: document.querySelectorAll(".drag-overlay").length };
+    uiHealth.recentLongestTaskMs = 0;
     // Counters are cumulative and bounded: a once-per-minute backend log cannot
     // miss a brief error or message burst between its sampled heartbeats.
     try { await invoke_timeout("ui_heartbeat", { snapshot }, 4000); }
-    catch { /* A failed IPC must not create its own rejection storm. */ }
+    catch { uiHealth.recentLongestTaskMs = Math.max(uiHealth.recentLongestTaskMs, snapshot.recentLongestTaskMs); }
     finally { inFlight = false; }
   };
   reportUiHealth = beat;

@@ -2328,6 +2328,9 @@ button.stop:disabled { opacity: .45; cursor: default; }
 .steps-meta + .steps-chevron { margin-left: 0; }
 .steps-body { padding: 2px 6px 6px; display: none; flex-direction: column; }
 .steps.open > .steps-body { display: flex; }
+.steps-body > .steps-more { align-self: flex-start; padding: 6px 8px; border: 0; border-radius: 4px; background: transparent; color: var(--clay); font: inherit; cursor: pointer; }
+.steps-body > .steps-more:hover { background: color-mix(in srgb, var(--clay) 8%, transparent); }
+.steps-body > .steps-more:focus-visible { outline: 2px solid var(--clay); outline-offset: 2px; }
 
 .step { border-radius: var(--radius-xs); }
 .step-head { display: flex; width: 100%; align-items: center; gap: 8px; padding: 5px 8px; border: 0; border-radius: var(--radius-xs); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }

@@ -326,6 +326,94 @@ mod start_user_turn_tests {
     use std::collections::HashMap;
 
     #[test]
+    fn short_turn_projection_preserves_existing_activity_boundaries() {
+        // Include metadata, action boundaries, final answers and queued turns.
+        let variants = [
+            ChatItem::Reasoning("why".into()),
+            ChatItem::Assistant {
+                text: "answer".into(),
+                model: None,
+                resources: Vec::new(),
+            },
+            ChatItem::System("metadata".into()),
+            ChatItem::ApprovalPending {
+                tool: "shell".into(),
+                preview: "cmd".into(),
+                message: "Allow?".into(),
+            },
+        ];
+        for a in &variants {
+            for b in &variants {
+                for busy in [false, true] {
+                    let items = vec![
+                        ChatItem::User("first".into()),
+                        a.clone(),
+                        b.clone(),
+                        ChatItem::User("second".into()),
+                        a.clone(),
+                        b.clone(),
+                        ChatItem::QueuedUser {
+                            id: 1,
+                            text: "queued".into(),
+                        },
+                    ];
+                    let runs = HashMap::new();
+                    let projection = super::activity_projection(&items, busy, &runs);
+                    let mut index = 0;
+                    while index < items.len() {
+                        let expected = completed_activity_end(&items, index, busy, &runs);
+                        assert_eq!(projection.ends[index], expected, "row {index}, busy {busy}");
+                        assert_eq!(
+                            projection.commentary[index],
+                            is_commentary_at(&items, index)
+                        );
+                        index = expected.unwrap_or(index + 1);
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            super::activity_projection(
+                &[ChatItem::Reasoning("live".into())],
+                true,
+                &HashMap::new()
+            )
+            .ends,
+            [None]
+        );
+    }
+
+    #[test]
+    fn live_activity_is_bounded_and_does_not_hide_action_cards() {
+        let mut items = vec![ChatItem::User("Analyze".into())];
+        items.extend((0..3700).map(|i| ChatItem::Reasoning(format!("step {i}"))));
+        items.insert(
+            100,
+            ChatItem::ApprovalPending {
+                tool: "shell".into(),
+                preview: "command".into(),
+                message: "Allow?".into(),
+            },
+        );
+        let projection = super::activity_projection(&items, true, &HashMap::new());
+        assert_eq!(projection.ends[1], Some(100));
+        assert_eq!(projection.ends[100], None);
+        assert_eq!(
+            projection.ends[101],
+            Some(items.len() - super::LIVE_ACTIVITY_TAIL)
+        );
+        assert!(projection.ends[items.len() - super::LIVE_ACTIVITY_TAIL..]
+            .iter()
+            .all(Option::is_none));
+        items.push(ChatItem::QueuedUser {
+            id: 1,
+            text: "Next".into(),
+        });
+        let queued = super::activity_projection(&items, true, &HashMap::new());
+        assert_eq!(queued.ends[101], projection.ends[101]);
+    }
+
+    #[test]
     fn excerpt_quotes_name_the_conversation_and_stay_out_of_the_edit_path() {
         let excerpt = SessionExcerpt {
             session_id: "s-1".into(),
@@ -1256,6 +1344,81 @@ pub(crate) fn is_turn_activity_at(
         || is_commentary_before(items, index, is_activity)
 }
 
+/// Keep a bounded live tail even when one autonomous turn lasts for hours.
+/// Action cards and final answers are boundaries and are never hidden here.
+pub(crate) const LIVE_ACTIVITY_TAIL: usize = 48;
+
+pub(crate) struct ActivityProjection {
+    pub activity: Vec<bool>,
+    pub commentary: Vec<bool>,
+    pub ends: Vec<Option<usize>>,
+}
+
+/// Linear projection: do not search for the next User from every row.
+pub(crate) fn activity_projection(
+    items: &[ChatItem],
+    busy: bool,
+    completed_runs: &HashMap<String, usize>,
+) -> ActivityProjection {
+    let mut activity = vec![false; items.len()];
+    let mut commentary = vec![false; items.len()];
+    let mut next_step = false;
+    let mut next_activity = false;
+    for (index, item) in items.iter().enumerate().rev() {
+        let step = is_tool_activity(item);
+        let process = step
+            || (!item.is_context_tombstone()
+                && matches!(item, ChatItem::Tool { name, input, .. }
+                if is_run_monitor_tool(name) && completed_runs.contains_key(input.trim())));
+        let assistant = matches!(item, ChatItem::Assistant { text, .. }
+            if !text.trim().is_empty() && !text.starts_with("Error: "));
+        commentary[index] = assistant && next_step;
+        activity[index] =
+            process || matches!(item, ChatItem::Reasoning(_)) || (assistant && next_activity);
+        if !is_activity_glue(item) && !matches!(item, ChatItem::Reasoning(_)) {
+            next_step = step;
+            next_activity = process;
+        }
+    }
+    let queue_start = trailing_queue_start(items);
+    let live_start = items[..queue_start]
+        .iter()
+        .rposition(|item| matches!(item, ChatItem::User(_)))
+        .map_or(0, |index| index + 1);
+    let fold_before = queue_start
+        .saturating_sub(LIVE_ACTIVITY_TAIL)
+        .max(live_start);
+    let mut ends = vec![None; items.len()];
+    let mut index = 0;
+    while index < items.len() {
+        let allowed = !busy || index < live_start || index < fold_before;
+        if !allowed || !activity[index] {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        let limit = if busy && index >= live_start {
+            fold_before
+        } else {
+            items.len()
+        };
+        let mut end = index + 1;
+        index += 1;
+        while index < limit && (activity[index] || is_activity_glue(&items[index])) {
+            if activity[index] {
+                end = index + 1;
+            }
+            index += 1;
+        }
+        ends[start] = Some(end);
+    }
+    ActivityProjection {
+        activity,
+        commentary,
+        ends,
+    }
+}
+
 /// End (exclusive) of the contiguous process activity that can collapse once
 /// its turn is complete. The active tail stays expanded while `busy` is true;
 /// turns followed by another user message are historical and may still fold.
@@ -1302,10 +1465,11 @@ pub(crate) fn completed_activity_groups(
     busy: bool,
     completed_runs: &HashMap<String, usize>,
 ) -> Vec<std::ops::Range<usize>> {
+    let projection = activity_projection(items, busy, completed_runs);
     let mut groups = Vec::new();
     let mut index = 0;
     while index < items.len() {
-        if let Some(end) = completed_activity_end(items, index, busy, completed_runs) {
+        if let Some(end) = projection.ends[index] {
             groups.push(index..end);
             index = end;
         } else {
@@ -1679,14 +1843,21 @@ mod stream_recovery_tests {
             assistant("The partial ans"),
         ];
         discard_stream_draft(&mut items, "The partial ans".len(), "deciding".len());
-        assert_eq!(items, vec![ChatItem::User("go".into()), tool()]);
+        assert!(
+            matches!(items.as_slice(), [ChatItem::User(text), ChatItem::Tool {
+            name, ok: Some(true), input, output, started_at_ms: None, duration_ms: Some(1),
+        }] if text == "go" && name == "shell" && input == "pwd" && output == "/tmp")
+        );
     }
 
     #[test]
     fn trims_only_the_tail_of_a_bubble_that_already_held_a_completed_text() {
         let mut items = vec![assistant("Done part. half")];
         discard_stream_draft(&mut items, "half".len(), 0);
-        assert_eq!(items, vec![assistant("Done part. ")]);
+        assert!(
+            matches!(items.as_slice(), [ChatItem::Assistant { text, model: None, resources }]
+            if text == "Done part. " && resources.is_empty())
+        );
     }
 
     #[test]
@@ -1700,22 +1871,19 @@ mod stream_recovery_tests {
             },
         ];
         discard_stream_draft(&mut items, 99, 99);
-        assert_eq!(
-            items,
-            vec![
-                tool(),
-                ChatItem::QueuedUser {
-                    id: 7,
-                    text: "next".into(),
-                }
-            ]
-        );
+        assert!(matches!(items.as_slice(), [ChatItem::Tool {
+            name, ok: Some(true), input, output, started_at_ms: None, duration_ms: Some(1),
+        }, ChatItem::QueuedUser { id: 7, text }]
+            if name == "shell" && input == "pwd" && output == "/tmp" && text == "next"));
     }
 
     #[test]
     fn leaves_an_error_card_alone() {
         let mut items = vec![assistant("Error: api: 401 invalid key")];
         discard_stream_draft(&mut items, 5, 0);
-        assert_eq!(items, vec![assistant("Error: api: 401 invalid key")]);
+        assert!(
+            matches!(items.as_slice(), [ChatItem::Assistant { text, model: None, resources }]
+            if text == "Error: api: 401 invalid key" && resources.is_empty())
+        );
     }
 }

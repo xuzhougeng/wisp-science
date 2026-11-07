@@ -1142,7 +1142,20 @@ pub(crate) async fn discard_exploration(
     Ok(())
 }
 
+/// File recovery must finish before tools can modify the workspace. With no
+/// journal directory there are no files to roll back; querying every project
+/// just to clean up already-committed metadata needlessly blocks first paint.
+fn has_promotion_journals(app_data: &Path) -> bool {
+    match std::fs::read_dir(app_data.join("exploration-promotions")) {
+        Ok(mut entries) => entries.next().is_some(),
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+    }
+}
+
 pub(crate) async fn recover_incomplete_promotions(store: &Store, app_data: &Path) {
+    if !has_promotion_journals(app_data) {
+        return;
+    }
     let promotions = match store.list_incomplete_exploration_promotions().await {
         Ok(promotions) => promotions,
         Err(error) => {
@@ -2936,6 +2949,17 @@ mod tests {
         assert!(!preview.eligibility.manual_resolution_available);
 
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn clean_startup_does_not_require_project_recovery() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(!has_promotion_journals(root.path()));
+        let journals = root.path().join("exploration-promotions");
+        std::fs::create_dir(&journals).unwrap();
+        assert!(!has_promotion_journals(root.path()));
+        std::fs::create_dir(journals.join("interrupted")).unwrap();
+        assert!(has_promotion_journals(root.path()));
     }
 
     #[tokio::test]
