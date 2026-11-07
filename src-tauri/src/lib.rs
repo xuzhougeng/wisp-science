@@ -7543,7 +7543,9 @@ fn spawn_deferred_startup(app: &tauri::AppHandle) {
 
 /// One sequential maintenance worker, started only after the main page loads.
 /// Later passes include projects opened since the first pass, without opening
-/// unused projects or holding their registry lock during backup I/O.
+/// unused projects or holding their registry lock during backup I/O. Run code
+/// snapshots are pruned after the copies, so the day's copy still holds what
+/// the first prune on a database removes.
 fn spawn_database_maintenance(app: &tauri::AppHandle) {
     static STARTED: AtomicBool = AtomicBool::new(false);
     if STARTED.swap(true, Ordering::AcqRel) {
@@ -7564,6 +7566,7 @@ fn spawn_database_maintenance(app: &tauri::AppHandle) {
             };
             store.maintain_daily_backups().await;
             library.maintain_daily_backups().await;
+            store.maintain_run_code_snapshots().await;
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         }
     });

@@ -8,14 +8,22 @@
 //! database. It is negated between taking the copy and finishing the
 //! migration, so a migration that fails on every launch cannot rotate the
 //! last good copy out.
+//!
+//! Each database keeps its [`KEPT`] newest copies of each kind; daily copies
+//! of all databases together also stay within [`DAILY_QUOTA_BYTES`]. Many
+//! large projects otherwise accumulate tens of gigabytes of copies (#1689).
 use anyhow::{Context, Result};
 use sqlx::SqlitePool;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const DIRECTORY: &str = "backups";
 const KEPT: usize = 3;
 const DAILY: &str = "daily";
+/// Total size of the daily copies in one backups directory, across every
+/// database. The oldest go first, but the last copy of each database stays.
+const DAILY_QUOTA_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 pub(crate) const DAY: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
 
 /// 1.17.0 -> 1_017_000. Pre-release suffixes are ignored.
@@ -335,12 +343,71 @@ fn prune(directory: &Path, label: &str, tag_prefix: &str) {
         .into_iter()
         .skip(KEPT)
     {
-        // Inspecting a copy leaves WAL files beside it.
-        for suffix in ["", "-wal", "-shm"] {
-            let mut sidecar = path.clone().into_os_string();
-            sidecar.push(suffix);
-            let _ = std::fs::remove_file(sidecar);
+        remove_copy(&path);
+    }
+    if tag_prefix == DAILY {
+        prune_daily_to_quota(directory, DAILY_QUOTA_BYTES);
+    }
+}
+
+/// A copy and the WAL files that inspecting it leaves beside it.
+fn remove_copy(path: &Path) {
+    for suffix in ["", "-wal", "-shm"] {
+        let mut sidecar = path.as_os_str().to_owned();
+        sidecar.push(suffix);
+        let _ = std::fs::remove_file(sidecar);
+    }
+}
+
+/// `<label>.<YYYYMMDD-HHMMSS>.daily.sqlite` -> (label, timestamp); `None`
+/// for an upgrade copy, a sidecar or a bystander.
+fn daily_copy_parts(name: &str) -> Option<(&str, &str)> {
+    let stem = name.strip_suffix(".daily.sqlite")?;
+    let (label, time) = stem.rsplit_once('.')?;
+    (!label.is_empty()
+        && time.len() == 15
+        && chrono::NaiveDateTime::parse_from_str(time, "%Y%m%d-%H%M%S").is_ok())
+    .then_some((label, time))
+}
+
+/// Keep the daily copies of every database together within `quota` bytes.
+/// The oldest go first whichever database they belong to, but the last daily
+/// copy of each database stays even while the total is still over the quota,
+/// and copies taken before an upgrade are neither counted nor removed.
+fn prune_daily_to_quota(directory: &Path, quota: u64) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    // (time, label, path, size): sorting puts the oldest first.
+    let mut copies: Vec<(String, String, PathBuf, u64)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let (label, time) = daily_copy_parts(&name)?;
+            let size = entry.metadata().ok()?.len();
+            Some((time.to_owned(), label.to_owned(), entry.path(), size))
+        })
+        .collect();
+    let mut total: u64 = copies.iter().map(|copy| copy.3).sum();
+    if total <= quota {
+        return;
+    }
+    let mut remaining: HashMap<String, usize> = HashMap::new();
+    for copy in &copies {
+        *remaining.entry(copy.1.clone()).or_default() += 1;
+    }
+    copies.sort();
+    for (_, label, path, size) in copies {
+        if total <= quota {
+            break;
         }
+        let Some(count) = remaining.get_mut(&label).filter(|count| **count > 1) else {
+            continue;
+        };
+        *count -= 1;
+        total -= size;
+        remove_copy(&path);
+        tracing::info!(backup = %path.display(), "Removed a daily database copy over the size quota");
     }
 }
 
@@ -560,6 +627,79 @@ mod tests {
             copies(root.path()),
             ["wisp.20200101-000001.pre-1.0.0.sqlite"]
         );
+    }
+
+    #[test]
+    fn daily_copy_names_split_into_database_and_time() {
+        assert_eq!(
+            daily_copy_parts("wisp.20261006-120301.daily.sqlite"),
+            Some(("wisp", "20261006-120301"))
+        );
+        assert_eq!(
+            daily_copy_parts("project-ab-12.20261006-120301.daily.sqlite"),
+            Some(("project-ab-12", "20261006-120301"))
+        );
+        assert_eq!(
+            daily_copy_parts("wisp.20261006-120301.pre-1.18.0.sqlite"),
+            None
+        );
+        assert_eq!(daily_copy_parts("wisp.notes.daily.sqlite"), None);
+        assert_eq!(
+            daily_copy_parts("wisp.20261006-120301.daily.sqlite-wal"),
+            None
+        );
+        assert_eq!(daily_copy_parts(".20261006-120301.daily.sqlite"), None);
+    }
+
+    #[test]
+    fn daily_copies_over_the_size_quota_go_oldest_first_but_one_per_database_stays() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join(DIRECTORY);
+        std::fs::create_dir_all(&directory).unwrap();
+        for name in [
+            "library.20200101-000001.daily.sqlite",
+            "project-a.20200101-000001.daily.sqlite",
+            "project-a.20200102-000001.daily.sqlite",
+            "wisp.20200101-000001.daily.sqlite",
+            "wisp.20200101-000002.daily.sqlite",
+            "wisp.20200101-000003.daily.sqlite",
+        ] {
+            std::fs::write(directory.join(name), b"1234").unwrap();
+        }
+        // Inspecting a copy leaves WAL files beside it; they go with it.
+        std::fs::write(directory.join("wisp.20200101-000001.daily.sqlite-wal"), b"").unwrap();
+        // Upgrade copies are neither counted nor removed, however large.
+        std::fs::write(
+            directory.join("wisp.20190101-000001.pre-1.0.0.sqlite"),
+            [0u8; 100],
+        )
+        .unwrap();
+        let names = || {
+            let mut names: Vec<String> = std::fs::read_dir(&directory)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        };
+
+        // 24 bytes of daily copies against a quota of 12: the three oldest
+        // removable copies go. The library's only copy is the oldest of all
+        // and stays.
+        prune_daily_to_quota(&directory, 12);
+        let kept = [
+            "library.20200101-000001.daily.sqlite",
+            "project-a.20200102-000001.daily.sqlite",
+            "wisp.20190101-000001.pre-1.0.0.sqlite",
+            "wisp.20200101-000003.daily.sqlite",
+        ];
+        assert_eq!(names(), kept);
+        // A second pass at the same quota changes nothing.
+        prune_daily_to_quota(&directory, 12);
+        assert_eq!(names(), kept);
+        // One copy per database stays even when that is still over the quota.
+        prune_daily_to_quota(&directory, 1);
+        assert_eq!(names(), kept);
     }
 
     #[tokio::test]

@@ -78,7 +78,8 @@ bottlenecks. The report's latency targets need a Windows WebView2 trace and
 remeasurement on the affected data; they are not guaranteed by row-count bounds.
 Item-level snapshot pagination, projected outlines, subscription/cursor changes,
 and W4–W6 storage work remain separate follow-ups. WAL policy for portable/network
-workspaces, unchanged-database backup detection, free-page reclamation, backup
-size quotas, and user-visible maintenance progress need their own design and
-regression coverage. Journal-less committed promotion metadata is left for a
+workspaces, unchanged-database backup detection, free-page reclamation, and
+user-visible maintenance progress need their own design and regression
+coverage; the daily-copy size quota and Run code snapshot retention (W6.4) are
+described in [Automatic copies](upgrade-backups.md). Journal-less committed promotion metadata is left for a
 later recovery scan; it does not require workspace file repair.
