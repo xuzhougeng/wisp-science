@@ -2105,7 +2105,13 @@ fn usage_item(
 }
 
 const MAX_PENDING_UI_EVENT_BYTES: usize = 64 * 1024;
+/// How long a saved event may wait in the writer before it is committed. It
+/// is the merge window for consecutive streaming deltas and the time bound on
+/// a batch, so a slow model stream still reaches the transcript promptly.
 const UI_EVENT_FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+/// The count bound on a batch: a burst commits as soon as this many rows are
+/// waiting instead of holding them all until the next tick.
+const UI_EVENT_BATCH_MAX_EVENTS: usize = 128;
 
 /// Keep future session event logs bounded as well as their replay. Completed
 /// tools have a separate `ToolResult` preview, so persisted stdout is only the
@@ -2242,14 +2248,56 @@ pub(crate) enum SessionUiMessage {
     Flush(tokio::sync::oneshot::Sender<()>),
 }
 
+/// Save a turn's UI events to the store. Each drained batch is one
+/// transaction; the single-row `append_ui_event` remains for the terminal
+/// event and for App context notices written outside the worker.
 async fn persist_ui_events(
     store: Store,
     frame_id: String,
+    seq: i64,
+    rx: tokio::sync::mpsc::UnboundedReceiver<SessionUiMessage>,
+    flush_interval: std::time::Duration,
+) {
+    drain_ui_events(
+        seq,
+        rx,
+        flush_interval,
+        UI_EVENT_BATCH_MAX_EVENTS,
+        move |first_seq, events| {
+            let store = store.clone();
+            let frame_id = frame_id.clone();
+            async move {
+                store
+                    .append_session_ui_events(&frame_id, first_seq, &events)
+                    .await
+            }
+        },
+    )
+    .await;
+}
+
+/// Drain streamed UI events into `write`, one call per batch, keeping `seq`
+/// contiguous across batches. Consecutive streaming deltas still merge in
+/// `pending` for up to `flush_interval`; everything evicted from it waits in
+/// the batch until the tick, `max_batch` rows, a `Flush`, or channel close.
+///
+/// Project databases use the rollback journal, where every autocommit INSERT
+/// is its own fsync, so a 3,700-event turn used to cost 3,700 commits (#1690
+/// W6.1). A failed batch is logged like a failed single row and leaves `seq`
+/// where it was: the transaction wrote nothing, so later rows cannot land
+/// past a hole.
+async fn drain_ui_events<F, Fut>(
     mut seq: i64,
     mut rx: tokio::sync::mpsc::UnboundedReceiver<SessionUiMessage>,
     flush_interval: std::time::Duration,
-) {
+    max_batch: usize,
+    mut write: F,
+) where
+    F: FnMut(i64, Vec<String>) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
     let mut pending = None;
+    let mut batch: Vec<String> = Vec::new();
     let mut persisted_stdout_bytes = 0usize;
     let mut ticker = tokio::time::interval(flush_interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -2260,25 +2308,57 @@ async fn persist_ui_events(
                 Some(SessionUiMessage::Event(event)) => {
                     if let Some(event) = limit_persisted_ui_event(event, &mut persisted_stdout_bytes) {
                         if let Some(event) = merge_pending_ui_event(&mut pending, event) {
-                            append_ui_event(&store, &frame_id, &mut seq, event).await;
+                            push_ui_event(&mut batch, event);
+                            if batch.len() >= max_batch {
+                                commit_ui_events(&mut write, &mut seq, &mut batch).await;
+                            }
                         }
                     }
                 }
                 Some(SessionUiMessage::Flush(done)) => {
                     if let Some(event) = pending.take() {
-                        append_ui_event(&store, &frame_id, &mut seq, event).await;
+                        push_ui_event(&mut batch, event);
                     }
+                    commit_ui_events(&mut write, &mut seq, &mut batch).await;
                     let _ = done.send(());
                 }
                 None => break,
             },
-            _ = ticker.tick(), if pending.is_some() => {
-                append_ui_event(&store, &frame_id, &mut seq, pending.take().unwrap()).await;
+            _ = ticker.tick(), if pending.is_some() || !batch.is_empty() => {
+                if let Some(event) = pending.take() {
+                    push_ui_event(&mut batch, event);
+                }
+                commit_ui_events(&mut write, &mut seq, &mut batch).await;
             }
         }
     }
     if let Some(event) = pending {
-        append_ui_event(&store, &frame_id, &mut seq, event).await;
+        push_ui_event(&mut batch, event);
+    }
+    commit_ui_events(&mut write, &mut seq, &mut batch).await;
+}
+
+fn push_ui_event(batch: &mut Vec<String>, event: AgentEvent) {
+    match serde_json::to_string(&event) {
+        Ok(json) => batch.push(json),
+        Err(error) => tracing::warn!("serialize UI event failed: {error}"),
+    }
+}
+
+async fn commit_ui_events<F, Fut>(write: &mut F, seq: &mut i64, batch: &mut Vec<String>)
+where
+    F: FnMut(i64, Vec<String>) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    if batch.is_empty() {
+        return;
+    }
+    let count = batch.len();
+    match write(*seq, std::mem::take(batch)).await {
+        Ok(()) => *seq += count as i64,
+        Err(error) => {
+            tracing::warn!("persist {count} UI events from {} failed: {error}", *seq);
+        }
     }
 }
 

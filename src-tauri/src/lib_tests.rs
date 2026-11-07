@@ -4,16 +4,18 @@ use super::desktop_lifecycle::{should_activate_workspace_window, should_hide_wor
 use super::session_commands::transcript_page_items;
 use super::{
     begin_queued_cutin, branch_title, client_turn_error, coalesce_live_agent_events,
-    copy_dir_recursive, enable_referenced_contexts, events_to_items, limit_persisted_ui_event,
-    merge_pending_ui_event, message_uses_resource_bindings, messages_to_context_view_items,
-    messages_to_items, navigation_allowed, parse_disabled_skills, parse_enabled_skill_names,
-    parse_follow_up_questions, parse_skill_tags, persist_ui_events, provenance_ui_file_changes,
-    receive_confirm_decision, resolve_acp_artifact_references, resolve_composer_references,
-    resolve_reader_references, resolve_review_backend, resolve_workspace, session_runtime_status,
-    should_hide_app_on_macos_close, should_persist_ui_event, take_next_queued_turn,
-    user_message_start, AgentEvent, ComposerReferenceArg, McpConnection, McpHttpAuth, McpTransport,
-    ProjectActivityLocks, QueuedItem, SessionRuntime, SkillInfo, StartupReport, StartupTimeline,
-    MAX_PENDING_UI_EVENT_BYTES, UI_STREAM_OUTPUT_MAX_BYTES, UI_TOOL_RESULT_MAX_CHARS,
+    copy_dir_recursive, drain_ui_events, enable_referenced_contexts, events_to_items,
+    limit_persisted_ui_event, merge_pending_ui_event, message_uses_resource_bindings,
+    messages_to_context_view_items, messages_to_items, navigation_allowed, parse_disabled_skills,
+    parse_enabled_skill_names, parse_follow_up_questions, parse_skill_tags, persist_ui_events,
+    provenance_ui_file_changes, receive_confirm_decision, resolve_acp_artifact_references,
+    resolve_composer_references, resolve_reader_references, resolve_review_backend,
+    resolve_workspace, session_runtime_status, should_hide_app_on_macos_close,
+    should_persist_ui_event, take_next_queued_turn, user_message_start, AgentEvent,
+    ComposerReferenceArg, McpConnection, McpHttpAuth, McpTransport, ProjectActivityLocks,
+    QueuedItem, SessionRuntime, SkillInfo, StartupReport, StartupTimeline,
+    MAX_PENDING_UI_EVENT_BYTES, UI_EVENT_BATCH_MAX_EVENTS, UI_STREAM_OUTPUT_MAX_BYTES,
+    UI_TOOL_RESULT_MAX_CHARS,
 };
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
@@ -2107,6 +2109,231 @@ async fn ui_events_are_persisted_before_the_turn_ends() {
     .await
     .unwrap();
     assert!(!handle.is_finished());
+    drop(tx);
+    handle.await.unwrap();
+    let _ = std::fs::remove_dir_all(base);
+}
+
+fn boundary_event(seq: i64) -> AgentEvent {
+    AgentEvent::MessageBoundary {
+        frame_id: "f".into(),
+        seq,
+    }
+}
+
+fn boundary_json(seq: i64) -> String {
+    serde_json::to_string(&boundary_event(seq)).unwrap()
+}
+
+/// Drive `drain_ui_events` with a writer that records every batch it is
+/// handed, failing the batches whose first seq is listed in `fail_first_seqs`
+/// once each.
+fn spawn_recording_drain(
+    rx: tokio::sync::mpsc::UnboundedReceiver<super::SessionUiMessage>,
+    flush_interval: std::time::Duration,
+    max_batch: usize,
+    fail_first_seqs: Vec<i64>,
+) -> (
+    tokio::task::JoinHandle<()>,
+    Arc<std::sync::Mutex<Vec<(i64, Vec<String>, bool)>>>,
+) {
+    let batches = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = batches.clone();
+    let failures = Arc::new(std::sync::Mutex::new(fail_first_seqs));
+    let handle = tokio::spawn(drain_ui_events(
+        1,
+        rx,
+        flush_interval,
+        max_batch,
+        move |first_seq, events| {
+            let sink = sink.clone();
+            let failures = failures.clone();
+            async move {
+                let fail = {
+                    let mut failures = failures.lock().unwrap();
+                    match failures.iter().position(|seq| *seq == first_seq) {
+                        Some(index) => {
+                            failures.remove(index);
+                            true
+                        }
+                        None => false,
+                    }
+                };
+                sink.lock().unwrap().push((first_seq, events, !fail));
+                if fail {
+                    anyhow::bail!("database is locked");
+                }
+                Ok(())
+            }
+        },
+    ));
+    (handle, batches)
+}
+
+async fn flush_drain(tx: &tokio::sync::mpsc::UnboundedSender<super::SessionUiMessage>) {
+    let (done, flushed) = tokio::sync::oneshot::channel();
+    tx.send(super::SessionUiMessage::Flush(done)).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), flushed)
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn saved_ui_events_commit_in_batches_bounded_by_count() {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let (handle, batches) =
+        spawn_recording_drain(rx, std::time::Duration::from_secs(3600), 4, Vec::new());
+    for seq in 1..=10 {
+        tx.send(super::SessionUiMessage::Event(boundary_event(seq)))
+            .unwrap();
+    }
+    flush_drain(&tx).await;
+    drop(tx);
+    handle.await.unwrap();
+
+    let batches = batches.lock().unwrap();
+    // Ten rows cost three commits: two full batches as the count bound trips
+    // and the remainder on the flush. The newest event always waits in
+    // `pending` for a possible merge, so a full batch closes one event late.
+    assert_eq!(
+        batches
+            .iter()
+            .map(|(first_seq, events, ok)| (*first_seq, events.len(), *ok))
+            .collect::<Vec<_>>(),
+        vec![(1, 4, true), (5, 4, true), (9, 2, true)]
+    );
+    let mut expected_seq = 1;
+    for (first_seq, events, _) in batches.iter() {
+        assert_eq!(*first_seq, expected_seq, "seq must be contiguous");
+        for (offset, json) in events.iter().enumerate() {
+            assert_eq!(*json, boundary_json(expected_seq + offset as i64));
+        }
+        expected_seq += events.len() as i64;
+    }
+}
+
+#[tokio::test]
+async fn saved_ui_event_batch_failure_keeps_seq_for_later_rows() {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let (handle, batches) =
+        spawn_recording_drain(rx, std::time::Duration::from_secs(3600), 4, vec![1]);
+    for seq in 1..=5 {
+        tx.send(super::SessionUiMessage::Event(boundary_event(seq)))
+            .unwrap();
+    }
+    flush_drain(&tx).await;
+    drop(tx);
+    handle.await.unwrap();
+
+    let batches = batches.lock().unwrap();
+    // The failed transaction wrote nothing, so the next batch starts at the
+    // same seq instead of leaving a hole behind the rows that were lost.
+    assert_eq!(
+        batches
+            .iter()
+            .map(|(first_seq, events, ok)| (*first_seq, events.len(), *ok))
+            .collect::<Vec<_>>(),
+        vec![(1, 4, false), (1, 1, true)]
+    );
+    assert_eq!(batches[1].1, vec![boundary_json(5)]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn saved_ui_events_commit_on_the_flush_interval() {
+    let interval = std::time::Duration::from_millis(250);
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    tx.send(super::SessionUiMessage::Event(boundary_event(1)))
+        .unwrap();
+    tx.send(super::SessionUiMessage::Event(boundary_event(2)))
+        .unwrap();
+    let (handle, batches) = spawn_recording_drain(rx, interval, 1000, Vec::new());
+    // Nothing is written until the tick: below the count bound, a slow stream
+    // still becomes durable after one interval, as one commit.
+    tokio::task::yield_now().await;
+    assert!(batches.lock().unwrap().is_empty());
+    tokio::time::sleep(interval * 2).await;
+    assert_eq!(
+        batches
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(first_seq, events, _)| (*first_seq, events.clone()))
+            .collect::<Vec<_>>(),
+        vec![(1, vec![boundary_json(1), boundary_json(2)])]
+    );
+    drop(tx);
+    handle.await.unwrap();
+}
+
+#[tokio::test]
+async fn streamed_ui_events_reach_the_store_through_the_batch_path() {
+    let base = std::env::temp_dir().join(format!("wisp_ui_batch_{}", uuid::Uuid::new_v4()));
+    let store = wisp_store::Store::open(&base.join("wisp.sqlite"))
+        .await
+        .unwrap();
+    store
+        .create_project("p", "Project", &base.to_string_lossy())
+        .await
+        .unwrap();
+    store
+        .create_frame("f", "p", "OPERON", "model")
+        .await
+        .unwrap();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let handle = tokio::spawn(persist_ui_events(
+        store.clone(),
+        "f".into(),
+        1,
+        rx,
+        std::time::Duration::from_secs(3600),
+    ));
+    // More rows than two full batches: each boundary is followed by two
+    // deltas that merge into one row, so 300 boundaries persist as 600 rows.
+    let mut expected = Vec::new();
+    for seq in 1..=300 {
+        tx.send(super::SessionUiMessage::Event(boundary_event(seq)))
+            .unwrap();
+        expected.push(boundary_json(seq));
+        for delta in ["a", "b"] {
+            tx.send(super::SessionUiMessage::Event(AgentEvent::Text {
+                frame_id: "f".into(),
+                delta: delta.into(),
+            }))
+            .unwrap();
+        }
+        expected.push(
+            serde_json::to_string(&AgentEvent::Text {
+                frame_id: "f".into(),
+                delta: "ab".into(),
+            })
+            .unwrap(),
+        );
+    }
+    assert!(expected.len() > 2 * UI_EVENT_BATCH_MAX_EVENTS);
+    flush_drain(&tx).await;
+    assert_eq!(store.load_session_ui_events("f").await.unwrap(), expected);
+    let timed = store.load_session_ui_events_timed("f").await.unwrap();
+    assert_eq!(
+        timed.iter().map(|event| event.seq).collect::<Vec<_>>(),
+        (1..=expected.len() as i64).collect::<Vec<_>>()
+    );
+    // Every row of a batch carries the batch's commit stamp, so the rows can
+    // show at most one stamp per commit: four full batches plus the flush.
+    let stamps: HashSet<i64> = timed
+        .iter()
+        .map(|event| event.created_at.expect("created_at must be stamped"))
+        .collect();
+    assert!(
+        stamps.len() <= expected.len() / UI_EVENT_BATCH_MAX_EVENTS + 1,
+        "{} commit stamps for {} rows",
+        stamps.len(),
+        expected.len()
+    );
+    assert_eq!(
+        store.next_session_ui_event_seq("f").await.unwrap(),
+        expected.len() as i64 + 1
+    );
     drop(tx);
     handle.await.unwrap();
     let _ = std::fs::remove_dir_all(base);

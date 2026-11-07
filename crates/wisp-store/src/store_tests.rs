@@ -4120,6 +4120,168 @@ async fn session_ui_events_keep_insertion_order() {
     );
 }
 
+/// Count write commits on every connection `pool` can hand out, autocommit
+/// statements included. Reads never reach the hook, so the count is the
+/// number of fsync'd transactions a code path cost.
+async fn count_commits(pool: &sqlx::SqlitePool) -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let commits = std::sync::Arc::new(AtomicUsize::new(0));
+    let mut held = Vec::new();
+    for _ in 0..pool.options().get_max_connections() {
+        let mut connection = pool.acquire().await.unwrap();
+        let counter = commits.clone();
+        connection
+            .lock_handle()
+            .await
+            .unwrap()
+            .set_commit_hook(move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                true
+            });
+        held.push(connection);
+    }
+    drop(held);
+    commits
+}
+
+fn ui_event_json(kind: &str, index: usize) -> String {
+    format!(r#"{{"kind":"{kind}","frame_id":"f","seq":{index}}}"#)
+}
+
+#[tokio::test]
+async fn session_ui_event_batches_keep_order_and_contiguous_seq() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_ui_event_batch_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "P", "").await.unwrap();
+    store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+
+    let first: Vec<String> = (1..=3)
+        .map(|index| ui_event_json("MessageBoundary", index))
+        .collect();
+    store
+        .append_session_ui_events("f", 1, &first)
+        .await
+        .unwrap();
+    assert_eq!(store.next_session_ui_event_seq("f").await.unwrap(), 4);
+    // The next batch continues where the previous one stopped, and a
+    // single-row append still interleaves with the batch path.
+    let second: Vec<String> = (4..=5).map(|index| ui_event_json("Text", index)).collect();
+    store
+        .append_session_ui_events("f", 4, &second)
+        .await
+        .unwrap();
+    store
+        .append_session_ui_event("f", 6, &ui_event_json("Done", 6))
+        .await
+        .unwrap();
+
+    let mut expected = first.clone();
+    expected.extend(second.clone());
+    expected.push(ui_event_json("Done", 6));
+    assert_eq!(store.load_session_ui_events("f").await.unwrap(), expected);
+    let timed = store.load_session_ui_events_timed("f").await.unwrap();
+    assert_eq!(
+        timed.iter().map(|event| event.seq).collect::<Vec<_>>(),
+        (1..=6).collect::<Vec<_>>()
+    );
+    assert!(timed.iter().all(|event| event.created_at.is_some()));
+    assert_eq!(store.next_session_ui_event_seq("f").await.unwrap(), 7);
+
+    // A batch that collides with an existing seq writes nothing at all, so
+    // the writer's seq stays valid for its retry.
+    let colliding = vec![ui_event_json("Text", 7), ui_event_json("Text", 6)];
+    assert!(store
+        .append_session_ui_events("f", 7, &colliding)
+        .await
+        .is_err());
+    assert_eq!(store.load_session_ui_events("f").await.unwrap(), expected);
+    assert_eq!(store.next_session_ui_event_seq("f").await.unwrap(), 7);
+    store.pool.close().await;
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn session_ui_event_batch_commits_once_on_the_routed_project_store() {
+    let root = tempfile::tempdir().unwrap();
+    let store = Store::open(&root.path().join("global.sqlite"))
+        .await
+        .unwrap();
+    let workspace = root.path().join("workspace");
+    store
+        .create_project("p", "P", workspace.to_str().unwrap())
+        .await
+        .unwrap();
+    store.migrate_project_storage("p").await.unwrap();
+    store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+    let project = store.route_project("p").await.unwrap().unwrap();
+    let project_commits = count_commits(&project.pool).await;
+    let global_commits = count_commits(&store.pool).await;
+
+    let events: Vec<String> = (1..=50)
+        .map(|index| ui_event_json("MessageBoundary", index))
+        .collect();
+    store
+        .append_session_ui_events("f", 1, &events)
+        .await
+        .unwrap();
+    assert_eq!(
+        project_commits.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "a batch must cost one commit"
+    );
+    assert_eq!(global_commits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    let routed: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM session_ui_events WHERE frame_id='f'")
+            .fetch_one(&project.pool)
+            .await
+            .unwrap();
+    let leaked: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM session_ui_events WHERE frame_id='f'")
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+    assert_eq!((routed, leaked), (50, 0));
+    assert_eq!(store.load_session_ui_events("f").await.unwrap(), events);
+
+    // The single-row path is what the batch replaces during streaming: the
+    // same rows one at a time cost one commit each.
+    for index in 51..=53 {
+        store
+            .append_session_ui_event("f", index as i64, &ui_event_json("Text", index))
+            .await
+            .unwrap();
+    }
+    assert_eq!(project_commits.load(std::sync::atomic::Ordering::SeqCst), 4);
+    assert_eq!(store.next_session_ui_event_seq("f").await.unwrap(), 54);
+    store.pool.close().await;
+}
+
+#[tokio::test]
+async fn empty_session_ui_event_batch_is_a_no_op() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_ui_event_empty_batch_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "P", "").await.unwrap();
+    store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+    let commits = count_commits(&store.pool).await;
+    store.append_session_ui_events("f", 1, &[]).await.unwrap();
+    // No frame lookup either: an unknown frame is not an error for nothing.
+    store
+        .append_session_ui_events("missing", 1, &[])
+        .await
+        .unwrap();
+    assert_eq!(commits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert!(store.load_session_ui_events("f").await.unwrap().is_empty());
+    assert_eq!(store.next_session_ui_event_seq("f").await.unwrap(), 1);
+    store.pool.close().await;
+    let _ = std::fs::remove_file(&tmp);
+}
+
 #[tokio::test]
 async fn presentation_families_do_not_hide_each_other() {
     let tmp = std::env::temp_dir().join(format!(

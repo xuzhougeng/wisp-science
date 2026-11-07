@@ -24,6 +24,20 @@ metadata can take up to one second to appear. The additive `messages(frame_id, t
 activity timestamp lookups, including marking a reply seen. Building it on an
 existing large database still incurs a one-time cost on the first open.
 
+While a turn streams, the saved-event writer no longer commits each UI event
+on its own. Events it has finished merging accumulate, and every drained batch
+is written as one transaction (`append_session_ui_events`), bounded to 128 rows
+and to the existing 250 ms flush interval, so a slow stream still reaches the
+saved transcript within one interval. Project databases keep the rollback
+journal, where every autocommit insert is its own fsync, so a turn of N events
+used to cost N commits; it now costs at most one commit per 250 ms tick that
+finds rows waiting, plus one per 128-row batch in a burst. Rows written in one
+batch share a commit timestamp. Transcript reads still flush the writer first,
+the terminal Done/Error event is still written after the writer has drained,
+and App context notices outside a turn keep the single-row path. A failed batch
+writes nothing and leaves the sequence where it was, so later rows cannot land
+past a hole.
+
 [Automatic copies](upgrade-backups.md) now run after the main page loads. Clean
 startup skips the exploration-promotion scan when no journal directories exist.
 Actual file recovery remains synchronous before tools can change workspace
