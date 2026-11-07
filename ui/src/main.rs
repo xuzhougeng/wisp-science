@@ -491,6 +491,11 @@ fn App() -> impl IntoView {
     let running = create_rw_signal::<HashSet<String>>(HashSet::new());
     let reviewing = create_rw_signal::<HashSet<String>>(HashSet::new());
     let approval_pending = create_rw_signal::<HashSet<String>>(HashSet::new());
+    // Hydration clears viewed replies locally, even while a shared inbox read
+    // is still in flight. Its epoch also rejects that read's stale snapshot.
+    let inbox_sessions = create_rw_signal::<Vec<SessionSearchInfo>>(vec![]);
+    let inbox_request_epoch = create_rw_signal(0u64);
+
     let pet_activity = create_rw_signal((String::from("idle"), 0_u64));
     let pending_turns = create_rw_signal::<HashMap<String, usize>>(HashMap::new());
     let transcripts = create_rw_signal::<HashMap<String, Vec<ChatItem>>>(HashMap::new());
@@ -7734,6 +7739,14 @@ fn App() -> impl IntoView {
                         &id,
                         browser_offline_notice_from_items(&id, &chats),
                     );
+                    if !approval_pending.with_untracked(|ids| ids.contains(&id))
+                        && !chats.iter().any(|row| {
+                            matches!(row, ChatItem::Question(card) if card.state == QuestionState::Pending)
+                        })
+                    {
+                        inbox_sessions.update(|rows| rows.retain(|row| row.id != id));
+                    }
+                    inbox_request_epoch.update(|epoch| *epoch = epoch.wrapping_add(1));
                     items.set(chats);
                     transcript_loading.set(None);
                 });
@@ -10060,8 +10073,6 @@ fn App() -> impl IntoView {
     // Cross-project "needs you" inbox (#423): sessions across every project
     // that are waiting on the user, surfaced from any window's topbar.
     let inbox_open = create_rw_signal(false);
-    let inbox_sessions = create_rw_signal::<Vec<SessionSearchInfo>>(vec![]);
-    let inbox_request_epoch = create_rw_signal(0u64);
     let inbox_refresh_active = create_rw_signal(false);
     let refresh_inbox = move || {
         inbox_request_epoch.update(|epoch| *epoch = epoch.wrapping_add(1));

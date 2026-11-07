@@ -17,8 +17,10 @@ The needs-you inbox coalesces refresh bursts for 150 ms and allows only one
 request in flight per window, with a trailing refresh for intervening changes.
 Desktop windows share a serialized backend query with a one-second cache;
 changes to running/approval membership bypass it, and loading a session
-invalidates it after marking the reply seen. Other saved metadata can take up
-to one second to appear. The additive `messages(frame_id, ts)` index covers
+invalidates it after marking the reply seen. Successful hydration immediately
+clears the viewed reply from the local inbox, even if an older inbox request is
+still in flight, while retaining pending approvals and questions. Other saved
+metadata can take up to one second to appear. The additive `messages(frame_id, ts)` index covers
 activity timestamp lookups, including marking a reply seen. Building it on an
 existing large database still incurs a one-time cost on the first open.
 

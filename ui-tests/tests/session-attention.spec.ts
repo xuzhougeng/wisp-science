@@ -99,6 +99,8 @@ test("a late inbox snapshot cannot restore a cleared pending marker", async ({ p
   await page.getByTestId("sidebar-needs-you").click();
   await page.getByTestId("sidebar-attention-session").filter({ hasText: "Paged session 101" }).click();
   await expect(page.getByTestId("sidebar-needs-you")).toHaveText("3 need you");
+  await expect(page.locator(".inbox-wrap .inbox-badge")).toHaveText("3");
+  await expect(page.getByTestId("sidebar-attention-session").filter({ hasText: "Paged session 4" })).toBeVisible();
   await page.evaluate(async () => {
     (window as any).__releaseNeedsYouRead();
     // Flush the resumed invoke and Leptos's scheduled render before asserting.

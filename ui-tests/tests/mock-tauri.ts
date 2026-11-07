@@ -2703,6 +2703,10 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
                 ],
                 next_before_seq: null,
                 user_offset: 0,
+                pending_approvals: session?.awaiting ? [{
+                  approval_id: `approval-${activeMockFrame}`, frame_id: activeMockFrame,
+                  tool: "shell", preview: "Run pending command", message: "Allow pending command?",
+                }] : [],
               };
             }
             if (mockExplorationFlow && String(arg("id") ?? "").startsWith("exploration-")) {
