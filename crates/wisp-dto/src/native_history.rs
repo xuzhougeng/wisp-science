@@ -156,10 +156,18 @@ mod tests {
     use super::*;
     #[test]
     fn excerpt_ranges_reject_stale_reversed_and_running_tail_turns() {
-        let turns: Vec<_> = (0..3).map(|user_index| TurnIdentity {
-            user_index, user_seq: user_index as i64 + 1, digest: format!("turn-{user_index}"),
-        }).collect();
-        let mut request = ExcerptRequest { session_id: "s".into(), start: turns[0].clone(), end: turns[1].clone() };
+        let turns: Vec<_> = (0..3)
+            .map(|user_index| TurnIdentity {
+                user_index,
+                user_seq: user_index as i64 + 1,
+                digest: format!("turn-{user_index}"),
+            })
+            .collect();
+        let mut request = ExcerptRequest {
+            session_id: "s".into(),
+            start: turns[0].clone(),
+            end: turns[1].clone(),
+        };
         assert!(request.validate(&turns, true).is_ok());
         request.end = turns[2].clone();
         assert!(request.validate(&turns, true).is_err());
@@ -173,7 +181,8 @@ mod tests {
         assert!(request.validate(&turns, false).is_err());
         assert!(serde_json::from_value::<ExcerptRequest>(serde_json::json!({
             "session_id":"s", "start_user_index":0, "end_user_index":1
-        })).is_err());
+        }))
+        .is_err());
     }
     #[test]
     fn historical_actions_preserve_running_and_checkpoint_boundaries() {

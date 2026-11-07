@@ -630,11 +630,16 @@ pub(crate) async fn dispatch(
         }
         "native_conversation_panel_file_provenance" => {
             file_provenance_reply(
-                &state.store, project_id, session, &project.root,
+                &state.store,
+                project_id,
+                session,
+                &project.root,
                 &args.path.ok_or("File path is required")?,
-            ).await
+            )
+            .await
         }
-        "native_conversation_panel_readartifact" | "native_conversation_panel_artifact_provenance"
+        "native_conversation_panel_readartifact"
+        | "native_conversation_panel_artifact_provenance"
         | "native_conversation_panel_artifact_library" => {
             let id = args.artifact_id.ok_or("Artifact ID is required")?;
             if !state
@@ -652,36 +657,81 @@ pub(crate) async fn dispatch(
                 .map_err(|e| e.to_string())?
                 .ok_or("Artifact not found")?;
             if request.command == "native_conversation_panel_artifact_library" {
-                let rows = state.library.list_for_session(session).await.map_err(|e| e.to_string())?;
-                let existing = rows.into_iter().find(|row| figure_library_matches(row, project_id, session, &path));
+                let rows = state
+                    .library
+                    .list_for_session(session)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let existing = rows
+                    .into_iter()
+                    .find(|row| figure_library_matches(row, project_id, session, &path));
                 let library_item_id = match (args.enabled, existing) {
                     (Some(false), Some(row)) => {
-                        remove_panel_library_item(&state.library, project_id, session, &row.id, "figure").await?;
+                        remove_panel_library_item(
+                            &state.library,
+                            project_id,
+                            session,
+                            &row.id,
+                            "figure",
+                        )
+                        .await?;
                         None
                     }
                     (Some(true), None) => {
-                        let name = path.replace('\\', "/").rsplit('/').next().unwrap_or("Figure").to_owned();
-                        Some(crate::library_commands::star_figure_at(&state, session, &project.root, &path, &name).await?.id)
+                        let name = path
+                            .replace('\\', "/")
+                            .rsplit('/')
+                            .next()
+                            .unwrap_or("Figure")
+                            .to_owned();
+                        Some(
+                            crate::library_commands::star_figure_at(
+                                &state,
+                                session,
+                                &project.root,
+                                &path,
+                                &name,
+                            )
+                            .await?
+                            .id,
+                        )
                     }
                     (_, row) => row.map(|row| row.id),
                 };
-                return serde_json::to_value(wisp_dto::native_conversations::PanelArtifactLibrary {
-                    schema: wisp_dto::native_conversations::SCHEMA.into(),
-                    project_id: project_id.into(), session_id: session.into(), artifact_id: id, library_item_id,
-                }).map_err(|e| e.to_string());
+                return serde_json::to_value(
+                    wisp_dto::native_conversations::PanelArtifactLibrary {
+                        schema: wisp_dto::native_conversations::SCHEMA.into(),
+                        project_id: project_id.into(),
+                        session_id: session.into(),
+                        artifact_id: id,
+                        library_item_id,
+                    },
+                )
+                .map_err(|e| e.to_string());
             }
             if request.command == "native_conversation_panel_artifact_provenance" {
                 let provenance = crate::session_export::artifact_provenance_for_path(
-                    &state.store, session, &project.root, &path,
-                ).await?;
+                    &state.store,
+                    session,
+                    &project.root,
+                    &path,
+                )
+                .await?;
                 let provenance = serde_json::from_value(
                     serde_json::to_value(provenance).map_err(|e| e.to_string())?,
-                ).map_err(|e| e.to_string())?;
-                return serde_json::to_value(wisp_dto::native_conversations::PanelArtifactProvenance {
-                    schema: wisp_dto::native_conversations::SCHEMA.into(),
-                    project_id: project_id.into(), session_id: session.into(), artifact_id: id,
-                    path, provenance,
-                }).map_err(|e| e.to_string());
+                )
+                .map_err(|e| e.to_string())?;
+                return serde_json::to_value(
+                    wisp_dto::native_conversations::PanelArtifactProvenance {
+                        schema: wisp_dto::native_conversations::SCHEMA.into(),
+                        project_id: project_id.into(),
+                        session_id: session.into(),
+                        artifact_id: id,
+                        path,
+                        provenance,
+                    },
+                )
+                .map_err(|e| e.to_string());
             }
             read(project.root, path, args.render_pdf, args.render_office).await
         }
@@ -698,18 +748,30 @@ async fn file_provenance_reply(
     if path.trim().is_empty() || path.chars().any(char::is_control) {
         return Err("A non-empty file path without control characters is required".into());
     }
-    if store.live_frame_project_id(session).await.map_err(|e| e.to_string())?.as_deref() != Some(project) {
+    if store
+        .live_frame_project_id(session)
+        .await
+        .map_err(|e| e.to_string())?
+        .as_deref()
+        != Some(project)
+    {
         return Err("File provenance scope mismatch".into());
     }
     // This reads execution metadata only. Like WebView, it also works after
     // the produced file has moved or disappeared; never read arbitrary bytes.
-    let provenance = crate::session_export::artifact_provenance_for_path(store, session, root, path).await?;
-    let provenance = serde_json::from_value(serde_json::to_value(provenance).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+    let provenance =
+        crate::session_export::artifact_provenance_for_path(store, session, root, path).await?;
+    let provenance =
+        serde_json::from_value(serde_json::to_value(provenance).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
     serde_json::to_value(wisp_dto::native_conversations::PanelFileProvenance {
         schema: wisp_dto::native_conversations::SCHEMA.into(),
-        project_id: project.into(), session_id: session.into(), path: path.into(), provenance,
-    }).map_err(|e| e.to_string())
+        project_id: project.into(),
+        session_id: session.into(),
+        path: path.into(),
+        provenance,
+    })
+    .map_err(|e| e.to_string())
 }
 
 fn library_item_in_scope(
@@ -720,9 +782,17 @@ fn library_item_in_scope(
 ) -> bool {
     row.kind == kind && row.source_project_id == project && row.source_session_id == session
 }
-fn figure_library_matches(row: &wisp_store::LibraryItem, project: &str, session: &str, path: &str) -> bool {
+fn figure_library_matches(
+    row: &wisp_store::LibraryItem,
+    project: &str,
+    session: &str,
+    path: &str,
+) -> bool {
     library_item_in_scope(row, project, session, "figure")
-        && row.source_path.as_deref().map(crate::library_commands::normalize_source_path)
+        && row
+            .source_path
+            .as_deref()
+            .map(crate::library_commands::normalize_source_path)
             == Some(crate::library_commands::normalize_source_path(path))
 }
 async fn remove_highlight(
@@ -828,19 +898,44 @@ mod tests {
     async fn file_provenance_keeps_frame_scope_without_requiring_a_registered_file() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
-        let store = wisp_store::Store::open(&root.join("store.db")).await.unwrap();
+        let store = wisp_store::Store::open(&root.join("store.db"))
+            .await
+            .unwrap();
         store.create_project("p", "Project", "").await.unwrap();
         store.create_frame("s", "p", "OPERON", "m").await.unwrap();
-        store.create_frame("other", "p", "OPERON", "m").await.unwrap();
-        store.record_env_snapshot("env", Some("python"), r#"[{"name":"numpy","version":"1.0"}]"#).await.unwrap();
-        store.insert_execution_log(&wisp_store::ExecLog {
-            id: "cell".into(), frame_id: "s".into(), cell_index: 0,
-            tool: "python".into(), language: "python".into(), source: "savefig('out/chart.png')".into(),
-            stdout: "created chart".into(), stderr: String::new(), exit_status: "ok".into(), wall_s: None,
-            files_written: vec!["out/chart.png".into(), "data/input.csv".into()],
-            files_read: vec!["data/input.csv".into(), "external.csv".into()], env_hash: Some("env".into()),
-        }).await.unwrap();
-        let value = file_provenance_reply(&store, "p", "s", root, "out/chart.png").await.unwrap();
+        store
+            .create_frame("other", "p", "OPERON", "m")
+            .await
+            .unwrap();
+        store
+            .record_env_snapshot(
+                "env",
+                Some("python"),
+                r#"[{"name":"numpy","version":"1.0"}]"#,
+            )
+            .await
+            .unwrap();
+        store
+            .insert_execution_log(&wisp_store::ExecLog {
+                id: "cell".into(),
+                frame_id: "s".into(),
+                cell_index: 0,
+                tool: "python".into(),
+                language: "python".into(),
+                source: "savefig('out/chart.png')".into(),
+                stdout: "created chart".into(),
+                stderr: String::new(),
+                exit_status: "ok".into(),
+                wall_s: None,
+                files_written: vec!["out/chart.png".into(), "data/input.csv".into()],
+                files_read: vec!["data/input.csv".into(), "external.csv".into()],
+                env_hash: Some("env".into()),
+            })
+            .await
+            .unwrap();
+        let value = file_provenance_reply(&store, "p", "s", root, "out/chart.png")
+            .await
+            .unwrap();
         assert_eq!(value["path"], "out/chart.png");
         assert!(value.get("artifact_id").is_none());
         assert_eq!(value["provenance"]["code"], "savefig('out/chart.png')");
@@ -849,15 +944,35 @@ mod tests {
         assert_eq!(value["provenance"]["inputs"][1]["produced_here"], false);
         assert_eq!(value["provenance"]["env"]["packages"][0]["version"], "1.0");
         let absolute = root.join("out/chart.png").to_string_lossy().into_owned();
-        let absolute_reply = file_provenance_reply(&store, "p", "s", root, &absolute).await.unwrap();
+        let absolute_reply = file_provenance_reply(&store, "p", "s", root, &absolute)
+            .await
+            .unwrap();
         assert_eq!(absolute_reply["path"], absolute);
         assert_eq!(absolute_reply["provenance"], value["provenance"]);
-        assert!(file_provenance_reply(&store, "p", "other", root, "out/chart.png").await.unwrap()["provenance"].is_null());
-        assert!(file_provenance_reply(&store, "p", "s", root, "missing.png").await.unwrap()["provenance"].is_null());
-        assert!(file_provenance_reply(&store, "wrong", "s", root, "out/chart.png").await.is_err());
-        assert!(file_provenance_reply(&store, "p", "missing-session", root, "out/chart.png").await.is_err());
+        assert!(
+            file_provenance_reply(&store, "p", "other", root, "out/chart.png")
+                .await
+                .unwrap()["provenance"]
+                .is_null()
+        );
+        assert!(file_provenance_reply(&store, "p", "s", root, "missing.png")
+            .await
+            .unwrap()["provenance"]
+            .is_null());
+        assert!(
+            file_provenance_reply(&store, "wrong", "s", root, "out/chart.png")
+                .await
+                .is_err()
+        );
+        assert!(
+            file_provenance_reply(&store, "p", "missing-session", root, "out/chart.png")
+                .await
+                .is_err()
+        );
         for invalid in ["", " ", "out/\0bad.png"] {
-            assert!(file_provenance_reply(&store, "p", "s", root, invalid).await.is_err());
+            assert!(file_provenance_reply(&store, "p", "s", root, invalid)
+                .await
+                .is_err());
         }
     }
     #[test]
@@ -982,20 +1097,39 @@ mod tests {
     #[tokio::test]
     async fn figure_library_matching_and_removal_are_scoped() {
         let temp = tempfile::tempdir().unwrap();
-        let library = wisp_store::LibraryStore::open(&temp.path().join("library.sqlite")).await.unwrap();
-        let row = library.insert(wisp_store::NewLibraryItem {
-            kind: "figure".into(), title: "Figure".into(), language: None, code: String::new(),
-            content_type: Some("image/png".into()), content: Some(vec![1, 2, 3]),
-            source_project_id: "p".into(), source_project_name: "P".into(),
-            source_session_id: "s".into(), source_session_title: "S".into(),
-            source_path: Some("figures/a.png".into()),
-        }).await.unwrap();
+        let library = wisp_store::LibraryStore::open(&temp.path().join("library.sqlite"))
+            .await
+            .unwrap();
+        let row = library
+            .insert(wisp_store::NewLibraryItem {
+                kind: "figure".into(),
+                title: "Figure".into(),
+                language: None,
+                code: String::new(),
+                content_type: Some("image/png".into()),
+                content: Some(vec![1, 2, 3]),
+                source_project_id: "p".into(),
+                source_project_name: "P".into(),
+                source_session_id: "s".into(),
+                source_session_title: "S".into(),
+                source_path: Some("figures/a.png".into()),
+            })
+            .await
+            .unwrap();
         assert!(figure_library_matches(&row, "p", "s", ".\\figures\\a.png"));
         assert!(!figure_library_matches(&row, "other", "s", "figures/a.png"));
         assert!(!figure_library_matches(&row, "p", "other", "figures/a.png"));
         assert!(!figure_library_matches(&row, "p", "s", "figures/b.png"));
-        assert!(remove_panel_library_item(&library, "p", "s", &row.id, "code").await.is_err());
-        assert!(remove_panel_library_item(&library, "p", "s", &row.id, "figure").await.unwrap());
+        assert!(
+            remove_panel_library_item(&library, "p", "s", &row.id, "code")
+                .await
+                .is_err()
+        );
+        assert!(
+            remove_panel_library_item(&library, "p", "s", &row.id, "figure")
+                .await
+                .unwrap()
+        );
         assert!(library.list_for_session("s").await.unwrap().is_empty());
     }
 
@@ -1070,9 +1204,21 @@ mod tests {
             .unwrap();
         let own = wisp_store::StateScope::mainline("p");
         let other = wisp_store::StateScope::mainline("other");
-        assert!(store.manageable_context_runs(&own, "local").await.unwrap().contains("r"));
-        assert!(store.manageable_context_runs(&own, "ssh:elsewhere").await.unwrap().is_empty());
-        assert!(store.manageable_context_runs(&other, "local").await.unwrap().is_empty());
+        assert!(store
+            .manageable_context_runs(&own, "local")
+            .await
+            .unwrap()
+            .contains("r"));
+        assert!(store
+            .manageable_context_runs(&own, "ssh:elsewhere")
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(store
+            .manageable_context_runs(&other, "local")
+            .await
+            .unwrap()
+            .is_empty());
         for mutation in [false, true] {
             assert!(require_run_scope(&store, &own, "r", mutation).await.is_ok());
             assert!(require_run_scope(&store, &other, "r", mutation)

@@ -120,8 +120,13 @@ mod tests {
             serde_json::to_value(result).unwrap()["contents"],
             fixture["result"]["contents"]
         );
-        assert!(serde_json::from_value::<DebugRequestArgs>(serde_json::json!({"session_id":"s","before_seq":3})).is_err());
-        assert!(crate::native_conversations::COMMANDS.contains(&"native_conversation_debug_request"));
+        assert!(serde_json::from_value::<DebugRequestArgs>(
+            serde_json::json!({"session_id":"s","before_seq":3})
+        )
+        .is_err());
+        assert!(
+            crate::native_conversations::COMMANDS.contains(&"native_conversation_debug_request")
+        );
     }
     #[test]
     fn export_fixture_binds_source_file_choice_revision_and_destination() {

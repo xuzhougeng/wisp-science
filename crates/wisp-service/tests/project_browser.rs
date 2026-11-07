@@ -94,7 +94,10 @@ async fn stdio_supports_queries_capabilities_and_recovers_after_invalid_requests
     assert_eq!(replies[3]["schema"], SCHEMA);
     assert_eq!(replies[3]["id"], "list");
     assert_eq!(replies[3]["activity_source"], "persisted_only");
-    assert_eq!(replies[3]["privacy"], json!({"active":false, "project_ids":[]}));
+    assert_eq!(
+        replies[3]["privacy"],
+        json!({"active":false, "project_ids":[]})
+    );
     assert_eq!(replies[3]["projects"][0]["name"], "Research");
     assert_eq!(store.list_projects().await.unwrap().len(), 1);
 }

@@ -412,7 +412,10 @@ mod tests {
     #[test]
     fn debug_export_filename_is_one_component_for_both_frontends() {
         assert_eq!(sanitize_component("source-1"), "source_1");
-        assert_eq!(sanitize_component("../folder\\session:研究"), "___folder_session___");
+        assert_eq!(
+            sanitize_component("../folder\\session:研究"),
+            "___folder_session___"
+        );
     }
 
     #[test]

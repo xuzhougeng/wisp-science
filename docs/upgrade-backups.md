@@ -42,7 +42,11 @@ before 1.18.0 opened it. The day's copy is named
 `project-<project id>.…`; the id is the `project_id` in the project's
 `.wisp/project.json`.
 
-The three most recent copies of each kind are kept per database. The folder
+The three most recent copies of each kind are kept per database. Daily copies
+of all databases together are also kept within 2 GiB: above that, the oldest
+daily copies are deleted first, whichever database they belong to, but the
+newest daily copy of every database always stays, and pre-upgrade copies are
+neither counted nor deleted by this rule. The folder
 can be deleted at any time to free disk space. A copy that cannot be written
 (a full disk, a read-only folder) is logged and does not stop Wisp from
 starting. A database that fails SQLite's `quick_check` is not copied, so a
@@ -51,6 +55,27 @@ damaged database never replaces the good copies it will be restored from.
 Installing an older version is not a rollback by itself: the older version
 opens the database as the newer one left it. It does take its own copy first,
 so the newer state is kept too.
+
+## Code snapshots are kept for recent Runs only
+
+Each Run records the command it ran, the git commit and any uncommitted patch
+(up to 1 MB) in its project database, so the Run can be reproduced later.
+Nothing removed those rows before, and one project's table reached 584 MB
+(#1689). The same background pass now keeps the code snapshots of the newest
+200 Runs of each project and of every Run that is still needed, and deletes the
+rest, oldest Runs first, after the day's copy has been taken.
+
+A Run's code snapshot is never deleted while:
+
+- the Run has not ended (draft, submitted, running, paused or cancelling);
+- the Run belongs to an exploration round that has not been promoted or
+  abandoned, or whose promotion has not finished;
+- a publication cites the Run as evidence or reproduces it.
+
+The Run itself, its inputs and outputs, environment snapshot, logs and research
+graph links are not touched; only the code snapshot rows go, and a publication
+that later cites such a Run cannot mark it re-executable. Deleted rows free
+space inside the database file for reuse; the file itself does not shrink.
 
 ## A damaged project database is restored by itself
 

@@ -45,11 +45,21 @@ pub(crate) async fn plan_skill_portfolio(
     conversion_id: Option<String>,
     expected_project_id: Option<String>,
 ) -> Result<SkillPortfolioDraft, String> {
-    let progress_project = state.require_active(window.label()).ok().map(|project| project.id.clone());
+    let progress_project = state
+        .require_active(window.label())
+        .ok()
+        .map(|project| project.id.clone());
     let progress = |stage| {
         if let Some(conversion_id) = &conversion_id {
-            if let (Some(project), Some(broker)) = (progress_project.as_deref(), window.app_handle().try_state::<crate::native_settings::Broker>()) {
-                broker.workflow_conversions.record(project, conversion_id, stage);
+            if let (Some(project), Some(broker)) = (
+                progress_project.as_deref(),
+                window
+                    .app_handle()
+                    .try_state::<crate::native_settings::Broker>(),
+            ) {
+                broker
+                    .workflow_conversions
+                    .record(project, conversion_id, stage);
             }
             let _ = window.emit_to(
                 window.label(),

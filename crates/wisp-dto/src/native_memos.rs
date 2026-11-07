@@ -3,8 +3,10 @@ use serde::{Deserialize, Serialize};
 
 pub const SCHEMA: &str = "wisp.native-memos.v1";
 pub const COMMANDS: &[&str] = &[
-    "native_project_memos", "native_project_memo_add",
-    "native_project_memo_update", "native_project_memo_delete",
+    "native_project_memos",
+    "native_project_memo_add",
+    "native_project_memo_update",
+    "native_project_memo_delete",
 ];
 
 #[derive(Debug, Deserialize)]
@@ -12,13 +14,19 @@ pub const COMMANDS: &[&str] = &[
 pub struct ListRequest {}
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct AddRequest { pub input: crate::ProjectMemoInput }
+pub struct AddRequest {
+    pub input: crate::ProjectMemoInput,
+}
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct UpdateRequest { pub patch: crate::ProjectMemoPatch }
+pub struct UpdateRequest {
+    pub patch: crate::ProjectMemoPatch,
+}
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DeleteRequest { pub memo_id: String }
+pub struct DeleteRequest {
+    pub memo_id: String,
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct MemoList {

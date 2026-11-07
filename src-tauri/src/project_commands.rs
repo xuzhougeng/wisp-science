@@ -794,7 +794,13 @@ pub(super) async fn delete_project(
     id: String,
     delete_data: Option<bool>,
 ) -> Result<(), String> {
-    delete_project_record(state.inner(), &id, delete_data.unwrap_or(false), Some(window.label())).await
+    delete_project_record(
+        state.inner(),
+        &id,
+        delete_data.unwrap_or(false),
+        Some(window.label()),
+    )
+    .await
 }
 
 /// Shared deletion pipeline. Native callers supply an explicit project and no
@@ -825,10 +831,20 @@ pub(crate) async fn delete_project_record(
     // workspace so `active` never dangles at a deleted project. An unbound
     // File → New Window (`home-*`) must not treat `main` as active or panic.
     let fallback_windows: Vec<String> = match window_label {
-        Some(label) => state.require_active(label).ok().filter(|ap| ap.id == id)
-            .map(|_| vec![label.to_owned()]).unwrap_or_default(),
-        None => state.active.read().unwrap().iter()
-            .filter(|(_, project)| project.id == id).map(|(label, _)| label.clone()).collect(),
+        Some(label) => state
+            .require_active(label)
+            .ok()
+            .filter(|ap| ap.id == id)
+            .map(|_| vec![label.to_owned()])
+            .unwrap_or_default(),
+        None => state
+            .active
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|(_, project)| project.id == id)
+            .map(|(label, _)| label.clone())
+            .collect(),
     };
     // Stop the deleted project's own running sessions (gather frame ids before
     // the store cascade removes them); other projects keep running (#52).
@@ -849,7 +865,10 @@ pub(crate) async fn delete_project_record(
     project_sync::forget_project_key(&id).await;
     for label in fallback_windows {
         // A window may have navigated elsewhere while the deletion was running.
-        if state.require_active(&label).is_ok_and(|project| project.id == id) {
+        if state
+            .require_active(&label)
+            .is_ok_and(|project| project.id == id)
+        {
             let _ = set_active_project(state, &label, "default").await;
         }
     }

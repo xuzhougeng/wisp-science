@@ -55,10 +55,10 @@ mod exploration_commands;
 mod mac_notifications;
 mod native_assistant;
 mod native_branch_merge;
-mod native_explorations;
 mod native_calendar;
 mod native_composer;
 mod native_conversations;
+mod native_explorations;
 mod native_files;
 mod native_history;
 #[cfg(target_os = "macos")]
@@ -67,10 +67,10 @@ mod native_journey;
 mod native_library;
 mod native_message_images;
 mod native_projects;
-mod native_session_deletion;
 mod native_publication;
 mod native_queue;
 mod native_search;
+mod native_session_deletion;
 mod native_session_export;
 mod native_session_transfer;
 mod native_settings;
@@ -128,10 +128,10 @@ mod toolchain;
 mod workflow_approval;
 mod workflow_artifacts;
 pub(crate) use wisp_runs as run_context;
-mod native_panels;
-mod native_runtimes;
 mod native_memos;
+mod native_panels;
 mod native_run_review;
+mod native_runtimes;
 mod native_share;
 mod native_terminals;
 mod network;
@@ -7543,7 +7543,9 @@ fn spawn_deferred_startup(app: &tauri::AppHandle) {
 
 /// One sequential maintenance worker, started only after the main page loads.
 /// Later passes include projects opened since the first pass, without opening
-/// unused projects or holding their registry lock during backup I/O.
+/// unused projects or holding their registry lock during backup I/O. Run code
+/// snapshots are pruned after the copies, so the day's copy still holds what
+/// the first prune on a database removes.
 fn spawn_database_maintenance(app: &tauri::AppHandle) {
     static STARTED: AtomicBool = AtomicBool::new(false);
     if STARTED.swap(true, Ordering::AcqRel) {
@@ -7555,7 +7557,8 @@ fn spawn_database_maintenance(app: &tauri::AppHandle) {
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         loop {
             // A native host page can finish while setup is still migrating.
-            let stores = app.try_state::<AppState>()
+            let stores = app
+                .try_state::<AppState>()
                 .map(|state| (state.store.clone(), state.library.clone()));
             let Some((store, library)) = stores else {
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -7563,6 +7566,7 @@ fn spawn_database_maintenance(app: &tauri::AppHandle) {
             };
             store.maintain_daily_backups().await;
             library.maintain_daily_backups().await;
+            store.maintain_run_code_snapshots().await;
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         }
     });

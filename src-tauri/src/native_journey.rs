@@ -102,8 +102,11 @@ pub(crate) async fn execute(
         let root = std::path::PathBuf::from(artifact.project_root);
         let path = context.version.storage_path.clone();
         let content = tokio::task::spawn_blocking(move || {
-            if input.thumbnail { read_thumbnail(&root, path) }
-            else { crate::file_browser::read_file_at(&root, path, Some(2 * 1024 * 1024)) }
+            if input.thumbnail {
+                read_thumbnail(&root, path)
+            } else {
+                crate::file_browser::read_file_at(&root, path, Some(2 * 1024 * 1024))
+            }
         })
         .await
         .map_err(|error| error.to_string())?;
@@ -161,20 +164,36 @@ fn read_thumbnail(root: &std::path::Path, path: String) -> Result<wisp_dto::File
         (raster_thumbnail(&bytes)?, "image/png")
     };
     Ok(wisp_dto::FileContent {
-        path: real.to_string_lossy().into_owned(), mime: mime.into(), text: None,
-        total_bytes: Some(bytes.len() as u64), base64: Some(base64::engine::general_purpose::STANDARD.encode(bytes)), truncated: false,
+        path: real.to_string_lossy().into_owned(),
+        mime: mime.into(),
+        text: None,
+        total_bytes: Some(bytes.len() as u64),
+        base64: Some(base64::engine::general_purpose::STANDARD.encode(bytes)),
+        truncated: false,
     })
 }
 
 fn raster_thumbnail(bytes: &[u8]) -> Result<Vec<u8>, String> {
     use std::io::Cursor;
-    let mut reader = image::ImageReader::new(Cursor::new(bytes)).with_guessed_format().map_err(|e| e.to_string())?;
+    let mut reader = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?;
     let mut limits = image::Limits::default();
-    limits.max_image_width = Some(16384); limits.max_image_height = Some(16384); limits.max_alloc = Some(128 * 1024 * 1024);
+    limits.max_image_width = Some(16384);
+    limits.max_image_height = Some(16384);
+    limits.max_alloc = Some(128 * 1024 * 1024);
     reader.limits(limits);
     let image = reader.decode().map_err(|e| e.to_string())?;
-    let image = if image.width() > 384 || image.height() > 384 { image.thumbnail(384, 384) } else { image };
-    let mut output = Cursor::new(Vec::new()); image.to_rgba8().write_to(&mut output, image::ImageFormat::Png).map_err(|e| e.to_string())?;
+    let image = if image.width() > 384 || image.height() > 384 {
+        image.thumbnail(384, 384)
+    } else {
+        image
+    };
+    let mut output = Cursor::new(Vec::new());
+    image
+        .to_rgba8()
+        .write_to(&mut output, image::ImageFormat::Png)
+        .map_err(|e| e.to_string())?;
     Ok(output.into_inner())
 }
 
@@ -191,8 +210,12 @@ mod tests {
         use std::io::Cursor;
         for (width, height, expected) in [(1200, 600, (384, 192)), (20, 10, (20, 10))] {
             let mut bytes = Cursor::new(Vec::new());
-            image::RgbaImage::from_pixel(width, height, image::Rgba([10, 20, 30, 0])).write_to(&mut bytes, image::ImageFormat::Png).unwrap();
-            let result = image::load_from_memory(&raster_thumbnail(bytes.get_ref()).unwrap()).unwrap().to_rgba8();
+            image::RgbaImage::from_pixel(width, height, image::Rgba([10, 20, 30, 0]))
+                .write_to(&mut bytes, image::ImageFormat::Png)
+                .unwrap();
+            let result = image::load_from_memory(&raster_thumbnail(bytes.get_ref()).unwrap())
+                .unwrap()
+                .to_rgba8();
             assert_eq!(result.dimensions(), expected);
             assert_eq!(result.get_pixel(0, 0)[3], 0);
         }
@@ -201,17 +224,24 @@ mod tests {
 
     #[test]
     fn card_reads_preserve_svg_and_bound_text() {
-        let root = std::env::temp_dir().join(format!("journey-thumbnails-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("journey-thumbnails-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\"><text>Evidence</text></svg>";
         std::fs::write(root.join("figure.svg"), svg).unwrap();
         std::fs::write(root.join("large.txt"), "x".repeat(9000)).unwrap();
         let text = read_thumbnail(&root, "large.txt".into()).unwrap();
-        assert!(text.truncated); assert_eq!(text.text.unwrap().len(), 2048);
+        assert!(text.truncated);
+        assert_eq!(text.text.unwrap().len(), 2048);
         let figure = read_thumbnail(&root, "figure.svg".into()).unwrap();
         assert_eq!(figure.mime, "image/svg+xml");
         use base64::Engine;
-        assert_eq!(base64::engine::general_purpose::STANDARD.decode(figure.base64.unwrap()).unwrap(), svg.as_bytes());
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(figure.base64.unwrap())
+                .unwrap(),
+            svg.as_bytes()
+        );
         assert!(read_thumbnail(&root, "../outside.txt".into()).is_err());
         std::fs::remove_dir_all(&root).unwrap();
     }

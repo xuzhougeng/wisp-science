@@ -200,14 +200,28 @@ pub struct ExplorationState {
 impl ExplorationState {
     pub fn for_session(rows: &[crate::ExplorationSummary], session: &str) -> Self {
         Self {
-            summary: rows.iter().find(|row| row.exploration.frame_id == session).cloned(),
-            active_count: rows.iter().filter(|row| row.source_frame_id == session
-                && matches!(row.exploration.status.as_str(), "creating" | "active" | "promoting")).count(),
+            summary: rows
+                .iter()
+                .find(|row| row.exploration.frame_id == session)
+                .cloned(),
+            active_count: rows
+                .iter()
+                .filter(|row| {
+                    row.source_frame_id == session
+                        && matches!(
+                            row.exploration.status.as_str(),
+                            "creating" | "active" | "promoting"
+                        )
+                })
+                .count(),
             // Failed candidates still freeze their source until the round is resolved.
             source_frozen: rows.iter().any(|row| row.source_frame_id == session),
             round_source_frame_id: rows.first().map(|row| row.source_frame_id.clone()),
             round_user_index: rows.first().map(|row| row.checkpoint_user_index),
-            candidate_count: rows.iter().filter(|row| row.source_frame_id == session).count(),
+            candidate_count: rows
+                .iter()
+                .filter(|row| row.source_frame_id == session)
+                .count(),
         }
     }
 }
@@ -1168,16 +1182,24 @@ mod tests {
     fn rules_fixture_requires_explicit_status_and_rejects_history_cursors() {
         let data: serde_json::Value = serde_json::from_str(include_str!(
             "../../../contracts/native-conversations/v1/rules.json"
-        )).unwrap();
+        ))
+        .unwrap();
         let request: super::RulesRequest = serde_json::from_value(data["request"].clone()).unwrap();
         let stale: super::RulesStatus = serde_json::from_value(data["stale"].clone()).unwrap();
         assert_eq!(request.session_id, stale.session_id);
         assert!(stale.stale_prompt);
-        let unchanged: super::RulesReloadResult = serde_json::from_value(data["unchanged"].clone()).unwrap();
+        let unchanged: super::RulesReloadResult =
+            serde_json::from_value(data["unchanged"].clone()).unwrap();
         assert!(!unchanged.changed);
         assert_eq!(unchanged.project_id, stale.project_id);
-        assert!(serde_json::from_value::<super::RulesRequest>(serde_json::json!({"session_id":"main-1","before_seq":5})).is_err());
-        assert!(serde_json::from_value::<super::RulesStatus>(serde_json::json!({"project_id":"research-1","session_id":"main-1"})).is_err());
+        assert!(serde_json::from_value::<super::RulesRequest>(
+            serde_json::json!({"session_id":"main-1","before_seq":5})
+        )
+        .is_err());
+        assert!(serde_json::from_value::<super::RulesStatus>(
+            serde_json::json!({"project_id":"research-1","session_id":"main-1"})
+        )
+        .is_err());
         assert!(super::COMMANDS.contains(&"native_conversation_rules_status"));
         assert!(super::COMMANDS.contains(&"native_conversation_rules_reload"));
     }
@@ -1185,7 +1207,8 @@ mod tests {
     fn exploration_navigation_preserves_private_scope_and_freeze() {
         let rows: super::Explorations = serde_json::from_str(include_str!(
             "../../../contracts/native-conversations/v1/explorations.json"
-        )).unwrap();
+        ))
+        .unwrap();
         assert_eq!(rows.project_id, "research-1");
         assert!(rows.explorations[0].isolation_is_full());
         assert!(!rows.explorations[1].isolation_is_full());
@@ -1201,25 +1224,32 @@ mod tests {
         assert_eq!(private.summary.unwrap().exploration.id, "explore-1");
         let other = super::ExplorationState::for_session(&rows.explorations, "other");
         assert!(!other.source_frozen && other.summary.is_none());
-        assert!(serde_json::from_value::<super::ExplorationOpenRequest>(serde_json::json!({
-            "session_id":"private-1", "exploration_id":"explore-1", "before_seq":10
-        })).is_err());
+        assert!(
+            serde_json::from_value::<super::ExplorationOpenRequest>(serde_json::json!({
+                "session_id":"private-1", "exploration_id":"explore-1", "before_seq":10
+            }))
+            .is_err()
+        );
         assert!(super::COMMANDS.contains(&"native_conversation_exploration_open"));
     }
     #[test]
     fn exploration_start_keeps_response_identity_and_round_checkpoint() {
         let data: super::ExplorationStarted = serde_json::from_str(include_str!(
             "../../../contracts/native-conversations/v1/exploration-started.json"
-        )).unwrap();
+        ))
+        .unwrap();
         assert_eq!(data.target.user_index, data.summary.checkpoint_user_index);
         assert_eq!(data.source_session_id, data.summary.source_frame_id);
         let state = super::ExplorationState::for_session(&[data.summary], "main-1");
         assert_eq!(state.round_source_frame_id.as_deref(), Some("main-1"));
         assert_eq!(state.round_user_index, Some(3));
         assert_eq!(state.candidate_count, 1);
-        assert!(serde_json::from_value::<super::ExplorationStartRequest>(serde_json::json!({
-            "session_id":"main-1", "name":"Example", "turn_index":3
-        })).is_err());
+        assert!(
+            serde_json::from_value::<super::ExplorationStartRequest>(serde_json::json!({
+                "session_id":"main-1", "name":"Example", "turn_index":3
+            }))
+            .is_err()
+        );
         assert!(serde_json::from_value::<super::ExplorationStartRequest>(serde_json::json!({
             "session_id":"main-1", "name":"Example", "target":data.target, "workspace_dir":"C:/other"
         })).is_err());
@@ -1228,41 +1258,71 @@ mod tests {
     fn exploration_preview_keeps_mixed_serde_shapes_and_guards() {
         let data: serde_json::Value = serde_json::from_str(include_str!(
             "../../../contracts/native-conversations/v1/exploration-preview.json"
-        )).unwrap();
+        ))
+        .unwrap();
         let preview: super::ExplorationPreview = serde_json::from_value(data).unwrap();
         assert_eq!(preview.source_session_id, "main-1");
-        assert_eq!(preview.preview.diff.exploration_id, preview.preview.exploration.id);
-        assert_eq!(preview.preview.diff.runs[0].frame_id.as_deref(), Some("private-1"));
-        assert_eq!(preview.preview.diff.research_edges[0].source_id, "decision-1");
+        assert_eq!(
+            preview.preview.diff.exploration_id,
+            preview.preview.exploration.id
+        );
+        assert_eq!(
+            preview.preview.diff.runs[0].frame_id.as_deref(),
+            Some("private-1")
+        );
+        assert_eq!(
+            preview.preview.diff.research_edges[0].source_id,
+            "decision-1"
+        );
         let serialized = serde_json::to_value(preview).unwrap();
-        assert_eq!(serialized["preview"]["eligibility"]["expectedGuardHash"], "guard-1");
-        assert!(serialized["preview"]["diff"].get("externalEffects").is_some());
-        assert!(serialized["preview"]["diff"]["externalEffects"][0].get("target_summary").is_some());
-        assert!(serde_json::from_value::<super::ExplorationPromoteRequest>(serde_json::json!({
-            "session_id":"private-1", "exploration_id":"explore-1"
-        })).is_err());
+        assert_eq!(
+            serialized["preview"]["eligibility"]["expectedGuardHash"],
+            "guard-1"
+        );
+        assert!(serialized["preview"]["diff"]
+            .get("externalEffects")
+            .is_some());
+        assert!(serialized["preview"]["diff"]["externalEffects"][0]
+            .get("target_summary")
+            .is_some());
+        assert!(
+            serde_json::from_value::<super::ExplorationPromoteRequest>(serde_json::json!({
+                "session_id":"private-1", "exploration_id":"explore-1"
+            }))
+            .is_err()
+        );
         assert!(serde_json::from_value::<super::ExplorationOpenRequest>(serde_json::json!({
             "session_id":"private-1", "exploration_id":"explore-1", "expected_guard_hash":"guard-1"
         })).is_err());
-        assert!(serde_json::from_value::<super::ExplorationActionResult>(serde_json::json!({
-            "project_id":"research-1", "session_id":"private-1", "source_session_id":"main-1",
-            "exploration_id":"explore-1", "action":"discard"
-        })).is_err());
+        assert!(
+            serde_json::from_value::<super::ExplorationActionResult>(serde_json::json!({
+                "project_id":"research-1", "session_id":"private-1", "source_session_id":"main-1",
+                "exploration_id":"explore-1", "action":"discard"
+            }))
+            .is_err()
+        );
     }
     #[test]
     fn branch_results_keep_checkpoint_and_exact_summary() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
             "../../../contracts/native-conversations/v1/branch-results.json"
-        )).unwrap();
+        ))
+        .unwrap();
         let snapshot: super::Snapshot = serde_json::from_value(fixture.clone()).unwrap();
         assert_eq!(snapshot.branches.len(), 2);
         assert_eq!(snapshot.branches[1].source_session_id, snapshot.session_id);
         assert_eq!(snapshot.branches[1].checkpoint_user_index, 2);
         assert_eq!(snapshot.branches[1].checkpoint_kind, "after_response");
-        assert_eq!(serde_json::to_value(&snapshot).unwrap()["branches"], fixture["branches"]);
+        assert_eq!(
+            serde_json::to_value(&snapshot).unwrap()["branches"],
+            fixture["branches"]
+        );
         let mut legacy = fixture;
         legacy.as_object_mut().unwrap().remove("branches");
-        assert!(serde_json::from_value::<super::Snapshot>(legacy).unwrap().branches.is_empty());
+        assert!(serde_json::from_value::<super::Snapshot>(legacy)
+            .unwrap()
+            .branches
+            .is_empty());
     }
     #[test]
     fn context_fixture_preserves_shared_head_and_model_details() {
@@ -1398,12 +1458,18 @@ mod tests {
         let old: super::SendRequest = serde_json::from_value(fixture["old_send"].clone()).unwrap();
         assert!(old.references.is_empty() && old.attachments.is_empty());
         assert!(old.acp_agent_id.is_none());
-        assert!(!old.resume && old.resume_after.is_none(), "old clients keep ordinary send behavior");
+        assert!(
+            !old.resume && old.resume_after.is_none(),
+            "old clients keep ordinary send behavior"
+        );
         let mut selected = fixture["old_send"].clone();
         selected["acp_agent_id"] = serde_json::json!("agent-exact");
         let selected: super::SendRequest = serde_json::from_value(selected).unwrap();
         assert_eq!(selected.acp_agent_id.as_deref(), Some("agent-exact"));
-        assert_eq!(serde_json::to_value(selected).unwrap()["acp_agent_id"], "agent-exact");
+        assert_eq!(
+            serde_json::to_value(selected).unwrap()["acp_agent_id"],
+            "agent-exact"
+        );
         let mut invalid = fixture["request"].clone();
         invalid["kind"] = "shell".into();
         assert!(serde_json::from_value::<super::ReferenceRequest>(invalid).is_err());
@@ -2122,7 +2188,8 @@ mod tests {
     fn file_provenance_reply_uses_a_path_without_inventing_an_artifact_id() {
         let reply: PanelFileProvenance = serde_json::from_str(include_str!(
             "../../../contracts/native-conversations/v1/file-provenance.json"
-        )).unwrap();
+        ))
+        .unwrap();
         assert_eq!(reply.schema, SCHEMA);
         assert_eq!(reply.project_id, "project-a");
         assert_eq!(reply.session_id, "session-a");
@@ -2131,7 +2198,10 @@ mod tests {
         assert!(encoded.get("artifact_id").is_none());
         assert_eq!(encoded["provenance"]["inputs"][0]["produced_here"], true);
         let empty = serde_json::json!({"schema":SCHEMA, "project_id":"p", "session_id":"s", "path":"x.png", "provenance":null});
-        assert!(serde_json::from_value::<PanelFileProvenance>(empty).unwrap().provenance.is_none());
+        assert!(serde_json::from_value::<PanelFileProvenance>(empty)
+            .unwrap()
+            .provenance
+            .is_none());
         assert!(COMMANDS.contains(&"native_conversation_panel_file_provenance"));
     }
     #[test]
