@@ -382,7 +382,13 @@ pub(super) async fn install_skill(
     src_path: String,
     scope: Option<String>,
 ) -> Result<wisp_dto::SkillInstallReceipt, String> {
-    install_scoped_skill(state, window, src_path, scope.unwrap_or_else(|| "global".into())).await
+    install_scoped_skill(
+        state,
+        window,
+        src_path,
+        scope.unwrap_or_else(|| "global".into()),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -470,13 +476,21 @@ pub(super) async fn promote_skill_to_global(
 fn promote_skill_dir(from: &Path, to: &Path) -> Result<(), String> {
     let parent = to.parent().ok_or("missing global skills directory")?;
     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    if parent.canonicalize().map_err(|e| e.to_string())?.starts_with(from.canonicalize().map_err(|e| e.to_string())?) {
+    if parent
+        .canonicalize()
+        .map_err(|e| e.to_string())?
+        .starts_with(from.canonicalize().map_err(|e| e.to_string())?)
+    {
         return Err("the skill source contains the install directory".into());
     }
     // Reserve this name atomically. The normal installer may replace an existing tree.
-    std::fs::create_dir(to).map_err(|e| if e.kind() == std::io::ErrorKind::AlreadyExists {
-        format!("skill_global_exists:{}", to.display())
-    } else { e.to_string() })?;
+    std::fs::create_dir(to).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            format!("skill_global_exists:{}", to.display())
+        } else {
+            e.to_string()
+        }
+    })?;
     if let Err(error) = copy_dir_recursive(from, to) {
         let _ = std::fs::remove_dir_all(to);
         return Err(format!("promote skill: {error}"));
@@ -499,7 +513,9 @@ pub(super) async fn remove_project_skill_copy(
     ap.skills = Arc::new(load_skill_index(&ap.root));
     let (index, _) = project_skill_catalog(&state.store, &ap).await;
     let dir = removable_project_copy(index.catalog_records(), &name, &project_dir)?;
-    tokio::fs::remove_dir_all(&dir).await.map_err(|e| e.to_string())?;
+    tokio::fs::remove_dir_all(&dir)
+        .await
+        .map_err(|e| e.to_string())?;
     reload_host_skill_index(&state, window.label())?;
     clear_idle_agents_for_project(&state, &ap.id).await;
     Ok(())
@@ -567,7 +583,9 @@ fn removable_project_copy(
     let actual = check_project_package(&dir, project_dir)?;
     let kept = named_records(records, name).any(|record| {
         record.scope != SkillSource::Project
-            && record_dir(record).canonicalize().is_ok_and(|other| !other.starts_with(&actual) && !actual.starts_with(other))
+            && record_dir(record)
+                .canonicalize()
+                .is_ok_and(|other| !other.starts_with(&actual) && !actual.starts_with(other))
             && (record.scope == SkillSource::Global
                 || (project.skill_md_sha256.is_some()
                     && record.skill_md_sha256 == project.skill_md_sha256))

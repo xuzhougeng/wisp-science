@@ -11,13 +11,26 @@ pub(crate) async fn dispatch(
     project_id: &str,
     session: Option<&str>,
 ) -> Result<Value, String> {
-    let action = request.command.strip_prefix(if session.is_some() { "native_conversation_panel_file_" } else { "native_project_file_" })
+    let action = request
+        .command
+        .strip_prefix(if session.is_some() {
+            "native_conversation_panel_file_"
+        } else {
+            "native_project_file_"
+        })
         .ok_or("File command scope mismatch")?;
     if matches!(action, "upload" | "download") {
         return dispatch_transfer(broker, request, project_id, session).await;
     }
     if matches!(action, "docx_review" | "docx_resolve") {
-        return crate::docx_review::dispatch_native(broker, request, project_id, session, action == "docx_resolve").await;
+        return crate::docx_review::dispatch_native(
+            broker,
+            request,
+            project_id,
+            session,
+            action == "docx_resolve",
+        )
+        .await;
     }
     let args: dto::Request =
         serde_json::from_value(request.args.clone()).map_err(|e| e.to_string())?;
@@ -41,7 +54,15 @@ pub(crate) async fn dispatch(
                 crate::exploration_commands::require_writable_scope(&state.store, &scope)
                     .await
                     .is_err()
-                    || if let Some(session) = session { state.store.require_unarchived_session(session).await.is_err() } else { false };
+                    || if let Some(session) = session {
+                        state
+                            .store
+                            .require_unarchived_session(session)
+                            .await
+                            .is_err()
+                    } else {
+                        false
+                    };
             let root = wisp_tools::safety::resolve_under_root(&root, ".")?;
             value(dto::Locations {
                 schema: dto::SCHEMA.into(),
@@ -133,13 +154,20 @@ pub(crate) async fn dispatch(
             })
         }
         "search" if session.is_none() => {
-            if context != "local" { return Err("Search requires the local project".into()); }
+            if context != "local" {
+                return Err("Search requires the local project".into());
+            }
             let query = args.query.unwrap_or_default();
-            tokio::task::spawn_blocking(move || value(crate::file_browser::search_files_at(&root, &query, None)?))
-                .await.map_err(|e| e.to_string())?
+            tokio::task::spawn_blocking(move || {
+                value(crate::file_browser::search_files_at(&root, &query, None)?)
+            })
+            .await
+            .map_err(|e| e.to_string())?
         }
         "action" | "save" if session.is_none() => {
-            if context != "local" { return Err("Editing requires the local project".into()); }
+            if context != "local" {
+                return Err("Editing requires the local project".into());
+            }
             crate::exploration_commands::require_writable_scope(&state.store, &scope).await?;
             let activity = state.begin_project_activity(project_id)?;
             let path = args.path.ok_or("File path is required")?;
@@ -147,19 +175,39 @@ pub(crate) async fn dispatch(
             tokio::task::spawn_blocking(move || {
                 let _activity = activity;
                 if save {
-                    crate::file_browser::save_file_preview_at(&root, &path,
-                        &args.original_text.ok_or("Original file text is required")?, &args.text.ok_or("File text is required")?)
+                    crate::file_browser::save_file_preview_at(
+                        &root,
+                        &path,
+                        &args.original_text.ok_or("Original file text is required")?,
+                        &args.text.ok_or("File text is required")?,
+                    )
                 } else {
-                    crate::native_panels::apply_file_action(&root, args.file_action.ok_or("File action is required")?, &path, args.new_path.as_deref())
+                    crate::native_panels::apply_file_action(
+                        &root,
+                        args.file_action.ok_or("File action is required")?,
+                        &path,
+                        args.new_path.as_deref(),
+                    )
                 }
-            }).await.map_err(|e| e.to_string())??;
-            state.store.bump_state_generation(&scope).await.map_err(|e| e.to_string())?;
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            state
+                .store
+                .bump_state_generation(&scope)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(Value::Bool(true))
         }
         "run" if session.is_none() => {
             let id = args.run_id.ok_or("Run ID is required")?;
             crate::native_panels::require_run_scope(&state.store, &scope, &id, false).await?;
-            let run = state.store.get_run(&id).await.map_err(|e| e.to_string())?.ok_or("Run not found")?;
+            let run = state
+                .store
+                .get_run(&id)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or("Run not found")?;
             if run.frame_id.is_some() || run.context_id != context || run.kind != "file_transfer" {
                 return Err("Project file transfer scope mismatch".into());
             }
@@ -170,22 +218,38 @@ pub(crate) async fn dispatch(
 }
 
 /// Resolve an explicit project without selecting a hidden WebView or creating a frame.
-pub(super) async fn file_scope(state: &crate::AppState, project_id: &str, session: Option<&str>) -> Result<(std::path::PathBuf, wisp_store::StateScope), String> {
+pub(super) async fn file_scope(
+    state: &crate::AppState,
+    project_id: &str,
+    session: Option<&str>,
+) -> Result<(std::path::PathBuf, wisp_store::StateScope), String> {
     if let Some(session) = session {
-        let (project, scope) = crate::exploration_commands::working_project_for_frame(state, session).await?;
-        if project.id != project_id { return Err("Project scope mismatch".into()); }
+        let (project, scope) =
+            crate::exploration_commands::working_project_for_frame(state, session).await?;
+        if project.id != project_id {
+            return Err("Project scope mismatch".into());
+        }
         return Ok((project.root, scope));
     }
-    let (_, workspace) = state.store.get_project(project_id).await.map_err(|e| e.to_string())?.ok_or("Project not found")?;
+    let (_, workspace) = state
+        .store
+        .get_project(project_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("Project not found")?;
     let root = project_root(&workspace)?;
     Ok((root, wisp_store::StateScope::mainline(project_id)))
 }
 
 fn project_root(workspace: &str) -> Result<std::path::PathBuf, String> {
     let path = Path::new(workspace);
-    if !path.is_absolute() { return Err("Project folder must be absolute".into()); }
+    if !path.is_absolute() {
+        return Err("Project folder must be absolute".into());
+    }
     let root = dunce::canonicalize(path).map_err(|e| e.to_string())?;
-    if !root.is_dir() { return Err("Project folder is unavailable".into()); }
+    if !root.is_dir() {
+        return Err("Project folder is unavailable".into());
+    }
     Ok(root)
 }
 
@@ -204,7 +268,13 @@ async fn dispatch_transfer(
     let activity = state.begin_project_activity(project_id)?;
     let items = if upload {
         crate::exploration_commands::require_writable_scope(&state.store, &scope).await?;
-        if let Some(session) = session { state.store.require_unarchived_session(session).await.map_err(|error| error.to_string())?; }
+        if let Some(session) = session {
+            state
+                .store
+                .require_unarchived_session(session)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
         if args.context_id == "local" {
             let root = root;
             let path = args.path.clone();
@@ -481,9 +551,21 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         assert!(project_root("").is_err());
         assert!(project_root("relative").is_err());
-        assert_eq!(project_root(temp.path().to_str().unwrap()).unwrap(), dunce::canonicalize(temp.path()).unwrap());
-        let request = dto::TransferRequest { session_id: None, context_id: "local".into(), path: ".".into(),
-            source_paths: vec![temp.path().join("sample.csv").to_string_lossy().into_owned()], destination_path: None };
+        assert_eq!(
+            project_root(temp.path().to_str().unwrap()).unwrap(),
+            dunce::canonicalize(temp.path()).unwrap()
+        );
+        let request = dto::TransferRequest {
+            session_id: None,
+            context_id: "local".into(),
+            path: ".".into(),
+            source_paths: vec![temp
+                .path()
+                .join("sample.csv")
+                .to_string_lossy()
+                .into_owned()],
+            destination_path: None,
+        };
         assert!(validate_transfer(&request, None, true).is_ok());
         assert!(validate_transfer(&request, Some("existing-frame"), true).is_err());
     }

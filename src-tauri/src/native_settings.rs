@@ -186,7 +186,10 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
     if request.command == "native_settings_capabilities" {
         return Ok(capabilities());
     }
-    if matches!(request.command.as_str(), "get_onboarding_state" | "dismiss_onboarding") {
+    if matches!(
+        request.command.as_str(),
+        "get_onboarding_state" | "dismiss_onboarding"
+    ) {
         if broker.remote || request.project_id.is_some() || request.args != serde_json::json!({}) {
             return Err("Onboarding takes no arguments and belongs to the local desktop".into());
         }
@@ -235,7 +238,9 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 serde_json::from_value(request.args.clone()).map_err(|e| e.to_string())?;
             let running = state.running_turns.lock().await.clone();
             let awaiting = state.awaiting_confirm.lock().unwrap().clone();
-            let snapshot = crate::native_projects::home_activity(&state.store, &running, &awaiting, input).await?;
+            let snapshot =
+                crate::native_projects::home_activity(&state.store, &running, &awaiting, input)
+                    .await?;
             return serde_json::to_value(snapshot).map_err(|e| e.to_string());
         }
         if request.command == "native_project_export" {
@@ -272,8 +277,13 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
         let mode: crate::privacy_mode::PrivacyMode =
             serde_json::from_value(request.args.clone()).map_err(|e| e.to_string())?;
         let state = broker.app.state::<crate::AppState>();
-        state.store.write_project_privacy(mode, false).await.map_err(|e| e.to_string())?;
-        return serde_json::to_value(crate::privacy_mode::load(&state.store).await?).map_err(|e| e.to_string());
+        state
+            .store
+            .write_project_privacy(mode, false)
+            .await
+            .map_err(|e| e.to_string())?;
+        return serde_json::to_value(crate::privacy_mode::load(&state.store).await?)
+            .map_err(|e| e.to_string());
     }
     if request.command == "get_privacy_mode" {
         let state = broker.app.state::<crate::AppState>();
@@ -622,8 +632,14 @@ mod tests {
             advertised["publication_schema"],
             wisp_dto::native_publication::SCHEMA
         );
-        assert_eq!(advertised["privacy"], serde_json::json!(["get_privacy_mode", "set_privacy_mode"]));
-        assert_eq!(advertised["onboarding"], serde_json::json!(["get_onboarding_state", "dismiss_onboarding"]));
+        assert_eq!(
+            advertised["privacy"],
+            serde_json::json!(["get_privacy_mode", "set_privacy_mode"])
+        );
+        assert_eq!(
+            advertised["onboarding"],
+            serde_json::json!(["get_onboarding_state", "dismiss_onboarding"])
+        );
         assert_eq!(advertised["search"][0], "native_workspace_search");
         assert_eq!(advertised["search_schema"], wisp_dto::native_search::SCHEMA);
         assert_eq!(

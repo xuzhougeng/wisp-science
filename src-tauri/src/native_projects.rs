@@ -28,19 +28,31 @@ pub(crate) async fn home_activity(
         return Ok(None);
     }
     let visible = |id: &str| !privacy.active || !privacy.project_ids.iter().any(|p| p == id);
-    let mut recent = crate::session_commands::recent_home_sessions(store, running, awaiting).await?;
+    let mut recent =
+        crate::session_commands::recent_home_sessions(store, running, awaiting).await?;
     recent.retain(|s| visible(&s.project_id));
     let mut projects = Vec::new();
     for (project_id, ..) in store.list_projects().await.map_err(|e| e.to_string())? {
         if visible(&project_id) {
-            let (running, needs_you) = wisp_app::projects::project_status_counts(store, &project_id, running, awaiting).await;
-            projects.push(HomeActivityCount { project_id, running, needs_you });
+            let (running, needs_you) =
+                wisp_app::projects::project_status_counts(store, &project_id, running, awaiting)
+                    .await;
+            projects.push(HomeActivityCount {
+                project_id,
+                running,
+                needs_you,
+            });
         }
     }
     if crate::privacy_mode::load(store).await? != privacy {
         return Err("Project visibility changed during the home read".into());
     }
-    Ok(Some(HomeActivity { revision, privacy, projects, recent }))
+    Ok(Some(HomeActivity {
+        revision,
+        privacy,
+        projects,
+        recent,
+    }))
 }
 
 pub(crate) async fn execute(
@@ -147,7 +159,10 @@ pub(crate) fn validate_delete_request(
     if request.command != "native_project_delete" {
         return Err("Unsupported native project deletion command".into());
     }
-    let id = request.project_id.as_deref().filter(|id| !id.trim().is_empty())
+    let id = request
+        .project_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty())
         .ok_or("A project is required")?;
     let input = serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
     Ok((id, input))
@@ -160,8 +175,11 @@ pub(crate) async fn execute_delete(
     let (id, input) = validate_delete_request(request)?;
     crate::project_commands::delete_project_record(state, id, input.delete_data, None).await?;
     serde_json::to_value(wisp_dto::native_projects::DeleteProjectResult {
-        project_id: id.into(), delete_data: input.delete_data, deleted: true,
-    }).map_err(|error| error.to_string())
+        project_id: id.into(),
+        delete_data: input.delete_data,
+        deleted: true,
+    })
+    .map_err(|error| error.to_string())
 }
 
 pub(crate) async fn execute_recovery(
@@ -484,23 +502,56 @@ mod tests {
         let store = &fixture.store;
         for (pid, sid) in [("lab", "analysis"), ("hidden", "private-turn")] {
             store.create_project(pid, pid, "").await.unwrap();
-            store.create_frame(sid, pid, "OPERON", "model").await.unwrap();
-            store.append_message(sid, 1, &wisp_llm::Message::user("question")).await.unwrap();
+            store
+                .create_frame(sid, pid, "OPERON", "model")
+                .await
+                .unwrap();
+            store
+                .append_message(sid, 1, &wisp_llm::Message::user("question"))
+                .await
+                .unwrap();
         }
-        crate::privacy_mode::save(store, true, &["hidden".into()]).await.unwrap();
+        crate::privacy_mode::save(store, true, &["hidden".into()])
+            .await
+            .unwrap();
         let running = HashSet::from(["analysis".into(), "private-turn".into()]);
-        let initial = super::home_activity(store, &running, &HashSet::new(), Default::default()).await.unwrap().unwrap();
+        let initial = super::home_activity(store, &running, &HashSet::new(), Default::default())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(initial.projects.len(), 1);
-        assert_eq!((initial.projects[0].project_id.as_str(), initial.projects[0].running), ("lab", 1));
+        assert_eq!(
+            (
+                initial.projects[0].project_id.as_str(),
+                initial.projects[0].running
+            ),
+            ("lab", 1)
+        );
         assert_eq!(initial.recent.len(), 1);
         assert_eq!(initial.recent[0].status, "running");
-        let known = || HomeActivityRequest { known_revision: Some(initial.revision.clone()) };
-        assert!(super::home_activity(store, &running, &HashSet::new(), known()).await.unwrap().is_none());
+        let known = || HomeActivityRequest {
+            known_revision: Some(initial.revision.clone()),
+        };
+        assert!(
+            super::home_activity(store, &running, &HashSet::new(), known())
+                .await
+                .unwrap()
+                .is_none()
+        );
         let approval = HashSet::from(["analysis".into()]);
-        let next = super::home_activity(store, &running, &approval, known()).await.unwrap().unwrap();
-        assert_eq!((next.projects[0].running, next.projects[0].needs_you), (0, 1));
+        let next = super::home_activity(store, &running, &approval, known())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (next.projects[0].running, next.projects[0].needs_you),
+            (0, 1)
+        );
         assert_eq!(next.recent[0].status, "needs_you");
-        let finished = super::home_activity(store, &HashSet::new(), &HashSet::new(), known()).await.unwrap().unwrap();
+        let finished = super::home_activity(store, &HashSet::new(), &HashSet::new(), known())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(finished.recent[0].status, "complete");
         assert_eq!(finished.projects[0].running, 0);
     }

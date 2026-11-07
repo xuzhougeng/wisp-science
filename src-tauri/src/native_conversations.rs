@@ -9,11 +9,7 @@ use tauri::Manager;
 use tokio::sync::Mutex;
 use wisp_dto::{native_conversations as dto, native_settings::Request};
 
-fn validate_handoff(
-    args: &dto::HandoffRequest,
-    acp: bool,
-    running: bool,
-) -> Result<(), String> {
+fn validate_handoff(args: &dto::HandoffRequest, acp: bool, running: bool) -> Result<(), String> {
     if args.session_id.trim().is_empty() || acp || running {
         return Err("Handoff requires an idle built-in conversation".into());
     }
@@ -82,11 +78,19 @@ impl Record {
         external_running: bool,
     ) -> Result<bool, String> {
         uuid::Uuid::parse_str(&request.request_id).map_err(|_| "Invalid send request ID")?;
-        if request.resume && (!request.message.is_empty() || !request.attachments.is_empty()
-            || !request.references.is_empty() || request.acp_agent_id.is_some()) {
-            return Err("Resume cannot append a message, attachments, references or ACP selection".into());
+        if request.resume
+            && (!request.message.is_empty()
+                || !request.attachments.is_empty()
+                || !request.references.is_empty()
+                || request.acp_agent_id.is_some())
+        {
+            return Err(
+                "Resume cannot append a message, attachments, references or ACP selection".into(),
+            );
         }
-        if !request.resume && (request.message.trim().is_empty() || request.message.len() > 128 * 1024) {
+        if !request.resume
+            && (request.message.trim().is_empty() || request.message.len() > 128 * 1024)
+        {
             return Err("Message must contain 1–131072 bytes".into());
         }
         if request.resume != request.resume_after.is_some() {
@@ -109,7 +113,12 @@ impl Record {
         if request.resume && self.request_id != request.resume_after {
             return Err("The conversation changed after this request; resume was not sent".into());
         }
-        if request.resume && self.error.as_deref().is_some_and(|error| error.starts_with(wisp_dto::ACP_TURN_ERROR_PREFIX)) {
+        if request.resume
+            && self
+                .error
+                .as_deref()
+                .is_some_and(|error| error.starts_with(wisp_dto::ACP_TURN_ERROR_PREFIX))
+        {
             return Err("ACP conversations cannot resume a Wisp transcript".into());
         }
         if self.accepted.len() >= 1024 {
@@ -569,12 +578,26 @@ pub(crate) async fn call(
     invoke_command(broker, Some(project.to_owned()), command, args).await
 }
 
-pub(crate) async fn native_explorations(store: &wisp_store::Store, project: &str) -> Result<Vec<wisp_dto::ExplorationSummary>, String> {
-    decode(&serde_json::to_value(store.list_project_explorations(project).await
-        .map_err(|error| error.to_string())?).map_err(|error| error.to_string())?)
+pub(crate) async fn native_explorations(
+    store: &wisp_store::Store,
+    project: &str,
+) -> Result<Vec<wisp_dto::ExplorationSummary>, String> {
+    decode(
+        &serde_json::to_value(
+            store
+                .list_project_explorations(project)
+                .await
+                .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?,
+    )
 }
 
-async fn native_exploration_state(store: &wisp_store::Store, project: &str, session: &str) -> Result<dto::ExplorationState, String> {
+async fn native_exploration_state(
+    store: &wisp_store::Store,
+    project: &str,
+    session: &str,
+) -> Result<dto::ExplorationState, String> {
     let rows = native_explorations(store, project).await?;
     Ok(dto::ExplorationState::for_session(&rows, session))
 }
@@ -592,8 +615,11 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
         let state = broker.app.state::<crate::AppState>();
         crate::project_commands::load_active_project(&state, project).await?;
         let explorations = native_explorations(&state.store, project).await?;
-        return serde_json::to_value(dto::Explorations { project_id: project.into(), explorations })
-            .map_err(|error| error.to_string());
+        return serde_json::to_value(dto::Explorations {
+            project_id: project.into(),
+            explorations,
+        })
+        .map_err(|error| error.to_string());
     }
     if request.command == "native_conversation_inbox" {
         if !request.args.as_object().is_some_and(|v| v.is_empty()) {
@@ -667,46 +693,84 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
     if request.command == "native_conversation_exploration_open" {
         let args: dto::ExplorationOpenRequest = decode(&request.args)?;
         let state = broker.app.state::<crate::AppState>();
-        let summary = native_explorations(&state.store, project).await?.into_iter()
-            .find(|row| row.exploration.id == args.exploration_id && row.exploration.frame_id == session)
+        let summary = native_explorations(&state.store, project)
+            .await?
+            .into_iter()
+            .find(|row| {
+                row.exploration.id == args.exploration_id && row.exploration.frame_id == session
+            })
             .ok_or("Exploration no longer belongs to the current round")?;
         require_owner(&state.store, project, &summary.source_frame_id).await?;
         // Navigation is explicit in the native client. Do not switch the cached
         // hidden WebView context to this private workspace.
-        return serde_json::to_value(dto::ExplorationOpen { project_id: project.into(), summary })
-            .map_err(|error| error.to_string());
+        return serde_json::to_value(dto::ExplorationOpen {
+            project_id: project.into(),
+            summary,
+        })
+        .map_err(|error| error.to_string());
     }
     if request.command == "native_conversation_excerpt" {
         return crate::native_history::excerpt(broker, project, decode(&request.args)?).await;
     }
-    if matches!(request.command.as_str(), "native_conversation_rules_status" | "native_conversation_rules_reload") {
+    if matches!(
+        request.command.as_str(),
+        "native_conversation_rules_status" | "native_conversation_rules_reload"
+    ) {
         let args: dto::RulesRequest = decode(&request.args)?;
         if request.command == "native_conversation_rules_status" {
             let state = broker.app.state::<crate::AppState>();
-            let (active, _, _) = crate::project_commands::load_active_project(&state, project).await?;
+            let (active, _, _) =
+                crate::project_commands::load_active_project(&state, project).await?;
             let stale = crate::session_commands::stale_prompt_frames(
-                &state.store, &active.root, std::slice::from_ref(&args.session_id),
-            ).await;
+                &state.store,
+                &active.root,
+                std::slice::from_ref(&args.session_id),
+            )
+            .await;
             return serde_json::to_value(dto::RulesStatus {
-                project_id: project.into(), session_id: args.session_id.clone(),
+                project_id: project.into(),
+                session_id: args.session_id.clone(),
                 stale_prompt: stale.contains(&args.session_id),
-            }).map_err(|error| error.to_string());
+            })
+            .map_err(|error| error.to_string());
         }
-        let result = invoke_command(broker, Some(project.into()), "reload_project_rules",
-            json!({"frameId":args.session_id})).await?;
+        let result = invoke_command(
+            broker,
+            Some(project.into()),
+            "reload_project_rules",
+            json!({"frameId":args.session_id}),
+        )
+        .await?;
         return serde_json::to_value(dto::RulesReloadResult {
-            project_id: project.into(), session_id: args.session_id,
+            project_id: project.into(),
+            session_id: args.session_id,
             changed: serde_json::from_value(result).map_err(|error| error.to_string())?,
-        }).map_err(|error| error.to_string());
+        })
+        .map_err(|error| error.to_string());
     }
-    if request.command.starts_with("native_conversation_exploration_") {
-        return crate::native_explorations::dispatch(broker, project, &request.command, &request.args).await;
+    if request
+        .command
+        .starts_with("native_conversation_exploration_")
+    {
+        return crate::native_explorations::dispatch(
+            broker,
+            project,
+            &request.command,
+            &request.args,
+        )
+        .await;
     }
     if request.command == "native_conversation_timer" {
         return crate::native_assistant::timer(broker, project, decode(&request.args)?).await;
     }
     if request.command.starts_with("native_conversation_branch_") {
-        return crate::native_branch_merge::dispatch(broker, project, &request.command, &request.args).await;
+        return crate::native_branch_merge::dispatch(
+            broker,
+            project,
+            &request.command,
+            &request.args,
+        )
+        .await;
     }
     if request.command == "native_conversation_debug_request" {
         let args: wisp_dto::native_session_export::DebugRequestArgs = decode(&request.args)?;
@@ -1156,14 +1220,22 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             record.sequence += 1;
             // A subagent conversation (#1061) is watched, not written to.
             let exploration = native_exploration_state(&state.store, project, session).await?;
-            let scope = state.store.frame_state_scope(session).await.map_err(|error| error.to_string())?
+            let scope = state
+                .store
+                .frame_state_scope(session)
+                .await
+                .map_err(|error| error.to_string())?
                 .ok_or("Session state scope was not found")?;
             let exploration_read_only = match &scope {
                 wisp_store::StateScope::Mainline { .. } => exploration.source_frozen,
-                wisp_store::StateScope::Exploration { .. } =>
-                    crate::exploration_commands::require_writable_scope(&state.store, &scope).await.is_err(),
+                wisp_store::StateScope::Exploration { .. } => {
+                    crate::exploration_commands::require_writable_scope(&state.store, &scope)
+                        .await
+                        .is_err()
+                }
             };
-            let read_only = frozen || exploration_read_only
+            let read_only = frozen
+                || exploration_read_only
                 || state
                     .store
                     .session_dispatched_from(session)
@@ -1295,10 +1367,18 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 (approvals, scopes)
             };
             let snapshot = dto::Snapshot {
-                exploration: (exploration.summary.is_some() || exploration.source_frozen).then_some(exploration),
-                branches: decode(&serde_json::to_value(
-                    state.store.list_session_branches(session, project).await.map_err(|e| e.to_string())?
-                ).map_err(|e| e.to_string())?)?,
+                exploration: (exploration.summary.is_some() || exploration.source_frozen)
+                    .then_some(exploration),
+                branches: decode(
+                    &serde_json::to_value(
+                        state
+                            .store
+                            .list_session_branches(session, project)
+                            .await
+                            .map_err(|e| e.to_string())?,
+                    )
+                    .map_err(|e| e.to_string())?,
+                )?,
                 approval_scopes,
                 run_cards,
                 run_review_supported: Some(true),
@@ -1388,7 +1468,10 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 return Err("Resume cannot be queued as a new user message".into());
             }
             if args.acp_agent_id.is_some() {
-                return Err("Choose an ACP Agent before sending the first turn, not in a queued follow-up".into());
+                return Err(
+                    "Choose an ACP Agent before sending the first turn, not in a queued follow-up"
+                        .into(),
+                );
             }
             let id = follow_up_id(&args.request_id)?;
             let digest = payload_digest(&args)?;
@@ -1500,22 +1583,17 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                             )
                             .await
                         } else {
-                            call(
-                                &broker,
-                                &project,
-                                "send_message",
-                                {
-                                    let mut args = turn_arguments(
+                            call(&broker, &project, "send_message", {
+                                let mut args = turn_arguments(
                                     &session,
                                     &message,
                                     &attachments,
                                     acp_agent_id.as_deref(),
                                     &references,
-                                    );
-                                    args["resume"] = json!(resume);
-                                    args
-                                },
-                            )
+                                );
+                                args["resume"] = json!(resume);
+                                args
+                            })
                             .await
                         }
                     });
@@ -1711,7 +1789,10 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
 mod tests {
     #[test]
     fn handoff_requires_idle_scoped_builtin_session() {
-        let mut args = super::dto::HandoffRequest { session_id: "s".into(), instruction: None };
+        let mut args = super::dto::HandoffRequest {
+            session_id: "s".into(),
+            instruction: None,
+        };
         assert!(super::validate_handoff(&args, false, false).is_ok());
         assert!(super::validate_handoff(&args, true, false).is_err());
         assert!(super::validate_handoff(&args, false, true).is_err());
@@ -1721,9 +1802,12 @@ mod tests {
         assert!(super::validate_handoff(&args, false, false).is_ok());
         args.session_id = " ".into();
         assert!(super::validate_handoff(&args, false, false).is_err());
-        assert!(serde_json::from_value::<super::dto::HandoffRequest>(serde_json::json!({
-            "session_id":"s", "instruction":null, "unexpected":true
-        })).is_err());
+        assert!(
+            serde_json::from_value::<super::dto::HandoffRequest>(serde_json::json!({
+                "session_id":"s", "instruction":null, "unexpected":true
+            }))
+            .is_err()
+        );
         assert!(super::dto::COMMANDS.contains(&"native_conversation_handoff"));
     }
     #[test]
@@ -2050,11 +2134,15 @@ mod tests {
     #[test]
     fn resume_is_scoped_idempotent_and_never_appends_user_context() {
         let previous = uuid::Uuid::new_v4().to_string();
-        let mut record = Record { request_id: Some(previous.clone()), ..Default::default() };
+        let mut record = Record {
+            request_id: Some(previous.clone()),
+            ..Default::default()
+        };
         let mut request: dto::SendRequest = serde_json::from_value(json!({
             "session_id":"s", "request_id":uuid::Uuid::new_v4().to_string(),
             "message":"", "resume":true, "resume_after":previous
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(record.accept(&request, false).unwrap());
         assert!(!record.accept(&request, true).unwrap());
         request.resume = false;
@@ -2068,8 +2156,14 @@ mod tests {
         request.attachments.clear();
         request.request_id = uuid::Uuid::new_v4().to_string();
         record.running = false;
-        assert!(record.accept(&request, false).is_err(), "stale compaction cannot resume a later turn");
-        assert!(Record::default().accept(&request, false).is_err(), "restarted host cannot resume the old request");
+        assert!(
+            record.accept(&request, false).is_err(),
+            "stale compaction cannot resume a later turn"
+        );
+        assert!(
+            Record::default().accept(&request, false).is_err(),
+            "restarted host cannot resume the old request"
+        );
     }
     #[test]
     fn resume_continues_a_settled_failure_without_replaying_the_user_message() {
@@ -2077,14 +2171,32 @@ mod tests {
         let request: dto::SendRequest = serde_json::from_value(json!({
             "session_id":"s", "request_id":uuid::Uuid::new_v4().to_string(),
             "message":"", "resume":true, "resume_after":previous
-        })).unwrap();
-        let mut record = Record { request_id: Some(previous.clone()), error: Some("api: 503 overloaded".into()), ..Default::default() };
-        assert!(record.accept(&request, true).is_err(), "a live external turn takes priority");
+        }))
+        .unwrap();
+        let mut record = Record {
+            request_id: Some(previous.clone()),
+            error: Some("api: 503 overloaded".into()),
+            ..Default::default()
+        };
+        assert!(
+            record.accept(&request, true).is_err(),
+            "a live external turn takes priority"
+        );
         assert!(record.accept(&request, false).unwrap());
         assert!(record.error.is_none() && record.running);
-        assert!(!record.accept(&request, true).unwrap(), "an acknowledged resume is deduplicated even while running");
-        let mut acp = Record { request_id: Some(previous), error: Some(format!("{}disconnected", wisp_dto::ACP_TURN_ERROR_PREFIX)), ..Default::default() };
-        assert!(acp.accept(&request, false).is_err(), "ACP failure must never fall back to replaying Wisp context");
+        assert!(
+            !record.accept(&request, true).unwrap(),
+            "an acknowledged resume is deduplicated even while running"
+        );
+        let mut acp = Record {
+            request_id: Some(previous),
+            error: Some(format!("{}disconnected", wisp_dto::ACP_TURN_ERROR_PREFIX)),
+            ..Default::default()
+        };
+        assert!(
+            acp.accept(&request, false).is_err(),
+            "ACP failure must never fall back to replaying Wisp context"
+        );
     }
     #[test]
     fn native_send_passes_references_to_the_shared_resolver() {

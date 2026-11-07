@@ -308,7 +308,8 @@ mod tests {
     fn home_activity_fixture_keeps_project_counts_independent_of_recent_limit() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
             "../../../contracts/native-projects/v1/home-activity.json"
-        )).unwrap();
+        ))
+        .unwrap();
         assert!(COMMANDS.contains(&fixture["command"].as_str().unwrap()));
         let query: HomeActivityRequest = serde_json::from_value(fixture["args"].clone()).unwrap();
         assert!(query.known_revision.is_none());
@@ -359,17 +360,22 @@ mod tests {
     fn delete_contract_requires_an_explicit_data_choice() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
             "../../../contracts/native-projects/v1/delete.json"
-        )).unwrap();
+        ))
+        .unwrap();
         assert!(COMMANDS.contains(&fixture["command"].as_str().unwrap()));
         assert!(!returns_project_summary("native_project_delete"));
         let input: DeleteProjectRequest = serde_json::from_value(fixture["args"].clone()).unwrap();
-        let result: DeleteProjectResult = serde_json::from_value(fixture["result"].clone()).unwrap();
+        let result: DeleteProjectResult =
+            serde_json::from_value(fixture["result"].clone()).unwrap();
         assert_eq!(fixture["project_id"], result.project_id);
         assert_eq!(input.delete_data, result.delete_data);
         assert!(result.deleted);
-        for args in [serde_json::json!({}), serde_json::json!({"delete_data": "false"}),
+        for args in [
+            serde_json::json!({}),
+            serde_json::json!({"delete_data": "false"}),
             serde_json::json!({"delete_data": true, "active_window": "main"}),
-            serde_json::json!({"delete_data": false, "id": "other"})] {
+            serde_json::json!({"delete_data": false, "id": "other"}),
+        ] {
             assert!(serde_json::from_value::<DeleteProjectRequest>(args).is_err());
         }
     }
