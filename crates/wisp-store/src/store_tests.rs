@@ -10177,6 +10177,15 @@ async fn exploration_promotion_recovery_migration_removes_legacy_cascade() {
 
 #[tokio::test]
 async fn abandoning_exploration_round_discards_every_candidate_and_releases_mainline() {
+    assert_exploration_round_can_be_resolved(false).await;
+}
+
+#[tokio::test]
+async fn failed_exploration_round_can_discard_candidates_and_abandon_to_release_mainline() {
+    assert_exploration_round_can_be_resolved(true).await;
+}
+
+async fn assert_exploration_round_can_be_resolved(failed: bool) {
     let (store, tmp) = exploration_store_fixture("abandon-round").await;
     store.create_project("target", "target", "").await.unwrap();
     create_exploration_checkpoint_fixture(&store).await;
@@ -10208,6 +10217,18 @@ async fn abandoning_exploration_round_discards_every_candidate_and_releases_main
             .await
             .unwrap();
     }
+    if failed {
+        for id in ["first", "second"] {
+            store
+                .transition_exploration(id, ExplorationStatus::Active, ExplorationStatus::Failed)
+                .await
+                .unwrap();
+        }
+    }
+    // Persisted rounds must remain recoverable after restarting the application.
+    store.pool.close().await;
+    let store = Store::open(&tmp).await.unwrap();
+    assert!(store.project_mainline_is_frozen("p").await.unwrap());
     store.discard_exploration_scope("first").await.unwrap();
     assert!(store.get_exploration("first").await.unwrap().is_none());
     assert!(store.frame_project_id("branch").await.unwrap().is_none());
@@ -10238,6 +10259,7 @@ async fn abandoning_exploration_round_discards_every_candidate_and_releases_main
         .await
         .unwrap()
         .is_none());
+    assert_eq!(store.frame_message_head("main").await.unwrap(), 2);
     store.delete_session("main", "p").await.unwrap();
     assert!(store.frame_project_id("main").await.unwrap().is_none());
 

@@ -323,13 +323,15 @@ impl ExplorationPromotionService {
                 message: "Finish or cancel exploration Runs before promotion.".into(),
             });
         }
-        let manual_resolution_available = exploration.status == ExplorationStatus::Active
-            && !family_advanced
+        let manual_resolution_available = matches!(
+            exploration.status,
+            ExplorationStatus::Active | ExplorationStatus::Failed
+        ) && !family_advanced
             && !reasons.is_empty()
             && reasons.iter().all(|reason| {
                 matches!(
                     reason.code.as_str(),
-                    ERR_MAINLINE_ADVANCED | ERR_EXTERNAL_REFERENCE_CHANGED
+                    ERR_MAINLINE_ADVANCED | ERR_EXTERNAL_REFERENCE_CHANGED | ERR_NOT_PROMOTABLE
                 )
             });
         let expected_guard_hash = hash_json(&serde_json::json!({
@@ -1087,10 +1089,13 @@ pub(crate) async fn discard_exploration(
             "finish or cancel exploration Runs before discarding",
         ));
     }
-    if exploration.status != ExplorationStatus::Active {
+    if !matches!(
+        exploration.status,
+        ExplorationStatus::Active | ExplorationStatus::Failed
+    ) {
         return Err(coded(
             ERR_NOT_PROMOTABLE,
-            "only an active exploration can be discarded",
+            "only an active or failed exploration can be discarded",
         ));
     }
     let snapshot = PersistentExplorationWorkspace::new(state.app_data.clone())
@@ -2922,6 +2927,47 @@ mod tests {
             .entity_keys
             .iter()
             .any(|key| key == "research_node:mainline-decision"));
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[tokio::test]
+    async fn failed_exploration_offers_manual_recovery_but_not_promotion() {
+        let (creator, store, base, _project, app_data) = fixture("failed_manual_resolution").await;
+        let checkpoint = creator.create_checkpoint("p", "main").await.unwrap();
+        let exploration = creator
+            .create_exploration(&checkpoint.id, "Failed candidate")
+            .await
+            .unwrap();
+        store
+            .transition_exploration(
+                &exploration.id,
+                ExplorationStatus::Active,
+                ExplorationStatus::Failed,
+            )
+            .await
+            .unwrap();
+        let service = ExplorationPromotionService::new(store.clone(), app_data);
+        let preview = service.preview(&exploration.id).await.unwrap();
+        assert!(!preview.eligibility.eligible);
+        assert_eq!(
+            preview.eligibility.code.as_deref(),
+            Some(ERR_NOT_PROMOTABLE)
+        );
+        assert!(preview.eligibility.manual_resolution_available);
+        assert!(store.project_mainline_is_frozen("p").await.unwrap());
+
+        // Failure must not bypass the active-Run safety check.
+        let mut run = RunRecord::new("failed-busy-run", "p", "local", "Busy run", "command");
+        run.frame_id = Some(exploration.frame_id.clone());
+        run.status = RunStatus::Running;
+        store.create_run(&run).await.unwrap();
+        let busy = service.preview(&exploration.id).await.unwrap();
+        assert!(!busy.eligibility.manual_resolution_available);
+        assert!(busy
+            .eligibility
+            .reasons
+            .iter()
+            .any(|reason| reason.code == ERR_EXPLORATION_BUSY));
         let _ = std::fs::remove_dir_all(base);
     }
 
