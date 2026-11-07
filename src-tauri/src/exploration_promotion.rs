@@ -2932,53 +2932,63 @@ mod tests {
 
     #[tokio::test]
     async fn failed_exploration_offers_manual_recovery_but_not_promotion() {
-        let (creator, store, base, _project, app_data) = fixture("failed_manual_resolution").await;
-        let checkpoint = creator.create_checkpoint("p", "main").await.unwrap();
-        let exploration = creator
-            .create_exploration(&checkpoint.id, "Failed candidate")
-            .await
-            .unwrap();
-        // Keep the materialized workspace and model a failed promotion using
-        // the same state transitions as production recovery.
-        store
-            .transition_exploration(
-                &exploration.id,
-                ExplorationStatus::Active,
-                ExplorationStatus::Promoting,
-            )
-            .await
-            .unwrap();
-        store
-            .transition_exploration(
-                &exploration.id,
-                ExplorationStatus::Promoting,
-                ExplorationStatus::Failed,
-            )
-            .await
-            .unwrap();
-        let service = ExplorationPromotionService::new(store.clone(), app_data);
-        let preview = service.preview(&exploration.id).await.unwrap();
-        assert!(!preview.eligibility.eligible);
-        assert_eq!(
-            preview.eligibility.code.as_deref(),
-            Some(ERR_NOT_PROMOTABLE)
-        );
-        assert!(preview.eligibility.manual_resolution_available);
-        assert!(store.project_mainline_is_frozen("p").await.unwrap());
-
-        // Failure must not bypass the active-Run safety check.
-        let mut run = RunRecord::new("failed-busy-run", "p", "local", "Busy run", "command");
-        run.frame_id = Some(exploration.frame_id.clone());
-        run.status = RunStatus::Running;
-        store.create_run(&run).await.unwrap();
-        let busy = service.preview(&exploration.id).await.unwrap();
-        assert!(!busy.eligibility.manual_resolution_available);
-        assert!(busy
-            .eligibility
-            .reasons
-            .iter()
-            .any(|reason| reason.code == ERR_EXPLORATION_BUSY));
-        let _ = std::fs::remove_dir_all(base);
+        for has_active_run in [false, true] {
+            let (creator, store, base, _project, app_data) =
+                fixture("failed_manual_resolution").await;
+            let checkpoint = creator.create_checkpoint("p", "main").await.unwrap();
+            let exploration = creator
+                .create_exploration(&checkpoint.id, "Failed candidate")
+                .await
+                .unwrap();
+            if has_active_run {
+                // Runs must already exist when failure makes the scope read-only.
+                let mut run =
+                    RunRecord::new("failed-busy-run", "p", "local", "Busy run", "command");
+                run.frame_id = Some(exploration.frame_id.clone());
+                run.status = RunStatus::Running;
+                store.create_run(&run).await.unwrap();
+            }
+            // Keep the materialized workspace and model a failed promotion using
+            // the same state transitions as production recovery.
+            assert!(store
+                .transition_exploration(
+                    &exploration.id,
+                    ExplorationStatus::Active,
+                    ExplorationStatus::Promoting,
+                )
+                .await
+                .unwrap());
+            assert!(store
+                .transition_exploration(
+                    &exploration.id,
+                    ExplorationStatus::Promoting,
+                    ExplorationStatus::Failed,
+                )
+                .await
+                .unwrap());
+            let service = ExplorationPromotionService::new(store.clone(), app_data);
+            let preview = service.preview(&exploration.id).await.unwrap();
+            assert!(!preview.eligibility.eligible);
+            assert_eq!(
+                preview.eligibility.code.as_deref(),
+                Some(ERR_NOT_PROMOTABLE)
+            );
+            assert!(store.project_mainline_is_frozen("p").await.unwrap());
+            // Failure must not bypass the active-Run safety check.
+            assert_eq!(
+                preview.eligibility.manual_resolution_available,
+                !has_active_run
+            );
+            assert_eq!(
+                preview
+                    .eligibility
+                    .reasons
+                    .iter()
+                    .any(|reason| reason.code == ERR_EXPLORATION_BUSY),
+                has_active_run
+            );
+            let _ = std::fs::remove_dir_all(base);
+        }
     }
 
     #[tokio::test]
