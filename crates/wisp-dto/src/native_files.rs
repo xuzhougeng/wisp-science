@@ -14,11 +14,18 @@ pub const COMMANDS: &[&str] = &[
 ];
 /// Project files are available before the first conversation exists.
 pub const PROJECT_COMMANDS: &[&str] = &[
-    "native_project_file_docx_review", "native_project_file_docx_resolve",
-    "native_project_file_locations", "native_project_file_directory",
-    "native_project_file_paths", "native_project_file_read", "native_project_file_search",
-    "native_project_file_upload", "native_project_file_download", "native_project_file_run",
-    "native_project_file_action", "native_project_file_save",
+    "native_project_file_docx_review",
+    "native_project_file_docx_resolve",
+    "native_project_file_locations",
+    "native_project_file_directory",
+    "native_project_file_paths",
+    "native_project_file_read",
+    "native_project_file_search",
+    "native_project_file_upload",
+    "native_project_file_download",
+    "native_project_file_run",
+    "native_project_file_action",
+    "native_project_file_save",
 ];
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -137,17 +144,29 @@ mod tests {
     use super::*;
     #[test]
     fn project_file_scope_is_explicitly_sessionless_and_legacy_frames_still_decode() {
-        let fixture: serde_json::Value = serde_json::from_str(include_str!("../../../contracts/native-files/v1/project.json")).unwrap();
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-files/v1/project.json"
+        ))
+        .unwrap();
         let locations: Locations = serde_json::from_value(fixture["locations"].clone()).unwrap();
         let directory: Directory = serde_json::from_value(fixture["directory"].clone()).unwrap();
         let paths: Paths = serde_json::from_value(fixture["paths"].clone()).unwrap();
-        assert!(locations.session_id.is_none() && directory.session_id.is_none() && paths.session_id.is_none());
-        assert_eq!(serde_json::to_value(locations).unwrap(), fixture["locations"]);
+        assert!(
+            locations.session_id.is_none()
+                && directory.session_id.is_none()
+                && paths.session_id.is_none()
+        );
+        assert_eq!(
+            serde_json::to_value(locations).unwrap(),
+            fixture["locations"]
+        );
         let project: Request = serde_json::from_str(r#"{"path":".","session_id":null}"#).unwrap();
         assert!(project.session_id.is_none());
         let frame: Request = serde_json::from_str(r#"{"session_id":"frame"}"#).unwrap();
         assert_eq!(frame.session_id.as_deref(), Some("frame"));
-        assert!(PROJECT_COMMANDS.iter().all(|name| name.starts_with("native_project_file_")));
+        assert!(PROJECT_COMMANDS
+            .iter()
+            .all(|name| name.starts_with("native_project_file_")));
         assert!(PROJECT_COMMANDS.iter().all(|name| !COMMANDS.contains(name)));
     }
     #[test]

@@ -1760,17 +1760,19 @@ pub(crate) async fn recent_home_sessions(
     Ok(rows
         .into_iter()
         .map(|r| {
-            let status = session_runtime_status(
-                &r.id,
-                r.last_role.as_deref(),
-                r.unseen,
-                running,
-                awaiting,
-            );
+            let status =
+                session_runtime_status(&r.id, r.last_role.as_deref(), r.unseen, running, awaiting);
             wisp_dto::RecentSession {
-                id: r.id, project_id: r.project_id, title: r.title, ts: r.created_at,
-                status: status.into(), folder_id: None, pinned: None, branched_from: None,
-                branch_state: None, dispatched_from: None,
+                id: r.id,
+                project_id: r.project_id,
+                title: r.title,
+                ts: r.created_at,
+                status: status.into(),
+                folder_id: None,
+                pinned: None,
+                branched_from: None,
+                branch_state: None,
+                dispatched_from: None,
             }
         })
         .collect())

@@ -979,7 +979,15 @@ pub(crate) async fn start_exploration(
     name: String,
 ) -> Result<Exploration, String> {
     let active = state.require_active(window.label())?;
-    let exploration = start_from_source(&state, &terminals, &active.id, &source_frame_id, turn_index, &name).await?;
+    let exploration = start_from_source(
+        &state,
+        &terminals,
+        &active.id,
+        &source_frame_id,
+        turn_index,
+        &name,
+    )
+    .await?;
     let (project, _) = working_project_for_frame(&state, &exploration.frame_id).await?;
     state.set_active(window.label(), project);
     state.set_active_frame(window.label(), Some(exploration.frame_id.clone()));
