@@ -1223,8 +1223,8 @@ impl Store {
         let family_id: String = row.try_get("family_id")?;
         let family_generation: i64 = row.try_get("source_family_generation")?;
         let status: String = row.try_get("status")?;
-        if status != "active" {
-            anyhow::bail!("Only an active exploration can be discarded");
+        if !matches!(status.as_str(), "active" | "failed") {
+            anyhow::bail!("Only an active or failed exploration can be discarded");
         }
         purge_exploration_scope_in_tx(&mut tx, &project_id, exploration_id, None).await?;
         cleanup_resolved_round_metadata_in_tx(&mut tx, &family_id, family_generation).await?;

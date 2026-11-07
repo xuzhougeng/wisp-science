@@ -148,7 +148,7 @@ test("Escape immediately after opening the diff overlay closes only that layer",
   await expect(page.getByText("Exploration A result")).toBeVisible();
 });
 
-test("an exploration round banner and checkpoint cards stay scoped to its source session", async ({ page }) => {
+test("project freeze recovery is visible in other sessions while checkpoint cards stay scoped", async ({ page }) => {
   await page.goto("/?mockExplorations=1&mockOtherExplorationSession=1");
   await page.locator(".proj-card-main").first().click();
 
@@ -157,7 +157,11 @@ test("an exploration round banner and checkpoint cards stay scoped to its source
   await expect(page.getByTestId("exploration-message-card")).toHaveCount(2);
 
   await page.locator('[data-session-id="session-b"]').click();
-  await expect(page.getByTestId("mainline-exploration-banner")).toBeHidden();
+  const banner = page.getByTestId("mainline-exploration-banner");
+  await expect(banner).toContainText("Project writes paused");
+  await expect(banner.getByRole("button", { name: "Abandon exploration", exact: true })).toBeVisible();
+  await expect(banner.getByRole("button", { name: "Start another" })).toHaveCount(0);
+  await expect(page.locator("#composer-input")).toBeEnabled();
   await expect(page.getByTestId("exploration-banner")).toBeHidden();
   await expect(page.getByTestId("exploration-message-card")).toHaveCount(0);
 });
@@ -469,7 +473,7 @@ test("mainline stays frozen and can abandon the complete exploration round", asy
   await mainline.click({ button: "right" });
   // Delete is offered too; its confirmation discards the round along with it.
   await expect(page.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Abandon exploration", exact: true }).click();
+  await page.locator(".ctx-menu").first().getByRole("button", { name: "Abandon exploration", exact: true }).click();
   await expect(page.locator(".confirm-modal")).toContainText("permanently remove every exploration");
   await page.locator(".confirm-modal").getByRole("button", { name: "Abandon exploration" }).click();
   await expect(page.getByTestId("sidebar-explorations")).toHaveCount(0);
@@ -573,4 +577,56 @@ test("deleting a mainline takes its branch and exploration round along by defaul
   await expect(mainline).toHaveCount(0);
   await expect(page.locator('.sidebar [data-session-id="conversation-branch"]')).toHaveCount(0);
   await expect(page.getByTestId("sidebar-explorations")).toHaveCount(0);
+});
+
+for (const location of ["mainline", "candidate", "other-session"] as const) {
+  test(`failed exploration can abandon its round from the ${location} banner`, async ({ page }) => {
+    await page.goto("/?mockExplorations=1&mockFailedExplorations=1&mockOtherExplorationSession=1");
+    await page.locator(".proj-card-main").first().click();
+    if (location === "candidate") {
+      await page.getByTestId("sidebar-explorations").locator('[data-exploration-id="exploration-a"]').click();
+    } else {
+      await page.locator(`[data-session-id="${location === "mainline" ? "exploration-mainline" : "session-b"}"]`).click();
+    }
+    const banner = page.getByTestId(location === "candidate" ? "exploration-banner" : "mainline-exploration-banner");
+    if (location === "candidate") await expect(banner).toContainText("Failed");
+    const abandon = banner.getByRole("button", { name: "Abandon exploration", exact: true });
+    await abandon.click();
+    const confirm = page.locator(".confirm-modal");
+    await expect(confirm).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(confirm).toBeHidden();
+    await expect(banner).toBeVisible();
+    await expect.poll(() => lastInvokeArgs(page, "abandon_exploration_round")).toBeNull();
+    await abandon.click();
+    await confirm.getByRole("button", { name: "Abandon exploration", exact: true }).click();
+    await expect.poll(() => lastInvokeArgs(page, "abandon_exploration_round")).toMatchObject({
+      sourceFrameId: "exploration-mainline",
+    });
+    await expect(page.getByTestId("sidebar-explorations")).toHaveCount(0);
+    await expect(page.getByTestId("mainline-exploration-banner")).toBeHidden();
+    await expect(page.locator("#composer-input")).toBeEnabled();
+  });
+}
+
+test("failed candidate exposes manual recovery and can be discarded without resolving its sibling", async ({ page }) => {
+  await page.goto("/?mockExplorations=1&mockFailedExplorations=1");
+  await page.locator(".proj-card-main").first().click();
+  await page.getByTestId("sidebar-explorations").locator('[data-exploration-id="exploration-a"]').click();
+  await page.getByTestId("exploration-banner").getByRole("button", { name: "View diff" }).click();
+  const diff = page.getByTestId("exploration-diff-overlay");
+  await expect(diff.getByTestId("exploration-promote")).toBeDisabled();
+  await expect(diff.getByTestId("exploration-manual-resolution")).toBeVisible();
+  await diff.getByTestId("exploration-open-manual-folders").click();
+  await expect.poll(() => lastInvokeArgs(page, "open_exploration_manual_resolution")).toMatchObject({
+    explorationId: "exploration-a",
+  });
+  await diff.getByRole("button", { name: "Discard", exact: true }).click();
+  await page.getByTestId("exploration-confirm-action").click();
+  await expect.poll(() => lastInvokeArgs(page, "discard_exploration")).toMatchObject({
+    explorationId: "exploration-a",
+  });
+  await expect(page.locator('[data-exploration-id="exploration-a"]')).toHaveCount(0);
+  await expect(page.getByTestId("mainline-exploration-banner")).toBeVisible();
+  await expect(page.locator("#composer-input")).toBeDisabled();
 });

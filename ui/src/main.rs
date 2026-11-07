@@ -14329,7 +14329,7 @@ fn App() -> impl IntoView {
                             row.exploration.frame_id == frame_id
                                 && matches!(
                                     row.exploration.status.as_str(),
-                                    "creating" | "active" | "promoting"
+                                    "creating" | "active" | "promoting" | "failed"
                                 )
                         }).cloned() {
                             let isolation_key = if summary.isolation_is_full() {
@@ -14341,7 +14341,12 @@ fn App() -> impl IntoView {
                             let id_for_diff = exploration.id.clone();
                             let id_for_promote = exploration.id.clone();
                             let id_for_discard = exploration.id.clone();
-                            let status_key = "exploration.status_active";
+                            let status_key = if exploration.status == "failed" {
+                                "exploration.status_failed"
+                            } else {
+                                "exploration.status_active"
+                            };
+                            let source_for_abandon = summary.source_frame_id;
                             Some(view! {
                                 <section class="exploration-banner branch" data-testid="exploration-banner">
                                     <div class="exploration-banner-copy">
@@ -14353,33 +14358,36 @@ fn App() -> impl IntoView {
                                         <button type="button" on:click=move |_| open_exploration_preview.call(id_for_diff.clone())>{t(locale.get(), "exploration.view_diff")}</button>
                                         <button type="button" class="primary" disabled=exploration.status != "active"
                                             on:click=move |_| open_exploration_preview.call(id_for_promote.clone())>{t(locale.get(), "exploration.promote")}</button>
-                                        <button type="button" class="danger-text"
+                                        <button type="button" class="danger-text" disabled=!matches!(exploration.status.as_str(), "active" | "failed")
                                             on:click=move |_| open_exploration_preview.call(id_for_discard.clone())>{t(locale.get(), "exploration.discard")}</button>
+                                        <button type="button" class="danger-text" on:click=move |_| ui_confirm.set(Some(UiConfirm::AbandonExploration(source_for_abandon.clone())))>{t(locale.get(), "exploration.abandon")}</button>
                                     </div>
                                 </section>
                             }.into_view())
                         } else {
-                            let active_count = rows
-                                .iter()
-                                .filter(|row| {
-                                    row.source_frame_id == frame_id
-                                        && matches!(
-                                            row.exploration.status.as_str(),
-                                            "creating" | "active" | "promoting"
-                                        )
-                                })
+                            let round = rows.iter().find(|row| matches!(
+                                row.exploration.status.as_str(),
+                                "creating" | "active" | "promoting" | "failed"
+                            ))?;
+                            let source_for_abandon = round.source_frame_id.clone();
+                            let is_source = source_for_abandon == frame_id;
+                            let active_count = rows.iter()
+                                .filter(|row| row.source_frame_id == source_for_abandon)
                                 .count();
-                            let checkpoint_turn_index = rows.iter()
-                                .find(|row| row.source_frame_id == frame_id)
-                                .map_or(0, |row| row.checkpoint_user_index);
+                            let checkpoint_turn_index = round.checkpoint_user_index;
                             (active_count > 0).then(|| view! {
                                 <section class="exploration-banner mainline" data-testid="mainline-exploration-banner">
                                     <div class="exploration-banner-copy">
-                                        <span class="exploration-banner-eyebrow">{t(locale.get(), "exploration.mainline_label")}</span>
+                                        <span class="exploration-banner-eyebrow">{t(locale.get(), if is_source { "exploration.mainline_label" } else { "exploration.project_frozen_label" })}</span>
                                         <strong>{tf(locale.get(), "exploration.mainline_count", &[("n", &active_count.to_string())])}</strong>
-                                        <span>{t(locale.get(), "exploration.mainline_warning")}</span>
+                                        <span>{t(locale.get(), if is_source { "exploration.mainline_warning" } else { "exploration.project_frozen_warning" })}</span>
                                     </div>
-                                    <button type="button" on:click=move |_| start_exploration_from_turn.call(checkpoint_turn_index)>{t(locale.get(), "exploration.start_another")}</button>
+                                    <div class="exploration-banner-actions">
+                                        {is_source.then(|| view! {
+                                            <button type="button" on:click=move |_| start_exploration_from_turn.call(checkpoint_turn_index)>{t(locale.get(), "exploration.start_another")}</button>
+                                        })}
+                                        <button type="button" class="danger-text" on:click=move |_| ui_confirm.set(Some(UiConfirm::AbandonExploration(source_for_abandon.clone())))>{t(locale.get(), "exploration.abandon")}</button>
+                                    </div>
                                 </section>
                             }.into_view())
                         }

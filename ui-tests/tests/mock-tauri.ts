@@ -335,7 +335,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     checkpoint_id: "checkpoint-shared",
     frame_id: frameId,
     name,
-    status: "active",
+    status: query.get("mockFailedExplorations") === "1" ? "failed" : "active",
     workspace_dir: `/mock/app-data/explorations/default/${id}/workspace`,
     workspace_backend: "copy",
     scope_generation: 1,
@@ -411,6 +411,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     const row = mockExplorations.find((item) => item.exploration.id === id);
     if (!row) throw new Error("Exploration not found");
     const blocked = mockMainlineAdvanced || row.source_frame_id !== "exploration-mainline";
+    const failed = row.exploration.status === "failed";
     return {
       exploration: { ...row.exploration },
       diff: {
@@ -431,10 +432,13 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
       },
       eligibility: {
         eligible: !blocked && row.exploration.status === "active",
-        code: blocked ? "MainlineAdvanced" : null,
-        reasons: blocked ? [{ code: "MainlineAdvanced", message: "The mainline no longer matches this exploration checkpoint." }] : [],
+        code: failed ? "ExplorationNotPromotable" : blocked ? "MainlineAdvanced" : null,
+        reasons: [
+          ...(failed ? [{ code: "ExplorationNotPromotable", message: "Only an active exploration can be promoted." }] : []),
+          ...(blocked ? [{ code: "MainlineAdvanced", message: "The mainline no longer matches this exploration checkpoint." }] : []),
+        ],
         expectedGuardHash: `guard-${id}`,
-        manualResolutionAvailable: blocked && row.exploration.status === "active",
+        manualResolutionAvailable: failed || (blocked && row.exploration.status === "active"),
       },
     };
   };

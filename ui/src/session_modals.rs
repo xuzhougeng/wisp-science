@@ -1641,7 +1641,7 @@ pub(crate) fn ExplorationOverlayView(
                                         {move || exploration_diff_body(locale.get(), tab.get(), &current)}
                                     </div>
                                     <div class="row exploration-actions">
-                                        {(status == "active").then(|| view! {
+                                        {(matches!(status.as_str(), "active" | "failed")).then(|| view! {
                                             <button type="button" class="danger-text" disabled=move || busy.get()
                                                 on:click=move |_| confirm.set(Some(ExplorationConfirm::Discard { exploration_id: id_for_discard.clone() }))>
                                                 {move || t(locale.get(), "exploration.discard")}
