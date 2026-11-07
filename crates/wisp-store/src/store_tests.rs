@@ -10212,18 +10212,17 @@ async fn assert_exploration_round_can_be_resolved(failed: bool) {
             })
             .await
             .unwrap();
+        // A creation failure enters Failed directly; Active cannot transition
+        // to Failed without first attempting promotion.
+        let status = if failed {
+            ExplorationStatus::Failed
+        } else {
+            ExplorationStatus::Active
+        };
         store
-            .transition_exploration(id, ExplorationStatus::Creating, ExplorationStatus::Active)
+            .transition_exploration(id, ExplorationStatus::Creating, status)
             .await
             .unwrap();
-    }
-    if failed {
-        for id in ["first", "second"] {
-            store
-                .transition_exploration(id, ExplorationStatus::Active, ExplorationStatus::Failed)
-                .await
-                .unwrap();
-        }
     }
     // Persisted rounds must remain recoverable after restarting the application.
     store.pool.close().await;

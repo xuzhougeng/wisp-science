@@ -2938,10 +2938,20 @@ mod tests {
             .create_exploration(&checkpoint.id, "Failed candidate")
             .await
             .unwrap();
+        // Keep the materialized workspace and model a failed promotion using
+        // the same state transitions as production recovery.
         store
             .transition_exploration(
                 &exploration.id,
                 ExplorationStatus::Active,
+                ExplorationStatus::Promoting,
+            )
+            .await
+            .unwrap();
+        store
+            .transition_exploration(
+                &exploration.id,
+                ExplorationStatus::Promoting,
                 ExplorationStatus::Failed,
             )
             .await

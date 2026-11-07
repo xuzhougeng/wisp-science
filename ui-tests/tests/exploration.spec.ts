@@ -584,7 +584,7 @@ for (const location of ["mainline", "candidate", "other-session"] as const) {
     await page.goto("/?mockExplorations=1&mockFailedExplorations=1&mockOtherExplorationSession=1");
     await page.locator(".proj-card-main").first().click();
     if (location === "candidate") {
-      await page.locator('[data-exploration-id="exploration-a"]').click();
+      await page.getByTestId("sidebar-explorations").locator('[data-exploration-id="exploration-a"]').click();
     } else {
       await page.locator(`[data-session-id="${location === "mainline" ? "exploration-mainline" : "session-b"}"]`).click();
     }
@@ -612,7 +612,7 @@ for (const location of ["mainline", "candidate", "other-session"] as const) {
 test("failed candidate exposes manual recovery and can be discarded without resolving its sibling", async ({ page }) => {
   await page.goto("/?mockExplorations=1&mockFailedExplorations=1");
   await page.locator(".proj-card-main").first().click();
-  await page.locator('[data-exploration-id="exploration-a"]').click();
+  await page.getByTestId("sidebar-explorations").locator('[data-exploration-id="exploration-a"]').click();
   await page.getByTestId("exploration-banner").getByRole("button", { name: "View diff" }).click();
   const diff = page.getByTestId("exploration-diff-overlay");
   await expect(diff.getByTestId("exploration-promote")).toBeDisabled();
