@@ -102,9 +102,10 @@ impl crate::Store {
 mod tests {
     use super::*;
     use crate::{
-        EvidenceBindingDraft, EvidenceSelectionState, EvidenceSourceKind, EvidenceVisibility,
-        Exploration, ExplorationCheckpoint, ExplorationFamily, ExplorationPromotion,
-        ExplorationPromotionStatus, ExplorationStatus, ReproductionRunStart, RunRecord, Store,
+        ContextArchiveRecord, EvidenceBindingDraft, EvidenceSelectionState, EvidenceSourceKind,
+        EvidenceVisibility, Exploration, ExplorationCheckpoint, ExplorationFamily,
+        ExplorationPromotion, ExplorationPromotionStatus, ExplorationStatus, ReproductionRunStart,
+        RunRecord, Store, WorkspaceSnapshotRecord,
     };
     use wisp_llm::Message;
 
@@ -170,6 +171,27 @@ mod tests {
             .unwrap();
         store
             .create_frame("branch", "p", "OPERON", "model")
+            .await
+            .unwrap();
+        store
+            .create_workspace_snapshot(&WorkspaceSnapshotRecord {
+                id: "snapshot".into(),
+                project_id: "p".into(),
+                manifest_json: r#"{"version":1,"files":[]}"#.into(),
+                manifest_sha256: "a".repeat(64),
+                created_at: 1,
+            })
+            .await
+            .unwrap();
+        store
+            .create_context_archive(&ContextArchiveRecord {
+                id: "archive".into(),
+                project_id: "p".into(),
+                frame_id: "main".into(),
+                storage_path: ".wisp/history/archive.json".into(),
+                checksum: "b".repeat(64),
+                created_at: 1,
+            })
             .await
             .unwrap();
         store
