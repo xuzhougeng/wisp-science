@@ -63,6 +63,20 @@ of stdout and stderr tail ahead of most summary columns, so a full read still
 touches every finished Run's tails; moving the tails out of the row needs its own
 schema design.
 
+The one-second Run and runtime polls (`list_runs`, `list_runtimes`) only need the
+window's state scope, so they no longer load the project to get it. Loading the
+project rebuilds its skill index, which reads every `SKILL.md` in the bundled,
+project and global skill folders twice (once to hash it, once to parse it), and
+creates the workspace and memory folders if they are missing; a Windows
+retest in #1690 saw each `SKILL.md` read about 160 times in 61 seconds while a
+task ran. The scope-only lookup makes the same checks as a full load: the
+conversation, project and exploration still exist, the exploration has not
+failed, and its workspace still resolves inside app data. It reports the same
+errors. Other commands that only read the scope (Run detail, runtime
+inspect/stop/dismiss, research graph and journey, memory write target, project
+import) use it as well. Commands that read the project's files, skills or memory
+still load the project.
+
 ## Diagnostics and regression checks
 
 The application log includes `session transcript queried` with `sql_ms`, message

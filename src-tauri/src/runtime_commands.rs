@@ -87,8 +87,7 @@ pub(super) async fn list_runtimes(
     state: State<'_, AppState>,
     window: crate::workspace_surface::WorkspaceSurface,
 ) -> Result<Vec<wisp_runtime::RuntimeInfo>, String> {
-    let (_, scope) =
-        exploration_commands::working_project_for_active_frame(&state, window.label()).await?;
+    let scope = exploration_commands::active_frame_scope(&state, window.label()).await?;
     let active_session = active_session_id(&state, window.label());
     Ok(state
         .runtime_manager
@@ -106,8 +105,7 @@ pub(super) async fn inspect_runtime(
     context_id: String,
     language: wisp_runtime::RuntimeLanguage,
 ) -> Result<wisp_runtime::RuntimeObjectList, String> {
-    let (_, scope) =
-        exploration_commands::working_project_for_active_frame(&state, window.label()).await?;
+    let scope = exploration_commands::active_frame_scope(&state, window.label()).await?;
     if matches!(&scope, wisp_store::StateScope::Exploration { .. })
         && scope.project_id() != project_id
     {
@@ -319,8 +317,7 @@ pub(super) async fn dismiss_runtime(
     window: crate::workspace_surface::WorkspaceSurface,
     runtime_id: String,
 ) -> Result<(), String> {
-    let (_, scope) =
-        exploration_commands::working_project_for_active_frame(&state, window.label()).await?;
+    let scope = exploration_commands::active_frame_scope(&state, window.label()).await?;
     if let Some(info) = state
         .runtime_manager
         .list()
@@ -349,8 +346,7 @@ pub(super) async fn stop_runtime(
     context_id: String,
     language: wisp_runtime::RuntimeLanguage,
 ) -> Result<Option<wisp_runtime::RuntimeInfo>, String> {
-    let (_, scope) =
-        exploration_commands::working_project_for_active_frame(&state, window.label()).await?;
+    let scope = exploration_commands::active_frame_scope(&state, window.label()).await?;
     if matches!(&scope, wisp_store::StateScope::Exploration { .. })
         && scope.project_id() != project_id
     {
@@ -450,8 +446,7 @@ pub(super) async fn list_runs(
     window: crate::workspace_surface::WorkspaceSurface,
     active_only: Option<bool>,
 ) -> Result<Vec<wisp_store::RunSummary>, String> {
-    let (_, scope) =
-        exploration_commands::working_project_for_active_frame(&state, window.label()).await?;
+    let scope = exploration_commands::active_frame_scope(&state, window.label()).await?;
     // The WebView polls active Runs every second during a turn and reads the
     // whole list less often; see `list_active_run_summaries_in_scope`.
     let summaries = if active_only.unwrap_or(false) {
@@ -468,8 +463,7 @@ pub(super) async fn get_run_detail(
     window: crate::workspace_surface::WorkspaceSurface,
     run_id: String,
 ) -> Result<wisp_store::RunRecord, String> {
-    let (_, scope) =
-        exploration_commands::working_project_for_active_frame(&state, window.label()).await?;
+    let scope = exploration_commands::active_frame_scope(&state, window.label()).await?;
     if !state
         .store
         .run_visible_in_scope(&run_id, &scope)

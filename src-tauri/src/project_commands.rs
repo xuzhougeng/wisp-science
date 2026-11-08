@@ -30,8 +30,7 @@ pub(super) async fn get_research_graph(
     state: State<'_, AppState>,
     window: crate::workspace_surface::WorkspaceSurface,
 ) -> Result<wisp_store::ResearchGraph, String> {
-    let (_, scope) =
-        exploration_commands::working_project_for_active_frame(&state, window.label()).await?;
+    let scope = exploration_commands::active_frame_scope(&state, window.label()).await?;
     state
         .store
         .research_graph_in_scope(&scope)
@@ -60,8 +59,7 @@ pub(super) async fn get_research_journey(
     from: i64,
     until: i64,
 ) -> Result<wisp_dto::ResearchJourney, String> {
-    let (_, scope) =
-        exploration_commands::working_project_for_active_frame(&state, window.label()).await?;
+    let scope = exploration_commands::active_frame_scope(&state, window.label()).await?;
     state
         .store
         .research_journey(&scope, from, until)
@@ -75,8 +73,7 @@ pub(super) async fn add_research_journal_entry(
     window: crate::workspace_surface::WorkspaceSurface,
     input: wisp_dto::ResearchJournalInput,
 ) -> Result<String, String> {
-    let (_, scope) =
-        exploration_commands::working_project_for_active_frame(&state, window.label()).await?;
+    let scope = exploration_commands::active_frame_scope(&state, window.label()).await?;
     state
         .store
         .add_research_journal_entry(&scope, &input)
@@ -156,8 +153,7 @@ pub(super) async fn get_research_journey_source(
     window: crate::workspace_surface::WorkspaceSurface,
     version_id: String,
 ) -> Result<wisp_dto::ResearchJourneySource, String> {
-    let (_, scope) =
-        exploration_commands::working_project_for_active_frame(&state, window.label()).await?;
+    let scope = exploration_commands::active_frame_scope(&state, window.label()).await?;
     state
         .store
         .research_journey_source(&scope, &version_id)
