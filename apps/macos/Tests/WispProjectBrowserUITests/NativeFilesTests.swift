@@ -103,6 +103,27 @@ private struct FilesDatabasePane: View {
 }
 
 final class NativeFilesTests: XCTestCase {
+    @MainActor func testDocumentTabsKeepValidatedPreviewAfterExplorerClosesAndSeparateSessions() async throws {
+        let fixture = try filesFixture(), fake = FilesFake(try filesFixture())
+        let model = NativeFilesModel(client: fake, projectID: fixture["locations"]["project_id"].string, sessionID: fixture["locations"]["session_id"].string, readOnly: false)
+        await model.open()
+        let row = try XCTUnwrap(model.rows.first { !$0.directory })
+        await model.read(row)
+        let preview = try XCTUnwrap(model.preview)
+        let detached = model.detachedPreview(preview)
+        let tabs = NativeDocumentTabs()
+        tabs.open(detached, scope: "a"); tabs.open(model.detachedPreview(preview), scope: "a")
+        XCTAssertEqual(tabs.documents.count, 1)
+        model.close()
+        XCTAssertEqual(detached.preview?.content.path, preview.content.path)
+        XCTAssertFalse(detached.closed)
+        tabs.selected["b"] = nil
+        XCTAssertNotNil(tabs.selected["a"])
+        tabs.requestClose(tabs.documents[0].id)
+        XCTAssertEqual(tabs.documents[0].closeRequest, 1)
+        tabs.close(tabs.documents[0].id)
+        XCTAssertTrue(detached.closed); XCTAssertNil(tabs.selected["a"])
+    }
     @MainActor private func model(_ fake: FilesFake, readOnly: Bool = false, transfersSupported: Bool = false) -> NativeFilesModel {
         NativeFilesModel(client: fake, projectID: "research-1", sessionID: "session-1", readOnly: readOnly, transfersSupported: transfersSupported)
     }

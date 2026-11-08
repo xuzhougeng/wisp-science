@@ -1011,6 +1011,24 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             let state = broker.app.state::<crate::AppState>();
             let options = dto::ComposerOptions {
                 session_id: session.into(),
+                reasoning_effort: decode(
+                    &call(
+                        broker,
+                        project,
+                        "get_session_reasoning_effort",
+                        session_args.clone(),
+                    )
+                    .await?,
+                )?,
+                subagent_model: decode(
+                    &call(
+                        broker,
+                        project,
+                        "get_session_subagent_model",
+                        session_args.clone(),
+                    )
+                    .await?,
+                )?,
                 full_permission: decode(
                     &call(
                         broker,
@@ -1366,8 +1384,8 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 (approvals, scopes)
             };
             let snapshot = dto::Snapshot {
-                exploration: (exploration.summary.is_some() || exploration.source_frozen)
-                    .then_some(exploration),
+                magpie: crate::magpie::magpie_model_info(),
+                exploration: (exploration.round_source_frame_id.is_some()).then_some(exploration),
                 branches: decode(
                     &serde_json::to_value(
                         state

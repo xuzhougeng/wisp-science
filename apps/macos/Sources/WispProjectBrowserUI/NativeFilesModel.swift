@@ -204,6 +204,12 @@ final class NativeFilesModel: ObservableObject {
             return page.paths.map { absolute ? $0.absolute_path : $0.relative_path }.joined(separator: "\n")
         } catch { if !closed, copyGeneration == current, !Task.isCancelled { self.error = error.localizedDescription }; return nil }
     }
+    /// Detach the already validated preview from the explorer navigation lifetime.
+    func detachedPreview(_ preview: NativeFilePreview) -> NativeFilesModel {
+        let document = NativeFilesModel(client: client, projectID: projectID, sessionID: sessionID, readOnly: readOnly)
+        document.catalog = catalog; document.contextID = contextID; document.path = path; document.preview = preview
+        return document
+    }
     func read(_ row: NativeFileBrowserRow) async {
         guard !closed, !Task.isCancelled, !loading, !row.directory, rows.contains(where: { $0.id == row.id }), let root = catalog?.local_root else { return }
         let context = contextID; let scope = generation; let current = UUID(); previewGeneration = current

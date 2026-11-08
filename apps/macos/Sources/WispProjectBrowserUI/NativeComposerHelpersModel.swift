@@ -7,6 +7,7 @@ import WispProjectBrowser
     @Published private(set) var memory: NativeComposerMemoryPreference?
     @Published private(set) var analysis: NativeFailureAnalysisSettings?
     @Published private(set) var reviewer: SettingsValue?
+    @Published private(set) var magpie: SettingsValue = .null
     @Published private(set) var choices: [NativeReviewerChoice] = []
     @Published private(set) var busy = false
     @Published private(set) var saving = false
@@ -18,13 +19,14 @@ import WispProjectBrowser
     var canEdit: Bool { writable() && !busy && error == nil && memory != nil && analysis != nil }
     var reviewerKey: String { reviewer.flatMap { try? NativeReviewerConfiguration.key($0) } ?? "" }
     var reviewerLabel: String {
+        if magpie != .null && !reviewerKey.hasPrefix("acp:") { return "Magpie · " + magpie["model"].string }
         if let choice = choices.first(where: { $0.id == reviewerKey }) { return choice.label }
         return localized("配置已不可用") + " · " + reviewerKey
     }
     init(client: any NativeConversationQuerying, project: String, writable: @escaping () -> Bool) {
         self.client = client; self.project = project; self.writable = writable
     }
-    func close() { generation = UUID(); memory = nil; analysis = nil; reviewer = nil; choices = []; busy = false; saving = false; error = nil }
+    func close() { generation = UUID(); memory = nil; analysis = nil; reviewer = nil; magpie = .null; choices = []; busy = false; saving = false; error = nil }
     func load() async {
         guard !busy else { return }
         let current = generation; busy = true; error = nil
@@ -39,8 +41,11 @@ import WispProjectBrowser
             let analysis = try NativeFailureAnalysisSettings.decode(await settings)
             let reviewer = try NativeReviewerConfiguration.catalog(await specialists).first { $0["id"] == .string("reviewer") }
             if let reviewer { _ = try NativeReviewerConfiguration.key(reviewer) }
-            let choices = try NativeReviewerConfiguration.choices(models: await models, agents: await agents, defaultLabel: localized("默认 HTTP 模型"), followLabel: localized("跟随当前会话"))
+            let magpie = try await client.invoke("magpie_model_info", args: [:], projectID: project)
+            var choices = try NativeReviewerConfiguration.choices(models: await models, agents: await agents, defaultLabel: localized("默认 HTTP 模型"), followLabel: localized("跟随当前会话"))
+            if magpie != .null { choices = [NativeReviewerChoice(id: "http:", label: "Magpie · " + magpie["model"].string)] + choices.filter { $0.id.hasPrefix("acp:") } }
             guard generation == current, !Task.isCancelled else { return }
+            self.magpie = magpie
             memory = preference; self.analysis = analysis; self.reviewer = reviewer; self.choices = choices
         } catch {
             if generation == current, !Task.isCancelled { self.error = localized("无法读取全局对话设置，请重试。") + "\n" + error.localizedDescription }

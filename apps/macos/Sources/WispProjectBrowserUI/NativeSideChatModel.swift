@@ -44,6 +44,7 @@ final class NativeSideChatModel: ObservableObject {
     func select(_ option: NativeSideChatOption) async {
         guard !busy, !changingModel else { return }
         if option.kind == "acp" { acpAgentID = option.id; modelSelectionUncertain = false; error = nil; return }
+        if option.kind == "http", option.id.isEmpty { acpAgentID = nil; modelSelectionUncertain = false; error = nil; return }
         optionsGeneration = UUID(); changingModel = true; modelSelectionUncertain = true; error = nil
         defer { changingModel = false }
         do {

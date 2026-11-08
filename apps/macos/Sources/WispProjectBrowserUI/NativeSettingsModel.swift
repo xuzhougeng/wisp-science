@@ -23,16 +23,16 @@ enum NativeSettingsSection: String, CaseIterable, Identifiable {
         case .session: return ["get_settings", "get_auto_review_enabled"]
         case .appearance: return ["get_appearance_prefs"]
         case .pet: return ["get_settings", "get_pet_runtime_status", "get_pet"]
-        case .models: return ["list_models", "list_acp_agents"]
+        case .models: return ["list_models", "list_acp_agents", "magpie_model_info"]
         case .quickActions: return ["list_quick_actions", "list_workflow_templates"]
         case .workflows: return ["list_workflow_templates", "list_models", "list_skills"]
-        case .specialists: return ["list_specialists", "list_models", "list_skills", "get_subagent_model"]
+        case .specialists: return ["list_specialists", "list_models", "list_skills", "get_subagent_model", "magpie_model_info"]
         case .memory: return ["get_memory_view", "get_auto_failure_analysis_settings"]
         case .skills: return ["list_skills"]
         case .plugins: return ["list_plugins"]
         case .browser: return ["get_browser_auto_launch", "get_browser_auto_close_tabs", "get_browser_url_filters", "browser_extension_status"]
         case .connections: return ["list_connectors", "list_mcp_connections"]
-        case .channels: return ["channels_status", "get_settings"]
+        case .channels: return ["channels_status", "get_settings", "lab_status"]
         case .credentials: return ["credential_status", "list_custom_credentials"]
         case .permissions: return ["list_approval_grants", "list_connectors"]
         case .environments: return ["list_execution_contexts", "list_ssh_hosts", "get_default_execution_context", "list_ssh_trust_edges"]
@@ -56,6 +56,7 @@ final class NativeSettingsModel: ObservableObject {
     @Published var message: String?
     @Published var detailSection: String?
     @Published var editor: SettingsEditor?
+    @Published var remoteAccessToken = ""
     private var generation = UUID()
     private var loadedProject: String?
     private var snapshots: [String: SettingsValue] = [:]
@@ -106,14 +107,15 @@ final class NativeSettingsModel: ObservableObject {
         if current == generation { loading = false; readRevision = UUID() }
     }
 
-    var hasUnsavedChanges: Bool { values.contains { key, value in snapshots[key] != nil && snapshots[key] != value } }
+    var hasUnsavedChanges: Bool { !remoteAccessToken.isEmpty || values.contains { key, value in snapshots[key] != nil && snapshots[key] != value } }
     func discardDrafts() {
+        remoteAccessToken = ""
         for (key, value) in snapshots { values[key] = value }
         error = nil
         message = nil
     }
 
-    func leave() { generation = UUID(); editor = nil }
+    func leave() { generation = UUID(); editor = nil; remoteAccessToken = "" }
 
     @discardableResult
     func run(_ command: String, _ args: [String: SettingsValue] = [:], refresh: Bool = true, success: String = "已保存") async -> SettingsValue? {
@@ -132,6 +134,7 @@ final class NativeSettingsModel: ObservableObject {
                 // A successful write invalidates its corresponding draft only.
                 let read = command.hasPrefix("set_") ? "get_" + command.dropFirst(4) : nil
                 if let read { values[read] = nil; snapshots[read] = nil }
+                if command == "set_remote_access" { values["channels_status"] = nil; snapshots["channels_status"] = nil; remoteAccessToken = "" }
                 await load()
             }
             return result

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 pub const SCHEMA: &str = "wisp.native-conversations.v1";
 pub const COMMANDS: &[&str] = &[
     "native_conversation_explorations",
+    "native_conversation_exploration_abandon",
     "native_conversation_exploration_open",
     "native_conversation_exploration_start",
     "native_conversation_exploration_preview",
@@ -259,6 +260,10 @@ pub struct ComposerOptions {
     pub auto_review: bool,
     pub specialist: Option<crate::Specialist>,
     pub specialist_locked: bool,
+    #[serde(default)]
+    pub subagent_model: Option<String>,
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
 }
 
 /// The persisted head working set and the shared model-context breakdown.
@@ -310,6 +315,12 @@ pub struct ComposerOptionRequest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ComposerOptionChange {
+    SubagentModel {
+        model_id: Option<String>,
+    },
+    ReasoningEffort {
+        effort: String,
+    },
     FullPermission {
         enabled: bool,
         confirmed: bool,
@@ -340,6 +351,14 @@ impl ComposerOptionChange {
     pub fn command(&self, session: &str) -> Result<(&'static str, serde_json::Value), String> {
         use serde_json::json;
         Ok(match self {
+            Self::ReasoningEffort { effort } => (
+                "set_session_reasoning_effort",
+                json!({"sessionId":session,"effort":effort}),
+            ),
+            Self::SubagentModel { model_id } => (
+                "set_session_subagent_model",
+                json!({"sessionId":session,"modelId":model_id}),
+            ),
             Self::FullPermission {
                 enabled: true,
                 confirmed: false,
@@ -1116,6 +1135,8 @@ impl PlanProposal {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Snapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub magpie: Option<crate::MagpieModelDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exploration: Option<ExplorationState>,
     /// Same checkpoint links and reviewed summaries used by the WebView transcript.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1500,6 +1521,33 @@ mod tests {
         assert!(super::runtime_reference_available(&context, "r"));
         assert!(super::runtime_reference_available(&context, "python"));
         assert!(!super::runtime_reference_available(&context, "bash"));
+    }
+
+    #[test]
+    fn managed_effort_and_subagent_model_preserve_session_scope_and_null_override() {
+        for model in [None, Some(String::new()), Some("profile-a".into())] {
+            let (command, args) = super::ComposerOptionChange::SubagentModel {
+                model_id: model.clone(),
+            }
+            .command("session-a")
+            .unwrap();
+            assert_eq!(command, "set_session_subagent_model");
+            assert_eq!(
+                args,
+                serde_json::json!({"sessionId":"session-a", "modelId":model})
+            );
+        }
+        let (command, args) = super::ComposerOptionChange::ReasoningEffort {
+            effort: "high".into(),
+        }
+        .command("session-b")
+        .unwrap();
+        assert_eq!(command, "set_session_reasoning_effort");
+        assert_eq!(
+            args,
+            serde_json::json!({"sessionId":"session-b", "effort":"high"})
+        );
+        assert!(super::COMMANDS.contains(&"native_conversation_exploration_abandon"));
     }
 
     #[test]

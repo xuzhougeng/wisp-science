@@ -16,6 +16,8 @@ struct NativeChannelSettings: View {
             case "飞书机器人": feishu
             case "微信机器人": weixin
             case "StickS3 设备桥接": device
+            case "网页远程访问": NativeRemoteAccessSettings(model: model)
+            case "Wisp Lab 课题组": NativeLabSettings(model: model)
             default:
                 NativeSettingsColumns {
                     sync
@@ -27,6 +29,10 @@ struct NativeChannelSettings: View {
                         channelEntry("微信机器人", detail: "iLink", enabled: status["weixin_enabled"].bool)
                         Divider()
                         channelEntry("StickS3 设备桥接", detail: "局域网 / 本机", enabled: status["device"]["enabled"].bool)
+                        Divider()
+                        channelEntry("网页远程访问", detail: status["remote"]["state"].string, enabled: status["remote"]["enabled"].bool)
+                        Divider()
+                        channelEntry("Wisp Lab 课题组", detail: model.values["lab_status"]?["lab_name"].string ?? "", enabled: model.values["lab_status"]?["state"].string == "active")
                     }
                 }
             }

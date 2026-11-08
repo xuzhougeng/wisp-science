@@ -44,6 +44,9 @@ import WispProjectBrowser
         guard options?.specialist_locked == false, id.isEmpty || specialists.contains(where: { $0.id == id }) else { return }
         await save(.object(["kind": .string("specialist"), "id": .string(id)]))
     }
+    func setSubagentModel(_ id: String?) async {
+        await save(.object(["kind": .string("subagent_model"), "model_id": id.map(SettingsValue.string) ?? .null]))
+    }
     private func save(_ change: SettingsValue) async {
         guard canEdit else { return }
         let current = generation; busy = true; saving = true; error = nil
@@ -56,6 +59,7 @@ import WispProjectBrowser
             case "full_permission": confirmed = result.full_permission == change["enabled"].bool
             case "delegation": confirmed = result.delegation == change["enabled"].bool
             case "auto_review": confirmed = result.auto_review == change["enabled"].bool
+            case "subagent_model": confirmed = result.subagent_model == (change["model_id"] == .null ? nil : change["model_id"].string)
             case "specialist": confirmed = (result.specialist?["id"].string ?? "") == change["id"].string
             default: confirmed = false
             }

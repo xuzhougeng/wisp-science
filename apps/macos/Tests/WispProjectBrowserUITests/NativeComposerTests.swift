@@ -9,6 +9,7 @@ private actor ComposerClient: NativeConversationQuerying {
     var calls: [(String, [String: SettingsValue])] = []
     var profile: SettingsValue = .object(["id": .string("p"), "provider": .string("openai"), "api_url": .string("https://example.test"), "model": .string("vendor/model-sibling"), "label": .string("Model"), "reasoning_effort": .string("low"), "max_tokens": .integer(8192), "has_key": .bool(true), "use_for_vision": .bool(true)])
     var contextID = "ssh:gpu"
+    var managedEffort = "low"
     var catalog: [String] = ["low", "high", "invented"]
     var held: CheckedContinuation<SettingsValue, Never>?
     var holdSearch = false
@@ -22,6 +23,10 @@ private actor ComposerClient: NativeConversationQuerying {
         case "native_conversation_panel_activity": return .object(["runtimes": .array([]), "runs": .array([]), "read_only": .bool(false)])
         case "native_conversation_panel_context_default": contextID = args["context_id"]!.string; return .object(["context_id": .string(contextID)])
         case "model_catalog_lookup": return .object(["efforts": .array(catalog.map(SettingsValue.string))])
+        case "native_conversation_options": return .object(["session_id": args["session_id"]!, "reasoning_effort": .string(managedEffort)])
+        case "native_conversation_options_set":
+            managedEffort = args["change"]!["effort"].string
+            return .object(["session_id": args["session_id"]!, "reasoning_effort": .string(managedEffort)])
         case "list_models": return .array([profile])
         case "save_model": profile = args["profile"]!; return .array([profile])
         case "native_conversation_references":
@@ -40,6 +45,20 @@ private actor ComposerClient: NativeConversationQuerying {
     func finish() { held?.resume(returning: catalogResponse("s")); held = nil }
 }
 final class NativeComposerTests: XCTestCase {
+    @MainActor func testMagpieUsesSessionEffortAndNeverEditsPersonalProfile() async throws {
+        let managed = try JSONDecoder().decode(NativeMagpieModel.self, from: Data(#"{"model":"managed","context_window":128000,"max_tokens":8192,"efforts":["low","high"],"default_effort":"low"}"#.utf8))
+        let client = ComposerClient()
+        let composer = NativeComposerModel(client: client)
+        await composer.bind(project: "p", session: "s", profile: client.row(), magpie: managed)
+        XCTAssertEqual(composer.efforts, ["low", "high"])
+        await composer.selectEffort("high")
+        XCTAssertEqual(composer.effort, "high")
+        let calls = await client.recorded()
+        XCTAssertFalse(calls.contains { ["save_model", "model_catalog_lookup"].contains($0.0) })
+        XCTAssertEqual(calls.last?.1["session_id"], .string("s"))
+        XCTAssertEqual(managed.label, "Magpie · managed")
+    }
+
     @MainActor func testRuntimeLineUsesTheWebViewNamesAndStatuses() {
         XCTAssertEqual(NativeComposerModel.runtimeName("python"), "Python")
         XCTAssertEqual(NativeComposerModel.runtimeName("r"), "R")

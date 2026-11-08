@@ -15,7 +15,7 @@ public struct NativePanelTabs: Equatable, Sendable {
         let decoded = saved.flatMap { $0.data(using: .utf8) }.flatMap { try? JSONDecoder().decode([String].self, from: $0) }
         var seen = Set<String>()
         open = (decoded ?? Self.defaults).filter { supported.contains($0) && seen.insert($0).inserted }
-        self.selected = open.contains(selected) ? selected : (open.first ?? "artifacts")
+        self.selected = selected == "home" ? "home" : open.contains(selected) ? selected : (open.first ?? "home")
     }
     public var saved: String { String(data: try! JSONEncoder().encode(open), encoding: .utf8)! }
     public mutating func show(_ id: String) {
@@ -26,7 +26,7 @@ public struct NativePanelTabs: Equatable, Sendable {
     public mutating func remove(_ id: String) {
         guard let index = open.firstIndex(of: id) else { return }
         open.remove(at: index)
-        if selected == id, !open.isEmpty { selected = open[max(0, index - 1)] }
+        if selected == id { selected = open.isEmpty ? "home" : open[max(0, index - 1)] }
     }
     public mutating func move(_ id: String, to target: String) {
         guard let from = open.firstIndex(of: id), let to = open.firstIndex(of: target), from != to else { return }
@@ -41,10 +41,11 @@ public struct NativePanelTabs: Equatable, Sendable {
     }
 
     public mutating func reopen() {
-        if open.isEmpty {
-            open = Self.defaults.filter { available.contains($0) }
-            if open.isEmpty, let first = available.first { open = [first] }
-            selected = open.first ?? "artifacts"
-        }
+        if open.isEmpty { selected = "home" }
+    }
+
+    /// Length-delimited components keep databases, projects and conversations isolated.
+    public static func scope(database: String, project: String, session: String?) -> String {
+        "native.workspace.v2." + [database, project, session ?? ""].map { "\($0.utf8.count):\($0)" }.joined()
     }
 }

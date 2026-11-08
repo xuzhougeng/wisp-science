@@ -1,5 +1,50 @@
 # Native settings implementation
 
+## SwiftUI parity completion (2026-11-07)
+
+Workflows now occupy a dedicated three-column studio: the template library,
+editable canvas, and configuration inspector. In narrow editor windows the canvas
+and inspector stack vertically to keep controls accessible. Switching templates or returning
+to Settings asks before discarding changes. Node editing, host validation,
+conversion source hashes, and unknown-write recovery remain shared with the
+existing canvas editor.
+
+General settings include Wisp-managed uv/Python/R/Node installation, status,
+progress/logs, cancellation and explicit retry. Opening Settings only reads status;
+it does not install tools. An unconfirmed install response requires a fresh status
+read and acknowledgement before another install. Notification sound has its own
+enable switch, platform sound picker and preview; preview does not save settings.
+
+Channels includes remote web access (relay configuration, connection code,
+link/QR and reset) and Lab membership (create/join, member approval/removal,
+knowledge base and inbox project). Credentials use the existing host keyring
+commands. These controls do not connect or publish until explicitly invoked.
+Usage shows four token totals, daily/weekly/cumulative activity, model shares and
+tool-call rankings, retaining project/session drilldown. Future activity cells
+remain empty.
+
+With Magpie connected, the composer, side chat, reviewer and subagent selectors
+show the managed HTTP model while retaining ACP choices. Personal model settings
+remain editable with a notice that they apply after disconnecting. Managed
+reasoning effort is saved on the current session, not on a personal profile.
+
+Manual verification: switch between two conversations and check model overrides;
+open General without triggering an installation; preview a sound without saving;
+inspect disabled remote/Lab state without connecting; open the workflow studio,
+edit a copied template and try switching/back; check usage with no records and
+with records. Exercise light/dark and narrow/wide windows. No real relay, Lab,
+installation, credential, SSH or model service is needed by the new fake-client
+tests.
+
+Validation (approved 2026-11-07): 147 scoped Swift tests passed, including native
+rendering in both themes and narrow/wide workflow layouts; 49 conversation/settings
+DTO contract tests passed. `WISP_CATALOG_OFFLINE=1 cargo check -p wisp-tauri -p
+wisp-server` passed, as did native design/command exports and changed Rust-file
+format checks. Swift tests used `--build-system native`, cached dependencies, and
+normal desktop permissions for AppKit window events and file panels. They did not
+exercise a real relay, Lab membership or tool installation.
+
+
 The macOS Workflows editor opens a native canvas. Node drags follow the pointer
 distance at every zoom level, including after panning. Tasks are arranged in execution
 stages with selectable dependency curves. Drag the background to pan, drag nodes

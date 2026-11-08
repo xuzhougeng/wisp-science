@@ -189,6 +189,23 @@ final class NativeFileTextPreviewTests: XCTestCase {
         await model.load(requests, loader: { _ in try imagePreview() })
         XCTAssertNotNil(model.images["plot.png"]); XCTAssertTrue(model.unavailable.isEmpty)
     }
+    @MainActor func testHiddenDocumentDoesNotConsumeEscapeFromTheVisibleTab() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; defer { window.close() }
+        var parentClosed = 0, visibleClosed = 0, hiddenClosed = 0
+        let container = NSView(frame: window.contentView!.bounds); window.contentView = container
+        let parent = NativeSettingsEscape.Coordinator(enabled: true) { parentClosed += 1 }
+        parent.view = container; parent.install(); defer { parent.remove() }
+        let visible = NSHostingView(rootView: NativePanelFilePreview(content: try textPreview("/work/a.txt", "A"), close: { visibleClosed += 1 }))
+        container.addSubview(visible); visible.frame = container.bounds; visible.layoutSubtreeIfNeeded()
+        let hidden = NSHostingView(rootView: NativePanelFilePreview(content: try textPreview("/work/b.txt", "B"), close: { hiddenClosed += 1 }, active: false).opacity(0))
+        container.addSubview(hidden); hidden.frame = container.bounds; hidden.layoutSubtreeIfNeeded()
+        let focus = window.firstResponder
+        let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53))
+        XCTAssertTrue(NativeEscapeStack.shared.consume(event, keyWindow: window, modalWindow: nil))
+        XCTAssertEqual(visibleClosed, 1); XCTAssertEqual(hiddenClosed, 0); XCTAssertEqual(parentClosed, 0)
+        XCTAssertTrue(window.firstResponder === focus)
+    }
     @MainActor func testImmediateEscapeClosesRichPreviewBeforeFilesWithoutChangingFocus() throws {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 419, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
         var parentClosed = 0, previewClosed = 0

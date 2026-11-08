@@ -3,6 +3,7 @@ import WispProjectBrowser
 
 struct NativeWorkflowSettings: View {
     @ObservedObject var model: NativeSettingsModel
+    var conversionOnly = false
     @State private var conversionRequest = ""
     @State private var conversionModel = ""
     @State private var sourceSkills: Set<String> = []
@@ -11,6 +12,7 @@ struct NativeWorkflowSettings: View {
     @State private var workflowDraft: NativeWorkflowDraft?
     var body: some View {
         VStack(spacing: 22) {
+        if !conversionOnly {
         if model.section == .specialists { subagentModel }
         NativeSettingsGroup(title: model.section.title) {
             Button("添加\(model.section.title)") { edit(.object(["id": .string(UUID().uuidString), "name": .string(""), "builtin": .bool(false)]), new: true) }
@@ -35,15 +37,19 @@ struct NativeWorkflowSettings: View {
             }
             if rows.isEmpty && !model.loading { Text(localized("尚无配置，可添加或复制现有配置。")).foregroundStyle(.secondary) }
         }
-        .sheet(item: $workflowDraft) { draft in NativeWorkflowCanvasEditor(draft: draft, close: { workflowDraft = nil }, saved: { Task { await model.load() } }) }
+        }
         if model.section == .workflows { conversion }
         }
+        .sheet(item: $workflowDraft) { draft in NativeWorkflowCanvasEditor(draft: draft, close: { workflowDraft = nil }, saved: { Task { await model.load() } }) }
     }
     /// Global default for every subagent (#1638): delegate_tasks children and
     /// dispatch_subagent conversations. A Specialist's own binding and a
     /// conversation's choice still outrank it; "" follows the conversation.
     private var subagentModel: some View {
         NativeSettingsGroup(title: "默认子智能体模型") {
+            if let info = model.values["magpie_model_info"], info != .null {
+                Text("Magpie · " + info["model"].string)
+            } else {
             NativePreferenceRow(title: "默认子智能体模型", hint: "delegate_tasks 创建的临时智能体和 dispatch_subagent 子会话默认用这个模型，而不是继承当前会话的模型。专家自身绑定的模型和会话里的“子智能体模型”选择优先；父智能体仍可按任务要求使用自己的模型（model_tier: inherit）。") {
                 Picker("", selection: Binding(get: { model.values["get_subagent_model"]?.string ?? "" }, set: { id in
                     Task { _ = await model.run("set_subagent_model", ["id": .string(id)]) }
@@ -55,6 +61,7 @@ struct NativeWorkflowSettings: View {
                 }
                 .labelsHidden().frame(maxWidth: 260).disabled(model.busy)
                 .accessibilityLabel(localized("默认子智能体模型")).accessibilityIdentifier("subagent-model-select")
+            }
             }
         }
     }

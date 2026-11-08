@@ -129,7 +129,7 @@ struct NativeComposerModes: View {
                             .accessibilityLabel(localized("会话模式"))
                     }.foregroundStyle(WispDesign.color(plan ? "clay" : "text-muted", scheme)).disabled(!conversation.canChangeMode)
                 }
-                if let fast = conversation.snapshot?.fast_mode {
+                if let fast = conversation.snapshot?.fast_mode, conversation.snapshot?.magpie == nil {
                     Button { Task { await conversation.setFastMode(!fast.enabled) } } label: {
                         HStack(spacing: 5) { WispIcon(name: "bolt", size: 14); Text("Fast") }
                             .foregroundStyle(fast.enabled ? WispDesign.color("clay", scheme) : WispDesign.color("text-muted", scheme))

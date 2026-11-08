@@ -14,11 +14,19 @@ struct ProjectWorkspace: View {
         self.conversation = model.nativeConversation()
         self.publication = model.publication
         self.journey = model.journey
+        let scope = NativePanelTabs.scope(database: model.databaseURL.standardizedFileURL.path, project: project.id, session: model.activeSessionID)
+        _panelVisible = AppStorage(wrappedValue: false, scope + ".visible")
+        _panelTab = AppStorage(wrappedValue: "home", scope + ".tab")
+        _panelTabs = AppStorage(wrappedValue: "[]", scope + ".tabs")
+        _panelWidth = AppStorage(wrappedValue: 380, "native.workspace.panel.width")
     }
     @Environment(\.colorScheme) private var scheme
+    @StateObject private var documents = NativeDocumentTabs()
+    private var documentScope: String { NativePanelTabs.scope(database: model.databaseURL.standardizedFileURL.path, project: project.id, session: model.activeSessionID) }
     @State private var sidebarVisible = true
     @State private var moreOpen = false
     @State private var trajectoryPresented = false
+    @State private var explorationsPresented = false
     @State private var archivePresented = false
     @State private var sharePresented = false
     @State private var sessionImportPresented = false
@@ -30,7 +38,7 @@ struct ProjectWorkspace: View {
     @AppStorage("native.workspace.panel.visible") private var panelVisible = false
     @AppStorage("native.workspace.panel.tab") private var panelTab = "artifacts"
     @AppStorage("native.workspace.panel.tabs") private var panelTabs = ""
-    @State private var panelWidth: CGFloat = 380
+    @AppStorage("native.workspace.panel.width") private var panelWidth: Double = 380
     @State private var panelDragStart: CGFloat?
     @State private var terminalHeight: CGFloat = 300
     @State private var terminalDragStart: CGFloat?
@@ -72,6 +80,8 @@ struct ProjectWorkspace: View {
                         .background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 9))
                         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(color("border")))
                     Menu {
+                    Button(localized("探索与恢复")) { explorationsPresented = true }
+                        .disabled(model.activeSessionID == nil)
                     Button {
                         if let session = model.sessions.first(where: { $0.id == model.activeSessionID }) { sessionRename.begin(session) }
                     } label: { Label { Text("重命名会话") } icon: { WispIcon(name: "edit", size: 14) } }
@@ -151,6 +161,14 @@ struct ProjectWorkspace: View {
                 .padding(.horizontal, 16).frame(height: 64)
                 Rectangle().fill(color("border")).frame(height: 1)
                 }
+                if let state = conversation.snapshot?.exploration, !state["round_source_frame_id"].string.isEmpty {
+                    HStack {
+                        WispIcon(name: "branch", size: 16)
+                        Text(localized("项目正在探索；主线文件修改暂时冻结。"))
+                        Spacer()
+                        Button(localized("查看探索 / 放弃探索")) { explorationsPresented = true }
+                    }.font(.callout).padding(12).background(color("bg-sunken"))
+                }
                 if let error = model.sessionError {
                     HStack {
                         Text(error).font(WispDesign.font(size: 12)).textSelection(.enabled)
@@ -187,6 +205,9 @@ struct ProjectWorkspace: View {
                 } else if journey.presented && journey.projectID == project.id {
                     NativeJourneyPage(model: model, journey: journey)
                 } else if let session = model.activeSessionID {
+                    NativeDocumentTabStrip(tabs: documents, scope: documentScope)
+                    HStack(spacing: 0) {
+                    ZStack {
                     NativeConversationView(conversation: conversation, projectID: project.id, sessionID: session, createAcpConversation: { agent in createSession(acpAgentID: agent) }, executeComposerCommand: { command, payload in
                         guard model.activeProjectID == project.id, model.activeSessionID == session else { return }
                         switch command {
@@ -231,6 +252,28 @@ struct ProjectWorkspace: View {
                             await conversation.loadSavedHighlights(project: project.id, session: session)
                         }
                         .onDisappear { conversation.pause() }
+                        .opacity(documents.selected[documentScope] == nil ? 1 : 0)
+                        .allowsHitTesting(documents.selected[documentScope] == nil)
+                        .accessibilityHidden(documents.selected[documentScope] != nil)
+                        ForEach(documents.documents) { document in
+                            let active = document.scope == documentScope && documents.selected[documentScope] == document.id
+                            NativeWorkspaceDocument(model: document.model, active: active, closeRequest: document.closeRequest, close: { documents.close(document.id) }, quote: { quote in
+                                guard active else { return }
+                                model.nativeSideChat(projectID: project.id, sessionID: session).quotes.append(quote)
+                                documents.sideChat.insert(documentScope)
+                            }).id(document.id)
+                                .opacity(active ? 1 : 0).allowsHitTesting(active).accessibilityHidden(!active)
+                                .onChange(of: conversation.snapshot?.read_only) { value in
+                                    if document.scope == documentScope { document.model.readOnly = value ?? true }
+                                }
+                        }
+                    }
+                    if documents.selected[documentScope] != nil && documents.sideChat.contains(documentScope) {
+                        Divider()
+                        NativeSideChatView(model: model.nativeSideChat(projectID: project.id, sessionID: session)).padding(12).frame(minWidth: 240, idealWidth: 300, maxWidth: 360)
+                    }
+                    }
+
                 } else {
                     VStack(spacing: 16) {
                         Text("开始新的研究对话").font(WispDesign.font(size: 22, weight: .semibold))
@@ -254,7 +297,7 @@ struct ProjectWorkspace: View {
                         if panelDragStart == nil { panelDragStart = panelWidth }
                         panelWidth = min(600, max(280, (panelDragStart ?? 380) - value.translation.width))
                     }.onEnded { _ in panelDragStart = nil })
-                NativePanelView(client: conversation.client, projectID: project.id, sessionID: session, projectRoot: project.workspaceDirectory, highlightRevision: conversation.savedHighlightRevision, highlightRemoved: { id in conversation.removeSavedHighlight(id, project: project.id, session: session) }, sideChat: model.nativeSideChat(projectID: project.id, sessionID: session), transcript: conversation.visibleItems, transcriptPage: conversation.showingHistory ? "history:\(conversation.history?.next_before_seq.map(String.init) ?? "start")" : "latest", revealExcerpt: conversation.revealExcerpt, readOnly: conversation.snapshot?.read_only ?? true, fileBrowserSupported: conversation.snapshot?.file_browser == true, fileTransfersSupported: conversation.snapshot?.file_transfers == true, environments: {
+                NativePanelView(layoutScope: NativePanelTabs.scope(database: model.databaseURL.standardizedFileURL.path, project: project.id, session: session), openDocument: { document in documents.open(document, scope: documentScope) }, client: conversation.client, projectID: project.id, sessionID: session, projectRoot: project.workspaceDirectory, highlightRevision: conversation.savedHighlightRevision, highlightRemoved: { id in conversation.removeSavedHighlight(id, project: project.id, session: session) }, sideChat: model.nativeSideChat(projectID: project.id, sessionID: session), transcript: conversation.visibleItems, transcriptPage: conversation.showingHistory ? "history:\(conversation.history?.next_before_seq.map(String.init) ?? "start")" : "latest", revealExcerpt: conversation.revealExcerpt, readOnly: conversation.snapshot?.read_only ?? true, fileBrowserSupported: conversation.snapshot?.file_browser == true, fileTransfersSupported: conversation.snapshot?.file_transfers == true, environments: {
                     guard model.activeProjectID == project.id, model.activeSessionID == session else { return }
                     model.openEnvironmentSettings()
                 }, manageWorkflows: model.openWorkflowSettings, openTerminal: { context in
@@ -268,6 +311,12 @@ struct ProjectWorkspace: View {
                     .frame(width: Self.panelWidth(preferred: panelWidth, available: geometry.size.width, sidebar: showsSidebar))
                     .id(NativePanelScopeIdentity(databaseURL: model.databaseURL.standardizedFileURL, projectID: project.id, sessionID: session))
             }
+        }
+        .sheet(isPresented: $explorationsPresented) {
+            NativeExplorationsView(client: conversation.client, project: project.id, session: model.activeSessionID ?? "", turns: conversation.snapshot?.history_state?.turns ?? [], close: { explorationsPresented = false }, open: { id in
+                explorationsPresented = false
+                Task { await model.openProject(project.id, sessionID: id) }
+            })
         }
         .onChange(of: model.workspaceCommand?.id) { _ in
             guard let command = model.workspaceCommand, command.project == project.id,
