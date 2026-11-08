@@ -82,6 +82,11 @@ mod exploration_workspace;
 mod file_browser;
 pub(crate) use wisp_runs::harvest;
 mod image_generation_tool;
+#[cfg(any(
+    test,
+    all(not(debug_assertions), any(target_os = "windows", target_os = "macos"))
+))]
+mod launch_log;
 mod library_commands;
 mod mcp_bridge;
 mod mcp_broker;
@@ -7493,10 +7498,12 @@ impl StartupTimeline {
 /// Windows release builds have no console, and a macOS app launched from the
 /// Finder has no terminal either, so tracing output left nothing to read when a
 /// user machine misbehaved. Keep the latest launch in a log file next to the
-/// database instead (`wisp.previous.log` holds the launch before it).
+/// database instead (`wisp.previous.log` holds the launch before it). A second
+/// launch that only hands over to the running window must not rotate it; see
+/// `launch_log`.
 #[cfg(all(not(debug_assertions), any(target_os = "windows", target_os = "macos")))]
 #[derive(Clone)]
-struct SharedLogFile(Arc<StdMutex<std::fs::File>>);
+struct SharedLogFile(Arc<StdMutex<launch_log::LaunchLog>>);
 
 #[cfg(all(not(debug_assertions), any(target_os = "windows", target_os = "macos")))]
 impl SharedLogFile {
@@ -7506,13 +7513,8 @@ impl SharedLogFile {
             .join("wisp-science")
             .join("logs");
         std::fs::create_dir_all(&dir).ok()?;
-        let path = dir.join("wisp.log");
-        // Someone hitting a slow launch restarts the app before asking for
-        // help, so the run that has to be explained is always the previous
-        // one. Keep it.
-        let _ = std::fs::rename(&path, dir.join("wisp.previous.log"));
-        let file = std::fs::File::create(path).ok()?;
-        Some(Self(Arc::new(StdMutex::new(file))))
+        let log = launch_log::LaunchLog::open(&dir).ok()?;
+        Some(Self(Arc::new(StdMutex::new(log))))
     }
 }
 
