@@ -6,13 +6,20 @@
 
 use crate::AppState;
 use serde_json::Value;
+use std::collections::{HashMap, HashSet};
+use std::sync::{LazyLock, Mutex};
 use tauri::State;
 use wisp_dto::SubagentActivity;
 use wisp_llm::{Message, Role};
+use wisp_store::{MessageLogCursor, Store};
 
 const SUMMARY_CHARS: usize = 160;
 const TITLE_CHARS: usize = 80;
 const PARENT_BRIEF_PREFIX: &str = "[From the parent conversation's agent]";
+/// In-process subagent tools whose calls and anchors the feed reads.
+const SUBAGENT_TOOLS: [&str; 2] = ["explore", "consult_expert"];
+/// Conversations kept folded across polls; the least recently read goes first.
+const CACHED_FRAMES: usize = 64;
 
 #[tauri::command]
 pub(crate) async fn list_subagent_activity(
@@ -43,13 +50,15 @@ pub(crate) async fn list_subagent_activity(
             continue;
         }
         let reference = store.get_session_reference(&child).await.ok().flatten();
-        let messages = store.load_messages(&child).await.unwrap_or_default();
+        let conversation = with_frame_fold(store, &child, |fold| fold.conversation.clone())
+            .await
+            .unwrap_or_default();
         let mut activity = conversation_activity(
             &child,
             reference.as_ref().map(|r| r.title.as_str()).unwrap_or(""),
             reference.as_ref().map(|r| r.created_at).unwrap_or(0),
             running.contains(&child),
-            &messages,
+            &conversation,
         );
         // The child's bound model (#1638), so the feed shows which worker ran.
         activity.model = store
@@ -66,14 +75,164 @@ pub(crate) async fn list_subagent_activity(
             .unwrap_or_default();
         items.push(activity);
     }
-    let messages = store
-        .load_messages(&session_id)
-        .await
-        .map_err(|error| error.to_string())?;
-    items.extend(explore_activities(&messages));
-    items.extend(expert_activities(&messages));
+    let (explores, experts) = with_frame_fold(store, &session_id, |fold| {
+        (
+            explore_activities(&fold.calls.messages),
+            expert_activities(&fold.calls.messages),
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    items.extend(explores);
+    items.extend(experts);
     items.sort_by(|a, b| b.started_at.cmp(&a.started_at));
     Ok(items)
+}
+
+/// What the feed needs from one conversation, advanced row by row so a poll
+/// reads only what was appended since the previous one. The Agents pane polls
+/// every second; reloading whole transcripts made that cost grow with the
+/// conversation, which is exactly when a long autonomous turn is watched.
+#[derive(Default)]
+struct FrameFold {
+    cursor: Option<MessageLogCursor>,
+    conversation: ConversationFold,
+    calls: SubagentCallLog,
+    last_read: u64,
+}
+
+impl FrameFold {
+    fn push(&mut self, message: &Message) {
+        self.conversation.push(message);
+        self.calls.push(message);
+    }
+}
+
+#[derive(Default)]
+struct FrameFolds {
+    frames: HashMap<String, FrameFold>,
+    clock: u64,
+}
+
+static FRAME_FOLDS: LazyLock<Mutex<FrameFolds>> = LazyLock::new(Mutex::default);
+
+/// Bring `frame_id`'s fold up to date and read from it. A rewritten history
+/// (compaction, undo, rewind) comes back as a reset and is refolded whole.
+async fn with_frame_fold<T>(
+    store: &Store,
+    frame_id: &str,
+    read: impl FnOnce(&FrameFold) -> T,
+) -> anyhow::Result<T> {
+    let cached = FRAME_FOLDS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .frames
+        .remove(frame_id);
+    let mut fold = cached.unwrap_or_default();
+    let delta = store
+        .load_messages_since(frame_id, fold.cursor.as_ref())
+        .await?;
+    if delta.reset {
+        fold = FrameFold::default();
+    }
+    for message in &delta.messages {
+        fold.push(message);
+    }
+    fold.cursor = delta.cursor;
+    let value = read(&fold);
+    let mut folds = FRAME_FOLDS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    folds.clock += 1;
+    fold.last_read = folds.clock;
+    folds.frames.insert(frame_id.to_string(), fold);
+    if folds.frames.len() > CACHED_FRAMES {
+        let oldest = folds
+            .frames
+            .iter()
+            .min_by_key(|(_, fold)| fold.last_read)
+            .map(|(id, _)| id.clone());
+        if let Some(id) = oldest {
+            folds.frames.remove(&id);
+        }
+    }
+    Ok(value)
+}
+
+/// A child conversation's feed row inputs: its latest instruction, its real
+/// answer, its last activity time and how many tools it ran.
+#[derive(Clone, Default)]
+struct ConversationFold {
+    instruction: String,
+    answer: Option<String>,
+    last_ts: Option<i64>,
+    tool_calls: u32,
+}
+
+impl ConversationFold {
+    fn push(&mut self, message: &Message) {
+        if message.role == Role::User {
+            self.instruction = strip_parent_brief(&message.content.as_text());
+        }
+        if message.role == Role::Tool && message.tool_name.as_deref() != Some("attempt_completion")
+        {
+            self.tool_calls += 1;
+        }
+        if is_answer(message) {
+            let text = message.content.as_text();
+            if !text.trim().is_empty() {
+                self.answer = Some(text);
+            }
+        }
+        self.last_ts = Some(message.ts);
+    }
+}
+
+#[cfg(test)]
+impl From<&[Message]> for ConversationFold {
+    fn from(messages: &[Message]) -> Self {
+        let mut fold = Self::default();
+        messages.iter().for_each(|message| fold.push(message));
+        fold
+    }
+}
+
+/// The parent rows `explore_activities` and `expert_activities` read: every
+/// assistant message calling a subagent tool, and every tool row answering
+/// one of those call ids. A result always follows its call, so the first
+/// match after a call is the same here as in the whole transcript.
+#[derive(Default)]
+struct SubagentCallLog {
+    messages: Vec<Message>,
+    call_ids: HashSet<String>,
+}
+
+impl SubagentCallLog {
+    fn push(&mut self, message: &Message) {
+        match message.role {
+            Role::Assistant => {
+                let mut calls = false;
+                for call in &message.tool_calls {
+                    if SUBAGENT_TOOLS.contains(&call.function.name.as_str()) {
+                        self.call_ids.insert(call.id.clone());
+                        calls = true;
+                    }
+                }
+                if calls {
+                    self.messages.push(message.clone());
+                }
+            }
+            Role::Tool
+                if message
+                    .tool_call_id
+                    .as_ref()
+                    .is_some_and(|id| self.call_ids.contains(id)) =>
+            {
+                self.messages.push(message.clone());
+            }
+            _ => {}
+        }
+    }
 }
 
 /// The turn's real answer: an `attempt_completion` result counts, the last
@@ -82,12 +241,15 @@ pub(crate) fn final_answer(messages: &[Message]) -> Option<String> {
     messages
         .iter()
         .rev()
-        .filter(|m| {
-            m.role == Role::Assistant
-                || (m.role == Role::Tool && m.tool_name.as_deref() == Some("attempt_completion"))
-        })
+        .filter(|m| is_answer(m))
         .map(|m| m.content.as_text())
         .find(|t| !t.trim().is_empty())
+}
+
+fn is_answer(message: &Message) -> bool {
+    message.role == Role::Assistant
+        || (message.role == Role::Tool
+            && message.tool_name.as_deref() == Some("attempt_completion"))
 }
 
 fn conversation_activity(
@@ -95,15 +257,10 @@ fn conversation_activity(
     title: &str,
     created_at: i64,
     running: bool,
-    messages: &[Message],
+    fold: &ConversationFold,
 ) -> SubagentActivity {
-    let instruction = messages
-        .iter()
-        .rev()
-        .find(|m| m.role == Role::User)
-        .map(|m| strip_parent_brief(&m.content.as_text()))
-        .unwrap_or_default();
-    let answer = final_answer(messages).unwrap_or_default();
+    let instruction = fold.instruction.clone();
+    let answer = fold.answer.clone().unwrap_or_default();
     let status = if running {
         "running"
     } else if answer.starts_with("Error: ") {
@@ -128,14 +285,10 @@ fn conversation_activity(
         answer,
         started_at: created_at,
         ended_at: (!running)
-            .then(|| messages.last().map(|m| m.ts).filter(|ts| *ts > 0))
-            .flatten(),
-        tool_calls: messages
-            .iter()
-            .filter(|m| {
-                m.role == Role::Tool && m.tool_name.as_deref() != Some("attempt_completion")
-            })
-            .count() as u32,
+            .then_some(fold.last_ts)
+            .flatten()
+            .filter(|ts| *ts > 0),
+        tool_calls: fold.tool_calls,
         model: String::new(),
         session_id: Some(session.to_string()),
         trace_path: None,
@@ -401,7 +554,13 @@ mod tests {
             Message::tool("c1", "shell", "ok"),
             Message::tool("c2", "attempt_completion", "Aligned 12 samples.\nBAMs under results/."),
         ];
-        let item = conversation_activity("sub", "Align the reads", 5, false, &messages);
+        let item = conversation_activity(
+            "sub",
+            "Align the reads",
+            5,
+            false,
+            &ConversationFold::from(&messages[..]),
+        );
         assert_eq!(item.status, "completed");
         assert_eq!(item.instruction, "Align the reads to GRCh38.");
         assert_eq!(item.answer, "Aligned 12 samples.\nBAMs under results/.");
@@ -409,12 +568,20 @@ mod tests {
         assert_eq!(item.tool_calls, 1);
         assert_eq!(item.session_id.as_deref(), Some("sub"));
 
-        let running = conversation_activity("sub", "", 5, true, &messages[..1]);
+        let running =
+            conversation_activity("sub", "", 5, true, &ConversationFold::from(&messages[..1]));
         assert_eq!(running.status, "running");
         assert_eq!(running.title, "Align the reads to GRCh38.");
         assert!(running.answer.is_empty());
         assert_eq!(
-            conversation_activity("sub", "t", 5, false, &messages[..1]).status,
+            conversation_activity(
+                "sub",
+                "t",
+                5,
+                false,
+                &ConversationFold::from(&messages[..1])
+            )
+            .status,
             "idle"
         );
     }
@@ -451,6 +618,95 @@ mod tests {
         assert_eq!(items[0].ended_at, Some(130));
         assert_eq!(items[1].id, "explore:e3");
         assert_eq!(items[1].status, "running");
+    }
+
+    #[test]
+    fn call_log_reads_subagents_like_the_whole_transcript() {
+        let mut expert = explore_call("x1", "Which normalisation?");
+        expert.tool_calls[0].function.name = "consult_expert".into();
+        let mut shell = Message::assistant("");
+        shell.tool_calls = explore_call("s1", "unused").tool_calls;
+        shell.tool_calls[0].function.name = "shell".into();
+        let transcript = vec![
+            Message::user("Map the pipeline"),
+            // A reused id answered before the explore call must not pair with it.
+            Message::tool("e1", "shell", "early"),
+            shell,
+            Message::tool("s1", "shell", "ok"),
+            explore_call("e1", "Where are reads trimmed?"),
+            Message::tool(
+                "e1",
+                "explore",
+                "[explore subagent: 2 tool call(s) — read×2]\ntrimmed in qc.py",
+            ),
+            expert,
+            Message::assistant("Waiting on the expert."),
+            explore_call("e2", "Still running?"),
+        ];
+        let mut log = SubagentCallLog::default();
+        // Folded in two polls, as the pane would see it.
+        transcript[..5].iter().for_each(|message| log.push(message));
+        transcript[5..].iter().for_each(|message| log.push(message));
+        assert_eq!(log.messages.len(), 4);
+        assert_eq!(
+            explore_activities(&log.messages),
+            explore_activities(&transcript)
+        );
+        assert_eq!(
+            expert_activities(&log.messages),
+            expert_activities(&transcript)
+        );
+        assert_eq!(
+            explore_activities(&log.messages)[0].answer,
+            "trimmed in qc.py"
+        );
+    }
+
+    #[tokio::test]
+    async fn frame_fold_reads_appended_rows_and_refolds_after_undo() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("wisp.sqlite")).await.unwrap();
+        // The fold cache is process-wide; a fresh id keeps tests apart.
+        let frame = uuid::Uuid::new_v4().to_string();
+        store.create_project("p", "Project", "").await.unwrap();
+        store.create_frame(&frame, "p", "Child", "m").await.unwrap();
+        let read = |fold: &FrameFold| {
+            (
+                fold.conversation.instruction.clone(),
+                fold.conversation.answer.clone(),
+                fold.conversation.tool_calls,
+            )
+        };
+        store
+            .append_message(&frame, 0, &Message::user("Count the reads"))
+            .await
+            .unwrap();
+        store
+            .append_message(&frame, 1, &Message::tool("c1", "shell", "42"))
+            .await
+            .unwrap();
+        assert_eq!(
+            with_frame_fold(&store, &frame, read).await.unwrap(),
+            ("Count the reads".into(), None, 1)
+        );
+        store
+            .append_message(&frame, 2, &Message::assistant("There are 42 reads."))
+            .await
+            .unwrap();
+        assert_eq!(
+            with_frame_fold(&store, &frame, read).await.unwrap(),
+            (
+                "Count the reads".into(),
+                Some("There are 42 reads.".into()),
+                1
+            )
+        );
+        // Undoing the turn's tail must not leave the old answer or count behind.
+        store.truncate_model_context(&frame, 0).await.unwrap();
+        assert_eq!(
+            with_frame_fold(&store, &frame, read).await.unwrap(),
+            ("Count the reads".into(), None, 0)
+        );
     }
 
     #[test]

@@ -388,9 +388,36 @@ impl Store {
     }
 
     pub async fn list_run_summaries_in_scope(&self, scope: &StateScope) -> Result<Vec<RunSummary>> {
+        self.run_summaries_in_scope(scope, false).await
+    }
+
+    /// The scope's submitted, running and cancelling Runs only, for pollers
+    /// between full reads. Every row stores up to 64 KiB each of stdout and
+    /// stderr tail ahead of most summary columns, so reading a finished Run's
+    /// summary walks its tails too; `status` is stored before them, which lets
+    /// this skip finished Runs without that cost.
+    pub async fn list_active_run_summaries_in_scope(
+        &self,
+        scope: &StateScope,
+    ) -> Result<Vec<RunSummary>> {
+        self.run_summaries_in_scope(scope, true).await
+    }
+
+    async fn run_summaries_in_scope(
+        &self,
+        scope: &StateScope,
+        active_only: bool,
+    ) -> Result<Vec<RunSummary>> {
         if let Some(store) = self.route_project(scope.project_id()).await? {
-            return Box::pin(store.list_run_summaries_in_scope(scope)).await;
+            return Box::pin(store.run_summaries_in_scope(scope, active_only)).await;
         }
+        // Keep this right after the project test, ahead of `exploration_id`,
+        // which is stored after the tails.
+        let active = if active_only {
+            " AND run.status IN ('submitted','running','cancelling')"
+        } else {
+            ""
+        };
         let columns = "run.id,run.frame_id,run.context_id,run.title,run.kind,run.status,\
             run.created_at,run.started_at,run.ended_at,run.exit_code,run.remote_workdir,\
             run.timeout_secs,run.last_polled_at,substr(run.last_poll_error,1,2048) AS last_poll_error,\
@@ -404,7 +431,7 @@ impl Store {
         let rows = match scope {
             StateScope::Mainline { project_id } => {
                 let sql = format!(
-                    "SELECT {columns} FROM runs run WHERE run.project_id=? \
+                    "SELECT {columns} FROM runs run WHERE run.project_id=?{active} \
                      AND run.exploration_id IS NULL ORDER BY run.created_at DESC,run.id DESC"
                 );
                 sqlx::query(&sql)
@@ -417,7 +444,7 @@ impl Store {
                 exploration_id,
             } => {
                 let sql = format!(
-                    "SELECT {columns} FROM runs run WHERE run.project_id=? \
+                    "SELECT {columns} FROM runs run WHERE run.project_id=?{active} \
                      AND (run.exploration_id=? OR (run.exploration_id IS NULL AND EXISTS(\
                        SELECT 1 FROM explorations exploration \
                        JOIN exploration_baseline_entities baseline \

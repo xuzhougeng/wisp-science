@@ -143,6 +143,27 @@ pub struct ToolCallUsage {
     pub calls: i64,
 }
 
+/// Where an incremental reader stopped in a frame's head-epoch log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessageLogCursor {
+    pub epoch: i64,
+    pub seq: i64,
+    pub id: String,
+    /// Head-epoch rows at or below `seq`, readable or not.
+    pub rows: i64,
+}
+
+/// What [`Store::load_messages_since`] read.
+#[derive(Debug, Default)]
+pub struct MessageLogDelta {
+    /// The cursor no longer described the log, so `messages` is the whole
+    /// head epoch rather than a suffix to append.
+    pub reset: bool,
+    pub messages: Vec<Message>,
+    /// `None` only while the head epoch has no readable row.
+    pub cursor: Option<MessageLogCursor>,
+}
+
 /// One bounded, turn-aligned slice of a saved conversation.
 pub struct SessionTranscriptPage {
     pub messages: Vec<(i64, Message)>,
@@ -1741,6 +1762,92 @@ impl Store {
             }
         }
         Ok(out)
+    }
+
+    /// Head-epoch messages appended after `cursor`, for pollers that fold a
+    /// conversation incrementally instead of reloading it every tick.
+    ///
+    /// The cursor is trusted only while the log below it is unchanged: same
+    /// head epoch, same row count up to its seq, and the same row at its seq.
+    /// Compaction, rewind, undo and timer replacement all break one of those,
+    /// and the result then carries the whole head epoch with `reset` set. The
+    /// checks and the read share one snapshot, so a concurrent rewrite cannot
+    /// slip between them.
+    pub async fn load_messages_since(
+        &self,
+        frame_id: &str,
+        cursor: Option<&MessageLogCursor>,
+    ) -> Result<MessageLogDelta> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.load_messages_since(frame_id, cursor)).await;
+        }
+        let mut tx = self.pool.begin().await?;
+        let epoch: i64 =
+            sqlx::query_scalar("SELECT COALESCE((SELECT head_epoch FROM frames WHERE id=?),0)")
+                .bind(frame_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        let mut resume = None;
+        if let Some(cursor) = cursor.filter(|cursor| cursor.epoch == epoch) {
+            let (rows, id): (i64, Option<String>) = sqlx::query_as(
+                "SELECT (SELECT COUNT(*) FROM messages \
+                         WHERE frame_id=?1 AND epoch=?2 AND seq<=?3), \
+                        (SELECT id FROM messages WHERE frame_id=?1 AND epoch=?2 AND seq=?3)",
+            )
+            .bind(frame_id)
+            .bind(epoch)
+            .bind(cursor.seq)
+            .fetch_one(&mut *tx)
+            .await?;
+            if rows == cursor.rows && id.as_deref() == Some(cursor.id.as_str()) {
+                resume = Some(cursor);
+            }
+        }
+        let rows = sqlx::query(
+            "SELECT id,seq,role,content,tool_calls,tool_call_id,tool_name,reasoning,ts,model_name \
+             FROM messages WHERE frame_id=? AND epoch=? AND seq>? ORDER BY seq ASC",
+        )
+        .bind(frame_id)
+        .bind(epoch)
+        .bind(resume.map_or(i64::MIN, |cursor| cursor.seq))
+        .fetch_all(&mut *tx)
+        .await?;
+        let mut messages = Vec::with_capacity(rows.len());
+        let mut last = None;
+        for row in rows {
+            match message_from_row(&row) {
+                Ok((seq, message)) => {
+                    last = Some((seq, row.try_get::<String, _>("id")?));
+                    messages.push(message);
+                }
+                Err(error) => {
+                    tracing::warn!(frame_id, %error, "skipping unreadable message row");
+                }
+            }
+        }
+        let next = match last {
+            // Unreadable rows still count, so the next check sees the same total.
+            Some((seq, id)) => Some(MessageLogCursor {
+                epoch,
+                seq,
+                id,
+                rows: sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM messages WHERE frame_id=? AND epoch=? AND seq<=?",
+                )
+                .bind(frame_id)
+                .bind(epoch)
+                .bind(seq)
+                .fetch_one(&mut *tx)
+                .await?,
+            }),
+            None => resume.cloned(),
+        };
+        tx.rollback().await?;
+        Ok(MessageLogDelta {
+            reset: resume.is_none(),
+            messages,
+            cursor: next,
+        })
     }
 
     /// Load at most `turn_limit` complete user turns before `before_seq`.

@@ -240,10 +240,56 @@ pub(crate) fn refresh_runtime_environment_after_tool(
     });
 }
 
+fn run_is_active(run: &RunSummary) -> bool {
+    matches!(run.status.as_str(), "submitted" | "running" | "cancelling")
+}
+
+/// Fold an active-only read into the full list. `None` when a Run started or
+/// stopped being active since the last full read: only the whole list can
+/// place a new Run or show where an ended one landed.
+fn merge_active_runs(current: &[RunSummary], active: Vec<RunSummary>) -> Option<Vec<RunSummary>> {
+    let mut active = active
+        .into_iter()
+        .map(|run| (run.id.clone(), run))
+        .collect::<HashMap<_, _>>();
+    let mut merged = Vec::with_capacity(current.len());
+    for run in current {
+        match active.remove(&run.id) {
+            Some(fresh) => merged.push(fresh),
+            None if run_is_active(run) => return None,
+            None => merged.push(run.clone()),
+        }
+    }
+    active.is_empty().then_some(merged)
+}
+
+/// Read the whole Run list. The ticker uses [`refresh_active_runs`] between
+/// these while a turn or transfer runs.
 pub(crate) fn refresh_runs(
     into: RwSignal<Vec<RunSummary>>,
     locale: RwSignal<Locale>,
     health: Option<RunRefreshHealth>,
+) {
+    refresh_run_list(into, locale, health, false);
+}
+
+/// Re-read only submitted, running and cancelling Runs. A finished Run's row
+/// carries up to 128 KiB of output tails that the backend must walk to read
+/// its summary, so re-reading every Run each second grew with the project's
+/// history; finished Runs are left to the slower full read.
+pub(crate) fn refresh_active_runs(
+    into: RwSignal<Vec<RunSummary>>,
+    locale: RwSignal<Locale>,
+    health: Option<RunRefreshHealth>,
+) {
+    refresh_run_list(into, locale, health, true);
+}
+
+fn refresh_run_list(
+    into: RwSignal<Vec<RunSummary>>,
+    locale: RwSignal<Locale>,
+    health: Option<RunRefreshHealth>,
+    active_only: bool,
 ) {
     let Some(guard) = RunRefreshGuard::acquire() else {
         return;
@@ -254,8 +300,13 @@ pub(crate) fn refresh_runs(
         });
     }
     spawn_local(async move {
-        let _guard = guard;
-        let result = invoke_checked("list_runs", JsValue::UNDEFINED)
+        let args = if active_only {
+            serde_wasm_bindgen::to_value(&serde_json::json!({ "activeOnly": true }))
+                .unwrap_or(JsValue::UNDEFINED)
+        } else {
+            JsValue::UNDEFINED
+        };
+        let result = invoke_checked("list_runs", args)
             .await
             .map_err(js_error_text)
             .and_then(|value| {
@@ -271,6 +322,19 @@ pub(crate) fn refresh_runs(
         if into.try_with_untracked(|_| ()).is_none() {
             return;
         }
+        let result = match result {
+            Ok(active) if active_only => {
+                match into.with_untracked(|current| merge_active_runs(current, active)) {
+                    Some(list) => Ok(list),
+                    None => {
+                        drop(guard);
+                        refresh_runs(into, locale, health);
+                        return;
+                    }
+                }
+            }
+            other => other,
+        };
         if let Ok(list) = result {
             let initialized = RUN_REFRESH_INITIALIZED.with(Cell::get);
             let stopped_runs = list
@@ -322,7 +386,7 @@ pub(crate) fn refresh_runs(
 #[cfg(test)]
 mod run_refresh_guard_tests {
     use super::{
-        method_search_memory_stale, run_lists_render_eq, run_refresh_warning,
+        merge_active_runs, method_search_memory_stale, run_lists_render_eq, run_refresh_warning,
         MethodSearchPanelMemory, RunRefreshGuard, RunRefreshState,
     };
     use crate::dto::RunSummary;
@@ -391,6 +455,56 @@ mod run_refresh_guard_tests {
             background_requested_at: None,
             output_fingerprint: "fp".into(),
         }
+    }
+
+    #[test]
+    fn active_reads_update_in_place_until_a_run_starts_or_ends() {
+        let run = |id: &str, status: &str, fingerprint: &str| {
+            let mut run = summary(Some(10));
+            run.id = id.into();
+            run.status = status.into();
+            run.output_fingerprint = fingerprint.into();
+            run
+        };
+        let current = vec![
+            run("live", "running", "old"),
+            run("done", "succeeded", "final"),
+            run("queued", "submitted", "none"),
+        ];
+        // Active Runs refresh in place; finished ones keep their last full read.
+        let merged = merge_active_runs(
+            &current,
+            vec![
+                run("queued", "running", "started"),
+                run("live", "running", "new"),
+            ],
+        )
+        .unwrap();
+        let view = merged
+            .iter()
+            .map(|run| {
+                (
+                    run.id.as_str(),
+                    run.status.as_str(),
+                    run.output_fingerprint.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            view,
+            [
+                ("live", "running", "new"),
+                ("done", "succeeded", "final"),
+                ("queued", "running", "started"),
+            ]
+        );
+        // A Run that left the active set needs the full list to show its end.
+        assert!(merge_active_runs(&current, vec![run("live", "running", "new")]).is_none());
+        // So does a Run the list has not placed yet.
+        let mut started = current[..2].to_vec();
+        started[0].status = "succeeded".into();
+        assert!(merge_active_runs(&started, vec![run("fresh", "submitted", "none")]).is_none());
+        assert_eq!(merge_active_runs(&started, Vec::new()).unwrap().len(), 2);
     }
 
     #[test]
