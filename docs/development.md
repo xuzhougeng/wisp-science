@@ -304,7 +304,11 @@ Packaged Windows and macOS builds have no console. Each launch writes
 `wisp.log` next to the database (Windows:
 `%APPDATA%\science.wisp-science\wisp-science\logs\wisp.log`; macOS:
 `~/Library/Application Support/science.wisp-science/wisp-science/logs/wisp.log`),
-keeping the previous launch as `wisp.previous.log`. The `startup finished` line breaks pre-first-paint work by phase
+keeping the previous launch as `wisp.previous.log`. Clicking the taskbar or Dock
+icon while Wisp is already running starts a short-lived process that hands over
+to the open window; it finds `wisp.log.lock` held by the running window, leaves
+`wisp.log` and `wisp.previous.log` alone, and writes `wisp.secondary.log`
+instead, so the running window's log keeps growing. The `startup finished` line breaks pre-first-paint work by phase
 (`total=…ms store=…ms skills=…ms …`). Recovery sweeps, removing the retired
 scratch chat's sandbox folder, and restoring project windows run after the
 window is interactive and are logged as `deferred startup finished`.
