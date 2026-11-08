@@ -7084,8 +7084,7 @@ async fn side_chat(
     // on what the conversation log happens to say about it.
     let run = match run_id.as_deref().filter(|id| !id.is_empty()) {
         Some(run_id) => {
-            let (_, scope) =
-                exploration_commands::working_project_for_frame(&state, frame_id).await?;
+            let scope = exploration_commands::frame_scope(&state, frame_id).await?;
             if !state
                 .store
                 .run_visible_in_scope(run_id, &scope)

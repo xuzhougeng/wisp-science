@@ -278,8 +278,7 @@ async fn require_writable_memory_target(
     window_label: &str,
     project_id: &str,
 ) -> Result<wisp_store::StateScope, String> {
-    let (_, active_scope) =
-        exploration_commands::working_project_for_active_frame(state, window_label).await?;
+    let active_scope = exploration_commands::active_frame_scope(state, window_label).await?;
     let scope = if active_scope.project_id() == project_id {
         active_scope
     } else {

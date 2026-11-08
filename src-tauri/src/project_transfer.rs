@@ -1307,8 +1307,7 @@ pub(super) async fn import_project(
     window: WorkspaceSurface,
     directory: Option<bool>,
 ) -> Result<Option<ProjectSummary>, String> {
-    let (_, scope) =
-        exploration_commands::working_project_for_active_frame(&state, window.label()).await?;
+    let scope = exploration_commands::active_frame_scope(&state, window.label()).await?;
     if matches!(scope, wisp_store::StateScope::Exploration { .. }) {
         return Err(
             "exploration_project_mutation_blocked: Project import is unavailable inside an active exploration."

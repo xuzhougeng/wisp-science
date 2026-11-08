@@ -1000,8 +1000,7 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                     .require_unarchived_session(session)
                     .await
                     .map_err(|e| e.to_string())?;
-                let (_, scope) =
-                    crate::exploration_commands::working_project_for_frame(&state, session).await?;
+                let scope = crate::exploration_commands::frame_scope(&state, session).await?;
                 crate::exploration_commands::require_writable_scope(&state.store, &scope).await?;
                 let (command, payload) = args.change.command(session)?;
                 call(broker, project, command, payload).await?;
@@ -1652,8 +1651,7 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 .require_unarchived_session(session)
                 .await
                 .map_err(|e| e.to_string())?;
-            let (_, scope) =
-                crate::exploration_commands::working_project_for_frame(&state, session).await?;
+            let scope = crate::exploration_commands::frame_scope(&state, session).await?;
             crate::exploration_commands::require_writable_scope(&state.store, &scope).await?;
             let current = crate::acp::native_session_state(&state, session)
                 .await?

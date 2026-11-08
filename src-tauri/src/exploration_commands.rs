@@ -807,29 +807,41 @@ pub(crate) fn exploration_runtime_injection(
     )))
 }
 
-pub(crate) async fn working_project_for_frame(
-    state: &AppState,
+/// Where a frame's files live, once its rows have been checked.
+enum FrameWorkspace {
+    /// The project's stored workspace directory, not yet created.
+    Mainline(String),
+    /// The exploration's canonical workspace, inside `<app data>/explorations`.
+    Exploration(PathBuf),
+}
+
+/// A frame's scope after every check `working_project_for_frame` makes before
+/// it loads anything from the workspace: the conversation and project rows
+/// exist, the exploration row exists and has not failed, and its workspace
+/// resolves inside app data. Reads no `SKILL.md` or memory file, so the
+/// scope-only resolvers can share it and reject exactly the same frames with
+/// the same errors.
+async fn checked_frame(
+    store: &Store,
+    app_data: &Path,
     frame_id: &str,
-) -> Result<(ActiveProject, StateScope), String> {
-    let scope = state
-        .store
+) -> Result<(StateScope, FrameWorkspace), String> {
+    let scope = store
         .frame_state_scope(frame_id)
         .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "Conversation not found".to_string())?;
-    match &scope {
+    let workspace = match &scope {
         StateScope::Mainline { project_id } => {
-            let project = crate::project_commands::load_active_project(state, project_id)
-                .await?
-                .0;
-            Ok((project, scope))
+            let (_, workspace) = store
+                .get_project(project_id)
+                .await
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| "Project not found".to_string())?;
+            FrameWorkspace::Mainline(workspace)
         }
-        StateScope::Exploration {
-            project_id,
-            exploration_id,
-        } => {
-            let exploration = state
-                .store
+        StateScope::Exploration { exploration_id, .. } => {
+            let exploration = store
                 .get_exploration(exploration_id)
                 .await
                 .map_err(|error| error.to_string())?
@@ -846,24 +858,68 @@ pub(crate) async fn working_project_for_frame(
                     format!("exploration workspace is unavailable: {error}"),
                 )
             })?;
-            let expected_root = dunce::canonicalize(state.app_data.join("explorations"))
+            let expected_root = dunce::canonicalize(app_data.join("explorations"))
                 .map_err(|error| error.to_string())?;
             if !root.starts_with(&expected_root) {
                 return Err("exploration workspace is outside app data".into());
             }
-            let skills = Arc::new(load_skill_index(&root));
-            let memory = Arc::new(MemoryManager::new(&root));
-            Ok((
-                ActiveProject {
-                    id: project_id.clone(),
-                    root,
-                    skills,
-                    memory,
-                },
-                scope,
-            ))
+            FrameWorkspace::Exploration(root)
         }
-    }
+    };
+    Ok((scope, workspace))
+}
+
+/// `working_project_for_frame` over a bare store and app-data directory.
+async fn working_project_in(
+    store: &Store,
+    app_data: &Path,
+    frame_id: &str,
+) -> Result<(ActiveProject, StateScope), String> {
+    let (scope, workspace) = checked_frame(store, app_data, frame_id).await?;
+    let root = match workspace {
+        // Same as `project_commands::load_active_project`.
+        FrameWorkspace::Mainline(workspace) => {
+            crate::ensure_writable(PathBuf::from(workspace), app_data)
+        }
+        FrameWorkspace::Exploration(root) => root,
+    };
+    let skills = Arc::new(load_skill_index(&root));
+    let memory = Arc::new(MemoryManager::new(&root));
+    let project = ActiveProject {
+        id: scope.project_id().to_string(),
+        root,
+        skills,
+        memory,
+    };
+    Ok((project, scope))
+}
+
+/// The frame's project with its skill index and memory loaded. Reads every
+/// `SKILL.md` in the project's skill sources, so a caller that needs only the
+/// scope uses [`frame_scope`] instead.
+pub(crate) async fn working_project_for_frame(
+    state: &AppState,
+    frame_id: &str,
+) -> Result<(ActiveProject, StateScope), String> {
+    working_project_in(&state.store, &state.app_data, frame_id).await
+}
+
+/// `frame_scope` over a bare store and app-data directory.
+async fn frame_scope_in(
+    store: &Store,
+    app_data: &Path,
+    frame_id: &str,
+) -> Result<StateScope, String> {
+    checked_frame(store, app_data, frame_id)
+        .await
+        .map(|(scope, _)| scope)
+}
+
+/// The scope `working_project_for_frame` returns, with the same checks and
+/// errors, without building the project. Per-second polls (`list_runs`,
+/// `list_runtimes`) use this so they never rebuild the skill index.
+pub(crate) async fn frame_scope(state: &AppState, frame_id: &str) -> Result<StateScope, String> {
+    frame_scope_in(&state.store, &state.app_data, frame_id).await
 }
 
 pub(crate) async fn working_project_for_active_frame(
@@ -876,6 +932,21 @@ pub(crate) async fn working_project_for_active_frame(
             let project = state.require_active(window_label)?;
             Ok((project.clone(), StateScope::mainline(project.id.clone())))
         }
+    }
+}
+
+/// The scope `working_project_for_active_frame` returns, with the same checks
+/// and errors, for callers that never touch the project's root, skills or
+/// memory.
+pub(crate) async fn active_frame_scope(
+    state: &AppState,
+    window_label: &str,
+) -> Result<StateScope, String> {
+    match state.active_frame(window_label) {
+        Some(frame_id) => frame_scope(state, &frame_id).await,
+        None => state
+            .require_active(window_label)
+            .map(|project| StateScope::mainline(project.id)),
     }
 }
 
@@ -2441,6 +2512,92 @@ mod tests {
         let error = service.create_checkpoint("p", "branch").await.unwrap_err();
         assert!(error.starts_with(ERR_BRANCH_UNSUPPORTED), "{error}");
         assert!(error.contains("Conversation branches cannot start an exploration."));
+        drop(service);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// The scope-only resolver used by per-second polls must accept and
+    /// reject exactly the frames the full resolver does, with the same scope
+    /// and the same error text. Returns the full resolver's result.
+    async fn resolve_both(
+        store: &Store,
+        app_data: &Path,
+        frame_id: &str,
+    ) -> Result<(ActiveProject, StateScope), String> {
+        let full = working_project_in(store, app_data, frame_id).await;
+        let scope_only = frame_scope_in(store, app_data, frame_id).await;
+        assert_eq!(
+            scope_only,
+            full.as_ref()
+                .map(|(_, scope)| scope.clone())
+                .map_err(Clone::clone),
+            "frame {frame_id}"
+        );
+        if let Ok((project, scope)) = &full {
+            assert_eq!(project.id, scope.project_id());
+        }
+        full
+    }
+
+    #[tokio::test]
+    async fn frame_scope_agrees_with_working_project_for_every_frame_state() {
+        let (service, base, project_dir) = fixture("frame_scope").await;
+        let app_data = base.join("app-data");
+        let store = &service.store;
+
+        let (mainline, scope) = resolve_both(store, &app_data, "main").await.unwrap();
+        assert_eq!(scope, StateScope::mainline("p"));
+        assert_eq!(mainline.root, project_dir);
+
+        assert_eq!(
+            resolve_both(store, &app_data, "missing")
+                .await
+                .err()
+                .as_deref(),
+            Some("Conversation not found")
+        );
+
+        let checkpoint = service
+            .create_checkpoint_at("p", "main", Some(0))
+            .await
+            .unwrap();
+        let exploration = service
+            .create_exploration(&checkpoint.id, "Scope")
+            .await
+            .unwrap();
+        let (working, scope) = resolve_both(store, &app_data, &exploration.frame_id)
+            .await
+            .unwrap();
+        assert_eq!(scope, StateScope::exploration("p", &exploration.id));
+        assert_eq!(
+            working.root,
+            dunce::canonicalize(&exploration.workspace_dir).unwrap()
+        );
+
+        // The workspace checks stay on the scope path: a missing exploration
+        // workspace is rejected by both resolvers, not only the full one.
+        std::fs::remove_dir_all(&exploration.workspace_dir).unwrap();
+        let error = resolve_both(store, &app_data, &exploration.frame_id)
+            .await
+            .err()
+            .unwrap();
+        assert!(error.starts_with(ERR_HISTORY_UNAVAILABLE), "{error}");
+
+        for (from, to) in [
+            (ExplorationStatus::Active, ExplorationStatus::Promoting),
+            (ExplorationStatus::Promoting, ExplorationStatus::Failed),
+        ] {
+            assert!(store
+                .transition_exploration(&exploration.id, from, to)
+                .await
+                .unwrap());
+        }
+        let error = resolve_both(store, &app_data, &exploration.frame_id)
+            .await
+            .err()
+            .unwrap();
+        assert!(error.starts_with(ERR_NOT_WRITABLE), "{error}");
+
         drop(service);
         let _ = std::fs::remove_dir_all(base);
     }
