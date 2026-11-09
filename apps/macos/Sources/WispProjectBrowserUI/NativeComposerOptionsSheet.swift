@@ -23,6 +23,26 @@ struct NativeComposerOptionsSheet: View {
             conversation.canEditComposerOptions && conversation.snapshot?.project_id == project && conversation.snapshot?.session_id == session
         }))
     }
+    private var subagentSelection: Binding<String> {
+        Binding<String>(get: { model.options?.subagent_model.map { "model:" + $0 } ?? "default" }, set: { key in
+            let id: String? = key == "default" ? nil : String(key.dropFirst(6))
+            Task { await model.setSubagentModel(id) }
+        })
+    }
+    @ViewBuilder private var subagentPicker: some View {
+        if let magpie = conversation.snapshot?.magpie {
+            LabeledContent(localized("子智能体模型"), value: magpie.label)
+        } else {
+            let profiles = NativeWorkflowSettings.chatModels(conversation.models)
+            Picker(localized("子智能体模型"), selection: subagentSelection) {
+                Text(localized("使用全局默认")).tag("default")
+                Text(localized("跟随会话模型")).tag("model:")
+                ForEach(profiles.indices, id: \.self) { index in
+                    Text(profiles[index]["label"].string).tag("model:" + profiles[index]["id"].string)
+                }
+            }
+        }
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack { Text(localized("会话选项")).font(.headline); Spacer(); Button(localized("关闭"), action: close).disabled(saving) }
@@ -42,6 +62,7 @@ struct NativeComposerOptionsSheet: View {
                     }))
                     Toggle(localized("子代理委派"), isOn: Binding(get: { options.delegation }, set: { enabled in Task { await model.setToggle("delegation", enabled: enabled) } }))
                     Toggle(localized("自动审查"), isOn: Binding(get: { options.auto_review }, set: { enabled in Task { await model.setToggle("auto_review", enabled: enabled) } }))
+                    subagentPicker
                     Picker(localized("专家"), selection: Binding(get: { options.specialist?["id"].string ?? "" }, set: { id in Task { await model.setSpecialist(id) } })) {
                         Text(localized("无")).tag("")
                         ForEach(model.specialists) { specialist in Text(specialist.name).tag(specialist.id) }

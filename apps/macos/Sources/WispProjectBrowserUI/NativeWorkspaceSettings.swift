@@ -139,11 +139,12 @@ struct NativeWorkspaceSettings: View {
     }
     private var usage: some View {
         VStack(spacing: 22) {
+            NativeUsageDashboard(overview: model.values["get_token_usage"] ?? .null, profiles: model.values["list_models"]?.array ?? [])
             NativeSettingsGroup(title: "项目 Token 用量") {
                 ForEach(Array((model.values["get_token_usage"]?["workspaces"].array ?? []).enumerated()), id: \.offset) { _, row in
                     HStack {
                         Text(row["name"].string).fontWeight(.medium); Spacer()
-                        Text("输入 \(row["input"].string) · 输出 \(row["output"].string) · 缓存 \(row["cached"].string)").font(.caption)
+                        Text("输入 \(NativeUsageDashboardData.compact(row["input"].integer)) · 输出 \(NativeUsageDashboardData.compact(row["output"].integer)) · 思考 \(NativeUsageDashboardData.compact(row["reasoning"].integer)) · 缓存 \(NativeUsageDashboardData.compact(row["cached"].integer))").font(.caption)
                         Button(localized("查看会话")) { Task { sessionProject = row["project_id"].string; sessions = []; await loadSessions() } }
                     }
                 }
@@ -153,10 +154,6 @@ struct NativeWorkspaceSettings: View {
                     if sessions.count < sessionTotal { Button(localized("加载更多会话")) { Task { await loadSessions() } } }
                 }
             }
-            let overview = model.values["get_token_usage"] ?? .null
-            usageGroup("模型用量", NativeUsageRows.models(overview["models"].array, profiles: model.values["list_models"]?.array ?? []))
-            usageGroup("工具调用", overview["tools"].array.map { ($0["name"].string, $0["calls"].integer) })
-            usageGroup("每日 Token", NativeUsageRows.pastDays(overview["days"].array))
         }
     }
     private func usageGroup(_ title: String, _ rows: [(label: String, value: Int64)]) -> some View {

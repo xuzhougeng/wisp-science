@@ -1,5 +1,50 @@
 # Native conversation loop
 
+## SwiftUI workspace parity (2026-11-07)
+
+Right-panel visibility, open tools and selected tool are saved per database,
+project and conversation. A new conversation starts with the panel closed and
+an empty tool list. Reopening preserves tools; closing the final tool returns to
+the launcher. Panel width is remembered separately. The launcher groups common
+and additional tools.
+
+Opening a file from the file browser creates a center document tab. Tabs retain
+independent preview/edit state across conversation switches, deduplicate the same
+context/path, and can open the current conversation's side chat beside the
+preview. Closing a dirty text preview asks before discarding; only the visible
+document participates in Escape handling. Existing scoped file write and quote
+validation remains in force. These tabs are in-memory for the current window;
+unsaved contents are not persisted across application restarts.
+
+The conversation menu and project exploration freeze banner open exploration
+recovery. Failed candidates can be inspected/discarded; eligible previews expose
+adoption and manual resolution. Abandoning a round uses a source-session-scoped
+host command with project ownership/current-round checks. Responses from another
+project/session are rejected. Unknown mutations require a fresh read and explicit
+acknowledgement before further writes.
+
+The composer options sheet distinguishes three subagent-model choices: inherit
+the global setting, follow the main model, or select a specific personal profile.
+Share PNG export supports a single long image or numbered 3:4 pages in a newly
+created folder. Page breaks use blank image scanlines so text baselines are not
+cut. Oversized indivisible blocks report an error; the existing 40-million-pixel /
+32768-pixel full-render limit still applies. HTML remains available for larger
+exports. Redaction and edits affect only the export copy.
+
+Manual verification: open files in two conversations, edit one, switch back,
+then close and cancel discard; open side chat and quote a selection; change the
+right tools in each conversation and reopen; press Escape immediately after
+opening exploration recovery and verify its parent stays open; export a long
+selection in both themes and verify page order, line continuity and 3:4 size.
+
+Approved validation on 2026-11-07 passed 147 scoped Swift tests and 49 DTO contract
+tests, plus the desktop/server Rust compile check. Regression coverage includes
+immediate Escape during exploration reads, hidden document tabs leaving Escape
+to the visible tab, session subagent overrides, and pixel-by-pixel preservation
+of the ordered PNG page slices in both themes. Native screenshots were inspected
+for the workflow studio, narrow canvas, usage dashboard and paginated sharing.
+
+
 ## macOS conversation ZIP export (2026-10-06)
 
 Use **会话操作 → 导出会话 ZIP** or `>export session zip` in Cmd+K. The preview

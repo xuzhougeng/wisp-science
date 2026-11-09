@@ -19,6 +19,9 @@ struct NativeModelSettings: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             if model.section == .credentials { credentials } else {
+                if let info = model.values["magpie_model_info"], info != .null {
+                    Text("Magpie · " + info["model"].string + " · " + localized("个人模型在断开 Magpie 后生效。")).font(.callout).foregroundStyle(.secondary)
+                }
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 12) { categories; Spacer(); addButton }
                     VStack(alignment: .leading, spacing: 12) { categories; addButton }

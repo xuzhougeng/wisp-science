@@ -65,6 +65,8 @@ public struct ConversationSnapshot: Codable, Sendable {
     public let queue: ConversationQueueSnapshot?
     public let plan_mode: Bool?
     public let fast_mode: ConversationFastMode?
+    public let magpie: NativeMagpieModel?
+    public let exploration: SettingsValue?
     public let history_state: ConversationHistoryState?
     public let acp_state: ConversationAcpState?
 
@@ -164,4 +166,14 @@ public struct NativeInboxEntry: Codable, Identifiable, Sendable {
     public let ts: Int64
     public let activity_at: Int64
     public let status: String
+}
+
+/// Shared wisp-dto::MagpieModelDto; no endpoint or credentials cross this boundary.
+public struct NativeMagpieModel: Codable, Equatable, Sendable {
+    public let model: String
+    public let context_window: UInt64
+    public let max_tokens: UInt64
+    public let efforts: [String]
+    public let default_effort: String
+    public var label: String { "Magpie · " + model }
 }

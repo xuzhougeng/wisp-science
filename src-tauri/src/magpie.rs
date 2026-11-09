@@ -83,14 +83,7 @@ pub(crate) fn supports_effort(effort: &str) -> bool {
 
 /// What the composer needs to offer the connected model's effort levels.
 /// Never carries the gateway URL or key.
-#[derive(serde::Serialize)]
-pub(crate) struct MagpieModelDto {
-    model: String,
-    context_window: u64,
-    max_tokens: u64,
-    efforts: Vec<String>,
-    default_effort: String,
-}
+use wisp_dto::MagpieModelDto;
 
 #[tauri::command]
 pub(crate) fn magpie_model_info() -> Option<MagpieModelDto> {

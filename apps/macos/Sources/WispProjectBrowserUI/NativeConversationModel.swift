@@ -114,6 +114,7 @@ final class NativeConversationModel: ObservableObject {
             let id = snapshot?.acp_agent_id ?? String((snapshot?.model_id ?? "").dropFirst(4))
             return acpAgents.first(where: { $0["id"].string == id })?["label"].string ?? String((snapshot?.model_id ?? "ACP").dropFirst(4))
         }
+        if let magpie = snapshot?.magpie { return magpie.label }
         return models.first(where: { $0["id"].string == snapshot?.model_id })?["label"].string ?? localized("选择模型")
     }
     private var canChangeConversationSettings: Bool {
@@ -503,7 +504,7 @@ final class NativeConversationModel: ObservableObject {
     }
     func bindComposer() async {
         guard let projectID, let sessionID, snapshot != nil else { return }
-        await composer.bind(project: projectID, session: sessionID, profile: isAcp ? .null : models.first { $0["id"].string == snapshot?.model_id } ?? .null)
+        await composer.bind(project: projectID, session: sessionID, profile: isAcp ? .null : models.first { $0["id"].string == snapshot?.model_id } ?? .null, magpie: isAcp ? nil : snapshot?.magpie)
     }
     @discardableResult
     func addReference(_ option: NativeComposerReference) -> Bool {

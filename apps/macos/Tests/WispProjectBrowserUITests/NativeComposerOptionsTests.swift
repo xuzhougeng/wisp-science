@@ -25,6 +25,7 @@ private actor ComposerOptionsFake: NativeConversationQuerying {
             if !unconfirmed {
                 let change = args["change"]!, kind = change["kind"].string
                 if ["full_permission", "delegation", "auto_review"].contains(kind) { state[kind] = change["enabled"] }
+                if kind == "subagent_model" { state["subagent_model"] = change["model_id"] }
                 if kind == "specialist" { state["specialist"] = change["id"].string.isEmpty ? .null : .object(["id": change["id"], "name": .string("Scientist")]) }
             }
         }
@@ -35,6 +36,20 @@ private actor ComposerOptionsFake: NativeConversationQuerying {
 }
 
 final class NativeComposerOptionsTests: XCTestCase {
+    @MainActor func testSubagentOverrideDistinguishesDefaultFollowAndProfile() async {
+        let fake = ComposerOptionsFake()
+        let model = NativeComposerOptionsModel(client: fake, project: "p", session: "s", writable: { true })
+        await model.load()
+        await model.setSubagentModel("")
+        XCTAssertEqual(model.options?.subagent_model, "")
+        await model.setSubagentModel("profile-a")
+        XCTAssertEqual(model.options?.subagent_model, "profile-a")
+        await model.setSubagentModel(nil)
+        XCTAssertNil(model.options?.subagent_model)
+        let writes = await fake.recorded()
+        XCTAssertEqual(writes.map { $0.1["change"]!["model_id"] }, [.string(""), .string("profile-a"), .null])
+        XCTAssertTrue(writes.allSatisfy { $0.0 == "p" && $0.1["session_id"] == .string("s") })
+    }
     @MainActor func testRenderOptionsAndPermissionConfirmationInEnglishDark() async throws {
         guard let directory = ProcessInfo.processInfo.environment["WISP_NATIVE_SNAPSHOT_DIR"] else { throw XCTSkip("Set WISP_NATIVE_SNAPSHOT_DIR to render native options") }
         let previous = UserDefaults.standard.object(forKey: "nativeSettings.locale")

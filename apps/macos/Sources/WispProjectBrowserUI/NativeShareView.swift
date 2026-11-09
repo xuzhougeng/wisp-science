@@ -9,6 +9,8 @@ struct NativeShareView: View {
     let close: () -> Void
     @State private var format = "PNG"
     @State private var width = "840"
+    @State private var paged = false
+    @State private var savedPath: String?
     @State private var exporting = false
     @State private var preview = false
     @State private var error: String?
@@ -42,6 +44,13 @@ struct NativeShareView: View {
                 }
             }
             TextField("脱敏关键词，以逗号分隔", text: $model.keywords)
+            if format == "PNG" {
+                Picker(localized("出图方式"), selection: $paged) {
+                    Text(localized("单张长图")).tag(false)
+                    Text(localized("多张 3:4 分页")).tag(true)
+                }.pickerStyle(.segmented).frame(maxWidth: 340)
+            }
+            if let savedPath { Text(localized("已保存到") + " " + savedPath).font(.caption).textSelection(.enabled) }
             HStack {
                 Picker("导出格式", selection: $format) { Text("PNG").tag("PNG"); Text("HTML").tag("HTML") }.pickerStyle(.segmented).frame(width: 180)
                 if format == "PNG" { TextField("图片宽度", text: $width).frame(width: 100); Text("320–2400 px").font(.caption) }
@@ -59,12 +68,25 @@ struct NativeShareView: View {
         defer { exporting = false }
         let rows = model.selected; let isPNG = format == "PNG"
         do {
+            if isPNG && paged {
+                let pages = try NativeSharePagination.pages(rows: rows, width: NativeShare.width(width), scheme: scheme)
+                let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true; panel.prompt = localized("保存分页图片")
+                guard await panel.begin() == .OK, let destination = panel.url else { return }
+                let folder = destination.appendingPathComponent("wisp-share-" + String(UUID().uuidString.prefix(8)))
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+                do {
+                    for (index, data) in pages.enumerated() { try data.write(to: folder.appendingPathComponent(String(format: "page-%03d.png", index + 1)), options: .atomic) }
+                } catch { try? FileManager.default.removeItem(at: folder); throw error }
+                savedPath = folder.path
+                return
+            }
             let data: Data
             if isPNG { data = try NativeSharePage.png(rows: rows, width: NativeShare.width(width), scheme: scheme) }
             else { data = Data(try await model.html(rows: rows, dark: scheme == .dark).utf8) }
             let panel = NSSavePanel(); panel.allowedContentTypes = [isPNG ? .png : .html]; panel.nameFieldStringValue = "wisp-share.\(isPNG ? "png" : "html")"
             guard await panel.begin() == .OK, let url = panel.url else { return }
             try data.write(to: url, options: .atomic)
+            savedPath = url.path
         } catch { self.error = error.localizedDescription }
     }
 }

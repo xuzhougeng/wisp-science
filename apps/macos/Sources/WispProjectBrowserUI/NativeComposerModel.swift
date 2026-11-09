@@ -58,6 +58,7 @@ struct NativeComposerReferenceCatalog: Decodable {
     private var project: String?
     private var session: String?
     private var profile: SettingsValue = .null
+    private var magpie: NativeMagpieModel?
     private var epoch = UUID()
     private var searchEpoch = UUID()
     private var contextsEpoch = UUID()
@@ -77,14 +78,25 @@ struct NativeComposerReferenceCatalog: Decodable {
         try JSONDecoder().decode(type, from: JSONEncoder().encode(value))
     }
     func reset() {
-        epoch = UUID(); contextsEpoch = UUID(); dismissSearch(); project = nil; session = nil; profile = .null
+        epoch = UUID(); contextsEpoch = UUID(); dismissSearch(); project = nil; session = nil; profile = .null; magpie = nil
         contexts = nil; contextID = "local"; runtimes = []; efforts = []; effort = ""; busy = false; error = nil
     }
-    func bind(project: String, session: String, profile: SettingsValue) async {
-        reset(); self.project = project; self.session = session; self.profile = profile
+    func bind(project: String, session: String, profile: SettingsValue, magpie: NativeMagpieModel? = nil) async {
+        reset(); self.project = project; self.session = session; self.profile = profile; self.magpie = magpie
         let current = epoch
         await refreshContexts()
-        guard epoch == current, !profile["id"].string.isEmpty else { return }
+        guard epoch == current else { return }
+        if let magpie {
+            efforts = magpie.efforts
+            do {
+                let options = try await client.invoke("native_conversation_options", args: ["session_id": .string(session)], projectID: project)
+                guard epoch == current else { return }
+                guard options["session_id"].string == session else { throw ProjectBrowserError.invalidResponse }
+                effort = options["reasoning_effort"].string
+            } catch { if epoch == current { self.error = error.localizedDescription } }
+            return
+        }
+        guard !profile["id"].string.isEmpty else { return }
         effort = profile["reasoning_effort"].string
         do {
             let catalog = try await client.invoke("model_catalog_lookup", args: ["provider": profile["provider"], "apiUrl": profile["api_url"], "model": profile["model"]], projectID: project)
@@ -99,7 +111,7 @@ struct NativeComposerReferenceCatalog: Decodable {
         do {
             let rows = try await client.invoke("list_models", args: [:], projectID: project).array
             guard epoch == current, !Task.isCancelled else { return }
-            await bind(project: project, session: session, profile: rows.first { $0["id"].string == id } ?? .null)
+            await bind(project: project, session: session, profile: rows.first { $0["id"].string == id } ?? .null, magpie: magpie)
         } catch { if epoch == current { self.error = "无法重新读取输入配置：" + error.localizedDescription } }
     }
     func refreshContexts() async {
@@ -132,6 +144,17 @@ struct NativeComposerReferenceCatalog: Decodable {
     private static func catalogKey(_ row: SettingsValue) -> [SettingsValue] { [row["provider"], row["api_url"], row["model"]] }
     func selectEffort(_ value: String) async {
         guard !busy, !efforts.isEmpty, value.isEmpty || efforts.contains(value), let project else { return }
+        if magpie != nil, let session {
+            let current = epoch; busy = true; error = nil
+            defer { if epoch == current { busy = false } }
+            do {
+                let result = try await client.invoke("native_conversation_options_set", args: ["session_id": .string(session), "change": .object(["kind": .string("reasoning_effort"), "effort": .string(value)])], projectID: project)
+                guard epoch == current else { return }
+                guard result["session_id"].string == session, result["reasoning_effort"].string == value else { throw ProjectBrowserError.invalidResponse }
+                effort = value
+            } catch { if epoch == current { self.error = localized("思考强度未确认保存，请重新读取后核对。") + error.localizedDescription } }
+            return
+        }
         let current = epoch; let target = profile["id"].string; let key = Self.catalogKey(profile)
         busy = true; error = nil
         defer { if epoch == current { busy = false } }

@@ -119,6 +119,12 @@
       "source": "src-tauri/src/connector_commands.rs"
     },
     {
+      "command": "cancel_toolchain_install",
+      "arguments": [],
+      "result": "bool",
+      "source": "src-tauri/src/toolchain.rs"
+    },
+    {
       "command": "channels_status",
       "arguments": [],
       "result": "Result<ChannelsStatus, String>",
@@ -606,6 +612,12 @@
       "source": "src-tauri/src/settings_commands.rs"
     },
     {
+      "command": "get_toolchain_status",
+      "arguments": [],
+      "result": "ToolchainStatus",
+      "source": "src-tauri/src/toolchain.rs"
+    },
+    {
       "command": "get_update_check_enabled",
       "arguments": [],
       "result": "Result<bool, String>",
@@ -725,6 +737,18 @@
       ],
       "result": "Result<wisp_dto::SkillInstallReceipt, String>",
       "source": "src-tauri/src/skill_commands.rs"
+    },
+    {
+      "command": "install_toolchain",
+      "arguments": [
+        {
+          "name": "tools",
+          "rust_type": "Vec<String>",
+          "optional": false
+        }
+      ],
+      "result": "Result<ToolchainStatus, String>",
+      "source": "src-tauri/src/toolchain.rs"
     },
     {
       "command": "install_update",
@@ -997,6 +1021,12 @@
       "arguments": [],
       "result": "Result<Vec<WorkflowTemplate>, String>",
       "source": "src-tauri/src/quick_actions.rs"
+    },
+    {
+      "command": "magpie_model_info",
+      "arguments": [],
+      "result": "Option<MagpieModelDto>",
+      "source": "src-tauri/src/magpie.rs"
     },
     {
       "command": "model_catalog_lookup",

@@ -29,6 +29,9 @@ struct NativeSettingsView: View {
 
     var body: some View {
         GeometryReader { geometry in
+        if state.section == .workflows {
+            NativeWorkflowStudio(model: state, back: { state.section = .general })
+        } else {
         HStack(spacing: 0) {
             navigation.frame(width: min(240, max(188, geometry.size.width * 0.18))).background(WispDesign.color("bg-sunken", scheme))
             Divider()
@@ -67,6 +70,7 @@ struct NativeSettingsView: View {
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         }
+        }
         .background(WispDesign.color("bg-app", scheme))
         .tint(WispDesign.color("clay", scheme))
         .buttonStyle(NativeSettingsButtonStyle())
@@ -79,7 +83,7 @@ struct NativeSettingsView: View {
         }
         .onChange(of: state.section) { _ in state.editor = nil; state.detailSection = nil; Task { await state.load() } }
         .onChange(of: state.projectID) { _ in state.editor = nil; Task { await state.load() } }
-        .background(NativeSettingsEscape(enabled: state.editor == nil && !confirmLeave && !confirmInstall) { requestClose() })
+        .background { if state.section != .workflows { NativeSettingsEscape(enabled: state.editor == nil && !confirmLeave && !confirmInstall) { requestClose() } } }
         .confirmationDialog(localized("放弃尚未保存的修改？"), isPresented: $confirmLeave) {
             Button(localized("放弃修改"), role: .destructive) { state.discardDrafts(); if changingProject { state.projectID = pendingProject; changingProject = false } else { state.leave(); close() } }
             Button(localized("继续编辑"), role: .cancel) { changingProject = false }
@@ -175,6 +179,7 @@ struct NativeSettingsView: View {
                 Divider().padding(.vertical, 8)
                 Text(localized("通知与更新")).font(WispDesign.font(size: 15, weight: .semibold))
                 fields("get_settings", [.init(key: "notifications_enabled", label: "桌面通知", kind: .toggle, hint: "任务完成、失败或等待确认时发送系统通知；只有前台窗口正在显示该会话时才不提醒，在其他项目或其他会话中工作仍会提醒。对应会话只会在启动任务的窗口打开。")])
+                NativeNotificationSoundSettings(model: state)
                 HStack {
                     Spacer()
                     Button(localized("取消")) { state.discardDrafts() }
@@ -197,6 +202,7 @@ struct NativeSettingsView: View {
                     }
                 }
             }
+            NativeToolchainSettings(client: state.client)
             NativeLocalEnvironmentSettings(model: state)
         }
     }

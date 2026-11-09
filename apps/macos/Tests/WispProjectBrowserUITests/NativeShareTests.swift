@@ -6,6 +6,56 @@ import WispProjectBrowser
 @testable import WispProjectBrowserUI
 
 final class NativeShareTests: XCTestCase {
+    func testPaginationPreservesEveryScanlineAndOnlyBreaksInWhitespace() throws {
+        let ranges = try NativeSharePagination.ranges(height: 280, pageHeight: 100) { [90, 180].contains($0) }
+        XCTAssertEqual(ranges, [0..<90, 90..<180, 180..<280])
+        XCTAssertEqual(ranges.reduce(0) { $0 + $1.count }, 280)
+        XCTAssertThrowsError(try NativeSharePagination.ranges(height: 200, pageHeight: 100) { _ in false })
+    }
+    @MainActor func testPagedPNGUsesThreeByFourPagesAtBothThemes() throws {
+        let rows = Array(repeating: try fixture("share-complex"), count: 5).flatMap { $0 }
+        for scheme in [ColorScheme.light, .dark] {
+            if let directory = ProcessInfo.processInfo.environment["WISP_NATIVE_SNAPSHOT_DIR"] {
+                try NativeSharePage.png(rows: rows, width: 840, scheme: scheme).write(to: URL(fileURLWithPath: directory).appendingPathComponent("share-pages-source-\(scheme).png"))
+            }
+            let pages = try NativeSharePagination.pages(rows: rows, width: 840, scheme: scheme)
+            XCTAssertGreaterThan(pages.count, 1)
+            for (index, data) in pages.enumerated() {
+                let image = try XCTUnwrap(NSBitmapImageRep(data: data))
+                XCTAssertEqual(image.pixelsWide, 840); XCTAssertEqual(image.pixelsHigh, 1120)
+                if let directory = ProcessInfo.processInfo.environment["WISP_NATIVE_SNAPSHOT_DIR"] {
+                    try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent("share-page-\(scheme)-\(index).png"))
+                }
+            }
+        }
+    }
+    @MainActor func testPaginationRetainsAllRenderedPixelsInOrder() throws {
+        let rows = Array(repeating: try fixture("share-complex"), count: 5).flatMap { $0 }
+        func pixels(_ image: CGImage) throws -> [UInt8] {
+            var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
+            try bytes.withUnsafeMutableBytes { buffer in
+                let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+                context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            }
+            return bytes
+        }
+        for scheme in [ColorScheme.light, .dark] {
+            let source = try XCTUnwrap(NSBitmapImageRep(data: NativeSharePage.png(rows: rows, width: 840, scheme: scheme))?.cgImage)
+            let pages = try NativeSharePagination.render(image: source, scheme: scheme)
+            var nextRow = 0
+            for page in pages {
+                XCTAssertEqual(page.source.lowerBound, nextRow)
+                let expected = try XCTUnwrap(source.cropping(to: CGRect(x: 0, y: nextRow, width: source.width, height: page.source.count)))
+                let decoded = try XCTUnwrap(NSBitmapImageRep(data: page.png)?.cgImage)
+                let actual = try XCTUnwrap(decoded.cropping(to: CGRect(x: 0, y: 16, width: source.width, height: page.source.count)))
+                let expectedBytes = try pixels(expected), actualBytes = try pixels(actual)
+                XCTAssertEqual(expectedBytes.count, actualBytes.count)
+                XCTAssertLessThanOrEqual(zip(expectedBytes, actualBytes).map { abs(Int($0) - Int($1)) }.max() ?? 0, 2, "Every source pixel must survive the ordered page slices")
+                nextRow = page.source.upperBound
+            }
+            XCTAssertEqual(nextRow, source.height)
+        }
+    }
     func fixture(_ name: String = "share") throws -> [NativeShareRow] {
         var root = URL(fileURLWithPath: #filePath)
         for _ in 0..<5 { root.deleteLastPathComponent() }

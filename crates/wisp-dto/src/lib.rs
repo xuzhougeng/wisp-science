@@ -4286,7 +4286,7 @@ pub struct CatalogEntryDto {
 
 /// `magpie_model_info`: the model a Magpie connection runs every HTTP turn on.
 /// An empty `efforts` list means only the provider default can be used.
-#[derive(Deserialize, Clone, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 pub struct MagpieModelDto {
     pub model: String,
     pub context_window: u64,

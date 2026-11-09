@@ -9,6 +9,7 @@ struct NativeWorkflowNodeDraft: Identifiable {
 
 struct NativeWorkflowCanvasEditor: View {
     @ObservedObject var draft: NativeWorkflowDraft
+    var embedded = false
     let close: () -> Void
     let saved: () -> Void
     @State private var nodeEditor: NativeWorkflowNodeDraft?
@@ -17,6 +18,7 @@ struct NativeWorkflowCanvasEditor: View {
     @State private var confirmDelete = false
     @Environment(\.colorScheme) private var scheme
     var body: some View {
+        GeometryReader { geometry in
         VStack(alignment: .leading, spacing: 16) {
             ViewThatFits(in: .horizontal) {
                 HStack { title; Spacer(); actions }
@@ -25,16 +27,21 @@ struct NativeWorkflowCanvasEditor: View {
             if let error = draft.error { Text(error).foregroundStyle(.orange).font(.caption).textSelection(.enabled) }
             if let message = draft.message { Text(message).foregroundStyle(.secondary).font(.caption) }
             if draft.uncertain { recovery }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    NativeWorkflowGraph(draft: draft, edit: openNode).frame(height: 420)
-                    inspector
-                    metadata.disabled(!draft.canWrite)
-                    validation
-                }.padding(.trailing, 4)
+            if geometry.size.width >= 760 {
+                HSplitView {
+                    NativeWorkflowGraph(draft: draft, edit: openNode).frame(minWidth: 260, maxWidth: .infinity, maxHeight: .infinity)
+                    ScrollView { configuration.padding(12) }.frame(minWidth: 240, idealWidth: 300, maxWidth: 380)
+                }
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        NativeWorkflowGraph(draft: draft, edit: openNode).frame(height: 360)
+                        configuration
+                    }
+                }
             }
-        }
-        .padding(22).frame(minWidth: 420, idealWidth: 1060, maxWidth: .infinity, minHeight: 640, idealHeight: 800, maxHeight: .infinity)
+        }.padding(embedded ? 12 : 22).frame(maxWidth: .infinity, maxHeight: .infinity)
+        }.frame(minWidth: 380, idealWidth: 1060, maxWidth: .infinity, minHeight: 420, idealHeight: 800, maxHeight: .infinity)
         .background(WispDesign.color("bg-app", scheme)).foregroundStyle(WispDesign.color("text", scheme)).tint(WispDesign.color("clay", scheme))
         .buttonStyle(WispButtonStyle()).font(WispDesign.font(size: 14))
         .sheet(item: $nodeEditor) { editor in NativeWorkflowNodeEditor(draft: draft, editor: editor) { nodeEditor = nil } }
@@ -51,6 +58,14 @@ struct NativeWorkflowCanvasEditor: View {
         .confirmationDialog(localized("确认删除？此操作会移除当前配置。"), isPresented: $confirmDelete) {
             Button(localized("删除"), role: .destructive) { Task { if await draft.remove() { saved(); draft.close(); close() } } }
             Button(localized("取消"), role: .cancel) {}
+        }
+    }
+    private var configuration: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text(localized("工作流配置")).font(.headline)
+            inspector
+            metadata.disabled(!draft.canWrite)
+            validation
         }
     }
     private var metadata: some View {

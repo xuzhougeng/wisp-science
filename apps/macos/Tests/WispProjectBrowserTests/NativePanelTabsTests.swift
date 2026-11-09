@@ -21,8 +21,19 @@ final class NativePanelTabsTests: XCTestCase {
         XCTAssertTrue(state.open.isEmpty)
         XCTAssertTrue(NativePanelTabs(saved: state.saved).open.isEmpty)
         state.reopen()
-        XCTAssertEqual(state.open, NativePanelTabs.defaults)
-        XCTAssertEqual(state.selected, "artifacts")
+        XCTAssertTrue(state.open.isEmpty)
+        XCTAssertEqual(state.selected, "home")
+    }
+    func testScopesSeparateDatabaseProjectAndSessionAndHomeKeepsTabs() {
+        let one = NativePanelTabs.scope(database: "/db/a", project: "p", session: "s")
+        XCTAssertNotEqual(one, NativePanelTabs.scope(database: "/db/b", project: "p", session: "s"))
+        XCTAssertNotEqual(one, NativePanelTabs.scope(database: "/db/a", project: "q", session: "s"))
+        XCTAssertNotEqual(one, NativePanelTabs.scope(database: "/db/a", project: "p", session: "t"))
+        XCTAssertNotEqual(NativePanelTabs.scope(database: "a", project: "bc", session: "d"), NativePanelTabs.scope(database: "ab", project: "c", session: "d"))
+        var state = NativePanelTabs(saved: "[\"files\",\"runs\"]", selected: "home", available: NativePanelTabs.all)
+        state.reopen()
+        XCTAssertEqual(state.selected, "home")
+        XCTAssertEqual(state.open, ["files", "runs"])
     }
     func testMoveAndShowPreserveSelectionAndNeverDuplicate() {
         var state = NativePanelTabs(selected: "agents")

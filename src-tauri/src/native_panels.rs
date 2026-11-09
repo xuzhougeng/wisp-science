@@ -58,6 +58,14 @@ pub(crate) async fn dispatch(
                     },
                 )
                 .collect();
+            if let Some(magpie) = crate::magpie::magpie_model_info() {
+                options = vec![wisp_dto::native_conversations::SideChatModelOption {
+                    id: String::new(),
+                    label: magpie.label(),
+                    kind: "http".into(),
+                    active: true,
+                }];
+            }
             options.extend(agents.into_iter().map(|agent| {
                 wisp_dto::native_conversations::SideChatModelOption {
                     id: agent.id,

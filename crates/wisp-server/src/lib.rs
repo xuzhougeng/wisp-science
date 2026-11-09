@@ -469,6 +469,7 @@ impl Server {
             .map(|(value, _)| value.clone())
             .collect();
         let snapshot = dto::Snapshot {
+            magpie: None,
             schema: dto::SCHEMA.into(),
             epoch: self.0.epoch.clone(),
             sequence: self.0.sequence.fetch_add(1, Ordering::Relaxed),

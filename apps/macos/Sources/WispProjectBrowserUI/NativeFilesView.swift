@@ -20,10 +20,11 @@ struct NativeFilesView: View {
     var environments: () -> Void = {}
     var runs: (String) -> Void = { _ in }
     var transfersSupported = false
-    init(client: any NativeConversationQuerying, projectID: String, sessionID: String, readOnly: Bool, quote: ((NativeSideChatQuote) -> Void)? = nil, environments: @escaping () -> Void = {}, runs: @escaping (String) -> Void = { _ in }, transfersSupported: Bool = false, model: NativeFilesModel? = nil) {
+    var openDocument: ((NativeFilesModel) -> Void)?
+    init(client: any NativeConversationQuerying, projectID: String, sessionID: String, readOnly: Bool, quote: ((NativeSideChatQuote) -> Void)? = nil, environments: @escaping () -> Void = {}, runs: @escaping (String) -> Void = { _ in }, transfersSupported: Bool = false, model: NativeFilesModel? = nil, openDocument: ((NativeFilesModel) -> Void)? = nil) {
         _model = StateObject(wrappedValue: model ?? NativeFilesModel(client: client, projectID: projectID, sessionID: sessionID, readOnly: readOnly, transfersSupported: transfersSupported))
         self.readOnly = readOnly; self.quote = quote; self.environments = environments
-        self.runs = runs; self.transfersSupported = transfersSupported
+        self.runs = runs; self.transfersSupported = transfersSupported; self.openDocument = openDocument
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -111,7 +112,7 @@ struct NativeFilesView: View {
             .sheet(item: $action, onDismiss: { Task { await model.refresh() } }) { selection in
                 NativeFileActionView(selection: selection, model: model.legacy, perform: { try await model.performAction($0, path: $1, newPath: $2) }) { action = nil }
             }
-            .sheet(isPresented: Binding(get: { model.preview != nil }, set: { if !$0 { model.dismissPreview() } })) {
+            .sheet(isPresented: Binding(get: { openDocument == nil && model.preview != nil }, set: { if !$0 { model.dismissPreview() } })) {
                 if let preview = model.preview {
                     let identity = model.previewIdentity
                     NativePanelFilePreview(content: preview.content, close: model.dismissPreview,
@@ -125,6 +126,9 @@ struct NativeFilesView: View {
                         }, loadImage: { try await model.readPreviewImage($0, original: preview.content) },
                             docxTarget: preview.context_id == "local" ? NativeDocxReviewTarget(client: model.client, projectID: model.projectID, sessionID: model.sessionID, readOnly: model.readOnly || model.catalog?.read_only != false) : nil).id(identity)
                 }
+            }
+            .onReceive(model.$preview) { preview in
+                if let preview, let openDocument { openDocument(model.detachedPreview(preview)) }
             }
             .onDisappear { dropTask?.cancel(); chooser.close(); model.close() }
     }

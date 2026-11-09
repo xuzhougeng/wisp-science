@@ -10,6 +10,35 @@ pub(crate) async fn dispatch(
     command: &str,
     value: &Value,
 ) -> Result<Value, String> {
+    if command == "native_conversation_exploration_abandon" {
+        let args: dto::SessionRequest =
+            serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
+        let state = broker.app.state::<crate::AppState>();
+        crate::native_conversations::require_owner(&state.store, project, &args.session_id).await?;
+        if !crate::native_conversations::native_explorations(&state.store, project)
+            .await?
+            .iter()
+            .any(|row| row.source_frame_id == args.session_id)
+        {
+            return Err("Exploration round is no longer active; refresh before continuing".into());
+        }
+        invoke_command(
+            broker,
+            Some(project.into()),
+            "abandon_exploration_round",
+            json!({"sourceFrameId":args.session_id}),
+        )
+        .await?;
+        return serde_json::to_value(dto::ExplorationActionResult {
+            project_id: project.into(),
+            session_id: args.session_id.clone(),
+            source_session_id: args.session_id,
+            exploration_id: String::new(),
+            action: "abandon".into(),
+            completed: true,
+        })
+        .map_err(|e| e.to_string());
+    }
     if command == "native_conversation_exploration_start" {
         let args: dto::ExplorationStartRequest =
             serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;

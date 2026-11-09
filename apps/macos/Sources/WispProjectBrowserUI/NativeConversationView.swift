@@ -25,6 +25,10 @@ struct NativeConversationView: View {
     @State private var modelContext = false
     @State private var timerPresented = false
     private func color(_ token: String) -> Color { WispDesign.color(token, scheme) }
+    private var composerBindingID: [String] {
+        [sessionID ?? "", conversation.snapshot?.model_id ?? "", String(conversation.models.count),
+         conversation.snapshot?.magpie?.model ?? "", conversation.snapshot?.magpie?.efforts.joined(separator: ",") ?? ""]
+    }
     var body: some View {
         VStack(spacing: 0) {
             if let error = conversation.connectionError ?? conversation.operationError ?? conversation.snapshot?.error {
@@ -93,7 +97,7 @@ struct NativeConversationView: View {
         .onChange(of: sessionID) { _ in expandedTools = []; feedbackApproval = nil; referencePicker = false; runtimeActivity = nil; historyAction = nil; undoAction = nil; composerOptions = false; modelContext = false; timerPresented = false }
         .onChange(of: projectID) { _ in modelContext = false }
         .onChange(of: conversation.showingHistory) { _ in expandedTools = [] }
-        .task(id: (sessionID ?? "") + ":" + (conversation.snapshot?.model_id ?? "") + ":" + String(conversation.models.count)) {
+        .task(id: composerBindingID) {
             guard !conversation.restrictedAssistant else { return }
             await conversation.bindComposer()
             while !Task.isCancelled {
@@ -297,7 +301,8 @@ struct NativeConversationView: View {
                     }
                     Spacer(minLength: 8)
                     Menu {
-                        ForEach(Array(conversation.models.enumerated()), id: \.offset) { _, profile in
+                        if let magpie = conversation.snapshot?.magpie { Text(magpie.label) }
+                        ForEach(Array((conversation.snapshot?.magpie == nil ? conversation.models : []).enumerated()), id: \.offset) { _, profile in
                             Button(profile["label"].string.isEmpty ? profile["model"].string : profile["label"].string) { Task { await conversation.selectModel(profile["id"].string) } }
                                 .disabled(conversation.isAcp)
                         }

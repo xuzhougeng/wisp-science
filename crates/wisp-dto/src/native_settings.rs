@@ -38,6 +38,10 @@ pub struct Response {
 }
 
 pub const COMMANDS: &[&str] = &[
+    "magpie_model_info",
+    "get_toolchain_status",
+    "install_toolchain",
+    "cancel_toolchain_install",
     "copy_demo_to_project",
     "native_workflow_conversion_progress",
     "assistant_weixin_status",

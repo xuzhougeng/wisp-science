@@ -41,9 +41,13 @@ struct NativePanelView: View {
     var environments: () -> Void = {}
     var insertMemo: (String) -> Void = { _ in }
     let close: () -> Void
+    var openDocument: ((NativeFilesModel) -> Void)?
     /// Tabs that draw their own search, refresh and errors.
-    private var ownsChrome: Bool { ["sidechat", "runs", "memos"].contains(tab) || (tab == "files" && fileBrowserSupported) }
-    init(client: any NativeConversationQuerying, projectID: String, sessionID: String, projectRoot: String = "", highlightRevision: Int = 0, highlightRemoved: @escaping (String) -> Void = { _ in }, sideChat: NativeSideChatModel? = nil, transcript: [ConversationItem] = [], transcriptPage: String = "latest", revealExcerpt: @escaping (String) -> Void = { _ in }, readOnly: Bool = false, fileBrowserSupported: Bool = false, fileTransfersSupported: Bool = false, environments: @escaping () -> Void = {}, manageWorkflows: @escaping () -> Void = {}, openTerminal: @escaping (String) -> Void = { _ in }, insertMemo: @escaping (String) -> Void = { _ in }, close: @escaping () -> Void) {
+    private var ownsChrome: Bool { ["home", "sidechat", "runs", "memos"].contains(tab) || (tab == "files" && fileBrowserSupported) }
+    init(layoutScope: String = "native.workspace.panel", openDocument: ((NativeFilesModel) -> Void)? = nil, client: any NativeConversationQuerying, projectID: String, sessionID: String, projectRoot: String = "", highlightRevision: Int = 0, highlightRemoved: @escaping (String) -> Void = { _ in }, sideChat: NativeSideChatModel? = nil, transcript: [ConversationItem] = [], transcriptPage: String = "latest", revealExcerpt: @escaping (String) -> Void = { _ in }, readOnly: Bool = false, fileBrowserSupported: Bool = false, fileTransfersSupported: Bool = false, environments: @escaping () -> Void = {}, manageWorkflows: @escaping () -> Void = {}, openTerminal: @escaping (String) -> Void = { _ in }, insertMemo: @escaping (String) -> Void = { _ in }, close: @escaping () -> Void) {
+        _tab = AppStorage(wrappedValue: "home", layoutScope + ".tab")
+        _savedTabs = AppStorage(wrappedValue: "[]", layoutScope + ".tabs")
+        self.openDocument = openDocument
         self.projectRoot = projectRoot
         _model = StateObject(wrappedValue: NativePanelModel(client: client, projectID: projectID, sessionID: sessionID)); self.highlightRevision = highlightRevision; self.highlightRemoved = highlightRemoved; self.sideChat = sideChat; self.revealExcerpt = revealExcerpt; self.transcript = transcript; self.transcriptPage = transcriptPage; self.manageWorkflows = manageWorkflows; self.openTerminal = openTerminal; self.readOnly = readOnly; self.fileBrowserSupported = fileBrowserSupported; self.environments = environments; self.close = close
         self.fileTransfersSupported = fileTransfersSupported; self.insertMemo = insertMemo
@@ -79,12 +83,14 @@ struct NativePanelView: View {
                         .disabled(readOnly || model.loading || model.fileActionBusy || !query.isEmpty)
                 }
             }
-            if tab == "files" && fileBrowserSupported {
+            if tab == "home" {
+                launcher
+            } else if tab == "files" && fileBrowserSupported {
                 NativeFilesView(client: model.client, projectID: model.projectID, sessionID: model.sessionID, readOnly: readOnly, quote: sideChat == nil ? nil : { quote in
                     guard let sideChat, sideChat.projectID == model.projectID, sideChat.sessionID == model.sessionID else { return }
                     sideChat.quotes.append(quote)
                     var value = layout; value.show("sidechat"); store(value)
-                }, environments: environments, runs: { context in activity = .init(context: context, runtimes: false) }, transfersSupported: fileTransfersSupported)
+                }, environments: environments, runs: { context in activity = .init(context: context, runtimes: false) }, transfersSupported: fileTransfersSupported, openDocument: openDocument)
             } else if tab == "sidechat", let sideChat {
                 NativeSideChatView(model: sideChat)
             } else if tab == "runs" {
@@ -134,7 +140,8 @@ struct NativePanelView: View {
                 if tab == "files" && !fileBrowserSupported { await model.searchFiles(query) }
             }
             .task(id: tab + "\n" + String(fileBrowserSupported)) {
-                if !availableTabs.contains(tab) { tab = "artifacts" }
+                if tab == "home" { return }
+                if !availableTabs.contains(tab) { tab = "home"; return }
                 if tab == "files" && fileBrowserSupported { return }
                 await model.refresh(tab)
                 while tab == "agents" && !Task.isCancelled {
@@ -242,13 +249,35 @@ struct NativePanelView: View {
     }
     private func removeTab(_ id: String) {
         var value = layout; value.remove(id); store(value)
-        if value.open.isEmpty { close() }
+        if value.open.isEmpty { tab = "home" }
     }
     private func moveTab(_ id: String, to target: String) {
         var value = layout; value.move(id, to: target); store(value)
     }
+    private var launcher: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Text(localized("工具导航")).font(.title2.bold())
+                ForEach([("常用", ["artifacts", "files", "agents", "runs"]), ("更多工具", ["notebook", "highlights", "provenance", "hosts", "memos", "sidechat"])], id: \.0) { group in
+                    Text(localized(group.0)).font(.headline)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 12) {
+                        ForEach(group.1.filter { availableTabs.contains($0) }, id: \.self) { id in
+                            Button { var value = layout; value.show(id); store(value) } label: {
+                                VStack(spacing: 8) {
+                                    WispIcon(name: ["artifacts": "layers", "files": "folder", "agents": "bot", "runs": "play", "notebook": "notebook", "highlights": "star", "provenance": "research-trail", "hosts": "server", "memos": "note-plus", "sidechat": "chat"][id] ?? "doc")
+                                    Text(title(id))
+                                }.frame(maxWidth: .infinity).padding(16)
+                            }.buttonStyle(WispButtonStyle()).accessibilityIdentifier("panel-launch-" + id)
+                        }
+                    }
+                }
+            }.padding(8)
+        }.accessibilityIdentifier("panel-launcher")
+    }
     private var tabStrip: some View {
         HStack(spacing: 4) {
+            Button { tab = "home" } label: { WispIcon(name: "grid", size: 16) }
+                .buttonStyle(.plain).help(localized("工具导航")).accessibilityLabel(localized("工具导航"))
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 4) {
@@ -346,6 +375,8 @@ struct NativePanelFilePreview: View {
     var documentQuote: ((NativeDocumentSelection) -> Bool)? = nil
     var loadImage: NativeFileImageLoader? = nil
     var docxTarget: NativeDocxReviewTarget? = nil
+    var active = true
+    var closeRequest = 0
     @State private var sourceMode = false
     @State private var editing = false
     @State private var draft = ""
@@ -416,7 +447,8 @@ struct NativePanelFilePreview: View {
             else { Text(localized("无法预览文件。")) }
         }.padding(16).frame(minWidth: 320, idealWidth: 850, minHeight: 420, idealHeight: 650)
             .interactiveDismissDisabled(dirty || saving)
-            .background(NativeSettingsEscape(enabled: !saving, close: requestClose))
+            .background { if active { NativeSettingsEscape(enabled: !saving && !confirmDiscard, close: requestClose) } }
+            .onChange(of: closeRequest) { _ in if active && !saving { requestClose() } }
             .confirmationDialog(localized("放弃未保存的修改？"), isPresented: $confirmDiscard) {
                 Button(localized("放弃修改"), role: .destructive, action: close)
                 Button(localized("继续编辑"), role: .cancel) {}
