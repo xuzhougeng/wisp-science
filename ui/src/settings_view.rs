@@ -1432,20 +1432,21 @@ fn codex_accounts_panel(
                                     }
                                 }}
                             </div>
-                            {(!account.active).then(|| view! {
-                                <div class="codex-account-actions">
+                            <div class="codex-account-actions">
+                                {(!account.active).then(|| view! {
                                     <button type="button" data-testid="codex-account-use" disabled=move || settings_busy.get()
                                         on:click=move |_| switch(pick.clone())>
                                         {move || t(locale.get(), "subscriptions.switch_account")}
                                     </button>
-                                    <button type="button" class="codex-account-remove" data-testid="codex-account-remove"
-                                        title=move || t(locale.get(), "subscriptions.remove_account")
-                                        aria-label=move || t(locale.get(), "subscriptions.remove_account")
-                                        on:click=move |_| delete_confirm.set(Some(DeleteConfirm::CodexAccount { id: remove.0.clone(), label: remove.1.clone() }))>
-                                        {compose_icon("trash")}
-                                    </button>
-                                </div>
-                            })}
+                                })}
+                                <button type="button" class="codex-account-remove" data-testid="codex-account-remove"
+                                    disabled=move || settings_busy.get()
+                                    title=move || t(locale.get(), "subscriptions.remove_account")
+                                    aria-label=move || t(locale.get(), "subscriptions.remove_account")
+                                    on:click=move |_| delete_confirm.set(Some(DeleteConfirm::CodexAccount { id: remove.0.clone(), label: remove.1.clone() }))>
+                                    {compose_icon("trash")}
+                                </button>
+                            </div>
                         </div>
                     }
                 }
@@ -8771,7 +8772,15 @@ pub(super) fn SettingsView(
                                                 {
                                                     Ok(list) => {
                                                         codex_usage.update(|usage| { usage.remove(&id); });
+                                                        subscription_status.update(|statuses| {
+                                                            statuses.insert("codex".into(), Ok(list.iter().any(|account| account.active)));
+                                                        });
                                                         codex_accounts.set(list);
+                                                        if let Ok(value) = invoke_checked("list_models", JsValue::UNDEFINED).await {
+                                                            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(value) {
+                                                                models.set(list);
+                                                            }
+                                                        }
                                                     }
                                                     Err(error) => codex_account_msg.set(Some((false, error))),
                                                 }

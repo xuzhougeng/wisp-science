@@ -118,12 +118,19 @@ you save the profile; the same catalog ceilings still apply.
 
 The composer model picker binds the selected HTTP model to the current
 conversation. Switching one populated conversation asks for confirmation and
-does not change any other conversation. Empty conversations switch immediately
+does not change any other conversation. The confirmation highlights the target
+model above the cache notice, with **Cancel**, **Switch model**, and **Don't ask
+again** in the footer (stacked in narrow windows). Empty conversations switch immediately
 without a warning. The active profile in Settings remains the default for new
 conversations. In **Settings → AI configuration → Models**, choose **Set as
 default** to save that default immediately; **Default** identifies the selected
 profile. The list has no Save/Cancel footer. Add/edit forms still require Save,
 and cancelling an edit does not undo an earlier default change.
+
+Conversation deletion uses a dedicated confirmation with a red **Delete**
+action. Associated-file and child-conversation options are grouped above the
+footer; expanded previews scroll while Cancel and Delete remain accessible.
+Escape cancels the confirmation without deleting the conversation.
 
 The model picker only switches models. It shows one display name per HTTP
 profile; profiles sharing a name show their provider and model ID underneath
@@ -231,9 +238,11 @@ makes it active, while signing in to a saved account updates its tokens. The
 **Accounts** list shows each account's email (or account id), plan and quota.
 Exactly one account is active; every ChatGPT model uses it. **Use this
 account** switches all ChatGPT models to another account; each conversation's
-next turn uses it. Remove an inactive account with the trash
-button; its tokens are deleted from the OS keyring after confirmation. Switch
-away from the active account before removing it.
+next turn uses it. Remove any account, including the only saved account, with
+the trash button; its tokens are deleted from the OS keyring after confirmation.
+Removing the active account selects the next saved account when available.
+Removing the last account signs out and clears its model credentials while
+preserving model settings; sign in again to reconnect those models.
 
 Quota comes from ChatGPT's read-only `https://chatgpt.com/backend-api/wham/usage`
 endpoint (the one Codex CLI and CLIProxyAPI read) and does not consume quota.

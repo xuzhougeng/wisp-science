@@ -1038,11 +1038,24 @@ test("switching HTTP models confirms cache invalidation", async ({ page }) => {
   await expect(opusOption).toBeVisible();
   await opusOption.evaluate((element: HTMLElement) => element.click());
   const modal = page.getByTestId("model-switch-confirm");
-  await expect(modal).toContainText("invalidates this conversation's model cache");
-  await expect(modal).toContainText("opus-4.8");
+  await expect(modal).toContainText("model cache for this conversation will be rebuilt");
+  await expect(modal).toHaveAttribute("role", "dialog");
+  await expect(modal).toHaveAccessibleName("Switch model?");
+  await expect(modal.getByTestId("model-switch-target").locator("strong")).toHaveText("opus-4.8");
+  await page.setViewportSize({ width: 390, height: 700 });
+  await expect(modal.getByRole("button", { name: "Switch model", exact: true })).toBeVisible();
+  await expect(modal.getByRole("checkbox", { name: "Don't ask again" })).toBeVisible();
+  expect(await modal.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  const layout = await modal.evaluate(el => {
+    const option = el.querySelector(".confirm-option")!.getBoundingClientRect();
+    const actions = el.querySelector(".row")!.getBoundingClientRect();
+    return { optionBottom: option.bottom, actionsTop: actions.top };
+  });
+  expect(layout.actionsTop).toBeGreaterThanOrEqual(layout.optionBottom);
+  await page.setViewportSize({ width: 1280, height: 900 });
   await expect.poll(() => lastInvokeArgs(page, "set_active_model")).toBeNull();
 
-  await modal.getByRole("button", { name: "No", exact: true }).click();
+  await modal.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(modal).toHaveCount(0);
   await expect(page.locator(".model-picker-label")).toHaveText("deepseek-v4-pro");
 
@@ -1050,7 +1063,7 @@ test("switching HTTP models confirms cache invalidation", async ({ page }) => {
   await expect(opusOption).toBeVisible();
   await opusOption.evaluate((element: HTMLElement) => element.click());
   await page.getByTestId("model-switch-confirm")
-    .getByRole("button", { name: "Yes, switch" }).click();
+    .getByRole("button", { name: "Switch model", exact: true }).click();
   await expect.poll(() => lastInvokeArgs(page, "set_active_model")).toMatchObject({ id: "opus" });
   await expect(page.locator(".model-picker-label")).toHaveText("opus-4.8");
 });
@@ -1124,7 +1137,7 @@ test("model switch warning can be permanently dismissed", async ({ page }) => {
   const modal = page.getByTestId("model-switch-confirm");
   await expect(modal.getByRole("checkbox", { name: "Don't ask again" })).not.toBeChecked();
   await modal.getByRole("checkbox", { name: "Don't ask again" }).check();
-  await modal.getByRole("button", { name: "Yes, switch" }).click();
+  await modal.getByRole("button", { name: "Switch model", exact: true }).click();
   await expect.poll(() => lastInvokeArgs(page, "set_active_model")).toMatchObject({ id: "opus" });
   await expect.poll(() => page.evaluate(() => localStorage.getItem("wisp-model-switch-warning-disabled")))
     .toBe("1");
@@ -1159,7 +1172,7 @@ test("model selection stays bound to its conversation", async ({ page }) => {
   await page.locator(".model-picker-btn").click();
   await page.getByRole("button", { name: /opus-4\.8/ }).click();
   await page.getByTestId("model-switch-confirm")
-    .getByRole("button", { name: "Yes, switch" }).click();
+    .getByRole("button", { name: "Switch model", exact: true }).click();
   await expect(page.locator(".model-picker-label")).toHaveText("opus-4.8");
 
   await page.locator('[data-session-id="s-model-b"]').click();
@@ -3452,7 +3465,7 @@ test("context usage limit follows the session's current model", async ({ page })
   await page.locator(".model-picker-btn").click();
   await page.getByRole("button", { name: /opus-4\.8/ }).click();
   await page.getByTestId("model-switch-confirm")
-    .getByRole("button", { name: "Yes, switch" }).click();
+    .getByRole("button", { name: "Switch model", exact: true }).click();
   await expect(page.locator(".model-picker-label")).toHaveText("opus-4.8");
   await expect.poll(() => trigger.evaluate((el) =>
     getComputedStyle(el).getPropertyValue("--context-gauge-angle").trim())).toBe("-54.0deg");
@@ -3526,7 +3539,7 @@ test("context usage keeps the running agent window until a model switch boundary
   await page.locator(".model-picker-btn").click();
   await page.getByRole("button", { name: /opus-4\.8/ }).click();
   await page.getByTestId("model-switch-confirm")
-    .getByRole("button", { name: "Yes, switch" }).click();
+    .getByRole("button", { name: "Switch model", exact: true }).click();
 
   // The binding changes immediately, but the in-flight request remains on
   // the old 128K Agent until Done.

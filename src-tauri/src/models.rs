@@ -1173,6 +1173,31 @@ pub(crate) fn forget_codex_account(account_id: &str) -> Result<(), String> {
     secret_del(&codex_account_secret(account_id))
 }
 
+/// Keep model settings, but remove every copy of the last account's tokens.
+pub(crate) async fn clear_codex_sign_in(store: &wisp_store::Store) -> Result<(), String> {
+    let profiles = decorated_models(store).await;
+    clear_codex_secrets(&profiles, secret_del)
+}
+
+fn clear_codex_secrets(
+    profiles: &[ModelProfile],
+    mut delete: impl FnMut(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    for profile in profiles.iter().filter(|profile| {
+        matches!(
+            profile.provider.as_str(),
+            "openai_codex" | "openai-codex" | "codex"
+        )
+    }) {
+        delete(&codex_oauth_secret(&profile.id))?;
+        delete(&secret_name(&profile.id))?;
+        if profile.id == "default" {
+            delete(LEGACY_KEY_SECRET)?;
+        }
+    }
+    delete(wisp_llm::codex_auth::SUBSCRIPTION_SECRET)
+}
+
 fn with_account_id(ids: &[String], account_id: &str) -> Vec<String> {
     ids.iter()
         .cloned()
@@ -2677,6 +2702,51 @@ mod tests {
         );
         drop(store);
         let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn clearing_last_codex_sign_in_removes_tokens_but_leaves_other_providers() {
+        let profiles: Vec<_> = [
+            ("default", "openai_codex"),
+            ("legacy", "openai-codex"),
+            ("alias", "codex"),
+            ("official", "openai_chatgpt"),
+            ("api", "openai"),
+        ]
+        .into_iter()
+        .map(|(id, provider)| {
+            let mut profile = test_profile(id, id, "test-model");
+            profile.provider = provider.into();
+            profile
+        })
+        .collect();
+        let mut removed = Vec::new();
+        clear_codex_secrets(&profiles, |key| {
+            removed.push(key.to_string());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            removed,
+            vec![
+                "codex_oauth:default",
+                "model_key:default",
+                "api_key",
+                "codex_oauth:legacy",
+                "model_key:legacy",
+                "codex_oauth:alias",
+                "model_key:alias",
+                wisp_llm::codex_auth::SUBSCRIPTION_SECRET,
+            ]
+        );
+        assert!(clear_codex_secrets(&profiles, |_| Err("keyring unavailable".into())).is_err());
+        removed.clear();
+        clear_codex_secrets(&[], |key| {
+            removed.push(key.to_string());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(removed, vec![wisp_llm::codex_auth::SUBSCRIPTION_SECRET]);
     }
 
     fn test_profile(id: &str, label: &str, model: &str) -> ModelProfile {
