@@ -73,7 +73,7 @@ for (const locale of ["zh", "en"]) {
     await expect(editor).toHaveCount(0);
     await expect(journey).toContainText(title);
     await page.keyboard.press("Escape");
-    await page.locator(".sidebar").getByRole("button", { name: tr("论文证据", "Publication"), exact: true }).click();
+    await page.locator(".sidebar").getByRole("button", { name: tr("论文整理", "Publication"), exact: true }).click();
     await expect(page.getByTestId("publication-evidence-card")).toBeVisible();
     await shot("05-publication");
   });

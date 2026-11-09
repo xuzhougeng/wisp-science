@@ -3,7 +3,8 @@
 The Publication Workspace selects the small set of project evidence that
 supports a manuscript. It is separate from project backup and Session export.
 
-Open **Publication** from the project sidebar. It opens a dedicated project page
+Open **Publication** (**论文整理** in the Chinese interface) from the project
+sidebar. It opens a dedicated project page
 and keeps the project sidebar available. Returning to a conversation or project
 files restores the ordinary workspace. Escape dismisses an open editor or
 advanced dialog before navigating back from an evidence-entry step; it does
@@ -32,7 +33,10 @@ changing historical evidence.
 
 **Add evidence** selects registered project results, persisted analysis runs,
 or saved research conversation text. Source lists are project/mainline scoped,
-searchable, and paginated in batches of 50. Files bind the exact ArtifactVersion
+searchable, and paginated in batches of 50. **Previous** / **Next** and the shown
+range sit under the list, outside its scroll area, and appear only when there is
+more than one page. **Cancel** (or Escape) returns to Evidence, and the form that
+follows **Explain its use** opens directly under the page tabs. Files bind the exact ArtifactVersion
 shown in the picker, even if a newer result is created before saving. Message
 previews show up to 16 KiB of original text; select a passage with the mouse or
 keyboard, or use the entire preview. The editor converts UTF-16 selection

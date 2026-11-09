@@ -19,7 +19,7 @@ struct NativeSearchCommand: Identifiable, Equatable {
         .init(id: "library", title: "收藏", icon: "star", keywords: "library favorites"),
         .init(id: "calendar", title: "研究日历", icon: "calendar", keywords: "research calendar"),
         .init(id: "journey", title: "研究历程", icon: "research-trail", keywords: "journey history", project: true),
-        .init(id: "publication", title: "论文证据", icon: "book", keywords: "publication evidence", project: true),
+        .init(id: "publication", title: "论文整理", icon: "book", keywords: "publication evidence", project: true),
         .init(id: "import-project", title: "导入项目", icon: "upload", keywords: "import project zip"),
         .init(id: "import-session-archive", title: "导入会话 ZIP 归档", icon: "archive-import", keywords: "import conversation session archive zip", project: true),
         .init(id: "import-external-session", title: "导入 Codex / Claude 会话", icon: "conversation-import", keywords: "import external codex claude conversation session history", project: true),

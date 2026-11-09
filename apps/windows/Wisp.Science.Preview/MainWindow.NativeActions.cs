@@ -363,7 +363,7 @@ internal sealed partial class MainWindow
         if (openingAction || nativePickerOpen || workspaceSheet != null || settingsPage != null || searchOverlay != null) return;
         openingAction = true;
         var project = model.ActiveProjectId; var session = model.ActiveSessionId; var database = model.DatabasePath;
-        var title = kind switch { "shelved" => design.T("session.shelved"), "create" => design.T("projects.new"), "import" => "导入项目", "import-session" => "导入会话归档", "library" => design.T("library.title"), "calendar" => design.L("研究日历", "Research calendar"), "journey" => "研究历程", "publication" => "论文证据", "capabilities" => design.T("caps.title"), _ => "工作区" };
+        var title = kind switch { "shelved" => design.T("session.shelved"), "create" => design.T("projects.new"), "import" => "导入项目", "import-session" => "导入会话归档", "library" => design.T("library.title"), "calendar" => design.L("研究日历", "Research calendar"), "journey" => "研究历程", "publication" => "论文整理", "capabilities" => design.T("caps.title"), _ => "工作区" };
         if (kind is "import-cli" or "import-codex" or "import-claude")
             title = kind == "import-claude" ? design.T("claude.title") : kind == "import-codex" ? design.T("codex.title") : design.L("导入外部会话", "Import external conversations");
         var loading = new NativeConnectionPage(design, title, CloseSheet, () => { CloseSheet(); _ = OpenNativeAction(kind); }, modal: kind is "capabilities" or "create" or "shelved" or "import-cli" or "import-codex" or "import-claude");

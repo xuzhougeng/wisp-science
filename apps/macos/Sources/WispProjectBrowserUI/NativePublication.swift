@@ -426,7 +426,7 @@ struct NativePublicationColumn: View {
 
     private var heading: some View {
         HStack {
-            Text(localized("论文证据")).font(.title2.bold())
+            Text(localized("论文整理")).font(.title2.bold())
             if let revision = publication.workspace.revision { Text(NativePublicationLabel.text(revision.state)).font(.caption).foregroundStyle(.secondary) }
         }
     }

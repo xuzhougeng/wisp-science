@@ -649,8 +649,14 @@ pub(super) fn PublicationWorkspacePage(
                                                 selected_item_id, loading, error,
                                             );
                                         }>
-                                        {current_for_select.publications.into_iter().map(|publication| view! {
-                                            <option value=publication.id>{publication.title}</option>
+                                        {current_for_select.publications.into_iter().map(|publication| {
+                                            let id = publication.id.clone();
+                                            view! {
+                                                <option value=publication.id
+                                                    prop:selected=move || publication_id.get() == id>
+                                                    {publication.title}
+                                                </option>
+                                            }
                                         }).collect_view()}
                                     </select>
                                 </label>
@@ -671,7 +677,13 @@ pub(super) fn PublicationWorkspacePage(
                                                 revision.label,
                                                 t(locale.get(), &format!("publication.state.{}", revision.state)),
                                             );
-                                            view! { <option value=revision.id>{label}</option> }
+                                            let id = revision.id.clone();
+                                            view! {
+                                                <option value=revision.id
+                                                    prop:selected=move || revision_id.get() == id>
+                                                    {label}
+                                                </option>
+                                            }
                                         }).collect_view()}
                                     </select>
                                 </label>
@@ -750,12 +762,16 @@ pub(super) fn PublicationWorkspacePage(
 
 
                             <nav class="publication-page-tabs" aria-label=t(locale.get(), "publication.title")>
-                                {[("evidence", "publication.tab_evidence"), ("readiness", "publication.tab_readiness"), ("versions", "publication.tab_versions")].into_iter().map(|(value,key)| view! {
-                                    <button type="button" class:active=move || page.get() == value aria-pressed=move || page.get() == value on:click=move |_| { binding_source.set(None); page.set(value); }>{t(locale.get(), key)}</button>
+                                {[("evidence", "publication.tab_evidence"), ("readiness", "publication.tab_readiness"), ("versions", "publication.tab_versions")].into_iter().map(|(value,key)| {
+                                    // Adding a source is a step of the organize tab, not a fourth tab.
+                                    let current = move || page.get() == value || (value == "evidence" && page.get() == "add");
+                                    view! {
+                                        <button type="button" class:active=current aria-pressed=move || current().to_string() on:click=move |_| { binding_source.set(None); page.set(value); }>{t(locale.get(), key)}</button>
+                                    }
                                 }).collect_view()}
                             </nav>
                             <Show when=move || page.get() == "add" && binding_source.get().is_none()>
-                                <PublicationSourcePicker locale=locale on_select=Callback::new(move |source| binding_source.set(Some(source))) on_advanced=Callback::new(move |_| anchor_open.set(true)) />
+                                <PublicationSourcePicker locale=locale on_select=Callback::new(move |source| binding_source.set(Some(source))) on_advanced=Callback::new(move |_| anchor_open.set(true)) on_cancel=Callback::new(move |_| page.set("evidence")) />
                             </Show>
                             <section class="publication-versions" hidden=move || page.get() != "versions">
                                 <h3>{t(locale.get(), "publication.versions_hint")}</h3>
@@ -790,7 +806,7 @@ pub(super) fn PublicationWorkspacePage(
                                                 on:change=move |event| item_kind.set(event_target_value(&event))>
                                                 {["section", "claim", "figure", "table", "methods", "supplement"]
                                                     .into_iter().map(|kind| view! {
-                                                        <option value=kind>
+                                                        <option value=kind prop:selected=move || item_kind.get() == kind>
                                                             {t(locale.get(), &format!("publication.item.{kind}"))}
                                                         </option>
                                                     }).collect_view()}
@@ -802,9 +818,16 @@ pub(super) fn PublicationWorkspacePage(
                                             <select aria-label=t(locale.get(), "publication.parent_item")
                                                 prop:value=move || item_parent.get()
                                                 on:change=move |event| item_parent.set(event_target_value(&event))>
-                                                <option value="">{t(locale.get(), "publication.no_parent")}</option>
-                                                {items_for_editor.clone().into_iter().map(|item| view! {
-                                                    <option value=item.id>{item.title}</option>
+                                                <option value="" prop:selected=move || item_parent.get().is_empty()>
+                                                    {t(locale.get(), "publication.no_parent")}
+                                                </option>
+                                                {items_for_editor.clone().into_iter().map(|item| {
+                                                    let id = item.id.clone();
+                                                    view! {
+                                                        <option value=item.id prop:selected=move || item_parent.get() == id>
+                                                            {item.title}
+                                                        </option>
+                                                    }
                                                 }).collect_view()}
                                             </select>
                                             <button type="button" class="primary"
@@ -917,6 +940,10 @@ pub(super) fn PublicationWorkspacePage(
                                                 })
                                                 .cloned();
                                             let current_selection = binding.selection_state.clone();
+                                            // A <select> ignores `prop:value` set before its options exist,
+                                            // so each option carries its own selected state.
+                                            let selection_for_options = binding.selection_state.clone();
+                                            let visibility_for_options = binding.visibility.clone();
                                             let current_visibility = binding.visibility.clone();
                                             let binding_id_for_selection = binding.id.clone();
                                             let binding_id_for_visibility = binding.id.clone();
@@ -1110,7 +1137,7 @@ pub(super) fn PublicationWorkspacePage(
                                                                         );
                                                                     }>
                                                                     {["candidate", "selected", "rejected"].into_iter().map(|value| view! {
-                                                                        <option value=value>
+                                                                        <option value=value selected=selection_for_options == value>
                                                                             {t(locale.get(), &format!("publication.selection.{value}"))}
                                                                         </option>
                                                                     }).collect_view()}
@@ -1133,7 +1160,7 @@ pub(super) fn PublicationWorkspacePage(
                                                                         );
                                                                     }>
                                                                     {["public", "restricted", "private"].into_iter().map(|value| view! {
-                                                                        <option value=value>
+                                                                        <option value=value selected=visibility_for_options == value>
                                                                             {t(locale.get(), &format!("publication.visibility.{value}"))}
                                                                         </option>
                                                                     }).collect_view()}
@@ -1155,7 +1182,7 @@ pub(super) fn PublicationWorkspacePage(
                                             <label><span>{t(locale.get(), "publication.target_visibility")}</span>
                                                 <select disabled=move || busy.get() prop:value=move || freeze_visibility.get()
                                                     on:change=move |event| freeze_visibility.set(event_target_value(&event))>
-                                                    {["private", "restricted", "public"].into_iter().map(|value| view! { <option value=value>{t(locale.get(), &format!("publication.visibility.{value}"))}</option> }).collect_view()}
+                                                    {["private", "restricted", "public"].into_iter().map(|value| view! { <option value=value prop:selected=move || freeze_visibility.get() == value>{t(locale.get(), &format!("publication.visibility.{value}"))}</option> }).collect_view()}
                                                 </select>
                                             </label>
                                             <Show when=move || freeze_visibility.get() == "public">
@@ -1329,6 +1356,194 @@ pub(super) fn PublicationWorkspacePage(
                         }.into_view()
                     }
                 }}
+
+                // Inside the page section: as a sibling it rendered below the
+                // full-height section, off-screen right after "Explain its use".
+                {move || binding_source.get().map(|source| {
+                    let current = workspace.get();
+                    let revisions = current.as_ref().map(|workspace| workspace.revisions.clone()).unwrap_or_default();
+                    let items = current.as_ref().map(|workspace| workspace.items.clone()).unwrap_or_default();
+                    let has_draft = revisions.iter().any(|revision| revision.state == "draft");
+                    let selected_is_draft = revisions.iter().any(|revision| {
+                        revision.id == binding_revision.get() && revision.state == "draft"
+                    });
+                    view! {
+                        <div class="publication-binding-step">
+                            <section class="publication-binding-dialog" role="region"
+                                data-testid="publication-binding-dialog"
+                                aria-labelledby="publication-binding-title"
+                                on:click=|event| event.stop_propagation()>
+                                <header>
+                                    <div>
+                                        <h3 id="publication-binding-title">
+                                            {t(locale.get(), "publication.bind_title")}
+                                        </h3>
+                                        <p>{source.label.clone()}</p>
+                                    </div>
+                                    <button type="button" class="ps-close"
+                                        aria-label=t(locale.get(), "publication.close")
+                                        on:click=move |_| {
+                                            binding_source.set(None);
+                                            binding_seen.set(String::new());
+                                        }>
+                                        {compose_icon("close")}
+                                    </button>
+                                </header>
+                                {if !has_draft {
+                                    view! {
+                                        <div class="publication-empty">
+                                            {t(locale.get(), "publication.bind_requires_draft")}
+                                        </div>
+                                    }.into_view()
+                                } else {
+                                    view! {
+                                        <div class="publication-form-grid">
+                                            <label>
+                                                <span>{t(locale.get(), "publication.revision")}</span>
+                                                <select prop:value=move || binding_revision.get()
+                                                    on:change=move |event| {
+                                                        let selected = event_target_value(&event);
+                                                        binding_revision.set(selected.clone());
+                                                        binding_item.set(String::new());
+                                                        binding_claim.set(String::new());
+                                                        revision_id.set(selected);
+                                                        refresh_workspace(
+                                                            workspace, publication_id, revision_id,
+                                                            selected_item_id, loading, error,
+                                                        );
+                                                    }>
+                                                    {revisions.into_iter().map(|revision| {
+                                                        let id = revision.id.clone();
+                                                        let label = format!(
+                                                            "{} · {}",
+                                                            revision.label,
+                                                            t(locale.get(), &format!("publication.state.{}", revision.state)),
+                                                        );
+                                                        view! {
+                                                            <option value=revision.id disabled=revision.state != "draft"
+                                                                prop:selected=move || binding_revision.get() == id>
+                                                                {label}
+                                                            </option>
+                                                        }
+                                                    }).collect_view()}
+                                                </select>
+                                            </label>
+                                            <label>
+                                                <span>{t(locale.get(), "publication.item_target")}</span>
+                                                <select prop:value=move || binding_item.get()
+                                                    on:change=move |event| binding_item.set(event_target_value(&event))>
+                                                    <option value="" prop:selected=move || binding_item.get().is_empty()>
+                                                        {t(locale.get(), "publication.unassigned")}
+                                                    </option>
+                                                    {items.clone().into_iter().map(|item| {
+                                                        let id = item.id.clone();
+                                                        view! {
+                                                            <option value=item.id prop:selected=move || binding_item.get() == id>
+                                                                {item.title}
+                                                            </option>
+                                                        }
+                                                    }).collect_view()}
+                                                </select>
+                                            </label>
+                                            <label class="wide">
+                                                <span>{t(locale.get(), "publication.purpose")}</span>
+                                                <textarea prop:value=move || binding_purpose.get()
+                                                    on:input=move |event| binding_purpose.set(event_target_value(&event))></textarea>
+                                            </label>
+                                            <label>
+                                                <span>{t(locale.get(), "publication.supported_claim")}</span>
+                                                <select prop:value=move || binding_claim.get()
+                                                    on:change=move |event| binding_claim.set(event_target_value(&event))>
+                                                    <option value="" prop:selected=move || binding_claim.get().is_empty()>
+                                                        {t(locale.get(), "publication.no_claim")}
+                                                    </option>
+                                                    {items.into_iter().filter(|item| item.kind == "claim")
+                                                        .map(|item| {
+                                                            let id = item.id.clone();
+                                                            view! {
+                                                                <option value=item.id prop:selected=move || binding_claim.get() == id>
+                                                                    {item.title}
+                                                                </option>
+                                                            }
+                                                        }).collect_view()}
+                                                </select>
+                                            </label>
+                                            <label>
+                                                <span>{t(locale.get(), "publication.selection")}</span>
+                                                <select prop:value=move || binding_selection.get()
+                                                    on:change=move |event| binding_selection.set(event_target_value(&event))>
+                                                    {["candidate", "selected", "rejected"].into_iter().map(|value| view! {
+                                                        <option value=value prop:selected=move || binding_selection.get() == value>
+                                                            {t(locale.get(), &format!("publication.selection.{value}"))}
+                                                        </option>
+                                                    }).collect_view()}
+                                                </select>
+                                            </label>
+                                            <label>
+                                                <span>{t(locale.get(), "publication.visibility")}</span>
+                                                <select prop:value=move || binding_visibility.get()
+                                                    on:change=move |event| binding_visibility.set(event_target_value(&event))>
+                                                    {["public", "restricted", "private"].into_iter().map(|value| view! {
+                                                        <option value=value prop:selected=move || binding_visibility.get() == value>
+                                                            {t(locale.get(), &format!("publication.visibility.{value}"))}
+                                                        </option>
+                                                    }).collect_view()}
+                                                </select>
+                                            </label>
+                                        </div>
+                                        <footer>
+                                            <button type="button" class="secondary"
+                                                on:click=move |_| {
+                                                    binding_source.set(None);
+                                                    binding_seen.set(String::new());
+                                                }>
+                                                {t(locale.get(), "publication.cancel")}
+                                            </button>
+                                            <button type="button" class="primary"
+                                                disabled=move || busy.get() || !selected_is_draft
+                                                    || binding_purpose.get().trim().is_empty()
+                                                on:click={
+                                                    let source = source.clone();
+                                                    move |_| {
+                                                        let selected_revision = binding_revision.get_untracked();
+                                                        let args = serde_json::json!({ "input": {
+                                                            "revisionId": selected_revision,
+                                                            "itemId": match binding_item.get_untracked() {
+                                                                value if value.is_empty() => None,
+                                                                value => Some(value),
+                                                            },
+                                                            "sourceKind": source.kind,
+                                                            "sourceId": source.id,
+                                                            "purpose": binding_purpose.get_untracked(),
+                                                            "supportedClaimItemId": match binding_claim.get_untracked() {
+                                                                value if value.is_empty() => None,
+                                                                value => Some(value),
+                                                            },
+                                                            "selectionState": binding_selection.get_untracked(),
+                                                            "visibility": binding_visibility.get_untracked(),
+                                                        }});
+                                                        invoke_workspace(
+                                                            "bind_publication_evidence", args,
+                                                            workspace, publication_id, revision_id,
+                                                            selected_item_id, busy, error,
+                                                            move |ok| if ok {
+                                                                transient_readiness.set(None);
+                                                                page.set("evidence");
+                                                                binding_source.set(None);
+                                                                binding_seen.set(String::new());
+                                                            },
+                                                        );
+                                                    }
+                                                }>
+                                                {t(locale.get(), "publication.bind_action")}
+                                            </button>
+                                        </footer>
+                                    }.into_view()
+                                }}
+                            </section>
+                        </div>
+                    }
+                })}
             </section>
 
             {move || anchor_open.get().then(|| view! {
@@ -1366,7 +1581,7 @@ pub(super) fn PublicationWorkspacePage(
                                     "code_cell",
                                     "external_resource",
                                 ].into_iter().map(|kind| view! {
-                                    <option value=kind>
+                                    <option value=kind prop:selected=move || anchor_kind.get() == kind>
                                         {t(locale.get(), &format!("publication.source.{kind}"))}
                                     </option>
                                 }).collect_view()}
@@ -1460,169 +1675,6 @@ pub(super) fn PublicationWorkspacePage(
                         </footer>
                     </section>
                 </div>
-            })}
-
-            {move || binding_source.get().map(|source| {
-                let current = workspace.get();
-                let revisions = current.as_ref().map(|workspace| workspace.revisions.clone()).unwrap_or_default();
-                let items = current.as_ref().map(|workspace| workspace.items.clone()).unwrap_or_default();
-                let has_draft = revisions.iter().any(|revision| revision.state == "draft");
-                let selected_is_draft = revisions.iter().any(|revision| {
-                    revision.id == binding_revision.get() && revision.state == "draft"
-                });
-                view! {
-                    <div class="publication-binding-step">
-                        <section class="publication-binding-dialog" role="region"
-                            data-testid="publication-binding-dialog"
-                            aria-labelledby="publication-binding-title"
-                            on:click=|event| event.stop_propagation()>
-                            <header>
-                                <div>
-                                    <h3 id="publication-binding-title">
-                                        {t(locale.get(), "publication.bind_title")}
-                                    </h3>
-                                    <p>{source.label.clone()}</p>
-                                </div>
-                                <button type="button" class="ps-close"
-                                    aria-label=t(locale.get(), "publication.close")
-                                    on:click=move |_| {
-                                        binding_source.set(None);
-                                        binding_seen.set(String::new());
-                                    }>
-                                    {compose_icon("close")}
-                                </button>
-                            </header>
-                            {if !has_draft {
-                                view! {
-                                    <div class="publication-empty">
-                                        {t(locale.get(), "publication.bind_requires_draft")}
-                                    </div>
-                                }.into_view()
-                            } else {
-                                view! {
-                                    <div class="publication-form-grid">
-                                        <label>
-                                            <span>{t(locale.get(), "publication.revision")}</span>
-                                            <select prop:value=move || binding_revision.get()
-                                                on:change=move |event| {
-                                                    let selected = event_target_value(&event);
-                                                    binding_revision.set(selected.clone());
-                                                    binding_item.set(String::new());
-                                                    binding_claim.set(String::new());
-                                                    revision_id.set(selected);
-                                                    refresh_workspace(
-                                                        workspace, publication_id, revision_id,
-                                                        selected_item_id, loading, error,
-                                                    );
-                                                }>
-                                                {revisions.into_iter().map(|revision| view! {
-                                                    <option value=revision.id disabled=revision.state != "draft">
-                                                        {format!("{} · {}", revision.label, revision.state)}
-                                                    </option>
-                                                }).collect_view()}
-                                            </select>
-                                        </label>
-                                        <label>
-                                            <span>{t(locale.get(), "publication.item_target")}</span>
-                                            <select prop:value=move || binding_item.get()
-                                                on:change=move |event| binding_item.set(event_target_value(&event))>
-                                                <option value="">{t(locale.get(), "publication.unassigned")}</option>
-                                                {items.clone().into_iter().map(|item| view! {
-                                                    <option value=item.id>{item.title}</option>
-                                                }).collect_view()}
-                                            </select>
-                                        </label>
-                                        <label class="wide">
-                                            <span>{t(locale.get(), "publication.purpose")}</span>
-                                            <textarea prop:value=move || binding_purpose.get()
-                                                on:input=move |event| binding_purpose.set(event_target_value(&event))></textarea>
-                                        </label>
-                                        <label>
-                                            <span>{t(locale.get(), "publication.supported_claim")}</span>
-                                            <select prop:value=move || binding_claim.get()
-                                                on:change=move |event| binding_claim.set(event_target_value(&event))>
-                                                <option value="">{t(locale.get(), "publication.no_claim")}</option>
-                                                {items.into_iter().filter(|item| item.kind == "claim")
-                                                    .map(|item| view! {
-                                                        <option value=item.id>{item.title}</option>
-                                                    }).collect_view()}
-                                            </select>
-                                        </label>
-                                        <label>
-                                            <span>{t(locale.get(), "publication.selection")}</span>
-                                            <select prop:value=move || binding_selection.get()
-                                                on:change=move |event| binding_selection.set(event_target_value(&event))>
-                                                {["candidate", "selected", "rejected"].into_iter().map(|value| view! {
-                                                    <option value=value>
-                                                        {t(locale.get(), &format!("publication.selection.{value}"))}
-                                                    </option>
-                                                }).collect_view()}
-                                            </select>
-                                        </label>
-                                        <label>
-                                            <span>{t(locale.get(), "publication.visibility")}</span>
-                                            <select prop:value=move || binding_visibility.get()
-                                                on:change=move |event| binding_visibility.set(event_target_value(&event))>
-                                                {["public", "restricted", "private"].into_iter().map(|value| view! {
-                                                    <option value=value>
-                                                        {t(locale.get(), &format!("publication.visibility.{value}"))}
-                                                    </option>
-                                                }).collect_view()}
-                                            </select>
-                                        </label>
-                                    </div>
-                                    <footer>
-                                        <button type="button" class="secondary"
-                                            on:click=move |_| {
-                                                binding_source.set(None);
-                                                binding_seen.set(String::new());
-                                            }>
-                                            {t(locale.get(), "publication.cancel")}
-                                        </button>
-                                        <button type="button" class="primary"
-                                            disabled=move || busy.get() || !selected_is_draft
-                                                || binding_purpose.get().trim().is_empty()
-                                            on:click={
-                                                let source = source.clone();
-                                                move |_| {
-                                                    let selected_revision = binding_revision.get_untracked();
-                                                    let args = serde_json::json!({ "input": {
-                                                        "revisionId": selected_revision,
-                                                        "itemId": match binding_item.get_untracked() {
-                                                            value if value.is_empty() => None,
-                                                            value => Some(value),
-                                                        },
-                                                        "sourceKind": source.kind,
-                                                        "sourceId": source.id,
-                                                        "purpose": binding_purpose.get_untracked(),
-                                                        "supportedClaimItemId": match binding_claim.get_untracked() {
-                                                            value if value.is_empty() => None,
-                                                            value => Some(value),
-                                                        },
-                                                        "selectionState": binding_selection.get_untracked(),
-                                                        "visibility": binding_visibility.get_untracked(),
-                                                    }});
-                                                    invoke_workspace(
-                                                        "bind_publication_evidence", args,
-                                                        workspace, publication_id, revision_id,
-                                                        selected_item_id, busy, error,
-                                                        move |ok| if ok {
-                                                            transient_readiness.set(None);
-                                                            page.set("evidence");
-                                                            binding_source.set(None);
-                                                            binding_seen.set(String::new());
-                                                        },
-                                                    );
-                                                }
-                                            }>
-                                            {t(locale.get(), "publication.bind_action")}
-                                        </button>
-                                    </footer>
-                                }.into_view()
-                            }}
-                        </section>
-                    </div>
-                }
             })}
 
             {move || waiver_code.get().map(|code| {
