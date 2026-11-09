@@ -923,6 +923,7 @@
   "删除中": "Deleting",
   "删除会从服务器永久移除文件。项目中已注册的产物和任务日志不受影响。": "Deletes are permanent on the server. Project artifacts and run logs stay.",
   "删除会话": "Delete conversation",
+  "删除会话？": "Delete conversation?",
   "删除分支": "Delete branch",
   "删除分组": "Delete group",
   "删除工作流？": "Delete Workflow?",

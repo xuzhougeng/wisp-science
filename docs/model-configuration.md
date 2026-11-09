@@ -127,6 +127,11 @@ default** to save that default immediately; **Default** identifies the selected
 profile. The list has no Save/Cancel footer. Add/edit forms still require Save,
 and cancelling an edit does not undo an earlier default change.
 
+Conversation deletion uses a dedicated confirmation with a red **Delete**
+action. Associated-file and child-conversation options are grouped above the
+footer; expanded previews scroll while Cancel and Delete remain accessible.
+Escape cancels the confirmation without deleting the conversation.
+
 The model picker only switches models. It shows one display name per HTTP
 profile; profiles sharing a name show their provider and model ID underneath
 for disambiguation. Hovering a model shows its full name, provider and model ID.

@@ -569,6 +569,31 @@ button.browser-needs-human-row .browser-tab-cleanup-body { opacity: 1; }
   .model-switch-confirm { padding: 20px; gap: 16px; }
   .model-switch-footer > .confirm-option { width: 100%; }
 }
+.session-delete-confirm { max-width: 440px; padding: 24px; gap: 18px; }
+.session-delete-confirm .ui-confirm-heading { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
+.session-delete-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; flex: 0 0 auto; border-radius: 10px;
+  color: var(--err); background: color-mix(in srgb, var(--err) 9%, var(--bg-elev));
+}
+.session-delete-icon svg { width: 18px; height: 18px; }
+.session-delete-confirm > .hint { flex: 0 0 auto; }
+.session-delete-options { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+.session-delete-options .session-artifact-choice {
+  flex: 0 0 auto; margin: 0; padding: 14px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-input);
+}
+.session-delete-options .session-artifact-toggle { color: var(--text); font-size: calc(13px * var(--ui-font-scale, 1)); font-weight: 400; }
+.session-delete-options .session-artifact-toggle input[type="checkbox"] { accent-color: var(--err); }
+.session-delete-options .hint { margin-top: 8px; overflow: visible; }
+.session-delete-options .session-transfer-error { color: var(--err); }
+.session-delete-confirm > .row {
+  margin-top: 0; padding-top: 16px; border-top: 1px solid var(--border);
+  flex-wrap: wrap; gap: 8px;
+}
+.session-delete-confirm > .row button { min-width: 72px; min-height: 36px; padding: 8px 14px; }
+.session-delete-confirm > .row button:focus-visible { outline: 2px solid var(--clay); outline-offset: 3px; }
+@media (max-width: 420px) { .session-delete-confirm { padding: 20px; gap: 16px; } }
 .project-delete-choice-modal { max-width: 560px; }
 .project-delete-choice-modal .delete-with-data {
   color: var(--err); border-color: color-mix(in srgb, var(--err) 42%, var(--border-strong));
