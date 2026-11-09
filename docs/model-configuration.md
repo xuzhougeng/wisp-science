@@ -118,7 +118,9 @@ you save the profile; the same catalog ceilings still apply.
 
 The composer model picker binds the selected HTTP model to the current
 conversation. Switching one populated conversation asks for confirmation and
-does not change any other conversation. Empty conversations switch immediately
+does not change any other conversation. The confirmation highlights the target
+model above the cache notice, with **Cancel**, **Switch model**, and **Don't ask
+again** in the footer (stacked in narrow windows). Empty conversations switch immediately
 without a warning. The active profile in Settings remains the default for new
 conversations. In **Settings → AI configuration → Models**, choose **Set as
 default** to save that default immediately; **Default** identifies the selected

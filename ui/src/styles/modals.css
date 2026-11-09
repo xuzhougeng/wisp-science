@@ -538,16 +538,36 @@ button.browser-needs-human-row .browser-tab-cleanup-body { opacity: 1; }
   overflow-wrap: anywhere;
   user-select: text;
 }
-.model-switch-confirm .row {
-  flex-wrap: wrap;
-  align-items: center;
+.model-switch-confirm {
+  max-width: 440px;
+  padding: 24px;
+  gap: 18px;
 }
-.model-switch-confirm .row button {
-  min-width: 72px;
-  white-space: nowrap;
+.model-switch-body { min-height: 0; overflow-y: auto; }
+.model-switch-target {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 16px; margin-bottom: 14px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg-input);
 }
-.model-switch-confirm .row button.primary {
-  flex: 0 1 auto;
+.model-switch-target > svg { width: 20px; height: 20px; flex: 0 0 auto; color: var(--clay-strong); }
+.model-switch-target > div { min-width: 0; display: grid; gap: 4px; }
+.model-switch-target span { color: var(--text-muted); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.model-switch-target strong { color: var(--text); font-size: calc(16px * var(--ui-font-scale, 1)); font-weight: 600; overflow-wrap: anywhere; }
+.model-switch-confirm .hint { overflow: visible; }
+.model-switch-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 16px; flex: 0 0 auto;
+  padding-top: 16px; border-top: 1px solid var(--border);
+}
+.model-switch-confirm .confirm-option { font-size: calc(12px * var(--ui-font-scale, 1)); }
+.model-switch-confirm .row { margin: 0 0 0 auto; flex-wrap: wrap; align-items: center; gap: 8px; }
+.model-switch-confirm .row button { min-width: 72px; min-height: 36px; padding: 8px 14px; }
+.model-switch-confirm .row button.primary { flex: 0 1 auto; }
+.model-switch-confirm .row button:focus-visible { outline: 2px solid var(--clay); outline-offset: 3px; }
+@media (max-width: 420px) {
+  .model-switch-confirm { padding: 20px; gap: 16px; }
+  .model-switch-footer > .confirm-option { width: 100%; }
 }
 .project-delete-choice-modal { max-width: 560px; }
 .project-delete-choice-modal .delete-with-data {
