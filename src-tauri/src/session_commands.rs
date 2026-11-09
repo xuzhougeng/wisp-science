@@ -98,11 +98,12 @@ pub(crate) async fn create_branch_from(
     checkpoint_kind: BranchCheckpointKind,
     title: Option<&str>,
 ) -> Result<String, String> {
-    let id = create_session_frame(store, project_id).await?;
     let checkpoint_user_index = match user_index {
         Some(index) => index,
         None => last_user_index(store, source).await?,
     };
+    // Resolve before creating the frame so a refused checkpoint leaves no
+    // empty conversation behind.
     let (epoch, keep_seq) = resolve_visual_keep(
         store,
         source,
@@ -110,6 +111,7 @@ pub(crate) async fn create_branch_from(
         checkpoint_kind == BranchCheckpointKind::AfterResponse,
     )
     .await?;
+    let id = create_session_frame(store, project_id).await?;
     store
         .set_session_branch_point(&id, source, checkpoint_user_index, checkpoint_kind.as_str())
         .await
@@ -1982,115 +1984,104 @@ async fn undo_inspected_compaction(
         .map_err(|e| e.to_string())
 }
 
+/// Refusal when a user index does not name a saved turn. Rewind and branch
+/// stop here instead of guessing a cut. Must stay equal to the string
+/// `localize_backend` matches in ui/src/i18n.rs.
+pub(crate) const USER_TURN_NOT_FOUND: &str =
+    "That message could not be found in the saved conversation. Nothing was changed.";
+
 pub(crate) async fn last_user_index(store: &Store, frame_id: &str) -> Result<usize, String> {
-    let visual = store
-        .visual_user_count(frame_id)
-        .await
-        .map_err(|e| format!("{e}"))?;
-    if visual > 0 {
-        return Ok(visual - 1);
-    }
-    let rows = store
-        .load_messages_in_epoch(frame_id, 0)
-        .await
-        .map_err(|e| format!("{e}"))?;
-    Ok(rows
-        .iter()
-        .filter(|(_, message)| {
-            message.role == wisp_llm::Role::User
-                && message.tool_name.as_deref() != Some(wisp_store::AGENT_WORKFLOW_COMPLETION_TOOL)
-                && !message.content.as_text().trim().is_empty()
-                && !wisp_store::is_compaction_checkpoint(&message.content.as_text())
-        })
-        .count()
+    Ok(user_turn_starts(store, frame_id)
+        .await?
+        .len()
         .saturating_sub(1))
+}
+
+/// A user row the transcript renders as its own bubble.
+fn is_user_bubble(message: &wisp_llm::Message) -> bool {
+    message.role == wisp_llm::Role::User
+        && message.tool_name.as_deref() != Some(wisp_store::AGENT_WORKFLOW_COMPLETION_TOOL)
+        && !message.content.as_text().trim().is_empty()
+        && !wisp_store::is_compaction_checkpoint(&message.content.as_text())
+}
+
+/// Start seq of every user turn in the UI's index space: the outline's
+/// message-only legacy prefix (turns saved before visual events existed),
+/// then each visual turn's first `MessageBoundary`. `None` marks a visual
+/// turn whose boundary was never saved.
+async fn user_turn_starts(store: &Store, frame_id: &str) -> Result<Vec<Option<i64>>, String> {
+    let visual = store
+        .visual_turn_anchors(frame_id)
+        .await
+        .map_err(|e| format!("{e}"))?;
+    let legacy = store
+        .load_session_outline(frame_id)
+        .await
+        .map_err(|e| format!("{e}"))?
+        .into_iter()
+        .map_while(|item| item.seq)
+        .collect::<HashSet<_>>();
+    let mut starts = Vec::with_capacity(legacy.len() + visual.len());
+    if !legacy.is_empty() {
+        // Legacy turns precede every compaction, so their rows are epoch 0.
+        starts.extend(
+            store
+                .load_messages_in_epoch(frame_id, 0)
+                .await
+                .map_err(|e| format!("{e}"))?
+                .iter()
+                .filter(|(seq, message)| legacy.contains(seq) && is_user_bubble(message))
+                .map(|(seq, _)| Some(*seq)),
+        );
+    }
+    starts.extend(visual);
+    Ok(starts)
+}
+
+/// Epoch owning the row at `seq`; a cut at or before the first row is epoch 0.
+/// A missing row is refused: defaulting to epoch 0 would drop every later
+/// epoch when the cut is applied.
+async fn epoch_owning(store: &Store, frame_id: &str, seq: i64) -> Result<i64, String> {
+    if seq <= 0 {
+        return Ok(0);
+    }
+    store
+        .resolve_message_epoch(frame_id, seq)
+        .await
+        .map_err(|e| format!("{e}"))?
+        .ok_or_else(|| USER_TURN_NOT_FOUND.to_string())
 }
 
 /// Map a visual user turn to `(epoch, keep_seq)`.
 /// `after_response` keeps that turn's reply; otherwise the cut is just before it.
-/// Legacy sessions without User events fall back to epoch-0 row indexes.
+/// An index that names no saved turn is refused, never mapped to a guess.
 pub(super) async fn resolve_visual_keep(
     store: &Store,
     frame_id: &str,
     user_index: usize,
     after_response: bool,
 ) -> Result<(i64, i64), String> {
-    if after_response {
-        if let Some(next) = store
-            .visual_turn_anchor(frame_id, user_index.saturating_add(1))
-            .await
-            .map_err(|e| format!("{e}"))?
-        {
-            let epoch = store
-                .resolve_message_epoch(frame_id, next.saturating_sub(1).max(1))
-                .await
-                .map_err(|e| format!("{e}"))?
-                .unwrap_or(0);
-            return Ok((epoch, next - 1));
-        }
-        if let Some(anchor) = store
-            .visual_turn_anchor(frame_id, user_index)
-            .await
-            .map_err(|e| format!("{e}"))?
-        {
-            let epoch = store
-                .resolve_message_epoch(frame_id, anchor)
-                .await
-                .map_err(|e| format!("{e}"))?
-                .unwrap_or(0);
-            let keep_seq = store
-                .load_messages_in_epoch(frame_id, epoch)
-                .await
-                .map_err(|e| format!("{e}"))?
-                .last()
-                .map(|(seq, _)| *seq)
-                .unwrap_or(anchor);
-            return Ok((epoch, keep_seq));
-        }
-    } else if let Some(anchor) = store
-        .visual_turn_anchor(frame_id, user_index)
+    let starts = user_turn_starts(store, frame_id).await?;
+    let not_found = || USER_TURN_NOT_FOUND.to_string();
+    let anchor = *starts.get(user_index).ok_or_else(not_found)?;
+    if !after_response {
+        let keep_seq = anchor.ok_or_else(not_found)? - 1;
+        return Ok((epoch_owning(store, frame_id, keep_seq).await?, keep_seq));
+    }
+    if let Some(next) = starts.get(user_index + 1).copied().flatten() {
+        let keep_seq = next - 1;
+        return Ok((epoch_owning(store, frame_id, keep_seq).await?, keep_seq));
+    }
+    let anchor = anchor.ok_or_else(not_found)?;
+    let epoch = epoch_owning(store, frame_id, anchor).await?;
+    let keep_seq = store
+        .load_messages_in_epoch(frame_id, epoch)
         .await
         .map_err(|e| format!("{e}"))?
-    {
-        let keep_seq = anchor - 1;
-        let epoch = if keep_seq <= 0 {
-            0
-        } else {
-            store
-                .resolve_message_epoch(frame_id, keep_seq)
-                .await
-                .map_err(|e| format!("{e}"))?
-                .unwrap_or(0)
-        };
-        return Ok((epoch, keep_seq));
-    }
-    let rows = store
-        .load_messages_in_epoch(frame_id, 0)
-        .await
-        .map_err(|e| format!("{e}"))?;
-    let msgs = rows
-        .iter()
-        .map(|(_, message)| message.clone())
-        .collect::<Vec<_>>();
-    let keep = if after_response {
-        user_message_start(&msgs, user_index.saturating_add(1))
-    } else {
-        user_message_start(&msgs, user_index)
-    };
-    Ok((0, head_keep_seq(&rows, keep)))
-}
-
-/// Durable seq below which the first `keep` head-epoch rows are retained.
-/// Keeping zero rows lands just below the head epoch's first row so frozen
-/// epochs (all lower seqs) survive; keeping more than exist keeps everything.
-pub(super) fn head_keep_seq(rows: &[(i64, wisp_llm::Message)], keep: usize) -> i64 {
-    match keep {
-        0 => rows.first().map_or(0, |(seq, _)| seq - 1),
-        _ => rows
-            .get(keep - 1)
-            .or(rows.last())
-            .map_or(0, |(seq, _)| *seq),
-    }
+        .last()
+        .map(|(seq, _)| *seq)
+        .unwrap_or(anchor);
+    Ok((epoch, keep_seq))
 }
 
 /// The frame's ACP `ask_user` rows, appended after the transcript (a pending
@@ -3758,5 +3749,125 @@ mod branch_kernel_tests {
         ] {
             assert_eq!(BranchCheckpointKind::parse(Some(kind.as_str())), Ok(kind));
         }
+    }
+
+    /// Event logging that began partway through leaves message-only turns
+    /// first in the transcript; the UI counts them, so the backend must too.
+    #[tokio::test]
+    async fn resolve_visual_keep_counts_the_legacy_message_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("wisp.sqlite")).await.unwrap();
+        store.create_project("p", "P", "").await.unwrap();
+        store
+            .create_frame("main", "p", "OPERON", "m")
+            .await
+            .unwrap();
+        for (seq, message) in [
+            (1, Message::system("sys")),
+            (2, Message::user("old a")),
+            (3, Message::assistant("old reply a")),
+            (4, Message::user("old b")),
+            (5, Message::assistant("old reply b")),
+            (6, Message::user("q1")),
+            (7, Message::assistant("a1")),
+            (8, Message::user("q2")),
+            (9, Message::assistant("a2")),
+        ] {
+            store.append_message("main", seq, &message).await.unwrap();
+        }
+        let mut event_seq = 1i64;
+        for (text, user_seq) in [("q1", 6), ("q2", 8)] {
+            for event in [
+                format!(r#"{{"kind":"User","frame_id":"main","text":"{text}"}}"#),
+                format!(r#"{{"kind":"MessageBoundary","frame_id":"main","seq":{user_seq}}}"#),
+                format!(
+                    r#"{{"kind":"MessageBoundary","frame_id":"main","seq":{}}}"#,
+                    user_seq + 1
+                ),
+            ] {
+                store
+                    .append_session_ui_event("main", event_seq, &event)
+                    .await
+                    .unwrap();
+                event_seq += 1;
+            }
+        }
+        assert_eq!(store.load_session_outline("main").await.unwrap().len(), 4);
+
+        assert_eq!(last_user_index(&store, "main").await.unwrap(), 3);
+        for (index, keep) in [(0, (0, 1)), (1, (0, 3)), (2, (0, 5)), (3, (0, 7))] {
+            assert_eq!(
+                resolve_visual_keep(&store, "main", index, false)
+                    .await
+                    .unwrap(),
+                keep,
+                "rewind before user turn {index}"
+            );
+        }
+        assert_eq!(
+            resolve_visual_keep(&store, "main", 1, true).await.unwrap(),
+            (0, 5)
+        );
+        assert_eq!(
+            resolve_visual_keep(&store, "main", 3, true).await.unwrap(),
+            (0, 9)
+        );
+        assert_eq!(
+            resolve_visual_keep(&store, "main", 4, false)
+                .await
+                .unwrap_err(),
+            USER_TURN_NOT_FOUND
+        );
+    }
+
+    /// An anchor whose neighbouring row is gone must not default to epoch 0.
+    #[tokio::test]
+    async fn resolve_visual_keep_refuses_anchors_without_saved_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_two_turns(dir.path()).await;
+        for (seq, event) in [
+            (9, r#"{"kind":"User","frame_id":"main","text":"q3"}"#),
+            (
+                10,
+                r#"{"kind":"MessageBoundary","frame_id":"main","seq":50}"#,
+            ),
+        ] {
+            store
+                .append_session_ui_event("main", seq, event)
+                .await
+                .unwrap();
+        }
+        for after_response in [false, true] {
+            assert_eq!(
+                resolve_visual_keep(&store, "main", 2, after_response)
+                    .await
+                    .unwrap_err(),
+                USER_TURN_NOT_FOUND
+            );
+        }
+        let grants = StdMutex::new(ApprovalGrants::default());
+        let full_permission = StdRwLock::new(HashSet::new());
+        assert_eq!(
+            create_branch_from(
+                &store,
+                BranchPermissions {
+                    approval_grants: &grants,
+                    full_permission_sessions: &full_permission,
+                },
+                "p",
+                "main",
+                Some(2),
+                BranchCheckpointKind::BeforeUser,
+                None,
+            )
+            .await
+            .unwrap_err(),
+            USER_TURN_NOT_FOUND
+        );
+        // The earlier turns still resolve.
+        assert_eq!(
+            resolve_visual_keep(&store, "main", 1, false).await.unwrap(),
+            (0, 3)
+        );
     }
 }

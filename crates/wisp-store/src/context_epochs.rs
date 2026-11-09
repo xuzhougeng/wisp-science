@@ -381,8 +381,20 @@ impl Store {
         frame_id: &str,
         user_index: usize,
     ) -> Result<Option<i64>> {
+        Ok(self
+            .visual_turn_anchors(frame_id)
+            .await?
+            .get(user_index)
+            .copied()
+            .flatten())
+    }
+
+    /// [`visual_turn_anchor`] for every visual user turn, in order: one entry
+    /// per counted User event, `None` where no `MessageBoundary` followed it
+    /// before the next User event.
+    pub async fn visual_turn_anchors(&self, frame_id: &str) -> Result<Vec<Option<i64>>> {
         if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
-            return Box::pin(store.visual_turn_anchor(frame_id, user_index)).await;
+            return Box::pin(store.visual_turn_anchors(frame_id)).await;
         }
         let rows = sqlx::query(
             "SELECT json_extract(event_json,'$.kind') AS kind, \
@@ -395,7 +407,7 @@ impl Store {
         .bind(frame_id)
         .fetch_all(&self.pool)
         .await?;
-        let mut seen = 0usize;
+        let mut anchors = Vec::new();
         let mut waiting = false;
         for row in rows {
             let kind: String = row.try_get("kind")?;
@@ -407,16 +419,19 @@ impl Store {
                     if crate::is_compaction_checkpoint(&text) {
                         continue;
                     }
-                    waiting = seen == user_index;
-                    seen += 1;
+                    anchors.push(None);
+                    waiting = true;
                 }
                 "MessageBoundary" if waiting => {
-                    return Ok(row.try_get::<Option<i64>, _>("message_seq")?);
+                    if let Some(anchor) = anchors.last_mut() {
+                        *anchor = row.try_get::<Option<i64>, _>("message_seq")?;
+                    }
+                    waiting = false;
                 }
                 _ => {}
             }
         }
-        Ok(None)
+        Ok(anchors)
     }
 
     /// Last completed `MessageBoundary` of the `user_index`-th visual user

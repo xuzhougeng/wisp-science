@@ -7425,6 +7425,10 @@ pub fn localize_backend(locale: Locale, msg: &str) -> String {
         "This project is already present on this device." => {
             if locale == Locale::Zh { "此项目已在当前设备上，请从项目列表打开。".into() } else { msg.into() }
         }
+        // Must stay equal to USER_TURN_NOT_FOUND in src-tauri/src/session_commands.rs.
+        "That message could not be found in the saved conversation. Nothing was changed." => {
+            if locale == Locale::Zh { "在已保存的会话中找不到这条消息，没有做任何改动。".into() } else { msg.into() }
+        }
         "Choose an export destination outside the project workspace." => {
             if locale == Locale::Zh { "请选择项目工作区以外的导出位置。".into() } else { msg.into() }
         }
@@ -8078,6 +8082,14 @@ mod api_error_hint_tests {
             assert_ne!(localize_backend(Locale::En, code), code);
             assert_ne!(localize_backend(Locale::Zh, code), code);
         }
+    }
+
+    #[test]
+    fn localize_backend_translates_a_refused_rewind() {
+        // Must stay equal to USER_TURN_NOT_FOUND in src-tauri/src/session_commands.rs.
+        let msg = "That message could not be found in the saved conversation. Nothing was changed.";
+        assert!(localize_backend(Locale::Zh, msg).contains("找不到这条消息"));
+        assert_eq!(localize_backend(Locale::En, msg), msg);
     }
 
     #[test]

@@ -87,6 +87,13 @@ previous model context and marks the row undone. After new turns, undo is
 disabled and **Rewind to before compact** uses the existing rewind confirmation
 to cut the conversation at that kept turn. Escape closes only the open summary.
 
+Rewind, edit, and branch locate the chosen message in the saved conversation
+before changing anything. If it is not there (for example, the visual log never
+recorded where that turn starts), the action is refused with "That message
+could not be found in the saved conversation. Nothing was changed." and the
+conversation reloads intact. Earlier versions could fall back to cutting at
+the end of the first context epoch, which deleted every later compaction.
+
 ## Model view
 
 After a compact, earlier bubbles stay on the full transcript but are dimmed
