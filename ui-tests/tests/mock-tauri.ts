@@ -280,6 +280,14 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
         ts: 2000 - index,
         running: false,
       }))
+    : query.get("mockSelectionLayout") === "1"
+      ? [
+          { id: "sel-grouped-a", title: "FigS4 retention", ts: 2100, running: false, folder_id: "sel-folder" },
+          { id: "sel-grouped-b", title: "S4 trajectory heatmap", ts: 2090, running: false, folder_id: "sel-folder" },
+          { id: "sel-one", title: "Range one", ts: 2080, running: false },
+          { id: "sel-two", title: "Range two", ts: 2070, running: false },
+          { id: "sel-three", title: "Range three", ts: 2060, running: false },
+        ]
     : query.get("mockContextDrag") === "1"
       ? [
           { id: "drag-qc", title: "QC review", ts: 2100, running: false, folder_id: "drag-folder" },
@@ -462,6 +470,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     ? [{ id: "pending-folder", name: "Pending reports" }]
     : query.get("mockContextDrag") === "1"
     ? [{ id: "drag-folder", name: "Reviews" }]
+    : query.get("mockSelectionLayout") === "1"
+    ? [{ id: "sel-folder", name: "Figures" }]
     : [];
   let activeProjectId = "default";
   let terminalCounter = 0;

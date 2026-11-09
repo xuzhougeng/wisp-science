@@ -25,6 +25,67 @@ fn nest_in_use(
             .any(|kid| running.contains(kid) || attention.contains(kid))
 }
 
+/// The rows a Shift-click covers: everything from the anchor to the target, inclusive,
+/// in the order the list shows them. `None` when either end is not on screen, so the
+/// click falls back to toggling the one row.
+fn selection_range(order: &[String], anchor: &str, target: &str) -> Option<Vec<String>> {
+    let from = order.iter().position(|id| id == anchor)?;
+    let to = order.iter().position(|id| id == target)?;
+    let (lo, hi) = if from <= to { (from, to) } else { (to, from) };
+    Some(order[lo..=hi].to_vec())
+}
+
+/// Selectable conversation rows in on-screen order. Rows inside a collapsed group or
+/// nest are skipped: a range covers only what the user can see between its two ends.
+fn visible_session_ids() -> Vec<String> {
+    use wasm_bindgen::JsCast;
+    let Some(nodes) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|doc| {
+            doc.query_selector_all(".side-list .side-item.ses[data-session-id]")
+                .ok()
+        })
+    else {
+        return Vec::new();
+    };
+    (0..nodes.length())
+        .filter_map(|i| nodes.item(i))
+        .filter_map(|node| node.dyn_into::<web_sys::HtmlElement>().ok())
+        .filter(|el| el.offset_parent().is_some())
+        .filter_map(|el| el.get_attribute("data-session-id"))
+        .collect()
+}
+
+#[cfg(test)]
+mod selection_range_tests {
+    use super::selection_range;
+
+    fn ids(list: &[&str]) -> Vec<String> {
+        list.iter().map(|id| id.to_string()).collect()
+    }
+
+    #[test]
+    fn a_range_runs_between_its_ends_in_either_direction() {
+        let order = ids(&["a", "b", "c", "d"]);
+        assert_eq!(
+            selection_range(&order, "b", "d"),
+            Some(ids(&["b", "c", "d"]))
+        );
+        assert_eq!(
+            selection_range(&order, "d", "b"),
+            Some(ids(&["b", "c", "d"]))
+        );
+        assert_eq!(selection_range(&order, "c", "c"), Some(ids(&["c"])));
+    }
+
+    #[test]
+    fn a_range_needs_both_ends_on_screen() {
+        let order = ids(&["a", "b"]);
+        assert_eq!(selection_range(&order, "gone", "b"), None);
+        assert_eq!(selection_range(&order, "a", "gone"), None);
+    }
+}
+
 #[cfg(test)]
 mod nest_tests {
     use super::nest_in_use;
@@ -245,6 +306,8 @@ pub(super) fn Sidebar(
         })
     });
     let selected_sessions = create_rw_signal::<HashSet<String>>(HashSet::new());
+    // The last row clicked while selecting; a Shift-click extends from it.
+    let select_anchor = create_rw_signal::<Option<String>>(None);
     let bulk_move_open = create_rw_signal(false);
     // The group being dragged to a new slot, with its index in `folders`.
     let drag_folder = create_rw_signal::<Option<(String, usize)>>(None);
@@ -252,7 +315,19 @@ pub(super) fn Sidebar(
     let search_shortcut = if is_mac() { "⌘K" } else { "Ctrl+K" };
     create_effect(move |_| {
         let available: HashSet<String> = sessions.get().into_iter().map(|s| s.id).collect();
-        selected_sessions.update(|selected| selected.retain(|id| available.contains(id)));
+        // Only notify when a ticked conversation is really gone: session updates arrive
+        // while replies stream, and each notify would rebuild the selection UI.
+        if selected_sessions.with_untracked(|selected| selected.iter().any(|id| !available.contains(id))) {
+            selected_sessions.update(|selected| selected.retain(|id| available.contains(id)));
+        }
+    });
+    let selected_count = create_memo(move |_| selected_sessions.with(HashSet::len));
+    let has_selection = create_memo(move |_| selected_count.get() != 0);
+    // The Move button leaves with the last tick, so its menu goes with it.
+    create_effect(move |_| {
+        if !has_selection.get() && bulk_move_open.get_untracked() {
+            bulk_move_open.set(false);
+        }
     });
     window_capture_escape(move || {
         // Only one of the two head menus is ever open.
@@ -400,20 +475,22 @@ pub(super) fn Sidebar(
                 let sort_opts = [("newest", "sidebar.sort_newest"), ("name", "sidebar.sort_name")];
                 view! {
                     <div class="side-sessions-head">
-                        // Selecting swaps the header for the bulk toolbar in place, so
-                        // the list below never shifts.
+                        // Selecting swaps the header for tick-all + count and a Done button
+                        // in place, so the list below never shifts. The actions live in the
+                        // bar under the list, where they appear only once something is ticked.
                         {move || if selecting_sessions.get() {
                             let count = selected_sessions.get().len();
                             let all_selected = count > 0 && count == sessions.get().len();
-                            let delete_selected = bulk_delete_sessions.clone();
                             let any_selected = count != 0;
                             let checked = if all_selected { "true" } else if any_selected { "mixed" } else { "false" };
                             view! {
                                 <button type="button" class="side-bulk-all" role="checkbox"
+                                    class:has-selection=any_selected
                                     aria-checked=checked
                                     aria-label=t(loc, "sidebar.select_all")
                                     title=t(loc, if all_selected { "sidebar.clear_selection" } else { "sidebar.select_all" })
                                     on:click=move |_| {
+                                        select_anchor.set(None);
                                         if all_selected {
                                             selected_sessions.set(HashSet::new());
                                         } else {
@@ -429,41 +506,16 @@ pub(super) fn Sidebar(
                                         tf(loc, "sidebar.selected_n", &[("n", &count.to_string())])
                                     }}</span>
                                 </button>
-                                <div class="side-sessions-head-actions" role="toolbar"
-                                    aria-label=t(loc, "sidebar.bulk_actions")>
-                                    <button type="button" class="icon-btn side-sort-btn"
-                                        data-testid="bulk-move-sessions"
-                                        class:active=move || bulk_move_open.get()
-                                        disabled=count == 0
-                                        aria-haspopup="menu"
-                                        title=t(loc, "sidebar.move_selected")
-                                        aria-label=t(loc, "sidebar.move_selected")
-                                        on:click=move |ev: web_sys::MouseEvent| {
-                                            ev.stop_propagation();
-                                            bulk_move_open.update(|v| *v = !*v);
-                                        }>
-                                        {compose_icon("folder-move")}
-                                    </button>
-                                    <button type="button" class="icon-btn side-sort-btn side-bulk-delete"
-                                        data-testid="bulk-delete-sessions"
-                                        disabled=count == 0
-                                        title=t(loc, "ctx.delete_session")
-                                        aria-label=t(loc, "ctx.delete_session")
-                                        on:click=move |_| {
-                                            let ids: Vec<String> = selected_sessions.get_untracked().into_iter().collect();
-                                            if !ids.is_empty() {
-                                                delete_selected.call(ids);
-                                            }
-                                        }>
-                                        {compose_icon("trash")}
-                                    </button>
-                                    <button type="button" class="side-select-btn"
+                                <div class="side-sessions-head-actions">
+                                    <button type="button" class="side-select-btn side-select-done"
+                                        data-testid="bulk-select-done"
                                         on:click=move |_| {
                                             selecting_sessions.set(false);
                                             selected_sessions.set(HashSet::new());
+                                            select_anchor.set(None);
                                             bulk_move_open.set(false);
                                         }>
-                                        {t(loc, "settings.cancel")}
+                                        {t(loc, "sidebar.selection_done")}
                                     </button>
                                 </div>
                             }.into_view()
@@ -473,10 +525,12 @@ pub(super) fn Sidebar(
                                 <div class="side-sessions-head-actions">
                                     <button type="button" class="side-select-btn"
                                         disabled=move || sessions.get().is_empty()
+                                        title=t(loc, "sidebar.select_hint")
                                         on:click=move |_| {
                                             needs_you_only.set(false);
                                             selecting_sessions.set(true);
                                             selected_sessions.set(HashSet::new());
+                                            select_anchor.set(None);
                                             sort_menu_open.set(false);
                                         }>
                                         {t(loc, "sidebar.select_sessions")}
@@ -528,45 +582,6 @@ pub(super) fn Sidebar(
                                 </div>
                             </div>
                         })}
-                        {move || bulk_move_open.get().then(|| {
-                            let move_selected = bulk_move_sessions.clone();
-                            let move_to = Callback::new(move |folder_id: Option<String>| {
-                                let ids: Vec<String> = selected_sessions.get_untracked().into_iter().collect();
-                                bulk_move_open.set(false);
-                                if !ids.is_empty() {
-                                    move_selected.call((ids, folder_id));
-                                    selected_sessions.set(HashSet::new());
-                                    selecting_sessions.set(false);
-                                }
-                            });
-                            view! {
-                                <div class="side-sort-backdrop" on:click=move |_| bulk_move_open.set(false)></div>
-                                <div class="side-sort-menu side-bulk-move-menu" role="menu" data-testid="bulk-move-menu">
-                                    <div class="side-sort-label">{t(loc, "sidebar.move_selected")}</div>
-                                    <div class="side-sort-opts">
-                                        <button type="button" class="side-sort-opt" role="menuitem" data-folder-id=""
-                                            on:click=move |_| move_to.call(None)>
-                                            <span>{t(loc, "ctx.move_to_ungrouped")}</span>
-                                        </button>
-                                        {folders.get().into_iter().map(|folder| {
-                                            let name = if folder.name.trim().is_empty() {
-                                                t(loc, "folder.untitled").to_string()
-                                            } else {
-                                                folder.name
-                                            };
-                                            let id = folder.id.clone();
-                                            view! {
-                                                <button type="button" class="side-sort-opt" role="menuitem"
-                                                    data-folder-id=folder.id title=name.clone()
-                                                    on:click=move |_| move_to.call(Some(id.clone()))>
-                                                    <span>{name}</span>
-                                                </button>
-                                            }
-                                        }).collect_view()}
-                                    </div>
-                                </div>
-                            }
-                        })}
                     </div>
                 }
             })}
@@ -587,7 +602,7 @@ pub(super) fn Sidebar(
                     </button>
                 </div>
             })}
-            <div class="side-list">
+            <div class="side-list" class:selecting=move || selecting_sessions.get()>
                 {move || {
                     let loc = locale.get();
                     // Demo ("Example project") mode: the session list shows the bundled
@@ -783,13 +798,26 @@ pub(super) fn Sidebar(
                                     data-session-family=if has_branch_family { "true" } else { "false" }
                                     data-exploration-round=if has_exploration_round { "true" } else { "false" }
                                     data-branch-merged=if branch_merged { "true" } else { "false" }
-                                    on:click=move |_| {
+                                    on:click=move |ev: web_sys::MouseEvent| {
                                         if selecting_sessions.get_untracked() {
+                                            let id = id_select_click.clone();
+                                            // Shift extends from the last clicked row: the whole run
+                                            // takes the state this row toggles to.
+                                            let range = ev.shift_key()
+                                                .then(|| select_anchor.get_untracked())
+                                                .flatten()
+                                                .and_then(|anchor| selection_range(&visible_session_ids(), &anchor, &id));
                                             selected_sessions.update(|selected| {
-                                                if !selected.insert(id_select_click.clone()) {
-                                                    selected.remove(&id_select_click);
+                                                let on = !selected.contains(&id);
+                                                for row in range.unwrap_or_else(|| vec![id.clone()]) {
+                                                    if on {
+                                                        selected.insert(row);
+                                                    } else {
+                                                        selected.remove(&row);
+                                                    }
                                                 }
                                             });
+                                            select_anchor.set(Some(id));
                                         } else {
                                             open.call(id_key.clone());
                                         }
@@ -1118,6 +1146,7 @@ pub(super) fn Sidebar(
                                 <div class="side-folder"
                                     class:dragging=move || drag_folder.get().is_some_and(|(id, _)| id == fid_dragcls)
                                     class:selecting=move || selecting_sessions.get()
+                                    class:selected=move || folder_total != 0 && folder_selected.get() == folder_total
                                     attr:draggable=move || if selecting_sessions.get() { "false" } else { "true" }
                                     title=fname_attr.clone()
                                     data-folder-id=fid.clone()
@@ -1146,8 +1175,8 @@ pub(super) fn Sidebar(
                                         folder_modal_input.set(fname_rename.clone());
                                         folder_modal.set(Some(FolderModal::Rename(fid_rename.clone())));
                                     }>
-                                    <span class="side-folder-caret" class:collapsed=collapsed>{compose_icon("chevron-down")}</span>
-                                    // Selecting swaps the folder icon for a tick box over the whole group.
+                                    // While selecting, the group's tick box leads the row so every tick
+                                    // box in the list shares one column; caret and icon keep the hierarchy.
                                     <button type="button" class="session-select-mark" role="checkbox"
                                         class:on=folder_any
                                         aria-checked=folder_checked
@@ -1156,6 +1185,7 @@ pub(super) fn Sidebar(
                                         on:dblclick=|ev: web_sys::MouseEvent| ev.stop_propagation()
                                         on:click=move |ev: web_sys::MouseEvent| {
                                             ev.stop_propagation();
+                                            select_anchor.set(None);
                                             selected_sessions.update(|selected| {
                                                 if folder_ids.iter().all(|id| selected.contains(id)) {
                                                     for id in &folder_ids {
@@ -1168,9 +1198,17 @@ pub(super) fn Sidebar(
                                         }>
                                         {move || compose_icon(if (1..folder_total).contains(&folder_selected.get()) { "minus" } else { "check" })}
                                     </button>
+                                    <span class="side-folder-caret" class:collapsed=collapsed>{compose_icon("chevron-down")}</span>
                                     {compose_icon("folder")}
                                     <span class="side-folder-name">{fname}</span>
-                                    <span class="side-folder-count">{in_folder.len()}</span>
+                                    // Selecting shows how much of the group is ticked, e.g. 3/6.
+                                    <span class="side-folder-count" data-testid="folder-count"
+                                        class:partial=move || selecting_sessions.get() && folder_selected.get() != 0>
+                                        {move || match folder_selected.get() {
+                                            n if n != 0 && selecting_sessions.get() => format!("{n}/{folder_total}"),
+                                            _ => folder_total.to_string(),
+                                        }}
+                                    </span>
                                     <button type="button" class="folder-actions"
                                         title=move || t(locale.get(), "folder.actions")
                                         aria-label=move || t(locale.get(), "folder.actions")
@@ -1240,6 +1278,96 @@ pub(super) fn Sidebar(
                     </button>
                 })
             }}
+            // While selecting, the bar under the list holds the bulk actions: a hint until
+            // something is ticked, then labelled Move and Delete buttons — never disabled ones.
+            {move || (!demo_mode.get() && selecting_sessions.get()).then(|| {
+                let loc = locale.get();
+                let move_selected = bulk_move_sessions.clone();
+                let delete_selected = bulk_delete_sessions.clone();
+                view! {
+                    <div class="side-bulk-bar" role="toolbar" data-testid="bulk-bar"
+                        aria-label=t(loc, "sidebar.bulk_actions")>
+                        // Rebuilt only when the bar switches between hint and actions;
+                        // the Delete label follows the count on its own.
+                        {move || {
+                            if !has_selection.get() {
+                                return view! {
+                                    <span class="side-bulk-hint" data-testid="bulk-hint">{t(loc, "sidebar.select_hint")}</span>
+                                }.into_view();
+                            }
+                            let delete_selected = delete_selected.clone();
+                            view! {
+                                <button type="button" class="side-bulk-action"
+                                    data-testid="bulk-move-sessions"
+                                    class:active=move || bulk_move_open.get()
+                                    aria-haspopup="menu"
+                                    aria-expanded=move || bulk_move_open.get().to_string()
+                                    title=t(loc, "sidebar.move_selected")
+                                    on:click=move |ev: web_sys::MouseEvent| {
+                                        ev.stop_propagation();
+                                        bulk_move_open.update(|v| *v = !*v);
+                                    }>
+                                    {compose_icon("folder-move")}
+                                    <span>{t(loc, "sidebar.bulk_move")}</span>
+                                </button>
+                                <button type="button" class="side-bulk-action danger"
+                                    data-testid="bulk-delete-sessions"
+                                    title=t(loc, "ctx.delete_session")
+                                    on:click=move |_| {
+                                        bulk_move_open.set(false);
+                                        let ids: Vec<String> = selected_sessions.get_untracked().into_iter().collect();
+                                        if !ids.is_empty() {
+                                            delete_selected.call(ids);
+                                        }
+                                    }>
+                                    {compose_icon("trash")}
+                                    <span>{move || tf(loc, "sidebar.delete_selected_n", &[("n", &selected_count.get().to_string())])}</span>
+                                </button>
+                            }.into_view()
+                        }}
+                        {move || bulk_move_open.get().then(|| {
+                            let move_selected = move_selected.clone();
+                            let move_to = Callback::new(move |folder_id: Option<String>| {
+                                let ids: Vec<String> = selected_sessions.get_untracked().into_iter().collect();
+                                bulk_move_open.set(false);
+                                if !ids.is_empty() {
+                                    move_selected.call((ids, folder_id));
+                                    selected_sessions.set(HashSet::new());
+                                    select_anchor.set(None);
+                                    selecting_sessions.set(false);
+                                }
+                            });
+                            view! {
+                                <div class="side-sort-backdrop" on:click=move |_| bulk_move_open.set(false)></div>
+                                <div class="side-sort-menu side-bulk-move-menu" role="menu" data-testid="bulk-move-menu">
+                                    <div class="side-sort-label">{t(loc, "sidebar.move_selected")}</div>
+                                    <div class="side-sort-opts">
+                                        <button type="button" class="side-sort-opt" role="menuitem" data-folder-id=""
+                                            on:click=move |_| move_to.call(None)>
+                                            <span>{t(loc, "ctx.move_to_ungrouped")}</span>
+                                        </button>
+                                        {folders.get().into_iter().map(|folder| {
+                                            let name = if folder.name.trim().is_empty() {
+                                                t(loc, "folder.untitled").to_string()
+                                            } else {
+                                                folder.name
+                                            };
+                                            let id = folder.id.clone();
+                                            view! {
+                                                <button type="button" class="side-sort-opt" role="menuitem"
+                                                    data-folder-id=folder.id title=name.clone()
+                                                    on:click=move |_| move_to.call(Some(id.clone()))>
+                                                    <span>{name}</span>
+                                                </button>
+                                            }
+                                        }).collect_view()}
+                                    </div>
+                                </div>
+                            }
+                        })}
+                    </div>
+                }
+            })}
             {move || (!demo_mode.get()).then(|| view! {
                 <div class="side-foot">
                     {move || update_banner.get().map(|u| view! {

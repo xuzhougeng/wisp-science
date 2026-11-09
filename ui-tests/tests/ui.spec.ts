@@ -4496,16 +4496,106 @@ test("groups reorder by dragging and tick all their conversations at once", asyn
   await sidebar.getByRole("button", { name: "Select", exact: true }).click();
   await expect(group("Beta")).toHaveAttribute("draggable", "false");
   const tick = group("Beta").getByRole("checkbox");
+  const count = group("Beta").getByTestId("folder-count");
   await expect(tick).toHaveAttribute("aria-checked", "false");
+  await expect(count).toHaveText("2");
   await tick.click();
   await expect(tick).toHaveAttribute("aria-checked", "true");
+  await expect(count).toHaveText("2/2");
   await expect(sidebar.getByText("2 selected", { exact: true })).toBeVisible();
   await sidebar.locator(".side-item.ses", { hasText: titles[0] }).click();
   await expect(tick).toHaveAttribute("aria-checked", "mixed");
+  await expect(count).toHaveText("1/2");
   await tick.click();
   await tick.click();
   await expect(tick).toHaveAttribute("aria-checked", "false");
-  await expect(sidebar.getByTestId("bulk-delete-sessions")).toBeDisabled();
+  await expect(count).toHaveText("2");
+  // With nothing ticked the bar offers a hint, not disabled buttons.
+  await expect(sidebar.getByTestId("bulk-delete-sessions")).toHaveCount(0);
+  await expect(sidebar.getByTestId("bulk-move-sessions")).toHaveCount(0);
+  await expect(sidebar.getByTestId("bulk-hint")).toHaveText("Shift-click to select a range");
+});
+
+test("selecting lines up every tick box, keeps the group hierarchy, and Shift-click ticks a range", async ({ page }) => {
+  await page.addInitScript(tauriMock);
+  await page.goto("/?mockSelectionLayout=1");
+  await page.locator(".proj-card-main").first().click();
+
+  const sidebar = page.locator(".sidebar");
+  const select = sidebar.getByRole("button", { name: "Select", exact: true });
+  await select.click();
+  const bar = sidebar.getByTestId("bulk-bar");
+  await expect(bar).toBeVisible();
+  await expect(sidebar.getByTestId("bulk-hint")).toBeVisible();
+
+  // One tick column: the head's tick-all, the group's tick box and both kinds of row line up,
+  // while titles inside the group start further right than ungrouped ones.
+  const folder = sidebar.locator('.side-folder[data-folder-name="Figures"]');
+  const grouped = sidebar.locator('.side-folder-sessions .side-item.ses[data-session-id="sel-grouped-a"]');
+  const ungrouped = sidebar.locator(".side-ungrouped .side-item.ses");
+  const left = (locator: ReturnType<Page["locator"]>) =>
+    locator.evaluate((el) => el.getBoundingClientRect().left);
+  const ticks = await Promise.all([
+    left(sidebar.locator(".side-bulk-all .session-select-mark")),
+    left(folder.locator(".session-select-mark")),
+    left(grouped.locator(".session-select-mark")),
+    left(ungrouped.first().locator(".session-select-mark")),
+  ]);
+  for (const x of ticks) expect(Math.abs(x - ticks[0])).toBeLessThanOrEqual(1.5);
+  await expect(folder.locator(":scope > svg")).toBeVisible();
+  const groupedTitle = await left(grouped.locator(".ses-title"));
+  expect(groupedTitle - (await left(ungrouped.first().locator(".ses-title")))).toBeGreaterThan(24);
+  expect(Math.abs(groupedTitle - (await left(folder.locator(".side-folder-name"))))).toBeLessThanOrEqual(1.5);
+  // An unticked box's edge keeps at least 3:1 against the sidebar (UI-component contrast).
+  const edgeContrast = await folder.locator(".session-select-mark").evaluate((mark) => {
+    const ctx = document.createElement("canvas").getContext("2d")!;
+    const sidebarBg = getComputedStyle(document.querySelector(".sidebar")!).backgroundColor;
+    const paint = (color: string) => {
+      ctx.fillStyle = sidebarBg;
+      ctx.fillRect(0, 0, 1, 1);
+      ctx.fillStyle = color;
+      ctx.fillRect(0, 0, 1, 1);
+      return Array.from(ctx.getImageData(0, 0, 1, 1).data).slice(0, 3);
+    };
+    const luminance = (rgb: number[]) => {
+      const [r, g, b] = rgb.map((v) => {
+        const c = v / 255;
+        return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const [hi, lo] = [luminance(paint(getComputedStyle(mark).borderTopColor)), luminance(paint(sidebarBg))]
+      .sort((a, b) => b - a);
+    return (hi + 0.05) / (lo + 0.05);
+  });
+  expect(edgeContrast).toBeGreaterThanOrEqual(3);
+
+  // Shift-click ticks every row between the last click and this one, in screen order.
+  const order = await ungrouped.evaluateAll((rows) => rows.map((row) => row.getAttribute("data-session-id")));
+  expect(order).toHaveLength(3);
+  const row = (index: number) => sidebar.locator(`.side-item.ses[data-session-id="${order[index]}"]`);
+  await row(0).click();
+  await row(2).click({ modifiers: ["Shift"] });
+  for (const index of [0, 1, 2]) await expect(row(index)).toHaveAttribute("aria-pressed", "true");
+  // The grouped row sits outside the run, so it stays unticked.
+  await expect(grouped).toHaveAttribute("aria-pressed", "false");
+  await expect(sidebar.getByText("3 selected", { exact: true })).toBeVisible();
+  await expect(sidebar.getByTestId("bulk-delete-sessions")).toHaveText("Delete 3");
+  await expect(sidebar.getByTestId("bulk-hint")).toHaveCount(0);
+  // Ticked rows are tinted, not outlined.
+  await expect(row(1)).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
+
+  // A Shift-click on a ticked row clears the run between it and the last click.
+  await row(1).click({ modifiers: ["Shift"] });
+  for (const index of [1, 2]) await expect(row(index)).toHaveAttribute("aria-pressed", "false");
+  await expect(row(0)).toHaveAttribute("aria-pressed", "true");
+  await expect(sidebar.getByText("1 selected", { exact: true })).toBeVisible();
+
+  // Done leaves selecting and takes the bar with it.
+  await sidebar.getByTestId("bulk-select-done").click();
+  await expect(bar).toHaveCount(0);
+  await expect(select).toBeVisible();
+  await expect(row(0)).not.toHaveAttribute("aria-pressed", /.+/);
 });
 
 test("group action button visibly renames and deletes groups", async ({ page }) => {
