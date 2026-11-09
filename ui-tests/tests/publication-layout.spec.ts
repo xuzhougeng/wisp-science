@@ -25,7 +25,7 @@ async function open(page: Page, mode: "cards" | "new" | "draft", locale = "en") 
       };
     };
   }, mode);
-  await page.locator(".sidebar").getByRole("button", { name: /^(Publication|论文证据)$/ }).click();
+  await page.locator(".sidebar").getByRole("button", { name: /^(Publication|论文整理)$/ }).click();
   await expect(page.getByTestId("publication-workspace")).toBeVisible();
 }
 
@@ -113,4 +113,73 @@ test("wide source previews use height while editing and narrow layouts remain us
   await fits(page);
   await page.getByRole("button", { name: "Version history", exact: true }).click();
   await fits(page);
+});
+
+test("source paging stays in view and the binding form opens under the tabs with its real values", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await open(page, "draft");
+  await page.evaluate(() => {
+    const core = (window as any).__TAURI__.core;
+    const invoke = core.invoke;
+    core.invoke = async (cmd: string, args: any) => {
+      // serde_wasm_bindgen hands JSON objects to the bridge as a Map.
+      const arg = (key: string) => args instanceof Map ? args.get(key) : args?.[key];
+      if (cmd !== "list_publication_sources" || arg("kind") !== "messages") return invoke(cmd, args);
+      const offset = Number(arg("offset") ?? 0);
+      const sources = Array.from({ length: offset === 0 ? 50 : 7 }, (_, i) => ({
+        kind: "message_span", id: `message-${offset + i}`, title: "figureS2C", detail: "assistant",
+        text: `**Checked** \`go_complex_heatmap.r\` part ${offset + i + 1}`,
+        frame_id: "publication-session", message_seq: offset + i + 1,
+      }));
+      return { sources, has_more: offset === 0 };
+    };
+  });
+  await page.getByTestId("add-publication-evidence").click();
+  // Adding a source is a step of the Evidence tab; one page of sources needs no pager.
+  await expect(page.locator(".publication-page-tabs button.active")).toHaveText("Evidence");
+  await expect(page.getByTestId("publication-source-pagination")).toBeHidden();
+  await page.getByRole("button", { name: "Research conversations", exact: true }).click();
+  const choices = page.locator(".publication-source-choice");
+  await expect(choices).toHaveCount(50);
+  await expect(choices.first()).toContainText("Assistant");
+  await expect(choices.first().locator("p")).toHaveText("Checked go_complex_heatmap.r part 1");
+
+  // The list overflows, yet paging is reachable without scrolling it or the page.
+  const list = page.locator(".publication-source-list");
+  expect(await list.evaluate(el => el.scrollHeight > el.clientHeight && el.scrollTop === 0)).toBe(true);
+  expect(await page.locator(".publication-page").evaluate(el => el.scrollTop)).toBe(0);
+  const pager = page.getByTestId("publication-source-pagination");
+  await expect(pager).toBeInViewport({ ratio: 1 });
+  await expect(pager).toContainText("1–50");
+  await expect(page.getByTestId("publication-source-previous")).toBeDisabled();
+  await fits(page);
+  await shot(page, "source-paging-1440");
+  await page.getByTestId("publication-source-next").click();
+  await expect(choices).toHaveCount(7);
+  await expect(pager).toContainText("51–57");
+  await expect(page.getByTestId("publication-source-next")).toBeDisabled();
+  await page.getByTestId("publication-source-previous").click();
+  await expect(choices).toHaveCount(50);
+
+  // "Explain its use" opens the form in view, not below a full-height page.
+  await choices.first().click();
+  await page.getByTestId("publication-source-continue").click();
+  const binding = page.getByTestId("publication-binding-dialog");
+  await expect(binding).toBeInViewport({ ratio: 1 });
+  await expect(page.getByRole("button", { name: "Bind exact evidence" })).toBeInViewport({ ratio: 1 });
+  // Dropdowns show the values that will be saved, not their first option.
+  const selects = binding.locator("select");
+  await expect(selects.nth(0)).toHaveValue("publication-revision-1");
+  await expect(selects.nth(3)).toHaveValue("selected");
+  await expect(selects.nth(4)).toHaveValue("private");
+  await page.keyboard.press("Escape");
+  await expect(binding).toHaveCount(0);
+  await expect(page.getByTestId("publication-source-picker")).toBeVisible();
+
+  // Cancel leaves the picker; the outline editor also starts on its real default.
+  await page.getByTestId("publication-source-cancel").click();
+  await expect(page.getByTestId("publication-source-picker")).toHaveCount(0);
+  await expect(page.locator(".publication-manuscript")).toBeVisible();
+  await page.locator(".publication-manuscript .publication-pane-head button").click();
+  await expect(page.locator(".publication-item-editor select").first()).toHaveValue("figure");
 });
