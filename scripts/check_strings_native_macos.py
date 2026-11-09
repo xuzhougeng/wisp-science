@@ -23,6 +23,8 @@ CJK = re.compile(r"[　-鿿＀-￯]")
 ALLOWED = {
     # Product, service and format names, identical in both locales.
     "Wisp Science", "Python", "Rscript", "Agents", "Fast", "PNG", "HTML", "SHA-256", "SHA-256: ", "320–2400 px",
+    # Managed-model brand prefix; the appended model ID is also locale-independent.
+    "Magpie · ",
     # Field names as the Feishu console and HTTP spell them.
     "App ID", "App Secret", "User-Agent",
     # Not shown: a dispatch queue label.

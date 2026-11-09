@@ -26,6 +26,15 @@ class StringCheckTests(unittest.TestCase):
             'Button("—") {}\n'
         ), [])
 
+    def test_managed_brand_prefix_is_allowed_but_raw_action_labels_are_not(self):
+        self.assertEqual(self.scan(
+            'Text("Magpie · " + model)\n'
+            'let choice = Choice(id: "http:", label: "Magpie · " + model)\n'
+            'Button(actionLabel("discard")) {}\n'
+        ), [])
+        self.assertEqual(self.scan('Button("discard") {}\n'),
+                         ['English-only literal "discard"'])
+
     def test_the_swiftui_sources_are_clean(self):
         self.assertEqual(list(findings()), [])
 

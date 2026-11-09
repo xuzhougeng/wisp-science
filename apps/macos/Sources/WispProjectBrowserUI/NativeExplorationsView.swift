@@ -111,7 +111,7 @@ struct NativeExplorationsView: View {
             .background(NativeSettingsEscape(enabled: !model.writing && pending == nil, close: close))
             .confirmationDialog(localized("确认探索操作"), isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } })) {
                 if let action = pending {
-                    Button(label(action), role: ["abandon", "discard"].contains(action) ? .destructive : nil) {
+                    Button(actionLabel(action), role: ["abandon", "discard"].contains(action) ? .destructive : nil) {
                         let args = pendingArgs; pending = nil
                         Task { await model.mutate(action, args: args) }
                     }
@@ -121,7 +121,7 @@ struct NativeExplorationsView: View {
             .task { await model.load() }.onDisappear { model.close() }
     }
     private func confirm(_ action: String, _ args: [String: SettingsValue]) { pendingArgs = args; pending = action }
-    private func label(_ action: String) -> String { localized(["start": "开始探索", "promote": "采用探索", "discard": "丢弃候选", "manual_open": "手动整理", "manual_finish": "完成手动整理", "abandon": "放弃整轮探索"][action] ?? action) }
+    private func actionLabel(_ action: String) -> String { localized(["start": "开始探索", "promote": "采用探索", "discard": "丢弃候选", "manual_open": "手动整理", "manual_finish": "完成手动整理", "abandon": "放弃整轮探索"][action] ?? action) }
     private func candidate(_ row: SettingsValue) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(row["exploration"]["name"].string).font(.headline)
@@ -130,9 +130,9 @@ struct NativeExplorationsView: View {
                 Button(localized("打开探索")) { open(row["exploration"]["frame_id"].string) }
                 Button(localized("查看变更")) { Task { await model.inspect(row) } }
                 if ["active", "failed"].contains(row["exploration"]["status"].string) {
-                    Button(label("discard")) { confirm("discard", model.arguments(row)) }.disabled(!model.canWrite)
+                    Button(actionLabel("discard")) { confirm("discard", model.arguments(row)) }.disabled(!model.canWrite)
                 }
-                Button(label("abandon")) { confirm("abandon", ["session_id": row["source_frame_id"]]) }.disabled(!model.canWrite)
+                Button(actionLabel("abandon")) { confirm("abandon", ["session_id": row["source_frame_id"]]) }.disabled(!model.canWrite)
             }.disabled(model.busy)
         }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
     }
@@ -146,10 +146,10 @@ struct NativeExplorationsView: View {
             DisclosureGroup(localized("产物、运行与外部影响")) { NativeSettingsSummary(value: preview["diff"]) }
             ForEach(Array(eligibility["reasons"].array.enumerated()), id: \.offset) { _, reason in Text(reason["message"].string).foregroundStyle(.orange) }
             HStack {
-                Button(label("promote")) { var guarded = args; guarded["expected_guard_hash"] = eligibility["expectedGuardHash"]; confirm("promote", guarded) }.disabled(!model.canWrite || !eligibility["eligible"].bool)
+                Button(actionLabel("promote")) { var guarded = args; guarded["expected_guard_hash"] = eligibility["expectedGuardHash"]; confirm("promote", guarded) }.disabled(!model.canWrite || !eligibility["eligible"].bool)
                 if eligibility["manualResolutionAvailable"].bool {
-                    Button(label("manual_open")) { confirm("manual_open", args) }.disabled(!model.canWrite)
-                    Button(label("manual_finish")) { confirm("manual_finish", args) }.disabled(!model.canWrite)
+                    Button(actionLabel("manual_open")) { confirm("manual_open", args) }.disabled(!model.canWrite)
+                    Button(actionLabel("manual_finish")) { confirm("manual_finish", args) }.disabled(!model.canWrite)
                 }
             }
         }.padding(12)
