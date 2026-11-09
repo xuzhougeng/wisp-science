@@ -613,7 +613,7 @@ struct ProjectWorkspace: View {
                 if moreOpen {
                     VStack(spacing: 0) {
                         moreEntry("research-trail", "研究历程", id: "sidebar-journey") { publication.dismiss(); model.journey.open(projectID: project.id, day: model.journeyFocus?.projectID == project.id ? model.journeyFocus?.day : nil) }
-                        moreEntry("book", "论文证据", id: "sidebar-publication") { journey.dismiss(); publication.open(projectID: project.id, databaseURL: model.databaseURL) }
+                        moreEntry("book", "论文整理", id: "sidebar-publication") { journey.dismiss(); publication.open(projectID: project.id, databaseURL: model.databaseURL) }
                         moreEntry("star", "收藏库", id: "sidebar-library") { model.library.presented = true }
                         moreEntry("archive-import", "导入会话 ZIP 归档", id: "import-session-archive") { sessionImportPresented = true }
                         moreEntry("conversation-import", "导入 Codex / Claude 会话", id: "import-external-session") { externalImportPresented = true }
