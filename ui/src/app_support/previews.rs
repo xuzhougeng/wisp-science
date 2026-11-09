@@ -28,7 +28,7 @@ pub(crate) fn table_view(table: &TableData, locale: Locale) -> impl IntoView {
                 </button>
             </div>
             <div class="tbl-wrap">
-                <table class="tbl">
+                <table class="tbl" data-select-all="">
                     <thead><tr>{headers.into_iter().map(|h| view! { <th inner_html=h></th> }).collect_view()}</tr></thead>
                     <tbody>
                         {rows.into_iter().map(|r| view! {
@@ -478,7 +478,7 @@ pub(crate) fn NotebookFilePreview(path: String) -> impl IntoView {
         (Some(parsed), _) => {
             let lang = parsed.lang.clone();
             view! {
-                <div class="notebook-cells" id=hid.clone()>
+                <div class="notebook-cells" id=hid.clone() data-select-all="">
                     {parsed.cells.iter().enumerate().map(|(i, cell)| {
                         let outputs = cell.outputs.iter().enumerate().map(|(output_i, out)| {
                             notebook_output_view(
@@ -1167,6 +1167,7 @@ pub(crate) fn FilePreview(dom_id: String, path: String, kind: String) -> impl In
         return view! { <DocxReviewPreview dom_id=dom_id path=path/> }.into_view();
     }
     let locale = use_locale();
+    let select_all = (kind != "image").then_some("");
     let id_for_effect = dom_id.clone();
     let path_for_effect = path.clone();
     create_effect(move |_| {
@@ -1292,8 +1293,14 @@ pub(crate) fn FilePreview(dom_id: String, path: String, kind: String) -> impl In
             let _ = mount_preview(mount_kind, &dom_id, &payload).await;
         });
     });
-    view! { <div class="rp-heavy" id=dom_id>{move || t(locale.get(), "loading")}</div> }
-        .into_view()
+    // Images carry no text: Ctrl/Cmd+A there selects nothing rather than
+    // tinting the picture.
+    view! {
+        <div class="rp-heavy" id=dom_id data-select-all=select_all>
+            {move || t(locale.get(), "loading")}
+        </div>
+    }
+    .into_view()
 }
 
 pub(crate) fn artifact_preview(a: &Artifact, dom_id: String, locale: Locale) -> impl IntoView {
@@ -1311,7 +1318,7 @@ pub(crate) fn artifact_preview(a: &Artifact, dom_id: String, locale: Locale) -> 
         }
         PreviewData::File { path, kind } => view! {
             <p class="rp-path hint">{a.location.clone().unwrap_or_else(|| path.clone())}</p>
-            <div class="rp-file-preview" data-file-path=path.clone()>
+            <div class="rp-file-preview" data-select-scope="" data-file-path=path.clone()>
                 <WorkspaceFilePreview
                     dom_id=dom_id
                     path=path.clone()
@@ -1532,7 +1539,7 @@ pub(crate) fn RpCodeView(lang: String, body: String) -> impl IntoView {
     view! {
         <div class="rp-code">
             <pre class="rp-code-gutter">{gutter}</pre>
-            <pre class="rp-code-body"><code node_ref=code_ref class=format!("language-{lang_class}") id=code_id></code></pre>
+            <pre class="rp-code-body" data-select-all=""><code node_ref=code_ref class=format!("language-{lang_class}") id=code_id></code></pre>
         </div>
     }
 }
@@ -1830,7 +1837,7 @@ pub(crate) fn RpCodeEditor(
                                 <span>{format!("{}\n", selected.after)}</span>
                             }
                         }}</pre>
-                        <textarea node_ref=input_ref class="rp-code-input" wrap="off" spellcheck="false"
+                        <textarea node_ref=input_ref class="rp-code-input" data-select-all="" wrap="off" spellcheck="false"
                             autocomplete="off" autocorrect="off" autocapitalize="off"
                             aria-label=move || t(locale.get(), "editor.source")
                             prop:value=move || draft.get()
@@ -2142,7 +2149,7 @@ pub(crate) fn ArtifactModal(
                     <button class="icon-btn" title=move || t(locale.get(), "right.close")
                         on:click=move |_| on_close.call(())>{compose_icon("close")}</button>
                 </div>
-                <div class="am-figure" class:zoomable-preview=is_zoomable
+                <div class="am-figure" data-select-scope="" class:zoomable-preview=is_zoomable
                     class:docx-preview=is_docx class:office-preview=is_office
                     data-file-path=path_head.clone()>
                     <WorkspaceFilePreview

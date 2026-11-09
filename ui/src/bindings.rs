@@ -143,6 +143,14 @@ extern "C" {
     fn install_scrollbar_reveal();
 }
 
+#[wasm_bindgen(module = "/src/select_all.js")]
+extern "C" {
+    fn install_document_select_all();
+    /// Ctrl/Cmd+A target: select the open document's text. False when no
+    /// document surface owns the shortcut (keep the browser default).
+    pub(crate) fn select_document_text() -> bool;
+}
+
 #[wasm_bindgen(module = "/src/marks.js")]
 extern "C" {
     /// Underline the given saved excerpts (JSON string array) in the transcript.
@@ -171,6 +179,12 @@ pub(crate) fn attach_chat_autoscroll() {
 /// Hide scrollbar thumbs until their container scrolls (then fade out on idle).
 pub(crate) fn setup_scrollbar_reveal() {
     install_scrollbar_reveal();
+}
+
+/// Track the last pressed/focused element so Ctrl/Cmd+A can tell which
+/// document the user is reading (see `select_document_text`).
+pub(crate) fn setup_document_select_all() {
+    install_document_select_all();
 }
 
 /// Nudge the chat view after a non-transcript layout change (respects scroll-up).

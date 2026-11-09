@@ -64,8 +64,9 @@ use bindings::{
     jump_chat_to_item, jump_chat_to_user, listen, listen_current_window, listen_native_file_drop,
     native_drop_in_composer, open_browser_extension_page, open_external_url, open_tutorials,
     pasted_image_count, preserve_chat_prepend_position, preview_selection,
-    restore_chat_session_scroll, schedule_chat_follow, set_saved_marks, set_window_title,
-    setup_scrollbar_reveal, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
+    restore_chat_session_scroll, schedule_chat_follow, select_document_text, set_saved_marks,
+    set_window_title, setup_document_select_all, setup_scrollbar_reveal, CHAT_SCROLLER_ID,
+    CHAT_THREAD_ID,
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
 use dto::*;
@@ -12752,6 +12753,13 @@ fn App() -> impl IntoView {
                 ev.prevent_default();
                 shortcut_action.call("settings");
             }
+            // Select-all while reading a document selects that document,
+            // not the whole app shell. Text fields keep their own select-all.
+            "a" if !ev.shift_key() && !ev.alt_key() && !keyboard_event_targets_text_entry(ev) => {
+                if select_document_text() {
+                    ev.prevent_default();
+                }
+            }
             _ => {}
         }
     });
@@ -13708,6 +13716,7 @@ fn App() -> impl IntoView {
                         }
                         class:runtime-panel-open=move || run_language.is_some() && center_runtime_panel.get()
                         class:center-mcp-app-preview=is_mcp_app
+                        data-select-scope=""
                         data-file-revision=revision
                         data-preview-kind=kind.clone()
                         data-file-path=path.clone()
@@ -20085,6 +20094,7 @@ pub fn main() {
         console_error_panic_hook::hook(info);
     }));
     setup_scrollbar_reveal();
+    setup_document_select_all();
     let is_pet_window = window().location().search().ok().is_some_and(|query| {
         query
             .split('&')
