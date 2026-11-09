@@ -1127,7 +1127,7 @@ narrow windows, both locales/schemes and originating draft retention.
 
 ### Windows publication evidence workspace
 
-Open **研究工具 → 论文证据** inside a project. The workspace supports paper and
+Open **研究工具 → 论文整理** inside a project. The workspace supports paper and
 revision selection, hierarchical section/claim/figure/table/method/supplement
 editing, multiline content and per-revision/item drafts. Returning from an editor
 or switching revisions retains unsaved text for the lifetime of the page.

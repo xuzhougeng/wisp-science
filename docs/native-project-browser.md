@@ -449,7 +449,7 @@ macOS editing surfaces are separate from its current implementation.
 
 ## Publication workspace
 
-The sidebar **更多 → 论文证据** entry replaces the conversation column with the
+The sidebar **更多 → 论文整理** entry replaces the conversation column with the
 publication workspace for the open project. `native_publication_workspace`
 reads that project's papers. `native_publication_create` creates one paper and
 its first revision. `native_publication_sources` lists exact artifact versions,

@@ -1,7 +1,7 @@
 use crate::app_support::compose_icon;
 use crate::bindings::invoke_checked;
 use crate::dto::{PublicationSourceChoice, PublicationSourcePage};
-use crate::i18n::{t, Locale};
+use crate::i18n::{t, tf, Locale};
 use crate::publication::PublicationEvidenceSource;
 use crate::text::event_target_value;
 use leptos::*;
@@ -21,11 +21,48 @@ fn utf16_byte_offset(text: &str, offset: u32) -> Option<usize> {
     (units == offset).then_some(text.len())
 }
 
+/// Card teaser for a transcript source: drops Markdown emphasis, code and
+/// heading markers and collapses whitespace. The preview keeps the exact text.
+fn source_snippet(text: &str) -> String {
+    let cleaned: String = text.chars().filter(|ch| !matches!(ch, '*' | '`')).collect();
+    let mut snippet = String::new();
+    for word in cleaned
+        .split_whitespace()
+        .filter(|word| !word.chars().all(|ch| ch == '#'))
+    {
+        if !snippet.is_empty() {
+            snippet.push(' ');
+        }
+        snippet.push_str(word);
+        if snippet.chars().count() >= 160 {
+            break;
+        }
+    }
+    snippet.chars().take(160).collect()
+}
+
+/// Short label beside a source title: file version, speaker, or Run status.
+fn source_detail(locale: Locale, source: &PublicationSourceChoice) -> String {
+    match (source.kind.as_str(), source.detail.as_str()) {
+        ("artifact_version", version) => format!("v{version}"),
+        ("message_span", role @ ("user" | "assistant")) => {
+            t(locale, &format!("publication.role.{role}"))
+        }
+        (_, detail) => detail.to_string(),
+    }
+}
+
+/// 1-based range of the sources shown on the current page, if any.
+fn source_range(offset: u32, shown: usize) -> Option<(u32, u32)> {
+    (shown > 0).then_some((offset + 1, offset + shown as u32))
+}
+
 #[component]
 pub(super) fn PublicationSourcePicker(
     locale: ReadSignal<Locale>,
     on_select: Callback<PublicationEvidenceSource>,
     on_advanced: Callback<()>,
+    on_cancel: Callback<()>,
 ) -> impl IntoView {
     let kind = create_rw_signal("files".to_string());
     let query = create_rw_signal(String::new());
@@ -83,51 +120,86 @@ pub(super) fn PublicationSourcePicker(
     });
     view! {
         <section class="publication-source-picker" data-testid="publication-source-picker">
-            <h3>{move || t(locale.get(), "publication.choose_source")}</h3>
-            <p class="publication-help">{move || t(locale.get(), "publication.choose_source_hint")}</p>
-            <div class="publication-source-tabs">
-                {["files", "runs", "messages"].into_iter().map(|value| view! {
-                    <button type="button" class:active=move || kind.get() == value
-                        aria-pressed=move || kind.get() == value
-                        on:click=move |_| { kind.set(value.into()); offset.set(0); load.call(()); }>
-                        {move || t(locale.get(), &format!("publication.sources.{value}"))}
-                    </button>
-                }).collect_view()}
+            <header class="publication-source-head">
+                <div>
+                    <h3>{move || t(locale.get(), "publication.choose_source")}</h3>
+                    <p class="publication-help">{move || t(locale.get(), "publication.choose_source_hint")}</p>
+                </div>
+                <button type="button" class="secondary" data-testid="publication-source-cancel"
+                    on:click=move |_| on_cancel.call(())>
+                    {move || t(locale.get(), "publication.cancel")}
+                </button>
+            </header>
+            <div class="publication-source-controls">
+                <div class="publication-source-tabs">
+                    {["files", "runs", "messages"].into_iter().map(|value| view! {
+                        <button type="button" class:active=move || kind.get() == value
+                            aria-pressed=move || (kind.get() == value).to_string()
+                            on:click=move |_| { kind.set(value.into()); offset.set(0); load.call(()); }>
+                            {move || t(locale.get(), &format!("publication.sources.{value}"))}
+                        </button>
+                    }).collect_view()}
+                </div>
+                <form class="publication-source-search" on:submit=move |event| { event.prevent_default(); offset.set(0); load.call(()); }>
+                    <input aria-label=move || t(locale.get(), "publication.source_search")
+                        placeholder=move || t(locale.get(), "publication.source_search")
+                        prop:value=move || query.get() on:input=move |event| query.set(event_target_value(&event)) />
+                    <button type="submit" class="secondary" disabled=move || loading.get()>{compose_icon("search")}{move || t(locale.get(), "publication.search")}</button>
+                </form>
             </div>
-            <form class="publication-source-search" on:submit=move |event| { event.prevent_default(); offset.set(0); load.call(()); }>
-                <input aria-label=move || t(locale.get(), "publication.source_search")
-                    placeholder=move || t(locale.get(), "publication.source_search")
-                    prop:value=move || query.get() on:input=move |event| query.set(event_target_value(&event)) />
-                <button type="submit" class="secondary" disabled=move || loading.get()>{compose_icon("search")}{move || t(locale.get(), "publication.search")}</button>
-            </form>
             {move || error.get().map(|error| view! { <div class="publication-error" role="alert">{error}</div> })}
             <div class="publication-source-grid">
-                <div class="publication-source-list" aria-busy=move || loading.get()>
-                    {move || if loading.get() { view! { <p class="publication-help">{t(locale.get(), "publication.loading")}</p> }.into_view() } else {
-                        let choices = page.get().sources;
-                        if choices.is_empty() { view! { <p class="publication-help">{t(locale.get(), "publication.sources_empty")}</p> }.into_view() } else {
-                            choices.into_iter().map(|source| {
-                                let id = source.id.clone();
-                                let text = source.text.clone();
-                                let title = source.title.clone();
-                                let detail = if source.kind == "artifact_version" { format!("v{}", source.detail) } else { source.detail.clone() };
-                                view! {
-                                    <button type="button" class="publication-source-choice"
-                                        class:active=move || selected.get().is_some_and(|source| source.id == id)
-                                        on:click=move |_| { selected.set(Some(source.clone())); range.set(None); }>
-                                        <strong>{title}</strong><span>{detail}</span>
-                                        {text.map(|text| view! { <p>{text.chars().take(90).collect::<String>()}</p> })}
-                                    </button>
-                                }
-                            }).collect_view()
-                        }
-                    }}
-                    <div class="publication-source-pagination">
-                        <button type="button" class="secondary" disabled=move || loading.get() || offset.get() == 0
-                            on:click=move |_| { offset.update(|v| *v = v.saturating_sub(50)); load.call(()); }>{move || t(locale.get(), "publication.previous")}</button>
-                        <button type="button" class="secondary" disabled=move || loading.get() || !page.get().has_more
-                            on:click=move |_| { offset.update(|v| *v += 50); load.call(()); }>{move || t(locale.get(), "publication.next")}</button>
+                <div class="publication-source-column">
+                    <div class="publication-source-list" aria-busy=move || loading.get().to_string()>
+                        {move || if loading.get() { view! { <p class="publication-help">{t(locale.get(), "publication.sources_loading")}</p> }.into_view() } else {
+                            let choices = page.get().sources;
+                            if choices.is_empty() { view! { <p class="publication-help">{t(locale.get(), "publication.sources_empty")}</p> }.into_view() } else {
+                                let locale = locale.get();
+                                choices.into_iter().map(|source| {
+                                    let id = source.id.clone();
+                                    let pressed_id = source.id.clone();
+                                    let snippet = source.text.as_deref().map(source_snippet);
+                                    let title = source.title.clone();
+                                    let detail = source_detail(locale, &source);
+                                    view! {
+                                        <button type="button" class="publication-source-choice"
+                                            class:active=move || selected.get().is_some_and(|source| source.id == id)
+                                            aria-pressed=move || selected.get().is_some_and(|source| source.id == pressed_id).to_string()
+                                            on:click=move |_| { selected.set(Some(source.clone())); range.set(None); }>
+                                            <span class="publication-source-choice-head">
+                                                <strong>{title}</strong>
+                                                <span class="publication-source-detail">{detail}</span>
+                                            </span>
+                                            {snippet.map(|snippet| view! { <p>{snippet}</p> })}
+                                        </button>
+                                    }
+                                }).collect_view()
+                            }
+                        }}
                     </div>
+                    // Outside the scrolling list, so paging never needs a scroll to the last card.
+                    <nav class="publication-source-pagination" data-testid="publication-source-pagination"
+                        hidden=move || offset.get() == 0 && !page.get().has_more>
+                        <button type="button" class="secondary" data-testid="publication-source-previous"
+                            disabled=move || loading.get() || offset.get() == 0
+                            on:click=move |_| { offset.update(|v| *v = v.saturating_sub(50)); load.call(()); }>
+                            {compose_icon("chevron-left")}{move || t(locale.get(), "publication.previous")}
+                        </button>
+                        <span class="publication-source-range" aria-live="polite">
+                            {move || if loading.get() { None } else {
+                                source_range(offset.get(), page.with(|page| page.sources.len())).map(|(from, to)| tf(
+                                    locale.get(),
+                                    "publication.source_range",
+                                    &[("from", &from.to_string()), ("to", &to.to_string())],
+                                ))
+                            }}
+                        </span>
+                        <button type="button" class="secondary" data-testid="publication-source-next"
+                            disabled=move || loading.get() || !page.get().has_more
+                            on:click=move |_| { offset.update(|v| *v += 50); load.call(()); }>
+                            {move || t(locale.get(), "publication.next")}{compose_icon("chevron-right")}
+                        </button>
+                    </nav>
                 </div>
                 <div class="publication-source-preview">
                     {move || selected.get().map(|source| {
@@ -156,7 +228,7 @@ pub(super) fn PublicationSourcePicker(
                                     on_select.call(PublicationEvidenceSource {kind,id,label:source.title.clone()});
                                 }>{move || t(locale.get(), "publication.explain_use")}</button>
                         }.into_view()
-                    }).unwrap_or_else(|| view! { <p class="publication-help">{t(locale.get(), "publication.choose_source_first")}</p> }.into_view())}
+                    }).unwrap_or_else(|| view! { <p class="publication-help publication-source-placeholder">{t(locale.get(), "publication.choose_source_first")}</p> }.into_view())}
                 </div>
             </div>
             <details class="publication-advanced"><summary>{move || t(locale.get(), "publication.advanced")}</summary>
@@ -169,7 +241,7 @@ pub(super) fn PublicationSourcePicker(
 
 #[cfg(test)]
 mod tests {
-    use super::utf16_byte_offset;
+    use super::{source_range, source_snippet, utf16_byte_offset};
     #[test]
     fn transcript_selection_preserves_utf8_boundaries() {
         let text = "A水稻🌱结果";
@@ -179,5 +251,22 @@ mod tests {
         assert_eq!(utf16_byte_offset(text, 5), Some(11));
         assert_eq!(utf16_byte_offset(text, 7), Some(text.len()));
         assert_eq!(utf16_byte_offset(text, 8), None);
+    }
+
+    #[test]
+    fn source_snippet_drops_markdown_markers_and_bounds_length() {
+        assert_eq!(
+            source_snippet("## 确认了。**`celltype_go/`** 就是\n\n这张图 `run_in_context`"),
+            "确认了。celltype_go/ 就是 这张图 run_in_context"
+        );
+        assert_eq!(source_snippet("  \n "), "");
+        assert_eq!(source_snippet(&"水稻 ".repeat(200)).chars().count(), 160);
+    }
+
+    #[test]
+    fn source_range_is_one_based_and_empty_without_sources() {
+        assert_eq!(source_range(0, 50), Some((1, 50)));
+        assert_eq!(source_range(50, 7), Some((51, 57)));
+        assert_eq!(source_range(50, 0), None);
     }
 }
