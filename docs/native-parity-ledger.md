@@ -23,6 +23,7 @@ parity-ledger` 检查这一点（`scripts/check_native_parity.py`）。
 
 | WebView 改动 | SwiftUI 状态 | 说明 |
 | --- | --- | --- |
+| 回溯／编辑／分支时，若找不到对应的已保存消息，后端拒绝并提示「在已保存的会话中找不到这条消息，没有做任何改动。」，不再退回到 epoch 0 截断（那会删掉之后所有压缩 epoch）；WebView 只新增这条提示的中文翻译 | 待补 | 拒绝逻辑在共享后端（`resolve_visual_keep`），SwiftUI 回溯同样受保护，但提示目前显示英文。另外 SwiftUI 回溯用 `load_session_user_messages` 的序号，与 WebView 的轮次序号（遗留消息前缀 + 可视轮次）不一致，需对齐后再改状态。 |
 | 本轮界面对齐：中间文档标签与侧聊、工作流三栏、Lab、提示音、用量图表、会话子智能体模型 | 已补 | 本地实现及回归用例已补；细节与限制见 `native-conversations.md` / `native-settings.md`，本轮定向验证通过。 |
 | 右侧「Agents」面板每秒刷新时同时只跑一次读取，期间的刷新合并为读取结束后的一次，切换对话后丢弃旧对话的结果；Run 列表在 turn 或传输进行时每秒只读进行中的 Run，完整列表仍每 5 秒读一次（#1690） | 待补 | 子智能体动态改为按新增消息增量读取（`load_messages_since`），由桌面后端共享。SwiftUI 需核对自己的 Agents 与 Run 轮询：`native_panels` / `native_runtimes` 仍读取完整 Run 列表。 |
 | 失败探索允许丢弃和手动整理；主线、候选及同项目其他会话的冻结横幅直接提供「放弃探索」（#1691） | 已补 | 本地实现：项目冻结横幅、失败候选恢复入口及按来源会话放弃整轮；本轮定向验证通过。 |

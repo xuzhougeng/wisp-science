@@ -3227,18 +3227,61 @@ mod context_epoch_tests {
         );
     }
 
-    #[test]
-    fn head_keep_seq_maps_row_counts_onto_durable_seqs() {
-        let rows = vec![
-            (7, Message::system("sys")),
-            (8, Message::user("q")),
-            (9, Message::assistant("a")),
-        ];
-        assert_eq!(crate::session_commands::head_keep_seq(&rows, 0), 6);
-        assert_eq!(crate::session_commands::head_keep_seq(&rows, 1), 7);
-        assert_eq!(crate::session_commands::head_keep_seq(&rows, 3), 9);
-        assert_eq!(crate::session_commands::head_keep_seq(&rows, 9), 9);
-        assert_eq!(crate::session_commands::head_keep_seq(&[], 0), 0);
+    /// A turn the event log cannot anchor used to resolve to the last epoch-0
+    /// row, and the rewind then deleted every compacted epoch after it.
+    #[tokio::test]
+    async fn resolve_visual_keep_refuses_turns_it_cannot_anchor_after_compaction() {
+        let store = store_with_frame().await;
+        let mut ctx = seeded_context(&store, long_turns(4), 10_000).await;
+        let mut event_seq = 1i64;
+        for index in 0..4i64 {
+            persist_visual_turn(&store, &mut event_seq, 2 + 2 * index, &format!("q{index}")).await;
+        }
+        ctx.compact(
+            &SummaryProvider("Objective\nkeep going"),
+            &archive("refuse-unanchored.json"),
+        )
+        .await
+        .unwrap();
+        persist_compaction_epoch(&store, "f", &ctx, "manual", true)
+            .await
+            .unwrap();
+        assert_eq!(store.frame_head_epoch("f").await.unwrap(), 1);
+        // A live turn after the compaction, appended into epoch 1.
+        let live = store.max_message_seq("f").await.unwrap() + 1;
+        store
+            .append_message("f", live, &Message::user("question 4"))
+            .await
+            .unwrap();
+        store
+            .append_message("f", live + 1, &Message::assistant("answer 4"))
+            .await
+            .unwrap();
+        persist_visual_turn(&store, &mut event_seq, live, "q4").await;
+        // A turn whose MessageBoundary never reached the log.
+        store
+            .append_session_ui_event(
+                "f",
+                event_seq,
+                r#"{"kind":"User","frame_id":"f","text":"q5"}"#,
+            )
+            .await
+            .unwrap();
+
+        let resolve = |index, after_response| {
+            crate::session_commands::resolve_visual_keep(&store, "f", index, after_response)
+        };
+        assert_eq!(resolve(4, false).await.unwrap(), (1, live - 1));
+        let not_found = crate::session_commands::USER_TURN_NOT_FOUND.to_string();
+        assert_eq!(resolve(5, false).await.unwrap_err(), not_found);
+        assert_eq!(resolve(6, false).await.unwrap_err(), not_found);
+        assert_eq!(resolve(6, true).await.unwrap_err(), not_found);
+        // The boundary-less turn still has no anchor to keep its reply by.
+        assert_eq!(resolve(5, true).await.unwrap_err(), not_found);
+        // With no next anchor, the turn before it keeps the rest of its epoch.
+        assert_eq!(resolve(4, true).await.unwrap(), (1, live + 1));
+        assert_eq!(store.frame_head_epoch("f").await.unwrap(), 1);
+        assert_eq!(store.context_epochs("f").await.unwrap().len(), 1);
     }
 }
 
