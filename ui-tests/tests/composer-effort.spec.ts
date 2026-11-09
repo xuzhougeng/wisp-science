@@ -237,7 +237,7 @@ test("the effort pill follows the session's model binding", async ({ page }) => 
   await page.locator(".model-picker-btn").click();
   await page.getByRole("button", { name: /opus-4\.8/ }).click();
   await page.getByTestId("model-switch-confirm")
-    .getByRole("button", { name: "Yes, switch" }).click();
+    .getByRole("button", { name: "Switch model", exact: true }).click();
   await expect(page.locator(".model-picker-label")).toHaveText("opus-4.8");
   await expect(page.getByTestId("composer-effort-value")).toHaveText("Max");
 

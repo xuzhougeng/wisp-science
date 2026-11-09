@@ -19406,6 +19406,8 @@ fn App() -> impl IntoView {
             let is_delete_session = matches!(&action, UiConfirm::DeleteSessions(_));
             let title_key = if is_full_permission {
                 "full_permission.confirm_title"
+            } else if is_delete_session {
+                "session.delete_title"
             } else {
                 "confirm.title"
             };
@@ -19439,17 +19441,25 @@ fn App() -> impl IntoView {
             };
             view! {
             <div class="overlay">
-                <div class="modal confirm-modal">
-                    <h2>{move || t(locale.get(), title_key)}</h2>
-                    <div class="hint">{message}</div>
+                <div class="modal confirm-modal" class:session-delete-confirm=is_delete_session
+                    role="alertdialog" aria-modal="true" aria-labelledby="ui-confirm-title" aria-describedby="ui-confirm-description">
+                    <div class="ui-confirm-heading">
+                        {is_delete_session.then(|| view! {
+                            <span class="session-delete-icon" aria-hidden="true">{compose_icon("trash")}</span>
+                        })}
+                        <h2 id="ui-confirm-title">{move || t(locale.get(), title_key)}</h2>
+                    </div>
+                    <div class="hint" id="ui-confirm-description">{message}</div>
                     {if let UiConfirm::DeleteSessions(ids) = action { Some(view! {
-                        <SessionChildrenChoice locale=locale ids=ids.clone() state=delete_children />
-                        <SessionArtifactChoice locale=locale ids=ids target=None state=delete_artifacts
-                            with_children=Signal::derive(move || delete_children.deletes_children()) />
+                        <div class="session-delete-options">
+                            <SessionChildrenChoice locale=locale ids=ids.clone() state=delete_children />
+                            <SessionArtifactChoice locale=locale ids=ids target=None state=delete_artifacts
+                                with_children=Signal::derive(move || delete_children.deletes_children()) />
+                        </div>
                     }) } else { None }}
                     <div class="row">
                         <button on:click=move |_| ui_confirm.set(None)>{move || t(locale.get(), "settings.cancel")}</button>
-                        <button class="primary" class:danger=is_full_permission
+                        <button class="primary" class:danger={is_full_permission || is_delete_session}
                             disabled=move || is_delete_session && (delete_artifacts.blocked() || delete_children.blocked())
                             on:click=move |_| {
                             let include_artifacts = is_delete_session && delete_artifacts.selected.get_untracked();

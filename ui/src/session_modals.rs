@@ -869,28 +869,40 @@ pub(crate) fn ModelSwitchConfirmOverlay(
             };
             view! {
                 <div class="overlay" data-testid="model-switch-confirm-overlay">
-                    <div class="modal confirm-modal model-switch-confirm" data-testid="model-switch-confirm">
-                        <h2>{move || t(locale.get(), "models.switch_confirm_title")}</h2>
-                        <div class="hint">{move || tf(
-                            locale.get(),
-                            hint_key,
-                            &[("model", &label)],
-                        )}</div>
-                        <label class="confirm-option" data-testid="model-switch-dont-ask">
-                            <input type="checkbox"
-                                prop:checked=move || dont_ask_again.get()
-                                on:change=move |ev| dont_ask_again.set(event_target_checked(&ev)) />
-                            <span>{move || t(locale.get(), "models.switch_dont_ask")}</span>
-                        </label>
-                        <div class="row">
-                            <button type="button" on:click=move |_| model_switch_confirm.set(None)>
-                                {move || t(locale.get(), "models.switch_no")}
-                            </button>
-                            <button type="button" class="primary" on:click=move |_| {
-                                let skip_future = dont_ask_again.get_untracked();
-                                model_switch_confirm.set(None);
-                                switch_yes.call((yes_id.clone(), skip_future));
-                            }>{move || t(locale.get(), yes_key)}</button>
+                    <div class="modal confirm-modal model-switch-confirm" data-testid="model-switch-confirm"
+                        role="dialog" aria-modal="true" aria-labelledby="model-switch-title" aria-describedby="model-switch-description">
+                        <h2 id="model-switch-title">{move || t(locale.get(), "models.switch_confirm_title")}</h2>
+                        <div class="model-switch-body">
+                            <div class="model-switch-target" data-testid="model-switch-target">
+                                {compose_icon("arrow-right")}
+                                <div>
+                                    <span>{move || t(locale.get(), "models.switch_target")}</span>
+                                    <strong>{label.clone()}</strong>
+                                </div>
+                            </div>
+                            <div class="hint" id="model-switch-description">{move || tf(
+                                locale.get(),
+                                hint_key,
+                                &[("model", &label)],
+                            )}</div>
+                        </div>
+                        <div class="model-switch-footer">
+                            <label class="confirm-option" data-testid="model-switch-dont-ask">
+                                <input type="checkbox"
+                                    prop:checked=move || dont_ask_again.get()
+                                    on:change=move |ev| dont_ask_again.set(event_target_checked(&ev)) />
+                                <span>{move || t(locale.get(), "models.switch_dont_ask")}</span>
+                            </label>
+                            <div class="row">
+                                <button type="button" on:click=move |_| model_switch_confirm.set(None)>
+                                    {move || t(locale.get(), "models.switch_no")}
+                                </button>
+                                <button type="button" class="primary" on:click=move |_| {
+                                    let skip_future = dont_ask_again.get_untracked();
+                                    model_switch_confirm.set(None);
+                                    switch_yes.call((yes_id.clone(), skip_future));
+                                }>{move || t(locale.get(), yes_key)}</button>
+                            </div>
                         </div>
                     </div>
                 </div>

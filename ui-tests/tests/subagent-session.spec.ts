@@ -272,3 +272,44 @@ test('a subagent shows its parent brief as a sender card without the framing', a
   await expect(page.locator('.msg.user')).not.toContainText('[From the parent');
   await expect(page.locator('.msg.user')).not.toContainText('You are its subagent');
 });
+
+test('conversation deletion has a compact destructive dialog and Escape cancels immediately', async ({ page }) => {
+  await page.addInitScript(tauriMock);
+  await page.goto('/?mockSubagent=1');
+  await page.locator('.proj-card-main').first().click();
+  const session = page.locator('.sidebar [data-session-id="subagent-child"]');
+  const open = async () => {
+    await session.click({ button: 'right' });
+    await page.locator('.ctx-menu').getByRole('button', { name: 'Delete', exact: true }).click();
+  };
+  await open();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.session-delete-confirm')).toHaveCount(0);
+  await expect(session).toBeVisible();
+
+  await open();
+  const modal = page.getByRole('alertdialog', { name: 'Delete conversation?' });
+  await expect(modal).toContainText('This cannot be undone');
+  await expect(modal.getByRole('checkbox', { name: 'Also delete associated artifacts and files' })).not.toBeChecked();
+  const remove = modal.getByRole('button', { name: 'Delete', exact: true });
+  await expect(remove).toHaveClass(/danger/);
+  const color = await remove.evaluate(el => ({
+    actual: getComputedStyle(el).backgroundColor,
+    expected: (() => {
+      const probe = document.createElement('span');
+      probe.style.backgroundColor = 'var(--err)';
+      el.append(probe);
+      const value = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return value;
+    })(),
+  }));
+  expect(color.actual).toBe(color.expected);
+  await page.setViewportSize({ width: 390, height: 600 });
+  await expect(remove).toBeInViewport();
+  expect(await modal.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  await modal.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(modal).toHaveCount(0);
+  await expect(session).toBeVisible();
+  expect(await deleteCalls(page)).toEqual([]);
+});

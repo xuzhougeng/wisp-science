@@ -34,7 +34,10 @@ async function setup(page: Page, locale = "en", saved = false) {
       }
       if (cmd === "remove_codex_account") {
         state.removals.push(a.accountId);
+        const wasActive = state.pool.some((p: any) => p.account_id === a.accountId && p.active);
         state.pool = state.pool.filter((p: any) => p.account_id !== a.accountId);
+        if (wasActive && state.pool.length) state.pool[0].active = true;
+        state.accounts.codex = state.pool.some((p: any) => p.active);
         return state.pool;
       }
       if (cmd === "import_local_codex_accounts") {
@@ -522,4 +525,39 @@ test("subscription account cards fit narrow windows", async ({ page }) => {
     await expect(page.getByTestId("import-codex-local")).toBeVisible();
     await expect(page.getByTestId("add-xai-model")).toBeVisible();
   }
+});
+
+for (const locale of ["en", "zh"]) {
+  test(`removing the only account signs out and preserves models (${locale})`, async ({ page }) => {
+    const zh = locale === "zh";
+    await setup(page, locale, true);
+    await page.evaluate(() => (window as any).__subscription.usageErrors["codex-account"] = "HTTP 401");
+    await subscriptions(page);
+    const row = page.getByTestId("codex-account");
+    await expect(row.getByTestId("codex-usage-error")).toContainText("401");
+    await row.getByTestId("codex-account-remove").click();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("codex-account-remove-confirm")).toHaveCount(0);
+    await expect(page.getByTestId("subscriptions-page")).toBeVisible();
+    await expect(row).toHaveCount(1);
+    await row.getByTestId("codex-account-remove").click();
+    await page.getByTestId("codex-account-remove-confirm").getByRole("button", { name: zh ? "移除账号" : "Remove account" }).click();
+    await expect(row).toHaveCount(0);
+    await expect(page.getByTestId("add-codex-model")).toBeDisabled();
+    expect(await page.evaluate(() => (window as any).__subscription.removals)).toEqual(["codex-account"]);
+    expect(await page.evaluate(() => (window as any).__subscription.profiles.map((p: any) => p.id))).toContain("codex-0");
+    await page.getByTestId("add-codex-login").click();
+    await expect(page.getByTestId("codex-saved-account")).toHaveCount(0);
+  });
+}
+
+test("removing the active account selects the remaining account", async ({ page }) => {
+  await setup(page, "en", true);
+  await seedPool(page);
+  await subscriptions(page);
+  await page.locator('[data-account-id="acct-a"]').getByTestId("codex-account-remove").click();
+  await page.getByTestId("codex-account-remove-confirm").getByRole("button", { name: "Remove account" }).click();
+  await expect(page.getByTestId("codex-account")).toHaveCount(1);
+  await expect(page.locator('[data-account-id="acct-b"]').getByTestId("codex-account-active")).toBeVisible();
+  await expect(page.getByTestId("add-codex-model")).toBeEnabled();
 });
