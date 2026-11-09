@@ -70,11 +70,27 @@ pub async fn switch_codex_account(
 }
 
 #[tauri::command]
-pub async fn remove_codex_account(account_id: String) -> Result<Vec<CodexAccount>, String> {
-    if active_id() == account_id {
-        return Err("Switch to another ChatGPT account before removing the active one.".into());
+pub async fn remove_codex_account(
+    state: State<'_, crate::AppState>,
+    account_id: String,
+) -> Result<Vec<CodexAccount>, String> {
+    let result = async {
+        if active_id() == account_id {
+            let replacement = models::codex_account_ids()
+                .iter()
+                .filter(|id| *id != &account_id)
+                .find_map(|id| models::load_codex_account(id));
+            if let Some(creds) = replacement {
+                crate::codex_login::activate_codex_account(&state.store, &creds).await?;
+            } else {
+                models::clear_codex_sign_in(&state.store).await?;
+            }
+        }
+        models::forget_codex_account(&account_id)
     }
-    models::forget_codex_account(&account_id)?;
+    .await;
+    crate::clear_idle_agents(&state).await;
+    result?;
     Ok(accounts())
 }
 

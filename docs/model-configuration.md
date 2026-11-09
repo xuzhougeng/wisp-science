@@ -231,9 +231,11 @@ makes it active, while signing in to a saved account updates its tokens. The
 **Accounts** list shows each account's email (or account id), plan and quota.
 Exactly one account is active; every ChatGPT model uses it. **Use this
 account** switches all ChatGPT models to another account; each conversation's
-next turn uses it. Remove an inactive account with the trash
-button; its tokens are deleted from the OS keyring after confirmation. Switch
-away from the active account before removing it.
+next turn uses it. Remove any account, including the only saved account, with
+the trash button; its tokens are deleted from the OS keyring after confirmation.
+Removing the active account selects the next saved account when available.
+Removing the last account signs out and clears its model credentials while
+preserving model settings; sign in again to reconnect those models.
 
 Quota comes from ChatGPT's read-only `https://chatgpt.com/backend-api/wham/usage`
 endpoint (the one Codex CLI and CLIProxyAPI read) and does not consume quota.
