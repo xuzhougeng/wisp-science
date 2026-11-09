@@ -23,6 +23,7 @@ parity-ledger` 检查这一点（`scripts/check_native_parity.py`）。
 
 | WebView 改动 | SwiftUI 状态 | 说明 |
 | --- | --- | --- |
+| 侧栏多选模式重排：勾选框统一放在最左列且对比度提高，分组保留箭头和文件夹图标，组内标题与组名对齐并加层级细线；选中行只着色不描边；顶部改为「已选 N 个 · 完成」，移动／删除移到列表下方的操作栏，未勾选时只显示提示；分组计数显示 `已选/总数`；支持 Shift 点击连选 | 待补 | WebView 专属的样式与交互（`ui/src/sidebar.rs`、`sidebar.css`）。SwiftUI 侧栏若有多选，需要单独核对勾选列对齐、底部操作栏和 Shift 连选。新增文案已同步到原生资源。 |
 | 回溯／编辑／分支时，若找不到对应的已保存消息，后端拒绝并提示「在已保存的会话中找不到这条消息，没有做任何改动。」，不再退回到 epoch 0 截断（那会删掉之后所有压缩 epoch）；WebView 只新增这条提示的中文翻译 | 待补 | 拒绝逻辑在共享后端（`resolve_visual_keep`），SwiftUI 回溯同样受保护，但提示目前显示英文。另外 SwiftUI 回溯用 `load_session_user_messages` 的序号，与 WebView 的轮次序号（遗留消息前缀 + 可视轮次）不一致，需对齐后再改状态。 |
 | 本轮界面对齐：中间文档标签与侧聊、工作流三栏、Lab、提示音、用量图表、会话子智能体模型 | 已补 | 本地实现及回归用例已补；细节与限制见 `native-conversations.md` / `native-settings.md`，本轮定向验证通过。 |
 | 右侧「Agents」面板每秒刷新时同时只跑一次读取，期间的刷新合并为读取结束后的一次，切换对话后丢弃旧对话的结果；Run 列表在 turn 或传输进行时每秒只读进行中的 Run，完整列表仍每 5 秒读一次（#1690） | 待补 | 子智能体动态改为按新增消息增量读取（`load_messages_since`），由桌面后端共享。SwiftUI 需核对自己的 Agents 与 Run 轮询：`native_panels` / `native_runtimes` 仍读取完整 Run 列表。 |

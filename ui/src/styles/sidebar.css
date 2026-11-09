@@ -146,10 +146,42 @@
   color: var(--text-muted); font: inherit; font-size: calc(12px * var(--ui-font-scale, 1)); white-space: nowrap; cursor: pointer;
 }
 .side-bulk-all:hover { color: var(--text); }
+.side-bulk-all.has-selection { color: var(--text); font-weight: 600; }
 .side-bulk-all .session-select-mark { display: inline-flex; }
 .side-sessions-head-actions .icon-btn:disabled { cursor: default; opacity: .4; background: transparent; color: var(--text-faint); }
-.side-bulk-delete:hover:not(:disabled) { color: var(--err); }
-.side-bulk-move-menu { max-width: calc(100% - 16px); }
+/* Done is the one way out of selecting, so it reads as the head's action. */
+.side-select-btn.side-select-done { color: var(--clay-strong); font-weight: 600; }
+/* The bulk bar sits under the list: a hint until something is ticked, then
+   labelled Move / Delete, so no disabled ghost icons ever show. */
+.side-bulk-bar {
+  position: relative; flex-shrink: 0;
+  display: flex; align-items: center; gap: 6px; min-height: 40px;
+  padding-top: 6px; border-top: 1px solid var(--border);
+  animation: motion-surface-in-soft var(--motion-duration-fast) var(--motion-ease-decelerate) both;
+}
+.side-bulk-hint {
+  flex: 1 1 auto; min-width: 0; padding: 0 6px; text-align: center;
+  color: var(--text-faint); font-size: calc(11.5px * var(--ui-font-scale, 1));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.side-bulk-action {
+  flex: 1 1 0; min-width: 0; height: 32px; padding: 0 10px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  background: var(--bg-elev); color: var(--text);
+  font: inherit; font-size: calc(12.5px * var(--ui-font-scale, 1)); white-space: nowrap; cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.side-bulk-action span { overflow: hidden; text-overflow: ellipsis; }
+.side-bulk-action svg { width: 15px; height: 15px; flex: 0 0 auto; }
+.side-bulk-action:hover, .side-bulk-action.active { border-color: var(--text-faint); }
+.side-bulk-action.danger { color: var(--err); }
+.side-bulk-action.danger:hover {
+  background: color-mix(in srgb, var(--err) 8%, var(--bg-elev));
+  border-color: color-mix(in srgb, var(--err) 45%, transparent);
+}
+/* Opened from the bar, the move menu rises above it instead of dropping from the head. */
+.side-bulk-move-menu { top: auto; bottom: calc(100% + 6px); left: 0; right: 0; min-width: 0; transform-origin: bottom center; }
 .side-bulk-move-menu .side-sort-opts { max-height: min(50vh, 320px); overflow-y: auto; }
 .side-bulk-move-menu .side-sort-opt span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side-item {
@@ -178,22 +210,34 @@
 button.side-item { width: 100%; text-align: left; background: transparent; border: 1px solid transparent; font: inherit; font-size: calc(13px * var(--ui-font-scale, 1)); cursor: pointer; }
 button.side-item.ses { cursor: pointer; user-select: none; padding-right: 34px; }
 button.side-item.ses.selecting { padding-right: 10px; }
+/* Tick boxes keep a 3:1 edge against the sunken sidebar (the old hairline
+   border-strong was ~1.3:1 and made every row look disabled). */
 .session-select-mark {
-  display: none; align-items: center; justify-content: center; width: 15px; height: 15px; flex: 0 0 auto;
-  border: 1px solid var(--border-strong); border-radius: 4px; color: transparent;
+  display: none; align-items: center; justify-content: center; width: 16px; height: 16px; flex: 0 0 auto;
+  border: 1.5px solid color-mix(in srgb, var(--text-faint) 90%, transparent); border-radius: 4px; color: transparent;
+  transition: background .12s ease, border-color .12s ease;
 }
-.session-select-mark svg { width: 11px; height: 11px; }
+.session-select-mark svg { width: 12px; height: 12px; }
 .side-item.ses.selecting .session-select-mark { display: inline-flex; }
 .side-item.ses.selecting .ses-status { display: none; }
-.side-item.ses.selected { background: var(--clay-soft); border-color: var(--clay); color: var(--text); }
+.side-item.ses.selecting:hover .session-select-mark,
+.side-folder.selecting:hover .session-select-mark,
+.side-bulk-all:hover .session-select-mark { border-color: var(--text-muted); }
+/* While selecting only the tick state is highlighted; the open conversation's
+   grey fill would read as a second kind of selection. */
+.side-item.ses.selecting.active:not(:hover) { background: transparent; }
+/* Ticked rows get a flat tint, no outline, so a run of them reads as one block. */
+.side-item.ses.selected,
+.side-item.ses.selecting.active.selected { background: var(--clay-soft); border-color: transparent; color: var(--text); }
+.side-item.ses.selected:hover { background: color-mix(in srgb, var(--clay) 18%, transparent); }
 .side-item.ses.selected .session-select-mark,
 .session-select-mark.on { background: var(--clay); border-color: var(--clay); color: var(--on-clay); }
-/* A group's tick box stands in for its folder icon while selecting. */
 button.session-select-mark { padding: 0; background: transparent; cursor: pointer; }
 button.session-select-mark:disabled { cursor: default; opacity: .4; }
 .side-folder.selecting .session-select-mark { display: inline-flex; }
-.side-folder.selecting > svg,
 .side-folder.selecting .folder-actions { display: none; }
+.side-folder.selecting.selected { background: var(--clay-soft); color: var(--text); }
+.side-folder-count.partial { color: var(--clay-strong); font-weight: 600; }
 /* A nested row's kind icon rests in the status slot and yields to live status. */
 .session-branch-icon { display: inline-flex; color: var(--clay); }
 .ses-status .session-branch-icon svg { width: 15px; height: 15px; }
@@ -343,6 +387,34 @@ button.session-select-mark:disabled { cursor: default; opacity: .4; }
 .update-card-arrow { display: inline-flex; color: var(--text-muted); flex: 0 0 auto; }
 .update-card-arrow svg { width: 15px; height: 15px; }
 
+/* Selecting lays every tick box in one column at the row's left edge and moves
+   the tree's indent onto the titles instead: group rows keep caret + folder icon,
+   their conversations start under the group name, and nested rows indent one more
+   step. Guide lines stand in for the indent the tick column takes over. The
+   compact rail below has no tick column, so this stays out of it. */
+@media (min-width: 901px) {
+  .side-list.selecting .side-folder-sessions { position: relative; padding-left: 0; }
+  .side-list.selecting .side-folder-sessions::before,
+  .side-list.selecting .side-nest::before {
+    content: ""; position: absolute; z-index: 1; top: 2px; bottom: 2px; width: 1px;
+    background: var(--border); pointer-events: none;
+  }
+  .side-list.selecting .side-folder-sessions::before { left: 58px; }
+  .side-list.selecting .side-folder-sessions .side-item.ses { padding-left: 10px; }
+  .side-list.selecting .side-folder-sessions .side-item.ses .ses-title { margin-left: 36px; }
+  .side-list.selecting .side-nest,
+  .side-list.selecting .side-folder-sessions .side-nest {
+    position: relative; margin-left: 0; padding-left: 0; border-left: 0;
+  }
+  .side-list.selecting .side-nest::before { left: 46px; }
+  .side-list.selecting .side-folder-sessions .side-nest::before { left: 81px; }
+  .side-list.selecting .side-nest .side-item-wrap > .side-item.ses { padding-left: 10px; }
+  .side-list.selecting .side-nest .side-item.ses .ses-title { margin-left: 20px; }
+  .side-list.selecting .side-folder-sessions .side-nest .side-item.ses .ses-title { margin-left: 56px; }
+  .side-list.selecting .side-nest .side-exploration { padding-left: 55px; }
+  .side-list.selecting .side-folder-sessions .side-nest .side-exploration { padding-left: 91px; }
+}
+
 /* Keep the research canvas usable only when the window is genuinely narrow.
    The Tauri window opens at 1100 CSS px; using that same value here made the
    default workspace look like an icon rail and hid every saved-session title.
@@ -383,7 +455,8 @@ button.session-select-mark:disabled { cursor: default; opacity: .4; }
   .sidebar .folder-actions,
   .sidebar .side-load-more,
   .sidebar .side-hint,
-  .sidebar .proj-meta { display: none; }
+  .sidebar .proj-meta,
+  .sidebar .side-bulk-bar { display: none; }
   .sidebar .side-back {
     width: 32px;
     height: 32px;
