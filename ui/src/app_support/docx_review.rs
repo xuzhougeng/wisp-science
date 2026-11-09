@@ -135,7 +135,7 @@ pub(crate) fn DocxReviewPreview(dom_id: String, path: String) -> impl IntoView {
                     }
                 })}
             </section>
-            <div class="rp-heavy" id=dom_id>{move || t(locale.get(),"loading")}</div>
+            <div class="rp-heavy" id=dom_id data-select-all="">{move || t(locale.get(),"loading")}</div>
         </div>
     }
 }
