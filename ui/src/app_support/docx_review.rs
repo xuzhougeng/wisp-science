@@ -1,5 +1,15 @@
 use super::*;
 
+const DOCX_REVIEW_MIN_PANEL: f64 = 72.0;
+// Matches `.docx-review > .rp-heavy { min-height }` and the resizer height.
+const DOCX_REVIEW_MIN_DOCUMENT: f64 = 120.0;
+const DOCX_REVIEW_RESIZER: f64 = 7.0;
+const DOCX_REVIEW_KEY_STEP: f64 = 24.0;
+
+fn clamp_docx_review_height(wanted: f64, max: f64) -> f64 {
+    wanted.min(max).max(DOCX_REVIEW_MIN_PANEL)
+}
+
 #[component]
 pub(crate) fn DocxReviewPreview(dom_id: String, path: String) -> impl IntoView {
     let locale = use_locale();
@@ -8,6 +18,23 @@ pub(crate) fn DocxReviewPreview(dom_id: String, path: String) -> impl IntoView {
     let stale = create_rw_signal(false);
     let error = create_rw_signal(None::<String>);
     let reload = create_rw_signal(0u64);
+    // Kept across reloads so the bar does not collapse and re-expand on every
+    // accepted change; only a finished read updates it.
+    let has_changes = create_rw_signal(false);
+    // User-chosen review bar height in px; `None` keeps the CSS default.
+    let panel_height = create_rw_signal(None::<f64>);
+    let drag = create_rw_signal(None::<(i32, f64, f64)>);
+    let panel_ref = create_node_ref::<html::Section>();
+    // Current bar height and the tallest it may get while the document below
+    // keeps its minimum height.
+    let measure = move || -> Option<(f64, f64)> {
+        let panel = panel_ref.get_untracked()?;
+        let container = panel.parent_element()?;
+        let max = container.get_bounding_client_rect().height()
+            - DOCX_REVIEW_MIN_DOCUMENT
+            - DOCX_REVIEW_RESIZER;
+        Some((panel.get_bounding_client_rect().height(), max))
+    };
     let alive = Rc::new(Cell::new(true));
     let generation = Rc::new(Cell::new(0u64));
     let cleanup = alive.clone();
@@ -52,7 +79,10 @@ pub(crate) fn DocxReviewPreview(dom_id: String, path: String) -> impl IntoView {
                 return;
             }
             match result {
-                Ok(value) => snapshot.set(value),
+                Ok(value) => {
+                    has_changes.set(value.as_ref().is_some_and(|s| !s.changes.is_empty()));
+                    snapshot.set(value);
+                }
                 Err(message) => error.set(Some(message)),
             }
             let payload = serde_json::json!({"path":path, "maxBytes":32*1024*1024,
@@ -98,18 +128,24 @@ pub(crate) fn DocxReviewPreview(dom_id: String, path: String) -> impl IntoView {
     let disabled = move || busy.get() || stale.get() || !snapshot.get().is_some_and(|s| s.writable);
     view! {
         <div class="docx-review" data-testid="docx-review">
-            <section class="docx-review-panel" aria-label=move || t(locale.get(),"docx.review")>
+            <section class="docx-review-panel" node_ref=panel_ref
+                class:is-empty=move || !has_changes.get()
+                style=move || match panel_height.get().filter(|_| has_changes.get()) {
+                    Some(height) => format!("height:{height}px;max-height:none;flex:0 0 auto"),
+                    None => String::new(),
+                }
+                aria-label=move || t(locale.get(),"docx.review")>
                 <div class="docx-review-toolbar">
                     <strong>{move || t(locale.get(),"docx.review")}</strong>
                     <button type="button" disabled=move || busy.get() on:click=move |_| reload.update(|n| *n=n.wrapping_add(1))>{move || t(locale.get(),"docx.refresh")}</button>
-                    <button type="button" data-testid="docx-accept-deletions"
+                    <button type="button" class="docx-review-batch" data-testid="docx-accept-deletions"
                         disabled=move || disabled() || !snapshot.get().is_some_and(|s| s.changes.iter().any(|c| c.kind == DocxChangeKind::Deletion))
                         on:click=move |_| act.call((DocxReviewSelection::Kind(DocxChangeKind::Deletion),DocxReviewAction::Accept))>{move || t(locale.get(),"docx.accept_deletions")}</button>
-                    <button type="button" data-testid="docx-accept-rewrites"
+                    <button type="button" class="docx-review-batch" data-testid="docx-accept-rewrites"
                         disabled=move || disabled() || !snapshot.get().is_some_and(|s| s.changes.iter().any(|c| c.kind == DocxChangeKind::Rewrite))
                         on:click=move |_| act.call((DocxReviewSelection::Kind(DocxChangeKind::Rewrite),DocxReviewAction::Accept))>{move || t(locale.get(),"docx.accept_rewrites")}</button>
                 </div>
-                <p class="hint">{move || t(locale.get(),"docx.scope")}</p>
+                <p class="hint docx-review-scope">{move || t(locale.get(),"docx.scope")}</p>
                 {move || error.get().map(|message| view! {<p role="alert" class="docx-review-error">{message}<span>{t(locale.get(),"docx.refresh_hint")}</span></p>})}
                 {move || (read_only_reference || snapshot.get().is_some_and(|s| !s.writable)).then(|| view! {<p class="hint">{t(locale.get(),"docx.readonly")}</p>})}
                 {move || snapshot.get().map(|s| {
@@ -135,6 +171,49 @@ pub(crate) fn DocxReviewPreview(dom_id: String, path: String) -> impl IntoView {
                     }
                 })}
             </section>
+            {move || has_changes.get().then(|| view! {
+                <div class="docx-review-resizer" role="separator" aria-orientation="horizontal" tabindex="0"
+                    data-testid="docx-review-resizer"
+                    class:is-dragging=move || drag.get().is_some()
+                    aria-label=move || t(locale.get(),"docx.resize")
+                    on:pointerdown=move |event: web_sys::PointerEvent| {
+                        if event.button() != 0 {
+                            return;
+                        }
+                        let Some((height, max)) = measure() else {
+                            return;
+                        };
+                        event.prevent_default();
+                        if let Some(target) = event.target()
+                            .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+                        {
+                            let _ = target.set_pointer_capture(event.pointer_id());
+                        }
+                        drag.set(Some((event.client_y(), height, max)));
+                    }
+                    on:pointermove=move |event: web_sys::PointerEvent| {
+                        let Some((start_y, origin, max)) = drag.get_untracked() else {
+                            return;
+                        };
+                        event.prevent_default();
+                        let wanted = origin + f64::from(event.client_y() - start_y);
+                        panel_height.set(Some(clamp_docx_review_height(wanted, max)));
+                    }
+                    on:pointerup=move |_| drag.set(None)
+                    on:pointercancel=move |_| drag.set(None)
+                    on:keydown=move |event: web_sys::KeyboardEvent| {
+                        let step = match event.key().as_str() {
+                            "ArrowUp" => -DOCX_REVIEW_KEY_STEP,
+                            "ArrowDown" => DOCX_REVIEW_KEY_STEP,
+                            _ => return,
+                        };
+                        let Some((height, max)) = measure() else {
+                            return;
+                        };
+                        event.prevent_default();
+                        panel_height.set(Some(clamp_docx_review_height(height + step, max)));
+                    }></div>
+            })}
             <div class="rp-heavy" id=dom_id data-select-all="">{move || t(locale.get(),"loading")}</div>
         </div>
     }

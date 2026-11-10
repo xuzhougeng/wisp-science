@@ -55,6 +55,14 @@ new output. A paragraph already containing pending changes must first be
 reviewed in Wisp or Word. This version does not implement automatic upload
 conversion, a persistent edit-group log, or editing an existing pending suggestion.
 
+The agent is instructed to use these two tools whenever it is asked to reword an
+existing `.docx` (polish, rewrite, shorten, translate, delete), instead of
+regenerating the file from a script, overwriting it, or answering with
+before/after text in chat. When the affected paragraphs are not editable, such
+as table cells, it reports that and asks before changing them another way. This
+is prompt guidance, not enforcement: a direct overwrite through `shell` or
+`python` still bypasses review.
+
 ## Review in Wisp
 
 Open a local `.docx` from **Files**, either in the preview or **Open in center**.
@@ -68,6 +76,11 @@ Both WebView and SwiftUI previews display native deletion/insertion markup and a
 - **Refresh revisions** reloads the document after another editor changes it.
 
 Review controls follow Wisp's UI font size setting.
+
+In the WebView preview, drag the divider between the revision list and the
+document (or focus it and press the Up/Down arrow keys) to give either side
+more room. A document with no pending revisions shows only a one-line bar with
+**Refresh revisions**, so its content is not pushed down.
 
 Each successful choice saves the currently opened local file and refreshes the
 list and preview. Before saving, Wisp keeps an exact copy of that version at
