@@ -117,3 +117,22 @@ test("many artifacts remain scrollable with confirmation actions visible in a sm
   await expect(modal).toHaveCount(0);
   expect(await argsFor(page, "delete_session")).toBeUndefined();
 });
+
+test("the artifact preview keeps one compact type scale and omits an empty file list", async ({ page }) => {
+  await enter(page);
+  await openAction(page, "Delete");
+  const modal = page.locator(".confirm-modal");
+  await modal.getByRole("checkbox").check();
+  const summary = modal.locator(".session-artifact-summary");
+  await expect(summary).toContainText("1 artifacts · 2 files to process");
+  const size = (selector: string) =>
+    modal.locator(selector).first().evaluate(el => parseFloat(getComputedStyle(el).fontSize));
+  const hint = await size(".session-artifact-detail > .hint");
+  for (const selector of [".session-artifact-summary", ".session-artifact-label", ".session-artifact-files li"]) {
+    expect(await size(selector)).toBeLessThanOrEqual(hint);
+  }
+  const retained = modal.locator(".session-artifact-retained li").first();
+  await expect(retained.locator(".session-artifact-name")).toContainText("uploads/input.csv");
+  await expect(retained.locator(".session-artifact-reason")).not.toBeEmpty();
+  await expect(modal.locator("ul.session-artifact-files:not(:has(li))")).toHaveCount(0);
+});

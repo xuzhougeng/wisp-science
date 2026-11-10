@@ -154,8 +154,9 @@ pub(crate) fn SessionArtifactChoice(
                 <span>{move || t(locale.get(), if moving { "session.artifacts.move" } else { "session.artifacts.delete" })}</span>
             </label>
             {move || state.selected.get().then(|| view! {
+                <div class="session-artifact-detail">
                 <div class="hint">{move || t(locale.get(), "session.artifacts.scope")}</div>
-                {move || state.busy.get().then(|| view! { <p role="status">{move || t(locale.get(), "loading")}</p> })}
+                {move || state.busy.get().then(|| view! { <p class="session-artifact-status" role="status">{move || t(locale.get(), "loading")}</p> })}
                 {move || state.error.get().map(|error| view! {
                     <p class="session-transfer-error" role="alert">{error}</p>
                     <button type="button" on:click=move |_| reload.call(())>{move || t(locale.get(), "session.artifacts.refresh")}</button>
@@ -166,16 +167,23 @@ pub(crate) fn SessionArtifactChoice(
                     let mut files=previews.values().flat_map(|p|p.files.clone()).collect::<Vec<_>>(); files.sort(); files.dedup();
                     let retained=previews.values().flat_map(|p|p.retained.clone()).collect::<Vec<_>>();
                     (!previews.is_empty()).then(|| view! {
-                        <p>{tf(locale.get(), "session.artifacts.count", &[("artifacts", &count.to_string()), ("files", &files.len().to_string())])}</p>
-                        <ul class="session-artifact-files">{files.into_iter().map(|path|view! { <li>{path}</li> }).collect_view()}</ul>
+                        <p class="session-artifact-summary">{tf(locale.get(), "session.artifacts.count", &[("artifacts", &count.to_string()), ("files", &files.len().to_string())])}</p>
+                        // No empty list box when nothing will be processed.
+                        {(!files.is_empty()).then(|| view! {
+                            <ul class="session-artifact-files">{files.into_iter().map(|path|view! { <li>{path}</li> }).collect_view()}</ul>
+                        })}
                         {(!retained.is_empty()).then(||view! {
-                            <p>{move || t(locale.get(), "session.artifacts.retained")}</p>
-                            <ul class="session-artifact-files">{retained.into_iter().map(|item|view! {
-                                <li>{item.name}{" — "}{t(locale.get(), &format!("session.artifacts.{}",item.reason)).to_string()}</li>
+                            <p class="session-artifact-label">{move || t(locale.get(), "session.artifacts.retained")}</p>
+                            <ul class="session-artifact-files session-artifact-retained">{retained.into_iter().map(|item|view! {
+                                <li>
+                                    <span class="session-artifact-name">{item.name}</span>
+                                    <span class="session-artifact-reason">{t(locale.get(), &format!("session.artifacts.{}",item.reason)).to_string()}</span>
+                                </li>
                             }).collect_view()}</ul>
                         })}
                     })
                 }}
+                </div>
             })}
         </div>
     }

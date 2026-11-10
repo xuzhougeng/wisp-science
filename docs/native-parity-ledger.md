@@ -23,6 +23,7 @@ parity-ledger` 检查这一点（`scripts/check_native_parity.py`）。
 
 | WebView 改动 | SwiftUI 状态 | 说明 |
 | --- | --- | --- |
+| 删除／移动会话确认框里的「关联产物」预览重排：说明、统计、文件列表与复选框文字左对齐并统一为小字号；文件列表改为带分隔线的浅底列表，保留项分两行显示文件名和原因；没有待处理文件时不再留空列表 | 不需要 | WebView 专属的排版修复（`ui/src/session_modals.rs`、`modals.css`）：原先统计行和保留项沿用弹窗正文字号，比说明文字大。SwiftUI 的 `NativeSessionTransferSheet` 本来就用 `.caption` 次要色显示这些内容。无新增文案。 |
 | DOCX 修订审阅栏：没有待处理修订时收成一行（只留「刷新修订」和提示），有修订时在修订列表与正文之间加可拖动（也可用上下方向键）的分隔条，取消列表 260px 的固定上限 | 待补 | WebView 的 `DocxReviewPreview` 布局（`ui/src/app_support/docx_review.rs`、`right-pane.css`）。SwiftUI 的 `NativeDocxReview` 仍是固定高度的审阅栏，需要单独补空状态收起和可调分隔。新增文案已同步到原生资源。 |
 | 打开的文档里按 Ctrl/⌘+A 只选中文档正文（代码不含行号，R/Python 编辑器选中全部源码，图片不选），不再选中整个窗口；作用于最近点击或聚焦的文档，与对话并排时需先点击文档 | 不需要 | WebView 专属修复：浏览器默认全选会选中整页外壳。SwiftUI 的文档预览在独立的 `WKWebView`（`NativeRichPreview`）里渲染，⌘A 由第一响应者处理，本来只作用于该文档。 |
 | 侧栏多选模式重排：勾选框统一放在最左列且对比度提高，分组保留箭头和文件夹图标，组内标题与组名对齐并加层级细线；选中行只着色不描边；顶部改为「已选 N 个 · 完成」，移动／删除移到列表下方的操作栏，未勾选时只显示提示；分组计数显示 `已选/总数`；支持 Shift 点击连选 | 待补 | WebView 专属的样式与交互（`ui/src/sidebar.rs`、`sidebar.css`）。SwiftUI 侧栏若有多选，需要单独核对勾选列对齐、底部操作栏和 Shift 连选。新增文案已同步到原生资源。 |

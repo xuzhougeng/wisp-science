@@ -374,8 +374,24 @@ button.browser-needs-human-row .browser-tab-cleanup-body { opacity: 1; }
 .session-artifact-choice { margin-top: 1rem; min-height: 0; overflow-y: auto; }
 .modal .session-artifact-toggle { display: flex; flex-direction: row; align-items: flex-start; gap: .5rem; cursor: pointer; }
 .modal .session-artifact-toggle input[type="checkbox"] { accent-color: var(--clay); width: 15px; height: 15px; padding: 0; margin: .15rem 0 0; flex: 0 0 auto; }
-.session-artifact-files { max-height: 10rem; overflow: auto; padding-left: 1.25rem; overflow-wrap: anywhere; font-size: .85rem; }
+/* Everything under the toggle lines up with its label text, past the checkbox. */
+.session-artifact-detail { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; padding-left: calc(15px + .5rem); }
 .session-artifact-choice p { margin: .6rem 0; }
+/* Outranks `.confirm-modal .hint`, which would let the hint shrink and scroll inside this column. */
+.modal .session-artifact-detail > .hint { flex: 0 0 auto; margin: 0; overflow: visible; font-size: calc(12.5px * var(--ui-font-scale, 1)); }
+.session-artifact-detail > button { align-self: flex-start; }
+.session-artifact-detail p { margin: 0; font-size: calc(12.5px * var(--ui-font-scale, 1)); line-height: 1.5; }
+.session-artifact-summary { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
+.session-artifact-label, .session-artifact-status { color: var(--text-muted); }
+.session-artifact-files {
+  flex: 0 0 auto; max-height: 10rem; overflow: auto; margin: 0; padding: 4px 10px; list-style: none;
+  border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--bg-sunken);
+  overflow-wrap: anywhere; font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.5; color: var(--text);
+}
+.session-artifact-files li { padding: 5px 0; }
+.session-artifact-files li + li { border-top: 1px solid var(--border); }
+.session-artifact-retained li { display: flex; flex-direction: column; }
+.session-artifact-reason { color: var(--text-muted); font-size: calc(11.5px * var(--ui-font-scale, 1)); }
 
 .session-transfer-modal .hint { color: var(--text-muted); font-size: calc(12.5px * var(--ui-font-scale, 1)); line-height: 1.5; }
 .session-transfer-modal .session-transfer-error { color: var(--err); }
@@ -585,7 +601,8 @@ button.browser-needs-human-row .browser-tab-cleanup-body { opacity: 1; }
 }
 .session-delete-options .session-artifact-toggle { color: var(--text); font-size: calc(13px * var(--ui-font-scale, 1)); font-weight: 400; }
 .session-delete-options .session-artifact-toggle input[type="checkbox"] { accent-color: var(--err); }
-.session-delete-options .hint { margin-top: 8px; overflow: visible; }
+.session-delete-options .hint { overflow: visible; }
+.session-delete-options [data-testid="session-children-choice"] > .hint { margin-top: 8px; }
 .session-delete-options .session-transfer-error { color: var(--err); }
 .session-delete-confirm > .row {
   margin-top: 0; padding-top: 16px; border-top: 1px solid var(--border);
