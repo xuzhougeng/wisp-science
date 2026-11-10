@@ -282,15 +282,20 @@ impl Store {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let opts = SqliteConnectOptions::new()
-            .filename(path)
-            .create_if_missing(true)
-            // WAL allows only one writer at a time; with a pool of concurrent
-            // connections a second writer would otherwise get SQLITE_BUSY
-            // immediately (default timeout is 0) and fail. Wait for the lock
-            // instead — concurrent tasks writing the same store (e.g. message +
-            // provenance persistence) must serialize, not error out.
-            .busy_timeout(std::time::Duration::from_secs(5));
+        // SQLx gives each memory store a unique name shared by its pool's
+        // connections. Filesystem paths keep their literal filename semantics.
+        let opts = if path == Path::new(":memory:") {
+            "sqlite::memory:".parse::<SqliteConnectOptions>()?
+        } else {
+            SqliteConnectOptions::new().filename(path)
+        }
+        .create_if_missing(true)
+        // WAL allows only one writer at a time; with a pool of concurrent
+        // connections a second writer would otherwise get SQLITE_BUSY
+        // immediately (default timeout is 0) and fail. Wait for the lock
+        // instead — concurrent tasks writing the same store (e.g. message +
+        // provenance persistence) must serialize, not error out.
+        .busy_timeout(std::time::Duration::from_secs(5));
         let pool = SqlitePoolOptions::new()
             .max_connections(4)
             .connect_with(opts)
