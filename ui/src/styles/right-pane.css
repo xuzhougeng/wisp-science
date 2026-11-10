@@ -561,11 +561,18 @@ button.run-status:hover { filter:brightness(0.96); }
 .rp-docx { width: 100%; overflow: visible; background: var(--bg-sunken); }
 .docx-review { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-height: 0; width: 100%; overflow: hidden; }
 .docx-review > .rp-heavy { display: flex; flex: 1 1 auto; min-height: 120px; flex-direction: column; overflow: auto; }
-.docx-review-panel { padding: 12px; border-bottom: 1px solid var(--border); background: var(--bg-elev); flex: 0 1 auto; max-height: 50%; overflow: auto; }
+.docx-review-panel { padding: 12px; border-bottom: 1px solid var(--border); box-sizing: border-box; background: var(--bg-elev); flex: 0 1 auto; max-height: 50%; overflow: auto; }
 .docx-review-toolbar, .docx-review-change-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .docx-review-toolbar button, .docx-review-change button { font: inherit; font-size: calc(12px * var(--ui-font-scale, 1)); padding: 4px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-sunken); color: var(--text); cursor: pointer; }
 .docx-review button:disabled { opacity: .45; cursor: default; }
-.docx-review-changes { max-height: 260px; overflow: auto; }
+/* No revisions: one compact row, so an ordinary document is not pushed down. */
+.docx-review-panel.is-empty { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 6px 12px; }
+.docx-review-panel.is-empty :is(.docx-review-batch, .docx-review-scope) { display: none; }
+.docx-review-panel.is-empty > p { margin: 0; }
+.docx-review-resizer { position: relative; flex: 0 0 7px; cursor: row-resize; touch-action: none; background: var(--bg-elev); }
+.docx-review-resizer::after { content: ""; position: absolute; inset-inline: 0; top: 3px; height: 1px; background: var(--border); transition: background .12s ease; }
+.docx-review-resizer:is(:hover, :focus-visible, .is-dragging)::after { background: var(--clay); }
+.docx-review-resizer:focus-visible { outline: none; }
 .docx-review-change { padding: 8px 0; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
 .docx-review-change-head { margin-bottom: 5px; font-size: calc(12px * var(--ui-font-scale, 1)); }
 .docx-review-change-head span { color: var(--text-muted); flex: 1; }

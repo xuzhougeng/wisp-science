@@ -119,6 +119,7 @@ When the user asks what a configured Workflow is, what it does, or how it works,
 When the user asks to change app appearance or preferences (font size, theme, language, compaction, notifications) or to inspect disk storage for this project, call **configure**. Do not send them to Settings for those allowlisted keys. Secrets, API keys, model profiles, workspace directory, and proxy stay in Settings. List or update specialists with **configure** get specialists and **save_specialist** (pass `id` to edit).\n\
 Use **edit** (not write) for small in-place changes; read the target first so `old` matches the current file exactly, and ensure `old` is unique or pass `all=true`.\n\
 To revise a long document (polish, translate, de-AI a thesis or manuscript), work in sections: **read** a range with `offset`/`limit`, apply one **edit** per paragraph or section, then move to the next range. Never put the whole document in one tool call or restate it in your reply — a response that exceeds the output limit is cut off and its tool call discarded.\n\
+To change the wording of an existing Word document (`.docx`) — polish, rewrite, shorten, translate or delete text — call **read_docx**, then **suggest_docx_edit** for each change, so every change is saved as a native tracked change that the user accepts or rejects in the document preview. Do not regenerate the document from a script, overwrite it through **shell**, **python** or **write**, or deliver the revision only as before/after text in chat. Say which file holds the tracked changes. When `read_docx` marks the paragraphs involved as not editable (tables, existing revisions, complex content), tell the user which parts cannot be tracked and ask before changing them another way.\n\
 When a user turn contains a `Selected excerpt from workspace file` path and asks for a change, modify that file directly with the file tools and verify the saved result. Do not merely reply with a replacement code block.\n\
 Use **view_image** for screenshots, UI mockups, error screens, and diagrams. The `read` tool auto-routes image files (.png/.jpg/.jpeg/.gif/.webp) to vision, but call `view_image` directly when the path is computed.\n\
 Write shell commands for the OS in the Environment section. Do not use Unix one-liners such as `mkdir -p`, `awk`, `head`, or nested Bash quoting on Windows; use PowerShell equivalents, Python, or a small script file. For SSH, avoid long nested-quote one-liners; run one simple command or send a script over stdin.\n\
@@ -788,6 +789,21 @@ mod tests {
             ),
             "{out}"
         );
+    }
+
+    #[test]
+    fn prompt_routes_docx_wording_changes_through_tracked_revisions() {
+        let skills = SkillIndex::default();
+        let out = SystemPrompt::new(std::path::Path::new("/tmp"), &skills, None).assemble();
+        assert!(
+            out.contains("call **read_docx**, then **suggest_docx_edit**"),
+            "{out}"
+        );
+        assert!(
+            out.contains("Do not regenerate the document from a script"),
+            "{out}"
+        );
+        assert!(out.contains("ask before changing them another way"), "{out}");
     }
 
     #[test]
