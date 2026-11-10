@@ -1,4 +1,5 @@
 use super::*;
+use std::str::FromStr;
 
 #[tokio::test]
 async fn global_settings_batch_rolls_back_on_failure() {

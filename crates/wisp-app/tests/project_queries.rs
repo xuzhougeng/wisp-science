@@ -8,6 +8,58 @@ use wisp_llm::Message;
 use wisp_store::{ProjectSyncState, Store};
 
 #[tokio::test]
+async fn remote_projects_hide_missing_databases_and_keep_desktop_recovery_entries() {
+    let root = TempDir::new().unwrap();
+    let store = Store::open_application(&root.path().join("global.sqlite"))
+        .await
+        .unwrap();
+    store
+        .create_project(
+            "central",
+            "Central",
+            root.path().join("central").to_str().unwrap(),
+        )
+        .await
+        .unwrap();
+    store
+        .set_setting("decentralized_project_storage", "true")
+        .await
+        .unwrap();
+    let workspace = root.path().join("missing");
+    store
+        .create_project("missing", "Missing", workspace.to_str().unwrap())
+        .await
+        .unwrap();
+    let database = workspace.join(wisp_store::PROJECT_DATABASE);
+    let saved = root.path().join("saved.sqlite");
+    // Creation releases the project handle, so this also works on Windows.
+    std::fs::rename(&database, &saved).unwrap();
+    let idle = HashSet::new();
+    let desktop = list_projects(&store, &idle, &idle).await.unwrap();
+    assert_eq!(desktop.len(), 2);
+    let remote = wisp_app::projects::available_remote_projects(&store, desktop.clone())
+        .await
+        .unwrap();
+    assert_eq!(remote.len(), 1);
+    assert_eq!(remote[0].id, "central");
+    assert!(!database.exists());
+
+    // A reconnected database appears again without losing its registration.
+    std::fs::copy(&saved, &database).unwrap();
+    assert_eq!(
+        wisp_app::projects::available_remote_projects(&store, desktop)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    std::fs::remove_file(&database).unwrap();
+    store.delete_project("missing").await.unwrap();
+    assert_eq!(list_projects(&store, &idle, &idle).await.unwrap().len(), 1);
+    assert!(saved.is_file());
+}
+
+#[tokio::test]
 async fn browser_relationships_preserve_checkpoint_states_and_subagent_parents() {
     let db = TestDb::new().await;
     db.project("p").await;

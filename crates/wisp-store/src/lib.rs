@@ -95,7 +95,7 @@ pub use models::*;
 pub use persist_seq::{join_or_abort_persist, persist_seq_loop, PersistJoinError};
 pub use project_snapshots::{FolderSyncOutcome, FOLDER_WAITING, WORKSPACE_TRANSPORT};
 pub use project_state_revisions::{ProjectStateRevision, ProjectStateRevisionSummary};
-pub use project_storage::{PROJECT_DATABASE, PROJECT_METADATA};
+pub use project_storage::{ProjectDatabaseDeleteGuard, PROJECT_DATABASE, PROJECT_METADATA};
 pub use project_sync::ProjectSyncState;
 pub use project_transfer::ProjectTransferStats;
 pub use projects::{is_assistant_project_id, ASSISTANT_PROJECT_ID};
@@ -122,7 +122,6 @@ use anyhow::Result;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
 use std::path::Path;
-use std::str::FromStr;
 #[cfg(test)]
 use wisp_llm::Message;
 
@@ -283,7 +282,8 @@ impl Store {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display()))?
+        let opts = SqliteConnectOptions::new()
+            .filename(path)
             .create_if_missing(true)
             // WAL allows only one writer at a time; with a pool of concurrent
             // connections a second writer would otherwise get SQLITE_BUSY

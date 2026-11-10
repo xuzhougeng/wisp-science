@@ -168,8 +168,10 @@ impl Server {
         );
         if request.command == "list_projects" {
             let (running, awaiting) = self.activity();
+            let projects =
+                wisp_app::projects::list_projects(&self.0.store, &running, &awaiting).await?;
             return Ok(serde_json::to_value(
-                wisp_app::projects::list_projects(&self.0.store, &running, &awaiting).await?,
+                wisp_app::projects::available_remote_projects(&self.0.store, projects).await?,
             )?);
         }
         if request.command == "native_conversation_inbox" {

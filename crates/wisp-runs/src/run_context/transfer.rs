@@ -1232,8 +1232,9 @@ async fn submit_transfer(
     }
 
     validate_remote_path("source_path", &request.source_path)?;
-    super::remote_files::refuse_if_context_path_discarded(
+    super::remote_files::refuse_if_project_context_path_discarded(
         store,
+        project_id,
         &request.source_context_id,
         &request.source_path,
     )
@@ -3721,6 +3722,66 @@ mod tests {
         .await
         .unwrap_err();
         assert!(error.contains("destination_path is required"), "{error}");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn transfer_tool_download_survives_an_unrelated_missing_project_database() {
+        let (root, _original) = test_store().await;
+        let store = wisp_store::Store::open_application(&root.join("wisp.sqlite"))
+            .await
+            .unwrap();
+        store.migrate_project_storage("p").await.unwrap();
+        store
+            .set_setting("decentralized_project_storage", "true")
+            .await
+            .unwrap();
+        let offline = root.join("offline");
+        store
+            .create_project("offline", "Offline", offline.to_str().unwrap())
+            .await
+            .unwrap();
+        let missing = offline.join(wisp_store::PROJECT_DATABASE);
+        std::fs::rename(&missing, root.join("saved.sqlite")).unwrap();
+        let runner = Arc::new(RelayRunner {
+            commands: StdMutex::new(Vec::new()),
+        });
+        let tool = TransferBetweenContextsTool::new(
+            store.clone(),
+            RunManager::with_runner(runner.clone()),
+            "p".into(),
+            Some("f".into()),
+        );
+        let destination = root.join("download").join("result.txt");
+        let result = tool
+            .run(
+                &serde_json::json!({
+                    "source_context_id": "ssh:a",
+                    "source_path": "/data/result.txt",
+                    "destination_context_id": "local",
+                    "destination_path": destination,
+                }),
+                &super::super::tests::RunToolTestEnv(root.clone()),
+            )
+            .await;
+        assert!(result.success, "{}", result.content);
+        let response: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+        let run_id = response["run_id"].as_str().unwrap();
+        let run = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let run = store.get_run(run_id).await.unwrap().unwrap();
+                if run.status.is_terminal() {
+                    break run;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(run.status, wisp_store::RunStatus::Succeeded);
+        assert_eq!(std::fs::read(destination).unwrap(), b"relay bytes");
+        assert!(!missing.exists());
+        assert_eq!(runner.commands.lock().unwrap().len(), 1);
         let _ = std::fs::remove_dir_all(root);
     }
 

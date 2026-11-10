@@ -473,6 +473,14 @@ async fn dispatch(broker: &Broker, request: &RemoteRequest) -> Result<Value, Str
         },
     )
     .await?;
+    if request.command == "list_projects" {
+        let state = broker.app.state::<AppState>();
+        let projects = serde_json::from_value(result).map_err(|error| error.to_string())?;
+        let available = wisp_app::projects::available_remote_projects(&state.store, projects)
+            .await
+            .map_err(|error| error.to_string())?;
+        return serde_json::to_value(available).map_err(|error| error.to_string());
+    }
     if request.command == "native_conversation_panel_file_read" {
         strip_file_bytes(&mut result);
     }
