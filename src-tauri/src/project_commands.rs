@@ -808,7 +808,7 @@ pub(crate) async fn delete_project_record(
     window_label: Option<&str>,
 ) -> Result<(), String> {
     validate_project_deletion(&state.store, id, delete_data).await?;
-    let _project_activity = state.begin_project_activity(&id)?;
+    let project_activity = state.begin_project_activity(&id)?;
     let workspace_delete_target = if delete_data {
         let (_, workspace_dir) = state
             .store
@@ -850,14 +850,12 @@ pub(crate) async fn delete_project_record(
     if let Err(error) = state.run_manager.wind_down_project(&state.store, &id).await {
         tracing::warn!(project_id = %id, "project wind-down failed: {error}");
     }
-    if let Some(target) = workspace_delete_target {
-        delete_project_workspace_data(target).await?;
-    }
-    state
-        .store
-        .delete_project(&id)
-        .await
-        .map_err(|e| format!("{e}"))?;
+    drop(project_activity);
+    let _delete_activity = workspace_delete_target
+        .as_ref()
+        .map(|_| state.begin_project_exclusive_activity(id))
+        .transpose()?;
+    delete_project_storage(&state.store, id, workspace_delete_target).await?;
     project_sync::forget_project_key(&id).await;
     for label in fallback_windows {
         // A window may have navigated elsewhere while the deletion was running.
@@ -869,6 +867,24 @@ pub(crate) async fn delete_project_record(
         }
     }
     Ok(())
+}
+
+async fn delete_project_storage(
+    store: &Store,
+    id: &str,
+    target: Option<ProjectWorkspaceDeleteTarget>,
+) -> Result<(), String> {
+    let _database_deletion = store
+        .begin_project_database_deletion(id)
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Some(target) = target {
+        delete_project_workspace_data(target).await?;
+    }
+    store
+        .delete_project(id)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 async fn validate_project_deletion(
@@ -1170,6 +1186,71 @@ mod tests {
         update_persisted_windows, validate_project_deletion, write_project_agent_context,
         APP_WINDOW_TITLE,
     };
+
+    #[tokio::test]
+    async fn project_storage_deletion_releases_open_database_before_removing_files() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open_application(&root.path().join("global.sqlite"))
+            .await
+            .unwrap();
+        store
+            .set_setting("decentralized_project_storage", "true")
+            .await
+            .unwrap();
+        let workspace = root.path().join("project");
+        store
+            .create_project("p", "P", workspace.to_str().unwrap())
+            .await
+            .unwrap();
+        store
+            .create_frame("f", "p", "agent", "model")
+            .await
+            .unwrap();
+        std::fs::write(workspace.join("research.txt"), "data").unwrap();
+        let target = super::project_workspace_delete_target(workspace.to_str().unwrap()).unwrap();
+        super::delete_project_storage(&store, "p", target)
+            .await
+            .unwrap();
+        assert!(!workspace.exists());
+        assert!(store.get_project("p").await.unwrap().is_none());
+        assert!(store.list_projects().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn project_storage_deletion_failure_keeps_registration_and_can_retry() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open_application(&root.path().join("global.sqlite"))
+            .await
+            .unwrap();
+        store
+            .set_setting("decentralized_project_storage", "true")
+            .await
+            .unwrap();
+        let workspace = root.path().join("project");
+        store
+            .create_project("p", "P", workspace.to_str().unwrap())
+            .await
+            .unwrap();
+        store
+            .create_frame("f", "p", "agent", "model")
+            .await
+            .unwrap();
+        let user_file = workspace.join("research.txt");
+        std::fs::write(&user_file, "keep data").unwrap();
+        let invalid = super::ProjectWorkspaceDeleteTarget::Directory(user_file.join("child"));
+        let error = super::delete_project_storage(&store, "p", Some(invalid))
+            .await
+            .unwrap_err();
+        assert!(error.contains("Failed to delete project data"), "{error}");
+        assert!(store.get_project("p").await.unwrap().is_some());
+        assert_eq!(std::fs::read_to_string(&user_file).unwrap(), "keep data");
+        let target = super::project_workspace_delete_target(workspace.to_str().unwrap()).unwrap();
+        super::delete_project_storage(&store, "p", target)
+            .await
+            .unwrap();
+        assert!(!workspace.exists());
+        assert!(store.list_projects().await.unwrap().is_empty());
+    }
 
     #[tokio::test]
     async fn missing_project_database_can_be_removed_without_deleting_files() {

@@ -136,7 +136,7 @@ async fn run_in_context_preview_keeps_long_commands_intact() {
     let _ = std::fs::remove_file(tmp);
 }
 
-struct RunToolTestEnv(PathBuf);
+pub(super) struct RunToolTestEnv(pub(super) PathBuf);
 
 #[async_trait::async_trait]
 impl wisp_tools::ToolEnv for RunToolTestEnv {
@@ -4741,6 +4741,16 @@ async fn discarding_a_server_marks_external_artifacts_and_blocks_fetch() {
     assert!(error.starts_with("source_discarded:"), "{error}");
     let error = remote_files::refuse_if_context_path_discarded(
         &store,
+        "ssh:gpu",
+        "/scratch/proj/artifacts/r1/big.bam",
+    )
+    .await
+    .unwrap_err();
+    assert!(error.starts_with("source_discarded:"), "{error}");
+
+    let error = remote_files::refuse_if_project_context_path_discarded(
+        &store,
+        "p",
         "ssh:gpu",
         "/scratch/proj/artifacts/r1/big.bam",
     )

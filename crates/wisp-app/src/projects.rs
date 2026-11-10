@@ -63,6 +63,21 @@ pub async fn list_projects(
     Ok(projects)
 }
 
+/// The remote picker omits missing project databases. Desktop listings retain
+/// their registrations so users can reconnect the volume or remove the entry.
+pub async fn available_remote_projects(
+    store: &Store,
+    projects: Vec<ProjectSummary>,
+) -> Result<Vec<ProjectSummary>> {
+    let mut available = Vec::with_capacity(projects.len());
+    for project in projects {
+        if !store.project_database_is_missing(&project.id).await? {
+            available.push(project);
+        }
+    }
+    Ok(available)
+}
+
 /// Count running sessions and sessions needing attention in one project.
 ///
 /// Pending approvals take precedence over running turns. Otherwise, an unseen

@@ -1,4 +1,5 @@
 use super::*;
+use std::str::FromStr;
 
 #[tokio::test]
 async fn global_settings_batch_rolls_back_on_failure() {
@@ -5922,6 +5923,60 @@ async fn detaching_session_default_clears_the_conversation_snapshot() {
     );
 
     let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn store_open_memory_shares_pool_connections_and_isolates_stores() {
+    let store = Store::open(Path::new(":memory:")).await.unwrap();
+    let mut connections = Vec::new();
+    // Hold every connection so the check cannot reuse one initialized handle.
+    for _ in 0..4 {
+        connections.push(store.pool.acquire().await.unwrap());
+    }
+    sqlx::query("INSERT INTO settings(key,value) VALUES('memory_pool_test','shared')")
+        .execute(&mut *connections[0])
+        .await
+        .unwrap();
+    for connection in &mut connections {
+        let value: String =
+            sqlx::query_scalar("SELECT value FROM settings WHERE key='memory_pool_test'")
+                .fetch_one(&mut **connection)
+                .await
+                .unwrap();
+        assert_eq!(value, "shared");
+    }
+    let independent = Store::open(Path::new(":memory:")).await.unwrap();
+    assert!(independent
+        .get_setting("memory_pool_test")
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn store_open_preserves_literal_canonical_database_paths() {
+    let root = tempfile::tempdir().unwrap();
+    // On Windows canonicalization also exercises the extended-length prefix.
+    let path = std::fs::canonicalize(root.path())
+        .unwrap()
+        .join("研究%20#state.sqlite");
+    let store = Store::open(&path).await.unwrap();
+    store
+        .set_setting("literal_path_test", "saved")
+        .await
+        .unwrap();
+    Store::close_pool(&store.pool).await;
+    assert!(path.is_file());
+    let reopened = Store::open(&path).await.unwrap();
+    assert_eq!(
+        reopened
+            .get_setting("literal_path_test")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("saved")
+    );
+    Store::close_pool(&reopened.pool).await;
 }
 
 #[tokio::test]

@@ -74,6 +74,25 @@ pub async fn refuse_if_context_path_discarded(
     refuse_if_source_discarded(store, &ssh_uri_for_context_path(context_id, remote_path)).await
 }
 
+pub async fn refuse_if_project_context_path_discarded(
+    store: &wisp_store::Store,
+    project_id: &str,
+    context_id: &str,
+    remote_path: &str,
+) -> Result<(), String> {
+    if store
+        .project_ssh_uri_source_discarded(
+            project_id,
+            &ssh_uri_for_context_path(context_id, remote_path),
+        )
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        return Err(SOURCE_DISCARDED_ERROR.into());
+    }
+    Ok(())
+}
+
 /// Drop the project's claim on a server: mark External artifacts discarded and
 /// close the staging ledger. Remote bytes are not deleted — the machine is
 /// being thrown away.

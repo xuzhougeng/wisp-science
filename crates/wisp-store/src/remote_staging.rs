@@ -380,6 +380,28 @@ impl Store {
         Ok(marked)
     }
 
+    /// Check the owning project without opening unrelated project databases.
+    /// A missing authoritative database still fails for this project.
+    pub async fn project_ssh_uri_source_discarded(
+        &self,
+        project_id: &str,
+        uri: &str,
+    ) -> Result<bool> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.project_ssh_uri_source_discarded(project_id, uri)).await;
+        }
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM artifact_versions v \
+             JOIN artifacts a ON a.id=v.artifact_id \
+             WHERE a.project_id=? AND v.materialization='external' AND v.storage_path=? \
+               AND v.source_discarded_at IS NOT NULL)",
+        )
+        .bind(project_id)
+        .bind(uri)
+        .fetch_one(&self.pool)
+        .await?)
+    }
+
     /// True when any External version of this exact URI has been discarded.
     /// Re-adding the same host alias must not resurrect abandoned references.
     pub async fn ssh_uri_source_discarded(&self, uri: &str) -> Result<bool> {

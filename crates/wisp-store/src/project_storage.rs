@@ -5,17 +5,38 @@ use super::Store;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+    sync::Arc,
+};
 use tokio::sync::Mutex;
 
 pub(super) struct ProjectRegistry {
     pub(super) global: SqlitePool,
     pub(super) pools: Mutex<HashMap<String, SqlitePool>>,
+    deleting: std::sync::Mutex<HashSet<String>>,
     read_only: bool,
     migrate_on_open: bool,
     entities: Mutex<HashMap<(String, String, String), String>>,
     /// Cache-file fingerprints at the last folder publish/check, per project.
     pub(super) published: std::sync::Mutex<HashMap<String, super::project_snapshots::Fingerprint>>,
+}
+
+/// Keeps project readers from reopening a database while its files are removed.
+/// Dropping the guard restores access after a failed or cancelled deletion.
+#[must_use]
+pub struct ProjectDatabaseDeleteGuard {
+    registry: Option<Arc<ProjectRegistry>>,
+    project_id: String,
+}
+
+impl Drop for ProjectDatabaseDeleteGuard {
+    fn drop(&mut self) {
+        if let Some(registry) = &self.registry {
+            registry.deleting.lock().unwrap().remove(&self.project_id);
+        }
+    }
 }
 
 pub const PROJECT_DATABASE: &str = ".wisp/project.sqlite";
@@ -378,6 +399,7 @@ impl Store {
             self.registry = Some(Arc::new(ProjectRegistry {
                 global: self.pool.clone(),
                 pools: Mutex::new(HashMap::new()),
+                deleting: std::sync::Mutex::new(HashSet::new()),
                 read_only,
                 migrate_on_open: false,
                 entities: Mutex::new(HashMap::new()),
@@ -411,7 +433,7 @@ impl Store {
                 .fetch_optional(&registry.global)
                 .await?;
         let Some(path) = path else { return Ok(false) };
-        match std::fs::metadata(&path) {
+        match tokio::fs::metadata(&path).await {
             Ok(_) => Ok(false),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
             Err(error) => Err(error).with_context(|| format!("Inspect project database: {path}")),
@@ -422,6 +444,10 @@ impl Store {
         let Some(registry) = &self.registry else {
             return Ok(None);
         };
+        anyhow::ensure!(
+            !registry.deleting.lock().unwrap().contains(id),
+            "Project {id} deletion is in progress"
+        );
         if let Some(scope) = &self.project_scope {
             anyhow::ensure!(
                 scope == id,
@@ -441,8 +467,18 @@ impl Store {
         let available = tokio::fs::metadata(&path)
             .await
             .is_ok_and(|metadata| metadata.is_file());
-        anyhow::ensure!(available, "Project {id} database is unavailable: {path}");
+        anyhow::ensure!(
+            available,
+            "Project {id} database is unavailable: {path}. Reconnect the workspace or, if it \
+             was deleted, choose Delete → Remove from Wisp only in the desktop project list. \
+             Resume this action from an available project."
+        );
         let mut pools = registry.pools.lock().await;
+        // Deletion can start while the metadata check above is in flight.
+        anyhow::ensure!(
+            !registry.deleting.lock().unwrap().contains(id),
+            "Project {id} deletion is in progress"
+        );
         if !pools.contains_key(id) {
             let database = Path::new(&path);
             let pool = match Self::open_project_pool(registry, id, database).await {
@@ -742,6 +778,41 @@ impl Store {
         Ok(())
     }
 
+    /// Drain this project's connections before deleting workspace files. The
+    /// registration stays available for removal or retry, and other projects
+    /// retain their own connections throughout the operation.
+    pub async fn begin_project_database_deletion(
+        &self,
+        id: &str,
+    ) -> Result<ProjectDatabaseDeleteGuard> {
+        anyhow::ensure!(self.project_scope.is_none(), "Application store required");
+        let Some(registry) = &self.registry else {
+            return Ok(ProjectDatabaseDeleteGuard {
+                registry: None,
+                project_id: id.to_owned(),
+            });
+        };
+        let mut pools = registry.pools.lock().await;
+        anyhow::ensure!(
+            registry.deleting.lock().unwrap().insert(id.to_owned()),
+            "Project {id} deletion is already in progress"
+        );
+        let guard = ProjectDatabaseDeleteGuard {
+            registry: self.registry.clone(),
+            project_id: id.to_owned(),
+        };
+        let pool = pools.remove(id);
+        drop(pools);
+        if let Some(pool) = pool {
+            Self::close_pool(&pool).await;
+            anyhow::ensure!(
+                pool.size() == 0,
+                "Project {id} database connections are still closing"
+            );
+        }
+        Ok(guard)
+    }
+
     /// Detach only the registration. The project database and files survive.
     pub(super) async fn unregister_project_storage(&self, id: &str) -> Result<bool> {
         if self.registry.is_none() || self.project_scope.is_some() {
@@ -768,8 +839,9 @@ impl Store {
         if let Some(registry) = &self.registry {
             // Release file handles so a removed project folder can be moved
             // or deleted, including on Windows.
-            if let Some(pool) = registry.pools.lock().await.remove(id) {
-                pool.close().await;
+            let pool = registry.pools.lock().await.remove(id);
+            if let Some(pool) = pool {
+                Self::close_pool(&pool).await;
             }
         }
         Ok(true)
@@ -1965,6 +2037,165 @@ mod tests {
             local.frame_project_id("b").await.unwrap().as_deref(),
             Some("b")
         );
+    }
+
+    #[tokio::test]
+    async fn project_database_deletion_releases_connections_and_blocks_reopening() {
+        let root = tempfile::tempdir().unwrap();
+        let store = open_portable_application(&root.path().join("global.sqlite"))
+            .await
+            .unwrap();
+        for id in ["removed", "healthy"] {
+            store
+                .create_project(id, id, root.path().join(id).to_str().unwrap())
+                .await
+                .unwrap();
+            store.create_frame(id, id, "agent", "model").await.unwrap();
+        }
+        let scoped = store.route_project("removed").await.unwrap().unwrap();
+        let pool = scoped.pool.clone();
+        assert!(!pool.is_closed());
+        let guard = store
+            .begin_project_database_deletion("removed")
+            .await
+            .unwrap();
+        assert!(pool.is_closed());
+        assert_eq!(pool.size(), 0);
+        assert!(store
+            .get_project("removed")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("deletion"));
+        assert!(scoped.get_project("removed").await.is_err());
+        assert!(store
+            .begin_project_database_deletion("removed")
+            .await
+            .is_err());
+        // A second deletion must not clear the first one's marker.
+        assert!(store.get_project("removed").await.is_err());
+        assert!(store.get_project("healthy").await.unwrap().is_some());
+
+        let workspace = root.path().join("removed");
+        assert!(std::fs::canonicalize(&workspace)
+            .unwrap()
+            .starts_with(std::fs::canonicalize(root.path()).unwrap()));
+        std::fs::remove_dir_all(&workspace).unwrap();
+        store.delete_project("removed").await.unwrap();
+        drop(guard);
+        assert!(store.get_project("removed").await.unwrap().is_none());
+        assert!(store.get_project("healthy").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn project_database_deletion_guard_allows_retry_after_interruption() {
+        let root = tempfile::tempdir().unwrap();
+        let store = open_portable_application(&root.path().join("global.sqlite"))
+            .await
+            .unwrap();
+        store
+            .create_project("p", "P", root.path().join("p").to_str().unwrap())
+            .await
+            .unwrap();
+        store
+            .create_frame("f", "p", "agent", "model")
+            .await
+            .unwrap();
+        store
+            .append_message("f", 1, &wisp_llm::Message::user("keep history"))
+            .await
+            .unwrap();
+        let guard = store.begin_project_database_deletion("p").await.unwrap();
+        assert!(store.get_project("p").await.is_err());
+        drop(guard);
+        assert_eq!(
+            store.load_messages("f").await.unwrap()[0].content.as_text(),
+            "keep history"
+        );
+        let retry = store.begin_project_database_deletion("p").await.unwrap();
+        drop(retry);
+        assert!(store.get_project("p").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn project_remote_source_checks_ignore_unrelated_missing_databases() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("global.sqlite");
+        let store = Store::open_application(&path).await.unwrap();
+        store
+            .create_project(
+                "central",
+                "Central",
+                root.path().join("central").to_str().unwrap(),
+            )
+            .await
+            .unwrap();
+        store
+            .set_setting("decentralized_project_storage", "true")
+            .await
+            .unwrap();
+        for id in ["offline", "online"] {
+            store
+                .create_project(id, id, root.path().join(id).to_str().unwrap())
+                .await
+                .unwrap();
+        }
+        store
+            .create_frame("f", "online", "agent", "model")
+            .await
+            .unwrap();
+        let uri = "ssh://gpu/data/result.bam";
+        store
+            .save_artifact_version(&crate::ArtifactVersionDraft {
+                version_id: None,
+                artifact_id: crate::logical_artifact_id("online", "path:result.bam"),
+                project_id: "online".into(),
+                root_frame_id: "f".into(),
+                filename: "result.bam".into(),
+                content_type: "data".into(),
+                storage_path: uri.into(),
+                logical_key: Some("path:result.bam".into()),
+                size_bytes: None,
+                checksum: None,
+                producing_run_id: None,
+                env_snapshot_hash: None,
+                materialization: crate::ArtifactMaterialization::External,
+                capture_timing: crate::ArtifactCaptureTiming::AtCreation,
+            })
+            .await
+            .unwrap();
+        store
+            .mark_external_artifacts_source_discarded("ssh://gpu/")
+            .await
+            .unwrap();
+        for pool in store.registry.as_ref().unwrap().pools.lock().await.values() {
+            pool.close().await;
+        }
+        store.pool.close().await;
+        let missing = root.path().join("offline").join(PROJECT_DATABASE);
+        std::fs::rename(&missing, root.path().join("saved.sqlite")).unwrap();
+        let store = Store::open_application(&path).await.unwrap();
+        assert!(store
+            .project_ssh_uri_source_discarded("online", uri)
+            .await
+            .unwrap());
+        assert!(!store
+            .project_ssh_uri_source_discarded("central", uri)
+            .await
+            .unwrap());
+        assert!(!store
+            .project_ssh_uri_source_discarded("online", "ssh://gpu/data/other.bam")
+            .await
+            .unwrap());
+        let error = store
+            .project_ssh_uri_source_discarded("offline", uri)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Remove from Wisp only"), "{error}");
+        // Unscoped checks retain their conservative behavior.
+        assert!(store.ssh_uri_source_discarded(uri).await.is_err());
+        assert!(!missing.exists());
     }
 
     #[tokio::test]

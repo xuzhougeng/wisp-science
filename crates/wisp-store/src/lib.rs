@@ -95,7 +95,7 @@ pub use models::*;
 pub use persist_seq::{join_or_abort_persist, persist_seq_loop, PersistJoinError};
 pub use project_snapshots::{FolderSyncOutcome, FOLDER_WAITING, WORKSPACE_TRANSPORT};
 pub use project_state_revisions::{ProjectStateRevision, ProjectStateRevisionSummary};
-pub use project_storage::{PROJECT_DATABASE, PROJECT_METADATA};
+pub use project_storage::{ProjectDatabaseDeleteGuard, PROJECT_DATABASE, PROJECT_METADATA};
 pub use project_sync::ProjectSyncState;
 pub use project_transfer::ProjectTransferStats;
 pub use projects::{is_assistant_project_id, ASSISTANT_PROJECT_ID};
@@ -122,7 +122,6 @@ use anyhow::Result;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
 use std::path::Path;
-use std::str::FromStr;
 #[cfg(test)]
 use wisp_llm::Message;
 
@@ -283,14 +282,20 @@ impl Store {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display()))?
-            .create_if_missing(true)
-            // WAL allows only one writer at a time; with a pool of concurrent
-            // connections a second writer would otherwise get SQLITE_BUSY
-            // immediately (default timeout is 0) and fail. Wait for the lock
-            // instead — concurrent tasks writing the same store (e.g. message +
-            // provenance persistence) must serialize, not error out.
-            .busy_timeout(std::time::Duration::from_secs(5));
+        // SQLx gives each memory store a unique name shared by its pool's
+        // connections. Filesystem paths keep their literal filename semantics.
+        let opts = if path == Path::new(":memory:") {
+            "sqlite::memory:".parse::<SqliteConnectOptions>()?
+        } else {
+            SqliteConnectOptions::new().filename(path)
+        }
+        .create_if_missing(true)
+        // WAL allows only one writer at a time; with a pool of concurrent
+        // connections a second writer would otherwise get SQLITE_BUSY
+        // immediately (default timeout is 0) and fail. Wait for the lock
+        // instead — concurrent tasks writing the same store (e.g. message +
+        // provenance persistence) must serialize, not error out.
+        .busy_timeout(std::time::Duration::from_secs(5));
         let pool = SqlitePoolOptions::new()
             .max_connections(4)
             .connect_with(opts)

@@ -5,6 +5,13 @@ use [Linux Server](linux-server.md). That deployment includes its own mobile
 endpoint and does not require a separate `wisp-relay` or a desktop session.
 The rest of this guide describes the separate desktop-plus-relay setup.
 
+The phone's project list temporarily hides registered projects whose database
+file is missing. Reconnecting the volume or restoring the original path makes
+them visible on refresh. Desktop listings keep those entries for recovery.
+After permanently deleting a project folder manually, choose **Delete → Remove
+from Wisp only** on the desktop to remove its registration, then refresh the
+phone. See [project database recovery](project-database-recovery.zh-CN.md).
+
 Open the Wisp running on your computer from a phone or any browser (#1460).
 An experimental [native iPhone and iPad client](../apps/ios/README.md) also uses
 the same relay and connection code. It requires iOS/iPadOS 17; real remote work

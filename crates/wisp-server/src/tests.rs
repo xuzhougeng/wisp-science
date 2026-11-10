@@ -123,6 +123,65 @@ async fn wait_for(
 }
 
 #[tokio::test]
+async fn mobile_project_list_omits_a_missing_registered_database() {
+    let root = tempfile::tempdir().unwrap();
+    let cfg = config(root.path());
+    let store = Store::open_application(&cfg.data.join("wisp.sqlite"))
+        .await
+        .unwrap();
+    store
+        .set_setting("decentralized_project_storage", "true")
+        .await
+        .unwrap();
+    let workspace = root.path().join("offline");
+    store
+        .create_project("offline", "Offline", workspace.to_str().unwrap())
+        .await
+        .unwrap();
+    let server = Server::open_with_models(cfg, models(Arc::new(AtomicUsize::new(0)), false))
+        .await
+        .unwrap();
+    // Re-register after releasing the startup reader's handles, including on Windows.
+    server.0.store.delete_project("offline").await.unwrap();
+    server
+        .0
+        .store
+        .register_project_folder(&workspace)
+        .await
+        .unwrap();
+    let database = workspace.join(wisp_store::PROJECT_DATABASE);
+    let saved = root.path().join("saved.sqlite");
+    std::fs::rename(&database, &saved).unwrap();
+
+    let projects = call(&server, "list_projects", PROJECT, json!({}))
+        .await
+        .unwrap();
+    let rows = projects.as_array().unwrap();
+    assert!(rows.iter().any(|row| row["id"] == PROJECT));
+    assert!(rows.iter().all(|row| row["id"] != "offline"));
+    assert!(server
+        .0
+        .store
+        .list_projects()
+        .await
+        .unwrap()
+        .iter()
+        .any(|row| row.0 == "offline"));
+    assert!(!database.exists());
+
+    std::fs::rename(&saved, &database).unwrap();
+    let projects = call(&server, "list_projects", PROJECT, json!({}))
+        .await
+        .unwrap();
+    assert!(projects
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|row| row["id"] == "offline"));
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn mobile_turn_approval_persistence_and_restart_reuse_the_same_runtime() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = config(tmp.path());
