@@ -37,6 +37,8 @@ pub(crate) enum TurnOrigin {
     Desktop,
     Im,
     Timer,
+    /// Unattended project schedule: preserve notification routing and ask before mutations.
+    Schedule,
     Queued(u64),
     /// A queued turn that was parked over the remote web tunnel. It keeps its
     /// queue id and the IM approval floor: waiting in the queue must not turn
@@ -62,14 +64,21 @@ impl TurnOrigin {
     pub(crate) fn force_ask_mutations(self) -> bool {
         matches!(
             self,
-            Self::Im | Self::QueuedUnattended(_) | Self::Subagent { unattended: true }
+            Self::Im
+                | Self::Schedule
+                | Self::QueuedUnattended(_)
+                | Self::Subagent { unattended: true }
         )
+    }
+
+    fn claims_notification_window(self, resume: bool, workflow_held: bool) -> bool {
+        !matches!(self, Self::Timer | Self::Schedule) && (!resume || !workflow_held)
     }
 
     fn queue_id(self) -> Option<u64> {
         match self {
             Self::Queued(id) | Self::QueuedUnattended(id) => Some(id),
-            Self::Desktop | Self::Im | Self::Timer | Self::Subagent { .. } => None,
+            Self::Desktop | Self::Im | Self::Timer | Self::Schedule | Self::Subagent { .. } => None,
         }
     }
 }
@@ -423,7 +432,7 @@ async fn send_message_inner_with_continuation(
     // Automatic delegation resume carries an owned workflow guard and uses the
     // synthetic "main" route. It must preserve the window that launched the
     // parent task; every direct/queued user turn may claim its actual window.
-    let user_routed_turn = origin != TurnOrigin::Timer && (!resume || workflow_guard.is_none());
+    let user_routed_turn = origin.claims_notification_window(resume, workflow_guard.is_some());
     if !resume && message.trim().is_empty() {
         return Err("message is empty".into());
     }
@@ -2737,6 +2746,22 @@ mod queue_tests {
         assert_eq!((first.id, first.unattended), (2, true));
         let second = take_next_queued_turn(&rt).unwrap();
         assert_eq!((second.id, second.unattended), (1, false));
+    }
+
+    #[test]
+    fn scheduled_turns_ask_before_mutations_and_preserve_window_routing() {
+        let origin = TurnOrigin::Schedule;
+        assert!(origin.force_ask_mutations());
+        assert!(origin.for_dispatch().force_ask_mutations());
+        assert_eq!(origin.queue_id(), None);
+        for resume in [false, true] {
+            for workflow_held in [false, true] {
+                assert!(!origin.claims_notification_window(resume, workflow_held));
+            }
+        }
+        assert!(TurnOrigin::Desktop.claims_notification_window(false, false));
+        assert!(!TurnOrigin::Desktop.claims_notification_window(true, true));
+        assert!(!TurnOrigin::Timer.force_ask_mutations());
     }
 
     #[test]

@@ -514,3 +514,6 @@ body { position: fixed; inset: 0; display: flex; flex-direction: column; overflo
 ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); border: var(--scrollbar-thumb-inset) solid transparent; background-clip: padding-box; }
 .is-scrolling::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border: var(--scrollbar-thumb-inset) solid transparent; background-clip: padding-box; }
 .is-scrolling::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); border: var(--scrollbar-thumb-inset) solid transparent; background-clip: padding-box; }
+
+.window-controls button { display: inline-flex; align-items: center; justify-content: center; }
+.window-controls svg { width: 14px; height: 14px; }

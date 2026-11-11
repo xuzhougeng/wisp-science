@@ -1,4 +1,5 @@
 mod eval;
+mod model_limits;
 mod rpc;
 mod runs;
 mod workflows;
@@ -935,8 +936,14 @@ async fn provider_config() -> Result<ProviderConfig> {
         wisp_llm::xai_auth::validate_xai_url(&base_url).map_err(anyhow::Error::msg)?;
     }
     let mut cfg = build_named_provider_config(&kind, base_url, api_key, model);
-    cfg.max_tokens = parse_wisp_max_tokens(std::env::var("WISP_MAX_TOKENS").ok().as_deref())
-        .unwrap_or(DEFAULT_HEADLESS_MAX_TOKENS);
+    cfg.max_tokens = model_limits::resolve(
+        &cfg,
+        std::env::var("WISP_MAX_CONTEXT")
+            .ok()
+            .and_then(|v| v.parse().ok()),
+        parse_wisp_max_tokens(std::env::var("WISP_MAX_TOKENS").ok().as_deref()),
+    )?
+    .1;
     if let Some(effort) =
         parse_wisp_reasoning_effort(std::env::var("WISP_REASONING_EFFORT").ok().as_deref())
     {
@@ -1030,7 +1037,6 @@ async fn vision_provider_config() -> Result<Option<ProviderConfig>> {
     )
 }
 
-const DEFAULT_HEADLESS_MAX_TOKENS: u64 = 32_768;
 const DEFAULT_HEADLESS_MAX_ITER: usize = 0;
 const DEFAULT_HEADLESS_VISION: bool = false;
 
@@ -1388,9 +1394,14 @@ async fn main() -> Result<()> {
             return Err(error);
         }
     };
-    let max_context = env("WISP_MAX_CONTEXT", "1000000")
-        .parse::<usize>()
-        .unwrap_or(1_000_000);
+    let (max_context, max_tokens) = model_limits::resolve(
+        &cfg,
+        std::env::var("WISP_MAX_CONTEXT")
+            .ok()
+            .and_then(|v| v.parse().ok()),
+        Some(cfg.max_tokens),
+    )?;
+    cfg.max_tokens = max_tokens;
     let max_iter = parse_wisp_max_iter(std::env::var("WISP_MAX_ITER").ok().as_deref())
         .unwrap_or(DEFAULT_HEADLESS_MAX_ITER);
 
@@ -1861,16 +1872,8 @@ mod tests {
     #[test]
     fn wisp_max_tokens_override_parses_set_unset_and_invalid() {
         assert_eq!(parse_wisp_max_tokens(None), None);
-        assert_eq!(
-            parse_wisp_max_tokens(None).unwrap_or(DEFAULT_HEADLESS_MAX_TOKENS),
-            32_768
-        );
         assert_eq!(parse_wisp_max_tokens(Some("65536")), Some(65536));
         assert_eq!(parse_wisp_max_tokens(Some("nope")), None);
-        assert_eq!(
-            parse_wisp_max_tokens(Some("nope")).unwrap_or(DEFAULT_HEADLESS_MAX_TOKENS),
-            32_768
-        );
         assert_eq!(parse_wisp_max_tokens(Some("")), None);
     }
 

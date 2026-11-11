@@ -1,3 +1,4 @@
+import { trackIntervals, waitForIntervalTicks } from "./async-observers";
 import { test, expect, type Page } from "@playwright/test";
 import { tauriMock } from "./mock-tauri";
 
@@ -356,6 +357,7 @@ test("assistant connection reports status, QR and enable errors with retry", asy
 });
 
 test("closing an assistant QR stops polling without binding the legacy channel", async ({ page }) => {
+  await trackIntervals(page);
   await page.addInitScript(() => { (window as any).__assistantWeixinPollState = "wait"; });
   await open(page);
   await page.getByRole("button", { name: "Remote access", exact: true }).click();
@@ -363,7 +365,7 @@ test("closing an assistant QR stops polling without binding the legacy channel",
   await expect(page.getByAltText("WeChat binding QR code")).toBeVisible();
   await page.keyboard.press("Escape");
   const polls = (await calls(page, "weixin_bind_poll")).length;
-  await page.waitForTimeout(1600);
+  await waitForIntervalTicks(page, 1000, 3);
   expect((await calls(page, "weixin_bind_poll")).length).toBe(polls);
   await page.getByRole("button", { name: "Remote access", exact: true }).click();
   await expect(page.getByTestId("assistant-weixin-enabled")).toBeDisabled();

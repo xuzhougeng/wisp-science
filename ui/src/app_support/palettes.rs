@@ -267,7 +267,9 @@ pub(crate) fn CommandPalette(
             let mut ps: Vec<_> = projects
                 .get()
                 .into_iter()
-                .filter(|p| !hidden.contains(&p.id) && contains_search(&q, &[&p.name, &p.description]))
+                .filter(|p| {
+                    !hidden.contains(&p.id) && contains_search(&q, &[&p.name, &p.description])
+                })
                 .collect();
             ps.sort_by_key(|p| (current.as_deref() != Some(p.id.as_str()), p.name.clone()));
             out.extend(ps.into_iter().map(CommandPaletteItem::Project));
@@ -382,7 +384,7 @@ pub(crate) fn CommandPalette(
     view! {
         {move || open.get().then(|| view! {
             <div class="project-search-overlay conversation-search-overlay" on:click=move |_| open.set(false)>
-                <div class="project-search-dialog conversation-search-dialog" role="dialog" aria-label="Search"
+                <div class="project-search-dialog conversation-search-dialog" role="dialog" aria-label=move || crate::i18n::tr(locale.get(), "a11y.search")
                     class:palette-overflow=move || list_overflows.get()
                     on:click=|ev| ev.stop_propagation()>
                     <div class="project-search-input">
@@ -443,7 +445,7 @@ pub(crate) fn CommandPalette(
                                                 CommandPaletteItem::Command("check-updates") => ("refresh", t(locale.get(), "command.check_updates").to_string(), String::new()),
                                                 CommandPaletteItem::Command("star-us") => ("star", t(locale.get(), "command.star_us").to_string(), String::new()),
                                                 CommandPaletteItem::Command("settings") => ("gear", t(locale.get(), "proj_settings.title").to_string(), String::new()),
-                                                CommandPaletteItem::Command("skills") => ("grid", t(locale.get(), "settings.nav.skills").to_string(), String::new()),
+                                                CommandPaletteItem::Command("skills") => ("skill", t(locale.get(), "settings.nav.skills").to_string(), String::new()),
                                                 CommandPaletteItem::Command(_) => ("doc", String::new(), String::new()),
                                             };
                                             view! {
@@ -638,7 +640,7 @@ pub(crate) fn ActionPalette(
             ),
             (
                 "skills",
-                "grid",
+                "skill",
                 "command.skills",
                 general,
                 "",
@@ -674,7 +676,7 @@ pub(crate) fn ActionPalette(
             ),
             (
                 "artifacts",
-                "grid",
+                "image",
                 "command.artifacts",
                 navigate.clone(),
                 "",
@@ -683,7 +685,7 @@ pub(crate) fn ActionPalette(
             ),
             (
                 "notebook",
-                "doc",
+                "notebook",
                 "command.notebook",
                 navigate.clone(),
                 "",
@@ -710,7 +712,7 @@ pub(crate) fn ActionPalette(
             ),
             (
                 "provenance",
-                "copy",
+                "history",
                 "command.provenance",
                 navigate.clone(),
                 "",
@@ -737,7 +739,7 @@ pub(crate) fn ActionPalette(
             ),
             (
                 "close-panel",
-                "panel",
+                "dock",
                 "command.close_panel",
                 navigate,
                 "",
@@ -809,7 +811,7 @@ pub(crate) fn ActionPalette(
             ),
             (
                 "star-us",
-                "star",
+                "star-filled",
                 "command.star_us",
                 help.clone(),
                 "",
@@ -818,7 +820,7 @@ pub(crate) fn ActionPalette(
             ),
             (
                 "docs",
-                "doc",
+                "book",
                 "menu.docs",
                 help.clone(),
                 "",
@@ -827,7 +829,7 @@ pub(crate) fn ActionPalette(
             ),
             (
                 "issues",
-                "bubble",
+                "circle-alert",
                 "menu.issues",
                 help,
                 "",
@@ -887,7 +889,7 @@ pub(crate) fn ActionPalette(
     view! {
         {move || open.get().then(|| view! {
             <div class="project-search-overlay action-palette-overlay" on:click=move |_| open.set(false)>
-                <div class="project-search-dialog action-palette" role="dialog" aria-label="Command Palette"
+                <div class="project-search-dialog action-palette" role="dialog" aria-label=move || crate::i18n::tr(locale.get(), "a11y.command_palette")
                     class:palette-overflow=move || list_overflows.get()
                     on:click=|ev| ev.stop_propagation()>
                     <div class="project-search-input">

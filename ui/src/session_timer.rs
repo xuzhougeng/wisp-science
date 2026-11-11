@@ -1,7 +1,7 @@
 use crate::app_support::compose_icon;
 use crate::dto::{ChatItem, ScheduleRecord, TimerTurnRemoval};
 use crate::i18n::Locale;
-use crate::research_journey::{call, clock, j};
+use crate::research_journey::{call, clock};
 use leptos::*;
 use wasm_bindgen::{closure::Closure, JsCast, JsValue};
 
@@ -48,13 +48,13 @@ pub(crate) fn duration(seconds: i64) -> String {
 
 pub(crate) fn label(timer: &ScheduleRecord, loc: Locale) -> String {
     if !timer.enabled {
-        return j(loc, "Timer paused", "定时任务已暂停").into();
+        return crate::i18n::tr(loc, "session_timer.timer_paused").into();
     }
     format!(
         "{} {} · {} {}",
-        j(loc, "Every", "每"),
+        crate::i18n::tr(loc, "session_timer.every"),
         duration(timer.interval_secs),
-        j(loc, "Next", "下次"),
+        crate::i18n::tr(loc, "automation.next"),
         clock(timer.next_run_at)
     )
 }
@@ -122,10 +122,9 @@ pub(crate) fn SessionTimerPanel(
         let expression = format!("{} {}", interval.get_untracked(), prompt.get_untracked());
         if crate::dto::parse_timer_expression(&expression).is_err() {
             error.set(Some(
-                j(
+                crate::i18n::tr(
                     locale.get_untracked(),
-                    "Use 1m–365d and a nonempty prompt (for example: 1h).",
-                    "请输入 1m–365d 的间隔和非空提示词，例如 1h。",
+                    "session_timer.use_1m_365d_and_a_nonempty_prompt_for_example_1h",
                 )
                 .into(),
             ));
@@ -199,21 +198,21 @@ pub(crate) fn SessionTimerPanel(
     });
     view! {
         <div class="session-timer-backdrop" on:click=move |_| on_close.call(())>
-            <section class="session-timer-panel" role="dialog" aria-modal="true" aria-label=move || j(locale.get(),"Conversation timer","会话定时任务") data-testid="session-timer-panel" on:click=move |ev| ev.stop_propagation()>
-                <header><h3>{compose_icon("clock")}{move || j(locale.get(),"Conversation timer","会话定时任务")}</h3>
-                    <button type="button" aria-label=move || j(locale.get(),"Close timer","关闭定时任务") on:click=move |_| on_close.call(())>{compose_icon("close")}</button></header>
-                <p>{move || j(locale.get(),"Each run replaces this timer's previous question, tools and answer. Your other messages remain. Runs only while Wisp is open; busy conversations wait until idle.","每次执行替换此定时任务上一轮的提问、工具调用和回答，保留其他聊天。仅在 Wisp 运行时触发，会话忙时等待空闲。")}</p>
-                <label>{move || j(locale.get(),"Interval","间隔")}<input data-testid="timer-interval" prop:value=move || interval.get() on:input=move |ev| interval.set(event_target_value(&ev)) placeholder="1h"/></label>
-                <label>{move || j(locale.get(),"Prompt","提示词")}<textarea data-testid="timer-prompt" rows="4" prop:value=move || prompt.get() on:input=move |ev| prompt.set(event_target_value(&ev))></textarea></label>
+            <section class="session-timer-panel" role="dialog" aria-modal="true" aria-label=move || crate::i18n::tr(locale.get(), "session_timer.conversation_timer") data-testid="session-timer-panel" on:click=move |ev| ev.stop_propagation()>
+                <header><h3>{compose_icon("clock")}{move || crate::i18n::tr(locale.get(), "session_timer.conversation_timer")}</h3>
+                    <button type="button" aria-label=move || crate::i18n::tr(locale.get(), "session_timer.close_timer") on:click=move |_| on_close.call(())>{compose_icon("close")}</button></header>
+                <p>{move || crate::i18n::tr(locale.get(), "session_timer.each_run_replaces_this_timer_s_previous_question_tools_and_answer")}</p>
+                <label>{move || crate::i18n::tr(locale.get(), "session_timer.interval")}<input data-testid="timer-interval" prop:value=move || interval.get() on:input=move |ev| interval.set(event_target_value(&ev)) placeholder="1h"/></label>
+                <label>{move || crate::i18n::tr(locale.get(), "automation.prompt")}<textarea data-testid="timer-prompt" rows="4" prop:value=move || prompt.get() on:input=move |ev| prompt.set(event_target_value(&ev))></textarea></label>
                 {move || timer.get().map(|value| view! {<p class="session-timer-status">{label(&value,locale.get())}</p>})}
                 {move || error.get().map(|e| view! {<p role="alert">{e}</p>})}
-                {move || last_error.get().map(|e| view! {<p role="alert">{j(locale.get(),"Last run failed: ","上次执行失败：")}{e}</p>})}
+                {move || last_error.get().map(|e| view! {<p role="alert">{crate::i18n::tr(locale.get(), "session_timer.last_run_failed")}{e}</p>})}
                 <footer>
                     {move || timer.get().map(|current| view! {
-                        <button type="button" disabled=move || busy.get() data-testid="timer-toggle" on:click=move |_| act.call(false)>{compose_icon(if current.enabled {"pause"} else {"play"})}{if current.enabled {j(locale.get(),"Pause","暂停")} else {j(locale.get(),"Resume","恢复")}}</button>
-                        <button type="button" disabled=move || busy.get() data-testid="timer-delete" on:click=move |_| act.call(true)>{compose_icon("trash")}{move || j(locale.get(),"Cancel timer","取消定时任务")}</button>
+                        <button type="button" disabled=move || busy.get() data-testid="timer-toggle" on:click=move |_| act.call(false)>{compose_icon(if current.enabled {"pause"} else {"play"})}{if current.enabled {crate::i18n::tr(locale.get(), "method_search.pause")} else {crate::i18n::tr(locale.get(), "session_timer.resume")}}</button>
+                        <button type="button" disabled=move || busy.get() data-testid="timer-delete" on:click=move |_| act.call(true)>{compose_icon("trash")}{move || crate::i18n::tr(locale.get(), "session_timer.cancel_timer")}</button>
                     })}
-                    <button type="button" class="btn-primary" data-testid="timer-save" disabled=move || busy.get() on:click=save>{compose_icon("save")}{move || j(locale.get(),"Save","保存")}</button>
+                    <button type="button" class="btn-primary" data-testid="timer-save" disabled=move || busy.get() on:click=save>{compose_icon("save")}{move || crate::i18n::tr(locale.get(), "settings.save")}</button>
                 </footer>
             </section>
         </div>

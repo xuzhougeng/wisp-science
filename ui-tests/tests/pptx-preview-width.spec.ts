@@ -30,16 +30,21 @@ test("PPTX preview width stays pinned in a narrow modal", async ({ page }) => {
   // by the sizing pass) instead of sleeping and hoping it has.
   await expect.poll(async () => (await measure(page)).scale).not.toBeNull();
   const a = await measure(page);
-  // Deliberate observation window: the regression is a feedback loop that
-  // drifts the width over time, so hold still and re-measure — there is no
-  // condition to await for "nothing changed".
-  await page.waitForTimeout(700);
-  const b = await measure(page);
+  // Sample consecutive layout frames: ResizeObserver feedback has a chance
+  // to run on each frame, without tying the regression to a wall-clock delay.
+  const widths = await page.evaluate(async () => {
+    const widths: number[] = [];
+    for (let frame = 0; frame < 30; frame++) {
+      await new Promise(requestAnimationFrame);
+      widths.push((document.querySelector(".rp-pptx") as HTMLElement).clientWidth);
+    }
+    return widths;
+  });
 
   // Container pinned to the figure (not runaway, not collapsed).
   expect(Math.abs(a.cw - a.figW)).toBeLessThan(30);
   // Stable over time — no feedback loop.
-  expect(Math.abs(a.cw - b.cw)).toBeLessThan(5);
+  expect(Math.max(a.cw, ...widths) - Math.min(a.cw, ...widths)).toBeLessThan(5);
   // Slide actually rendered, not scaled to a near-zero sliver.
   expect(a.scale).not.toBeNull();
   expect(a.scale!).toBeGreaterThan(0.1);

@@ -245,9 +245,7 @@
 .plan-entry-text.md pre, .plan-entry-text.md table,
 .plan-entry-text.md .md-code-card, .plan-entry-text.md .md-table-card { max-width: 100%; }
 .plan-entry-mark { flex: none; width: 12px; color: var(--text-faint); font-size: calc(11px * var(--ui-font-scale, 1)); text-align: center; }
-.plan-entry-mark::after { content: "○"; color: var(--border-strong); }
-.plan-card-body li[data-status="completed"] .plan-entry-mark::after,
-.plan-card-body li[data-status="in_progress"] .plan-entry-mark::after { content: none; }
+.plan-card-body li[data-status="pending"] .plan-entry-mark { color: var(--border-strong); }
 .plan-card-body li[data-status="completed"] { color: var(--text-faint); }
 .plan-card-body li[data-status="completed"] .plan-entry-mark { color: var(--clay-strong); }
 .plan-card-body li[data-status="in_progress"] { color: var(--text); font-weight: 600; }
@@ -1226,10 +1224,10 @@ button.tool-btn.card-copy { margin-left: auto; flex: 0 0 auto; padding: 2px 8px;
 .plan-step { display: flex; align-items: flex-start; gap: 10px; padding: 5px 4px; font-size: calc(13.5px * var(--ui-font-scale, 1)); line-height: 1.45; }
 .plan-step-mark { flex: 0 0 auto; width: 16px; height: 16px; margin-top: 1px; border-radius: 5px; border: 1.5px solid var(--border-strong); background: var(--bg-elev); position: relative; }
 .plan-step.done .plan-step-mark { background: var(--clay); border-color: var(--clay); }
-.plan-step.done .plan-step-mark::after { content: "✓"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--on-clay); }
+.plan-step-mark svg { position: absolute; inset: 0; margin: auto; width: 11px; height: 11px; color: var(--on-clay); }
 .plan-step.running .plan-step-mark { border-color: var(--clay); }
 .plan-step.running .plan-step-mark::after { content: ""; position: absolute; inset: 3px; border-radius: 2px; background: var(--clay); }
-.plan-step.cancelled .plan-step-mark::after { content: "−"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-faint); }
+.plan-step.cancelled .plan-step-mark svg { color: var(--text-faint); }
 .plan-step.done .plan-step-text { color: var(--text-muted); text-decoration: line-through; text-decoration-color: var(--text-faint); }
 .plan-step.cancelled .plan-step-text { color: var(--text-faint); text-decoration: line-through; text-decoration-color: var(--text-faint); }
 .plan-step.pending .plan-step-text { color: var(--text-muted); }
@@ -1981,7 +1979,8 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse var(--a
 .context-usage-row.expandable:hover { border-color: var(--border); background: var(--surface-hover); }
 .context-usage-row[aria-expanded="true"] { border-color: color-mix(in srgb, var(--clay) 22%, var(--border)); background: color-mix(in srgb, var(--clay-soft) 35%, var(--bg-elev)); }
 .context-usage-row:disabled { opacity: 1; }
-.context-usage-chevron { flex: 0 0 auto; margin-left: 8px; color: var(--text-muted); transition: transform .15s ease; }
+.context-usage-chevron { display: inline-flex; flex: 0 0 auto; margin-left: 8px; color: var(--text-muted); transition: transform .15s ease; }
+.context-usage-chevron svg { width: 14px; height: 14px; }
 .context-usage-row[aria-expanded="true"] .context-usage-chevron { transform: rotate(180deg); }
 .context-usage-detail {
   max-height: var(--context-usage-detail-max); margin: 0 10px 6px 38px; padding: 10px 12px;
@@ -2823,3 +2822,15 @@ button.stop:disabled { opacity: .45; cursor: default; }
 .generated-artifact-tree .message-artifact-card { width: 100%; min-width: 0; grid-template-columns: 24px minmax(0, 1fr); padding: 4px 6px; }
 .generated-artifact-tree .message-artifact-thumb { width: 24px; height: 24px; }
 .message-artifacts summary:focus-visible { outline: 2px solid var(--text-muted); outline-offset: 2px; }
+
+.step-icon svg, .run-monitor-done svg, .plan-entry-mark svg, .plan-entry-priority svg,
+.review-transition-icon svg, .review-badge svg, .review-empty svg, .review-coverage svg,
+.finding-tag svg, .tool-status svg, .tool-step .ok svg, .tool-step .fail svg {
+  width: 14px; height: 14px; flex: 0 0 auto; vertical-align: middle;
+}
+.review-empty, .finding-tag { display: inline-flex; align-items: center; gap: 5px; }
+.assistant-followup svg, .rp-art-group-caret svg { width: 14px; height: 14px; }
+
+.tool .head .ok svg, .tool .head .fail svg, .center-file-console-prompt svg, .rp-art-group-caret svg, .follow-up-question svg { width: 14px; height: 14px; vertical-align: middle; }
+
+.run-monitor-failed svg, .image-generation-failed-mark svg, .video-generation-failed-mark svg { width: 14px; height: 14px; }

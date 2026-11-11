@@ -13,13 +13,6 @@ use leptos::*;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use wasm_bindgen::JsValue;
 
-pub(super) fn j(loc: Locale, en: &'static str, zh: &'static str) -> &'static str {
-    if loc == Locale::Zh {
-        zh
-    } else {
-        en
-    }
-}
 pub(super) fn date(ts: i64) -> js_sys::Date {
     js_sys::Date::new(&JsValue::from_f64(ts as f64 * 1000.0))
 }
@@ -53,16 +46,16 @@ pub(super) fn clock(ts: i64) -> String {
 }
 pub(super) fn category(loc: Locale, kind: &str) -> &'static str {
     match kind {
-        "progress" => j(loc, "Progress", "进展"),
-        "finding" => j(loc, "Finding", "发现"),
-        "decision" => j(loc, "Decision", "决策"),
-        "next" => j(loc, "Next step", "待继续"),
-        "run" => j(loc, "Experiment", "实验"),
-        "session" => j(loc, "Conversation", "会话"),
-        "archive" => j(loc, "Research archive", "研究归档"),
-        "paper" => j(loc, "Paper", "文献"),
-        "data_asset" => j(loc, "Data", "数据"),
-        _ => j(loc, "Output", "产出"),
+        "progress" => crate::i18n::tr(loc, "mandates.progress"),
+        "finding" => crate::i18n::tr(loc, "journey.finding"),
+        "decision" => crate::i18n::tr(loc, "journey.decision"),
+        "next" => crate::i18n::tr(loc, "journey.next_step"),
+        "run" => crate::i18n::tr(loc, "journey.experiment"),
+        "session" => crate::i18n::tr(loc, "journey.conversation"),
+        "archive" => crate::i18n::tr(loc, "archive.research_archive"),
+        "paper" => crate::i18n::tr(loc, "journey.paper"),
+        "data_asset" => crate::i18n::tr(loc, "journey.data"),
+        _ => crate::i18n::tr(loc, "journey.output"),
     }
 }
 fn icon(kind: &str) -> &'static str {
@@ -81,14 +74,14 @@ fn icon(kind: &str) -> &'static str {
 }
 pub(super) fn status(loc: Locale, value: &str) -> String {
     match value {
-        "submitted" => j(loc, "Submitted", "已提交"),
-        "started" => j(loc, "Started", "开始"),
-        "succeeded" => j(loc, "Completed", "已完成"),
-        "failed" => j(loc, "Failed", "失败"),
-        "cancelled" => j(loc, "Cancelled", "已取消"),
-        "lost" => j(loc, "Connection lost", "失去连接"),
-        "running" => j(loc, "Running", "运行中"),
-        "queued" => j(loc, "Queued", "排队中"),
+        "submitted" => crate::i18n::tr(loc, "journey.submitted"),
+        "started" => crate::i18n::tr(loc, "journey.started"),
+        "succeeded" => crate::i18n::tr(loc, "trajectory.status.completed"),
+        "failed" => crate::i18n::tr(loc, "exploration.status_failed"),
+        "cancelled" => crate::i18n::tr(loc, "execution_plan.cancelled"),
+        "lost" => crate::i18n::tr(loc, "journey.connection_lost"),
+        "running" => crate::i18n::tr(loc, "sess_status.running"),
+        "queued" => crate::i18n::tr(loc, "runs.status.submitted"),
         _ => value,
     }
     .into()
@@ -262,27 +255,27 @@ pub(super) fn ResearchJourneyView(
         }
     });
     view! {
-        <section class="research-journey" data-testid="research-journey" aria-label=move || j(locale.get(),"Research journey","研究历程")
+        <section class="research-journey" data-testid="research-journey" aria-label=move || crate::i18n::tr(locale.get(), "sidebar.graph")
             style=move || format!("--journey-left:{}px",left.get())>
             <header class="journey-header">
-                <div class="journey-breadcrumb">{project_name}<span>" / "</span>{move || j(locale.get(),"Research journey","研究历程")}</div>
-                <div class="journey-title-row"><div><h1>{move || j(locale.get(),"Research journey","研究历程")}</h1>
-                    <p>{move || j(locale.get(),"Your daily exploration, outputs and decisions — with their sources.","每天的探索、产出与关键决定，都有迹可循。")}</p></div>
-                    <div class="journey-actions"><button type="button" class="btn-primary" on:click=move |_| note_open.set(true)>{compose_icon("note-plus")}{move || j(locale.get(),"Add entry","补充记录")}</button>
-                    <button type="button" class="journey-icon" aria-label=move || j(locale.get(),"Close research journey","关闭研究历程") on:click=move |_| on_close.call(())>{compose_icon("close")}</button></div>
+                <div class="journey-breadcrumb">{project_name}<span>" / "</span>{move || crate::i18n::tr(locale.get(), "sidebar.graph")}</div>
+                <div class="journey-title-row"><div><h1>{move || crate::i18n::tr(locale.get(), "sidebar.graph")}</h1>
+                    <p>{move || crate::i18n::tr(locale.get(), "journey.your_daily_exploration_outputs_and_decisions_with_their_sources")}</p></div>
+                    <div class="journey-actions"><button type="button" class="btn-primary" on:click=move |_| note_open.set(true)>{compose_icon("note-plus")}{move || crate::i18n::tr(locale.get(), "journey.add_entry")}</button>
+                    <button type="button" class="journey-icon" aria-label=move || crate::i18n::tr(locale.get(), "journey.close_research_journey") on:click=move |_| on_close.call(())>{compose_icon("close")}</button></div>
                 </div>
-                <div class="journey-toolbar"><div role="tablist" aria-label=move || j(locale.get(),"Research view","研究视图")>
-                    <button role="tab" aria-selected=move || (!graph_tab.get()).to_string() class:active=move || !graph_tab.get() on:click=move |_| graph_tab.set(false)>{move || j(locale.get(),"By day","按日")}</button>
-                    <button role="tab" aria-selected=move || graph_tab.get().to_string() class:active=move || graph_tab.get() on:click=move |_| graph_tab.set(true)>{move || j(locale.get(),"Relationships","关系图")}</button></div>
-                    <div class="journey-search">{compose_icon("search")}<input type="search" aria-label=move || j(locale.get(),"Search research records","搜索研究记录") placeholder=move || j(locale.get(),"Search this month's records","搜索本月研究记录") prop:value=move || query.get() on:input=move |ev| query.set(event_target_value(&ev)) /></div>
-                    <button type="button" class="journey-icon" title=move || j(locale.get(),"Refresh","刷新") aria-label=move || j(locale.get(),"Refresh research records","刷新研究记录") on:click=move |_| refresh.update(|v|*v+=1)>{compose_icon("refresh")}</button>
+                <div class="journey-toolbar"><div role="tablist" aria-label=move || crate::i18n::tr(locale.get(), "journey.research_view")>
+                    <button role="tab" aria-selected=move || (!graph_tab.get()).to_string() class:active=move || !graph_tab.get() on:click=move |_| graph_tab.set(false)>{move || crate::i18n::tr(locale.get(), "journey.by_day")}</button>
+                    <button role="tab" aria-selected=move || graph_tab.get().to_string() class:active=move || graph_tab.get() on:click=move |_| graph_tab.set(true)>{move || crate::i18n::tr(locale.get(), "journey.relationships")}</button></div>
+                    <div class="journey-search">{compose_icon("search")}<input type="search" aria-label=move || crate::i18n::tr(locale.get(), "journey.search_research_records") placeholder=move || crate::i18n::tr(locale.get(), "journey.search_this_month_s_records") prop:value=move || query.get() on:input=move |ev| query.set(event_target_value(&ev)) /></div>
+                    <button type="button" class="journey-icon" title=move || crate::i18n::tr(locale.get(), "codex.refresh") aria-label=move || crate::i18n::tr(locale.get(), "journey.refresh_research_records") on:click=move |_| refresh.update(|v|*v+=1)>{compose_icon("refresh")}</button>
                 </div>
             </header>
             {move || if graph_tab.get() {
                 let current=graph.get(); let loc=locale.get();
                 view! { <div class="journey-graph" data-testid="journey-relationships">
-                    <div class="journey-graph-tools"><span>{format!("{} {} · {} {}",current.nodes.len(),j(loc,"nodes","个节点"),current.edges.len(),j(loc,"relationships","条关系"))}</span>
-                        <button class="btn-ghost" on:click=move |_| graph_canvas.update(|v|*v=!*v)>{move || if graph_canvas.get(){j(locale.get(),"List","列表")}else{j(locale.get(),"Graph","图谱")}}</button></div>
+                    <div class="journey-graph-tools"><span>{format!("{} {} · {} {}",current.nodes.len(),crate::i18n::tr(loc, "journey.nodes"),current.edges.len(),crate::i18n::tr(loc, "journey.relationships_2"))}</span>
+                        <button class="btn-ghost" on:click=move |_| graph_canvas.update(|v|*v=!*v)>{move || if graph_canvas.get(){crate::i18n::tr(locale.get(), "graph.view.list")}else{crate::i18n::tr(locale.get(), "graph.view.graph")}}</button></div>
                     {if graph_canvas.get(){crate::research::research_graph_canvas(loc,&current,selected_edge)}else{crate::research::research_graph_list(loc,&current,selected_edge)}}
                     {selected_edge.get().map(|e|crate::research::research_edge_detail(loc,&current,e,selected_edge))}
                 </div> }.into_view()
@@ -290,15 +283,15 @@ pub(super) fn ResearchJourneyView(
                 view! { <div class="journey-body">
                     <main class="journey-feed" data-testid="journey-feed">
                         {move || match if history.loading().get(){None}else{history.get()} {
-                            None => view!{<div class="journey-empty" role="status">{j(locale.get(),"Loading research records…","正在读取研究记录…")}</div>}.into_view(),
-                            Some(Err(error)) => view!{<div class="journey-empty" role="alert"><h2>{j(locale.get(),"Could not load research records","研究记录加载失败")}</h2><p>{error}</p><button class="btn-ghost" on:click=move |_| refresh.update(|n|*n+=1)>{j(locale.get(),"Try again","重试")}</button></div>}.into_view(),
+                            None => view!{<div class="journey-empty" role="status">{crate::i18n::tr(locale.get(), "journey.loading_research_records")}</div>}.into_view(),
+                            Some(Err(error)) => view!{<div class="journey-empty" role="alert"><h2>{crate::i18n::tr(locale.get(), "journey.could_not_load_research_records")}</h2><p>{error}</p><button class="btn-ghost" on:click=move |_| refresh.update(|n|*n+=1)>{crate::i18n::tr(locale.get(), "journey.try_again")}</button></div>}.into_view(),
                             Some(Ok(data)) => {
                                 let groups=days(&data.entries,&query.get());
-                                if groups.is_empty() { return view!{<div class="journey-empty"><h2>{j(locale.get(),"No records in this view","当前范围没有研究记录")}</h2><p>{j(locale.get(),"Choose another month, clear the search, or add a research note. Conversations, runs and registered outputs appear here automatically.","可以切换月份、清空搜索或补充记录。会话、实验和已登记的产出会自动出现在这里。")}</p></div>}.into_view(); }
+                                if groups.is_empty() { return view!{<div class="journey-empty"><h2>{crate::i18n::tr(locale.get(), "journey.no_records_in_this_view")}</h2><p>{crate::i18n::tr(locale.get(), "journey.choose_another_month_clear_the_search_or_add_a_research_note_conv")}</p></div>}.into_view(); }
                                 let first=groups[0].0.clone();
                                 let recaps=data.recaps.into_iter().map(|r|(day_key(r.day_start),r)).collect::<HashMap<_,_>>();
                                 view!{
-                                    {data.truncated.then(||view!{<p class="journey-notice" role="status">{j(locale.get(),"Showing the latest 2,000 events. Use the date picker to load one day.","当前展示最近 2,000 条活动，请按日查看以缩小范围。")}</p>})}
+                                    {data.truncated.then(||view!{<p class="journey-notice" role="status">{crate::i18n::tr(locale.get(), "journey.showing_the_latest_2_000_events_use_the_date_picker_to_load_one_d")}</p>})}
                                     {groups.into_iter().map(|(day,entries)|view!{<JourneyDay locale=locale day=day.clone() recap=recaps.get(&day).cloned() recap_editing=recap_editing entries=entries initially_open={day==first} selected_date=selected_date selected=selected on_select=choose on_session=on_session on_artifact=on_artifact run_open=run_open/>}).collect_view()}
                                 }.into_view()
                             }
@@ -307,41 +300,41 @@ pub(super) fn ResearchJourneyView(
                     <aside class="journey-aside">
                         <JourneyCalendar locale=locale month=month history=history selected_date=selected_date query=query focus_day=focus_day/>
                         <div class="journey-source" id="journey-source" data-testid="journey-source">
-                            <h2>{move || if selected.get().is_some_and(|e|e.kind!="artifact"){j(locale.get(),"Record details","记录详情")}else{j(locale.get(),"Source details","产物来源")}}</h2>
+                            <h2>{move || if selected.get().is_some_and(|e|e.kind!="artifact"){crate::i18n::tr(locale.get(), "journey.record_details")}else{crate::i18n::tr(locale.get(), "journey.source_details")}}</h2>
                             {move || match selected.get() {
-                                None=>view!{<p class="journey-muted">{j(locale.get(),"Select an output or record to trace its source.","选择一份产出或研究记录，查看它的来源。")}</p>}.into_view(),
+                                None=>view!{<p class="journey-muted">{crate::i18n::tr(locale.get(), "journey.select_an_output_or_record_to_trace_its_source")}</p>}.into_view(),
                                 Some(e)=>{
                                     let loc=locale.get();let artifact=e.kind=="artifact";let open=e.clone();
                                     view!{
-                                        <h3>{e.title.clone()}</h3><p class="journey-muted">{format!("{} {} · {}",day_key(e.occurred_at),if e.manual{String::new()}else{clock(e.occurred_at)},if artifact{j(loc,"Registered","登记")}else if e.manual{j(loc,"Manually recorded","手动记录")}else{j(loc,"Recorded","记录")})}</p>
+                                        <h3>{e.title.clone()}</h3><p class="journey-muted">{format!("{} {} · {}",day_key(e.occurred_at),if e.manual{String::new()}else{clock(e.occurred_at)},if artifact{crate::i18n::tr(loc, "journey.registered")}else if e.manual{crate::i18n::tr(loc, "journey.manually_recorded")}else{crate::i18n::tr(loc, "journey.recorded")})}</p>
                                         {(!e.summary.is_empty()).then(||view!{<p class="journey-source-body">{e.summary.clone()}</p>})}
-                                        {(e.manual && day_key(e.recorded_at)!=day_key(e.occurred_at)).then(||view!{<p class="journey-muted">{format!("{} {}",j(loc,"Added on","补记于"),day_key(e.recorded_at))}</p>})}
+                                        {(e.manual && day_key(e.recorded_at)!=day_key(e.occurred_at)).then(||view!{<p class="journey-muted">{format!("{} {}",crate::i18n::tr(loc, "journey.added_on"),day_key(e.recorded_at))}</p>})}
                                         {if artifact {view!{
-                                            <p class="journey-muted">{format!("{} {}",j(loc,"Version","版本"),e.version_number.unwrap_or(1))}</p>
+                                            <p class="journey-muted">{format!("{} {}",crate::i18n::tr(loc, "journey.version"),e.version_number.unwrap_or(1))}</p>
                                             {move || match if source.loading().get(){None}else{source.get()} {
-                                                None=>view!{<p role="status">{j(locale.get(),"Loading source…","正在读取来源…")}</p>}.into_view(),
+                                                None=>view!{<p role="status">{crate::i18n::tr(locale.get(), "journey.loading_source")}</p>}.into_view(),
                                                 Some(Err(err))=>view!{<p role="alert">{err}</p>}.into_view(),
                                                 Some(Ok(Some(src)))=>{
                                                     let loc=locale.get();let rid=src.run_id.clone();
                                                     view!{
-                                                        <div class="journey-lineage"><div>{compose_icon("database")}<strong>{j(loc,"Input data","输入数据")}</strong>
-                                                            {if src.inputs.is_empty(){view!{<p class="journey-muted">{j(loc,"No inputs recorded","尚未记录输入")}</p>}.into_view()}else{src.inputs.into_iter().map(|input|{
+                                                        <div class="journey-lineage"><div>{compose_icon("database")}<strong>{crate::i18n::tr(loc, "journey.input_data")}</strong>
+                                                            {if src.inputs.is_empty(){view!{<p class="journey-muted">{crate::i18n::tr(loc, "journey.no_inputs_recorded")}</p>}.into_view()}else{src.inputs.into_iter().map(|input|{
                                                                 let title=input.title.clone();
                                                                 view!{<p>{match input.version_id { Some(id)=>view!{<button class="journey-link" on:click=move |_| on_artifact.call((format!("artifact-version:{id}"),title.clone(),file_kind(&title).unwrap_or("text").into()))>{input.title}</button>}.into_view(),None=>view!{<span>{input.title}</span>}.into_view()}}<small>{format!("{} · {}",input.role,input.confidence)}</small></p>}
                                                             }).collect_view()}}
-                                                        </div><div>{compose_icon("flask")}<strong>{j(loc,"Experiment","实验运行")}</strong>
-                                                            <p>{if src.run_title.is_empty(){j(loc,"No producing run recorded","尚未记录生成它的运行").to_string()}else{src.run_title}}</p>
+                                                        </div><div>{compose_icon("flask")}<strong>{crate::i18n::tr(loc, "journey.experiment_2")}</strong>
+                                                            <p>{if src.run_title.is_empty(){crate::i18n::tr(loc, "journey.no_producing_run_recorded").to_string()}else{src.run_title}}</p>
                                                             <small>{format!("{} {}",src.context_id,status(loc,&src.run_status))}</small>
-                                                            {src.generated_at.map(|ts|view!{<small>{format!("{} {} {}",day_key(ts),clock(ts),j(loc,"completed","完成"))}</small>})}
+                                                            {src.generated_at.map(|ts|view!{<small>{format!("{} {} {}",day_key(ts),clock(ts),crate::i18n::tr(loc, "journey.completed"))}</small>})}
                                                         </div></div>
-                                                        {rid.map(|id|view!{<button class="journey-link" on:click=move |_| run_open.set(Some(id.clone()))>{compose_icon("terminal")}{j(loc,"View run record","查看运行记录")}</button>})}
+                                                        {rid.map(|id|view!{<button class="journey-link" on:click=move |_| run_open.set(Some(id.clone()))>{compose_icon("terminal")}{crate::i18n::tr(loc, "journey.view_run_record")}</button>})}
                                                     }.into_view()
                                                 },_=>().into_view()
                                             }}
-                                            <button class="journey-link journey-open-output" disabled=e.source_discarded on:click=move |_| on_artifact.call((format!("artifact-version:{}",open.source_id),open.title.clone(),file_kind(&open.title).unwrap_or("text").into()))>{compose_icon("external-link")}{if e.source_discarded{j(loc,"Source unavailable","源文件已不可用")}else{j(loc,"Open output","打开产物")}}</button>
-                                        }.into_view()}else{view!{<p class="journey-muted">{if e.manual{j(loc,"This entry was added by the researcher.","这条记录由研究者手动补充。")}else{j(loc,"Recorded project object. Related evidence is available in Relationships.","已记录的项目对象，可在关系图中查看关联依据。")}}</p>}.into_view()}}
-                                        {(e.kind=="archive").then(||e.frame_id.clone()).flatten().map(|id|view!{<button class="journey-link" data-testid="journey-open-archive" on:click=move |_|on_archive.call(id.clone())>{compose_icon("archive")}{j(loc,"View archive / Continue research","查看归档 / 继续研究")}</button>})}
-                                        {e.frame_id.map(|id|view!{<button class="journey-link" on:click=move |_| on_session.call(id.clone())>{compose_icon("chat")}{j(loc,"Open conversation","打开会话")}</button>})}
+                                            <button class="journey-link journey-open-output" disabled=e.source_discarded on:click=move |_| on_artifact.call((format!("artifact-version:{}",open.source_id),open.title.clone(),file_kind(&open.title).unwrap_or("text").into()))>{compose_icon("external-link")}{if e.source_discarded{crate::i18n::tr(loc, "journey.source_unavailable")}else{crate::i18n::tr(loc, "journey.open_output")}}</button>
+                                        }.into_view()}else{view!{<p class="journey-muted">{if e.manual{crate::i18n::tr(loc, "journey.this_entry_was_added_by_the_researcher")}else{crate::i18n::tr(loc, "journey.recorded_project_object_related_evidence_is_available_in_relation")}}</p>}.into_view()}}
+                                        {(e.kind=="archive").then(||e.frame_id.clone()).flatten().map(|id|view!{<button class="journey-link" data-testid="journey-open-archive" on:click=move |_|on_archive.call(id.clone())>{compose_icon("archive")}{crate::i18n::tr(loc, "journey.view_archive_continue_research")}</button>})}
+                                        {e.frame_id.map(|id|view!{<button class="journey-link" on:click=move |_| on_session.call(id.clone())>{compose_icon("chat")}{crate::i18n::tr(loc, "journey.open_conversation")}</button>})}
                                     }.into_view()
                                 }
                             }}
@@ -453,27 +446,27 @@ fn JourneyDay(
     view! {
         <article class="journey-day" class:today=today id=format!("journey-day-{day}") data-day=day>
             <div class="journey-day-date"><strong>{move ||if locale.get()==Locale::Zh{format!("{month} 月 {day_number} 日")}else{format!("{month:02}/{day_number:02}")}}</strong>
-                <span>{move ||{let w=if locale.get()==Locale::Zh{["周日","周一","周二","周三","周四","周五","周六"][weekday]}else{["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][weekday]};format!("{w}{}",if today{j(locale.get()," · Today"," · 今天")}else{""})}}</span></div>
+                <span>{move ||{let w=if locale.get()==Locale::Zh{["周日","周一","周二","周三","周四","周五","周六"][weekday]}else{["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][weekday]};format!("{w}{}",if today{crate::i18n::tr(locale.get(), "journey.today")}else{""})}}</span></div>
             <div class="journey-day-main"><div class="journey-day-heading"><h2>{move ||match recap.get().filter(|r|r.status!="dismissed"){
                     // A kept recap names the day better than its latest record.
                     Some(r)=>view!{<span class="journey-headline" data-testid="journey-recap-headline">{r.headline}</span>}.into_view(),
                     None=>{let entry=headline_entry.clone();view!{<button class="journey-headline" on:click=move |_|on_select.call(entry.clone())>{headline.title.clone()}</button>}.into_view()},
                 }}</h2>
-                <button class="journey-icon" aria-expanded=move ||expanded.get().to_string() aria-label=move || if expanded.get(){j(locale.get(),"Collapse day","收起记录")}else{j(locale.get(),"Expand day","展开记录")} on:click=move |_|expanded.update(|v|*v=!*v)>{move ||compose_icon(if expanded.get(){"chevron-down"}else{"chevron-right"})}</button></div>
+                <button class="journey-icon" aria-expanded=move ||expanded.get().to_string() aria-label=move || if expanded.get(){crate::i18n::tr(locale.get(), "journey.collapse_day")}else{crate::i18n::tr(locale.get(), "journey.expand_day")} on:click=move |_|expanded.update(|v|*v=!*v)>{move ||compose_icon(if expanded.get(){"chevron-down"}else{"chevron-right"})}</button></div>
                 {move ||(!summary.is_empty()&&recap.with(|r|r.as_ref().is_none_or(|r|r.status=="dismissed"))).then(||view!{<p class="journey-day-summary">{summary.clone()}</p>})}
                 <JourneyRecap locale=locale day=recap_day bounds=bounds recap=recap editing=recap_editing entries=all_entries run_open=run_open on_session=on_session on_select=on_select on_artifact=on_artifact/>
-                <p class="journey-day-counts">{move ||format!("{run_count} {} · {output_count} {} · {note_count} {} · {session_count} {}",j(locale.get(),"experiments","次实验"),j(locale.get(),"outputs","份产出"),j(locale.get(),"notes","条研究记录"),j(locale.get(),"conversations","个会话"))}</p>
+                <p class="journey-day-counts">{move ||format!("{run_count} {} · {output_count} {} · {note_count} {} · {session_count} {}",crate::i18n::tr(locale.get(), "journey.experiments"),crate::i18n::tr(locale.get(), "journey.outputs"),crate::i18n::tr(locale.get(), "journey.notes"),crate::i18n::tr(locale.get(), "projects.recover_sessions"))}</p>
                 {move ||if expanded.get(){view!{
                     <div class="journey-activities">{activities.get_value().into_iter().map(|entry|{
                         let failed=matches!(entry.status.as_str(),"failed"|"lost"|"cancelled"); let id=entry.source_id.clone();let st=entry.status.clone();
                         let made=outputs.with_value(|o|o.iter().filter(|e|e.run_id.as_ref()==Some(&entry.source_id)).count());
-                        view!{<button class="journey-activity" class:failed=failed on:click=move |_|run_open.set(Some(id.clone()))>{compose_icon(if failed{"circle-alert"}else if entry.status=="succeeded"{"check"}else{"clock"})}<time>{clock(entry.occurred_at)}</time><span>{entry.title}</span><small>{move ||if made>0{format!("{made} {} · {}",j(locale.get(),"outputs","份产出"),status(locale.get(),&st))}else{status(locale.get(),&st)}}</small></button>}
+                        view!{<button class="journey-activity" class:failed=failed on:click=move |_|run_open.set(Some(id.clone()))>{compose_icon(if failed{"circle-alert"}else if entry.status=="succeeded"{"check"}else{"clock"})}<time>{clock(entry.occurred_at)}</time><span>{entry.title}</span><small>{move ||if made>0{format!("{made} {} · {}",crate::i18n::tr(locale.get(), "journey.outputs"),status(locale.get(),&st))}else{status(locale.get(),&st)}}</small></button>}
                     }).collect_view()}</div>
-                    {(!outputs.get_value().is_empty()).then(||view!{<h3 class="journey-output-heading">{j(locale.get(),"Today's outputs","当日产出")}</h3><div class="journey-outputs">{outputs.get_value().into_iter().take(output_limit.get()).map(|e|view!{<JourneyOutput locale=locale entry=e selected=selected on_select=on_select/>}).collect_view()}</div>})}
-                    {(output_count>output_limit.get()).then(||view!{<button class="journey-link journey-more-outputs" on:click=move |_|output_limit.update(|n|*n+=6)>{j(locale.get(),"Show more outputs","显示更多产出")}</button>})}
+                    {(!outputs.get_value().is_empty()).then(||view!{<h3 class="journey-output-heading">{crate::i18n::tr(locale.get(), "journey.today_s_outputs")}</h3><div class="journey-outputs">{outputs.get_value().into_iter().take(output_limit.get()).map(|e|view!{<JourneyOutput locale=locale entry=e selected=selected on_select=on_select/>}).collect_view()}</div>})}
+                    {(output_count>output_limit.get()).then(||view!{<button class="journey-link journey-more-outputs" on:click=move |_|output_limit.update(|n|*n+=6)>{crate::i18n::tr(locale.get(), "journey.show_more_outputs")}</button>})}
                     <div class="journey-notes">{notes.get_value().into_iter().map(|e|{
                         let entry=e.clone();let kind=e.kind.clone();
-                        view!{<div class="journey-note-row">{compose_icon(icon(&e.kind))}<span>{move ||category(locale.get(),&kind)}</span><button class="journey-note-text" on:click=move |_|on_select.call(entry.clone())>{e.title}{(!e.summary.is_empty()).then(||view!{<small>{e.summary}</small>})}</button>{e.manual.then(||view!{<small class="journey-manual">{j(locale.get(),"Manual","手动")}</small>})}</div>}
+                        view!{<div class="journey-note-row">{compose_icon(icon(&e.kind))}<span>{move ||category(locale.get(),&kind)}</span><button class="journey-note-text" on:click=move |_|on_select.call(entry.clone())>{e.title}{(!e.summary.is_empty()).then(||view!{<small>{e.summary}</small>})}</button>{e.manual.then(||view!{<small class="journey-manual">{crate::i18n::tr(locale.get(), "journey.manual")}</small>})}</div>}
                     }).collect_view()}</div>
                     {(!sessions.get_value().is_empty()).then(||view!{<div class="journey-session-links">{sessions.get_value().into_iter().map(|e|{let id=e.source_id;view!{<button class="journey-link" on:click=move |_|on_session.call(id.clone())>{compose_icon("chat")}{e.title}</button>}}).collect_view()}</div>})}
                 }.into_view()}else{view!{<div class="journey-collapsed-outputs">{outputs.get_value().into_iter().take(3).map(|e|{let entry=e.clone();view!{<button class="journey-link" on:click=move |_|{expanded.set(true);on_select.call(entry.clone());}>{compose_icon("doc")}{e.title}</button>}}).collect_view()}</div>}.into_view()}}
@@ -482,11 +475,11 @@ fn JourneyDay(
     }
 }
 
-const RECAP_SECTIONS: [(&str, &str, &str); 4] = [
-    ("done", "Done", "今日完成"),
-    ("findings", "Findings & decisions", "发现与决定"),
-    ("issues", "Issues", "问题与失败"),
-    ("next", "Next", "待继续"),
+const RECAP_SECTIONS: [(&str, &str); 4] = [
+    ("done", "journey.recap.done"),
+    ("findings", "journey.recap.findings_decisions"),
+    ("issues", "journey.recap.issues"),
+    ("next", "journey.recap.next"),
 ];
 
 fn recap_section<'a>(recap: &'a ResearchRecap, key: &str) -> &'a [ResearchRecapItem] {
@@ -564,7 +557,7 @@ fn JourneyRecap(
                 current.headline.clone(),
                 RECAP_SECTIONS
                     .iter()
-                    .map(|(key, _, _)| recap_section(&current, key).to_vec())
+                    .map(|(key, _)| recap_section(&current, key).to_vec())
                     .collect(),
             )
         };
@@ -614,44 +607,44 @@ fn JourneyRecap(
             let alert = move || error.get().map(|e| view! {<p class="journey-recap-error" role="alert">{e}</p>});
             let Some(r) = recap.get().filter(|r| r.status != "dismissed") else {
                 return view! {<div class="journey-recap-empty">
-                    <button type="button" class="journey-link" data-testid="journey-recap-generate" prop:disabled=move || busy.get() on:click=generate>{compose_icon("sparkles")}{move || if busy.get() {j(locale.get(),"Drafting recap…","正在起草回顾…")} else {j(locale.get(),"Generate recap","生成回顾")}}</button>
-                    {move || quiet.get().then(|| view! {<small class="journey-muted">{j(locale.get(),"Nothing recorded to recap.","当天没有可总结的记录。")}</small>})}
+                    <button type="button" class="journey-link" data-testid="journey-recap-generate" prop:disabled=move || busy.get() on:click=generate>{compose_icon("sparkles")}{move || if busy.get() {crate::i18n::tr(locale.get(), "journey.drafting_recap")} else {crate::i18n::tr(locale.get(), "journey.generate_recap")}}</button>
+                    {move || quiet.get().then(|| view! {<small class="journey-muted">{crate::i18n::tr(locale.get(), "journey.nothing_recorded_to_recap")}</small>})}
                     {alert}
                 </div>}.into_view();
             };
             if day.with_value(|d| editing.get().as_ref() == Some(d)) {
-                return view! {<section class="journey-recap editing" data-testid="journey-recap-editor" aria-label=j(loc,"Edit recap","编辑回顾")>
-                    <label>{j(loc,"Headline","标题")}<input type="text" prop:value=move || draft.with(|d| d.0.clone()) on:input=move |ev| draft.update(|d| d.0 = event_target_value(&ev))/></label>
-                    {RECAP_SECTIONS.iter().enumerate().map(|(index, (_, en, zh))| view! {
-                        <label>{j(loc,en,zh)}<textarea rows="3" prop:value=move || draft.with(|d| d.1[index].clone()) on:input=move |ev| draft.update(|d| d.1[index] = event_target_value(&ev))></textarea></label>
+                return view! {<section class="journey-recap editing" data-testid="journey-recap-editor" aria-label=crate::i18n::tr(loc, "journey.edit_recap")>
+                    <label>{crate::i18n::tr(loc, "journey.headline")}<input type="text" prop:value=move || draft.with(|d| d.0.clone()) on:input=move |ev| draft.update(|d| d.0 = event_target_value(&ev))/></label>
+                    {RECAP_SECTIONS.iter().enumerate().map(|(index, (_, label_key))| view! {
+                        <label>{crate::i18n::tr(loc, label_key)}<textarea rows="3" prop:value=move || draft.with(|d| d.1[index].clone()) on:input=move |ev| draft.update(|d| d.1[index] = event_target_value(&ev))></textarea></label>
                     }).collect_view()}
-                    <p class="journey-muted">{j(loc,"One item per line. A line you change no longer cites its sources.","每行一条；改动过的行不再关联原来源。")}</p>
+                    <p class="journey-muted">{crate::i18n::tr(loc, "journey.one_item_per_line_a_line_you_change_no_longer_cites_its_sources")}</p>
                     {alert}
                     <div class="journey-recap-edit-actions">
-                        <button type="button" class="btn-ghost" on:click=move |_| editing.set(None)>{j(loc,"Cancel","取消")}</button>
-                        <button type="button" class="btn-primary" prop:disabled=move || busy.get() on:click=move |_| save("confirmed", true)>{compose_icon("save")}{j(loc,"Save and confirm","保存并确认")}</button>
+                        <button type="button" class="btn-ghost" on:click=move |_| editing.set(None)>{crate::i18n::tr(loc, "projects.cancel")}</button>
+                        <button type="button" class="btn-primary" prop:disabled=move || busy.get() on:click=move |_| save("confirmed", true)>{compose_icon("save")}{crate::i18n::tr(loc, "journey.save_and_confirm")}</button>
                     </div>
                 </section>}.into_view();
             }
             let confirmed = r.status == "confirmed";
             let sources = r.sources.clone();
             let start = r.clone();
-            view! {<section class="journey-recap" data-testid="journey-recap" data-status=r.status.clone() aria-label=j(loc,"Daily recap","每日回顾")>
+            view! {<section class="journey-recap" data-testid="journey-recap" data-status=r.status.clone() aria-label=crate::i18n::tr(loc, "journey.daily_recap")>
                 <header class="journey-recap-head">
-                    {compose_icon("sparkles")}<strong>{j(loc,"Daily recap","每日回顾")}</strong>
-                    <span class="journey-recap-badge" class:confirmed=confirmed>{if confirmed {j(loc,"AI-drafted · confirmed","AI 起草 · 已确认")} else {j(loc,"AI draft · review before keeping","AI 草稿 · 待确认")}}</span>
+                    {compose_icon("sparkles")}<strong>{crate::i18n::tr(loc, "journey.daily_recap")}</strong>
+                    <span class="journey-recap-badge" class:confirmed=confirmed>{if confirmed {crate::i18n::tr(loc, "journey.ai_drafted_confirmed")} else {crate::i18n::tr(loc, "journey.ai_draft_review_before_keeping")}}</span>
                     <div class="journey-recap-actions">
-                        {(!confirmed).then(|| view! {<button type="button" class="journey-link" data-testid="journey-recap-confirm" prop:disabled=move || busy.get() on:click=move |_| save("confirmed", false)>{compose_icon("check")}{j(loc,"Confirm","确认")}</button>})}
-                        <button type="button" class="journey-icon" title=j(loc,"Edit recap","编辑回顾") aria-label=j(loc,"Edit recap","编辑回顾") on:click=move |_| {
-                            draft.set((start.headline.clone(), RECAP_SECTIONS.iter().map(|(key, _, _)| recap_section(&start, key).iter().map(|i| i.text.clone()).collect::<Vec<_>>().join("\n")).collect()));
+                        {(!confirmed).then(|| view! {<button type="button" class="journey-link" data-testid="journey-recap-confirm" prop:disabled=move || busy.get() on:click=move |_| save("confirmed", false)>{compose_icon("check")}{crate::i18n::tr(loc, "journey.confirm")}</button>})}
+                        <button type="button" class="journey-icon" title=crate::i18n::tr(loc, "journey.edit_recap") aria-label=crate::i18n::tr(loc, "journey.edit_recap") on:click=move |_| {
+                            draft.set((start.headline.clone(), RECAP_SECTIONS.iter().map(|(key, _)| recap_section(&start, key).iter().map(|i| i.text.clone()).collect::<Vec<_>>().join("\n")).collect()));
                             editing.set(Some(day.get_value()));
                         }>{compose_icon("edit")}</button>
-                        <button type="button" class="journey-icon" title=j(loc,"Regenerate recap","重新生成回顾") aria-label=j(loc,"Regenerate recap","重新生成回顾") prop:disabled=move || busy.get() on:click=generate>{compose_icon("refresh")}</button>
-                        <button type="button" class="journey-icon" title=j(loc,"Dismiss recap","忽略回顾") aria-label=j(loc,"Dismiss recap","忽略回顾") prop:disabled=move || busy.get() on:click=move |_| save("dismissed", false)>{compose_icon("eye-off")}</button>
+                        <button type="button" class="journey-icon" title=crate::i18n::tr(loc, "journey.regenerate_recap") aria-label=crate::i18n::tr(loc, "journey.regenerate_recap") prop:disabled=move || busy.get() on:click=generate>{compose_icon("refresh")}</button>
+                        <button type="button" class="journey-icon" title=crate::i18n::tr(loc, "journey.dismiss_recap") aria-label=crate::i18n::tr(loc, "journey.dismiss_recap") prop:disabled=move || busy.get() on:click=move |_| save("dismissed", false)>{compose_icon("eye-off")}</button>
                     </div>
                 </header>
-                {RECAP_SECTIONS.iter().filter(|(key, _, _)| !recap_section(&r, key).is_empty()).map(|(key, en, zh)| view! {
-                    <div class="journey-recap-section" data-section=*key><h4>{j(loc,en,zh)}</h4><ul>
+                {RECAP_SECTIONS.iter().filter(|(key, _)| !recap_section(&r, key).is_empty()).map(|(key, label_key)| view! {
+                    <div class="journey-recap-section" data-section=*key><h4>{crate::i18n::tr(loc, label_key)}</h4><ul>
                         {recap_section(&r, key).iter().map(|item| view! {<li><span>{item.text.clone()}</span>
                             {item.refs.iter().filter_map(|i| sources.get(*i).cloned()).map(|source| {
                                 let title = source.title.clone();
@@ -660,7 +653,7 @@ fn JourneyRecap(
                         </li>}).collect_view()}
                     </ul></div>
                 }).collect_view()}
-                <p class="journey-recap-foot">{if loc == Locale::Zh {format!("由 {} 起草，可在 设置 → 专家 → Recap 中更换模型。", r.model)} else {format!("Drafted by {}. Change the model in Settings → Specialists → Recap.", r.model)}}</p>
+                <p class="journey-recap-foot">{crate::i18n::tf(loc, "journey.recap_model", &[("model", &r.model)])}</p>
                 {alert}
             </section>}.into_view()
         }}
@@ -719,7 +712,7 @@ fn JourneyOutput(
             }).collect_view()}</div>}.into_view(),
             Some((false,text))=>view!{<pre>{text}</pre>}.into_view(),
             None=>view!{<div class="journey-output-fallback">{compose_icon(if kind=="image"{"image"}else if kind=="csv"{"table"}else{"doc"})}<span>{kind.to_uppercase()}</span></div>}.into_view()
-        }}</div><strong title=entry.title.clone()>{entry.title}</strong><small>{move ||format!("{} · v{}",if discarded{j(locale.get(),"Unavailable","源文件不可用")}else{j(locale.get(),"Registered output","已登记产出")},entry.version_number.unwrap_or(1))}</small>
+        }}</div><strong title=entry.title.clone()>{entry.title}</strong><small>{move ||format!("{} · v{}",if discarded{crate::i18n::tr(locale.get(), "journey.unavailable")}else{crate::i18n::tr(locale.get(), "journey.registered_output")},entry.version_number.unwrap_or(1))}</small>
     </button>}
 }
 
@@ -745,8 +738,8 @@ fn JourneyCalendar(
     });
     view! {<div class="journey-calendar" data-testid="journey-calendar">
         <div class="journey-calendar-head"><strong>{move ||{let(y,m)=month.get();if locale.get()==Locale::Zh{format!("{y} 年 {} 月",m+1)}else{format!("{y} / {:02}",m+1)}}}</strong>
-            <button class="journey-icon" aria-label=move ||j(locale.get(),"Previous month","上个月") on:click=move |_|{focus_day.set(None);month.update(|m|*m=shift_month(*m,-1));query.set(String::new());}>{compose_icon("chevron-left")}</button>
-            <button class="journey-icon" aria-label=move ||j(locale.get(),"Next month","下个月") on:click=move |_|{focus_day.set(None);month.update(|m|*m=shift_month(*m,1));query.set(String::new());}>{compose_icon("chevron-right")}</button></div>
+            <button class="journey-icon" aria-label=move ||crate::i18n::tr(locale.get(), "journey.previous_month") on:click=move |_|{focus_day.set(None);month.update(|m|*m=shift_month(*m,-1));query.set(String::new());}>{compose_icon("chevron-left")}</button>
+            <button class="journey-icon" aria-label=move ||crate::i18n::tr(locale.get(), "journey.next_month") on:click=move |_|{focus_day.set(None);month.update(|m|*m=shift_month(*m,1));query.set(String::new());}>{compose_icon("chevron-right")}</button></div>
         <div class="journey-calendar-grid">{move ||{let labels=if locale.get()==Locale::Zh{["一","二","三","四","五","六","日"]}else{["M","T","W","T","F","S","S"]};labels.into_iter().map(|label|view!{<span class="journey-weekday">{label}</span>}).collect_view()}}
             {move ||{let m=month.get();let first=date(month_start(m));let offset=(first.get_day()+6)%7;
                 let count=js_sys::Date::new_with_year_month_day(m.0 as u32,m.1 as i32+1,0).get_date();
@@ -762,9 +755,9 @@ fn JourneyCalendar(
                 }).collect_view();
                 view!{<>{blanks}{buttons}</>}
             }}
-        </div><button class="journey-link journey-today" on:click=move |_|{focus_day.set(None);month.set(month_of(now()));selected_date.set(day_key(now()));query.set(String::new());if let Some(el)=document().get_element_by_id(&format!("journey-day-{}",day_key(now()))){el.scroll_into_view();}}>{j(locale.get(),"Back to today","回到今天")}</button>
-        {move ||focus_day.get().map(|_|view!{<button class="journey-link" on:click=move |_|focus_day.set(None)>{j(locale.get(),"Show full month","显示整月")}</button>})}
-        <p class="journey-timezone">{j(locale.get(),"Dates follow this device's timezone","日期按本机时区显示")}</p>
+        </div><button class="journey-link journey-today" on:click=move |_|{focus_day.set(None);month.set(month_of(now()));selected_date.set(day_key(now()));query.set(String::new());if let Some(el)=document().get_element_by_id(&format!("journey-day-{}",day_key(now()))){el.scroll_into_view();}}>{crate::i18n::tr(locale.get(), "journey.back_to_today")}</button>
+        {move ||focus_day.get().map(|_|view!{<button class="journey-link" on:click=move |_|focus_day.set(None)>{crate::i18n::tr(locale.get(), "journey.show_full_month")}</button>})}
+        <p class="journey-timezone">{crate::i18n::tr(locale.get(), "journey.dates_follow_this_device_s_timezone")}</p>
     </div>}
 }
 
@@ -781,10 +774,10 @@ fn JournalEditor(
     let note_date = create_rw_signal(initial_date);
     let busy = create_rw_signal(false);
     let error = create_rw_signal(None::<String>);
-    view! {<div class="overlay journey-detail-overlay" on:click=move |_|on_close.call(())><form class="modal journey-editor" role="dialog" aria-modal="true" aria-label=move ||j(locale.get(),"Add research entry","补充研究记录") on:click=|ev|ev.stop_propagation() on:submit=move |ev|{
+    view! {<div class="overlay journey-detail-overlay" on:click=move |_|on_close.call(())><form class="modal journey-editor" role="dialog" aria-modal="true" aria-label=move ||crate::i18n::tr(locale.get(), "journey.add_research_entry") on:click=|ev|ev.stop_propagation() on:submit=move |ev|{
         ev.prevent_default();if busy.get_untracked(){return;}
         let timestamp=js_sys::Date::new(&JsValue::from_str(&format!("{}T12:00:00",note_date.get_untracked()))).get_time()/1000.0;
-        if !timestamp.is_finite(){error.set(Some(j(locale.get(),"Choose a valid date","请选择有效日期").into()));return;}
+        if !timestamp.is_finite(){error.set(Some(crate::i18n::tr(locale.get(), "journey.choose_a_valid_date").into()));return;}
         let input=ResearchJournalInput{title:title.get_untracked(),body:body.get_untracked(),category:category_value.get_untracked(),occurred_at:timestamp as i64};
         busy.set(true);error.set(None);
         spawn_local(async move{let result=call::<String>("add_research_journal_entry",serde_json::json!({"input":input})).await;
@@ -793,14 +786,14 @@ fn JournalEditor(
             if busy.try_get_untracked().is_none(){return;}
             busy.set(false);match result{Ok(_)=>on_saved.call(timestamp as i64),Err(e)=>error.set(Some(e))}
         });
-    }><div class="journey-dialog-head"><h2>{j(locale.get(),"Add research entry","补充研究记录")}</h2><button type="button" class="journey-icon" aria-label=move ||j(locale.get(),"Close entry editor","关闭记录编辑器") on:click=move |_|on_close.call(())>{compose_icon("close")}</button></div>
-        <p class="journey-muted">{j(locale.get(),"Record progress, a finding, a decision or a next step. The entry date and the time you added it are kept separately.","记录进展、发现、决策或下一步。研究日期与补记时间会分别保存。")}</p>
-        <div class="journey-form-row"><label>{j(locale.get(),"Research date","研究日期")}<input type="date" required prop:value=move ||note_date.get() on:input=move |ev|note_date.set(event_target_value(&ev))/></label>
-        <label>{j(locale.get(),"Category","记录类型")}<select aria-label=move ||j(locale.get(),"Category","记录类型") prop:value=move ||category_value.get() on:change=move |ev|category_value.set(event_target_value(&ev))>{["progress","finding","decision","next"].into_iter().map(|kind|view!{<option value=kind>{category(locale.get(),kind)}</option>}).collect_view()}</select></label></div>
-        <label>{j(locale.get(),"Title","标题")}<input required maxlength="200" prop:value=move ||title.get() on:input=move |ev|title.set(event_target_value(&ev))/></label>
-        <label>{j(locale.get(),"Details and evidence","详情与依据")}<textarea rows="5" maxlength="10000" prop:value=move ||body.get() on:input=move |ev|body.set(event_target_value(&ev))></textarea></label>
+    }><div class="journey-dialog-head"><h2>{crate::i18n::tr(locale.get(), "journey.add_research_entry")}</h2><button type="button" class="journey-icon" aria-label=move ||crate::i18n::tr(locale.get(), "journey.close_entry_editor") on:click=move |_|on_close.call(())>{compose_icon("close")}</button></div>
+        <p class="journey-muted">{crate::i18n::tr(locale.get(), "journey.record_progress_a_finding_a_decision_or_a_next_step_the_entry_dat")}</p>
+        <div class="journey-form-row"><label>{crate::i18n::tr(locale.get(), "journey.research_date")}<input type="date" required prop:value=move ||note_date.get() on:input=move |ev|note_date.set(event_target_value(&ev))/></label>
+        <label>{crate::i18n::tr(locale.get(), "journey.category")}<select aria-label=move ||crate::i18n::tr(locale.get(), "journey.category") prop:value=move ||category_value.get() on:change=move |ev|category_value.set(event_target_value(&ev))>{["progress","finding","decision","next"].into_iter().map(|kind|view!{<option value=kind>{category(locale.get(),kind)}</option>}).collect_view()}</select></label></div>
+        <label>{crate::i18n::tr(locale.get(), "publication.paper_title")}<input required maxlength="200" prop:value=move ||title.get() on:input=move |ev|title.set(event_target_value(&ev))/></label>
+        <label>{crate::i18n::tr(locale.get(), "journey.details_and_evidence")}<textarea rows="5" maxlength="10000" prop:value=move ||body.get() on:input=move |ev|body.set(event_target_value(&ev))></textarea></label>
         {move ||error.get().map(|e|view!{<p class="journey-error" role="alert">{e}</p>})}
-        <footer><button type="button" class="btn-ghost" on:click=move |_|on_close.call(())>{j(locale.get(),"Cancel","取消")}</button><button class="btn-primary" type="submit" disabled=move ||busy.get()>{move ||if busy.get(){j(locale.get(),"Saving…","正在保存…")}else{j(locale.get(),"Save entry","保存记录")}}</button></footer>
+        <footer><button type="button" class="btn-ghost" on:click=move |_|on_close.call(())>{crate::i18n::tr(locale.get(), "projects.cancel")}</button><button class="btn-primary" type="submit" disabled=move ||busy.get()>{move ||if busy.get(){crate::i18n::tr(locale.get(), "memory.proposal.saving")}else{crate::i18n::tr(locale.get(), "journey.save_entry")}}</button></footer>
     </form></div>}
 }
 
@@ -813,15 +806,15 @@ fn JourneyRun(locale: RwSignal<Locale>, run_id: String, on_close: Callback<()>) 
             async move { call::<RunRecord>("get_run_detail", serde_json::json!({"runId":id})).await }
         },
     );
-    view! {<div class="overlay journey-detail-overlay" on:click=move |_|on_close.call(())><section class="modal journey-run" role="dialog" aria-modal="true" aria-label=move ||j(locale.get(),"Run record","运行记录") on:click=|ev|ev.stop_propagation()>
-        <div class="journey-dialog-head"><h2>{j(locale.get(),"Run record","运行记录")}</h2><button class="journey-icon" aria-label=move ||j(locale.get(),"Close run record","关闭运行记录") on:click=move |_|on_close.call(())>{compose_icon("close")}</button></div>
+    view! {<div class="overlay journey-detail-overlay" on:click=move |_|on_close.call(())><section class="modal journey-run" role="dialog" aria-modal="true" aria-label=move ||crate::i18n::tr(locale.get(), "journey.run_record") on:click=|ev|ev.stop_propagation()>
+        <div class="journey-dialog-head"><h2>{crate::i18n::tr(locale.get(), "journey.run_record")}</h2><button class="journey-icon" aria-label=move ||crate::i18n::tr(locale.get(), "journey.close_run_record") on:click=move |_|on_close.call(())>{compose_icon("close")}</button></div>
         <div class="journey-run-body">
             {move || match detail.get() {
                 None => view!{<p role="status">{t(locale.get(),"loading")}</p>}.into_view(),
                 Some(Err(e)) => view!{<p class="journey-error" role="alert">{e}</p>}.into_view(),
                 Some(Ok(run)) => {
                     let loc = locale.get();
-                    let timestamp = |value: Option<i64>| value.map(|ts|format!("{} {}",day_key(ts),clock(ts))).unwrap_or_else(||j(loc,"Not recorded","未记录").into());
+                    let timestamp = |value: Option<i64>| value.map(|ts|format!("{} {}",day_key(ts),clock(ts))).unwrap_or_else(||crate::i18n::tr(loc, "journey.not_recorded").into());
                     let failed = matches!(run.status.as_str(), "failed" | "lost");
                     let succeeded = run.status == "succeeded";
                     view! {
@@ -833,14 +826,14 @@ fn JourneyRun(locale: RwSignal<Locale>, run_id: String, on_close: Callback<()>) 
                             </span>
                         </div>
                         <dl class="journey-run-meta">
-                            <div><dt>{j(loc,"Execution context","运行环境")}</dt><dd>{run.context_id}</dd></div>
-                            <div><dt>{j(loc,"Exit code","退出码")}</dt><dd>{run.exit_code.map(|code|code.to_string()).unwrap_or_else(||j(loc,"Not recorded","未记录").into())}</dd></div>
-                            <div><dt>{j(loc,"Started (local time)","开始时间（本地）")}</dt><dd>{timestamp(run.started_at)}</dd></div>
-                            <div><dt>{j(loc,"Ended (local time)","结束时间（本地）")}</dt><dd>{timestamp(run.ended_at)}</dd></div>
+                            <div><dt>{crate::i18n::tr(loc, "journey.execution_context")}</dt><dd>{run.context_id}</dd></div>
+                            <div><dt>{crate::i18n::tr(loc, "journey.exit_code")}</dt><dd>{run.exit_code.map(|code|code.to_string()).unwrap_or_else(||crate::i18n::tr(loc, "journey.not_recorded").into())}</dd></div>
+                            <div><dt>{crate::i18n::tr(loc, "journey.started_local_time")}</dt><dd>{timestamp(run.started_at)}</dd></div>
+                            <div><dt>{crate::i18n::tr(loc, "journey.ended_local_time")}</dt><dd>{timestamp(run.ended_at)}</dd></div>
                         </dl>
-                        <JourneyRunText title=j(loc,"Command","执行命令") text=run.command empty=j(loc,"No command recorded","未记录执行命令")/>
-                        <JourneyRunText title=j(loc,"Standard output · log tail","标准输出 · 日志尾部") text=run.stdout_tail empty=j(loc,"No standard output recorded","暂无标准输出")/>
-                        <JourneyRunText title=j(loc,"Standard error · log tail","标准错误 · 日志尾部") text=run.stderr_tail empty=j(loc,"No standard error recorded","暂无标准错误输出")/>
+                        <JourneyRunText title=crate::i18n::tr(loc, "journey.command") text=run.command empty=crate::i18n::tr(loc, "journey.no_command_recorded")/>
+                        <JourneyRunText title=crate::i18n::tr(loc, "journey.standard_output_log_tail") text=run.stdout_tail empty=crate::i18n::tr(loc, "journey.no_standard_output_recorded")/>
+                        <JourneyRunText title=crate::i18n::tr(loc, "journey.standard_error_log_tail") text=run.stderr_tail empty=crate::i18n::tr(loc, "journey.no_standard_error_recorded")/>
                     }.into_view()
                 }
             }}

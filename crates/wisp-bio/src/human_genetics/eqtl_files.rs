@@ -1,7 +1,7 @@
 //! Official eQTL metadata and tabix-indexed summary statistics, fetched in bounded
 //! HTTP ranges. No local download of a whole study or external tabix process.
 use crate::{
-    http::{Source, MAX_RESPONSE},
+    http::{Source, ENSEMBL as LOOKUP, MAX_RESPONSE},
     NativeBio,
 };
 use anyhow::{bail, Context, Result};
@@ -19,7 +19,6 @@ static METADATA_CACHE: tokio::sync::OnceCell<Vec<Value>> = tokio::sync::OnceCell
 const FTP_ROOT: &str = "ftp://ftp.ebi.ac.uk/pub/databases/spot/eQTL/sumstats/";
 const HTTPS_ROOT: &str = "https://ftp.ebi.ac.uk/pub/databases/spot/eQTL/sumstats/";
 const SOURCE: Source = Source("eQTL summary files", Duration::from_secs(2));
-const LOOKUP: Source = Source("Ensembl REST", Duration::from_millis(350));
 const MAX_SCAN: usize = 16 * 1024 * 1024;
 const BLOCK: u64 = 65536;
 

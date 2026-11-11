@@ -20,7 +20,7 @@ const concat = (a: Uint8Array, b: Uint8Array) => new Uint8Array([...a, ...b]);
 type Call = { command: string; project_id: string | null; args: any };
 /// What the fake desktop offers and how it behaves. A host with no `commands`
 /// is a desktop older than the page, which must still work as before.
-type Host = { commands?: string[]; mute?: boolean; connections?: number; respond?: (call: Call) => any };
+type Host = { commands?: string[]; mute?: boolean; connections?: number; respond?: (call: Call, answer: (call: Call) => any) => any };
 const CURRENT = [
   "native_conversation_inbox", "native_conversation_enqueue", "native_conversation_queue_action", "remote_attach_image",
 ];
@@ -54,7 +54,7 @@ const WIDE_TABLE = [
 ].join("\n");
 const LONG_TITLE = "Mass spec of the aging cohort plasma proteome, second batch, reanalysed with the corrected sample sheet";
 
-const snapshots: Record<string, any> = {
+const snapshotTemplate: Record<string, any> = {
   "s-1": {
     items: [
       { role: "user", text: "Run QC", tool_name: null, input: null, ok: null, status: null },
@@ -128,8 +128,10 @@ const earlier: Record<number, any> = {
   12: { items: [{ role: "user", text: "Very first", tool_name: null, input: null, ok: null, status: null }], next_before_seq: null },
 };
 // Conversations waiting for the reader, across projects.
-let inbox: any[] = [];
-let uploads = 0;
+type RemoteState = { snapshots: Record<string, any>; inbox: any[]; uploads: number };
+function createRemoteState(): RemoteState {
+  return { snapshots: structuredClone(snapshotTemplate), inbox: [], uploads: 0 };
+}
 const sessions: Record<string, any[]> = {
   "p-1": [
     { id: "s-1", project_id: "p-1", project_name: "RNA-seq", title: "QC run", ts: 1750000000, activity_at: 1750000300, status: "needs_you" },
@@ -160,7 +162,8 @@ const files: Record<string, any> = {
   "results/paper.pdf": { mime: "application/pdf", text: "## Abstract\n\nExtracted *text*.", base64: null, truncated: false, total_bytes: 4096 },
 };
 
-function answer({ command, project_id, args }: Call): any {
+function answer({ command, project_id, args }: Call, state: RemoteState): any {
+  const { snapshots, inbox } = state;
   const session = args.session_id as string;
   switch (command) {
     case "list_projects":
@@ -190,7 +193,7 @@ function answer({ command, project_id, args }: Call): any {
       // The picture arrives re-encoded as a JPEG, never under a name of its own.
       if (Object.keys(args).sort().join() !== "base64,session_id") throw new Error("unknown field");
       if (!Buffer.from(args.base64, "base64").subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))) throw new Error("Only JPEG, PNG and WebP pictures can be attached remotely");
-      const name = `photo-${++uploads}.jpg`;
+      const name = `photo-${++state.uploads}.jpg`;
       return { path: `uploads/${name}`, name };
     }
     case "native_conversation_image":
@@ -216,7 +219,7 @@ function answer({ command, project_id, args }: Call): any {
 
 /// Serves the page and stands in for relay + desktop. Returns every request
 /// the browser made, after authentication and replay checks.
-async function remote(page: Page, host: Host = {}): Promise<Call[]> {
+async function remote(page: Page, host: Host = {}, state = createRemoteState()): Promise<Call[]> {
   const calls: Call[] = [];
   const secret = Uint8Array.from(CODE.replace(/-/g, "").match(/../g)!, (hex) => parseInt(hex, 16));
   const raw = await webcrypto.subtle.digest("SHA-256", concat(label("wisp-remote/key/v1"), secret));
@@ -246,7 +249,7 @@ async function remote(page: Page, host: Host = {}): Promise<Call[]> {
         let result = null;
         let error = null;
         try {
-          result = host.respond ? await host.respond(call) : answer(call);
+          result = host.respond ? await host.respond(call, call => answer(call, state)) : answer(call, state);
         } catch (failure) {
           error = (failure as Error).message;
         }
@@ -268,6 +271,32 @@ function watchConsole(page: Page): string[] {
 }
 
 test.use({ locale: "en-US" });
+
+test("each remote host isolates nested snapshots, inbox and upload numbering", async ({ page }) => {
+  const first = createRemoteState();
+  first.snapshots["s-2"].items[0].text = "Only the first host changed.";
+  first.inbox.push({ id: "s-1", project_id: "p-1", status: "needs_you" });
+  first.uploads = 40;
+  const other = await page.context().newPage();
+  try {
+    await remote(page, { commands: CURRENT }, first);
+    await remote(other, { commands: CURRENT });
+    await page.goto(`/remote#${CODE}/p/p-1/s/s-2`);
+    await other.goto(`/remote#${CODE}/p/p-1/s/s-2`);
+    await expect(page.locator("#main")).toContainText("Only the first host changed.");
+    await expect(other.locator("#main")).toContainText("Second conversation.");
+    await expect(other.locator("#inbox")).toBeHidden();
+    const fresh = createRemoteState();
+    const upload: Call = { command: "remote_attach_image", project_id: "p-1", args: {
+      session_id: "s-2", base64: Buffer.from([0xff, 0xd8, 0xff]).toString("base64"),
+    } };
+    expect(answer(upload, first).name).toBe("photo-41.jpg");
+    expect(answer(upload, fresh).name).toBe("photo-1.jpg");
+    expect(fresh.inbox).toEqual([]);
+  } finally {
+    await other.close();
+  }
+});
 
 test("projects and conversations switch from the sidebar, with Back and reload", async ({ page }) => {
   const problems = watchConsole(page);
@@ -369,8 +398,10 @@ test("replies render Markdown and conversation images without trusting their HTM
 });
 
 test("a turn's steps fold as on the desktop: newest open while running, one row once done", async ({ page }) => {
+
+  const state = createRemoteState();
   const problems = watchConsole(page);
-  await remote(page);
+  await remote(page, {}, state);
   await page.goto(`/remote#${CODE}/p/p-1/s/s-3`);
 
   const folds = page.locator("#main > .transcript > details.steps");
@@ -385,12 +416,12 @@ test("a turn's steps fold as on the desktop: newest open while running, one row 
 
   // Closing the live run survives the refresh that finishes its last step.
   await folds.nth(1).locator(":scope > summary").click();
-  const live = snapshots["s-3"];
+  const live = state.snapshots["s-3"];
   live.items[7] = { ...live.items[7], ok: true };
   await expect(folds.nth(1).locator("details.tool .state")).toHaveText(["Done", "Done"]);
   await expect(folds.nth(1)).not.toHaveAttribute("open");
 
-  snapshots["s-3"] = { ...live, running: false, items: [...live.items, { role: "assistant", text: "All done.", tool_name: null, input: null, ok: null, status: null }] };
+  state.snapshots["s-3"] = { ...live, running: false, items: [...live.items, { role: "assistant", text: "All done.", tool_name: null, input: null, ok: null, status: null }] };
   await expect(folds.locator(":scope > summary")).toHaveText(["Ran 4 steps"]);
   await expect(commentary).toHaveText(["All done."]);
   await expect(folds).not.toHaveAttribute("open");
@@ -546,8 +577,10 @@ const setVisible = (page: Page, visible: boolean) => page.evaluate((state) => {
 const users = (page: Page) => page.locator("#main .msg.user");
 
 test("the next message queues behind a running turn and can be withdrawn", async ({ page }) => {
+
+  const state = createRemoteState();
   const problems = watchConsole(page);
-  const calls = await remote(page, { commands: CURRENT });
+  const calls = await remote(page, { commands: CURRENT }, state);
   await page.setViewportSize({ width: 390, height: 780 });
   await page.goto(`/remote#${CODE}/p/p-1/s/s-4`);
 
@@ -570,7 +603,7 @@ test("the next message queues behind a running turn and can be withdrawn", async
     { session_id: "s-4", id: "7", digest: "d-then plot the coverage", action: { kind: "cancel" } });
 
   // Once the turn ends the same button sends, and suggestions fill the draft without sending.
-  snapshots["s-4"] = { ...snapshots["s-4"], running: false, follow_ups: ["Plot the top genes", "Export the table"] };
+  state.snapshots["s-4"] = { ...state.snapshots["s-4"], running: false, follow_ups: ["Plot the top genes", "Export the table"] };
   await expect(send).toHaveText("Send");
   await expect(page.locator("#stop")).toBeHidden();
   const chips = page.getByRole("group", { name: "Suggested next messages" }).getByRole("button");
@@ -584,25 +617,29 @@ test("the next message queues behind a running turn and can be withdrawn", async
 });
 
 test("an older desktop is offered only what it supports", async ({ page }) => {
-  snapshots["s-4"] = { ...snapshots["s-4"], running: true, follow_ups: [] };
-  inbox = [{ id: "s-1", project_id: "p-1", project_name: "RNA-seq", title: "QC run", status: "needs_you" }];
-  const calls = await remote(page);
+
+  const state = createRemoteState();
+  state.snapshots["s-4"] = { ...state.snapshots["s-4"], running: true, follow_ups: [] };
+  state.inbox = [{ id: "s-1", project_id: "p-1", project_name: "RNA-seq", title: "QC run", status: "needs_you" }];
+  const calls = await remote(page, {}, state);
   await page.goto(`/remote#${CODE}/p/p-1/s/s-4`);
   await expect(page.locator("#stop")).toBeVisible();
   await expect(page.locator("#send")).toBeHidden();
   await expect(page.locator("#attach")).toBeHidden();
   await expect(page.locator("#inbox")).toBeHidden();
   expect(calls.some((call) => CURRENT.includes(call.command))).toBe(false);
-  inbox = [];
+  state.inbox = [];
 });
 
 test("the header counts other conversations that need you and jumps to the next", async ({ page }) => {
+
+  const state = createRemoteState();
   const problems = watchConsole(page);
-  inbox = [
+  state.inbox = [
     { id: "s-1", project_id: "p-1", project_name: "RNA-seq", title: "QC run", status: "needs_you" },
     { id: "s-9", project_id: "p-2", project_name: "Proteomics", title: LONG_TITLE, status: "needs_you" },
   ];
-  await remote(page, { commands: CURRENT });
+  await remote(page, { commands: CURRENT }, state);
   await page.goto(`/remote#${CODE}/p/p-1/s/s-2`);
 
   const bell = page.locator("#inbox");
@@ -623,15 +660,18 @@ test("the header counts other conversations that need you and jumps to the next"
   await setVisible(page, true);
   await expect(page).toHaveTitle(/^\(1\) Mass spec/);
 
-  inbox = [];
+  state.inbox = [];
   await expect(bell).toBeHidden({ timeout: 15_000 });
   await expect(page).toHaveTitle(/^Mass spec/);
   expect(problems).toEqual([]);
 });
 
 test("coming back to the page catches up at once and replaces a dead connection", async ({ page }) => {
+
+  const state = createRemoteState();
+  await page.clock.install();
   const host: Host = { commands: CURRENT };
-  const calls = await remote(page, host);
+  const calls = await remote(page, host, state);
   await page.goto(`/remote#${CODE}/p/p-1/s/s-2`);
   await expect(page.locator("#main")).toContainText("Second conversation.");
   const polls = () => calls.filter((call) => call.command === "native_conversation_snapshot").length;
@@ -641,9 +681,9 @@ test("coming back to the page catches up at once and replaces a dead connection"
   const before = polls();
   await expect.poll(polls, { timeout: 8_000 }).toBeGreaterThan(before);
   const settled = polls();
-  const original = snapshots["s-2"];
-  snapshots["s-2"] = { ...original, items: [...original.items, { role: "assistant", text: "Finished while you were away.", tool_name: null, input: null, ok: null, status: null }] };
-  await page.waitForTimeout(5_000);
+  const original = state.snapshots["s-2"];
+  state.snapshots["s-2"] = { ...original, items: [...original.items, { role: "assistant", text: "Finished while you were away.", tool_name: null, input: null, ok: null, status: null }] };
+  await page.clock.runFor(5_000);
   expect(polls()).toBe(settled);
   await expect(page.locator("#main")).not.toContainText("Finished while you were away.");
   await setVisible(page, true);
@@ -655,15 +695,17 @@ test("coming back to the page catches up at once and replaces a dead connection"
   await setVisible(page, true);
   await expect.poll(() => host.connections, { timeout: 10_000 }).toBe(2);
   await expect(page.locator("#status")).toHaveText("Connected");
-  snapshots["s-2"] = { ...original, items: [...original.items, { role: "assistant", text: "Back online.", tool_name: null, input: null, ok: null, status: null }] };
+  state.snapshots["s-2"] = { ...original, items: [...original.items, { role: "assistant", text: "Back online.", tool_name: null, input: null, ok: null, status: null }] };
   await expect(page.locator("#main")).toContainText("Back online.");
   await expect(page.locator("#main [role=alert]")).toHaveCount(0);
-  snapshots["s-2"] = original;
+  state.snapshots["s-2"] = original;
 });
 
 test("earlier messages load a page at a time, above what is already shown", async ({ page }) => {
+
+  const state = createRemoteState();
   const problems = watchConsole(page);
-  const calls = await remote(page, { commands: CURRENT });
+  const calls = await remote(page, { commands: CURRENT }, state);
   await page.goto(`/remote#${CODE}/p/p-1/s/s-6`);
 
   const more = page.getByRole("button", { name: "Load earlier messages" });
@@ -679,15 +721,17 @@ test("earlier messages load a page at a time, above what is already shown", asyn
   expect(calls.filter((call) => call.command === "native_conversation_snapshot" && call.args.before_seq != null).map((call) => call.args.before_seq)).toEqual([40, 12]);
 
   // A new turn moves the latest page on; older pages start over rather than leave a gap.
-  snapshots["s-6"] = { ...snapshots["s-6"], next_before_seq: 55 };
+  state.snapshots["s-6"] = { ...state.snapshots["s-6"], next_before_seq: 55 };
   await expect(users(page)).toHaveText(["Latest question"]);
   await expect(more).toBeVisible();
   expect(problems).toEqual([]);
 });
 
 test("runs show their state and the end of their output, updated in place", async ({ page }) => {
+
+  const state = createRemoteState();
   const problems = watchConsole(page);
-  await remote(page, { commands: CURRENT });
+  await remote(page, { commands: CURRENT }, state);
   await page.goto(`/remote#${CODE}/p/p-1/s/s-7`);
 
   const runs = page.locator("#main details.run");
@@ -703,8 +747,8 @@ test("runs show their state and the end of their output, updated in place", asyn
 
   // New output and the final state arrive in the same row.
   await runs.nth(1).evaluate((node) => ((node as HTMLElement).dataset.kept = "yes"));
-  const [live, failed] = snapshots["s-7"].run_cards;
-  snapshots["s-7"] = { ...snapshots["s-7"], run_cards: [{ ...live, status: "succeeded", ended_at: live.started_at + 130, exit_code: 0, stdout_tail: "chunk 1\nchunk 2\nchunk 3" }, failed] };
+  const [live, failed] = state.snapshots["s-7"].run_cards;
+  state.snapshots["s-7"] = { ...state.snapshots["s-7"], run_cards: [{ ...live, status: "succeeded", ended_at: live.started_at + 130, exit_code: 0, stdout_tail: "chunk 1\nchunk 2\nchunk 3" }, failed] };
   await expect(runs.nth(1).locator(".state")).toHaveText("Done");
   await expect(runs.nth(1).locator("pre")).toContainText("chunk 3");
   await expect(runs.nth(1).locator(".sub")).toHaveText("2m 10s");
@@ -714,8 +758,10 @@ test("runs show their state and the end of their output, updated in place", asyn
 });
 
 test("a picture is shrunk in the browser, attached and sent with the message", async ({ page }) => {
+
+  const state = createRemoteState();
   const problems = watchConsole(page);
-  const calls = await remote(page, { commands: CURRENT });
+  const calls = await remote(page, { commands: CURRENT }, state);
   await page.setViewportSize({ width: 390, height: 780 });
   await page.goto(`/remote#${CODE}/p/p-1/s/s-2`);
 
@@ -741,12 +787,12 @@ test("a picture is shrunk in the browser, attached and sent with the message", a
   expect(calls.find((call) => call.command === "native_conversation_send")!.args).toMatchObject({ session_id: "s-2", message: "", attachments: ["uploads/photo-2.jpg"] });
 
   // The sent picture shows in the message; the line that names its file does not.
-  const original = snapshots["s-2"];
-  snapshots["s-2"] = { ...original, items: [...original.items, { role: "user", text: "What is this?\n\nUploaded files: uploads/photo-2.jpg", attachments: ["uploads/photo-2.jpg"], tool_name: null, input: null, ok: null, status: null }] };
+  const original = state.snapshots["s-2"];
+  state.snapshots["s-2"] = { ...original, items: [...original.items, { role: "user", text: "What is this?\n\nUploaded files: uploads/photo-2.jpg", attachments: ["uploads/photo-2.jpg"], tool_name: null, input: null, ok: null, status: null }] };
   await expect(users(page)).toHaveText("What is this?photo-2.jpg");
   await expect(users(page).locator("img")).toHaveAttribute("src", `data:image/png;base64,${PNG}`);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  snapshots["s-2"] = original;
+  state.snapshots["s-2"] = original;
   expect(problems).toEqual([]);
 });
 
@@ -777,7 +823,7 @@ test.describe("mobile workspace aligned with the native research tabs", () => {
     await page.clock.setFixedTime(new Date("2026-10-14T04:00:00Z"));
   });
 
-  const researchHost = (call: Call) => {
+  const researchHost = (call: Call, answer: (call: Call) => any) => {
     if (call.command === "native_research_calendar") {
       const at = new Date("2026-10-14T04:00:00Z").getTime() / 1000;
       const month = call.args.until - call.args.from > 86400;
@@ -880,7 +926,7 @@ test.describe("mobile workspace aligned with the native research tabs", () => {
     ];
     let revision = 2;
     let conflict = true;
-    const calls = await remote(page, { commands: RESEARCH, respond: call => {
+    const calls = await remote(page, { commands: RESEARCH, respond: (call, answer) => {
       if (call.command !== "native_research_checklist_sync") return answer(call);
       const { args } = call;
       const outcomes = args.changes.map((change: any) => {
@@ -980,16 +1026,18 @@ test.describe("mobile workspace aligned with the native research tabs", () => {
 });
 
 test("completed run records fold together while failed and live runs stay visible", async ({ page }) => {
-  const original = snapshots["s-7"];
+
+  const state = createRemoteState();
+  const original = state.snapshots["s-7"];
   const cards = original.run_cards;
-  const calls = await remote(page, { respond: call => {
+  const calls = await remote(page, { respond: (call, answer) => {
     if (call.command !== "native_conversation_snapshot") return answer(call);
     return { ...answer(call), run_cards: [
       { ...cards[0], id: "finished", status: "succeeded", title: "Finished analysis", created_at: 1 },
       { ...cards[0], id: "live", status: "running", title: "Live analysis", created_at: 2 },
       { ...cards[1], id: "failed", status: "failed", title: "Failed analysis", created_at: 3 },
     ] };
-  } });
+  } }, state);
   await page.goto(`/remote#${CODE}/p/p-1/s/s-7`);
   const completed = page.locator("details.completed-runs");
   await expect(completed.locator(":scope > summary")).toHaveText("Completed records (1)");

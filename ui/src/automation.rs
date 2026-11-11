@@ -6,7 +6,7 @@
 use crate::app_support::compose_icon;
 use crate::dto::{DailyRecapAutomation, MemoryTidyAutomation, ProjectSummary, ScheduleRecord};
 use crate::i18n::Locale;
-use crate::research_journey::{call, clock, date, day_key, j, now};
+use crate::research_journey::{call, clock, date, day_key, now};
 use leptos::*;
 
 const DAY: i64 = 86_400;
@@ -33,8 +33,8 @@ struct Draft {
 
 struct Template {
     icon: &'static str,
-    title: (&'static str, &'static str),
-    prompt: (&'static str, &'static str),
+    title: &'static str,
+    prompt: &'static str,
     cadence: Cadence,
     time: &'static str,
     weekday: u32,
@@ -43,33 +43,27 @@ struct Template {
 static TEMPLATES: [Template; 3] = [
     Template {
         icon: "book",
-        title: ("Literature watch", "文献追踪"),
-        prompt: (
-            "Search for papers published in the past 7 days that bear on this project's research question. List at most 10, most relevant first, each with one sentence on how it relates to this project, and state the search queries you used. Read-only: do not change project files.",
-            "检索过去 7 天内与本项目研究问题相关的新文献，按相关性列出最多 10 篇，每篇用一句话说明与本项目的关系，并注明所用检索式。只读，不修改项目文件。",
-        ),
+        title: "automation.template.literature_watch",
+        prompt:
+            "automation.template.search_for_papers_published_in_the_past_7_days_that_bear_on_this",
         cadence: Cadence::Weekly,
         time: "09:00",
         weekday: 1,
     },
     Template {
         icon: "gauge",
-        title: ("Run check", "运行巡检"),
-        prompt: (
-            "Check this project's runs. List runs that are still running, failed, lost their connection, or finished without their outputs harvested, with the likely reason and a suggested next step for each. Read-only: do not resubmit or cancel runs.",
-            "检查本项目的所有运行：列出仍在运行、失败、失去连接或已完成但尚未收取产出的任务，说明可能原因和建议的下一步。只读，不重新提交或取消任务。",
-        ),
+        title: "automation.template.run_check",
+        prompt:
+            "automation.template.check_this_project_s_runs_list_runs_that_are_still_running_failed",
         cadence: Cadence::Daily,
         time: "18:00",
         weekday: 1,
     },
     Template {
         icon: "doc",
-        title: ("Weekly report", "研究周报"),
-        prompt: (
-            "Summarize this week's research journey for this project, including its daily recaps, into a short weekly report: completed work, key findings and decisions, problems met, and next week's plan. Cite runs and outputs by name. Read-only.",
-            "汇总本项目本周的研究历程（含每日回顾），整理成一份简短周报：本周完成、关键发现与决定、遇到的问题、下周计划，并注明相关运行和产出。只读。",
-        ),
+        title: "automation.template.weekly_report",
+        prompt:
+            "automation.template.summarize_this_week_s_research_journey_for_this_project_including",
         cadence: Cadence::Weekly,
         time: "17:00",
         weekday: 5,
@@ -77,40 +71,42 @@ static TEMPLATES: [Template; 3] = [
 ];
 
 fn weekday_name(loc: Locale, day: u32) -> &'static str {
-    let en = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    let zh = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-    let day = (day % 7) as usize;
-    if loc == Locale::Zh {
-        zh[day]
-    } else {
-        en[day]
-    }
+    let keys = [
+        "calendar.weekday.sun",
+        "calendar.weekday.mon",
+        "calendar.weekday.tue",
+        "calendar.weekday.wed",
+        "calendar.weekday.thu",
+        "calendar.weekday.fri",
+        "calendar.weekday.sat",
+    ];
+    crate::i18n::tr(loc, keys[(day % 7) as usize])
 }
 
 /// Human cadence from the interval and the next slot's local wall clock.
 fn cadence_label(loc: Locale, schedule: &ScheduleRecord) -> String {
     let at = clock(schedule.next_run_at);
     match schedule.interval_secs {
-        DAY => format!("{} {at}", j(loc, "Daily", "每天")),
+        DAY => format!("{} {at}", crate::i18n::tr(loc, "automation.daily")),
         WEEK => format!(
             "{} {at}",
             weekday_name(loc, date(schedule.next_run_at).get_day())
         ),
         n if n % 3600 == 0 => {
             let h = n / 3600;
-            if loc == Locale::Zh {
-                format!("每 {h} 小时")
-            } else {
-                format!("Every {h} h")
-            }
+            crate::i18n::tf(
+                loc,
+                "automation.cadence_hours",
+                &[("count", &h.to_string())],
+            )
         }
         n => {
             let m = n / 60;
-            if loc == Locale::Zh {
-                format!("每 {m} 分钟")
-            } else {
-                format!("Every {m} min")
-            }
+            crate::i18n::tf(
+                loc,
+                "automation.every_minutes",
+                &[("count", &m.to_string())],
+            )
         }
     }
 }
@@ -231,8 +227,8 @@ pub(crate) fn AutomationPage(
         let loc = locale.get_untracked();
         let mut next = blank();
         if let Some(t) = template {
-            next.name = j(loc, t.title.0, t.title.1).into();
-            next.prompt = j(loc, t.prompt.0, t.prompt.1).into();
+            next.name = crate::i18n::tr(loc, t.title).into();
+            next.prompt = crate::i18n::tr(loc, t.prompt).into();
             next.cadence = t.cadence;
             next.time = t.time.into();
             next.weekday = t.weekday;
@@ -247,12 +243,7 @@ pub(crate) fn AutomationPage(
         let loc = locale.get_untracked();
         if d.project_id.is_empty() || d.prompt.trim().is_empty() {
             form_error.set(Some(
-                j(
-                    loc,
-                    "Choose a project and write a prompt.",
-                    "请选择项目并填写提示词。",
-                )
-                .into(),
+                crate::i18n::tr(loc, "automation.choose_a_project_and_write_a_prompt").into(),
             ));
             return;
         }
@@ -263,12 +254,7 @@ pub(crate) fn AutomationPage(
         };
         if d.cadence != Cadence::Hourly && start_at.is_none() {
             form_error.set(Some(
-                j(
-                    loc,
-                    "Use a 24-hour HH:MM time.",
-                    "请输入 24 小时制时间 HH:MM。",
-                )
-                .into(),
+                crate::i18n::tr(loc, "automation.use_a_24_hour_hh_mm_time").into(),
             ));
             return;
         }
@@ -293,43 +279,43 @@ pub(crate) fn AutomationPage(
     let project_name =
         move |id: &str| projects.with(|ps| ps.iter().find(|p| p.id == id).map(|p| p.name.clone()));
     view! {
-        <section class="home-calendar home-automation" data-testid="home-automation" aria-label=move || j(locale.get(),"Automation","自动化")>
-            <button type="button" class="calendar-back" on:click=move |_| on_close.call(())>{compose_icon("arrow-left")}{move || j(locale.get(),"Back to research assistant","返回科研助理")}</button>
-            <header class="home-calendar-heading"><div><h2>{move || j(locale.get(),"Automation","自动化")}</h2><p>{move || j(locale.get(),"Run tasks on a schedule while Wisp is open, or any time you need them.","按计划运行任务，或在需要时随时执行。")}</p></div>
+        <section class="home-calendar home-automation" data-testid="home-automation" aria-label=move || crate::i18n::tr(locale.get(), "automation.automation")>
+            <button type="button" class="calendar-back" on:click=move |_| on_close.call(())>{compose_icon("arrow-left")}{move || crate::i18n::tr(locale.get(), "automation.back_to_research_assistant")}</button>
+            <header class="home-calendar-heading"><div><h2>{move || crate::i18n::tr(locale.get(), "automation.automation")}</h2><p>{move || crate::i18n::tr(locale.get(), "automation.run_tasks_on_a_schedule_while_wisp_is_open_or_any_time_you_need_t")}</p></div>
                 <div class="automation-heading-actions">
-                    <button type="button" class="calendar-icon" aria-label=move || j(locale.get(),"Refresh automation","刷新自动化") on:click=move |_| refresh.update(|n| *n += 1)>{compose_icon("refresh")}</button>
-                    <button type="button" class="btn-primary" data-testid="automation-create" on:click=move |_| start(None)>{compose_icon("plus")}{move || j(locale.get(),"New scheduled task","创建定时任务")}</button>
+                    <button type="button" class="calendar-icon" aria-label=move || crate::i18n::tr(locale.get(), "automation.refresh_automation") on:click=move |_| refresh.update(|n| *n += 1)>{compose_icon("refresh")}</button>
+                    <button type="button" class="btn-primary" data-testid="automation-create" on:click=move |_| start(None)>{compose_icon("plus")}{move || crate::i18n::tr(locale.get(), "automation.new_scheduled_task")}</button>
                 </div>
             </header>
             {move || notice.get().map(|e| view! {<p class="automation-notice" role="alert">{e}</p>})}
             <section class="automation-card automation-builtin" data-testid="automation-daily-recap">
                 {move || {
                     let loc = locale.get();
-                    let Some(d) = daily.get() else { return view! {<p class="automation-meta" role="status">{j(loc,"Loading…","正在读取…")}</p>}.into_view(); };
+                    let Some(d) = daily.get() else { return view! {<p class="automation-meta" role="status">{crate::i18n::tr(loc, "privacy.loading")}</p>}.into_view(); };
                     let (enabled, time) = (d.enabled, d.time.clone());
                     let toggle_time = time.clone();
                     let status = if d.running {
-                        j(loc,"Running now…","正在运行…").to_string()
+                        crate::i18n::tr(loc, "automation.running_now").to_string()
                     } else if let Some(at) = d.last_run_at {
                         let when = format!("{} {}", day_key(at), clock(at));
-                        if loc == Locale::Zh { format!("上次运行：{when} · 起草 {} 份", d.drafted) } else { format!("Last run: {when} · {} drafted", d.drafted) }
+                        crate::i18n::tf(loc, "automation.last_drafted", &[("when", &when), ("count", &d.drafted.to_string())])
                     } else {
-                        j(loc,"Not run yet","尚未运行").to_string()
+                        crate::i18n::tr(loc, "automation.not_run_yet").to_string()
                     };
                     view! {
-                        <div class="automation-card-head">{compose_icon("sparkles")}<h3>{j(loc,"Daily research recap","每日研究回顾")}</h3><span class="automation-tag">{j(loc,"Built-in","内置")}</span>
-                            <label class="automation-toggle"><input type="checkbox" role="switch" data-testid="daily-recap-enabled" prop:checked=enabled on:change=move |ev| save_daily(event_target_checked(&ev), toggle_time.clone())/><span>{if enabled {j(loc,"On","已开启")} else {j(loc,"Off","已关闭")}}</span></label>
+                        <div class="automation-card-head">{compose_icon("sparkles")}<h3>{crate::i18n::tr(loc, "automation.daily_research_recap")}</h3><span class="automation-tag">{crate::i18n::tr(loc, "conn.bundled_badge")}</span>
+                            <label class="automation-toggle"><input type="checkbox" role="switch" data-testid="daily-recap-enabled" prop:checked=enabled on:change=move |ev| save_daily(event_target_checked(&ev), toggle_time.clone())/><span>{if enabled {crate::i18n::tr(loc, "automation.on")} else {crate::i18n::tr(loc, "automation.off")}}</span></label>
                         </div>
-                        <p class="automation-desc">{j(loc,"Every day after","每天")}" "
-                            <input type="time" class="automation-time" data-testid="daily-recap-time" aria-label=j(loc,"Daily recap time","每日回顾时间") prop:value=time on:change=move |ev| save_daily(enabled, event_target_value(&ev))/>
-                            " "{j(loc,"it drafts a recap for each project's recent days with recorded activity (catching up to 3 days). Drafts become records only after you confirm them in the research journey.","起，为各项目最近有记录的日子起草研究回顾（最多补齐 3 天）。草稿在研究历程中确认后才算正式记录。")}</p>
+                        <p class="automation-desc">{crate::i18n::tr(loc, "automation.every_day_after")}" "
+                            <input type="time" class="automation-time" data-testid="daily-recap-time" aria-label=crate::i18n::tr(loc, "automation.daily_recap_time") prop:value=time on:change=move |ev| save_daily(enabled, event_target_value(&ev))/>
+                            " "{crate::i18n::tr(loc, "automation.it_drafts_a_recap_for_each_project_s_recent_days_with_recorded_ac")}</p>
                         <p class="automation-meta" data-testid="daily-recap-status">{status}</p>
                         {d.error.map(|e| view! {<p class="automation-error" role="alert">{e}</p>})}
                         <div class="automation-actions">
                             <button type="button" class="btn-ghost" data-testid="daily-recap-run" prop:disabled=d.running on:click=move |_| spawn_local(async move {
                                 if let Ok(value) = call::<DailyRecapAutomation>("run_daily_recap_now", serde_json::json!({})).await { daily.set(Some(value)); }
-                            })>{compose_icon("play")}{j(loc,"Run now","立即运行")}</button>
-                            <button type="button" class="journey-link" on:click=move |_| on_open_specialists.call(())>{compose_icon("gear")}{j(loc,"Change model in Settings → Specialists → Recap","在 设置 → 专家 → Recap 中更换模型")}</button>
+                            })>{compose_icon("play")}{crate::i18n::tr(loc, "automation.run_now")}</button>
+                            <button type="button" class="journey-link" on:click=move |_| on_open_specialists.call(())>{compose_icon("gear")}{crate::i18n::tr(loc, "automation.change_model_in_settings_specialists_recap")}</button>
                         </div>
                     }.into_view()
                 }}
@@ -337,47 +323,42 @@ pub(crate) fn AutomationPage(
             <section class="automation-card automation-builtin" data-testid="automation-memory-tidy">
                 {move || {
                     let loc = locale.get();
-                    let Some(t) = tidy.get() else { return view! {<p class="automation-meta" role="status">{j(loc,"Loading…","正在读取…")}</p>}.into_view(); };
+                    let Some(t) = tidy.get() else { return view! {<p class="automation-meta" role="status">{crate::i18n::tr(loc, "privacy.loading")}</p>}.into_view(); };
                     let count = t.proposals.len();
                     let status = if t.running {
-                        j(loc,"Running now…","正在运行…").to_string()
+                        crate::i18n::tr(loc, "automation.running_now").to_string()
                     } else if let Some(at) = t.last_run_at {
                         let when = format!("{} {}", day_key(at), clock(at));
-                        if loc == Locale::Zh { format!("上次运行：{when} · {count} 条建议待处理") } else { format!("Last run: {when} · {count} proposal(s) to review") }
+                        crate::i18n::tf(loc, "automation.last_proposals", &[("when", &when), ("count", &count.to_string())])
                     } else {
-                        j(loc,"Not run yet","尚未运行").to_string()
+                        crate::i18n::tr(loc, "automation.not_run_yet").to_string()
                     };
                     view! {
-                        <div class="automation-card-head">{compose_icon("memory")}<h3>{j(loc,"Memory tidy","记忆整理")}</h3><span class="automation-tag">{j(loc,"Built-in","内置")}</span>
-                            <label class="automation-toggle"><input type="checkbox" role="switch" data-testid="memory-tidy-enabled" prop:checked=t.enabled on:change=move |ev| tidy_act("set_memory_tidy_automation", serde_json::json!({"enabled":event_target_checked(&ev)}))/><span>{if t.enabled {j(loc,"On","已开启")} else {j(loc,"Off","已关闭")}}</span></label>
+                        <div class="automation-card-head">{compose_icon("memory")}<h3>{crate::i18n::tr(loc, "automation.memory_tidy")}</h3><span class="automation-tag">{crate::i18n::tr(loc, "conn.bundled_badge")}</span>
+                            <label class="automation-toggle"><input type="checkbox" role="switch" data-testid="memory-tidy-enabled" prop:checked=t.enabled on:change=move |ev| tidy_act("set_memory_tidy_automation", serde_json::json!({"enabled":event_target_checked(&ev)}))/><span>{if t.enabled {crate::i18n::tr(loc, "automation.on")} else {crate::i18n::tr(loc, "automation.off")}}</span></label>
                         </div>
-                        <p class="automation-desc">{j(loc,"Once a week it looks over your global habits and proposes merging entries that say the same thing or retiring one that a newer entry replaces. Nothing changes until you apply a proposal.","每周检查一次全局习惯，提出合并意思相同的条目，或淘汰已被新条目取代的条目。在你应用某条建议之前，不会改动任何记忆。")}</p>
+                        <p class="automation-desc">{crate::i18n::tr(loc, "automation.once_a_week_it_looks_over_your_global_habits_and_proposes_merging")}</p>
                         <p class="automation-meta" data-testid="memory-tidy-status">{status}</p>
                         {t.error.map(|e| view! {<p class="automation-error" role="alert">{e}</p>})}
                         {t.proposals.into_iter().map(|p| {
                             let merge = p.action == "merge";
                             let n = p.memories.len();
-                            let title = match (merge, loc == Locale::Zh) {
-                                (true, true) => format!("合并 {n} 条记忆"),
-                                (true, false) => format!("Merge {n} memories"),
-                                (false, true) => format!("淘汰 {n} 条记忆"),
-                                (false, false) => format!("Retire {n} memory(ies)"),
-                            };
+                            let title = crate::i18n::tf(loc, if merge { "automation.merge_memories" } else { "automation.retire_memories" }, &[("count", &n.to_string())]);
                             let (apply_id, dismiss_id) = (p.id.clone(), p.id.clone());
                             view! {<article class="memory-tidy-proposal" data-testid="memory-tidy-proposal" data-action=p.action.clone()>
                                 <strong>{title}</strong>
                                 {(!p.reason.is_empty()).then(|| view! {<small>{p.reason.clone()}</small>})}
                                 <ul>{p.memories.iter().map(|m| view! {<li>{m.content.clone()}</li>}).collect_view()}</ul>
-                                {merge.then(|| view! {<p class="memory-tidy-merged"><b>{j(loc,"Becomes","合并为")}</b>{p.text.clone()}</p>})}
+                                {merge.then(|| view! {<p class="memory-tidy-merged"><b>{crate::i18n::tr(loc, "automation.becomes")}</b>{p.text.clone()}</p>})}
                                 <div class="automation-actions">
-                                    <button type="button" class="btn-primary" data-testid="memory-tidy-apply" on:click=move |_| tidy_act("apply_memory_tidy_proposal", serde_json::json!({"id":apply_id.clone()}))>{j(loc,"Apply","应用")}</button>
-                                    <button type="button" class="btn-ghost" data-testid="memory-tidy-dismiss" on:click=move |_| tidy_act("dismiss_memory_tidy_proposal", serde_json::json!({"id":dismiss_id.clone()}))>{j(loc,"Dismiss","忽略")}</button>
+                                    <button type="button" class="btn-primary" data-testid="memory-tidy-apply" on:click=move |_| tidy_act("apply_memory_tidy_proposal", serde_json::json!({"id":apply_id.clone()}))>{crate::i18n::tr(loc, "automation.apply")}</button>
+                                    <button type="button" class="btn-ghost" data-testid="memory-tidy-dismiss" on:click=move |_| tidy_act("dismiss_memory_tidy_proposal", serde_json::json!({"id":dismiss_id.clone()}))>{crate::i18n::tr(loc, "automation.dismiss")}</button>
                                 </div>
                             </article>}
                         }).collect_view()}
                         <div class="automation-actions">
-                            <button type="button" class="btn-ghost" data-testid="memory-tidy-run" prop:disabled=t.running on:click=move |_| tidy_act("run_memory_tidy_now", serde_json::json!({}))>{compose_icon("play")}{j(loc,"Run now","立即运行")}</button>
-                            <button type="button" class="journey-link" on:click=move |_| on_open_specialists.call(())>{compose_icon("gear")}{j(loc,"It uses the Recap specialist's model","使用 Recap 专家的模型")}</button>
+                            <button type="button" class="btn-ghost" data-testid="memory-tidy-run" prop:disabled=t.running on:click=move |_| tidy_act("run_memory_tidy_now", serde_json::json!({}))>{compose_icon("play")}{crate::i18n::tr(loc, "automation.run_now")}</button>
+                            <button type="button" class="journey-link" on:click=move |_| on_open_specialists.call(())>{compose_icon("gear")}{crate::i18n::tr(loc, "automation.it_uses_the_recap_specialist_s_model")}</button>
                         </div>
                     }.into_view()
                 }}
@@ -385,65 +366,65 @@ pub(crate) fn AutomationPage(
             <crate::mandates::MandateSection locale=locale projects=projects form_open=form_open mandate_form=mandate_form refresh=refresh notice=notice/>
             {move || (form_open.get() && !mandate_form.get()).then(|| {
                 let loc = locale.get();
-                view! {<section class="automation-card automation-form" data-testid="automation-form" aria-label=j(loc,"New scheduled task","创建定时任务")>
-                    <h3>{j(loc,"New scheduled task","创建定时任务")}</h3>
+                view! {<section class="automation-card automation-form" data-testid="automation-form" aria-label=crate::i18n::tr(loc, "automation.new_scheduled_task")>
+                    <h3>{crate::i18n::tr(loc, "automation.new_scheduled_task")}</h3>
                     <div class="automation-form-grid">
-                        <label>{j(loc,"Project","项目")}<select on:change=move |ev| draft.update(|d| d.project_id = event_target_value(&ev))>
+                        <label>{crate::i18n::tr(loc, "permissions.scope.project")}<select on:change=move |ev| draft.update(|d| d.project_id = event_target_value(&ev))>
                             {projects.get().into_iter().map(|p| { let id = p.id.clone(); view! {<option value=p.id prop:selected=move || draft.with(|d| d.project_id == id)>{p.name}</option>} }).collect_view()}
                         </select></label>
-                        <label>{j(loc,"Name","名称")}<input type="text" prop:value=move || draft.with(|d| d.name.clone()) on:input=move |ev| draft.update(|d| d.name = event_target_value(&ev))/></label>
-                        <label>{j(loc,"Repeat","频率")}<select on:change=move |ev| draft.update(|d| d.cadence = match event_target_value(&ev).as_str() { "weekly" => Cadence::Weekly, "hourly" => Cadence::Hourly, _ => Cadence::Daily })>
-                            <option value="daily" prop:selected=move || draft.with(|d| d.cadence == Cadence::Daily)>{j(loc,"Daily","每天")}</option>
-                            <option value="weekly" prop:selected=move || draft.with(|d| d.cadence == Cadence::Weekly)>{j(loc,"Weekly","每周")}</option>
-                            <option value="hourly" prop:selected=move || draft.with(|d| d.cadence == Cadence::Hourly)>{j(loc,"Every few hours","每隔几小时")}</option>
+                        <label>{crate::i18n::tr(loc, "proj_settings.name")}<input type="text" prop:value=move || draft.with(|d| d.name.clone()) on:input=move |ev| draft.update(|d| d.name = event_target_value(&ev))/></label>
+                        <label>{crate::i18n::tr(loc, "automation.repeat")}<select on:change=move |ev| draft.update(|d| d.cadence = match event_target_value(&ev).as_str() { "weekly" => Cadence::Weekly, "hourly" => Cadence::Hourly, _ => Cadence::Daily })>
+                            <option value="daily" prop:selected=move || draft.with(|d| d.cadence == Cadence::Daily)>{crate::i18n::tr(loc, "automation.daily")}</option>
+                            <option value="weekly" prop:selected=move || draft.with(|d| d.cadence == Cadence::Weekly)>{crate::i18n::tr(loc, "settings.usage.weekly")}</option>
+                            <option value="hourly" prop:selected=move || draft.with(|d| d.cadence == Cadence::Hourly)>{crate::i18n::tr(loc, "automation.every_few_hours")}</option>
                         </select></label>
                         {move || match draft.with(|d| d.cadence) {
-                            Cadence::Hourly => view! {<label>{j(loc,"Every (hours)","间隔（小时）")}<input type="number" min="1" max="168" prop:value=move || draft.with(|d| d.hours.to_string()) on:input=move |ev| draft.update(|d| d.hours = event_target_value(&ev).parse().unwrap_or(1))/></label>}.into_view(),
+                            Cadence::Hourly => view! {<label>{crate::i18n::tr(loc, "automation.every_hours")}<input type="number" min="1" max="168" prop:value=move || draft.with(|d| d.hours.to_string()) on:input=move |ev| draft.update(|d| d.hours = event_target_value(&ev).parse().unwrap_or(1))/></label>}.into_view(),
                             cadence => view! {
-                                {(cadence == Cadence::Weekly).then(|| view! {<label>{j(loc,"Day","星期")}<select on:change=move |ev| draft.update(|d| d.weekday = event_target_value(&ev).parse().unwrap_or(1))>
+                                {(cadence == Cadence::Weekly).then(|| view! {<label>{crate::i18n::tr(loc, "automation.day")}<select on:change=move |ev| draft.update(|d| d.weekday = event_target_value(&ev).parse().unwrap_or(1))>
                                     {[1u32, 2, 3, 4, 5, 6, 0].into_iter().map(|w| view! {<option value=w.to_string() prop:selected=move || draft.with(|d| d.weekday == w)>{weekday_name(loc, w)}</option>}).collect_view()}
                                 </select></label>})}
-                                <label>{j(loc,"Time","时间")}<input type="time" prop:value=move || draft.with(|d| d.time.clone()) on:input=move |ev| draft.update(|d| d.time = event_target_value(&ev))/></label>
+                                <label>{crate::i18n::tr(loc, "automation.time")}<input type="time" prop:value=move || draft.with(|d| d.time.clone()) on:input=move |ev| draft.update(|d| d.time = event_target_value(&ev))/></label>
                             }.into_view(),
                         }}
-                        <label class="automation-span">{j(loc,"Prompt","提示词")}<textarea rows="6" prop:value=move || draft.with(|d| d.prompt.clone()) on:input=move |ev| draft.update(|d| d.prompt = event_target_value(&ev))></textarea></label>
+                        <label class="automation-span">{crate::i18n::tr(loc, "automation.prompt")}<textarea rows="6" prop:value=move || draft.with(|d| d.prompt.clone()) on:input=move |ev| draft.update(|d| d.prompt = event_target_value(&ev))></textarea></label>
                     </div>
-                    <p class="automation-meta">{j(loc,"When due, Wisp starts a new session in the project and sends this prompt. Tasks run only while Wisp is open; a missed time runs once on the next launch.","到点后会在所选项目中新建一个会话并发送这段提示词。仅在 Wisp 运行时触发，错过的时间会在下次启动时补跑一次。")}</p>
+                    <p class="automation-meta">{crate::i18n::tr(loc, "automation.when_due_wisp_starts_a_new_session_in_the_project_and_sends_this")}</p>
                     {move || form_error.get().map(|e| view! {<p class="automation-error" role="alert">{e}</p>})}
                     <div class="automation-actions automation-form-actions">
-                        <button type="button" class="btn-ghost" on:click=move |_| form_open.set(false)>{j(loc,"Cancel","取消")}</button>
-                        <button type="button" class="btn-primary" data-testid="automation-save" on:click=create>{j(loc,"Create","创建")}</button>
+                        <button type="button" class="btn-ghost" on:click=move |_| form_open.set(false)>{crate::i18n::tr(loc, "projects.cancel")}</button>
+                        <button type="button" class="btn-primary" data-testid="automation-save" on:click=create>{crate::i18n::tr(loc, "projects.create")}</button>
                     </div>
                 </section>}
             })}
             <section class="automation-section">
-                <h3>{move || j(locale.get(),"Scheduled tasks","定时任务")}</h3>
+                <h3>{move || crate::i18n::tr(locale.get(), "automation.scheduled_tasks")}</h3>
                 {move || {
                     let loc = locale.get();
                     match schedules.get() {
-                        None => view! {<p class="automation-meta" role="status">{j(loc,"Loading…","正在读取…")}</p>}.into_view(),
+                        None => view! {<p class="automation-meta" role="status">{crate::i18n::tr(loc, "privacy.loading")}</p>}.into_view(),
                         Some(Err(e)) => view! {<p class="automation-error" role="alert">{e}</p>}.into_view(),
                         Some(Ok(rows)) => {
                             // Privacy mode hides a project's tasks with the project.
                             let rows: Vec<_> = rows.into_iter().filter_map(|s| project_name(&s.project_id).map(|name| (s, name))).collect();
                             if rows.is_empty() {
-                                return view! {<div class="automation-empty" data-testid="automation-empty">{j(loc,"No scheduled tasks yet. Start from a template below or write your own prompt.","还没有定时任务。可以从下方模板开始，或自己写一段提示词。")}</div>}.into_view();
+                                return view! {<div class="automation-empty" data-testid="automation-empty">{crate::i18n::tr(loc, "automation.no_scheduled_tasks_yet_start_from_a_template_below_or_write_your")}</div>}.into_view();
                             }
                             rows.into_iter().map(|(s, name)| {
                                 let (id, toggle_id, run_id, delete_id, confirm_id) = (s.id.clone(), s.id.clone(), s.id.clone(), s.id.clone(), s.id.clone());
                                 let enabled = s.enabled;
                                 let timer = s.replace_previous_turn;
-                                let next = if enabled { format!("{} {} {}", j(loc,"Next","下次"), day_key(s.next_run_at), clock(s.next_run_at)) } else { j(loc,"Paused","已暂停").into() };
+                                let next = if enabled { format!("{} {} {}", crate::i18n::tr(loc, "automation.next"), day_key(s.next_run_at), clock(s.next_run_at)) } else { crate::i18n::tr(loc, "runs.status.paused").into() };
                                 view! {<article class="automation-row" data-schedule-id=id class:paused=!enabled>
                                     <div class="automation-row-main"><strong>{s.name.clone()}</strong>
                                         <small>{format!("{name} · {} · {next}", cadence_label(loc, &s))}</small>
                                         <p class="automation-prompt">{s.prompt.clone()}</p></div>
                                     <div class="automation-row-actions">
-                                        <label class="automation-toggle"><input type="checkbox" role="switch" aria-label=format!("{} {}", j(loc,"Enable","启用"), s.name) prop:checked=enabled on:change=move |ev| act("set_schedule_enabled", serde_json::json!({"id":toggle_id,"enabled":event_target_checked(&ev)}))/></label>
-                                        <button type="button" class="calendar-icon" title=j(loc,"Run now","立即运行") aria-label=format!("{} {}", j(loc,"Run now","立即运行"), s.name) on:click=move |_| { act("run_schedule_now", serde_json::json!({"id":run_id})); notice.set(Some(if timer { j(locale.get_untracked(),"Requested a check in the bound conversation.","已请求在绑定会话中检查。") } else { j(locale.get_untracked(),"Started. The result appears in a new session of that project.","已触发，结果会出现在该项目的新会话中。") }.into())); }>{compose_icon("play")}</button>
+                                        <label class="automation-toggle"><input type="checkbox" role="switch" aria-label=format!("{} {}", crate::i18n::tr(loc, "automation.enable"), s.name) prop:checked=enabled on:change=move |ev| act("set_schedule_enabled", serde_json::json!({"id":toggle_id,"enabled":event_target_checked(&ev)}))/></label>
+                                        <button type="button" class="calendar-icon" title=crate::i18n::tr(loc, "automation.run_now") aria-label=format!("{} {}", crate::i18n::tr(loc, "automation.run_now"), s.name) on:click=move |_| { act("run_schedule_now", serde_json::json!({"id":run_id})); notice.set(Some(if timer { crate::i18n::tr(locale.get_untracked(), "automation.requested_a_check_in_the_bound_conversation") } else { crate::i18n::tr(locale.get_untracked(), "automation.started_the_result_appears_in_a_new_session_of_that_project") }.into())); }>{compose_icon("play")}</button>
                                         <button type="button" class="calendar-icon automation-delete" class:confirming=move || deleting.get().as_ref() == Some(&confirm_id)
-                                            title=move || if deleting.get().as_ref() == Some(&delete_id) {j(locale.get(),"Click again to delete","再次点击确认删除")} else {j(locale.get(),"Delete","删除")}
-                                            aria-label=format!("{} {}", j(loc,"Delete","删除"), s.name)
+                                            title=move || if deleting.get().as_ref() == Some(&delete_id) {crate::i18n::tr(locale.get(), "automation.click_again_to_delete")} else {crate::i18n::tr(locale.get(), "projects.delete")}
+                                            aria-label=format!("{} {}", crate::i18n::tr(loc, "projects.delete"), s.name)
                                             on:click=move |_| if deleting.get_untracked().as_ref() == Some(&s.id) { deleting.set(None); act("delete_schedule", serde_json::json!({"id":s.id.clone()})); } else { deleting.set(Some(s.id.clone())); }>{compose_icon("trash")}</button>
                                     </div>
                                 </article>}
@@ -453,13 +434,13 @@ pub(crate) fn AutomationPage(
                 }}
             </section>
             <section class="automation-section">
-                <h3>{move || j(locale.get(),"Templates","定时任务模板")}</h3>
+                <h3>{move || crate::i18n::tr(locale.get(), "automation.templates")}</h3>
                 <div class="automation-templates">
                     {TEMPLATES.iter().map(|t| view! {
                         <button type="button" class="automation-template" on:click=move |_| start(Some(t))>
-                            <span class="automation-template-head">{compose_icon(t.icon)}<strong>{move || j(locale.get(), t.title.0, t.title.1)}</strong></span>
-                            <span class="automation-template-desc">{move || j(locale.get(), t.prompt.0, t.prompt.1)}</span>
-                            <small>{move || { let loc = locale.get(); let when = if t.cadence == Cadence::Weekly { weekday_name(loc, t.weekday).to_string() } else { j(loc,"Daily","每天").to_string() }; format!("{when} {}", t.time) }}</small>
+                            <span class="automation-template-head">{compose_icon(t.icon)}<strong>{move || crate::i18n::tr(locale.get(), t.title)}</strong></span>
+                            <span class="automation-template-desc">{move || crate::i18n::tr(locale.get(), t.prompt)}</span>
+                            <small>{move || { let loc = locale.get(); let when = if t.cadence == Cadence::Weekly { weekday_name(loc, t.weekday).to_string() } else { crate::i18n::tr(loc, "automation.daily").to_string() }; format!("{when} {}", t.time) }}</small>
                         </button>
                     }).collect_view()}
                 </div>

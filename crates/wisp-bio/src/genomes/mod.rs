@@ -14,22 +14,19 @@
 #[cfg(test)]
 mod tests;
 
-use crate::http::{path_segment, Source};
+use crate::http::{path_segment, ENSEMBL, UCSC};
 use crate::NativeBio;
 use anyhow::{bail, Context, Result};
 use reqwest::Method;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use sha2::Digest;
-use std::time::Duration;
 use wisp_llm::ToolSchema;
 
 const ENSEMBL_REST: &str = "https://rest.ensembl.org";
 const UCSC_API: &str = "https://api.genome.ucsc.edu";
 const ENSEMBL_BROWSER: &str = "https://www.ensembl.org";
 const UCSC_BROWSER: &str = "https://genome.ucsc.edu/cgi-bin/hgTracks";
-const ENSEMBL: Source = Source("Ensembl REST", Duration::from_millis(340));
-const UCSC: Source = Source("UCSC Genome Browser", Duration::from_millis(500));
 
 const DEFAULT_SPECIES: &str = "homo_sapiens";
 const DEFAULT_GENOME: &str = "hg38";

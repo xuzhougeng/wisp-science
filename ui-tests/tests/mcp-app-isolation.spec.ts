@@ -1,3 +1,4 @@
+import { trackInvokes, waitForInvokes, settleRendering } from "./async-observers";
 import { test, expect, type Page } from "@playwright/test";
 import { tauriMock } from "./mock-tauri";
 
@@ -87,12 +88,13 @@ test("native creation fails closed and can retry, never falls back", async ({pag
 
 test("late create cannot resurrect a closed Tab; native rectangles exclude host controls", async ({page}) => {
   const frame = await start(page);
+  await trackInvokes(page, ["open_mcp_app_child"]);
   await page.evaluate(() => (window as any).__nativeDelay = 500);
   await present(page, frame);
   await expect.poll(() => calls(page,"open_mcp_app_child")).toHaveLength(1);
   await page.locator(".center-tab").filter({hasText:"Isolated figures"}).locator("..").locator(".center-tab-close").click();
   await expect.poll(() => page.evaluate(() => (window as any).__nativeActive)).toBeNull();
-  await page.waitForTimeout(650); // controlled mock late-create boundary
+  await waitForInvokes(page);
   expect(await page.evaluate(() => (window as any).__nativeActive)).toBeNull();
   await page.evaluate(() => (window as any).__nativeDelay = 0);
   await present(page, frame);
@@ -177,7 +179,7 @@ test("child shell preserves sandbox/CSP and directly forwards guest protocol", a
   const requests = await page.evaluate(() => (window as any).__shellCalls.filter((c:any)=>c.command==="mcp_app_child_request"));
   expect(requests.map((c:any)=>c.args.request.method)).toEqual(["ui/initialize","tools/call"]);
   await page.evaluate(() => window.postMessage({jsonrpc:"2.0",method:"tools/call",id:99,params:{name:"forged"}},"*"));
-  await page.waitForTimeout(50);
+  await settleRendering(page);
   expect(await page.evaluate(() => (window as any).__shellCalls.filter((c:any)=>c.command==="mcp_app_child_request").length)).toBe(2);
 });
 

@@ -13,6 +13,8 @@ chrono = { workspace = true }
 dirs = "5"
 dunce = { workspace = true }
 glob = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
 hex = { workspace = true }
 walkdir = { workspace = true }
 serde = { workspace = true }

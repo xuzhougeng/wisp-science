@@ -1200,8 +1200,8 @@ fn render_step_row(
                     (id, context, owned)
                 });
             let icon = match ok {
-                Some(true) => view! { <span class="step-icon ok">"✓"</span> }.into_view(),
-                Some(false) => view! { <span class="step-icon fail">"✗"</span> }.into_view(),
+                Some(true) => view! { <span class="step-icon ok">{crate::app_support::compose_icon("check")}</span> }.into_view(),
+                Some(false) => view! { <span class="step-icon fail">{crate::app_support::compose_icon("close")}</span> }.into_view(),
                 None => view! { <span class="step-icon run"><span class="run-dot"></span></span> }.into_view(),
             };
             let meta = step_tool_meta(
@@ -1284,9 +1284,9 @@ fn render_step_row(
             let has_body = !locations.trim().is_empty()
                 || (!content.trim().is_empty() && !acp_tool_is_terminal_stub(content));
             let icon = if failed {
-                view! { <span class="step-icon fail">"✗"</span> }.into_view()
+                view! { <span class="step-icon fail">{crate::app_support::compose_icon("close")}</span> }.into_view()
             } else if done {
-                view! { <span class="step-icon ok">"✓"</span> }.into_view()
+                view! { <span class="step-icon ok">{crate::app_support::compose_icon("check")}</span> }.into_view()
             } else {
                 view! { <span class="step-icon run"><span class="run-dot"></span></span> }.into_view()
             };
@@ -2239,8 +2239,8 @@ pub(crate) fn ProvenancePane(
                                         }>
                                         <span class="prov-name">{name}</span>
                                         {match ok {
-                                            Some(true) => view! { <span class="ok">"✓"</span> }.into_view(),
-                                            Some(false) => view! { <span class="fail">"✗"</span> }.into_view(),
+                                            Some(true) => view! { <span class="ok">{crate::app_support::compose_icon("check")}</span> }.into_view(),
+                                            Some(false) => view! { <span class="fail">{crate::app_support::compose_icon("close")}</span> }.into_view(),
                                             None => view! { <span class="run">"…"</span> }.into_view(),
                                         }}
                                     </summary>
@@ -2522,9 +2522,9 @@ pub(crate) fn RunMonitorCard(
                             if active {
                                 view! { <span class="run-dot"></span> }.into_view()
                             } else if status == "succeeded" {
-                                view! { <span class="run-monitor-done">"✓"</span> }.into_view()
+                                view! { <span class="run-monitor-done">{crate::app_support::compose_icon("check")}</span> }.into_view()
                             } else {
-                                view! { <span class="run-monitor-failed">"!"</span> }.into_view()
+                                view! { <span class="run-monitor-failed">{crate::app_support::compose_icon("circle-alert")}</span> }.into_view()
                             }
                         }</span>
                         <div class="run-monitor-title">
@@ -2795,7 +2795,7 @@ pub(crate) fn render_item(
                 <div class="finding err">
                     <div class="finding-head">
                         <div class="finding-summary">
-                        <span class="finding-tag">{move || format!("● {}", t(locale.get(), "chat.error"))}</span>
+                        <span class="finding-tag">{compose_icon("circle-alert")}{move || t(locale.get(), "chat.error")}</span>
                         <span class="finding-title">{msg}</span>
                         </div>
                         <div class="finding-actions">
@@ -3063,18 +3063,18 @@ pub(crate) fn render_item(
         ChatItem::ReviewTransition { phase, model } => {
             let (icon, message_key, data_phase) = match phase {
                 ReviewTransitionPhase::Reviewing => {
-                    ("↗", "review.transition_to_reviewer", "reviewing")
+                    ("review", "review.transition_to_reviewer", "reviewing")
                 }
                 ReviewTransitionPhase::Correcting => {
-                    ("↩", "review.transition_to_agent", "correcting")
+                    ("undo", "review.transition_to_agent", "correcting")
                 }
-                ReviewTransitionPhase::Passed => ("✓", "review.transition_passed", "passed"),
+                ReviewTransitionPhase::Passed => ("check", "review.transition_passed", "passed"),
             };
             let model = model.clone();
             view! {
                 <div class="review-transition" data-phase=data_phase>
                     <span class="review-transition-line"></span>
-                    <span class="review-transition-icon">{icon}</span>
+                    <span class="review-transition-icon">{compose_icon(icon)}</span>
                     <span class="review-transition-text">{move || t(locale.get(), message_key)}</span>
                     {model.map(|model| view! { <span class="review-transition-model">{model}</span> })}
                     <span class="review-transition-line"></span>
@@ -3109,9 +3109,9 @@ pub(crate) fn render_item(
                     <ul class="plan-card-body" data-testid="plan-entries">
                         {entries.into_iter().map(|entry| {
                             let (status, mark, label) = match entry.status {
-                                PlanStatus::Completed => ("completed", "✓", "plan.status.completed"),
-                                PlanStatus::InProgress => ("in_progress", "▸", "plan.status.in_progress"),
-                                PlanStatus::Pending => ("pending", "", "plan.status.pending"),
+                                PlanStatus::Completed => ("completed", "check", "plan.status.completed"),
+                                PlanStatus::InProgress => ("in_progress", "play", "plan.status.in_progress"),
+                                PlanStatus::Pending => ("pending", "circle", "plan.status.pending"),
                             };
                             let high = entry.priority == PlanPriority::High;
                             let html = enrich_app_markdown(
@@ -3125,14 +3125,14 @@ pub(crate) fn render_item(
                             view! {
                                 <li data-status=status>
                                     <span class="plan-entry-mark" role="img"
-                                        aria-label=move || t(locale.get(), label)>{mark}</span>
+                                        aria-label=move || t(locale.get(), label)>{(!mark.is_empty()).then(|| compose_icon(mark))}</span>
                                     <div class="plan-entry-text md" inner_html=html
                                         on:click=move |ev: web_sys::MouseEvent| {
                                             handle_md_click(&ev, &[], &[], &entry_artifact, &entry_file)
                                         }></div>
                                     {high.then(|| view! {
                                         <span class="plan-entry-priority" role="img"
-                                            aria-label=move || t(locale.get(), "plan.priority_high")>"!"</span>
+                                            aria-label=move || t(locale.get(), "plan.priority_high")>{compose_icon("circle-alert")}</span>
                                     })}
                                 </li>
                             }
@@ -3311,7 +3311,7 @@ pub(crate) fn render_item(
             view! {
                 <div class="review-card">
                     <div class="review-head">
-                        <span class="review-badge">"🔍"</span>
+                        <span class="review-badge">{crate::app_support::compose_icon("review")}</span>
                         <span>{move || t(locale.get(), "review.title")}</span>
                         <span class="review-count">{move || tf(locale.get(), "review.findings_n", &[("n", &count_text)])}</span>
                         {(!model.is_empty()).then(|| view! { <span class="review-model">{model}</span> })}
@@ -3323,11 +3323,11 @@ pub(crate) fn render_item(
                     </div>
                     <div class="review-summary">{summary}</div>
                     {(count == 0 && !unreviewable).then(|| view! {
-                        <div class="review-empty">"✓ "{move || t(locale.get(), "review.no_findings")}</div>
+                        <div class="review-empty">{compose_icon("check")}{move || t(locale.get(), "review.no_findings")}</div>
                     })}
                     {unreviewable.then(|| view! {
                         <div class="review-empty review-unreviewable">
-                            "⚠ "{move || tf(locale.get(), "review.unreviewable", &[("pct", &coverage)])}
+                            {compose_icon("circle-alert")}{move || tf(locale.get(), "review.unreviewable", &[("pct", &coverage)])}
                         </div>
                     })}
                     {(!coverage_gaps.is_empty()).then(|| view! {

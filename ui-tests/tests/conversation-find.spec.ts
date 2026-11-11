@@ -1,7 +1,9 @@
+import { trackIntervals, waitForIntervalTicks } from "./async-observers";
 import { test, expect, type Page } from "@playwright/test";
 import { tauriMock } from "./mock-tauri";
 
 test.beforeEach(async ({ page }) => {
+  await trackIntervals(page);
   await page.addInitScript(tauriMock);
   await page.goto("/?mockLongPages=8");
   await page.locator(".proj-card-main").first().click();
@@ -43,18 +45,20 @@ for (const modifier of ["Control", "Meta"]) {
     await page.locator(".msg.assistant .body").last().evaluate(body => {
       body.appendChild(document.createTextNode(" streamed output".repeat(500)));
     });
-    await page.waitForTimeout(250);
+    // The follow chain runs ResizeObserver -> rAF -> rAF; two frames are not
+    // enough to see whether it moved the active match.
+    await waitForIntervalTicks(page, 1000, 1);
     await expect(count).toHaveText("20 / 20");
     await expect.poll(() => activeMatch(page)).toMatchObject({ body: expect.stringContaining("row 19 "), visible: true });
     await page.getByRole("button", { name: "Previous match", exact: true }).click();
     await expect(count).toHaveText("19 / 20");
-    // Outlive the scroll gesture guard and pending observer/follow callbacks.
-    await page.waitForTimeout(750);
+    // Advance past the scroll gesture guard and pending observer/follow callbacks.
+    await waitForIntervalTicks(page, 1000, 2);
     await expect.poll(() => activeMatch(page)).toMatchObject({ body: expect.stringContaining("row 18 "), visible: true });
     await page.locator(".msg.assistant .body").last().evaluate(body => {
       body.appendChild(document.createTextNode(" streamed output".repeat(500)));
     });
-    await page.waitForTimeout(250);
+    await waitForIntervalTicks(page, 1000, 1);
     await expect(count).toHaveText("19 / 20");
     await expect.poll(() => activeMatch(page)).toMatchObject({ body: expect.stringContaining("row 18 "), visible: true });
     const scroller = page.locator("#chat-scroller");

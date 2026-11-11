@@ -1852,7 +1852,7 @@ button.workflow-graph-port.output {
 .pet-settings-pane { gap: 22px; }
 .pet-settings-hero { display: flex; align-items: center; gap: 24px; min-height: 150px; padding: 18px 24px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--clay) 28%, var(--border)); border-radius: var(--radius); background: radial-gradient(circle at 16% 20%, color-mix(in srgb, var(--clay) 16%, transparent), transparent 36%), linear-gradient(135deg, color-mix(in srgb, var(--bg-elev) 90%, var(--clay-soft)), var(--bg-app)); }
 .pet-settings-preview { display: grid; place-items: center; width: 116px; height: 126px; flex: 0 0 auto; border-radius: 24px; background: color-mix(in srgb, var(--bg-sunken) 76%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 75%, transparent); }
-.pet-settings-preview.empty::after { content: "?"; color: var(--text-faint); font-size: calc(38px * var(--ui-font-scale, 1)); font-weight: 400; }
+.pet-settings-preview > svg { width: 38px; height: 38px; color: var(--text-faint); }
 .pet-settings-sprite { width: 96px; height: 104px; background-repeat: no-repeat; background-size: 800% 1100%; background-position: 0 0; filter: drop-shadow(0 8px 12px rgba(22,20,16,.16)); }
 .pet-settings-copy { min-width: 0; }
 .pet-settings-copy h3 { margin: 0 0 7px; font-size: calc(21px * var(--ui-font-scale, 1)); letter-spacing: -.025em; }
@@ -2100,12 +2100,8 @@ button.workflow-graph-port.output {
   list-style: none;
 }
 .skill-tags-editor > summary::-webkit-details-marker { display: none; }
-.skill-tags-editor > summary::before {
-  content: "›";
-  flex: 0 0 auto;
-  transition: transform .12s ease;
-}
-.skill-tags-editor[open] > summary::before { transform: rotate(90deg); }
+.skill-tags-editor > summary > svg { width: 14px; height: 14px; flex: 0 0 auto; transition: transform .12s ease; }
+.skill-tags-editor[open] > summary > svg { transform: rotate(90deg); }
 .skill-tags-summary {
   min-width: 0;
   overflow: hidden;
@@ -2331,7 +2327,7 @@ button.workflow-graph-port.output {
   user-select: none;
 }
 .settings-add-menu > summary::-webkit-details-marker { display: none; }
-.settings-add-menu > summary::after { content: " ▾"; color: var(--text-faint); font-size: calc(11px * var(--ui-font-scale, 1)); }
+.settings-add-menu > summary > svg { width: 14px; height: 14px; color: var(--text-faint); }
 .settings-add-menu[open] > summary { border-color: var(--clay); }
 .settings-add-menu > button {
   position: absolute;
@@ -3566,7 +3562,7 @@ body { font-size: var(--ui-font-size, 14px); }
 .skills-primary-actions > button:hover, .skills-bulk-actions > button:hover { color: var(--text); background: var(--surface-hover); }
 .skills-pane button:focus-visible, .skills-pane summary:focus-visible { outline: 2px solid var(--clay); outline-offset: 2px; }
 .skills-primary-actions .settings-add-menu > summary { display: flex; align-items: center; gap: 6px; background: var(--clay-soft); border-color: color-mix(in srgb, var(--clay) 30%, var(--border)); color: var(--clay-strong); }
-.skills-primary-actions .settings-add-menu > summary::after { content: none; }
+.skills-primary-actions .settings-add-menu > summary > svg { width: 16px; height: 16px; color: inherit; }
 .skills-primary-actions svg { width: 16px; height: 16px; flex-shrink: 0; }
 .skill-add-panel {
   position: absolute;
@@ -3854,3 +3850,7 @@ body { font-size: var(--ui-font-size, 14px); }
 .specialists-subagent-model > label { font-size: calc(13px * var(--ui-font-scale, 1)); font-weight: 600; }
 .specialists-subagent-model > select { max-width: 360px; }
 .remote-qr { display: block; width: 160px; height: 160px; margin-top: 10px; background: white; border-radius: 8px; }
+
+.settings-list-chevron svg, .settings-crumb-sep svg, .settings-active-mark svg, .caret svg, .memory-project-option-check svg, .cred-external-link svg { width: 14px; height: 14px; vertical-align: middle; }
+
+.workflow-graph-edge-delete svg { width: 12px; height: 12px; }

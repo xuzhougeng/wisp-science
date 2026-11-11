@@ -90,3 +90,5 @@
   .toolchain-state { grid-column: 3; grid-row: 1; }
   .toolchain-note { grid-column: 2 / -1; grid-row: 2; }
 }
+
+.ctx-submenu-chevron svg { width: 14px; height: 14px; }

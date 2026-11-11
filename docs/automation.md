@@ -50,6 +50,7 @@
 
 - 「创建定时任务」选择项目、名称、频率（每天 / 每周某天 / 每隔 N 小时）、时间和提示词。名称留空时使用提示词首行。
 - 模板预填常见任务：文献追踪（每周一 09:00）、运行巡检（每天 18:00）、研究周报（每周五 17:00）。提交前可以修改任何字段。
+- 项目级任务使用独立的 Schedule 来源，不改变会话通知所属窗口。按现有无人值守策略，变更类工具的默认允许提升为确认，显式拒绝仍生效；用户明确授予该会话的完全权限仍有效。会话 timer 保留原有审批策略。
 - 任务只在 Wisp 运行时触发，没有系统级后台服务；关闭期间错过的多个时间点合并为下次启动后的一次补跑。
 - 每天/每周任务按首次运行时间固定间隔重复；跨夏令时切换后，墙钟时间可能偏移一小时。
 
@@ -109,3 +110,5 @@ confirm the cadence and next run, run it now and open the new session in that
 project; pause and delete it. Turn the daily recap off, refresh, and confirm it
 stays off; set its time a minute ahead with a project that has activity
 yesterday and confirm a draft appears in that day's research journey.
+
+Project schedules use a dedicated Schedule origin and preserve the conversation’s notification window. The existing unattended policy raises the desktop Allow default to Ask and preserves Deny rules. An explicit full-permission grant for the conversation still applies. Session timers retain their existing policy.

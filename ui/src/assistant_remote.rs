@@ -2,7 +2,7 @@
 use crate::app_support::compose_icon;
 use crate::dto::{AssistantWeixinStatus, WeixinBindStart};
 use crate::i18n::{t, Locale};
-use crate::research_journey::{call, j};
+use crate::research_journey::call;
 use leptos::*;
 use serde_json::json;
 use std::{cell::Cell, rc::Rc, time::Duration};
@@ -122,11 +122,11 @@ pub(crate) fn AssistantRemote(locale: RwSignal<Locale>, on_close: Callback<()>) 
         <div class="overlay assistant-remote-overlay" on:click=move |_| on_close.call(())>
             <section class="assistant-remote-dialog" role="dialog" aria-modal="true" aria-labelledby="assistant-remote-title"
                 data-testid="assistant-remote" on:click=move |event| event.stop_propagation()>
-                <header><div><h2 id="assistant-remote-title">{move || j(locale.get(), "Remote access", "远程接入")}</h2>
-                    <p>{move || j(locale.get(), "Research assistant · WeChat", "科研助理 · 微信")}</p></div>
-                    <button type="button" class="icon-btn" aria-label=move || j(locale.get(), "Close remote access", "关闭远程接入") on:click=move |_| on_close.call(())>{compose_icon("close")}</button>
+                <header><div><h2 id="assistant-remote-title">{move || crate::i18n::tr(locale.get(), "assistant_remote.remote_access")}</h2>
+                    <p>{move || crate::i18n::tr(locale.get(), "assistant_remote.research_assistant_wechat")}</p></div>
+                    <button type="button" class="icon-btn" aria-label=move || crate::i18n::tr(locale.get(), "assistant_remote.close_remote_access") on:click=move |_| on_close.call(())>{compose_icon("close")}</button>
                 </header>
-                <p>{move || j(locale.get(), "Talk to your research assistant from WeChat. The same ongoing conversation manages all visible projects — describe the project and task in your own words.", "在微信里直接与科研助理对话，延续桌面的同一条长期对话。用自然语言说明项目和需求，即可统筹所有可见项目。")}</p>
+                <p>{move || crate::i18n::tr(locale.get(), "assistant_remote.talk_to_your_research_assistant_from_wechat_the_same_ongoing_conv")}</p>
                 <div class="assistant-remote-channel">
                     <div><strong>{move || t(locale.get(), "channels.weixin.title")}</strong>
                         <p role="status">{move || status.get().map(|value| {
@@ -134,10 +134,10 @@ pub(crate) fn AssistantRemote(locale: RwSignal<Locale>, on_close: Callback<()>) 
                                 "running" => "channels.state.running", "connecting" => "channels.state.connecting", "error" => "channels.state.error", _ => "channels.state.stopped",
                             }};
                             t(locale.get(), key).to_string()
-                        }).unwrap_or_else(|| j(locale.get(), "Loading…", "正在读取…").into())}</p>
+                        }).unwrap_or_else(|| crate::i18n::tr(locale.get(), "privacy.loading").into())}</p>
                     </div>
                     <label class="toggle"><input type="checkbox" data-testid="assistant-weixin-enabled"
-                        aria-label=move || j(locale.get(), "Enable assistant WeChat", "启用科研助理微信接入")
+                        aria-label=move || crate::i18n::tr(locale.get(), "assistant_remote.enable_assistant_wechat")
                         prop:checked=move || status.get().is_some_and(|s| s.enabled)
                         disabled=move || busy.get() || !status.get().is_some_and(|s| s.bound)
                         on:change=move |ev| change.call(("set_weixin_channel", crate::text::event_target_checked(&ev))) />
@@ -146,19 +146,19 @@ pub(crate) fn AssistantRemote(locale: RwSignal<Locale>, on_close: Callback<()>) 
                 {move || status.get().filter(|s| !s.detail.is_empty()).map(|s| view! {<p class="assistant-remote-detail">{s.detail}</p>})}
                 <div class="assistant-remote-actions">
                     <button type="button" class="primary" disabled=move || busy.get() || status.get().is_none() on:click=move |_| bind.call(())>
-                        {move || if status.get().is_some_and(|s| s.bound) { j(locale.get(), "Bind again", "重新扫码绑定") } else { j(locale.get(), "Scan to bind", "扫码绑定") }}</button>
+                        {move || if status.get().is_some_and(|s| s.bound) { crate::i18n::tr(locale.get(), "assistant_remote.bind_again") } else { crate::i18n::tr(locale.get(), "channels.weixin.bind") }}</button>
                     {move || status.get().is_some_and(|s| s.bound).then(|| view! {
-                        <button type="button" disabled=move || busy.get() on:click=move |_| change.call(("weixin_unbind", false))>{move || j(locale.get(), "Unbind", "解除绑定")}</button>
+                        <button type="button" disabled=move || busy.get() on:click=move |_| change.call(("weixin_unbind", false))>{move || crate::i18n::tr(locale.get(), "assistant_remote.unbind")}</button>
                     })}
-                    <button type="button" disabled=move || busy.get() on:click=move |_| { error.set(None); refresh.call(()); }>{move || j(locale.get(), "Refresh status", "刷新状态")}</button>
+                    <button type="button" disabled=move || busy.get() on:click=move |_| { error.set(None); refresh.call(()); }>{move || crate::i18n::tr(locale.get(), "assistant_remote.refresh_status")}</button>
                 </div>
                 {move || qr.get().map(|binding| view! {
-                    <div class="assistant-remote-qr"><img src=binding.qr_image alt=move || j(locale.get(), "WeChat binding QR code", "微信绑定二维码") />
-                        <p>{move || j(locale.get(), "Scan with the owner's WeChat account and confirm on your phone.", "请用所有者的微信扫码，并在手机上确认。")}</p></div>
+                    <div class="assistant-remote-qr"><img src=binding.qr_image alt=move || crate::i18n::tr(locale.get(), "assistant_remote.wechat_binding_qr_code") />
+                        <p>{move || crate::i18n::tr(locale.get(), "assistant_remote.scan_with_the_owner_s_wechat_account_and_confirm_on_your_phone")}</p></div>
                 })}
-                {move || (scan_state.get() == "expired").then(|| view! {<p role="status">{move || j(locale.get(), "QR code expired. Scan again to retry.", "二维码已过期，请重新扫码绑定。")}</p>})}
+                {move || (scan_state.get() == "expired").then(|| view! {<p role="status">{move || crate::i18n::tr(locale.get(), "assistant_remote.qr_code_expired_scan_again_to_retry")}</p>})}
                 {move || error.get().map(|message| view! {<p class="assistant-remote-error" role="alert">{message}</p>})}
-                <footer>{move || j(locale.get(), "This binding and switch are separate from Settings → Remote Access. Only the scanning owner's direct messages are accepted. Keep Wisp running; handle approvals in the desktop assistant or project.", "此处的绑定和开关独立于设置页的远程接入。仅接收扫码所有者的一对一消息。请保持 Wisp 运行；需要审批时，请在桌面助理或对应项目中处理。")}</footer>
+                <footer>{move || crate::i18n::tr(locale.get(), "assistant_remote.this_binding_and_switch_are_separate_from_settings_remote_access")}</footer>
             </section>
         </div>
     }

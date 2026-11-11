@@ -1145,7 +1145,7 @@ fn dynamic_task_editor(
                     disabled=move || state.dynamic_form.with(|form| form.tasks.len() <= 1)
                     on:click=move |_| state.dynamic_form.update(|form| {
                         form.remove_task(remove_key);
-                    })>{"×"}</button>
+                    })>{crate::app_support::compose_icon("close")}</button>
             </div>
             <div class="dynamic-agent-task-grid">
                 <label>
@@ -2205,9 +2205,7 @@ fn workflow_graph_editor(
                                                         });
                                                         selected_edge.set(None);
                                                         state.error.set(None);
-                                                    }>
-                                                    {"×"}
-                                                </button>
+                                                    }>{crate::app_support::compose_icon("close")}</button>
                                             </foreignObject>
                                         </g>
                                     }
@@ -4170,7 +4168,7 @@ fn dynamic_workflow_card(
                                 }
                             })}
                             {(!task.skill_bindings.is_empty()).then(|| view! {
-                                <div class="agent-chip-row" aria-label="Skills">
+                                <div class="agent-chip-row" aria-label=move || crate::i18n::tr(locale.get(), "a11y.skills")>
                                     <span class="agent-chip-label">{t(locale.get(),"workflow_studio.legacy_sources")}</span>
                                     {task.skill_bindings.into_iter().map(|binding| view! {
                                         <span class="agent-chip skill" title=format!("{} · {}", binding.path, binding.skill_md_sha256)>

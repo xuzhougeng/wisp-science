@@ -146,13 +146,38 @@ pub fn validate_file_path(root: &Path, path: &str) -> Result<PathBuf, String> {
                     "path '{path}' is a symlink whose target cannot be resolved"
                 ));
             }
-            // Target doesn't exist yet (write). Canonicalize the parent and
-            // append the file name, then verify the parent is under root.
-            let parent = abs.parent().unwrap_or(Path::new(""));
-            let file = abs.file_name().map(PathBuf::from).unwrap_or_default();
-            let parent_real = dunce::canonicalize(parent)
-                .map_err(|e| format!("path '{path}' parent not resolvable: {e}"))?;
-            parent_real.join(file)
+            // Resolve the closest existing ancestor before creating anything.
+            // Never normalize away a missing component or an unresolved link:
+            // either can hide an escape (including an intermediate dangling link).
+            let mut ancestor = abs.clone();
+            let mut missing = Vec::new();
+            let resolved = loop {
+                match dunce::canonicalize(&ancestor) {
+                    Ok(real) => break real,
+                    Err(error) => {
+                        match ancestor.symlink_metadata() {
+                            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                            _ => return Err(format!("path '{path}' not resolvable: {error}")),
+                        }
+                        let component = match ancestor.components().next_back() {
+                            Some(std::path::Component::Normal(name)) => name.to_os_string(),
+                            _ => {
+                                return Err(format!(
+                                    "path '{path}' has an unresolved parent component"
+                                ))
+                            }
+                        };
+                        missing.push(component);
+                        if !ancestor.pop() {
+                            return Err(format!("path '{path}' has no resolvable ancestor"));
+                        }
+                    }
+                }
+            };
+            missing
+                .into_iter()
+                .rev()
+                .fold(resolved, |path, name| path.join(name))
         }
     };
     let root_real = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
@@ -400,9 +425,9 @@ mod tests {
                 expect_ok: true,
             },
             Case {
-                name: "new file whose parent does not exist rejected",
+                name: "new file whose parent does not exist accepted (write target)",
                 path: "missing_dir/new.txt".into(),
-                expect_ok: false,
+                expect_ok: true,
             },
             Case {
                 name: "directory target rejected (write/edit are file-only)",

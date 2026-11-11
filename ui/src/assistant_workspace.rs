@@ -2,7 +2,7 @@
 use crate::app_support::compose_icon;
 use crate::dto::{ProjectSummary, ProjectTransferProgress, ResearchAssistantPlanItem};
 use crate::i18n::Locale;
-use crate::research_journey::{call, day_key, j};
+use crate::research_journey::{call, day_key};
 use leptos::*;
 use wasm_bindgen::JsCast;
 
@@ -199,23 +199,23 @@ pub(crate) fn AssistantHeader(
     view! {
         <header class="assistant-workspace-header" data-testid="assistant-header">
             <button type="button" id="assistant-projects-toggle" class="icon-btn assistant-panel-toggle"
-                aria-label=move || j(locale.get(), "Toggle projects", "展开或收起项目列表")
-                title=move || j(locale.get(), "Projects", "项目列表")
+                aria-label=move || crate::i18n::tr(locale.get(), "assistant.toggle_projects")
+                title=move || crate::i18n::tr(locale.get(), "assistant.projects")
                 aria-controls="assistant-projects" aria-expanded=move || state.left.get().to_string()
                 on:click=move |_| on_toggle.call(true)>{compose_icon("panel-left")}</button>
-            <h1 class="assistant-title">{move || j(locale.get(), "Research assistant", "科研助理")}</h1>
-            <span class="assistant-topbar-note">{move || j(locale.get(), "A little more clarity, every day", "让研究，日渐清晰")}</span>
+            <h1 class="assistant-title">{move || crate::i18n::tr(locale.get(), "assistant.title")}</h1>
+            <span class="assistant-topbar-note">{move || crate::i18n::tr(locale.get(), "assistant.a_little_more_clarity_every_day")}</span>
             <button type="button" id="assistant-automation-toggle" class="assistant-remote-toggle" data-testid="open-automation"
-                on:click=move |_| on_automation.call(())>{compose_icon("clock")}{move || j(locale.get(), "Automation", "自动化")}</button>
+                on:click=move |_| on_automation.call(())>{compose_icon("clock")}{move || crate::i18n::tr(locale.get(), "automation.automation")}</button>
             <button type="button" id="assistant-remote-toggle" class="assistant-remote-toggle"
-                on:click=move |_| on_remote.call(())>{compose_icon("link")}{move || j(locale.get(), "Remote access", "远程接入")}</button>
+                on:click=move |_| on_remote.call(())>{compose_icon("link")}{move || crate::i18n::tr(locale.get(), "assistant_remote.remote_access")}</button>
             <button type="button" id="assistant-calendar-toggle" class="icon-btn assistant-panel-toggle assistant-calendar-toggle"
-                aria-label=move || j(locale.get(), "Toggle research calendar", "展开或收起研究日历")
-                title=move || j(locale.get(), "Research calendar", "研究日历")
+                aria-label=move || crate::i18n::tr(locale.get(), "assistant.toggle_research_calendar")
+                title=move || crate::i18n::tr(locale.get(), "assistant.research_calendar")
                 aria-controls="assistant-calendar" aria-expanded=move || state.right.get().to_string()
                 on:click=move |_| on_toggle.call(false)>{compose_icon("panel")}</button>
-            <button type="button" class="icon-btn assistant-close" aria-label=move || j(locale.get(), "Close research assistant", "关闭科研助理")
-                title=move || j(locale.get(), "Back to home", "返回首页") on:click=move |_| on_close.call(())>{compose_icon("close")}</button>
+            <button type="button" class="icon-btn assistant-close" aria-label=move || crate::i18n::tr(locale.get(), "assistant.close")
+                title=move || crate::i18n::tr(locale.get(), "assistant.back_to_home") on:click=move |_| on_close.call(())>{compose_icon("close")}</button>
         </header>
     }
 }
@@ -229,16 +229,16 @@ pub(crate) fn AssistantProjects(
         <aside id="assistant-projects" class="assistant-side assistant-projects" data-testid="assistant-projects"
             hidden=move || !state.left.get()
             class:drawer-top=move || state.last_left.get()
-            aria-label=move || j(locale.get(), "Projects", "项目列表")>
-            <header class="assistant-side-heading"><h2>{move || j(locale.get(), "Projects", "项目")}</h2>
+            aria-label=move || crate::i18n::tr(locale.get(), "assistant.projects")>
+            <header class="assistant-side-heading"><h2>{move || crate::i18n::tr(locale.get(), "command.section.projects")}</h2>
             </header>
             <button type="button" class="assistant-project" aria-pressed=move || state.selected.get().is_none().to_string()
                 on:click=move |_| { state.selected.set(None); if state.narrow.get_untracked() { state.left.set(false); focus_toggle(true); } }>
-                {compose_icon("layers")}<span>{move || j(locale.get(), "All projects", "全部项目")}<small>{move || j(locale.get(), "Discuss across projects", "跨项目讨论")}</small></span>
+                {compose_icon("layers")}<span>{move || crate::i18n::tr(locale.get(), "settings.storage.all_projects")}<small>{move || crate::i18n::tr(locale.get(), "assistant.discuss_across_projects")}</small></span>
             </button>
             <div class="assistant-project-list">
-                {move || state.loading.get().then(|| view!{<p class="assistant-side-notice" role="status">{j(locale.get(), "Loading projects…", "正在读取项目…")}</p>})}
-                {move || state.error.get().map(|error| view!{<p class="assistant-side-notice" role="alert">{error}<button type="button" on:click=move |_| state.refresh.update(|value| *value += 1)>{j(locale.get(), "Retry", "重试")}</button></p>})}
+                {move || state.loading.get().then(|| view!{<p class="assistant-side-notice" role="status">{crate::i18n::tr(locale.get(), "assistant.loading_projects")}</p>})}
+                {move || state.error.get().map(|error| view!{<p class="assistant-side-notice" role="alert">{error}<button type="button" on:click=move |_| state.refresh.update(|value| *value += 1)>{crate::i18n::tr(locale.get(), "toolchain.retry")}</button></p>})}
                 <For each=move || state.projects.get() key=|project| (project.id.clone(), project.name.clone(), project.session_count) children=move |project| {
                     let id = project.id.clone(); let chosen = project.id.clone();
                     view!{<button type="button" class="assistant-project" data-project-id=project.id
@@ -247,9 +247,9 @@ pub(crate) fn AssistantProjects(
                         {compose_icon("folder")}<span><span class="assistant-project-name">{project.name}</span><small>{move || if locale.get()==Locale::Zh {format!("{} 个会话",project.session_count)} else {format!("{} conversations",project.session_count)}}</small></span>
                     </button>}
                 }/>
-                {move || (!state.loading.get() && state.error.get().is_none() && state.projects.get().is_empty()).then(|| view!{<p class="assistant-side-notice">{j(locale.get(), "No visible projects", "暂无可见项目")}</p>})}
+                {move || (!state.loading.get() && state.error.get().is_none() && state.projects.get().is_empty()).then(|| view!{<p class="assistant-side-notice">{crate::i18n::tr(locale.get(), "assistant.no_visible_projects")}</p>})}
             </div>
-            <footer class="assistant-side-footer">{move || j(locale.get(), "Project context applies to your next message.", "所选项目作为后续提问的上下文。")}</footer>
+            <footer class="assistant-side-footer">{move || crate::i18n::tr(locale.get(), "assistant.project_context_applies_to_your_next_message")}</footer>
         </aside>
     }
 }
@@ -265,12 +265,12 @@ pub(crate) fn AssistantCalendar(
     view! {
         <aside id="assistant-calendar" class="assistant-side assistant-calendar" data-testid="assistant-calendar"
             hidden=move || !state.right.get() class:drawer-top=move || !state.last_left.get()
-            aria-label=move || j(locale.get(), "Research calendar", "研究日历")>
-            <header class="assistant-side-heading"><h2>{move || j(locale.get(), "Research calendar", "研究日历")}</h2>
+            aria-label=move || crate::i18n::tr(locale.get(), "assistant.research_calendar")>
+            <header class="assistant-side-heading"><h2>{move || crate::i18n::tr(locale.get(), "assistant.research_calendar")}</h2>
             </header>
-            {move || state.loading.get().then(|| view! {<p class="assistant-side-notice" role="status">{j(locale.get(), "Loading visible projects…", "正在确认可见项目…")}</p>})}
-            {move || state.error.get().map(|_| view! {<p class="assistant-side-notice" role="alert">{j(locale.get(), "Project visibility could not be verified. Reload to view the calendar.", "暂时无法确认可见项目，请重新读取后查看日历。")}
-                <button type="button" on:click=move |_| state.refresh.update(|n| *n += 1)>{j(locale.get(), "Retry", "重试")}</button></p>})}
+            {move || state.loading.get().then(|| view! {<p class="assistant-side-notice" role="status">{crate::i18n::tr(locale.get(), "assistant.loading_visible_projects")}</p>})}
+            {move || state.error.get().map(|_| view! {<p class="assistant-side-notice" role="alert">{crate::i18n::tr(locale.get(), "assistant.project_visibility_could_not_be_verified_reload_to_view_the_calen")}
+                <button type="button" on:click=move |_| state.refresh.update(|n| *n += 1)>{crate::i18n::tr(locale.get(), "toolchain.retry")}</button></p>})}
             <div class="assistant-calendar-body" hidden=move || !ready.get()>
                 <crate::research_calendar::ResearchCalendar locale=locale projects=state.projects compact=true
                     external_refresh=Signal::derive(move || state.refresh.get()) ready=ready on_plan=on_draft
@@ -321,26 +321,26 @@ pub(crate) fn AssistantPlans(
     );
     view! {
         <section class="assistant-plans" data-testid="assistant-plans">
-            <header><h4>{move || j(locale.get(), "Saved plans", "已保存计划")}</h4>
+            <header><h4>{move || crate::i18n::tr(locale.get(), "assistant.saved_plans")}</h4>
                 <button type="button" class="assistant-plan-draft" disabled=move || !ready.get()
                     on:click=move |_| { if let Some(callback) = on_plan {
                         let date = day_key(selected.get_untracked());
                         callback.call(if locale.get_untracked() == Locale::Zh { format!("请帮我安排 {date} 的研究计划。") } else { format!("Help me plan my research for {date}.") });
-                    }}>{compose_icon("plus")}{move || j(locale.get(), "Plan this day", "安排这一天")}</button>
+                    }}>{compose_icon("plus")}{move || crate::i18n::tr(locale.get(), "assistant.plan_this_day")}</button>
             </header>
             {move || {
                 let loc = locale.get();
-                if !ready.get() || plans.loading().get() { return view! { <p class="assistant-side-notice" role="status">{j(loc, "Loading plans…", "正在读取计划…")}</p> }.into_view(); }
+                if !ready.get() || plans.loading().get() { return view! { <p class="assistant-side-notice" role="status">{crate::i18n::tr(loc, "assistant.loading_plans")}</p> }.into_view(); }
                 match plans.get() {
-                    Some(Err(error)) => view! {<p class="assistant-side-notice" role="alert">{error}<button type="button" on:click=move |_| on_retry.call(())>{j(loc,"Retry","重试")}</button></p>}.into_view(),
+                    Some(Err(error)) => view! {<p class="assistant-side-notice" role="alert">{error}<button type="button" on:click=move |_| on_retry.call(())>{crate::i18n::tr(loc, "toolchain.retry")}</button></p>}.into_view(),
                     Some(Ok(items)) => {
                         let items: Vec<_> = items.into_iter().filter(|item| item.project_id.as_ref().is_none_or(|id| projects.with(|ps| ps.iter().any(|p| &p.id == id)))).collect();
-                        if items.is_empty() { return view! {<p class="assistant-plan-empty">{j(loc, "No saved plans. Discuss a plan with your assistant.", "暂无已保存计划，可以和助理一起安排。")}</p>}.into_view(); }
+                        if items.is_empty() { return view! {<p class="assistant-plan-empty">{crate::i18n::tr(loc, "assistant.no_saved_plans_discuss_a_plan_with_your_assistant")}</p>}.into_view(); }
                         view! {<ul>{items.into_iter().map(|item| {
-                            let state = match item.status.as_str() { "done" => j(loc,"Done","完成"), "dropped" => j(loc,"Dropped","放弃"), _ => j(loc,"To do","待办") };
+                            let state = match item.status.as_str() { "done" => crate::i18n::tr(loc, "projects.transfer.done"), "dropped" => crate::i18n::tr(loc, "assistant.dropped"), _ => crate::i18n::tr(loc, "assistant.to_do") };
                             let carried = item.day < day_key(selected.get());
                             view! {<li data-plan-id=item.id data-status=item.status><div class="assistant-plan-title"><span>{item.title}</span><small>{state}</small></div>
-                                <p>{item.project_name.unwrap_or_else(|| j(loc,"Across projects","跨项目").into())}{carried.then(|| format!(" · {} {}", j(loc,"Originally","原定"),item.day))}</p>
+                                <p>{item.project_name.unwrap_or_else(|| crate::i18n::tr(loc, "assistant.across_projects").into())}{carried.then(|| format!(" · {} {}", crate::i18n::tr(loc, "assistant.originally"),item.day))}</p>
                             </li>}
                         }).collect_view()}</ul>}.into_view()
                     },

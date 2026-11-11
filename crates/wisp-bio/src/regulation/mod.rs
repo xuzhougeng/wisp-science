@@ -19,7 +19,7 @@ mod encode;
 mod jaspar;
 mod unibind;
 
-use crate::http::{looks_like_html, path_segment, Source};
+use crate::http::{looks_like_html, path_segment, Source, UCSC};
 use crate::NativeBio;
 use anyhow::{bail, Context, Result};
 use reqwest::{Method, StatusCode};
@@ -36,7 +36,6 @@ const UCSC_API: &str = "https://api.genome.ucsc.edu";
 const ENCODE: Source = Source("ENCODE", Duration::from_millis(200));
 const JASPAR: Source = Source("JASPAR", Duration::from_millis(200));
 const UNIBIND: Source = Source("UniBind", Duration::from_millis(200));
-const UCSC: Source = Source("UCSC Genome Browser", Duration::from_millis(1000));
 
 const ENCODE_MAX_ROWS: u32 = 100;
 const LIST_MAX_ROWS: u32 = 200;

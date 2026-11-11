@@ -17,9 +17,25 @@ static PACERS: LazyLock<std::sync::Mutex<HashMap<&'static str, Pace>>> =
 
 #[derive(Clone, Copy)]
 pub(crate) struct Source(pub &'static str, pub Duration);
+pub(crate) const UCSC: Source = Source("UCSC Genome Browser", Duration::from_millis(1000));
+pub(crate) const ENSEMBL: Source = Source("Ensembl REST", Duration::from_millis(350));
 pub(crate) const NCBI: Source = Source("NCBI", Duration::from_millis(350));
 pub(crate) const PMC_IDCONV: Source = Source("PMC ID Converter", Duration::from_millis(350));
 pub(crate) const EUROPE_PMC: Source = Source("Europe PMC", Duration::from_millis(500));
+
+async fn pace(source: Source) {
+    let pacer = PACERS
+        .lock()
+        .unwrap()
+        .entry(source.0)
+        .or_insert_with(|| Arc::new(Mutex::new(None)))
+        .clone();
+    let mut last = pacer.lock().await;
+    if let Some(previous) = *last {
+        tokio::time::sleep_until(previous + source.1).await;
+    }
+    *last = Some(Instant::now());
+}
 
 #[derive(Clone)]
 pub(crate) struct Http(pub reqwest::Client);
@@ -215,20 +231,8 @@ impl Http {
         method: Method,
         build: impl Fn(Method) -> reqwest::RequestBuilder,
     ) -> Result<Response> {
-        let pacer = PACERS
-            .lock()
-            .unwrap()
-            .entry(source.0)
-            .or_insert_with(|| Arc::new(Mutex::new(None)))
-            .clone();
         'attempts: for attempt in 0..2 {
-            {
-                let mut last = pacer.lock().await;
-                if let Some(previous) = *last {
-                    tokio::time::sleep_until(previous + source.1).await;
-                }
-                *last = Some(Instant::now());
-            }
+            pace(source).await;
             let mut response = match build(method.clone()).send().await {
                 Ok(response) => response,
                 Err(_) if method == Method::GET && attempt == 0 => {
@@ -363,6 +367,25 @@ fn retry_delay(value: &str) -> Option<u64> {
 mod tests {
     use super::*;
     use axum::{http::StatusCode, routing::get, Router};
+
+    #[tokio::test(start_paused = true)]
+    async fn clients_sharing_an_upstream_observe_its_strict_interval() {
+        for (name, source, minimum) in [
+            ("ucsc pacing regression", UCSC, Duration::from_secs(1)),
+            (
+                "ensembl pacing regression",
+                ENSEMBL,
+                Duration::from_millis(350),
+            ),
+        ] {
+            let source = Source(name, source.1);
+            pace(source).await;
+            let start = Instant::now();
+            // Two independently issued requests share the same upstream key.
+            let ((), ()) = tokio::join!(pace(source), pace(source));
+            assert!(start.elapsed() >= minimum * 2);
+        }
+    }
 
     #[tokio::test]
     async fn downloads_follow_local_hops_but_reject_foreign_redirects_and_bad_ranges() {

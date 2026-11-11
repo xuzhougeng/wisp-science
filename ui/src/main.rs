@@ -209,7 +209,11 @@ fn subagent_model_summary(
                 model_label(models, Some(global_default))
                     .unwrap_or_else(|| global_default.to_string())
             };
-            tf(locale, "composer.subagent.default", &[("model", &default_label)])
+            tf(
+                locale,
+                "composer.subagent.default",
+                &[("model", &default_label)],
+            )
         }
     }
 }
@@ -376,9 +380,15 @@ fn request_turn_memory_proposal(
 /// ⌘⇧G "Go to Folder" sheet; other platforms paste into the address bar.
 fn browser_setup_steps(loc: Locale) -> impl IntoView {
     let (path_key, choose_key) = if is_mac() {
-        ("browser.offline.step_path_mac", "browser.offline.step_choose_mac")
+        (
+            "browser.offline.step_path_mac",
+            "browser.offline.step_choose_mac",
+        )
     } else {
-        ("browser.offline.step_path_other", "browser.offline.step_choose_other")
+        (
+            "browser.offline.step_path_other",
+            "browser.offline.step_choose_other",
+        )
     };
     view! {
         <ol class="browser-setup-steps" data-testid="browser-setup-steps">
@@ -1398,8 +1408,7 @@ fn App() -> impl IntoView {
     });
     // In-turn model recovery (#1641): one live notice per session while a cut
     // or rejected model request is retried; the next model output clears it.
-    let stream_recovery_sessions =
-        create_rw_signal(HashMap::<String, StreamRecoveryNotice>::new());
+    let stream_recovery_sessions = create_rw_signal(HashMap::<String, StreamRecoveryNotice>::new());
     let stream_recovery_active = create_memo(move |_| {
         active_session
             .get()
@@ -1874,7 +1883,9 @@ fn App() -> impl IntoView {
     let apply_privacy = move |active, ids: HashSet<String>| {
         cache_privacy_mode(active, &ids);
         batch(move || {
-            if privacy_hidden_project_ids.with_untracked(|old| old != &ids) { privacy_hidden_project_ids.set(ids); }
+            if privacy_hidden_project_ids.with_untracked(|old| old != &ids) {
+                privacy_hidden_project_ids.set(ids);
+            }
             privacy_mode_active.set(active);
             privacy_ready.set(true);
             privacy_error.set(false);
@@ -1882,12 +1893,16 @@ fn App() -> impl IntoView {
     };
     let read_privacy = move |seed: bool| {
         let seed = seed || !privacy_ready.get_untracked();
-        if privacy_busy.get_untracked() { return; }
+        if privacy_busy.get_untracked() {
+            return;
+        }
         privacy_revision.update_value(|n| *n += 1);
         let ticket = privacy_revision.get_value();
         spawn_local(async move {
             let mode = read_shared_privacy(seed).await;
-            if ticket != privacy_revision.get_value() { return; }
+            if ticket != privacy_revision.get_value() {
+                return;
+            }
             if let Some(mode) = mode {
                 apply_privacy(mode.active, mode.project_ids.into_iter().collect());
             } else {
@@ -1931,17 +1946,25 @@ fn App() -> impl IntoView {
     });
     let privacy_mode_modal_open = create_rw_signal(false);
     create_effect(move |_| {
-        if privacy_mode_modal_open.get() && !privacy_ready.get_untracked() && privacy_error.get_untracked() {
+        if privacy_mode_modal_open.get()
+            && !privacy_ready.get_untracked()
+            && privacy_error.get_untracked()
+        {
             read_privacy(false);
         }
     });
     let commit_privacy = move |active: bool, ids: HashSet<String>| {
-        if !privacy_ready.get_untracked() || privacy_busy.get_untracked() { return; }
+        if !privacy_ready.get_untracked() || privacy_busy.get_untracked() {
+            return;
+        }
         privacy_revision.update_value(|n| *n += 1);
         privacy_busy.set(true);
         spawn_local(async move {
             let args = serde_wasm_bindgen::to_value(&privacy_host_args(active, &ids)).unwrap();
-            if crate::bindings::invoke_checked("set_privacy_mode", args).await.is_ok() {
+            if crate::bindings::invoke_checked("set_privacy_mode", args)
+                .await
+                .is_ok()
+            {
                 apply_privacy(active, ids);
                 privacy_mode_modal_open.set(false);
             } else {
@@ -5428,10 +5451,9 @@ fn App() -> impl IntoView {
             if assistant_workspace.selected.get().is_some()
                 && (assistant_workspace.loading.get() || assistant_workspace.error.get().is_some())
             {
-                show_toast(research_journey::j(
+                show_toast(crate::i18n::tr(
                     locale.get(),
-                    "Wait for the project context to load, or clear the selected project.",
-                    "请等项目上下文读取完成，或取消项目选择。",
+                    "assistant.wait_for_the_project_context_to_load_or_clear_the_selected_projec",
                 ));
                 return;
             }
@@ -8329,12 +8351,12 @@ fn App() -> impl IntoView {
         match name {
             "timer" => {
                 let Some(id) = active_session.get_untracked() else {
-                    status.set(research_journey::j(locale.get_untracked(), "Open a conversation before creating a timer.", "请先打开一个会话，再创建定时任务。").into());
+                    status.set(crate::i18n::tr(locale.get_untracked(), "assistant.open_a_conversation_before_creating_a_timer").into());
                     return true;
                 };
                 if payload.trim().is_empty() { input.set(String::new()); timer_open.set(true); return true; }
                 if parse_timer_expression(payload).is_err() {
-                    status.set(research_journey::j(locale.get_untracked(), "Usage: /timer 1h prompt (units: m, h, d).", "用法：/timer 1h 当前进展如何（单位：m、h、d）。").into());
+                    status.set(crate::i18n::tr(locale.get_untracked(), "assistant.usage_timer_1h_prompt_units_m_h_d").into());
                     return true;
                 }
                 let expression = payload.to_string();
@@ -8345,7 +8367,7 @@ fn App() -> impl IntoView {
                                 session_timer.set(Some(timer));
                                 timer_refresh.update(|n| *n = n.wrapping_add(1));
                                 if input.get_untracked() == text { input.set(String::new()); }
-                                status.set(research_journey::j(locale.get_untracked(), "Timer saved. Use the clock to manage it.", "定时任务已保存，点击时钟可以管理。").into());
+                                status.set(crate::i18n::tr(locale.get_untracked(), "assistant.timer_saved_use_the_clock_to_manage_it").into());
                             }
                         },
                         Err(error) => status.set(error),
@@ -11014,7 +11036,9 @@ fn App() -> impl IntoView {
         }
         if privacy_mode_modal_open.get() {
             ev.prevent_default();
-            if !privacy_busy.get_untracked() { privacy_mode_modal_open.set(false); }
+            if !privacy_busy.get_untracked() {
+                privacy_mode_modal_open.set(false);
+            }
             return;
         }
         if action_palette_open.get() {
@@ -12866,11 +12890,7 @@ fn App() -> impl IntoView {
                     turn_memory_editor.set(String::new());
                     turn_memory_replace_id.set(String::new());
                     if scope == "mandate" {
-                        show_toast(research_journey::j(
-                            locale.get_untracked(),
-                            "Added to the mandate's standing instructions. It applies from the next round.",
-                            "已加入职责的长期要求，从下一轮起生效。",
-                        ));
+                        show_toast(crate::i18n::tr(locale.get_untracked(), "assistant.added_to_the_mandate_s_standing_instructions_it_applies_from_the"));
                     } else {
                         show_toast(&t(
                             locale.get_untracked(),
@@ -13398,7 +13418,7 @@ fn App() -> impl IntoView {
             <assistant_workspace::AssistantProjects locale=locale state=assistant_workspace/>
             <button type="button" class="assistant-drawer-backdrop"
                 hidden=move || !assistant_workspace.narrow.get() || !(assistant_workspace.left.get() || assistant_workspace.right.get())
-                aria-label=move || research_journey::j(locale.get(), "Close sidebar", "关闭侧栏")
+                aria-label=move || crate::i18n::tr(locale.get(), "assistant.close_sidebar")
                 on:click=move |_| { assistant_workspace.close_drawer(); }></button>
         })}
         <main class="center" class:split=move || center_split_on.get()
@@ -13554,12 +13574,12 @@ fn App() -> impl IntoView {
                     <span class="topbar-action-label">{move || t(locale.get(), "trajectory.topbar")}</span>
                 </button>
                 <button type="button" class="icon-btn" data-testid="archive-topbar"
-                    title=move ||research_journey::j(locale.get(),"Archive research","研究归档")
-                    aria-label=move ||research_journey::j(locale.get(),"Archive research","研究归档")
+                    title=move ||crate::i18n::tr(locale.get(), "assistant.archive_research")
+                    aria-label=move ||crate::i18n::tr(locale.get(), "assistant.archive_research")
                     disabled=move ||demo_mode.get() || busy.get() || active_session.get().is_none() || active_is_exploration.get()
                     on:click=move |_|{archive_frame.set(active_session.get_untracked());archive_minimized.set(false);}>
                     {compose_icon("archive")}
-                    <span class="topbar-action-label">{move ||research_journey::j(locale.get(),"Archive research","研究归档")}</span>
+                    <span class="topbar-action-label">{move ||crate::i18n::tr(locale.get(), "assistant.archive_research")}</span>
                 </button>
                 <div class="inbox-wrap">
                     <button class="icon-btn"
@@ -15224,7 +15244,7 @@ fn App() -> impl IntoView {
                                                     input.set(selected.clone());
                                                     focus_composer();
                                                 }>
-                                                    <span aria-hidden="true">"↳"</span>
+                                                    <span aria-hidden="true">{crate::app_support::compose_icon("arrow-right")}</span>
                                                     <span>{question}</span>
                                                 </button>
                                             }
@@ -15701,7 +15721,7 @@ fn App() -> impl IntoView {
                     </div>
                 })}
                 {move ||active_archived.get().then(||view!{
-                    <div class="archive-readonly" data-testid="archive-readonly"><span>{research_journey::j(locale.get(),"Archived notebook · read only","实验记录本已归档 · 只读")}</span><button class="btn-ghost" on:click=move |_|archive_frame.set(active_session.get_untracked())>{research_journey::j(locale.get(),"View milestone / Continue research","查看归档 / 继续研究")}</button></div>
+                    <div class="archive-readonly" data-testid="archive-readonly"><span>{crate::i18n::tr(locale.get(), "assistant.archived_notebook_read_only")}</span><button class="btn-ghost" on:click=move |_|archive_frame.set(active_session.get_untracked())>{crate::i18n::tr(locale.get(), "assistant.view_milestone_continue_research")}</button></div>
                 })}
                 {move || (active_subagent.get() && !active_archived.get() && !demo_mode.get()).then(|| view! {
                     <div class="subagent-permissions" data-testid="subagent-permissions">
@@ -15818,8 +15838,8 @@ fn App() -> impl IntoView {
                     {move || (assistant_mode.get() && assistant_workspace.selected.get().is_some()).then(|| view! {
                         <div class="assistant-context" data-testid="assistant-project-context">
                             {compose_icon("folder")}
-                            <span>{move || assistant_workspace.selected_project().map(|project| project.name).unwrap_or_else(|| research_journey::j(locale.get(), "Project context unavailable", "项目上下文暂不可用").into())}</span>
-                            <button type="button" aria-label=move || research_journey::j(locale.get(), "Clear project context", "取消项目上下文")
+                            <span>{move || assistant_workspace.selected_project().map(|project| project.name).unwrap_or_else(|| crate::i18n::tr(locale.get(), "assistant.project_context_unavailable").into())}</span>
+                            <button type="button" aria-label=move || crate::i18n::tr(locale.get(), "assistant.clear_project_context")
                                 on:click=move |_| assistant_workspace.selected.set(None)>{compose_icon("close")}</button>
                         </div>
                     })}
@@ -16120,7 +16140,7 @@ fn App() -> impl IntoView {
                             on:keydown:undelegated=on_send
                             on:paste=on_paste
                             prop:placeholder=move || {
-                                if active_archived.get(){return research_journey::j(locale.get(),"Archived notebook. Continue research in a new conversation.","实验记录本已归档，请从归档节点继续研究。").to_string();}
+                                if active_archived.get(){return crate::i18n::tr(locale.get(), "assistant.archived_notebook_continue_research_in_a_new_conversation").to_string();}
                                 if active_subagent.get() {
                                     return t(locale.get(), "subagent.read_only_placeholder").into();
                                 }
@@ -16131,7 +16151,7 @@ fn App() -> impl IntoView {
                                 } else if composer_scope_locked.get() {
                                     t(locale.get(), "exploration.read_only_placeholder").into()
                                 } else if assistant_mode.get() {
-                                    research_journey::j(locale.get(), "Ask about your research, or plan the next step…", "聊聊研究进展，或安排下一步…").into()
+                                    crate::i18n::tr(locale.get(), "assistant.ask_about_your_research_or_plan_the_next_step").into()
                                 } else {
                                     tf(
                                         locale.get(),
@@ -16339,7 +16359,7 @@ fn App() -> impl IntoView {
                                                 compose_menu_open.set(false);
                                                 open_settings_fn(Some("skills".into()));
                                             }>
-                                            <span class="compose-item-icon">{compose_icon("skill")}</span>
+                                            <span class="compose-item-icon">{compose_icon("wrench")}</span>
                                             <span class="compose-item-text">
                                                 <span class="compose-item-label">{move || t(locale.get(), "skills.manage")}</span>
                                                 <span class="compose-item-sub">{move || t(locale.get(), "skills.manage_sub")}</span>
@@ -17235,7 +17255,7 @@ fn App() -> impl IntoView {
                                                                         .unwrap_or_else(|| mode.clone());
                                                                     if available_modes.len() < 2 {
                                                                         return view! {
-                                                                            <div class="model-menu-config-row" title="Session mode">
+                                                                            <div class="model-menu-config-row" title=move || crate::i18n::tr(locale.get(), "a11y.session_mode")>
                                                                                 <span class="model-menu-config-label">"Mode"</span>
                                                                                 <span class="model-menu-config-value">{current_label}</span>
                                                                             </div>
@@ -17244,9 +17264,9 @@ fn App() -> impl IntoView {
                                                                     }
                                                                     let frame_id = session_id.clone();
                                                                     view! {
-                                                                        <label class="model-menu-config-row" title="Session mode">
+                                                                        <label class="model-menu-config-row" title=move || crate::i18n::tr(locale.get(), "a11y.session_mode")>
                                                                             <span class="model-menu-config-label">"Mode"</span>
-                                                                            <select class="model-menu-config-select" aria-label="Session mode"
+                                                                            <select class="model-menu-config-select" aria-label=move || crate::i18n::tr(locale.get(), "a11y.session_mode")
                                                                                 on:change=move |event| {
                                                                                     let mode_id = dom_value(&event);
                                                                                     let frame_id = frame_id.clone();
@@ -17700,7 +17720,7 @@ fn App() -> impl IntoView {
                                                     open_tool.call(tab);
                                                 }>
                                                 <span>{label}</span>
-                                                {is_open.then(|| view! { <span>"✓"</span> })}
+                                                {is_open.then(|| view! { <span>{crate::app_support::compose_icon("check")}</span> })}
                                             </button>
                                         }.into_view()
                                     }).collect_view()
@@ -17915,7 +17935,7 @@ fn App() -> impl IntoView {
                                                         else { set.insert(key_toggle.clone()); }
                                                     });
                                                 }>
-                                                <span class="rp-art-group-caret">"▾"</span>
+                                                <span class="rp-art-group-caret">{crate::app_support::compose_icon("chevron-down")}</span>
                                                 <span class="rp-art-group-name">{label}</span>
                                                 <span class="rp-art-group-count">{count}</span>
                                             </button>

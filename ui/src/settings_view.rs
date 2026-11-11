@@ -2618,8 +2618,12 @@ pub(super) fn SettingsView(
             return;
         }
         spawn_local(async move {
-            let locations = invoke_checked("skill_install_locations", JsValue::UNDEFINED).await.ok()
-                .and_then(|value| serde_wasm_bindgen::from_value::<SkillInstallLocations>(value).ok());
+            let locations = invoke_checked("skill_install_locations", JsValue::UNDEFINED)
+                .await
+                .ok()
+                .and_then(|value| {
+                    serde_wasm_bindgen::from_value::<SkillInstallLocations>(value).ok()
+                });
             if location_request.get_untracked() == generation {
                 location_error.set(locations.is_none());
                 skill_install_locations.set(locations);
@@ -3173,7 +3177,7 @@ pub(super) fn SettingsView(
                                         <div class="settings-breadcrumb">
                                             <button type="button" class="settings-crumb-link"
                                                 on:click=move |_| close_settings_subpage.call(())>{parent.clone()}</button>
-                                            <span class="settings-crumb-sep">"›"</span>
+                                            <span class="settings-crumb-sep">{crate::app_support::compose_icon("chevron-right")}</span>
                                             <span class="settings-crumb-current">{child}</span>
                                         </div>
                                     }.into_view()
@@ -3941,7 +3945,7 @@ pub(super) fn SettingsView(
                                                     session_token_usage.set(None);
                                                     selected_usage_workspace.set(None);
                                                 }>
-                                                <span aria-hidden="true">"←"</span>
+                                                <span aria-hidden="true">{crate::app_support::compose_icon("arrow-left")}</span>
                                                 {t(loc, "settings.usage.all_workspaces")}
                                             </button>
                                             <div class="usage-detail-title">
@@ -5540,13 +5544,13 @@ pub(super) fn SettingsView(
                                                             <div class="settings-list-main">
                                                                 <span class="settings-list-title">
                                                                     {agent.label.clone()}
-                                                                    {is_active.then(|| view! { <span class="settings-active-mark" title="active">" ✓"</span> })}
+                                                                    {is_active.then(|| view! { <span class="settings-active-mark" title=move || crate::i18n::tr(locale.get(), "a11y.active")>{crate::app_support::compose_icon("check")}</span> })}
                                                                 </span>
                                                                 <span class="settings-list-sub">{agent.command.clone()}</span>
                                                             </div>
                                                             <div class="settings-list-actions">
                                                                 {is_active.then(|| view! {
-                                                                    <span class="settings-active-mark" title="active">"✓"</span>
+                                                                    <span class="settings-active-mark" title=move || crate::i18n::tr(locale.get(), "a11y.active")>{crate::app_support::compose_icon("check")}</span>
                                                                 })}
                                                                 <button class="settings-list-use" type="button" data-testid="test-acp-agent"
                                                                     on:click=move |ev| {
@@ -5578,7 +5582,7 @@ pub(super) fn SettingsView(
                                                                             label: label_for_delete.clone(),
                                                                         }));
                                                                     }>{compose_icon("close")}</button>
-                                                                <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                                                                <span class="settings-list-chevron" aria-hidden="true">{crate::app_support::compose_icon("chevron-right")}</span>
                                                             </div>
                                                             {move || {
                                                                 let id = agent.id.clone();
@@ -5811,7 +5815,7 @@ pub(super) fn SettingsView(
                                                                         });
                                                                     }>{move || t(locale.get(), "models.use")}</button>
                                                             }})}
-                                                            <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                                                            <span class="settings-list-chevron" aria-hidden="true">{crate::app_support::compose_icon("chevron-right")}</span>
                                                         </div>
                                                     </div>
                                                 }
@@ -5836,6 +5840,7 @@ pub(super) fn SettingsView(
                     <div class="settings-pane pet-settings-pane">
                         <div class="pet-settings-hero">
                             <div class="pet-settings-preview" class:empty=move || pet_status.get().asset.is_none()>
+                                {move || pet_status.get().asset.is_none().then(|| compose_icon("circle-help"))}
                                 {move || pet_status.get().asset.map(|asset| {
                                     let style = format!("background-image:url('{}')", asset.spritesheet_data_url);
                                     view! { <span class="pet-settings-sprite" style=style aria-hidden="true"></span> }
@@ -6393,7 +6398,7 @@ pub(super) fn SettingsView(
                                     format!("{} ({n})", t(locale.get(), "settings.nav.specialists"))
                                 }}</span>
                                 <details class="settings-add-menu">
-                                    <summary>{move || t(locale.get(), "specialists.add")}</summary>
+                                    <summary>{move || t(locale.get(), "specialists.add")}{compose_icon("chevron-down")}</summary>
                                     <button type="button" on:click=move |ev| {
                                         close_details_ancestor(&ev);
                                         model_form_msg.set(None);
@@ -6470,7 +6475,7 @@ pub(super) fn SettingsView(
                                                     })}
                                                 </div>
                                                 <div class="settings-list-actions">
-                                                    <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                                                    <span class="settings-list-chevron" aria-hidden="true">{crate::app_support::compose_icon("chevron-right")}</span>
                                                 </div>
                                             </div>
                                         }
@@ -6513,7 +6518,7 @@ pub(super) fn SettingsView(
                                                                 remove_specialist.call(id.clone());
                                                             }>{compose_icon("close")}</button>
                                                     }})}
-                                                    <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                                                    <span class="settings-list-chevron" aria-hidden="true">{crate::app_support::compose_icon("chevron-right")}</span>
                                                 </div>
                                             </div>
                                         }
@@ -6638,7 +6643,7 @@ pub(super) fn SettingsView(
                                                 let n = view.map(|v| v.files.len()).unwrap_or(0);
                                                 format!("{name} ({n})")
                                             }}</span>
-                                            <span class="caret" aria-hidden="true">"▾"</span>
+                                            <span class="caret" aria-hidden="true">{crate::app_support::compose_icon("chevron-down")}</span>
                                         </button>
                                         {move || memory_project_menu_open.get().then(|| view! {
                                             <div class="memory-project-backdrop"
@@ -6704,7 +6709,7 @@ pub(super) fn SettingsView(
                                                                             .map(|view| view.project_id == id_check)
                                                                             .unwrap_or(false);
                                                                         selected.then(|| view! {
-                                                                            <span class="memory-project-option-check" aria-hidden="true">"✓"</span>
+                                                                            <span class="memory-project-option-check" aria-hidden="true">{crate::app_support::compose_icon("check")}</span>
                                                                         })
                                                                     }}
                                                                 </button>
@@ -6796,7 +6801,7 @@ pub(super) fn SettingsView(
                                                 </div>
                                                 <div class="settings-list-actions">
                                                     <span class="memory-note-size">{format_bytes(f.bytes)}</span>
-                                                    <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                                                    <span class="settings-list-chevron" aria-hidden="true">{crate::app_support::compose_icon("chevron-right")}</span>
                                                 </div>
                                             </div>
                                         }
@@ -7231,7 +7236,7 @@ pub(super) fn SettingsView(
                                                     </span>
                                                 </div>
                                                 <details class="skill-tags-editor plugin-details">
-                                                    <summary><span>{move || t(locale.get(), "plugins.details")}</span></summary>
+                                                    <summary>{compose_icon("chevron-right")}<span>{move || t(locale.get(), "plugins.details")}</span></summary>
                                                     <dl class="plugin-detail-grid">
                                                         <dt>{move || t(locale.get(), "plugins.provides_skills")}</dt>
                                                         <dd>{skills}</dd>
@@ -7708,7 +7713,7 @@ pub(super) fn SettingsView(
                                         class="cred-help-trigger"
                                         aria-label=move || format!("{}: {}", t(locale.get(), g.name_key), t(locale.get(), "cred.help.aria"))
                                         aria-describedby=described_by
-                                    >"?"</button>
+                                    >{crate::app_support::compose_icon("circle-help")}</button>
                                     <span id=tooltip_id class="cred-help-tooltip" role="tooltip">
                                         <span class="cred-help-section">
                                             <strong>{move || t(locale.get(), "cred.help.what")}</strong>
@@ -7767,7 +7772,7 @@ pub(super) fn SettingsView(
                                             <button type="button" class="cred-external-link"
                                                 on:click=move |_| crate::bindings::open_external_url(url.into())>
                                                 <span>{move || t(locale.get(), link.label_key)}</span>
-                                                <span aria-hidden="true">"↗"</span>
+                                                <span aria-hidden="true">{crate::app_support::compose_icon("external-link")}</span>
                                             </button>
                                         }
                                     }).collect_view()}
@@ -8589,7 +8594,7 @@ pub(super) fn SettingsView(
                                                     } />
                                                     <span class="toggle-track" aria-hidden="true"></span>
                                                 </label>
-                                                <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                                                <span class="settings-list-chevron" aria-hidden="true">{crate::app_support::compose_icon("chevron-right")}</span>
                                             </div>
                                         </div>
                                     }
@@ -8652,7 +8657,7 @@ pub(super) fn SettingsView(
                                                         conn_form.set(Some(conn_form_from_row(&row_edit)));
                                                         conn_test_msg.set(None);
                                                     }>{compose_icon("edit")}</button>
-                                                <button class="settings-list-remove" type="button" title="remove" on:click=move |ev| {
+                                                <button class="settings-list-remove" type="button" title=move || crate::i18n::tr(locale.get(), "a11y.remove") on:click=move |ev| {
                                                     ev.stop_propagation();
                                                     let id = id_del.clone();
                                                     spawn_local(async move {
@@ -8673,7 +8678,7 @@ pub(super) fn SettingsView(
                                                     } />
                                                     <span class="toggle-track" aria-hidden="true"></span>
                                                 </label>
-                                                <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                                                <span class="settings-list-chevron" aria-hidden="true">{crate::app_support::compose_icon("chevron-right")}</span>
                                             </div>
                                         </div>
                                     }

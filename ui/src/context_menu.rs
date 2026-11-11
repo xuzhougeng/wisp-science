@@ -1540,7 +1540,7 @@ pub fn ContextMenuPortal(
                                     }
                                 >
                                     <span class="ctx-item-label">{label}</span>
-                                    <span class="ctx-submenu-chevron" aria-hidden="true">"›"</span>
+                                    <span class="ctx-submenu-chevron" aria-hidden="true">{crate::app_support::compose_icon("chevron-right")}</span>
                                 </button>
                             }.into_view();
                         }

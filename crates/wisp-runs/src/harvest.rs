@@ -46,7 +46,7 @@ pub async fn harvest_run_outputs(
     specs: &[OutputSpec],
 ) -> Result<Vec<HarvestedArtifact>, String> {
     let mut out = Vec::new();
-    for spec in specs {
+    for (index, spec) in specs.iter().enumerate() {
         if spec
             .logical_key
             .as_deref()
@@ -88,8 +88,13 @@ pub async fn harvest_run_outputs(
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?
             .into_iter()
-            .filter(|path| path.is_file())
+            .filter(|path| path.is_file() || (spec.bundle && path.is_dir()))
             .collect::<Vec<_>>();
+        let paths = if spec.bundle && !paths.is_empty() {
+            vec![bundle_local_output(base_dir, run_id, index, &paths)?]
+        } else {
+            paths
+        };
         if spec.logical_key.is_some() && paths.len() > 1 {
             return Err(format!(
                 "output logical_key '{}' matched more than one file",
@@ -114,15 +119,21 @@ pub async fn harvest_run_outputs(
             if !as_reference {
                 total = total.saturating_add(size);
             }
-            let source_path = path
-                .strip_prefix(base_dir)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .replace('\\', "/");
-            let logical_key = spec
-                .logical_key
-                .clone()
-                .unwrap_or_else(|| format!("path:{source_path}"));
+            let source_path = if spec.bundle {
+                spec.glob.clone()
+            } else {
+                path.strip_prefix(base_dir)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            };
+            let logical_key = spec.logical_key.clone().unwrap_or_else(|| {
+                if spec.bundle {
+                    format!("bundle:{}", spec.glob)
+                } else {
+                    format!("path:{source_path}")
+                }
+            });
             out.push(
                 register_local_artifact(
                     store,
@@ -141,6 +152,68 @@ pub async fn harvest_run_outputs(
         }
     }
     Ok(out)
+}
+
+/// Create one deterministic archive inside the run's harvest area. Rust tar/gzip
+/// keeps local bundling available on Windows without a system tar executable.
+fn bundle_local_output(
+    base_dir: &Path,
+    run_id: &str,
+    index: usize,
+    selections: &[std::path::PathBuf],
+) -> Result<std::path::PathBuf, String> {
+    use sha2::{Digest, Sha256};
+    let root = dunce::canonicalize(base_dir).map_err(|e| e.to_string())?;
+    let harvest = root.join(".wisp/harvest");
+    let mut files = std::collections::BTreeSet::new();
+    for selection in selections {
+        let selection = dunce::canonicalize(selection).map_err(|e| e.to_string())?;
+        if !selection.starts_with(&root) {
+            return Err("bundle output is outside the run directory".into());
+        }
+        for entry in walkdir::WalkDir::new(selection)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(|entry| !entry.path().starts_with(&harvest))
+        {
+            let entry = entry.map_err(|e| e.to_string())?;
+            if !entry.path().is_file() {
+                continue;
+            }
+            let path = dunce::canonicalize(entry.path()).map_err(|e| e.to_string())?;
+            if !path.starts_with(&root) {
+                return Err("bundle output is outside the run directory".into());
+            }
+            files.insert(path);
+        }
+    }
+    let destination = harvest
+        .join(hex::encode(Sha256::digest(run_id.as_bytes())))
+        .join("bundles")
+        .join(format!("bundle_{index}.tar.gz"));
+    // Validate the destination through the same sandbox boundary as write.
+    let destination =
+        wisp_tools::safety::validate_file_path(&root, &destination.to_string_lossy())?;
+    std::fs::create_dir_all(
+        destination
+            .parent()
+            .ok_or("bundle has no parent directory")?,
+    )
+    .map_err(|e| e.to_string())?;
+    let file = std::fs::File::create(&destination).map_err(|e| e.to_string())?;
+    let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+    let mut archive = tar::Builder::new(encoder);
+    archive.mode(tar::HeaderMode::Deterministic);
+    for path in files {
+        archive
+            .append_path_with_name(&path, path.strip_prefix(&root).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    }
+    archive
+        .into_inner()
+        .and_then(|encoder| encoder.finish())
+        .map_err(|e| e.to_string())?;
+    Ok(destination)
 }
 
 /// A retried harvest must not append duplicate versions or lineage rows for
@@ -668,6 +741,91 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bundle_retry_excludes_its_own_archive_when_the_base_is_a_symlink() {
+        let tmp = std::env::temp_dir().join(format!("wisp_bundle_alias_{}", uuid::Uuid::new_v4()));
+        let root = tmp.join("root");
+        let alias = tmp.join("alias");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("result.txt"), "result").unwrap();
+        std::os::unix::fs::symlink(&root, &alias).unwrap();
+        let archive = bundle_local_output(&alias, "run", 0, &[alias.clone()]).unwrap();
+        let first = std::fs::read(&archive).unwrap();
+        bundle_local_output(&alias, "run", 0, &[alias.clone()]).unwrap();
+        assert_eq!(first, std::fs::read(archive).unwrap());
+        std::fs::remove_dir_all(tmp).unwrap();
+    }
+
+    #[tokio::test]
+    async fn local_bundle_registers_one_stable_archive_for_multiple_files_and_directories() {
+        let tmp =
+            std::env::temp_dir().join(format!("wisp_harvest_bundle_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(tmp.join("results/nested")).unwrap();
+        std::fs::write(tmp.join("results/a.txt"), "one").unwrap();
+        std::fs::write(tmp.join("results/nested/b.txt"), "two").unwrap();
+        let store = wisp_store::Store::open(&tmp.join("wisp.sqlite"))
+            .await
+            .unwrap();
+        seed_run(&store).await;
+        let spec = OutputSpec {
+            glob: "results/*".into(),
+            kind: "data".into(),
+            residency: OutputResidency::Local,
+            logical_key: Some("results".into()),
+            max_file_mb: Some(1),
+            max_total_mb: Some(1),
+            bundle: true,
+        };
+        let first = harvest_run_outputs(&store, "p", "f", "r", &tmp, &[spec.clone()])
+            .await
+            .unwrap();
+        assert_eq!(first.len(), 1);
+        let archive_path = bundle_local_output(&tmp, "r", 0, &[tmp.join("results")]).unwrap();
+        let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(
+            std::fs::File::open(archive_path).unwrap(),
+        ));
+        let paths: Vec<_> = archive
+            .entries()
+            .unwrap()
+            .map(|entry| entry.unwrap().path().unwrap().into_owned())
+            .collect();
+        assert_eq!(
+            paths,
+            vec![
+                std::path::PathBuf::from("results/a.txt"),
+                std::path::PathBuf::from("results/nested/b.txt")
+            ]
+        );
+        let second = harvest_run_outputs(&store, "p", "f", "r", &tmp, &[spec])
+            .await
+            .unwrap();
+        assert_eq!(first[0].artifact_version_id, second[0].artifact_version_id);
+        assert_eq!(store.list_run_outputs("r").await.unwrap().len(), 1);
+        let reference = harvest_run_outputs(
+            &store,
+            "p",
+            "f",
+            "r",
+            &tmp,
+            &[OutputSpec {
+                glob: "results/*".into(),
+                kind: "data".into(),
+                residency: OutputResidency::Auto,
+                logical_key: Some("large-results".into()),
+                max_file_mb: Some(0),
+                max_total_mb: Some(0),
+                bundle: true,
+            }],
+        )
+        .await
+        .unwrap();
+        assert_eq!(reference.len(), 1);
+        assert_eq!(reference[0].residency, OutputResidency::Remote);
+        assert!(reference[0].path.ends_with(".tar.gz"));
+        std::fs::remove_dir_all(tmp).unwrap();
     }
 
     async fn seed_run(store: &wisp_store::Store) {

@@ -1,3 +1,4 @@
+import { trackIntervals, waitForIntervalTicks, trackInvokes, waitForInvokes } from "./async-observers";
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -545,7 +546,6 @@ test("tool-only turn endings do not generate follow-up questions", async ({ page
 
   await expect(page.getByRole("button", { name: "Processed" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
-  await page.waitForTimeout(100);
   await expect(page.getByTestId("follow-up-questions")).toHaveCount(0);
 });
 
@@ -1417,11 +1417,11 @@ test("persisted wisp:plan reload rebuilds all entry states and priority", async 
     const inProgress = card.locator('li[data-status="in_progress"]');
     const pending = card.locator('li[data-status="pending"]');
 
-    await expect(completed.locator(".plan-entry-mark")).toHaveText("✓");
-    await expect(inProgress.locator(".plan-entry-mark")).toHaveText("▸");
+    await expect(completed.locator(".plan-entry-mark svg")).toHaveAttribute("data-icon", "check");
+    await expect(inProgress.locator(".plan-entry-mark svg")).toHaveAttribute("data-icon", "play");
     await expect(inProgress).toHaveCSS("font-weight", "600");
-    await expect(inProgress.getByRole("img", { name: "High priority" })).toHaveText("!");
-    await expect(pending.locator(".plan-entry-mark")).toHaveText("");
+    await expect(inProgress.getByRole("img", { name: "High priority" }).locator("svg")).toHaveAttribute("data-icon", "circle-alert");
+    await expect(pending.locator(".plan-entry-mark svg")).toHaveAttribute("data-icon", "circle");
   };
   await assertPlan();
 
@@ -1811,7 +1811,6 @@ test("ACP cancellation is scoped to the active bound frame", async ({ page }) =>
   await expect.poll(() => lastInvokeArgs(page, "stop_agent")).toMatchObject({ sessionId: expect.any(String) });
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   await expect(page.getByTestId("stopping-toast")).toHaveCount(0);
-  await page.waitForTimeout(100);
   await expect(page.getByTestId("turn-memory-overlay")).toHaveCount(0);
 });
 
@@ -1970,10 +1969,17 @@ for (const locale of ["zh", "en"]) {
           overflow: el.scrollWidth > el.clientWidth,
           controls: controls.map(control => {
             const rect = control.getBoundingClientRect();
-            const range = document.createRange();
-            range.selectNodeContents(control);
+            // Count the lines the label's text occupies. A control may also
+            // hold an icon, whose box is not a line of text.
+            let lines = 0;
+            const walker = document.createTreeWalker(control, NodeFilter.SHOW_TEXT);
+            while (walker.nextNode()) {
+              const range = document.createRange();
+              range.selectNodeContents(walker.currentNode);
+              lines += range.getClientRects().length;
+            }
             return {
-              lines: range.getClientRects().length,
+              lines,
               inside: rect.left >= bounds.left && rect.right <= bounds.right,
             };
           }),
@@ -3853,6 +3859,12 @@ test("Ctrl+P command palette runs commands and switches themes", async ({ page }
     .locator(".action-shortcut")).toHaveText("Ctrl+K");
   await expect(palette).toContainText("Import and export");
   await expect(palette).toContainText("Import session archive");
+  const icons = await palette.locator(".action-palette-row > svg").evaluateAll(nodes =>
+    nodes.map(node => node.getAttribute("data-icon")));
+  expect(icons.length).toBeGreaterThan(10);
+  expect(icons.every(Boolean)).toBe(true);
+  expect(new Set(icons).size).toBe(icons.length);
+
 
   const rows = palette.locator(".project-search-row");
   await expect(rows.first()).toHaveClass(/active/);
@@ -8240,6 +8252,7 @@ test("active SSH transfer shows a live progress card and can be cancelled", asyn
 });
 
 test("unmeasured relay shows elapsed activity and collapses without cancelling", async ({ page }) => {
+  await trackIntervals(page);
   await page.goto("/");
   await page.evaluate(() => {
     const now = Math.floor(Date.now() / 1000);
@@ -8293,7 +8306,7 @@ test("unmeasured relay shows elapsed activity and collapses without cancelling",
   expect((await summary.boundingBox())!.height).toBeLessThan(fullHeight);
   await expect(card).toBeHidden();
   // Polls and the one-second clock must preserve the user's collapsed state.
-  await page.waitForTimeout(2200);
+  await waitForIntervalTicks(page, 1000, 3);
   await expect(summary).toBeVisible();
   await summary.click();
   await expect(card).toBeVisible();
@@ -8340,6 +8353,7 @@ test("unknown-size download is indeterminate and completion restores measured pr
 });
 
 test("completed SSH transfer cards leave the composer tray promptly", async ({ page }) => {
+  await trackIntervals(page);
   await page.goto("/");
   await page.evaluate(() => {
     const run = (window as any).__mockRuns.find((item: any) => item.id === "run-local-002");
@@ -8391,7 +8405,7 @@ test("completed SSH transfer cards leave the composer tray promptly", async ({ p
   await expect(card).toBeHidden({ timeout: 5_000 });
   // Crossing another shared-clock tick must not remount an expired card after
   // the transfer tray has dropped its clock dependency.
-  await page.waitForTimeout(1_200);
+  await waitForIntervalTicks(page, 1000, 3);
   await expect(card).toBeHidden();
 });
 
@@ -11883,10 +11897,11 @@ test("skill detail shows file errors and ignores stale file responses", async ({
   await picker.selectOption("assets/image.png");
   await expect(detail.getByRole("alert")).toContainText("Binary files cannot be previewed");
   await expect(detail.getByTestId("skill-file-preview")).toBeHidden();
+  await trackInvokes(page, ["read_skill_file"]);
   await picker.selectOption("scripts/slow.py");
   await picker.selectOption("scripts/nested/analyze.py");
   await expect(detail.getByTestId("skill-file-source")).toContainText("analysis ready");
-  await page.waitForTimeout(500);
+  await waitForInvokes(page);
   await expect(detail.getByTestId("skill-file-source")).not.toContainText("old slow response");
   await picker.selectOption("references/guide.md");
   await expect(detail.getByTestId("skill-file-preview")).toContainText("Reference guide");
@@ -11911,6 +11926,9 @@ test("skill detail reports unavailable packages and can return immediately", asy
 test("skill manager filters by tag and batch disables visible skills", async ({ page }) => {
   await enterApp(page);
   await page.getByRole("button", { name: "Add to message" }).click();
+  const menu = page.locator(".compose-menu");
+  await expect(menu.getByRole("button", { name: /Save.*skill/i }).locator(".compose-item-icon svg")).toHaveAttribute("data-icon", "skill");
+  await expect(menu.getByRole("button", { name: /Manage skills/i }).locator(".compose-item-icon svg")).toHaveAttribute("data-icon", "wrench");
   await page.getByRole("button", { name: "Manage skills" }).click();
   await expect(page.getByRole("button", { name: "Skills", exact: true })).toBeVisible();
   await expect(page.locator(".settings-search")).toHaveAttribute("type", "text");

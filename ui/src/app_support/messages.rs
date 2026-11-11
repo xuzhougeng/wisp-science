@@ -328,7 +328,7 @@ pub(crate) fn compose_icon(kind: &str) -> impl IntoView {
         "18"
     };
     view! {
-        <svg width=size height=size viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        <svg width=size height=size data-icon=kind.to_string() aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{body}</svg>
     }
 }
@@ -401,7 +401,7 @@ pub(crate) fn ImageGenerationCard(
                     }.into_view(),
                     Some(false) => view! {
                         <div class="image-generation-state failed">
-                            <span class="image-generation-failed-mark" aria-hidden="true">"!"</span>
+                            <span class="image-generation-failed-mark" aria-hidden="true">{crate::app_support::compose_icon("circle-alert")}</span>
                             <span>{move || t(locale.get(), "chat.image_failed")}</span>
                             {(!failure_detail.is_empty()).then(|| view! {
                                 <small title=failure_detail.clone()>{failure_detail.clone()}</small>
@@ -437,7 +437,7 @@ pub(crate) fn ImageGenerationCard(
                         }
                         None if preview_failed.get() => view! {
                             <div class="image-generation-state failed">
-                                <span class="image-generation-failed-mark" aria-hidden="true">"!"</span>
+                                <span class="image-generation-failed-mark" aria-hidden="true">{crate::app_support::compose_icon("circle-alert")}</span>
                                 <span>{move || t(locale.get(), "chat.image_preview_unavailable")}</span>
                             </div>
                         }.into_view(),
@@ -520,7 +520,7 @@ pub(crate) fn VideoGenerationCard(path: String, ok: Option<bool>, output: String
                     }.into_view(),
                     Some(false) => view! {
                         <div class="video-generation-state failed">
-                            <span class="video-generation-failed-mark" aria-hidden="true">"!"</span>
+                            <span class="video-generation-failed-mark" aria-hidden="true">{crate::app_support::compose_icon("circle-alert")}</span>
                             <span>{move || t(locale.get(), "chat.video_failed")}</span>
                             {(!failure_detail.is_empty()).then(|| view! {
                                 <small title=failure_detail.clone()>{failure_detail.clone()}</small>
@@ -543,7 +543,7 @@ pub(crate) fn VideoGenerationCard(path: String, ok: Option<bool>, output: String
                         }.into_view(),
                         None if preview_failed.get() => view! {
                             <div class="video-generation-state failed">
-                                <span class="video-generation-failed-mark" aria-hidden="true">"!"</span>
+                                <span class="video-generation-failed-mark" aria-hidden="true">{crate::app_support::compose_icon("circle-alert")}</span>
                                 <span>{move || t(locale.get(), "chat.video_preview_unavailable")}</span>
                             </div>
                         }.into_view(),
@@ -1429,8 +1429,8 @@ pub(crate) fn ToolBlock(
                 })}
                 <span>{title}</span>
                 {match ok {
-                    Some(true) => view!{ <span class="ok">"✓"</span> }.into_view(),
-                    Some(false) => view!{ <span class="fail">"✗"</span> }.into_view(),
+                    Some(true) => view!{ <span class="ok">{crate::app_support::compose_icon("check")}</span> }.into_view(),
+                    Some(false) => view!{ <span class="fail">{crate::app_support::compose_icon("close")}</span> }.into_view(),
                     None => view!{ <span class="run"><span class="run-dot"></span>{move || t(locale.get(), "tool.running")}</span> }.into_view(),
                 }}
             </summary>
@@ -1577,7 +1577,7 @@ pub(crate) fn ApprovalCard(
                                 let step_file = on_file.clone();
                                 view! {
                                     <div class=format!("plan-step {cls}")>
-                                        <span class="plan-step-mark"></span>
+                                        <span class="plan-step-mark">{match cls { "done" => Some(compose_icon("check")), "cancelled" => Some(compose_icon("minus")), _ => None }}</span>
                                         <div class="plan-step-text md" inner_html=html
                                             on:click=move |ev: web_sys::MouseEvent| {
                                                 handle_md_click(&ev, &[], &[], &step_artifact, &step_file)

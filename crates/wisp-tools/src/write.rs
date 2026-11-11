@@ -16,7 +16,7 @@ impl Tool for WriteTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "write",
-            "Write content to a file, overwriting if it exists. The path must be inside the project root. `content` counts against the model's output limit, so an oversized call is cut off and discarded: revise an existing long document with edit, section by section, instead of rewriting it.",
+            "Write content to a file, overwriting if it exists and creating missing parent directories. The path must be inside the project root. `content` counts against the model's output limit, so an oversized call is cut off and discarded: revise an existing long document with edit, section by section, instead of rewriting it.",
             json!({
                 "type": "object",
                 "properties": {
@@ -138,6 +138,65 @@ mod tests {
         );
         assert!(env.events.lock().unwrap().is_empty());
         std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[tokio::test]
+    async fn write_creates_nested_parent_directories() {
+        let tmp = std::env::temp_dir().join(format!("wisp_write_nested_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let env = RecordingEnv {
+            root: tmp.clone(),
+            events: Mutex::new(Vec::new()),
+        };
+        let result = WriteTool
+            .run(
+                &json!({ "path": "new/deep/script.py", "content": "print(1)" }),
+                &env,
+            )
+            .await;
+        assert!(result.success, "{}", result.content);
+        assert_eq!(
+            std::fs::read_to_string(tmp.join("new/deep/script.py")).unwrap(),
+            "print(1)"
+        );
+        let escaped = WriteTool
+            .run(
+                &json!({ "path": "../outside/deep/file", "content": "no" }),
+                &env,
+            )
+            .await;
+        assert!(!escaped.success);
+        std::fs::remove_dir_all(tmp).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn write_rejects_missing_parents_beyond_outbound_and_dangling_links() {
+        let tmp =
+            std::env::temp_dir().join(format!("wisp_write_parent_link_{}", std::process::id()));
+        let root = tmp.join("project");
+        let outside = tmp.join("outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("escape")).unwrap();
+        std::os::unix::fs::symlink(outside.join("missing"), root.join("dangling")).unwrap();
+        let env = RecordingEnv {
+            root,
+            events: Mutex::new(Vec::new()),
+        };
+        for path in [
+            "escape/new/deep/file",
+            "dangling/new/file",
+            "missing/../../outside/file",
+        ] {
+            let result = WriteTool
+                .run(&json!({ "path": path, "content": "no" }), &env)
+                .await;
+            assert!(!result.success, "{path}: {}", result.content);
+        }
+        assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
+        assert!(env.events.lock().unwrap().is_empty());
+        std::fs::remove_dir_all(tmp).unwrap();
     }
 
     struct CancelledEnv(PathBuf);
