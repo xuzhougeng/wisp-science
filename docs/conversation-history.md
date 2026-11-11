@@ -218,6 +218,11 @@ Both conversations keep their history. Unsent text and quotes remain attached
 to their own sessions when you switch; these drafts are held in memory and do
 not survive an app restart. Very long excerpts are shortened with a visible notice.
 
+A range is read from the saved conversation by where each turn starts. If the
+range includes a turn whose start or rows were never saved, the quote is
+refused with "The selected turns are not available." instead of being filled
+from other turns of the first context epoch.
+
 ### Distill a reusable experience
 
 In the same review dialog, choose **Distill experience**, optionally describe the
