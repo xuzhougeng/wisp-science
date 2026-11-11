@@ -7444,7 +7444,6 @@ dependencies = [
  "dunce",
  "flate2",
  "futures-util",
- "glob",
  "hex",
  "ignore",
  "image",

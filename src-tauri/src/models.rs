@@ -160,6 +160,8 @@ impl Default for VideoGenerationOptions {
 }
 
 const PROFILES_KEY: &str = "model_profiles";
+/// Holds the last `model_profiles` value that failed to parse, verbatim.
+const PROFILES_BACKUP_KEY: &str = "model_profiles_unreadable_backup";
 pub(crate) const ACTIVE_KEY: &str = "active_model_id";
 /// Global default model for subagents (`delegate_tasks` children and
 /// `dispatch_subagent` conversations). Missing or empty follows the
@@ -693,7 +695,37 @@ async fn load_raw(store: &wisp_store::Store) -> Vec<ModelProfile> {
     let Some(raw) = store.get_setting(PROFILES_KEY).await.ok().flatten() else {
         return Vec::new();
     };
-    serde_json::from_str::<Vec<ModelProfile>>(&raw).unwrap_or_default()
+    match serde_json::from_str::<Vec<ModelProfile>>(&raw) {
+        Ok(profiles) => profiles,
+        Err(error) => {
+            // An unreadable list must not look like a fresh install: callers
+            // save over this setting, which would erase every saved profile.
+            // Keep the original value and whatever entries still parse.
+            let salvaged = salvage_profiles(&raw);
+            tracing::warn!(
+                %error,
+                salvaged = salvaged.len(),
+                "saved model profiles could not be read; the original value is kept in {PROFILES_BACKUP_KEY}"
+            );
+            let backed_up = store.get_setting(PROFILES_BACKUP_KEY).await.ok().flatten();
+            if backed_up.as_deref() != Some(raw.as_str()) {
+                let _ = store.set_setting(PROFILES_BACKUP_KEY, &raw).await;
+            }
+            salvaged
+        }
+    }
+}
+
+/// The entries of an unreadable profile list that are still valid on their own.
+fn salvage_profiles(raw: &str) -> Vec<ModelProfile> {
+    serde_json::from_str::<Vec<serde_json::Value>>(raw)
+        .map(|items| {
+            items
+                .into_iter()
+                .filter_map(|item| serde_json::from_value(item).ok())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 async fn save_raw(store: &wisp_store::Store, profiles: &[ModelProfile]) -> Result<(), String> {
@@ -2747,6 +2779,45 @@ mod tests {
         })
         .unwrap();
         assert_eq!(removed, vec![wisp_llm::codex_auth::SUBSCRIPTION_SECRET]);
+    }
+
+    #[tokio::test]
+    async fn unreadable_profiles_are_backed_up_and_salvaged_not_erased() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = wisp_store::Store::open(&dir.path().join("unreadable.sqlite"))
+            .await
+            .unwrap();
+
+        // One entry with a field of the wrong type, one valid entry.
+        let good = serde_json::to_value(test_profile("keep", "Keep", "keep-model")).unwrap();
+        let mut bad = serde_json::to_value(test_profile("bad", "Bad", "bad-model")).unwrap();
+        bad["model"] = serde_json::json!({ "not": "a string" });
+        let mixed = serde_json::json!([bad, good]).to_string();
+        store.set_setting(PROFILES_KEY, &mixed).await.unwrap();
+        let profiles = ensure(&store).await;
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].id, "keep");
+        assert_eq!(
+            store
+                .get_setting(PROFILES_BACKUP_KEY)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some(mixed.as_str())
+        );
+
+        // Nothing parses: the legacy default is seeded, the original survives.
+        store.set_setting(PROFILES_KEY, "{broken").await.unwrap();
+        let seeded = ensure(&store).await;
+        assert_eq!(seeded.len(), 1);
+        assert_eq!(
+            store
+                .get_setting(PROFILES_BACKUP_KEY)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("{broken")
+        );
     }
 
     fn test_profile(id: &str, label: &str, model: &str) -> ModelProfile {

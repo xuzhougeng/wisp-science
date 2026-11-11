@@ -7,7 +7,6 @@
 //! calling agent plan complementary exact, conceptual, procedural, and temporal
 //! searches.
 
-use glob::glob;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -168,12 +167,13 @@ impl MemoryManager {
     }
 
     fn chunks(&self) -> Vec<MemoryChunk> {
-        let pattern = format!("{}/*.md", self.dir.display());
-        let mut paths: Vec<PathBuf> = glob(&pattern)
-            .ok()
+        // Not a glob: a project path containing `[`, `*` or `?` is a literal.
+        let mut paths: Vec<PathBuf> = std::fs::read_dir(&self.dir)
             .into_iter()
             .flatten()
             .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "md") && path.is_file())
             .collect();
         paths.sort_by(|left, right| right.cmp(left));
         let mut chunks = Vec::new();
@@ -405,6 +405,27 @@ mod tests {
             })
             .unwrap();
         assert!(result.results.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn search_reads_notes_under_a_path_with_glob_metacharacters() {
+        let root = temp_root("brackets [v2] *");
+        let memory = MemoryManager::new(&root);
+        memory
+            .append("[TURN-MEMORY]\nScanpy h5ad OOM was fixed with backed mode.")
+            .unwrap();
+        let response = memory
+            .search(&MemorySearchRequest {
+                queries: vec![MemorySearchQuery {
+                    text: "backed mode".into(),
+                    kind: "concept".into(),
+                }],
+                time_hint: None,
+                max_results: 10,
+            })
+            .unwrap();
+        assert_eq!(response.results.len(), 1);
         let _ = std::fs::remove_dir_all(&root);
     }
 

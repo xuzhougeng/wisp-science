@@ -5253,13 +5253,7 @@ async fn project_has_approval_overlay(store: &Store, project_id: &str) -> bool {
 
 /// Reload the live approval policy after a settings change so running sessions
 /// see it on their next tool call (approval is enforced live, not per session).
-/// `None` reloads the process-wide default (unprefixed keys). Kept for
-/// global-default writers (connector enable/disable stays process-wide).
-#[allow(dead_code)]
-async fn refresh_approval_policy(state: &AppState) {
-    refresh_approval_policy_for(state, None).await;
-}
-
+/// `None` reloads the process-wide default (unprefixed keys).
 async fn refresh_approval_policy_for(state: &AppState, project_id: Option<&str>) {
     let policy = build_approval_policy_for(&state.store, project_id).await;
     if let Ok(mut live) = state.approvals.write() {

@@ -48,8 +48,10 @@ impl RelayHttpState {
 }
 
 pub fn relay_router(state: RelayHttpState) -> Router {
-    Router::new()
-        .route("/healthz", get(|| async { "ok" }))
+    // The bearer check runs as a layer, before any extractor: a handler that
+    // takes the body as an argument would otherwise buffer up to
+    // `MAX_RELAY_BODY_BYTES` from a caller that has not authenticated yet.
+    let sync_routes = Router::new()
         .route("/v1/projects/{project_id}/head", get(get_head))
         .route(
             "/v1/projects/{project_id}/revisions/{revision_id}",
@@ -60,6 +62,13 @@ pub fn relay_router(state: RelayHttpState) -> Router {
             get(get_blob).head(head_blob).put(put_blob),
         )
         .route("/v1/projects/{project_id}/commit", post(commit))
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            require_bearer,
+        ));
+    Router::new()
+        .route("/healthz", get(|| async { "ok" }))
+        .merge(sync_routes)
         .route("/remote", get(crate::remote::page))
         .route("/remote.js", get(crate::remote::script))
         .route("/remote.webmanifest", get(crate::remote::manifest))
@@ -95,6 +104,17 @@ pub(crate) fn authorized(headers: &HeaderMap, state: &RelayHttpState) -> bool {
             let provided_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, token.as_bytes());
             ring::hmac::verify(&provided_key, MESSAGE, expected.as_ref()).is_ok()
         })
+}
+
+async fn require_bearer(
+    State(state): State<RelayHttpState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    if !authorized(request.headers(), &state) {
+        return unauthorized();
+    }
+    next.run(request).await
 }
 
 pub(crate) fn unauthorized() -> Response {
@@ -284,15 +304,7 @@ impl HttpRelay {
     }
 
     pub(crate) fn component(value: &str, name: &str) -> Result<()> {
-        if value.is_empty()
-            || value.len() > 128
-            || !value
-                .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.'))
-        {
-            anyhow::bail!("invalid {name}");
-        }
-        Ok(())
+        crate::relay::FileRelay::validate_component(value, name)
     }
 
     fn blob_id(value: &str) -> Result<()> {
@@ -465,6 +477,44 @@ mod tests {
             "Bearer correct-token".parse().unwrap(),
         );
         assert!(authorized(&headers, &state));
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn an_unauthenticated_upload_is_refused_before_its_body_is_read() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let root = std::env::temp_dir().join(format!("wisp-http-early-{}", uuid::Uuid::new_v4()));
+        let relay = FileRelay::open(&root).await.unwrap();
+        let app = relay_router(RelayHttpState::new(relay, "correct-token").unwrap());
+        let blob_id = "a".repeat(64);
+        for (path, method) in [
+            (format!("/v1/blobs/{blob_id}"), "PUT"),
+            ("/v1/projects/p/commit".to_string(), "POST"),
+        ] {
+            let polled = Arc::new(AtomicBool::new(false));
+            let flag = polled.clone();
+            let body = Body::from_stream(futures_util::stream::once(async move {
+                flag.store(true, Ordering::SeqCst);
+                Ok::<_, std::io::Error>(Bytes::from_static(b"payload"))
+            }));
+            let request = Request::builder()
+                .method(method)
+                .uri(&path)
+                .header("authorization", "Bearer wrong-token")
+                .header("content-type", "application/json")
+                .body(body)
+                .unwrap();
+            let response = app.clone().oneshot(request).await.unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::UNAUTHORIZED,
+                "{method} {path}"
+            );
+            assert!(
+                !polled.load(Ordering::SeqCst),
+                "{method} {path} read the body"
+            );
+        }
         let _ = tokio::fs::remove_dir_all(root).await;
     }
 

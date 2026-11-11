@@ -46,9 +46,6 @@ pub struct NativeBio {
     credentials: Vec<(String, String)>,
 }
 
-/// Hosts historically constructed `PubMed`; that name now covers every native domain.
-pub type PubMed = NativeBio;
-
 impl NativeBio {
     pub fn new(credentials: &[(String, String)]) -> Result<Self> {
         Self::with_proxy(credentials, "")
@@ -106,7 +103,7 @@ impl NativeBio {
     #[cfg(test)]
     pub(crate) fn test_client(credentials: &[(String, String)], http: http::Http) -> Result<Self> {
         Ok(Self {
-            pubmed: pubmed::PubMed::new(credentials)?,
+            pubmed: pubmed::PubMed::with_http(credentials, http.clone()),
             http,
             credentials: credentials
                 .iter()

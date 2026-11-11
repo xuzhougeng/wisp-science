@@ -99,7 +99,7 @@ final class NativeComposerHelpersTests: XCTestCase {
         analysis.minimum_failures = 0; await model.setAnalysis(analysis)
         analysis.minimum_failures = 101; await model.setAnalysis(analysis)
         let writes = await fake.recorded(); XCTAssertEqual(writes.count, 3)
-        XCTAssertEqual(writes[0].2, ["enabled": .bool(false), "project_id": .string("project-a")])
+        XCTAssertEqual(writes[0].2, ["enabled": .bool(false), "projectId": .string("project-a")])
         XCTAssertEqual(writes[2].2["settings"], model.analysis?.value)
         XCTAssertTrue(writes.allSatisfy { $0.0 == "project-a" && $0.2["session_id"] == nil })
     }

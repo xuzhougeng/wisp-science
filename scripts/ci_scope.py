@@ -20,7 +20,7 @@ DESIGN_INPUTS = frozenset({
     "ui/src/app_support/messages.rs", "ui/src/i18n.rs", "ui/src/app_support/settings.rs",
     "ui/src/automation.rs", "ui/src/settings_view.rs", "ui/src/styles/base.css",
     "ui/src/styles/chat.css", "docs/assets/wordmark-light.svg", "docs/assets/wordmark-dark.svg",
-    "apps/macos/native-settings-english.json",
+    "apps/macos/native-settings-english.json", "ui/logo.svg",
 })
 
 
@@ -67,7 +67,7 @@ def scopes_for_path(path):
         # These are actually bundled by native clients, unlike general Leptos
         # source which is validated by the independent wasm/browser jobs.
         if path.startswith("ui/vendor-src/") or path in {
-            "ui/native-host.html", "ui/sync-vendor.mjs", "ui/package.json", "ui/package-lock.json",
+            "ui/native-host.html", "ui/sync-vendor.mjs",
         }:
             scopes.update({"macos", "windows", "shared_assets"})
         return scopes

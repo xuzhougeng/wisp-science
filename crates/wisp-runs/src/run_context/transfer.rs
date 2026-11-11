@@ -2212,7 +2212,7 @@ async fn download_remote_item(
 ) -> Result<(super::RunCommandOutput, PathBuf, u64, u64), String> {
     let mut download_args = source.scp_option_args()?;
     download_args.push("-r".into());
-    download_args.push(format!("{}:{source_path}", source.target()?));
+    download_args.push(source.scp_remote_arg(source_path)?);
     download_args.push(scp_local_path(staging_dir));
     let download = checked_output(
         "SSH download",
@@ -2459,7 +2459,7 @@ async fn local_upload_lifecycle(
                     upload_args.push("-r".into());
                 }
                 upload_args.push(scp_local_path(&source_path));
-                upload_args.push(format!("{}:{destination_path}", destination.target()?));
+                upload_args.push(destination.scp_remote_arg(&destination_path)?);
                 RunCommand {
                     context_id: format!("ssh:{}", destination.alias),
                     program: "scp".into(),
@@ -2779,7 +2779,7 @@ async fn relay_lifecycle(
             upload_args.push("-r".into());
         }
         upload_args.push(scp_local_path(&local_item));
-        upload_args.push(format!("{}:{destination_path}", destination.target()?));
+        upload_args.push(destination.scp_remote_arg(&destination_path)?);
         let upload = checked_output(
             "Relay upload",
             run_with_lifecycle_lease(

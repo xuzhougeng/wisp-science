@@ -93,7 +93,9 @@ pub(super) fn ChannelsPane(
     // Status events fire on every browser connect; load the URL field once.
     let remote_loaded = create_rw_signal(false);
 
-    let refresh = Callback::new(move |_: ()| {
+    // A plain `Copy` closure, not a `Callback`: polls and the event listener
+    // can outlive this pane, and calling a disposed `Callback` panics.
+    let refresh = move |_: ()| {
         spawn_local(async move {
             if let Ok(v) = invoke_checked("channels_status", JsValue::UNDEFINED).await {
                 if let Ok(s) = serde_wasm_bindgen::from_value::<ChannelsStatus>(v) {
@@ -109,16 +111,32 @@ pub(super) fn ChannelsPane(
                 }
             }
         });
-    });
-    refresh.call(());
+    };
+    refresh(());
     {
-        let refresh = refresh;
+        // Unlisten when the pane unmounts; otherwise every visit to this
+        // section leaves another permanent listener behind.
+        let closed = store_value(false);
+        let unlisten = store_value(None::<js_sys::Function>);
         spawn_local(async move {
             let callback = Closure::wrap(Box::new(move |_event: JsValue| {
-                refresh.call(());
+                refresh(());
             }) as Box<dyn FnMut(JsValue)>);
-            let _ = listen("channels-updated", callback.as_ref().unchecked_ref()).await;
+            let result = listen("channels-updated", callback.as_ref().unchecked_ref()).await;
             callback.forget();
+            if let Some(f) = result.dyn_ref::<js_sys::Function>() {
+                if closed.try_get_value().unwrap_or(true) {
+                    let _ = f.call0(&JsValue::NULL);
+                } else {
+                    unlisten.set_value(Some(f.clone()));
+                }
+            }
+        });
+        on_cleanup(move || {
+            closed.set_value(true);
+            if let Some(f) = unlisten.get_value() {
+                let _ = f.call0(&JsValue::NULL);
+            }
         });
     }
 
@@ -146,7 +164,7 @@ pub(super) fn ChannelsPane(
                     )));
                 }
             }
-            refresh.call(());
+            refresh(());
         });
     });
 
@@ -224,7 +242,7 @@ pub(super) fn ChannelsPane(
                             true,
                             t(locale.get_untracked(), "channels.feishu.bound").into(),
                         )));
-                        refresh.call(());
+                        refresh(());
                         return;
                     }
                     "denied" => {
@@ -283,7 +301,7 @@ pub(super) fn ChannelsPane(
                     )));
                 }
             }
-            refresh.call(());
+            refresh(());
         });
     });
 
@@ -307,7 +325,7 @@ pub(super) fn ChannelsPane(
                     )));
                 }
             }
-            refresh.call(());
+            refresh(());
         });
     });
 
@@ -329,7 +347,7 @@ pub(super) fn ChannelsPane(
                     )));
                 }
             }
-            refresh.call(());
+            refresh(());
         });
     });
 
@@ -349,7 +367,7 @@ pub(super) fn ChannelsPane(
                     )));
                 }
             }
-            refresh.call(());
+            refresh(());
         });
     });
 
@@ -363,7 +381,7 @@ pub(super) fn ChannelsPane(
                     localize_backend(locale.get_untracked(), &js_error_text(error)),
                 )));
             }
-            refresh.call(());
+            refresh(());
         });
     });
 
@@ -376,7 +394,7 @@ pub(super) fn ChannelsPane(
                     localize_backend(locale.get_untracked(), &js_error_text(e)),
                 )));
             }
-            refresh.call(());
+            refresh(());
         });
     });
 
@@ -421,7 +439,7 @@ pub(super) fn ChannelsPane(
                                     true,
                                     t(locale.get_untracked(), "channels.weixin.bound").into(),
                                 )));
-                                refresh.call(());
+                                refresh(());
                                 return;
                             }
                             "expired" => {
@@ -466,7 +484,7 @@ pub(super) fn ChannelsPane(
                     )));
                 }
             }
-            refresh.call(());
+            refresh(());
         });
     });
 
@@ -503,7 +521,7 @@ pub(super) fn ChannelsPane(
                     )));
                 }
             }
-            refresh.call(());
+            refresh(());
         });
     });
 
@@ -530,7 +548,7 @@ pub(super) fn ChannelsPane(
                     )));
                 }
             }
-            refresh.call(());
+            refresh(());
         });
     });
 
@@ -550,7 +568,7 @@ pub(super) fn ChannelsPane(
                     )));
                 }
             }
-            refresh.call(());
+            refresh(());
         });
     });
 
@@ -580,7 +598,7 @@ pub(super) fn ChannelsPane(
                     )));
                 }
             }
-            refresh.call(());
+            refresh(());
         });
     });
 
@@ -625,7 +643,7 @@ pub(super) fn ChannelsPane(
                     )));
                 }
             }
-            refresh.call(());
+            refresh(());
         });
     });
 

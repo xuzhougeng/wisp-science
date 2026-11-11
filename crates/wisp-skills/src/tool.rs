@@ -305,6 +305,11 @@ impl Tool for ListSkillCatalogTool {
             .to_string()
     }
 
+    /// A pure catalog read: stays callable in plan mode and unattended turns.
+    fn read_only(&self) -> bool {
+        true
+    }
+
     async fn run(&self, args: &serde_json::Value, _env: &dyn ToolEnv) -> ToolResult {
         self.list(args)
     }

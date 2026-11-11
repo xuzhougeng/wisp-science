@@ -388,19 +388,19 @@ fn parse_flat_record(chunk: &str) -> Result<KeggRecord> {
     })
 }
 
+// `get` rather than slicing: byte 12 of a non-ASCII line may not be a
+// character boundary, and an upstream body must not be able to panic the tool.
 fn field_keyword(line: &str) -> String {
-    if line.len() >= FIELD_WIDTH {
-        line[..FIELD_WIDTH].trim().to_string()
-    } else {
-        line.trim().to_string()
+    match line.get(..FIELD_WIDTH) {
+        Some(keyword) => keyword.trim().to_string(),
+        None => line.trim().to_string(),
     }
 }
 
 fn field_value(line: &str) -> String {
-    if line.len() >= FIELD_WIDTH {
-        line[FIELD_WIDTH..].trim_end().to_string()
-    } else {
-        String::new()
+    match line.get(FIELD_WIDTH..) {
+        Some(value) => value.trim_end().to_string(),
+        None => String::new(),
     }
 }
 

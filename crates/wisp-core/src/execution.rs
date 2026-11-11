@@ -361,6 +361,9 @@ impl DelegationExecutor {
                     self.observer.step_blocked(&request, &reason).await?;
                     responses.insert(step_id.clone(), response);
                     pending.remove(index);
+                    // A step listed before its dependency was skipped while the
+                    // dependency had no response; rescan so the block propagates.
+                    index = 0;
                 } else {
                     index += 1;
                 }
@@ -949,31 +952,37 @@ mod tests {
     }
 
     fn fan_in_plan() -> (DelegationPlan, CapabilityRegistry, DelegationHostPolicy) {
-        let (registry, host) = dynamic_policy();
-        let tasks = [
+        plan_of(vec![
             ("inspect", vec![]),
             ("research", vec![]),
             ("synthesize", vec!["inspect".into(), "research".into()]),
-        ]
-        .into_iter()
-        .map(|(id, depends_on)| DelegatedTaskProposal {
-            id: id.into(),
-            instruction: format!("Complete {id}"),
-            context_summary: String::new(),
-            depends_on,
-            capabilities: vec!["reasoning".into()],
-            skill_bindings: vec![],
-            specialist: None,
-            output_schema: None,
-            isolated: false,
-            model_id: None,
-            model_tier: None,
-            executor: None,
-            budget: None,
-            timeout_secs: None,
-            input: serde_json::json!({}),
-        })
-        .collect();
+        ])
+    }
+
+    fn plan_of(
+        steps: Vec<(&str, Vec<String>)>,
+    ) -> (DelegationPlan, CapabilityRegistry, DelegationHostPolicy) {
+        let (registry, host) = dynamic_policy();
+        let tasks = steps
+            .into_iter()
+            .map(|(id, depends_on)| DelegatedTaskProposal {
+                id: id.into(),
+                instruction: format!("Complete {id}"),
+                context_summary: String::new(),
+                depends_on,
+                capabilities: vec!["reasoning".into()],
+                skill_bindings: vec![],
+                specialist: None,
+                output_schema: None,
+                isolated: false,
+                model_id: None,
+                model_tier: None,
+                executor: None,
+                budget: None,
+                timeout_secs: None,
+                input: serde_json::json!({}),
+            })
+            .collect();
         let plan = registry
             .resolve_plan(
                 "parallel analysis with final synthesis",
@@ -1274,6 +1283,36 @@ mod tests {
             .await
             .iter()
             .any(|step| step == "synthesize"));
+    }
+
+    #[tokio::test]
+    async fn failed_dependency_blocks_a_chain_listed_before_it() {
+        // `last` is listed before `middle`, which is listed before `first`: one
+        // forward pass sees `last` while `middle` still has no response.
+        let (plan, registry, host) = plan_of(vec![
+            ("last", vec!["middle".into()]),
+            ("middle", vec!["first".into()]),
+            ("first", vec![]),
+        ]);
+        let delegator = Arc::new(RecordingDelegator {
+            active: AtomicUsize::new(0),
+            max_active: AtomicUsize::new(0),
+            calls: Mutex::new(vec![]),
+            fail: Some("first".into()),
+        });
+        let result = DelegationExecutor::new(delegator.clone())
+            .with_dynamic_policy(registry, host)
+            .execute(plan)
+            .await
+            .unwrap();
+        assert_eq!(result.status, DelegationExecutionStatus::Failed);
+        let blocked = result
+            .steps
+            .iter()
+            .filter(|step| step.response.status == DelegationStatus::Blocked)
+            .count();
+        assert_eq!(blocked, 2);
+        assert_eq!(*delegator.calls.lock().await, ["first"]);
     }
 
     #[tokio::test]

@@ -3017,15 +3017,6 @@ fn merge_ready_wait(mut payload: Value, ready: Option<bool>, wait: Option<Value>
     payload
 }
 
-#[allow(dead_code)]
-fn render_bridge_error(error: Option<&Value>) -> String {
-    match error {
-        Some(Value::String(error)) => error.clone(),
-        Some(error) => serde_json::to_string_pretty(error).unwrap_or_else(|_| error.to_string()),
-        None => "browser extension returned an unknown error".into(),
-    }
-}
-
 fn session_arg(args: &Value) -> Result<Option<String>, String> {
     let Some(value) = args.get("session") else {
         return Ok(None);

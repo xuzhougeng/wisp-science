@@ -708,11 +708,16 @@ impl ContextManager {
     }
 
     pub fn save(&self, path: &Path) {
+        let _ = self.try_save(path);
+    }
+
+    /// [`Self::save`] for callers that must know the archive is complete.
+    fn try_save(&self, path: &Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            std::fs::create_dir_all(parent)?;
         }
-        let s = serde_json::to_string_pretty(&self.messages).unwrap_or_default();
-        let _ = std::fs::write(path, s);
+        let s = serde_json::to_string_pretty(&self.messages)?;
+        std::fs::write(path, s)
     }
 
     /// Plain-text transcript for read/grep retrieval. Images become labels only.
@@ -1954,12 +1959,12 @@ impl ContextManager {
         }
         self.invalidate_last_request();
         let before = self.request_tokens_with_reserve(fixed_tokens);
-        self.save(archive_path);
-        if !archive_path.is_file() {
+        if let Err(error) = self.try_save(archive_path) {
             // Never fold anything we failed to archive — retrievability is the
-            // contract of /compact.
+            // contract of /compact. A file that merely exists is not enough: a
+            // failed write leaves an empty, partial, or stale one behind.
             return Err(format!(
-                "compact aborted: could not write archive {}",
+                "compact aborted: could not write archive {}: {error}",
                 archive_path.display()
             ));
         }
@@ -2401,6 +2406,30 @@ mod tests {
                 Content::text(format!("tool-output-{i} {}", "x".repeat(50))),
             );
         }
+    }
+
+    #[tokio::test]
+    async fn compact_aborts_when_the_archive_cannot_be_written() {
+        let mut ctx = ContextManager::new(1_000_000);
+        ctx.append_system("sys");
+        seed_turns(&mut ctx, 11);
+        let before = serde_json::to_string(&ctx.messages).unwrap();
+
+        // The archive's parent is a regular file, so nothing can be written,
+        // while a stale file of the same name may still exist elsewhere.
+        let blocker = archive_path("not-a-directory");
+        std::fs::create_dir_all(blocker.parent().unwrap()).unwrap();
+        std::fs::write(&blocker, b"x").unwrap();
+        let provider = StubProvider {
+            allow_summary: false,
+        };
+        let error = ctx
+            .compact(&provider, &blocker.join("archive.json"))
+            .await
+            .unwrap_err();
+        assert!(error.contains("could not write archive"), "{error}");
+        assert_eq!(serde_json::to_string(&ctx.messages).unwrap(), before);
+        let _ = std::fs::remove_file(blocker);
     }
 
     // /compact archives the full history first, then tombstones old tool

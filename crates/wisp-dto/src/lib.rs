@@ -4028,18 +4028,6 @@ pub struct ConnForm {
     pub proxy_custom: bool,
 }
 
-impl ConnForm {
-    pub fn new_connection() -> Self {
-        Self {
-            kind: "stdio".into(),
-            enabled: true,
-            headers: vec![ConnSecretField::default()],
-            env: vec![ConnSecretField::default()],
-            ..Self::default()
-        }
-    }
-}
-
 #[derive(Clone, Default)]
 pub struct ModelFormEntry {
     pub row_id: u64,

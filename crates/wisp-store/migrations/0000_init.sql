@@ -138,8 +138,8 @@ CREATE TABLE IF NOT EXISTS artifacts (
     exploration_id  TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_artifacts_project ON artifacts(project_id);
-CREATE INDEX IF NOT EXISTS ix_artifacts_project_logical_key
-    ON artifacts(project_id, logical_key) WHERE logical_key IS NOT NULL;
+-- ix_artifacts_project_logical_key is created by Store::apply_exploration_branches:
+-- a legacy artifacts table gains logical_key only after this script has run.
 
 CREATE TABLE IF NOT EXISTS artifact_versions (
     id                  TEXT PRIMARY KEY,

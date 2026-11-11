@@ -937,13 +937,13 @@ pub(super) async fn reload_project_rules(
         return Err("Session does not belong to the active project.".into());
     }
     let runtime = state.sessions.lock().await.get(&frame_id).cloned();
-    if let Some(rt) = &runtime {
-        if rt.workflow.clone().try_lock_owned().is_err() {
-            return Err(
-                "This session is running a turn; reload the rules after it finishes.".into(),
-            );
-        }
-    }
+    // Held until the prompt is replaced, so a turn cannot start on the old one.
+    let _workflow = match &runtime {
+        Some(rt) => Some(rt.workflow.clone().try_lock_owned().map_err(|_| {
+            "This session is running a turn; reload the rules after it finishes.".to_string()
+        })?),
+        None => None,
+    };
     let stored = state
         .store
         .load_system_messages(std::slice::from_ref(&frame_id))
@@ -1780,8 +1780,6 @@ pub(crate) async fn recent_home_sessions(
         .collect())
 }
 
-/// Switch the active session to `id`, load its transcript, and return the
-/// rendered rows so the UI can repopulate the conversation view.
 /// Rewind the named session to just before the given user turn (for message
 /// edit). Only touches that session's agent context and DB rows.
 #[tauri::command]

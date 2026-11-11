@@ -81,9 +81,10 @@ impl Tool for GrepTool {
             else {
                 continue;
             };
+            // Grew past the limit since the size check: skip it like any
+            // other oversized file instead of abandoning the whole search.
             if bytes.len() as u64 > MAX_FILE_BYTES {
-                truncated = true;
-                break;
+                continue;
             }
             let Ok(text) = String::from_utf8(bytes) else {
                 continue;

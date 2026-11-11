@@ -81,8 +81,8 @@ or Escape dismisses only that dialog and preserves the workflow and draft.
 The composer `/` picker searches both enabled Skills and Workflow templates.
 Selecting a Workflow adds a typed Workflow chip instead of copying prose into
 the message. On send, Wisp resolves the template by stable ID, injects its
-exact DAG contract, and enables delegation for that native conversation so
-the main Agent can execute the graph through `delegate_tasks`. Skill and
+exact DAG contract so the main Agent can execute the graph through
+`delegate_tasks`. Skill and
 Workflow chips can be combined in the same turn; transcript cards retain both
 selections after reload. Removed or unavailable templates fail closed instead
 of silently falling back to an invented plan.
