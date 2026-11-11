@@ -7,7 +7,7 @@
 //! - assistant tool calls become `tool_use` content blocks
 
 use crate::message::{Content, Message, Role, ToolCall, ToolSchema};
-use crate::provider::{LlmError, Provider, Result, StreamSink, Utf8Stream};
+use crate::provider::{LlmError, Provider, Result, SseTextStream, StreamSink};
 use crate::{Completion, FunctionCall, Usage};
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -434,11 +434,12 @@ impl Provider for AnthropicProvider {
         }
         let mut stream = resp.bytes_stream();
         let mut buf = String::new();
-        let mut utf8 = Utf8Stream::default();
+        let mut text = SseTextStream::default();
         // index -> (type, id, name, input_json_accumulator, text_accumulator)
         let mut blocks: std::collections::BTreeMap<usize, BlockAcc> =
             std::collections::BTreeMap::new();
         let mut content = String::new();
+        let mut reasoning = String::new();
         let mut finish_reason: Option<String> = None;
         let mut usage = Usage::default();
         let mut saw_stop = false;
@@ -450,7 +451,7 @@ impl Provider for AnthropicProvider {
                 break;
             }
             let bytes = chunk?;
-            buf.push_str(&utf8.push(&bytes));
+            buf.push_str(&text.push(&bytes));
             while let Some(idx) = buf.find("\n\n") {
                 let event = buf[..idx].to_string();
                 buf.drain(..idx + 2);
@@ -465,8 +466,11 @@ impl Provider for AnthropicProvider {
                 // inside an otherwise successful SSE response. Relays may also
                 // omit the event name and leave only `{type:"error"}`. Neither
                 // is a completed model turn, even if a terminal frame follows.
-                if anthropic_stream_event_is_error(&etype, &val) {
-                    return Err(LlmError::Incomplete);
+                // Report the provider's reason rather than a bare "stream
+                // cut", so overload/rate limits retry as requests and
+                // permanent failures (invalid request, billing) end the turn.
+                if let Some(error) = anthropic_stream_error(&etype, &val) {
+                    return Err(error);
                 }
                 match etype.as_str() {
                     "message_start" => {
@@ -529,6 +533,7 @@ impl Provider for AnthropicProvider {
                             }
                             Some("thinking_delta") => {
                                 if let Some(t) = delta.get("thinking").and_then(|v| v.as_str()) {
+                                    reasoning.push_str(t);
                                     sink.on_reasoning(t);
                                 }
                             }
@@ -579,7 +584,7 @@ impl Provider for AnthropicProvider {
         }
         Ok(Completion {
             content,
-            reasoning: None,
+            reasoning: (!reasoning.is_empty()).then_some(reasoning),
             tool_calls,
             finish_reason,
             usage,
@@ -611,10 +616,68 @@ fn parse_sse_event(event: &str) -> (String, String) {
     (etype, data)
 }
 
-fn anthropic_stream_event_is_error(event_type: &str, value: &Value) -> bool {
-    event_type == "error"
-        || value.get("type").and_then(Value::as_str) == Some("error")
-        || value.get("error").is_some()
+/// Turn an in-band stream error into `LlmError::Api` carrying the provider's
+/// error type and message. Shapes: Anthropic's
+/// `{"type":"error","error":{"type":"overloaded_error","message":..}}`, and
+/// relay variants that drop the event name, flatten the envelope, or send
+/// `{"error":"plain text"}`. `"error": null` on a normal event is not one.
+///
+/// The status is the HTTP code Anthropic documents for the error type, so
+/// `is_retriable` (429/5xx/overloaded) and `is_context_overflow` (400) treat
+/// a mid-stream failure like the same failure before the stream opened. An
+/// unknown type falls back to a numeric `code`/`status`, then to the 200 the
+/// server actually sent.
+fn anthropic_stream_error(event_type: &str, value: &Value) -> Option<LlmError> {
+    let envelope = value.get("error").filter(|error| !error.is_null());
+    if event_type != "error"
+        && value.get("type").and_then(Value::as_str) != Some("error")
+        && envelope.is_none()
+    {
+        return None;
+    }
+    let detail = envelope.unwrap_or(value);
+    let kind = detail
+        .get("type")
+        .and_then(Value::as_str)
+        .filter(|kind| *kind != "error");
+    let message = detail
+        .as_str()
+        .or_else(|| detail.get("message").and_then(Value::as_str))
+        .or_else(|| value.get("message").and_then(Value::as_str))
+        .map(str::to_string)
+        .unwrap_or_else(|| detail.to_string());
+    let status = kind
+        .and_then(|kind| match kind {
+            "invalid_request_error" => Some(400),
+            "authentication_error" => Some(401),
+            "billing_error" => Some(402),
+            "permission_error" => Some(403),
+            "not_found_error" => Some(404),
+            "request_too_large" => Some(413),
+            "rate_limit_error" => Some(429),
+            "api_error" => Some(500),
+            "timeout_error" => Some(504),
+            "overloaded_error" => Some(529),
+            _ => None,
+        })
+        .or_else(|| {
+            detail
+                .get("code")
+                .or_else(|| detail.get("status"))
+                .and_then(|code| match code {
+                    Value::Number(n) => n.as_u64(),
+                    Value::String(s) => s.parse().ok(),
+                    _ => None,
+                })
+                .and_then(|code| u16::try_from(code).ok())
+                .filter(|code| (100..=599).contains(code))
+        })
+        .unwrap_or(200);
+    let body = match kind {
+        Some(kind) => format!("{kind}: {message}"),
+        None => message,
+    };
+    Some(LlmError::Api { status, body })
 }
 
 #[cfg(test)]
@@ -965,19 +1028,98 @@ mod tests {
         assert_eq!(usage.output_tokens, 42);
     }
 
+    fn stream_error(event_type: &str, value: Value) -> (u16, String) {
+        match anthropic_stream_error(event_type, &value) {
+            Some(LlmError::Api { status, body }) => (status, body),
+            other => panic!("expected an API error, got {other:?}"),
+        }
+    }
+
     #[test]
-    fn identifies_named_and_relayed_stream_errors() {
-        assert!(anthropic_stream_event_is_error(
-            "error",
-            &json!({"type": "error", "error": {"message": "connection reset"}})
-        ));
-        assert!(anthropic_stream_event_is_error(
-            "",
-            &json!({"type": "error", "message": "upstream failed"})
-        ));
-        assert!(!anthropic_stream_event_is_error(
-            "message_stop",
-            &json!({"type": "message_stop"})
-        ));
+    fn stream_errors_carry_the_provider_type_and_message() {
+        assert_eq!(
+            stream_error(
+                "error",
+                json!({"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}})
+            ),
+            (529, "overloaded_error: Overloaded".to_string())
+        );
+        assert_eq!(
+            stream_error(
+                "error",
+                json!({"type": "error", "error": {"type": "invalid_request_error", "message": "prompt is too long: 250000 tokens > 200000 maximum"}})
+            ),
+            (
+                400,
+                "invalid_request_error: prompt is too long: 250000 tokens > 200000 maximum"
+                    .to_string()
+            )
+        );
+        // Relays: no event name, flattened envelope, plain-text error, and a
+        // numeric code in place of a known type.
+        assert_eq!(
+            stream_error("", json!({"type": "error", "message": "upstream failed"})),
+            (200, "upstream failed".to_string())
+        );
+        assert_eq!(
+            stream_error("", json!({"error": "upstream connection reset"})),
+            (200, "upstream connection reset".to_string())
+        );
+        assert_eq!(
+            stream_error(
+                "error",
+                json!({"type": "error", "error": {"code": "503", "message": "no channel"}})
+            ),
+            (503, "no channel".to_string())
+        );
+    }
+
+    #[test]
+    fn ordinary_stream_events_are_not_errors() {
+        assert!(anthropic_stream_error("message_stop", &json!({"type": "message_stop"})).is_none());
+        assert!(anthropic_stream_error(
+            "message_delta",
+            &json!({"type": "message_delta", "error": null, "delta": {}})
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn stream_errors_keep_retry_and_overflow_classification() {
+        let classify = |kind: &str, message: &str| {
+            anthropic_stream_error(
+                "error",
+                &json!({"type": "error", "error": {"type": kind, "message": message}}),
+            )
+            .unwrap()
+        };
+        // Transient: retried as a request, not reconnected as a cut stream.
+        for kind in [
+            "overloaded_error",
+            "rate_limit_error",
+            "api_error",
+            "timeout_error",
+        ] {
+            let error = classify(kind, "try again");
+            assert!(crate::is_retriable(&error), "{kind}");
+            assert!(!crate::is_stream_interruption(&error), "{kind}");
+        }
+        // Permanent: neither retried nor reconnected.
+        for kind in [
+            "invalid_request_error",
+            "authentication_error",
+            "billing_error",
+            "permission_error",
+            "not_found_error",
+        ] {
+            let error = classify(kind, "nope");
+            assert!(!crate::is_retriable(&error), "{kind}");
+            assert!(!crate::is_stream_interruption(&error), "{kind}");
+        }
+        assert!(classify("invalid_request_error", "prompt is too long").is_context_overflow());
+        // A relay's in-band transport failure still reconnects.
+        let relayed =
+            anthropic_stream_error("", &json!({"error": "upstream connection reset"})).unwrap();
+        assert!(crate::is_stream_interruption(&relayed));
     }
 }

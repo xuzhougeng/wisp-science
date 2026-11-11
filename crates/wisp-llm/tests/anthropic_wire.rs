@@ -159,9 +159,11 @@ fn validate_messages(body: &Value) -> Option<String> {
 }
 
 fn provider_for(url: &str) -> AnthropicProvider {
-    // The mock is loopback; keep ambient proxies out of the way.
-    std::env::set_var("NO_PROXY", "*");
-    AnthropicProvider::new(ProviderConfig::anthropic(url, "sk-test", "claude-test"))
+    // The mock is loopback; keep ambient proxies out of the way. Per-provider
+    // config, not process environment: tests in this binary run concurrently.
+    let mut cfg = ProviderConfig::anthropic(url, "sk-test", "claude-test");
+    cfg.proxy = Some("none".into());
+    AnthropicProvider::new(cfg)
 }
 
 fn tool_call(id: &str, name: &str, args: &str) -> ToolCall {
