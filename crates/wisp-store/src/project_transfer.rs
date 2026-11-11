@@ -8,7 +8,6 @@ use sqlx::{
 };
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectTransferStats {
@@ -1437,7 +1436,8 @@ impl Store {
             ("research_recaps", "*", "id"),
             ("project_memos", "*", "id"),
         ];
-        let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", database.display()))?
+        let options = SqliteConnectOptions::new()
+            .filename(database)
             .read_only(true);
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
@@ -2530,9 +2530,7 @@ mod tests {
         let header = std::fs::read(&archive_path).unwrap();
         assert_eq!(&header[18..20], &[1, 1]);
         assert!(!archive_path.with_extension("sqlite-wal").exists());
-        let archive_options =
-            SqliteConnectOptions::from_str(&format!("sqlite://{}", archive_path.display()))
-                .unwrap();
+        let archive_options = SqliteConnectOptions::new().filename(&archive_path);
         let archive_pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(archive_options)
@@ -2802,9 +2800,7 @@ mod tests {
             .await
             .unwrap();
 
-        let archive_options =
-            SqliteConnectOptions::from_str(&format!("sqlite://{}", archive_path.display()))
-                .unwrap();
+        let archive_options = SqliteConnectOptions::new().filename(&archive_path);
         let archive = SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(archive_options)

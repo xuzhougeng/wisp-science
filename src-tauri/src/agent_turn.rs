@@ -1381,19 +1381,18 @@ async fn send_message_inner_with_continuation(
                         .map(|(seq, _)| *seq)
                         .ok_or_else(|| "replace: interrupted turn is out of range".to_string())?,
                 };
-                agent.ctx.messages.truncate(start);
+                // Store first: if the rollback fails, the cached context must
+                // still match the rows it was loaded from.
                 state
                     .store
                     .truncate_model_context(&frame_id, keep_seq)
                     .await
                     .map_err(|e| format!("replace: rolling back the context failed: {e}"))?;
+                agent.ctx.messages.truncate(start);
                 rt.sync_last_seq_from_store(&state.store, &frame_id).await?;
             }
         }
     }
-    state
-        .device_hub
-        .mark_working(&frame_id, Some(ap.id.as_str()));
     // User-triggered /compact — never part of a model turn. Archive + fold the
     // in-memory context, persist the compacted working set as a new context
     // epoch (the previous rows and the visual transcript in session_ui_events
@@ -1844,6 +1843,11 @@ async fn send_message_inner_with_continuation(
     agent.ctx.supports_vision = primary_supports_vision;
     rt.effective_max_iter.store(max_iter, Ordering::SeqCst);
     rt.effective_max_iter_known.store(true, Ordering::SeqCst);
+    // Only once every fallible pre-turn step has passed: an early return emits
+    // no Done/Error, which would leave the device state Working forever.
+    state
+        .device_hub
+        .mark_working(&frame_id, Some(ap.id.as_str()));
     state.running_turns.lock().await.insert(frame_id.clone());
     // Even a Guide/cut-in racing the timer flag belongs to a subsequent human
     // turn. Never let it enter the disposable timer's ownership range, nor a

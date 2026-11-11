@@ -64,8 +64,9 @@ if [ -n "$INPUT" ] && [ -f "$INPUT" ] && [[ "$INPUT" == *.wasm ]]; then
                 new_args+=("$arg")
             fi
         done
-        "$REAL" "${new_args[@]}"
-        rc=$?
+        # `set -e` is on: capture the status so the temp file is removed either way.
+        rc=0
+        "$REAL" "${new_args[@]}" || rc=$?
         rm -f "$TMP"
         exit $rc
     else

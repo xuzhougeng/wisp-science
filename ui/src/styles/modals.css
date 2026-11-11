@@ -710,7 +710,7 @@ button.browser-needs-human-row .browser-tab-cleanup-body { opacity: 1; }
   border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-sunken);
   cursor: pointer;
 }
-.branch-candidate.selected { border-color: var(--border-active); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent); }
+.branch-candidate.selected { border-color: var(--border-active); box-shadow: 0 0 0 1px color-mix(in srgb, var(--clay) 20%, transparent); }
 .branch-candidate-head { display: flex; align-items: center; gap: 7px; padding: 9px; border-bottom: 1px solid var(--border); background: var(--bg-elev); font-size: calc(11px * var(--ui-font-scale, 1)); }
 .branch-candidate-head strong { min-width: 0; overflow: hidden; color: var(--text); font-size: calc(12px * var(--ui-font-scale, 1)); text-overflow: ellipsis; white-space: nowrap; }
 .branch-candidate-head .spacer { flex: 1 1 auto; }
@@ -723,7 +723,7 @@ button.browser-needs-human-row .browser-tab-cleanup-body { opacity: 1; }
 .branch-delta-message + .branch-delta-message { margin-top: 5px; }
 .branch-delta-message > span { display: block; margin-bottom: 3px; color: var(--text-faint); font-size: calc(9px * var(--ui-font-scale, 1)); text-transform: uppercase; }
 .branch-delta-message > div { overflow-wrap: anywhere; color: var(--text-muted); font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.45; white-space: pre-wrap; user-select: text; }
-.branch-delta-message.user { background: color-mix(in srgb, var(--accent) 7%, var(--bg-elev)); }
+.branch-delta-message.user { background: color-mix(in srgb, var(--clay) 7%, var(--bg-elev)); }
 .branch-comparison-empty { display: grid; min-height: 100px; place-items: center; color: var(--text-faint); font-size: calc(11px * var(--ui-font-scale, 1)); text-align: center; }
 .branch-convergence-note { color: var(--text-faint); font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.45; }
 .branch-merge-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 1fr); gap: 10px; min-height: 0; flex: 1 1 auto; }
@@ -738,9 +738,9 @@ button.browser-needs-human-row .browser-tab-cleanup-body { opacity: 1; }
 .branch-guidance-editor > strong { color: var(--text); font-size: calc(12px * var(--ui-font-scale, 1)); }
 .branch-guidance-editor textarea { min-height: 150px; resize: vertical; font: inherit; }
 .branch-merge-card-row { width: min(100%, 620px); }
-.branch-merge-card { display: flex; width: 100%; align-items: center; gap: 11px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-raised); color: var(--text); text-align: left; box-shadow: var(--shadow-sm); }
-.branch-merge-card:hover { border-color: var(--accent); background: var(--bg-hover); }
-.branch-merge-card-icon { display: grid; width: 36px; height: 36px; flex: 0 0 36px; place-items: center; border-radius: 10px; background: var(--accent-soft); color: var(--accent); }
+.branch-merge-card { display: flex; width: 100%; align-items: center; gap: 11px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text); text-align: left; box-shadow: var(--shadow-sm); }
+.branch-merge-card:hover { border-color: var(--clay); background: var(--surface-hover); }
+.branch-merge-card-icon { display: grid; width: 36px; height: 36px; flex: 0 0 36px; place-items: center; border-radius: 10px; background: var(--clay-soft); color: var(--clay); }
 .branch-merge-card-copy { display: flex; min-width: 0; flex: 1 1 auto; flex-direction: column; gap: 3px; }
 .branch-merge-card-copy strong { font-size: calc(13px * var(--ui-font-scale, 1)); }
 .branch-merge-card-copy > span { overflow: hidden; color: var(--text-faint); font-size: calc(11px * var(--ui-font-scale, 1)); text-overflow: ellipsis; white-space: nowrap; }

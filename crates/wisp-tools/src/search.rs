@@ -61,10 +61,18 @@ impl Tool for SearchTool {
             Ok(path) => path,
             Err(error) => return ToolResult::fail(format!("search error: {error}")),
         };
-        let full = base.join(&pat).to_string_lossy().replace("\\\\", "\\");
+        // Only `pat` is a pattern: `[`, `*` or `?` in the directory are literal.
+        let full = std::path::Path::new(&glob::Pattern::escape(&base.to_string_lossy()))
+            .join(&pat)
+            .to_string_lossy()
+            .replace("\\\\", "\\");
+        let entries = match glob::glob(&full) {
+            Ok(entries) => entries,
+            Err(error) => return ToolResult::fail(format!("search error: invalid glob: {error}")),
+        };
         let mut hits = BinaryHeap::new();
         let mut match_count = 0usize;
-        for entry in glob::glob(&full).ok().into_iter().flatten().flatten() {
+        for entry in entries.flatten() {
             let path = entry.to_string_lossy().to_string();
             let mtime = std::fs::metadata(&entry)
                 .ok()
@@ -119,6 +127,26 @@ mod tests {
             true
         }
         async fn emit(&self, _event: ToolEvent) {}
+    }
+
+    #[tokio::test]
+    async fn directory_metacharacters_are_literal_and_bad_patterns_are_reported() {
+        let tmp = std::env::temp_dir().join(format!("wisp_search [v2] {}", std::process::id()));
+        std::fs::remove_dir_all(&tmp).ok();
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("notes.txt"), b"").unwrap();
+
+        let found = SearchTool
+            .run(&json!({ "pat": "*.txt" }), &TestEnv(tmp.clone()))
+            .await;
+        assert!(found.success);
+        assert!(found.content.contains("notes.txt"), "{}", found.content);
+
+        let invalid = SearchTool
+            .run(&json!({ "pat": "a***b" }), &TestEnv(tmp.clone()))
+            .await;
+        assert!(!invalid.success);
+        std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[tokio::test]

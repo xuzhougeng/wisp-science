@@ -1,6 +1,6 @@
 [package]
 name = "wisp-store"
-description = "SQLite persistence for Wisp (sessions, artifacts, settings, API keys)."
+description = "SQLite persistence for Wisp (sessions, artifacts, settings); API keys live in the OS keyring."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

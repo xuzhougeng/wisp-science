@@ -50,13 +50,12 @@ fn rules() -> &'static [Rule] {
             // Disk / partition
             mk(r"(?i)\bformat\b", Danger::Disk),
             mk(r"(?i)\bdiskpart\b", Danger::Disk),
-            mk(r"(?i)\bcd\b\s+[a-z]:\\", Danger::Disk), // naive drive switch — warn only on destructive below
             mk(r"(?i)\b(icacls|takeown|cacls)\b", Danger::Perms),
             mk(r"(?i)\bicacls\b.*everyone", Danger::Perms),
             // Privilege
             mk(r"(?i)\brunas\b", Danger::Privilege),
             mk(
-                r"(?i)\bnet\b+(localgroup|user)\b.*administrators",
+                r"(?i)\bnet\b\s+(localgroup|user)\b.*administrators",
                 Danger::Privilege,
             ),
             mk(r"(?i)\bsudo\b", Danger::Privilege),
@@ -332,6 +331,20 @@ mod tests {
         }
         for cmd in ["rm x", "rm -i x", "ls -r x", "rm x && grep -r y z"] {
             assert!(check_command_safety(cmd).is_none(), "{cmd}");
+        }
+    }
+
+    #[test]
+    fn drive_switches_are_safe_and_admin_group_edits_are_privileged() {
+        assert!(check_command_safety(r"cd C:\Users\me\project").is_none());
+        for cmd in [
+            "net localgroup administrators eve /add",
+            "net  user eve /add && net localgroup Administrators eve /add",
+        ] {
+            assert!(
+                matches!(check_command_safety(cmd), Some(Danger::Privilege)),
+                "{cmd}"
+            );
         }
     }
 

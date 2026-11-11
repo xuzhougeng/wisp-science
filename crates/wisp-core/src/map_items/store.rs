@@ -192,13 +192,29 @@ impl RunDir {
             .map_err(|e| format!("no map_items run '{run_id}' in this project: {e}"))?;
         let manifest = serde_json::from_str(&text)
             .map_err(|e| format!("run '{run_id}' has an unreadable manifest: {e}"))?;
-        Ok((Self { dir }, manifest))
+        let run = Self { dir };
+        run.terminate_torn_row();
+        Ok((run, manifest))
     }
 
     pub fn save_manifest(&self, manifest: &Manifest) -> std::io::Result<()> {
         let tmp = self.dir.join("manifest.json.tmp");
         std::fs::write(&tmp, serde_json::to_vec_pretty(manifest)?)?;
         std::fs::rename(tmp, self.dir.join("manifest.json"))
+    }
+
+    /// A crash can leave the last line of `rows.jsonl` without its newline.
+    /// End it, so the next appended row is not glued onto the fragment and
+    /// lost with it.
+    fn terminate_torn_row(&self) {
+        let path = self.dir.join("rows.jsonl");
+        let torn =
+            std::fs::read(&path).is_ok_and(|bytes| bytes.last().is_some_and(|b| *b != b'\n'));
+        if torn {
+            if let Ok(mut file) = std::fs::OpenOptions::new().append(true).open(&path) {
+                let _ = file.write_all(b"\n");
+            }
+        }
     }
 
     pub fn append_row(&self, row: &Row) -> std::io::Result<()> {
@@ -399,6 +415,12 @@ mod tests {
         file.write_all(b"{\"item\":\"b\",\"stat").unwrap();
         let rows = dir.load_rows();
         assert!(rows.contains_key("a") && !rows.contains_key("b"));
+        // Resuming ends the torn line, so the retried row is kept.
+        drop(file);
+        let (resumed, _) = RunDir::open(&root, &manifest.run_id).unwrap();
+        resumed.append_row(&row("b")).unwrap();
+        let rows = resumed.load_rows();
+        assert!(rows.contains_key("a") && rows.contains_key("b"));
         std::fs::remove_dir_all(root).unwrap();
     }
 }

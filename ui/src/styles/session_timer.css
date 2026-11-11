@@ -10,7 +10,7 @@
 .session-timer-panel input, .session-timer-panel textarea { width: 100%; box-sizing: border-box; padding: 8px; color: inherit; background: transparent; border: 1px solid var(--border); border-radius: 6px; font: inherit; }
 .session-timer-panel button { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
 .session-timer-panel button:not(.btn-primary) { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: calc(13px * var(--ui-font-scale, 1)); }
-.session-timer-panel button:not(.btn-primary):hover { background: var(--bg-hover); }
+.session-timer-panel button:not(.btn-primary):hover { background: var(--surface-hover); }
 .session-timer-panel header button:not(.btn-primary) { padding: 6px; border: 0; }
 .session-timer-panel button:disabled { opacity: .5; cursor: default; }
 .session-timer-panel svg { width: 17px; height: 17px; }

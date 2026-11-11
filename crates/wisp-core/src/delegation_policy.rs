@@ -458,6 +458,7 @@ impl CapabilityRegistry {
             executor: Some(executor),
             request_preferences: Some(crate::AgentRequestPreferences {
                 model_id: proposal.model_id.clone(),
+                model_tier: proposal.model_tier,
                 executor: proposal.executor.clone(),
                 isolated: proposal.isolated,
                 budget: proposal.budget.clone(),
@@ -1216,9 +1217,9 @@ fn proposal_from_spec(spec: &AgentSpec) -> Result<DelegatedTaskProposal, Resolut
         model_id: preferences
             .map(|preferences| preferences.model_id.clone())
             .unwrap_or_else(|| spec.model.clone()),
-        // A tier is consumed when the plan is first resolved; revalidation
-        // keeps the model that was snapshotted (or the explicit preference).
-        model_tier: None,
+        // Revalidation re-resolves with the tier that was requested, so a
+        // tier that picked a non-default model still matches its snapshot.
+        model_tier: preferences.and_then(|preferences| preferences.model_tier),
         executor: preferences
             .map(|preferences| preferences.executor.clone())
             .unwrap_or_else(|| spec.executor.clone()),
@@ -1745,6 +1746,10 @@ mod tests {
         inherit.model_tier = Some(ModelTier::Inherit);
         let inherit = registry.resolve_task(inherit, &host).unwrap();
         assert_eq!(inherit.spec().model.as_deref(), Some("vision"));
+        // The snapshot revalidates: the tier is re-resolved, not dropped.
+        registry
+            .validate_resolved_spec(inherit.spec(), &host)
+            .unwrap();
 
         let mut explicit_fast = proposal("explicit-fast", &["project_read"]);
         explicit_fast.model_tier = Some(ModelTier::Fast);

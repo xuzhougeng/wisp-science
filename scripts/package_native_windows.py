@@ -18,8 +18,6 @@ import tomllib
 import xml.etree.ElementTree as ET
 
 MIB = 1024 * 1024
-MAX_INSTALLER_MIB = 100
-MAX_PAYLOAD_MIB = 350
 VARIANTS = {'self-contained': (100, 350), 'framework-dependent': (40, 150)}
 SCRIPT_ROOT = Path(__file__).resolve().parent
 REQUIRED = (

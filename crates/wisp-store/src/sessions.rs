@@ -450,8 +450,9 @@ async fn detach_child_rows(tx: &mut Transaction<'_, Sqlite>, frame_id: &str) -> 
     Ok(())
 }
 
-/// Delete every database row owned by a conversation. Legacy databases do not
-/// consistently enable SQLite foreign keys, so the cascade must be explicit.
+/// Delete every database row owned by a conversation. The cascade is explicit
+/// because legacy tables were created without `ON DELETE CASCADE`; sqlx enables
+/// `foreign_keys` on every connection, which covers the tables that declare it.
 /// Runs are project-level records and survive, but their stale frame reference
 /// is cleared. Artifact files are also left untouched in the workspace.
 async fn delete_session_rows(

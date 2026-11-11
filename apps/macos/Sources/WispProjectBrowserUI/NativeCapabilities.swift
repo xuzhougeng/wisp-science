@@ -74,7 +74,7 @@ final class NativeCapabilitiesModel: ObservableObject {
             let bootstrap = try await client.invoke("get_bootstrap_status", args: [:], projectID: requested)
             let skills = try await client.invoke("list_skills", args: [:], projectID: requested)
             let connections = try await client.invoke("list_mcp_connections", args: [:], projectID: requested)
-            let memory = try await client.invoke("get_memory_view", args: ["project_id": .string(requested)], projectID: requested)
+            let memory = try await client.invoke("get_memory_view", args: ["projectId": .string(requested)], projectID: requested)
             guard generation == current, presented, self.projectID == requested else { return }
             let decodedSkills = try Self.decode([CapabilitySkill].self, skills)
             let counts = NativeCapabilityRead.skillCounts(decodedSkills)

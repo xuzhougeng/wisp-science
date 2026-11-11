@@ -706,7 +706,7 @@ body:has(.settings-page) .projects-screen { display: none; }
   position: absolute; top: calc(100% + 6px); right: 0;
   display: grid; gap: 4px; width: 225px; padding: 6px;
   border: 1px solid var(--border-strong); border-radius: 10px;
-  background: var(--bg-elev); box-shadow: var(--shadow-md);
+  background: var(--bg-elev); box-shadow: var(--shadow);
 }
 .workflow-graph-add-menu button {
   display: flex; align-items: center; gap: 10px; padding: 10px;
@@ -3796,7 +3796,7 @@ body { font-size: var(--ui-font-size, 14px); }
   color: var(--text); background: var(--bg-input);
   border: 1px solid var(--border-strong); border-radius: 8px; cursor: pointer;
 }
-.subscription-model-row > button:hover, .subscription-model-edit:hover { background: var(--bg-hover); }
+.subscription-model-row > button:hover, .subscription-model-edit:hover { background: var(--surface-hover); }
 .subscription-model-edit { padding: 8px 6px; border-radius: 8px; font: inherit; color: var(--text); cursor: pointer; }
 .subscription-login { max-width: 920px; margin-inline: auto; }
 .subscription-account-actions { flex-wrap: wrap; }

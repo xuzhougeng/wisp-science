@@ -153,7 +153,7 @@
 .message-exploration-copy > span { overflow: hidden; color: var(--text-faint); font-size: calc(10px * var(--ui-font-scale, 1)); text-overflow: ellipsis; white-space: nowrap; }
 .message-branch-entry .branch-merge-card { position: relative; width: calc(100% - 18px); min-height: 32px; margin-left: 18px; gap: 8px; padding: 6px 9px; border-color: var(--border); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--bg-elev) 72%, transparent); box-shadow: none; color: var(--text-muted); }
 .message-branch-entry .branch-merge-card::before { position: absolute; top: -6px; left: -12px; width: 9px; height: 16px; border-bottom: 1px solid var(--border-strong); border-left: 1px solid var(--border-strong); border-radius: 0 0 0 6px; content: ""; pointer-events: none; }
-.message-branch-entry .branch-merge-card:hover { border-color: var(--border-active); background: var(--bg-hover); color: var(--text); }
+.message-branch-entry .branch-merge-card:hover { border-color: var(--border-active); background: var(--surface-hover); color: var(--text); }
 .message-branch-entry .branch-merge-card-icon { display: inline-flex; width: 16px; height: 16px; flex: 0 0 16px; place-items: initial; border-radius: 0; background: transparent; color: var(--text-faint); }
 .message-branch-entry .branch-merge-card-copy { display: block; overflow: hidden; white-space: nowrap; }
 .message-branch-entry .branch-merge-card-copy strong { font-size: calc(11px * var(--ui-font-scale, 1)); font-weight: 600; }

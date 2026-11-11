@@ -773,7 +773,7 @@ pub(crate) fn ActionPalette(
             ),
             (
                 "font-ui-increase",
-                "plus",
+                "type-increase",
                 "command.font_ui_increase",
                 appearance.clone(),
                 "",
@@ -782,7 +782,7 @@ pub(crate) fn ActionPalette(
             ),
             (
                 "font-ui-decrease",
-                "minus",
+                "type-decrease",
                 "command.font_ui_decrease",
                 appearance.clone(),
                 "",
@@ -791,7 +791,7 @@ pub(crate) fn ActionPalette(
             ),
             (
                 "font-code-increase",
-                "plus",
+                "code-increase",
                 "command.font_code_increase",
                 appearance.clone(),
                 "",
@@ -800,7 +800,7 @@ pub(crate) fn ActionPalette(
             ),
             (
                 "font-code-decrease",
-                "minus",
+                "code-decrease",
                 "command.font_code_decrease",
                 appearance,
                 "",

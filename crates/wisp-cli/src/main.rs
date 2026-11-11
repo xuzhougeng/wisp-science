@@ -1077,8 +1077,10 @@ fn skill_sources(root: &std::path::Path) -> Vec<(PathBuf, SkillSource)> {
         paths.push((home.join(".wisp").join("skills"), SkillSource::Global));
     }
     if let Ok(extra) = std::env::var("WISP_SKILLS_PATH") {
-        for p in extra.split([':', ';']).filter(|s| !s.is_empty()) {
-            paths.push((PathBuf::from(p), SkillSource::Extra));
+        // Platform separator (`;` on Windows, `:` elsewhere): splitting on
+        // both would cut `C:\skills` in two.
+        for p in std::env::split_paths(&extra).filter(|p| !p.as_os_str().is_empty()) {
+            paths.push((p, SkillSource::Extra));
         }
     }
     paths
@@ -1337,6 +1339,8 @@ async fn main() -> Result<()> {
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env().add_directive("wisp=info".parse()?),
         )
+        // stdout carries the `rpc` and `run --output jsonl` protocols.
+        .with_writer(std::io::stderr)
         .init();
 
     if let CliCommand::Eval(options) = &command {
@@ -1534,9 +1538,8 @@ async fn main() -> Result<()> {
                 }
             })
             .collect();
-        if parts.len() >= 2 {
-            let args: Vec<String> = parts[1..].to_vec();
-            wire_mcp(&mut agent, &parts[0], &args, jsonl).await;
+        if let Some((program, args)) = parts.split_first() {
+            wire_mcp(&mut agent, program, args, jsonl).await;
         }
     } else if !wisp_bio::selected_by_package(&bio_package) {
         setup_message(
@@ -1634,7 +1637,7 @@ async fn main() -> Result<()> {
                 agent.vision_provider = vision_cfg.clone().map(wisp_llm::build);
                 agent
                     .tools
-                    .add(Box::new(wisp_core::subagent::ExploreTool::from_config(
+                    .replace(Box::new(wisp_core::subagent::ExploreTool::from_config(
                         cfg.clone(),
                         max_context,
                     )));

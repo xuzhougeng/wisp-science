@@ -197,11 +197,20 @@ impl Master {
         }
         let mut buf: Vec<u8> = Vec::new();
         let mut chunk = [0_u8; 8192];
+        // Where the marker search resumes: rescanning from 0 after every read
+        // is quadratic in the output size.
+        let mut scan_from = 0usize;
         loop {
-            if let Some(start) = buf
+            let found = buf[scan_from..]
                 .windows(marker.len())
                 .position(|window| window == marker)
-            {
+                .map(|offset| scan_from + offset);
+            match found {
+                // Keep the marker's start: its trailing newline may not be here yet.
+                Some(start) => scan_from = start,
+                None => scan_from = buf.len().saturating_sub(marker.len().saturating_sub(1)),
+            }
+            if let Some(start) = found {
                 let tail = &buf[start + marker.len()..];
                 if let Some(end) = tail.iter().position(|byte| *byte == b'\n') {
                     let exit_code = std::str::from_utf8(&tail[..end])

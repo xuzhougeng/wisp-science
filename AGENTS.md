@@ -10,12 +10,24 @@ Do not implement broad product vision in one change. Prefer small PRs that add o
 
 - `crates/wisp-core/`: agent loop, context management, memory, provenance helpers.
 - `crates/wisp-tools/`: built-in tools such as read/write/edit/search/grep/shell.
-- `crates/wisp-store/`: sqlx SQLite store. Migrations are in `crates/wisp-store/migrations/0000_init.sql`; idempotent migration code lives in `crates/wisp-store/src/lib.rs`.
+- `crates/wisp-store/`: sqlx SQLite store. The base schema is `crates/wisp-store/migrations/0000_init.sql`; later migrations are either numbered `.sql` files in that directory or inline Rust steps, and all of them are applied by the idempotent, name-recorded migration code in `crates/wisp-store/src/lib.rs` (a new `.sql` file does nothing until it is wired in there).
 - `crates/wisp-runtime/`: managed runtime support (currently the persistent Python REPL tool).
 - `crates/wisp-skills/`: SKILL.md discovery and use_skill tool.
 - `crates/wisp-dto/`: shared serde DTOs for the UI ⇄ Tauri invoke/event contract. Compiles for wasm32 and native; data only, no Leptos/Tauri deps. `ui/src/dto.rs` re-exports it, and `src-tauri/src/dto_contract_tests.rs` deserializes backend payloads into these types to catch serde drift. Add new cross-boundary shapes here, not as hand-mirrored copies.
 - `crates/wisp-runs/`: shared Run control plane (`run_in_context`, `monitor_run`, harvest/cleanup/transfer) used by the CLI and the desktop shell.
 - `crates/wisp-cli/`: headless `wisp-science` binary (interactive, `run`, `rpc`, `eval`).
+- `crates/wisp-llm/`: provider-agnostic LLM client (OpenAI-compatible and Anthropic Messages, SSE streaming).
+- `crates/wisp-mcp/`: stdio and HTTP JSON-RPC MCP client for user-configured servers.
+- `crates/wisp-acp/`: process and protocol boundary for local ACP agents.
+- `crates/wisp-bio/`: native biological and literature data retrieval tools shared by the desktop, CLI, and MCP bridge.
+- `crates/wisp-paths/`: bundled asset and resource path resolution for dev checkouts and Tauri bundles.
+- `crates/wisp-sync/`: encrypted project snapshot sync protocol, self-hosted relay, and remote web access rendezvous.
+- `crates/wisp-app/`: host-independent application services shared by Wisp clients.
+- `crates/wisp-service/`: local project-browser query and command service for the native clients.
+- `crates/wisp-server/`: headless Wisp host with built-in encrypted mobile web access (`deploy/server/` holds its container setup).
+- `crates/wisp-dev/`: dependency-free repository build launcher; the workspace `default-members` entry.
+- `apps/`: native clients (`macos`, `ios`, `windows`, `android`). `contracts/` holds the JSON fixtures the Rust host and those clients both honour.
+- `vendor/`: patched third-party crates (`tao`, `leptos_reactive`); provenance and removal criteria live beside each.
 - `src-tauri/`: desktop shell, Tauri commands, app state, SSH host registry. `src/app_state.rs` owns `AppState`/`SessionRuntime`/`ActiveProject`; `src/agent_turn.rs` owns the send_message turn pipeline, turn queue, and stop_agent; `src/turn_hooks.rs` owns what runs when a turn ends (Stop: automatic review/correction before `Done`; AfterTurn: memory proposal and follow-up questions after it) and the shared side-model call `side_complete`; `lib.rs` keeps command registration, setup, and shared helpers.
 - `src-tauri/src/model_catalog_shared.rs`: distilled models.dev catalog types and exact-id lookup, compiled into both `build.rs` and the runtime. `build.rs` fetches `https://models.dev/api.json` at build time and falls back to the checked-in `src-tauri/model_catalog.snapshot.json` when offline (`WISP_CATALOG_OFFLINE=1` skips the fetch); run `scripts/refresh_model_catalog.sh` to refresh the snapshot before releases.
 - `ui/`: Leptos frontend.
@@ -104,7 +116,7 @@ When asked to release, follow this section. Create the GitHub Release with `gh` 
    gh release create vX.Y.Z --title $title --notes-file .github/release-notes/vX.Y.Z.md --target (git rev-parse HEAD)
    ```
 
-5. Confirm the release exists, then wait until CI has **started** (Create Release, Windows Release, macOS Release, Linux Release, Android Release, Relay Image):
+5. Confirm the release exists, then wait until CI has **started** (Create Release, Windows Release, Windows WinUI Release, macOS Release, Linux Release, Android Release, Relay Image):
 
    ```bash
    gh release view vX.Y.Z

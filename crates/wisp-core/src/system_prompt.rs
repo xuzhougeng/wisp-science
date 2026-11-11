@@ -268,6 +268,9 @@ These apply to every project. Project Instructions and User Rules below take pre
     /// Byte span of the rules section inside an assembled prompt: from the
     /// first of the section headers to just before `## Environment`.
     fn rules_section_span(prompt: &str) -> Option<(usize, usize)> {
+        // The host's own section, matched with its first line: instructions may
+        // themselves contain a heading such as `## Environment Setup`.
+        const HOST_SECTION: &str = "\n\n## Environment\n- Working directory: ";
         const NEXT_SECTION: &str = "\n\n## Environment";
         let start = [
             USER_INSTRUCTIONS_HEADER,
@@ -278,7 +281,11 @@ These apply to every project. Project Instructions and User Rules below take pre
         .filter_map(|header| prompt.find(header))
         .min()?;
         let rest = &prompt[start..];
-        let end = start + rest.find(NEXT_SECTION).unwrap_or(rest.len());
+        let end = start
+            + rest
+                .rfind(HOST_SECTION)
+                .or_else(|| rest.find(NEXT_SECTION))
+                .unwrap_or(rest.len());
         Some((start, end))
     }
 
@@ -386,6 +393,34 @@ mod tests {
             Some("Cite DOIs.\n")
         );
         std::fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn rules_section_survives_an_environment_heading_inside_instructions() {
+        let root = std::env::temp_dir().join(format!("wisp-env-heading-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join(".wisp")).unwrap();
+        std::fs::write(
+            root.join("AGENTS.md"),
+            "Use the repository checks.\n\n## Environment Setup\nInstall pixi first.\n\n## Style\nKeep it short.",
+        )
+        .unwrap();
+        let skills = SkillIndex::default();
+        let prompt = SystemPrompt::new(&root, &skills, None);
+        let assembled = prompt.assemble();
+        let rules = prompt.rules_section();
+        assert!(rules.contains("Keep it short."));
+        assert_eq!(
+            SystemPrompt::extract_rules_section(&assembled).as_deref(),
+            Some(rules.as_str())
+        );
+        // Re-splicing unchanged rules must not duplicate the tail.
+        let reloaded = SystemPrompt::replace_rules_section(&assembled, &rules).unwrap();
+        assert_eq!(reloaded.matches("Keep it short.").count(), 1);
+        assert_eq!(
+            SystemPrompt::extract_rules_section(&reloaded).as_deref(),
+            Some(rules.as_str())
+        );
+        std::fs::remove_dir_all(root).ok();
     }
 
     #[test]
@@ -803,7 +838,10 @@ mod tests {
             out.contains("Do not regenerate the document from a script"),
             "{out}"
         );
-        assert!(out.contains("ask before changing them another way"), "{out}");
+        assert!(
+            out.contains("ask before changing them another way"),
+            "{out}"
+        );
     }
 
     #[test]

@@ -194,7 +194,7 @@
   border-radius: var(--radius-xs);
   background: var(--bg-elev);
   color: var(--text);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow);
 }
 
 .terminal-dock-add-label {
@@ -277,7 +277,7 @@
   background: color-mix(in srgb, var(--err) 16%, var(--bg-elev));
   color: var(--err);
   font: calc(11px * var(--ui-font-scale, 1))/1.35 var(--font-ui);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow);
 }
 
 @media (max-width: 700px) {

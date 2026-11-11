@@ -69,13 +69,22 @@ fn skip_field(buf: &[u8], i: &mut usize, wire: u8) -> Result<(), DecodeError> {
         0 => {
             read_varint(buf, i)?;
         }
-        1 => *i += 8,
+        1 => skip_fixed(buf, i, 8)?,
         2 => {
             read_len_delim(buf, i)?;
         }
-        5 => *i += 4,
+        5 => skip_fixed(buf, i, 4)?,
         _ => return Err(DecodeError::BadWireType),
     }
+    Ok(())
+}
+
+fn skip_fixed(buf: &[u8], i: &mut usize, width: usize) -> Result<(), DecodeError> {
+    let end = i.checked_add(width).ok_or(DecodeError::Truncated)?;
+    if end > buf.len() {
+        return Err(DecodeError::Truncated);
+    }
+    *i = end;
     Ok(())
 }
 
@@ -230,6 +239,14 @@ mod tests {
         assert_eq!(decoded.header("type"), Some("event"));
         assert_eq!(decoded.header("message_id"), Some("m-123"));
         assert_eq!(decoded.payload, b"{\"hello\":\"world\"}");
+    }
+
+    #[test]
+    fn truncated_fixed_width_field_is_rejected() {
+        // Field 15, wire type 1 (64-bit) with only three of its eight bytes.
+        assert!(decode(&[0x79, 1, 2, 3]).is_err());
+        // Field 15, wire type 5 (32-bit) with only two of its four bytes.
+        assert!(decode(&[0x7d, 1, 2]).is_err());
     }
 
     #[test]

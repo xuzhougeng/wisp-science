@@ -818,6 +818,11 @@ fn normalize_doi(raw: &str) -> Result<String> {
     {
         bail!("DOI values must start with 10. and contain a slash");
     }
+    // The DOI becomes part of a request path: these would turn its tail into
+    // a query or fragment, or walk to a different endpoint.
+    if doi.contains(['?', '#', '%']) || doi.split('/').any(|segment| segment == "..") {
+        bail!("DOI values must not contain ?, #, % or a .. segment");
+    }
     Ok(doi.to_string())
 }
 
