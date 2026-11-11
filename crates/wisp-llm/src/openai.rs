@@ -8,8 +8,8 @@
 
 use crate::message::{Content, Message, Part, Role, ToolCall, ToolSchema};
 use crate::provider::{
-    openai_internal_tool_name, openai_wire_tool_name, LlmError, Provider, Result, StreamSink,
-    Utf8Stream,
+    openai_internal_tool_name, openai_wire_tool_name, LlmError, Provider, Result, SseTextStream,
+    StreamSink,
 };
 use crate::{Completion, FunctionCall, Usage};
 use async_trait::async_trait;
@@ -619,7 +619,7 @@ impl Provider for OpenAiProvider {
         let (endpoint, resp) = self.streaming_response(&body).await?;
         let mut stream = resp.bytes_stream();
         let mut buf = String::new();
-        let mut utf8 = Utf8Stream::default();
+        let mut text = SseTextStream::default();
         let mut content = String::new();
         let mut reasoning = String::new();
         // index -> (id, name, arguments)
@@ -636,7 +636,7 @@ impl Provider for OpenAiProvider {
                 break;
             }
             let bytes = chunk?;
-            buf.push_str(&utf8.push(&bytes));
+            buf.push_str(&text.push(&bytes));
             while let Some(idx) = buf.find("\n\n") {
                 let event = buf[..idx].to_string();
                 buf.drain(..idx + 2);

@@ -4,7 +4,7 @@ use crate::codex_auth::{self, account_id_from_access_token};
 use crate::message::{Content, Message, Part, Role, ToolCall, ToolSchema};
 use crate::provider::{
     openai_internal_tool_name, openai_wire_tool_name, LlmError, Provider, ProviderKind, Result,
-    StreamSink, Utf8Stream,
+    SseTextStream, StreamSink,
 };
 use crate::{Completion, FunctionCall, Usage};
 use async_trait::async_trait;
@@ -435,7 +435,7 @@ impl OpenAiResponsesProvider {
             });
         }
         let mut bytes = response.bytes_stream();
-        let mut utf8 = Utf8Stream::default();
+        let mut decoder = SseTextStream::default();
         let mut sse = SseBuffer::default();
         let mut raw = String::new();
         let mut acc = CodexStream::default();
@@ -445,7 +445,7 @@ impl OpenAiResponsesProvider {
                 return Ok(acc.into_completion(true));
             }
             let chunk = chunk?;
-            let text = utf8.push(&chunk);
+            let text = decoder.push(&chunk);
             raw.push_str(&text);
             for data in sse.push(&text) {
                 let event: Value = serde_json::from_str(&data)?;

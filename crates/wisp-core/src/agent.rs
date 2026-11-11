@@ -35,8 +35,10 @@ const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const STOPPED_BY_USER: &str = "stopped by user";
 /// Bytes of a discarded tool call's arguments kept in history.
 const DISCARDED_ARGS_EXCERPT_BYTES: usize = 300;
+/// Sent after a truncated text response. The partial text itself is already
+/// in history as an assistant message, so the prompt does not repeat it.
 const AUTO_CONTINUE_PROMPT: &str =
-    "Continue from where the previous response was truncated. Do not repeat completed work. The partial response already shown to the user was:\n\n";
+    "Your previous response was cut off at the output token limit. Continue exactly where it stopped. Do not repeat or summarize what you already wrote.";
 const STREAM_CUT_MESSAGE: &str = "模型响应流在中途被断开（未收到结束标记），已生成的部分内容不完整、不会计入上下文。常见原因：网络不稳定、代理/中转站切断连接，或同一 API key 的并发请求达到上限（例如多个会话同时使用同一模型）。已完成的工具结果均已保留，可点击“继续执行”重试；需要并行会话时建议错开请求或使用不同的 API key。(stream cut mid-response, #437)";
 const EMPTY_RESPONSE_MESSAGE: &str = "模型完成了本轮推理，但没有返回可显示的文本或工具调用。对话上下文和已完成的工具结果均已保留；请点击“继续执行”重新生成最终回复。若长对话中反复出现，请先发送 /compact 压缩上下文。(model returned no visible response)";
 const ABNORMAL_FINISH_MESSAGE: &str = "模型服务没有正常完成本轮响应，已生成的部分内容不会作为最终答案提交。已完成的工具结果均已保留；请点击“继续执行”重试。(provider returned an unsuccessful finish reason)";
@@ -507,6 +509,7 @@ impl<'a> AgentLoop<'a> {
         let mut iteration = 0usize;
         let mut auto_continues = 0usize;
         let mut last_cut_tool: Option<String> = None;
+        let mut continue_prompted = false;
         let mut recent_observations: VecDeque<[u8; 32]> = VecDeque::with_capacity(STUCK_WINDOW);
         loop {
             if self.cancelled() {
@@ -536,6 +539,11 @@ impl<'a> AgentLoop<'a> {
                     }
                 })
                 .await?;
+            // The continuation has arrived: its prompt must not trail later
+            // tool results for the rest of the turn.
+            if std::mem::take(&mut continue_prompted) {
+                remove_auto_continue_prompt(ctx);
+            }
             if is_truncated(comp.finish_reason.as_deref()) {
                 let cut_tool = comp.tool_calls.last().map(|tc| tc.function.name.clone());
                 if cut_tool.is_some() {
@@ -550,19 +558,31 @@ impl<'a> AgentLoop<'a> {
                 // The same tool cut off twice running will not fit a third time
                 // either: stop instead of spending the remaining auto-continues.
                 let repeated_cut = cut_tool.is_some() && cut_tool == last_cut_tool;
+                // Nothing was produced (for example the whole budget went to
+                // reasoning), so the next request would be identical and be
+                // cut the same way.
+                let nothing_to_continue = cut_tool.is_none() && comp.content.trim().is_empty();
                 last_cut_tool = cut_tool;
-                if let Some(limit) = ctx
-                    .auto_continue_limit()
-                    .filter(|limit| !repeated_cut && auto_continues < *limit)
-                {
+                if let Some(limit) = ctx.auto_continue_limit().filter(|limit| {
+                    !repeated_cut && !nothing_to_continue && auto_continues < *limit
+                }) {
                     auto_continues += 1;
+                    // A discarded tool call already left its own durable result.
+                    if comp.tool_calls.is_empty() {
+                        // Keep the partial text as an ordinary assistant
+                        // message. Runtime injections are cleared when the
+                        // turn ends, so text carried only there would be
+                        // missing from the saved transcript and later turns.
+                        ctx.append_assistant(comp.content.clone(), vec![], comp.reasoning.clone());
+                        if let Some(m) = ctx.messages.last() {
+                            self.output.on_message(m);
+                        }
+                        ctx.inject_user(AUTO_CONTINUE_PROMPT);
+                        continue_prompted = true;
+                    }
                     self.report_usage(ctx, iteration, &comp, &schemas, &schema_origins);
                     self.output
                         .compaction(auto_continues, limit, "auto_continue");
-                    // A discarded tool call already left its own durable result.
-                    if comp.tool_calls.is_empty() {
-                        ctx.inject_user(format!("{AUTO_CONTINUE_PROMPT}{}", comp.content));
-                    }
                     continue;
                 }
                 return Err(LoopError::TruncatedOutput(truncated_output_message(
@@ -1009,6 +1029,19 @@ fn record_discarded_tool_calls(
             "Not executed: the response hit the model's output limit{limit} before its tool calls were complete, so the arguments were cut off and the whole batch was discarded. Do not retry at the same size. Split the work into several smaller calls (for a long document, one `edit` per paragraph or section) and keep each call well under the limit."
         ),
     );
+}
+
+/// Drop the auto-continue prompt once the model has answered it. It is always
+/// the newest such injection; any plan reminder was added before it or is
+/// added after this runs, so indices recorded elsewhere stay valid.
+fn remove_auto_continue_prompt(ctx: &mut ContextManager) {
+    if let Some(index) = ctx
+        .runtime_injections
+        .iter()
+        .rposition(|message| message.content.as_text() == AUTO_CONTINUE_PROMPT)
+    {
+        ctx.runtime_injections.remove(index);
+    }
 }
 
 /// User-facing report for a response cut off at the output limit. It names the
@@ -3487,10 +3520,70 @@ mod tests {
         assert_eq!(outcome, AgentLoopOutcome::Completed);
         assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 2);
         assert_eq!(output.0.load(Ordering::SeqCst), 1);
-        assert!(ctx
-            .runtime_injections
+        // The partial text is durable history, in order, as its own assistant
+        // message; the continuation follows it.
+        let assistant_texts: Vec<String> = ctx
+            .messages
             .iter()
-            .any(|message| message.content.as_text().contains("partial")));
+            .filter(|message| message.role == Role::Assistant)
+            .map(|message| message.content.as_text())
+            .collect();
+        assert_eq!(assistant_texts, ["partial", "done"]);
+        assert_eq!(
+            ctx.messages
+                .iter()
+                .filter(|message| message.role == Role::User)
+                .count(),
+            1,
+            "the continue prompt must not become durable history"
+        );
+        // The continuation request ended with the short prompt, which did not
+        // repeat the partial text, and the prompt is gone once answered.
+        let request = ctx.last_request().unwrap();
+        let prompt = request.last().unwrap();
+        assert_eq!(prompt.role, Role::User);
+        assert_eq!(prompt.content.as_text(), AUTO_CONTINUE_PROMPT);
+        assert!(!AUTO_CONTINUE_PROMPT.contains("partial"));
+        assert_eq!(request[request.len() - 2].content.as_text(), "partial");
+        assert!(ctx.runtime_injections.is_empty());
+    }
+
+    #[tokio::test]
+    async fn empty_truncated_output_does_not_auto_continue() {
+        // Whole budget spent on reasoning: no text, no tool call. Continuing
+        // would resend an identical request.
+        let provider = SequenceProvider::new((0..5).map(|_| Completion {
+            content: " \n".into(),
+            reasoning: Some("thinking at length".into()),
+            finish_reason: Some("length".into()),
+            ..Completion::default()
+        }));
+        let output = AutoContinueCounter(AtomicUsize::new(0));
+        let mut ctx = ContextManager::new(100_000);
+        ctx.set_auto_continue(true, 10);
+
+        let error = agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &Registry::builtins().filtered(&[]),
+            Path::new("."),
+            &output,
+            "finish the task",
+            0,
+            None,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("output truncated at max_tokens"));
+        assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(output.0.load(Ordering::SeqCst), 0);
+        assert!(ctx.runtime_injections.is_empty());
+        assert!(ctx
+            .messages
+            .iter()
+            .all(|message| message.role != Role::Assistant));
     }
 
     #[tokio::test]

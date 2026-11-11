@@ -744,6 +744,48 @@ impl Utf8Stream {
     }
 }
 
+/// Incremental decoder for an SSE response body: UTF-8 reassembly plus
+/// line-ending normalisation, so every parser can split events on `"\n\n"`.
+///
+/// The SSE format allows LF, CRLF or a bare CR as the line terminator. Servers
+/// and proxies that emit `\r\n\r\n` between events otherwise never produce a
+/// `"\n\n"` and the whole stream goes unparsed. A terminator can also straddle
+/// two network chunks (`\r` at the end of one, `\n` at the start of the next),
+/// so the pending CR is remembered across `push` calls.
+#[derive(Default)]
+pub struct SseTextStream {
+    utf8: Utf8Stream,
+    /// The previous output ended on a CR already emitted as `\n`; a leading
+    /// LF now belongs to that same terminator.
+    after_cr: bool,
+}
+
+impl SseTextStream {
+    /// Feed one chunk; return the decoded text with every line terminator
+    /// rewritten to `\n`.
+    pub fn push(&mut self, bytes: &[u8]) -> String {
+        let text = self.utf8.push(bytes);
+        if !self.after_cr && !text.contains('\r') {
+            return text;
+        }
+        let mut out = String::with_capacity(text.len());
+        for ch in text.chars() {
+            match ch {
+                '\r' => {
+                    out.push('\n');
+                    self.after_cr = true;
+                }
+                '\n' if self.after_cr => self.after_cr = false,
+                other => {
+                    out.push(other);
+                    self.after_cr = false;
+                }
+            }
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1121,6 +1163,55 @@ mod tests {
         }
         assert_eq!(out, full, "content lost across chunk boundaries");
         assert!(s.tail.is_empty(), "no bytes left dangling at stream end");
+    }
+
+    fn sse_text(chunks: &[&[u8]]) -> String {
+        let mut stream = SseTextStream::default();
+        chunks.iter().map(|chunk| stream.push(chunk)).collect()
+    }
+
+    #[test]
+    fn sse_text_stream_normalises_every_line_terminator() {
+        assert_eq!(
+            sse_text(&[b"data: a\n\ndata: b\n\n"]),
+            "data: a\n\ndata: b\n\n"
+        );
+        assert_eq!(
+            sse_text(&[b"event: x\r\ndata: a\r\n\r\ndata: b\r\n\r\n"]),
+            "event: x\ndata: a\n\ndata: b\n\n"
+        );
+        // Bare CR is a terminator too; a blank line is two of them.
+        assert_eq!(
+            sse_text(&[b"data: a\r\rdata: b\r\r"]),
+            "data: a\n\ndata: b\n\n"
+        );
+    }
+
+    #[test]
+    fn sse_text_stream_is_independent_of_chunk_boundaries() {
+        let wire = "event: delta\r\ndata: {\"t\":\"中文\"}\r\n\r\ndata: [DONE]\r\n\r\n".as_bytes();
+        let expected = "event: delta\ndata: {\"t\":\"中文\"}\n\ndata: [DONE]\n\n";
+        // Every two-chunk split, including between `\r` and `\n`, inside the
+        // `\r\n\r\n` separator and inside a multi-byte character.
+        for cut in 0..=wire.len() {
+            assert_eq!(
+                sse_text(&[&wire[..cut], &wire[cut..]]),
+                expected,
+                "cut at {cut}"
+            );
+        }
+        // One byte per chunk.
+        let bytes: Vec<&[u8]> = wire.chunks(1).collect();
+        assert_eq!(sse_text(&bytes), expected);
+    }
+
+    #[test]
+    fn sse_text_stream_keeps_a_blank_line_after_a_split_crlf() {
+        // `\r` | `\n\n`: the first LF completes the CRLF, the second is real.
+        assert_eq!(
+            sse_text(&[b"data: a\r", b"\n\ndata: b"]),
+            "data: a\n\ndata: b"
+        );
     }
 
     #[test]

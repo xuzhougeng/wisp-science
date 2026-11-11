@@ -1,5 +1,7 @@
+mod common;
+
 use serde_json::Value;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use wisp_llm::openai::OpenAiProvider;
 use wisp_llm::responses::OpenAiResponsesProvider;
 use wisp_llm::{Completion, Message, Provider, ProviderConfig, StreamSink, Usage};
@@ -13,42 +15,8 @@ async fn capture_json_requests(
         let mut captured = Vec::with_capacity(responses.len());
         for (content_type, response_body) in responses {
             let (mut socket, _) = listener.accept().await.unwrap();
-            let mut request = Vec::new();
-            let (header_end, content_length) = loop {
-                let mut chunk = [0_u8; 4096];
-                let read = socket.read(&mut chunk).await.unwrap();
-                assert!(read > 0, "request ended before its headers");
-                request.extend_from_slice(&chunk[..read]);
-                if let Some(end) = request.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
-                    let end = end + 4;
-                    let head = String::from_utf8_lossy(&request[..end]);
-                    let length = head
-                        .lines()
-                        .find_map(|line| {
-                            let (name, value) = line.split_once(':')?;
-                            name.eq_ignore_ascii_case("content-length")
-                                .then(|| value.trim().parse::<usize>().ok())
-                                .flatten()
-                        })
-                        .expect("JSON request must carry content-length");
-                    break (end, length);
-                }
-            };
-            while request.len() < header_end + content_length {
-                let mut chunk = [0_u8; 4096];
-                let read = socket.read(&mut chunk).await.unwrap();
-                assert!(read > 0, "request body ended early");
-                request.extend_from_slice(&chunk[..read]);
-            }
-            let head = String::from_utf8_lossy(&request[..header_end]);
-            let path = head
-                .lines()
-                .next()
-                .and_then(|line| line.split_whitespace().nth(1))
-                .unwrap()
-                .to_string();
-            let body: Value =
-                serde_json::from_slice(&request[header_end..header_end + content_length]).unwrap();
+            let (head, body) = common::read_json_request(&mut socket).await;
+            let path = common::request_path(&head);
             captured.push((path, body));
 
             let response = format!(
