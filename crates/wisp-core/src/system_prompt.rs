@@ -803,7 +803,10 @@ mod tests {
             out.contains("Do not regenerate the document from a script"),
             "{out}"
         );
-        assert!(out.contains("ask before changing them another way"), "{out}");
+        assert!(
+            out.contains("ask before changing them another way"),
+            "{out}"
+        );
     }
 
     #[test]
