@@ -4058,6 +4058,14 @@ async fn session_reviews_are_upserted_and_truncated_with_the_transcript() {
     let store = Store::open(&tmp).await.unwrap();
     store.create_project("p", "P", "").await.unwrap();
     store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+    // The rewind below cuts at a saved row.
+    for (seq, message) in [
+        (1, Message::user("a")),
+        (2, Message::assistant("b")),
+        (3, Message::assistant("c")),
+    ] {
+        store.append_message("f", seq, &message).await.unwrap();
+    }
 
     store
         .upsert_session_review("f", "review-1", 2, r#"{"summary":"first"}"#)
@@ -4092,6 +4100,10 @@ async fn session_ui_events_keep_insertion_order() {
     let store = Store::open(&tmp).await.unwrap();
     store.create_project("p", "P", "").await.unwrap();
     store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+    // The rewind below cuts at a saved row.
+    for (seq, message) in [(1, Message::user("a")), (2, Message::assistant("b"))] {
+        store.append_message("f", seq, &message).await.unwrap();
+    }
 
     assert_eq!(store.next_session_ui_event_seq("f").await.unwrap(), 1);
     let first = r#"{"kind":"MessageBoundary","frame_id":"f","seq":1}"#;

@@ -847,6 +847,11 @@ impl Store {
     /// `keep_seq`. Later epochs (higher seqs and their `context_epochs`
     /// records) disappear. The visual transcript is cut at the last
     /// `MessageBoundary` whose message seq is `<= keep_seq`.
+    ///
+    /// `keep_seq` must be a saved row owned by `epoch`, or `<= 0` with epoch 0
+    /// (drop everything). Any other pair is refused and nothing changes: an
+    /// epoch that does not own the cut row would drop later epochs' records
+    /// while keeping, or deleting, rows that belong to them.
     pub async fn rewind_to_seq(&self, frame_id: &str, epoch: i64, keep_seq: i64) -> Result<()> {
         if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
             return Box::pin(store.rewind_to_seq(frame_id, epoch, keep_seq)).await;
@@ -859,6 +864,21 @@ impl Store {
         let current = current.ok_or_else(|| anyhow::anyhow!("Session not found"))?;
         if epoch < 0 || epoch > current {
             anyhow::bail!("context epoch {epoch} is not in this session");
+        }
+        let owner: Option<i64> = if keep_seq <= 0 {
+            Some(0)
+        } else {
+            sqlx::query_scalar("SELECT epoch FROM messages WHERE frame_id=? AND seq=?")
+                .bind(frame_id)
+                .bind(keep_seq)
+                .fetch_optional(&mut *tx)
+                .await?
+        };
+        if owner != Some(epoch) {
+            // Dropping `tx` rolls back; nothing has been written yet.
+            anyhow::bail!(
+                "message {keep_seq} is not a saved row of context epoch {epoch}; nothing was changed"
+            );
         }
         sqlx::query("UPDATE frames SET head_epoch=? WHERE id=?")
             .bind(epoch)
@@ -1538,6 +1558,106 @@ mod tests {
         assert_eq!(store.list_turn_file_undo("f", 2).await.unwrap().len(), 1);
         assert_eq!(store.visual_user_count("f").await.unwrap(), 1);
         assert!(store.visual_turn_anchor("f", 1).await.unwrap().is_none());
+    }
+
+    /// Epoch 0 holds seqs 1..=5, the compacted epoch 1 the four rows after.
+    async fn compacted_two_epochs() -> Store {
+        let store = store().await;
+        seed(
+            &store,
+            &[
+                ("system", "sys"),
+                ("user", "q1"),
+                ("assistant", "a1"),
+                ("user", "q2"),
+                ("assistant", "a2"),
+            ],
+        )
+        .await;
+        let mut event_seq = 1i64;
+        persist_visual_turn(&store, &mut event_seq, 2, "q1").await;
+        persist_visual_turn(&store, &mut event_seq, 4, "q2").await;
+        let messages = compacted();
+        store
+            .open_context_epoch("f", open_input(&messages))
+            .await
+            .unwrap();
+        store
+    }
+
+    async fn rewind_state(
+        store: &Store,
+    ) -> (i64, Vec<ContextEpochRecord>, Vec<String>, Vec<String>) {
+        let rows = store
+            .load_messages_all_epochs("f")
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(epoch, seq, message)| format!("{epoch}/{seq}/{}", message.content.as_text()))
+            .collect();
+        (
+            store.frame_head_epoch("f").await.unwrap(),
+            store.context_epochs("f").await.unwrap(),
+            rows,
+            store.load_session_ui_events("f").await.unwrap(),
+        )
+    }
+
+    /// The 1.24.0 incident shape: epoch 0 paired with a cut that epoch 0 does
+    /// not own dropped every later epoch record. The store now refuses it.
+    #[tokio::test]
+    async fn rewind_to_seq_refuses_a_cut_the_epoch_does_not_own() {
+        let store = compacted_two_epochs().await;
+        let before = rewind_state(&store).await;
+        assert_eq!(before.0, 1);
+        assert_eq!(before.1.len(), 1);
+        let epoch_one = before.2.iter().filter(|row| row.starts_with("1/")).count();
+        assert_eq!((before.2.len(), epoch_one), (9, 4));
+        assert_eq!(store.resolve_message_epoch("f", 8).await.unwrap(), Some(1));
+
+        for (epoch, keep_seq, case) in [
+            (0, 8, "a later epoch's row under epoch 0"),
+            (1, 3, "an older epoch's row under the head epoch"),
+            (0, 99, "a row that was never saved"),
+            (1, 99, "a row past the head epoch"),
+            (1, 0, "an empty cut under a compacted epoch"),
+        ] {
+            let error = store
+                .rewind_to_seq("f", epoch, keep_seq)
+                .await
+                .expect_err(case)
+                .to_string();
+            assert!(error.contains("nothing was changed"), "{case}: {error}");
+            assert_eq!(rewind_state(&store).await, before, "{case}");
+        }
+    }
+
+    #[tokio::test]
+    async fn rewind_to_seq_accepts_cuts_owned_by_their_epoch() {
+        // Inside the head epoch: the epoch record stays, later rows go.
+        let store = compacted_two_epochs().await;
+        store.rewind_to_seq("f", 1, 8).await.unwrap();
+        let (head, epochs, rows, _) = rewind_state(&store).await;
+        assert_eq!((head, epochs.len()), (1, 1));
+        assert_eq!(rows.len(), 8);
+        assert!(rows.iter().all(|row| !row.starts_with("1/9/")));
+
+        // The last row of an older epoch: an epoch boundary is a valid cut.
+        let store = compacted_two_epochs().await;
+        store.rewind_to_seq("f", 0, 5).await.unwrap();
+        let (head, epochs, rows, _) = rewind_state(&store).await;
+        assert_eq!(head, 0);
+        assert!(epochs.is_empty());
+        assert_eq!(rows.len(), 5);
+        assert!(rows.iter().all(|row| row.starts_with("0/")));
+
+        // Dropping everything is epoch 0 with no row to own the cut.
+        let store = compacted_two_epochs().await;
+        store.rewind_to_seq("f", 0, 0).await.unwrap();
+        let (head, epochs, rows, _) = rewind_state(&store).await;
+        assert_eq!(head, 0);
+        assert!(epochs.is_empty());
+        assert!(rows.is_empty());
     }
 
     #[tokio::test]

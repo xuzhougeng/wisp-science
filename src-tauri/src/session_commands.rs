@@ -586,9 +586,10 @@ pub(super) async fn generate_session_experience(
 /// Model-context rows of the visual turns `start..=end`, oldest first. Each
 /// turn is read from the epoch its User event anchors to, so a compaction
 /// between two turns neither hides the earlier turn nor duplicates the kept
-/// tail copied into the newer epoch. Sessions without User events (legacy
-/// transcripts) fall back to epoch-0 row indexes. Errors when the range runs
-/// past the completed turns.
+/// tail copied into the newer epoch. Only a session with no User events at
+/// all (a legacy transcript) falls back to epoch-0 row indexes. Errors when
+/// the range runs past the completed turns, or names a turn whose start or
+/// rows were never saved: guessing epoch 0 there would quote other turns.
 pub(super) async fn visual_turn_range_messages(
     store: &Store,
     frame_id: &str,
@@ -599,11 +600,11 @@ pub(super) async fn visual_turn_range_messages(
     if start > end {
         return Err("Invalid excerpt range.".into());
     }
-    let first_anchor = store
-        .visual_turn_anchor(frame_id, start)
+    let anchors = store
+        .visual_turn_anchors(frame_id)
         .await
         .map_err(|e| format!("{e}"))?;
-    let Some(mut anchor) = first_anchor else {
+    if anchors.is_empty() {
         // Legacy transcript: no persisted User events to anchor on.
         let rows = store
             .load_messages_in_epoch(frame_id, 0)
@@ -619,19 +620,27 @@ pub(super) async fn visual_turn_range_messages(
             return Err(UNAVAILABLE.into());
         }
         return Ok(msgs[from..to].to_vec());
-    };
+    }
     let mut epochs: HashMap<i64, Vec<(i64, wisp_llm::Message)>> = HashMap::new();
     let mut out = Vec::new();
     for user_index in start..=end {
-        let next = store
-            .visual_turn_anchor(frame_id, user_index.saturating_add(1))
+        // Past the log, or a User event no MessageBoundary followed.
+        let anchor = anchors
+            .get(user_index)
+            .copied()
+            .flatten()
+            .ok_or(UNAVAILABLE)?;
+        // The turn ends where the next saved turn starts, else with its epoch.
+        let end_seq = anchors
+            .get(user_index.saturating_add(1)..)
+            .and_then(|later| later.iter().flatten().next())
+            .map_or(i64::MAX, |seq| seq - 1);
+        let epoch = epoch_owning(store, frame_id, anchor)
             .await
-            .map_err(|e| format!("{e}"))?;
-        let epoch = store
-            .resolve_message_epoch(frame_id, anchor)
-            .await
-            .map_err(|e| format!("{e}"))?
-            .unwrap_or(0);
+            .map_err(|error| match error.as_str() {
+                USER_TURN_NOT_FOUND => UNAVAILABLE.to_string(),
+                _ => error,
+            })?;
         if !epochs.contains_key(&epoch) {
             let rows = store
                 .load_messages_in_epoch(frame_id, epoch)
@@ -639,18 +648,12 @@ pub(super) async fn visual_turn_range_messages(
                 .map_err(|e| format!("{e}"))?;
             epochs.insert(epoch, rows);
         }
-        let end_seq = next.map_or(i64::MAX, |seq| seq - 1);
         out.extend(
             epochs[&epoch]
                 .iter()
                 .filter(|(seq, _)| *seq >= anchor && *seq <= end_seq)
                 .map(|(_, message)| message.clone()),
         );
-        match next {
-            Some(seq) if user_index < end => anchor = seq,
-            None if user_index < end => return Err(UNAVAILABLE.into()),
-            _ => {}
-        }
     }
     if out.is_empty() {
         return Err(UNAVAILABLE.into());
@@ -3866,6 +3869,131 @@ mod branch_kernel_tests {
         assert_eq!(
             resolve_visual_keep(&store, "main", 1, false).await.unwrap(),
             (0, 3)
+        );
+    }
+
+    const TURNS_UNAVAILABLE: &str = "The selected turns are not available.";
+
+    /// `store_with_compacted_frame` plus a live turn appended into epoch 1
+    /// (q3 at seq 10, a3 at seq 11), with the given visual event log.
+    async fn compacted_frame_with_events(events: &[&str]) -> Store {
+        let store = store_with_compacted_frame().await;
+        assert_eq!(store.max_message_seq("f").await.unwrap(), 9);
+        store
+            .append_message("f", 10, &Message::user("q3"))
+            .await
+            .unwrap();
+        store
+            .append_message("f", 11, &Message::assistant("a3"))
+            .await
+            .unwrap();
+        assert_eq!(store.resolve_message_epoch("f", 10).await.unwrap(), Some(1));
+        for (index, event) in events.iter().enumerate() {
+            store
+                .append_session_ui_event("f", index as i64 + 1, event)
+                .await
+                .unwrap();
+        }
+        store
+    }
+
+    async fn range_texts(store: &Store, start: usize, end: usize) -> Result<Vec<String>, String> {
+        Ok(visual_turn_range_messages(store, "f", start, end)
+            .await?
+            .iter()
+            .map(|message| message.content.as_text())
+            .collect())
+    }
+
+    #[tokio::test]
+    async fn visual_turn_range_messages_reads_a_compacted_frame_by_anchor() {
+        let store = compacted_frame_with_events(&[
+            r#"{"kind":"User","frame_id":"f","text":"q1"}"#,
+            r#"{"kind":"MessageBoundary","frame_id":"f","seq":2}"#,
+            r#"{"kind":"MessageBoundary","frame_id":"f","seq":3}"#,
+            r#"{"kind":"User","frame_id":"f","text":"q2"}"#,
+            r#"{"kind":"MessageBoundary","frame_id":"f","seq":4}"#,
+            r#"{"kind":"MessageBoundary","frame_id":"f","seq":5}"#,
+            r#"{"kind":"User","frame_id":"f","text":"q3"}"#,
+            r#"{"kind":"MessageBoundary","frame_id":"f","seq":10}"#,
+            r#"{"kind":"MessageBoundary","frame_id":"f","seq":11}"#,
+        ])
+        .await;
+        assert_eq!(
+            range_texts(&store, 0, 1).await.unwrap(),
+            ["q1", "a1", "q2", "a2"]
+        );
+        // q2 is read once from epoch 0, not again from its epoch-1 copy.
+        assert_eq!(
+            range_texts(&store, 1, 2).await.unwrap(),
+            ["q2", "a2", "q3", "a3"]
+        );
+        assert_eq!(range_texts(&store, 2, 2).await.unwrap(), ["q3", "a3"]);
+        assert_eq!(
+            range_texts(&store, 2, 3).await.unwrap_err(),
+            TURNS_UNAVAILABLE
+        );
+    }
+
+    /// A turn the log cannot anchor used to send the whole read to epoch-0
+    /// row indexes, which quoted a different turn of a compacted conversation.
+    #[tokio::test]
+    async fn visual_turn_range_messages_refuses_turns_without_a_saved_start() {
+        let store = compacted_frame_with_events(&[
+            r#"{"kind":"User","frame_id":"f","text":"q1"}"#,
+            r#"{"kind":"MessageBoundary","frame_id":"f","seq":2}"#,
+            r#"{"kind":"MessageBoundary","frame_id":"f","seq":3}"#,
+            // Visual turn 1 never got a MessageBoundary.
+            r#"{"kind":"User","frame_id":"f","text":"lost"}"#,
+            r#"{"kind":"User","frame_id":"f","text":"q2"}"#,
+            r#"{"kind":"MessageBoundary","frame_id":"f","seq":4}"#,
+            r#"{"kind":"MessageBoundary","frame_id":"f","seq":5}"#,
+            r#"{"kind":"User","frame_id":"f","text":"q3"}"#,
+            r#"{"kind":"MessageBoundary","frame_id":"f","seq":10}"#,
+            r#"{"kind":"MessageBoundary","frame_id":"f","seq":11}"#,
+            // Visual turn 4 is anchored on a row that was never saved.
+            r#"{"kind":"User","frame_id":"f","text":"q4"}"#,
+            r#"{"kind":"MessageBoundary","frame_id":"f","seq":50}"#,
+        ])
+        .await;
+        // Epoch-0 row indexes would have answered turn 1 with q2's rows.
+        for (start, end) in [(1, 1), (0, 1), (1, 2), (0, 3)] {
+            assert_eq!(
+                range_texts(&store, start, end).await.unwrap_err(),
+                TURNS_UNAVAILABLE,
+                "range {start}..={end} includes the unanchored turn"
+            );
+        }
+        // A missing row is not defaulted to epoch 0 either.
+        for (start, end) in [(4, 4), (3, 4)] {
+            assert_eq!(
+                range_texts(&store, start, end).await.unwrap_err(),
+                TURNS_UNAVAILABLE,
+                "range {start}..={end} includes the turn without rows"
+            );
+        }
+        // The turns around them still read, each bounded by the next saved
+        // start instead of running to the end of its epoch.
+        assert_eq!(range_texts(&store, 0, 0).await.unwrap(), ["q1", "a1"]);
+        assert_eq!(
+            range_texts(&store, 2, 3).await.unwrap(),
+            ["q2", "a2", "q3", "a3"]
+        );
+    }
+
+    #[tokio::test]
+    async fn visual_turn_range_messages_keeps_the_legacy_fallback_without_a_visual_log() {
+        // No User events at all: epoch-0 row indexes are the only index.
+        let store = store_with_compacted_frame().await;
+        assert!(store.visual_turn_anchors("f").await.unwrap().is_empty());
+        assert_eq!(
+            range_texts(&store, 0, 1).await.unwrap(),
+            ["q1", "a1", "q2", "a2"]
+        );
+        assert_eq!(range_texts(&store, 1, 1).await.unwrap(), ["q2", "a2"]);
+        assert_eq!(
+            range_texts(&store, 2, 2).await.unwrap_err(),
+            TURNS_UNAVAILABLE
         );
     }
 }
