@@ -25,7 +25,7 @@ export default defineConfig({
   use: {
     baseURL: `http://localhost:${port}`,
     browserName: "chromium",
-    trace: "retain-on-failure",
+    trace: "on-first-retry",
   },
   webServer: process.env.PLAYWRIGHT_REUSE_SERVER ? undefined : {
     command: serveCommand,
