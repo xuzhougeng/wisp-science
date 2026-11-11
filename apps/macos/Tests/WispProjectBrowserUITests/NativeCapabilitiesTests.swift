@@ -26,7 +26,7 @@ final class NativeCapabilitiesTests: XCTestCase {
         XCTAssertEqual(commands.map(\.command), NativeCapabilityRead.commands)
         XCTAssertTrue(commands.allSatisfy { $0.projectID == "research-1" })
         XCTAssertFalse(commands.contains { $0.command == NativeCapabilityRead.probe })
-        XCTAssertEqual(commands.last?.args["project_id"], .string("research-1"))
+        XCTAssertEqual(commands.last?.args["projectId"], .string("research-1"))
         XCTAssertEqual(capabilities.summary.version, "1.14.0")
         XCTAssertEqual(capabilities.summary.workspace, "/tmp/research")
         XCTAssertEqual(capabilities.summary.bundledSkills, 1)
