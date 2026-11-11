@@ -1,7 +1,6 @@
 use super::AppState;
 use crate::workspace_surface::WorkspaceSurface;
 use base64::Engine;
-use serde::Serialize;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use tauri::{ipc::Response, State};

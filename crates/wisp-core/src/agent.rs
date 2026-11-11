@@ -174,9 +174,12 @@ fn over_budget_text(content: &Content, budget: usize) -> Option<String> {
 fn spill_tool_output(root: &Path, tool_name: &str, text: &str) -> Option<PathBuf> {
     let spill_dir = root.join(".wisp").join("tool-output");
     let safe_name = tool_name.replace(['/', '\\'], "_");
+    // The uuid keeps two same-named results spilled within one millisecond
+    // (a history reload bounds many in a tight loop) from sharing a file.
     let spill_path = spill_dir.join(format!(
-        "{safe_name}-{}.txt",
-        chrono::Utc::now().timestamp_millis()
+        "{safe_name}-{}-{}.txt",
+        chrono::Utc::now().timestamp_millis(),
+        uuid::Uuid::new_v4().simple()
     ));
     if std::fs::create_dir_all(&spill_dir).is_ok() {
         let _ = std::fs::write(&spill_path, text.as_bytes());
@@ -194,7 +197,6 @@ fn bounded_tool_result(
     budget: usize,
     spill: Option<&Path>,
 ) -> Content {
-    let half = budget / 2;
     let marker = match spill {
         Some(spill_path) => format!(
             "[... ~{} bytes omitted from {tool_name}; full output at {} — read/grep narrow ranges; do not load the whole file ...]",
@@ -206,6 +208,10 @@ fn bounded_tool_result(
             text.len().saturating_sub(budget)
         ),
     };
+    // Reserve the marker and its two newlines inside the budget: a bounded
+    // result must itself fit, or every history reload would bound it again and
+    // replace the pointer to the full output with a pointer to an excerpt.
+    let half = budget.saturating_sub(marker.len() + 2) / 2;
     let bounded = ContextManager::truncate_middle(text, half, half, &marker);
     let Content::Parts(parts) = content else {
         return Content::text(bounded);
@@ -1641,6 +1647,18 @@ mod tests {
         assert_eq!(repair_unpaired_tool_calls(&mut messages), 1);
         bound_tool_results_in_history(&root, &mut messages);
         assert!(messages[2].content.as_text().len() < 80_000);
+        // Bounding is idempotent: a second reload neither re-truncates the
+        // excerpt nor writes another spill file.
+        let bounded_once = messages[2].content.as_text();
+        let spills = || {
+            std::fs::read_dir(root.join(".wisp/tool-output"))
+                .map(|dir| dir.count())
+                .unwrap_or(0)
+        };
+        let spilled_once = spills();
+        bound_tool_results_in_history(&root, &mut messages);
+        assert_eq!(messages[2].content.as_text(), bounded_once);
+        assert_eq!(spills(), spilled_once);
         let mut ctx = ContextManager::new(128_000);
         ctx.messages = messages;
         let prepared = ctx.prepare_for_api(&NullOutput);

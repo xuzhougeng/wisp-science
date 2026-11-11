@@ -72,6 +72,8 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(select_scopes(["crates/wisp-sync/cloudflare/relay.mjs"]), {"relay_worker"})
         self.assertIn("rust", select_scopes(["crates/wisp-sync/src/remote.rs"]))
         self.assertEqual(select_scopes(["ui/src/app_support/messages.rs"]), {"ui", "shared_assets"})
+        # The logo is an input of sync_native_design.py.
+        self.assertEqual(select_scopes(["ui/logo.svg"]), {"ui", "shared_assets"})
         self.assertEqual(select_scopes(["vendor/tao/src/lib.rs"]), {"rust", "desktop", "macos", "windows"})
 
     def test_runtime_skills_are_not_documentation(self):

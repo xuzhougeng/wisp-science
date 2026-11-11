@@ -929,7 +929,16 @@ mod tests {
             .unwrap();
         assert_eq!(meta.0, "Imported study");
         assert_eq!(meta.1, "from archive");
-        assert!(std::path::Path::new(&meta.2).starts_with(std::fs::canonicalize(&parent).unwrap()));
+        // Compare canonical forms: the temp dir is a symlink on macOS
+        // (`/var` -> `/private/var`) and the stored path keeps the chosen one.
+        let canonical_parent = std::fs::canonicalize(&parent).unwrap();
+        let canonical_workspace = std::fs::canonicalize(&meta.2).unwrap();
+        assert!(
+            canonical_workspace.starts_with(&canonical_parent),
+            "{} is not under {}",
+            canonical_workspace.display(),
+            canonical_parent.display()
+        );
         assert_eq!(
             std::fs::read(std::path::Path::new(&meta.2).join("notes.txt")).unwrap(),
             b"hello"

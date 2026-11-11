@@ -77,7 +77,12 @@ pub async fn harvest_run_outputs(
         }
 
         let mut total = 0u64;
-        let pattern = base_dir.join(&spec.glob).to_string_lossy().into_owned();
+        // Only `spec.glob` is a pattern: `[`, `*` or `?` in the project path
+        // are literal characters.
+        let pattern = Path::new(&glob::Pattern::escape(&base_dir.to_string_lossy()))
+            .join(&spec.glob)
+            .to_string_lossy()
+            .into_owned();
         let paths = glob::glob(&pattern)
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
@@ -103,8 +108,12 @@ pub async fn harvest_run_outputs(
             let max_total = spec.max_total_mb.map(mb_to_bytes).unwrap_or(u64::MAX);
             let as_reference = spec.residency == OutputResidency::Remote
                 || size > max_file
-                || total + size > max_total;
-            total = total.saturating_add(size);
+                || total.saturating_add(size) > max_total;
+            // The total budget covers what is copied; a file kept as a
+            // reference must not push every later file out as well.
+            if !as_reference {
+                total = total.saturating_add(size);
+            }
             let source_path = path
                 .strip_prefix(base_dir)
                 .unwrap_or(&path)
@@ -418,6 +427,40 @@ fn mb_to_bytes(mb: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn harvest_treats_glob_characters_in_the_project_path_as_literal() {
+        let tmp = std::env::temp_dir().join(format!("wisp_harvest [v2] {}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(tmp.join("results")).unwrap();
+        std::fs::write(tmp.join("results/table.tsv"), b"a\tb\n1\t2\n").unwrap();
+        let store = wisp_store::Store::open(&tmp.join("wisp.sqlite"))
+            .await
+            .unwrap();
+        seed_run(&store).await;
+
+        let harvested = harvest_run_outputs(
+            &store,
+            "p",
+            "f",
+            "r",
+            &tmp,
+            &[OutputSpec {
+                glob: "results/*.tsv".into(),
+                kind: "table".into(),
+                residency: OutputResidency::Auto,
+                logical_key: None,
+                max_file_mb: Some(1),
+                max_total_mb: Some(1),
+                bundle: false,
+            }],
+        )
+        .await
+        .unwrap();
+        assert_eq!(harvested.len(), 1);
+        let outputs = store.list_run_outputs("r").await.unwrap();
+        assert_eq!(outputs[0].logical_output_key, "path:results/table.tsv");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
 
     #[tokio::test]
     async fn harvest_registers_small_local_file_and_run_link() {

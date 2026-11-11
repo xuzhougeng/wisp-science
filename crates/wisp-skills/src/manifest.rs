@@ -145,6 +145,8 @@ pub fn parse_skill_document(
     text: &str,
     fallback_name: String,
 ) -> Result<(SkillManifest, String), String> {
+    // Editors on Windows often save a UTF-8 byte-order mark.
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut lines = text.split_inclusive('\n');
     let first = lines
         .next()
@@ -236,6 +238,17 @@ mod tests {
         assert!(manifest.extra.contains_key("license"));
         assert_eq!(manifest.wisp.unwrap().domains, ["oncology", "single-cell"]);
         assert_eq!(body, "# Body");
+    }
+
+    #[test]
+    fn accepts_a_leading_byte_order_mark() {
+        let (manifest, body) = parse_skill_document(
+            "\u{feff}---\nname: bom\ndescription: saved by a Windows editor\n---\nbody",
+            "fallback".into(),
+        )
+        .unwrap();
+        assert_eq!(manifest.name.as_deref(), Some("bom"));
+        assert_eq!(body, "body");
     }
 
     #[test]

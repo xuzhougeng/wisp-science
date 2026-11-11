@@ -118,12 +118,13 @@ pub fn credentials_from_token_body(
     now_ms: i64,
 ) -> Result<XaiCredentials, String> {
     let value: Value = serde_json::from_str(body)
-        .map_err(|_| format!("xAI token response was not JSON: {body}"))?;
+        // Never echo the body: a token response carries credentials.
+        .map_err(|_| "xAI token response was not JSON".to_string())?;
     let access = value
         .get("access_token")
         .and_then(Value::as_str)
         .filter(|token| !token.is_empty())
-        .ok_or_else(|| format!("xAI token response missing access_token: {body}"))?
+        .ok_or("xAI token response missing access_token")?
         .to_string();
     let refresh = value
         .get("refresh_token")
@@ -352,6 +353,18 @@ mod tests {
     use base64::Engine;
 
     const TOKEN_URL: &str = "https://auth.x.ai/oauth2/token";
+
+    #[test]
+    fn malformed_token_errors_never_echo_secrets() {
+        for body in [
+            r#"{"refresh_token":"secret-refresh"}"#,
+            r#"{"access_token":"","refresh_token":"secret-refresh"}"#,
+            r#"secret-refresh, not json"#,
+        ] {
+            let error = credentials_from_token_body(body, None, TOKEN_URL, 0).unwrap_err();
+            assert!(!error.contains("secret-refresh"), "{error}");
+        }
+    }
 
     #[tokio::test]
     async fn discovery_transport_error_exposes_the_proxy_failure_before_browser_launch() {

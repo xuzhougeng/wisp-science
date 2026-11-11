@@ -37,6 +37,8 @@ impl FileRelay {
     pub(crate) fn validate_component(value: &str, name: &str) -> Result<()> {
         if value.is_empty()
             || value.len() > 128
+            // "." and ".." would resolve to the parent of the project directory.
+            || value.bytes().all(|c| c == b'.')
             || !value
                 .bytes()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.'))
@@ -217,6 +219,19 @@ mod tests {
             workspace_blobs: blobs[2..].to_vec(),
             state_hash: sha256_hex(b"state"),
             auth_tag: sha256_hex(b"auth"),
+        }
+    }
+
+    #[test]
+    fn component_rejects_dot_only_names() {
+        for value in ["", ".", "..", "...", "a/b", "a\\b"] {
+            assert!(
+                FileRelay::validate_component(value, "project id").is_err(),
+                "{value:?} must be refused"
+            );
+        }
+        for value in ["a", "a.b", ".hidden", "proj-1_x"] {
+            assert!(FileRelay::validate_component(value, "project id").is_ok());
         }
     }
 

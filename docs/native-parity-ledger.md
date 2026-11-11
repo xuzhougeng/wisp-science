@@ -23,6 +23,7 @@ parity-ledger` 检查这一点（`scripts/check_native_parity.py`）。
 
 | WebView 改动 | SwiftUI 状态 | 说明 |
 | --- | --- | --- |
+| 设置「渠道」页离开后不再残留 `channels-updated` 监听，也不会在卸载后调用已释放的回调；若干样式里引用的未定义 CSS 变量（`--accent`、`--bg-hover`、`--shadow-md` 等）改为现有设计变量；文件标签页的快照路径计算不再克隆整份对话；命令面板里界面／代码字号增减四项改用各自专属图标（原先共用加号和减号） | 不需要 | WebView 专属修复（`ui/src/channels_view.rs`、`ui/src/main.rs`、`ui/src/styles/*.css`）：Leptos 回调生命周期与 CSS 变量在 SwiftUI 中没有对应物。 |
 | 删除／移动会话确认框里的「关联产物」预览重排：说明、统计、文件列表与复选框文字左对齐并统一为小字号；文件列表改为带分隔线的浅底列表，保留项分两行显示文件名和原因；没有待处理文件时不再留空列表 | 不需要 | WebView 专属的排版修复（`ui/src/session_modals.rs`、`modals.css`）：原先统计行和保留项沿用弹窗正文字号，比说明文字大。SwiftUI 的 `NativeSessionTransferSheet` 本来就用 `.caption` 次要色显示这些内容。无新增文案。 |
 | DOCX 修订审阅栏：没有待处理修订时收成一行（只留「刷新修订」和提示），有修订时在修订列表与正文之间加可拖动（也可用上下方向键）的分隔条，取消列表 260px 的固定上限 | 待补 | WebView 的 `DocxReviewPreview` 布局（`ui/src/app_support/docx_review.rs`、`right-pane.css`）。SwiftUI 的 `NativeDocxReview` 仍是固定高度的审阅栏，需要单独补空状态收起和可调分隔。新增文案已同步到原生资源。 |
 | 打开的文档里按 Ctrl/⌘+A 只选中文档正文（代码不含行号，R/Python 编辑器选中全部源码，图片不选），不再选中整个窗口；作用于最近点击或聚焦的文档，与对话并排时需先点击文档 | 不需要 | WebView 专属修复：浏览器默认全选会选中整页外壳。SwiftUI 的文档预览在独立的 `WKWebView`（`NativeRichPreview`）里渲染，⌘A 由第一响应者处理，本来只作用于该文档。 |

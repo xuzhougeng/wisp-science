@@ -4,7 +4,6 @@ use sha2::{Digest, Sha256};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow};
 use sqlx::{Row, SqlitePool};
 use std::path::Path;
-use std::str::FromStr;
 
 /// App-global, immutable snapshots. This deliberately uses a separate SQLite
 /// pool from [`crate::Store`], so project/session cascades cannot delete stars.
@@ -105,7 +104,8 @@ impl LibraryStore {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display()))?
+        let opts = SqliteConnectOptions::new()
+            .filename(path)
             .create_if_missing(true)
             // Wait for the WAL write lock instead of failing a concurrent writer
             // with SQLITE_BUSY (default timeout is 0). See Store::open.
@@ -610,10 +610,9 @@ mod tests {
             ))
             .join("library.sqlite");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let opts =
-            sqlx::sqlite::SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display()))
-                .unwrap()
-                .create_if_missing(true);
+        let opts = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true);
         let pool = SqlitePool::connect_with(opts).await.unwrap();
         sqlx::query(
             "CREATE TABLE library_items (\

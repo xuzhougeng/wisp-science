@@ -299,6 +299,10 @@ pub enum AgentOutputSchemaSource {
 pub struct AgentRequestPreferences {
     #[serde(default)]
     pub model_id: Option<String>,
+    /// The requested tier when no explicit model was named. Kept so that
+    /// revalidating the snapshot resolves the same model again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_tier: Option<crate::delegation_policy::ModelTier>,
     #[serde(default)]
     pub executor: Option<AgentExecutorRef>,
     #[serde(default)]

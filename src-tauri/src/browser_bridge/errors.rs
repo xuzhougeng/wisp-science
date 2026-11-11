@@ -1,7 +1,5 @@
 use serde_json::{json, Value};
 
-#[allow(dead_code)]
-pub const TAB_BUSY: &str = "TAB_BUSY";
 pub const EXTENSION_STALE: &str = "EXTENSION_STALE";
 pub const SESSION_REQUIRED: &str = "SESSION_REQUIRED";
 pub const USER_CONTROLLING: &str = "USER_CONTROLLING";

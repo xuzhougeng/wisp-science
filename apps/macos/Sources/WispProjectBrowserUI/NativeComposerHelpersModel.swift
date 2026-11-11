@@ -32,7 +32,7 @@ import WispProjectBrowser
         let current = generation; busy = true; error = nil
         defer { if generation == current { busy = false } }
         do {
-            async let memoryView = client.invoke("get_memory_view", args: ["project_id": .string(project)], projectID: project)
+            async let memoryView = client.invoke("get_memory_view", args: ["projectId": .string(project)], projectID: project)
             async let settings = client.invoke("get_auto_failure_analysis_settings", args: [:], projectID: project)
             async let specialists = client.invoke("list_specialists", args: [:], projectID: project)
             async let models = client.invoke("list_models", args: [:], projectID: project)
@@ -54,7 +54,7 @@ import WispProjectBrowser
     func setMemory(_ enabled: Bool) async {
         guard memory?.enabled != enabled else { return }
         await save {
-            let reply = try await self.client.invoke("set_memory_enabled", args: ["enabled": .bool(enabled), "project_id": .string(self.project)], projectID: self.project)
+            let reply = try await self.client.invoke("set_memory_enabled", args: ["enabled": .bool(enabled), "projectId": .string(self.project)], projectID: self.project)
             let result = try NativeComposerMemoryPreference.decode(reply, project: self.project)
             guard result.enabled == enabled else { throw ProjectBrowserError.invalidResponse }
             return { self.memory = result }

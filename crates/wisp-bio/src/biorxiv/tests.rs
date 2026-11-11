@@ -41,6 +41,14 @@ fn validates_identifiers_intervals_and_bounds() {
     assert!(normalize_doi("10.1101/2024.01.01.999999").is_ok());
     assert!(normalize_doi(" ").is_err());
     assert!(normalize_doi("10.1101").is_err());
+    for doi in [
+        "10.1101/x#y",
+        "10.1101/x?a=b",
+        "10.1101/x%2Fy",
+        "10.1101/../../pubs/biorxiv/2024-01-01/2024-01-02/0",
+    ] {
+        assert!(normalize_doi(doi).is_err(), "{doi}");
+    }
     assert!(normalize_ror("https://ror.org/021nxhr62").unwrap() == "021nxhr62");
     assert!(normalize_ror("021nxhr62").is_ok());
     assert!(normalize_ror("too-short").is_err());

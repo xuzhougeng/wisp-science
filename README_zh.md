@@ -83,7 +83,7 @@ Agent 读写项目文件、执行 shell，并按需加载 Skills（`SKILL.md`）
 
 | | |
 |---|---|
-| **上手** | [基础配置](docs/basic-configuration.md) · [模型](docs/model-configuration.md) · [ACP](docs/acp-agents.md) |
+| **上手** | [基础配置](docs/basic-configuration.md) · [模型](docs/model-configuration.md) · [Magpie](docs/magpie.md) · [ACP](docs/acp-agents.md) |
 | **科研** | [探索分支](docs/exploration-branches.zh-CN.md) · [证据胶囊](docs/publication-evidence.md) · [选题库](docs/case-studies.zh-CN.md) |
 | **项目** | [迁移](docs/project-transfer.md) · [同步](docs/project-sync.zh-CN.md) · [全局库](docs/global-library.md) |
 | **算力** | [终端](docs/terminal-sessions.md) · [远程文件](docs/remote-file-browser.md) · [传输](docs/server-transfers.md) |
@@ -152,12 +152,15 @@ Agent 读写项目文件、执行 shell，并按需加载 Skills（`SKILL.md`）
   <a href="https://github.com/245429488zc-svg"><img src="https://avatars.githubusercontent.com/u/250579619?v=4&amp;s=96" width="64" height="64" alt="@245429488zc-svg" title="@245429488zc-svg"></a>
   <a href="https://github.com/chewice"><img src="https://avatars.githubusercontent.com/u/244145152?v=4&amp;s=96" width="64" height="64" alt="@chewice" title="@chewice"></a>
   <a href="https://github.com/XuuChen"><img src="https://avatars.githubusercontent.com/u/99383234?v=4&amp;s=96" width="64" height="64" alt="@XuuChen" title="@XuuChen"></a>
+  <a href="https://github.com/fei0810"><img src="https://avatars.githubusercontent.com/u/17489298?v=4&amp;s=96" width="64" height="64" alt="@fei0810" title="@fei0810"></a>
   <a href="https://github.com/shengxinzhuan"><img src="https://avatars.githubusercontent.com/u/54225560?v=4&amp;s=96" width="64" height="64" alt="@shengxinzhuan" title="@shengxinzhuan"></a>
   <a href="https://github.com/c020627"><img src="https://avatars.githubusercontent.com/u/251123242?v=4&amp;s=96" width="64" height="64" alt="@c020627" title="@c020627"></a>
   <a href="https://github.com/chenhd3"><img src="https://avatars.githubusercontent.com/u/52345106?v=4&amp;s=96" width="64" height="64" alt="@chenhd3" title="@chenhd3"></a>
   <a href="https://github.com/ChrisLou-bioinfo"><img src="https://avatars.githubusercontent.com/u/34942834?v=4&amp;s=96" width="64" height="64" alt="@ChrisLou-bioinfo" title="@ChrisLou-bioinfo"></a>
   <a href="https://github.com/Emberwhirl"><img src="https://avatars.githubusercontent.com/u/5317953?v=4&amp;s=96" width="64" height="64" alt="@Emberwhirl" title="@Emberwhirl"></a>
   <a href="https://github.com/entpyf"><img src="https://avatars.githubusercontent.com/u/125380093?v=4&amp;s=96" width="64" height="64" alt="@entpyf" title="@entpyf"></a>
+  <a href="https://github.com/jymtop"><img src="https://avatars.githubusercontent.com/u/248790276?v=4&amp;s=96" width="64" height="64" alt="@jymtop" title="@jymtop"></a>
+  <a href="https://github.com/MenghanLi-lab"><img src="https://avatars.githubusercontent.com/u/309669757?v=4&amp;s=96" width="64" height="64" alt="@MenghanLi-lab" title="@MenghanLi-lab"></a>
   <a href="https://github.com/georgeatparallel"><img src="https://avatars.githubusercontent.com/u/297992784?v=4&amp;s=96" width="64" height="64" alt="@georgeatparallel" title="@georgeatparallel"></a>
   <a href="https://github.com/HanWang-kui"><img src="https://avatars.githubusercontent.com/u/306124623?v=4&amp;s=96" width="64" height="64" alt="@HanWang-kui" title="@HanWang-kui"></a>
   <a href="https://github.com/hero199409"><img src="https://avatars.githubusercontent.com/u/296349483?v=4&amp;s=96" width="64" height="64" alt="@hero199409" title="@hero199409"></a>

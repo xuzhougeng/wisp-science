@@ -104,7 +104,7 @@ internal abstract class NativeActionPage : WorkspaceSheet
     protected Button Button(string title, Func<Task> action, bool? primary = null)
     {
         var button = new Button { Content = title };
-        Design.ActionButton(button, primary ?? (title is "保存" or "创建项目" or "导入" or "创建论文证据"));
+        Design.ActionButton(button, primary ?? (title is "保存" or "创建项目" or "导入"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, title);
         button.Click += async (_, _) => await action(); return button;
     }

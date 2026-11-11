@@ -1039,6 +1039,7 @@ mod tests {
         assert_eq!(active.shadowed_by, None);
     }
 
+    #[test]
     fn promoting_never_overwrites_an_existing_global_folder() {
         let temp = TestDir::new();
         let source = write_skill(&temp.0, "project/notes", "notes", "project");

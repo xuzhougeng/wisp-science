@@ -434,6 +434,64 @@ impl Store {
         Ok(anchors)
     }
 
+    /// The latest visual turn: the index of its first user turn in
+    /// [`Self::visual_turn_anchors`] order, and the anchors of every user
+    /// message in it. A turn runs from the first User event after a `Done` or
+    /// `Error` to the next one, so mid-turn guidance and queue cut-ins, which
+    /// are User events of their own, stay inside the turn they steered.
+    /// `(0, [])` when the transcript has no counted User event.
+    pub async fn latest_turn_user_anchors(
+        &self,
+        frame_id: &str,
+    ) -> Result<(usize, Vec<Option<i64>>)> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.latest_turn_user_anchors(frame_id)).await;
+        }
+        let rows = sqlx::query(
+            "SELECT json_extract(event_json,'$.kind') AS kind, \
+             json_extract(event_json,'$.text') AS text, \
+             json_extract(event_json,'$.seq') AS message_seq \
+             FROM session_ui_events WHERE frame_id=? \
+             AND json_extract(event_json,'$.kind') IN ('User','MessageBoundary','Done','Error') \
+             ORDER BY seq",
+        )
+        .bind(frame_id)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut anchors: Vec<Option<i64>> = Vec::new();
+        let mut turn_start = 0usize;
+        let mut turn_open = false;
+        let mut waiting = false;
+        for row in rows {
+            let kind: String = row.try_get("kind")?;
+            match kind.as_str() {
+                "User" => {
+                    let Some(text) = row.try_get::<Option<String>, _>("text")? else {
+                        continue;
+                    };
+                    if crate::is_compaction_checkpoint(&text) {
+                        continue;
+                    }
+                    if !turn_open {
+                        turn_start = anchors.len();
+                        turn_open = true;
+                    }
+                    anchors.push(None);
+                    waiting = true;
+                }
+                "MessageBoundary" if waiting => {
+                    if let Some(anchor) = anchors.last_mut() {
+                        *anchor = row.try_get::<Option<i64>, _>("message_seq")?;
+                    }
+                    waiting = false;
+                }
+                "Done" | "Error" => turn_open = false,
+                _ => {}
+            }
+        }
+        Ok((turn_start, anchors.split_off(turn_start.min(anchors.len()))))
+    }
+
     /// Last completed `MessageBoundary` of the `user_index`-th visual user
     /// turn, plus that turn's last UI-event seq. Checkpoint User cards are
     /// skipped and also close the turn (so a pre-compact clone does not

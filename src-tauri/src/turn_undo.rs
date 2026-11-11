@@ -107,28 +107,57 @@ pub(super) async fn persist_provenance_changes(
     }
 }
 
+/// Resolve the turn the user asked to undo. `user_index` is the index of a
+/// user bubble in the whole visual transcript, so it is checked against the
+/// visual log; the model-context rows of the head epoch only locate the cut.
+/// The whole turn is undone from its first user message: file changes are
+/// recorded against that message, and guidance sent mid-turn belongs to it.
 async fn target_for_user_index(
     store: &Store,
     frame_id: &str,
     user_index: usize,
 ) -> Result<UndoTarget, String> {
+    const NOT_LATEST: &str = "Only the latest completed turn can be undone.";
     let messages = store
         .load_messages_with_seq(frame_id)
         .await
         .map_err(|error| error.to_string())?;
-    let users = messages
-        .iter()
-        .enumerate()
-        .filter(|(_, (_, message))| {
-            message.role == wisp_llm::Role::User
-                && message.tool_name.as_deref() != Some(wisp_store::AGENT_WORKFLOW_COMPLETION_TOOL)
-                && !message.content.as_text().trim().is_empty()
-        })
-        .collect::<Vec<_>>();
-    if users.is_empty() || user_index + 1 != users.len() {
-        return Err("Only the latest completed turn can be undone.".into());
-    }
-    let (message_index, (user_seq, _)) = users[user_index];
+    let is_user_row = |message: &wisp_llm::Message| {
+        message.role == wisp_llm::Role::User
+            && message.tool_name.as_deref() != Some(wisp_store::AGENT_WORKFLOW_COMPLETION_TOOL)
+            && !message.content.as_text().trim().is_empty()
+            && !wisp_store::is_compaction_checkpoint(&message.content.as_text())
+    };
+    let (turn_start, anchors) = store
+        .latest_turn_user_anchors(frame_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let message_index = if anchors.is_empty() {
+        // A transcript with no visual log (legacy): its message rows are the
+        // only record, and their user rows are the visual turns.
+        let users = messages
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, message))| is_user_row(message))
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        if users.is_empty() || user_index + 1 != users.len() {
+            return Err(NOT_LATEST.into());
+        }
+        users[user_index]
+    } else {
+        if user_index < turn_start || user_index >= turn_start + anchors.len() {
+            return Err(NOT_LATEST.into());
+        }
+        let start_seq = anchors[0].ok_or("The latest turn has no completed reply to undo.")?;
+        messages
+            .iter()
+            .position(|(seq, message)| *seq == start_seq && is_user_row(message))
+            .ok_or(
+                "The latest turn was folded into a context summary and can no longer be undone.",
+            )?
+    };
+    let user_seq = messages[message_index].0;
     if !messages[message_index + 1..]
         .iter()
         .any(|(_, message)| message.role == wisp_llm::Role::Assistant)
@@ -140,7 +169,7 @@ async fn target_for_user_index(
             .checked_sub(1)
             .map(|index| messages[index].0)
             .unwrap_or(0),
-        user_seq: *user_seq,
+        user_seq,
     })
 }
 
@@ -531,6 +560,125 @@ mod tests {
             .await
             .unwrap_err()
             .contains("no completed reply"));
+        std::fs::remove_file(database).ok();
+    }
+
+    async fn store_with_frame(label: &str) -> (Store, std::path::PathBuf) {
+        let database =
+            std::env::temp_dir().join(format!("wisp_turn_undo_{label}_{}.sqlite", Uuid::new_v4()));
+        let store = Store::open(&database).await.unwrap();
+        store.create_project("p", "Project", "").await.unwrap();
+        store
+            .create_frame("f", "p", "OPERON", "model")
+            .await
+            .unwrap();
+        (store, database)
+    }
+
+    /// Append visual events: `("User", seq)` writes a user bubble anchored at
+    /// that message seq, `("Done", _)` ends the turn.
+    async fn visual_log(store: &Store, events: &[(&str, i64)]) {
+        let mut event_seq = 1;
+        for (kind, message_seq) in events {
+            let rows = match *kind {
+                "User" => vec![
+                    r#"{"kind":"User","frame_id":"f","text":"bubble"}"#.to_string(),
+                    format!(r#"{{"kind":"MessageBoundary","frame_id":"f","seq":{message_seq}}}"#),
+                ],
+                _ => vec![r#"{"kind":"Done","frame_id":"f"}"#.to_string()],
+            };
+            for row in rows {
+                store
+                    .append_session_ui_event("f", event_seq, &row)
+                    .await
+                    .unwrap();
+                event_seq += 1;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn the_latest_turn_is_targetable_after_earlier_turns_left_the_context() {
+        let (store, database) = store_with_frame("compacted").await;
+        // The head context holds only the latest turn; the visual transcript
+        // still shows two earlier ones, so the bubble's index is 2.
+        for (seq, message) in [
+            wisp_llm::Message::system("system"),
+            wisp_llm::Message::user("third"),
+            wisp_llm::Message::assistant("third reply"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            store
+                .append_message("f", seq as i64 + 1, message)
+                .await
+                .unwrap();
+        }
+        visual_log(
+            &store,
+            &[
+                ("User", 90),
+                ("Done", 0),
+                ("User", 95),
+                ("Done", 0),
+                ("User", 2),
+                ("Done", 0),
+            ],
+        )
+        .await;
+
+        assert!(target_for_user_index(&store, "f", 0).await.is_err());
+        assert!(target_for_user_index(&store, "f", 1).await.is_err());
+        let target = target_for_user_index(&store, "f", 2).await.unwrap();
+        assert_eq!((target.keep_seq, target.user_seq), (1, 2));
+        std::fs::remove_file(database).ok();
+    }
+
+    #[tokio::test]
+    async fn guidance_sent_mid_turn_undoes_the_whole_turn_and_its_files() {
+        let (store, database) = store_with_frame("guidance").await;
+        for (seq, message) in [
+            wisp_llm::Message::system("system"),
+            wisp_llm::Message::user("first"),
+            wisp_llm::Message::assistant("first reply"),
+            wisp_llm::Message::user("edit the notes"),
+            wisp_llm::Message::assistant("working"),
+            wisp_llm::Message::user("also fix the title"),
+            wisp_llm::Message::assistant("done"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            store
+                .append_message("f", seq as i64 + 1, message)
+                .await
+                .unwrap();
+        }
+        // Turn two has two user bubbles: its prompt (seq 4) and guidance (seq 6).
+        visual_log(
+            &store,
+            &[
+                ("User", 2),
+                ("Done", 0),
+                ("User", 4),
+                ("User", 6),
+                ("Done", 0),
+            ],
+        )
+        .await;
+
+        // Either bubble of the latest turn resolves to the turn's first
+        // message, which is what file changes are recorded against.
+        for bubble in [1, 2] {
+            let target = target_for_user_index(&store, "f", bubble).await.unwrap();
+            assert_eq!(
+                (target.keep_seq, target.user_seq),
+                (3, 4),
+                "bubble {bubble}"
+            );
+        }
+        assert!(target_for_user_index(&store, "f", 0).await.is_err());
         std::fs::remove_file(database).ok();
     }
 

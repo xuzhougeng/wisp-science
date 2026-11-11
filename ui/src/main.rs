@@ -2664,14 +2664,16 @@ fn App() -> impl IntoView {
     let center_file = create_rw_signal::<Option<String>>(None);
     let snapshot_workspace_path = create_memo(move |_| {
         let path = center_file.get()?;
-        snapshot_workspace_source(
-            &path,
-            &items.get(),
-            project_info
-                .get()
-                .as_ref()
-                .map(|project| project.root.as_str()),
-        )
+        // Borrow, do not clone: `items` is the whole transcript.
+        items.with(|rows| {
+            project_info.with(|project| {
+                snapshot_workspace_source(
+                    &path,
+                    rows,
+                    project.as_ref().map(|project| project.root.as_str()),
+                )
+            })
+        })
     });
     // Live MCP Apps use the same center-tab surface as files, but their HTML,
     // tool input, and result stay in a separate instance map so in-memory tab

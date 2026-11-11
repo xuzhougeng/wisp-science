@@ -5444,6 +5444,56 @@ async fn migrate_adds_folder_id_on_legacy_db() {
     let _ = std::fs::remove_file(&tmp);
 }
 
+/// A v0.7-era database has no migration markers, so 0000_init.sql runs against
+/// its `artifacts` table, which predates `logical_key`. The init script must
+/// not index columns a legacy table gains only in later steps.
+#[tokio::test]
+async fn migrate_opens_legacy_db_whose_artifacts_lack_logical_key() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_legacy_artifacts_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    {
+        let opts = SqliteConnectOptions::new()
+            .filename(&tmp)
+            .create_if_missing(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await
+            .unwrap();
+        for sql in [
+            "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, description TEXT, \
+             workspace_dir TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+            "CREATE TABLE frames (id TEXT PRIMARY KEY, parent_frame_id TEXT, root_frame_id TEXT, \
+             agent_name TEXT NOT NULL, status TEXT NOT NULL, project_id TEXT, model TEXT, \
+             input_tokens INTEGER, output_tokens INTEGER, created_at INTEGER NOT NULL, \
+             updated_at INTEGER NOT NULL, completed_at INTEGER, title TEXT)",
+            "CREATE TABLE artifacts (id TEXT PRIMARY KEY, \
+             project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, \
+             root_frame_id TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE, \
+             filename TEXT NOT NULL, content_type TEXT NOT NULL, storage_path TEXT NOT NULL, \
+             created_at INTEGER NOT NULL)",
+        ] {
+            sqlx::query(sql).execute(&pool).await.unwrap();
+        }
+        pool.close().await;
+    }
+    let store = Store::open(&tmp).await.unwrap();
+    let indexed: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master \
+         WHERE type='index' AND name='ix_artifacts_project_logical_key')",
+    )
+    .fetch_one(&store.pool)
+    .await
+    .unwrap();
+    assert!(
+        indexed,
+        "the logical-key index is created once the column exists"
+    );
+    let _ = std::fs::remove_file(&tmp);
+}
+
 /// A v0-era database that already recorded `0000_initial_schema`, so the
 /// current 0000_init.sql (folders, extra columns) never runs. Opening it
 /// after jumping to HEAD must still list sessions and folders.

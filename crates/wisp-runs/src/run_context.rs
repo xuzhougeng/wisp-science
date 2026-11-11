@@ -1035,7 +1035,7 @@ impl RunManager {
             return Err("Download Run changed state before it could start".into());
         }
         let mut args = connection.scp_option_args()?;
-        args.push(format!("{}:{remote_path}", connection.target()?));
+        args.push(connection.scp_remote_arg(remote_path)?);
         let copy_destination = target
             .as_ref()
             .map(|target| target.temporary.as_path())

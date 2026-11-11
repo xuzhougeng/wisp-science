@@ -197,11 +197,10 @@ impl Store {
         Ok(out)
     }
 
-    /// Delete a project and everything under it. Explicit child deletes (SQLite
-    /// FKs are OFF by default, so declared CASCADE would not fire). Filesystem
-    /// is untouched — only DB rows.
-    /// ponytail: explicit cascade of known child tables; switch to
-    /// `PRAGMA foreign_keys=ON` if more child tables appear.
+    /// Delete a project and everything under it. Child rows are deleted
+    /// explicitly; sqlx also enables `foreign_keys` on every connection, so
+    /// declared CASCADE covers tables not listed here. Filesystem is untouched
+    /// — only DB rows.
     pub async fn delete_project(&self, id: &str) -> Result<()> {
         if self.unregister_project_storage(id).await? {
             return Ok(());
