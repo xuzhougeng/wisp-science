@@ -473,11 +473,34 @@ pub async fn run(
             return;
         }
     };
+    // The queue, its worker and the dedupe window outlive any one WebSocket:
+    // events are ACKed before they are queued, so Feishu never redelivers
+    // them, and a reconnect must neither drop the queue nor cut off the turn
+    // the worker is in the middle of.
+    let (event_tx, event_rx) = tokio::sync::mpsc::channel::<InboundMessage>(64);
+    // Dropping this handle on return detaches the worker: disabling the
+    // channel must not cancel a shared desktop turn at an arbitrary await.
+    let _worker = tokio::spawn(event_worker(
+        app.clone(),
+        rest.clone(),
+        event_rx,
+        shutdown.clone(),
+    ));
+    let mut seen = SeenEvents::new(DEDUPE_WINDOW);
     loop {
         set_status(&status, "connecting", "正在连接飞书…");
         // connect_once watches `shutdown` itself; stop latency during the
         // connection setup awaits is bounded by their HTTP timeouts.
-        let result = connect_once(&app, &rest, &app_id, &app_secret, &status, &mut shutdown).await;
+        let result = connect_once(
+            &rest,
+            &app_id,
+            &app_secret,
+            &status,
+            &mut shutdown,
+            &event_tx,
+            &mut seen,
+        )
+        .await;
         if *shutdown.borrow() {
             break;
         }
@@ -495,14 +518,76 @@ pub async fn run(
     set_status(&status, "stopped", "");
 }
 
+/// Replies and turn-driving run on a worker so the read loop can keep ACKing
+/// within Feishu's 3-second deadline during long agent turns. One worker
+/// serves the channel for its whole lifetime, across reconnects.
+async fn event_worker(
+    app: AppHandle,
+    rest: Arc<FeishuRest>,
+    mut event_rx: tokio::sync::mpsc::Receiver<InboundMessage>,
+    shutdown: watch::Receiver<bool>,
+) {
+    while let Some(msg) = event_rx.recv().await {
+        // The channel was switched off: finish nothing further from the queue.
+        if *shutdown.borrow() {
+            break;
+        }
+        if let Some(reply) = super::authorize_feishu_sender(&app, &msg.sender_open_id).await {
+            if let Err(e) = rest.send_text(&msg.chat_id, &reply).await {
+                tracing::warn!(target: "wisp", channel = "feishu", error = %e, "send owner-auth reply failed");
+            }
+            continue;
+        }
+        let Some(text) = msg.text.as_deref().filter(|text| !text.is_empty()) else {
+            if let Err(e) = rest
+                .send_text(&msg.chat_id, "暂不支持该消息类型,请发送文本消息。")
+                .await
+            {
+                tracing::warn!(target: "wisp", channel = "feishu", error = %e, "send unsupported-message reply failed");
+            }
+            continue;
+        };
+
+        // Slash commands are immediate control-plane replies. Ordinary
+        // agent turns get one CardKit card that evolves from progress
+        // to the final answer, matching the desktop information flow.
+        if !text.trim_start().starts_with('/') {
+            let initial = feishu_card::ProgressState::default().render();
+            match rest.create_streaming_card(&initial).await {
+                Ok(card_id) => match rest.send_card(&msg.chat_id, &card_id).await {
+                    Ok(()) => {
+                        run_streamed_turn(&app, rest.clone(), &msg.chat_id, text, card_id).await;
+                        continue;
+                    }
+                    Err(error) => {
+                        tracing::warn!(target: "wisp", channel = "feishu", %error, "send progress card failed; falling back to text");
+                    }
+                },
+                Err(error) => {
+                    tracing::warn!(target: "wisp", channel = "feishu", %error, "create progress card failed; falling back to text");
+                }
+            }
+        }
+
+        let reply = super::handle_inbound(&app, "feishu", &msg.chat_id, text).await;
+        if reply.is_empty() {
+            continue;
+        }
+        if let Err(e) = rest.send_text(&msg.chat_id, &reply).await {
+            tracing::warn!(target: "wisp", channel = "feishu", error = %e, "send reply failed");
+        }
+    }
+}
+
 /// One connection lifetime. Returns the reconnect delay on orderly loss.
 async fn connect_once(
-    app: &AppHandle,
     rest: &Arc<FeishuRest>,
     app_id: &str,
     app_secret: &str,
     status: &Arc<StdMutex<ChannelStatus>>,
     shutdown: &mut watch::Receiver<bool>,
+    event_tx: &tokio::sync::mpsc::Sender<InboundMessage>,
+    seen: &mut SeenEvents,
 ) -> Result<Duration> {
     let bot_open_id = rest
         .bot_open_id()
@@ -516,71 +601,12 @@ async fn connect_once(
         .context("WSS 连接失败")?;
     let (mut sink, mut stream) = ws.split();
 
-    // Replies and turn-driving run on a worker so the read loop can keep
-    // ACKing within Feishu's 3-second deadline during long agent turns.
-    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<InboundMessage>(64);
-    let worker = {
-        let app = app.clone();
-        let rest = rest.clone();
-        tokio::spawn(async move {
-            while let Some(msg) = event_rx.recv().await {
-                if let Some(reply) = super::authorize_feishu_sender(&app, &msg.sender_open_id).await
-                {
-                    if let Err(e) = rest.send_text(&msg.chat_id, &reply).await {
-                        tracing::warn!(target: "wisp", channel = "feishu", error = %e, "send owner-auth reply failed");
-                    }
-                    continue;
-                }
-                let Some(text) = msg.text.as_deref().filter(|text| !text.is_empty()) else {
-                    if let Err(e) = rest
-                        .send_text(&msg.chat_id, "暂不支持该消息类型,请发送文本消息。")
-                        .await
-                    {
-                        tracing::warn!(target: "wisp", channel = "feishu", error = %e, "send unsupported-message reply failed");
-                    }
-                    continue;
-                };
-
-                // Slash commands are immediate control-plane replies. Ordinary
-                // agent turns get one CardKit card that evolves from progress
-                // to the final answer, matching the desktop information flow.
-                if !text.trim_start().starts_with('/') {
-                    let initial = feishu_card::ProgressState::default().render();
-                    match rest.create_streaming_card(&initial).await {
-                        Ok(card_id) => match rest.send_card(&msg.chat_id, &card_id).await {
-                            Ok(()) => {
-                                run_streamed_turn(&app, rest.clone(), &msg.chat_id, text, card_id)
-                                    .await;
-                                continue;
-                            }
-                            Err(error) => {
-                                tracing::warn!(target: "wisp", channel = "feishu", %error, "send progress card failed; falling back to text");
-                            }
-                        },
-                        Err(error) => {
-                            tracing::warn!(target: "wisp", channel = "feishu", %error, "create progress card failed; falling back to text");
-                        }
-                    }
-                }
-
-                let reply = super::handle_inbound(&app, "feishu", &msg.chat_id, text).await;
-                if reply.is_empty() {
-                    continue;
-                }
-                if let Err(e) = rest.send_text(&msg.chat_id, &reply).await {
-                    tracing::warn!(target: "wisp", channel = "feishu", error = %e, "send reply failed");
-                }
-            }
-        })
-    };
-
     set_status(status, "running", "已连接,等待消息");
     let mut ping = tokio::time::interval(ep.ping_interval);
     ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     ping.reset(); // fire after one interval, not immediately
-    let mut seen = SeenEvents::new(DEDUPE_WINDOW);
 
-    let result: Result<Duration> = loop {
+    loop {
         tokio::select! {
             _ = shutdown.changed() => break Ok(Duration::ZERO),
             _ = ping.tick() => {
@@ -618,10 +644,7 @@ async fn connect_once(
                 }
             }
         }
-    };
-    drop(event_tx);
-    worker.abort();
-    result
+    }
 }
 
 async fn run_streamed_turn(

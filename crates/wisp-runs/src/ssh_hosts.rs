@@ -220,6 +220,17 @@ impl SshConnection {
         Ok(args)
     }
 
+    /// The `host:path` operand for `scp`, safe for the local client's protocol.
+    pub fn scp_remote_arg(&self, remote_path: &str) -> Result<String, String> {
+        // An unknown client is treated as legacy: quoting a plain path is harmless.
+        let legacy = require_local_openssh().map_or(true, |version| version < SCP_SFTP_DEFAULT);
+        Ok(format!(
+            "{}:{}",
+            self.target()?,
+            scp_remote_path(remote_path, legacy)
+        ))
+    }
+
     pub fn scp_option_args(&self) -> Result<Vec<String>, String> {
         self.validate()?;
         let mut args = if self.uses_password() {
@@ -409,6 +420,29 @@ pub fn build_password_askpass_env(password: &str) -> Result<Vec<(String, String)
             askpass_path.to_string_lossy().into_owned(),
         ),
     ])
+}
+
+/// OpenSSH 9.0 made `scp` speak SFTP by default. Older clients use the legacy
+/// protocol, where the remote shell evaluates the path operand.
+const SCP_SFTP_DEFAULT: OpenSshVersion = OpenSshVersion { major: 9, minor: 0 };
+
+/// Quote a remote path for a legacy-protocol `scp`, so spaces work and `$(…)`,
+/// backticks or `;` in a file name are not run by the remote shell. SFTP-mode
+/// clients take the path literally and must not be quoted. Plain paths are
+/// left alone either way.
+fn scp_remote_path(path: &str, legacy_protocol: bool) -> String {
+    let plain = path
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b"/._-+:@,=%~".contains(&b));
+    if !legacy_protocol || plain {
+        return path.to_string();
+    }
+    let quote = |value: &str| format!("'{}'", value.replace('\'', "'\"'\"'"));
+    // A quoted `~` would not expand to the home directory.
+    match path.strip_prefix("~/") {
+        Some(rest) => format!("~/{}", quote(rest)),
+        None => quote(path),
+    }
 }
 
 fn shell_single_quote_path(path: &Path) -> String {
@@ -1330,6 +1364,34 @@ pub fn list_ssh_config_aliases() -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn scp_remote_path_is_quoted_only_for_the_legacy_protocol() {
+        // SFTP mode takes the operand literally.
+        assert_eq!(
+            scp_remote_path("/data/my file $(id).txt", false),
+            "/data/my file $(id).txt"
+        );
+        // Legacy mode: the remote shell must see one literal word.
+        assert_eq!(
+            scp_remote_path("/data/my file $(id).txt", true),
+            "'/data/my file $(id).txt'"
+        );
+        assert_eq!(
+            scp_remote_path("/data/it's;rm -rf x", true),
+            "'/data/it'\"'\"'s;rm -rf x'"
+        );
+        // The home prefix stays outside the quotes so it still expands.
+        assert_eq!(scp_remote_path("~/runs/a b", true), "~/'runs/a b'");
+        // Plain paths are untouched in both modes.
+        for legacy in [false, true] {
+            assert_eq!(
+                scp_remote_path("/data/run-1/out_2.tsv", legacy),
+                "/data/run-1/out_2.tsv"
+            );
+            assert_eq!(scp_remote_path("~/runs/out.tsv", legacy), "~/runs/out.tsv");
+        }
+    }
+
     use super::*;
 
     fn host(alias: &str, notes: Option<&str>) -> SshHost {
