@@ -1969,10 +1969,17 @@ for (const locale of ["zh", "en"]) {
           overflow: el.scrollWidth > el.clientWidth,
           controls: controls.map(control => {
             const rect = control.getBoundingClientRect();
-            const range = document.createRange();
-            range.selectNodeContents(control);
+            // Count the lines the label's text occupies. A control may also
+            // hold an icon, whose box is not a line of text.
+            let lines = 0;
+            const walker = document.createTreeWalker(control, NodeFilter.SHOW_TEXT);
+            while (walker.nextNode()) {
+              const range = document.createRange();
+              range.selectNodeContents(walker.currentNode);
+              lines += range.getClientRects().length;
+            }
             return {
-              lines: range.getClientRects().length,
+              lines,
               inside: rect.left >= bounds.left && rect.right <= bounds.right,
             };
           }),
