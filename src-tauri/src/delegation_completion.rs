@@ -189,6 +189,35 @@ pub(crate) async fn load_workflow_execution(
     Ok((execution, delegation_tool::display_task_ids(&plan)))
 }
 
+/// Each step's attempt as a delivery of `generation` saw it: its newest
+/// attempt numbered at or below that generation. A re-run reuses the steps
+/// that already succeeded, so those keep an earlier attempt number; matching
+/// the generation exactly would report them as never having produced a result.
+/// Attempts of a later generation belong to a later delivery.
+fn attempts_as_of_generation<'a, T>(
+    attempts: &'a [T],
+    generation: i64,
+    step_and_attempt: impl Fn(&'a T) -> (&'a str, i64),
+) -> HashMap<&'a str, &'a T> {
+    let mut newest = HashMap::<&str, (i64, &T)>::new();
+    for attempt in attempts {
+        let (step, number) = step_and_attempt(attempt);
+        if number > generation {
+            continue;
+        }
+        if newest
+            .get(step)
+            .is_none_or(|(current, _)| *current < number)
+        {
+            newest.insert(step, (number, attempt));
+        }
+    }
+    newest
+        .into_iter()
+        .map(|(step, (_, attempt))| (step, attempt))
+        .collect()
+}
+
 async fn reconstruct_delivery_result(
     store: &Store,
     delivery: &AgentWorkflowDelivery,
@@ -204,11 +233,9 @@ async fn reconstruct_delivery_result(
         .list_agent_workflow_attempts(&delivery.workflow_id)
         .await
         .map_err(|error| error.to_string())?;
-    let by_step = attempts
-        .iter()
-        .filter(|attempt| attempt.attempt == delivery.generation)
-        .map(|attempt| (attempt.step_id.as_str(), attempt))
-        .collect::<HashMap<_, _>>();
+    let by_step = attempts_as_of_generation(&attempts, delivery.generation, |attempt| {
+        (attempt.step_id.as_str(), attempt.attempt)
+    });
     let execution = DelegationExecutionResult {
         workflow_id: workflow.id,
         status: execution_status(workflow.status),
@@ -428,6 +455,31 @@ mod tests {
             completion_poll_delay(u32::MAX, true),
             COMPLETION_POLL_INTERVAL
         );
+    }
+
+    #[test]
+    fn a_delivery_sees_steps_reused_from_an_earlier_generation() {
+        // (step, attempt number, outcome). Generation 2 re-ran only `fit`;
+        // `load` succeeded in generation 1 and was reused.
+        let attempts = [
+            ("load", 1, "ok"),
+            ("fit", 1, "failed"),
+            ("fit", 2, "ok"),
+            ("fit", 3, "later"),
+        ];
+        let as_of = |generation| {
+            let picked = attempts_as_of_generation(&attempts, generation, |row| (row.0, row.1));
+            let mut seen = picked
+                .into_iter()
+                .map(|(step, row)| (step, row.2))
+                .collect::<Vec<_>>();
+            seen.sort();
+            seen
+        };
+        assert_eq!(as_of(2), [("fit", "ok"), ("load", "ok")]);
+        assert_eq!(as_of(1), [("fit", "failed"), ("load", "ok")]);
+        // A step with no attempt yet is absent, so it is reported as unfinished.
+        assert!(as_of(0).is_empty());
     }
 
     #[test]
