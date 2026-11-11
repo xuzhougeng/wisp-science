@@ -82,3 +82,15 @@ records even though the tool succeeded. When no native command ran, a failing
 cmdlet still yields exit 1, and an explicit `exit N` is passed through. A cmdlet
 failure that follows a successful native command in the same script is still
 masked by that native exit code; end such scripts with an explicit `exit`.
+
+Local output harvest honors `bundle: true`: matching files (including files
+inside selected directories) become one deterministic tar.gz artifact, with one
+logical output key. Repeating a harvest for unchanged contents reuses the same
+artifact version. Local bundling uses Rust tar/gzip and needs no external `tar`
+program on Windows or macOS. File and total copy limits apply to the archive.
+
+本地产出收取支持 `bundle: true`，将匹配文件及所选目录中的文件打包为单个
+tar.gz 产物。内容不变时重复收取不会新增版本；复制预算按压缩后的归档大小计算。
+`write` 工具会在项目内创建缺失的父目录，并在创建前校验现有祖先路径及符号链接。
+
+The `write` tool creates missing parent directories within the project after validating existing ancestors and symlinks.

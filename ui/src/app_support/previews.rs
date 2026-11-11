@@ -896,12 +896,12 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
             <div class="file-preview-zoom-bar">
                 <button type="button" aria-label=move || t(locale.get(), "preview.zoom_out")
                     disabled=move || { zoom.get() <= 25 }
-                    on:click=move |_| adjust_zoom(-25)>"−"</button>
+                    on:click=move |_| adjust_zoom(-25)>{crate::app_support::compose_icon("minus")}</button>
                 <button type="button" aria-label=move || t(locale.get(), "preview.zoom_reset")
                     on:click=move |_| zoom.set(100)>{move || format!("{}%", zoom.get())}</button>
                 <button type="button" aria-label=move || t(locale.get(), "preview.zoom_in")
                     disabled=move || { zoom.get() >= 400 }
-                    on:click=move |_| adjust_zoom(25)>"+"</button>
+                    on:click=move |_| adjust_zoom(25)>{crate::app_support::compose_icon("plus")}</button>
                 {is_image.then(|| view! {
                     <button type="button" class="file-preview-crop-btn"
                         class:active=move || crop_mode.get()

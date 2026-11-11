@@ -1305,7 +1305,7 @@ pub(super) fn PublicationWorkspacePage(
                                                             {results.into_iter().map(|result| view! {
                                                                 <div class="publication-reproduction-result"
                                                                     data-passed=result.passed.to_string()>
-                                                                    <span>{if result.passed { "✓" } else { "✗" }}</span>
+                                                                    <span>{crate::app_support::compose_icon(if result.passed { "check" } else { "close" })}</span>
                                                                     <code>{result.output_path}</code>
                                                                     <span>{result.comparator_kind}</span>
                                                                 </div>

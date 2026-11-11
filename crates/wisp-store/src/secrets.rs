@@ -61,12 +61,29 @@ mod backend {
     use std::path::PathBuf;
     use std::sync::{Mutex, OnceLock};
 
+    #[cfg(test)]
+    fn file() -> PathBuf {
+        static DIRECTORY: OnceLock<tempfile::TempDir> = OnceLock::new();
+        DIRECTORY
+            .get_or_init(|| tempfile::tempdir().expect("isolated test secrets directory"))
+            .path()
+            .join("secrets.json")
+    }
+
+    #[cfg(not(test))]
     fn file() -> PathBuf {
         std::env::var_os("HOME")
             .or_else(|| std::env::var_os("USERPROFILE"))
             .map(PathBuf::from)
             .unwrap_or_else(std::env::temp_dir)
             .join(".wisp-science-dev-secrets.json")
+    }
+
+    #[test]
+    fn unit_test_secrets_are_isolated_from_the_developer_home() {
+        let path = file();
+        assert!(path.starts_with(std::env::temp_dir()));
+        assert_ne!(path.file_name().unwrap(), ".wisp-science-dev-secrets.json");
     }
 
     fn lock() -> std::sync::MutexGuard<'static, ()> {
@@ -116,7 +133,7 @@ mod tests {
 
     // Exercises only the debug file backend (cargo test builds with
     // debug_assertions), so no OS keyring daemon is ever required. The entry
-    // name is UUID-scoped so parallel test runs sharing $HOME never collide.
+    // name is UUID-scoped; the backend uses a temporary directory in tests.
     #[test]
     fn set_get_delete_roundtrip() {
         let name = format!("test:roundtrip:{}", uuid::Uuid::new_v4());

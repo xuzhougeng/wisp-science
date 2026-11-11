@@ -24,4 +24,5 @@ wisp-llm = { workspace = true }
 wisp-tools = { workspace = true }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 axum = { workspace = true }

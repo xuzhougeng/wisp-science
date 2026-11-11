@@ -1251,7 +1251,7 @@ pub(super) fn ChannelsPane(
                                     on:change=move |ev| save_feishu.call(event_target_checked(&ev)) />
                                 <span class="toggle-track" aria-hidden="true"></span>
                             </label>
-                            <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                            <span class="settings-list-chevron" aria-hidden="true">{crate::app_support::compose_icon("chevron-right")}</span>
                         </div>
                     </div>
                     <div class="settings-list-row settings-list-row-link" data-testid="weixin-channel-row"
@@ -1280,7 +1280,7 @@ pub(super) fn ChannelsPane(
                                     on:change=move |ev| set_weixin_enabled.call(event_target_checked(&ev)) />
                                 <span class="toggle-track" aria-hidden="true"></span>
                             </label>
-                            <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                            <span class="settings-list-chevron" aria-hidden="true">{crate::app_support::compose_icon("chevron-right")}</span>
                         </div>
                     </div>
                     <div class="settings-list-row settings-list-row-link" data-testid="sticks3-channel-row"
@@ -1311,7 +1311,7 @@ pub(super) fn ChannelsPane(
                                     on:change=move |ev| save_device.call(event_target_checked(&ev)) />
                                 <span class="toggle-track" aria-hidden="true"></span>
                             </label>
-                            <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                            <span class="settings-list-chevron" aria-hidden="true">{crate::app_support::compose_icon("chevron-right")}</span>
                         </div>
                     </div>
                     <div class="settings-list-row settings-list-row-link" data-testid="remote-channel-row"
@@ -1343,7 +1343,7 @@ pub(super) fn ChannelsPane(
                                     on:change=move |ev| save_remote.call(event_target_checked(&ev)) />
                                 <span class="toggle-track" aria-hidden="true"></span>
                             </label>
-                            <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                            <span class="settings-list-chevron" aria-hidden="true">{crate::app_support::compose_icon("chevron-right")}</span>
                         </div>
                     </div>
                     <div class="settings-list-row settings-list-row-link" data-testid="lab-channel-row"
@@ -1357,13 +1357,13 @@ pub(super) fn ChannelsPane(
                             </span>
                         </div>
                         <div class="settings-list-actions">
-                            <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                            <span class="settings-list-chevron" aria-hidden="true">{crate::app_support::compose_icon("chevron-right")}</span>
                         </div>
                     </div>
                 </div>
                 <p class="settings-note" data-testid="channel-routing-help">
                     {move || t(locale.get(), "channels.routing.desc")}
-                    <span class="channels-command-list" aria-label="IM slash commands">
+                    <span class="channels-command-list" aria-label=move || crate::i18n::tr(locale.get(), "a11y.im_slash_commands")>
                         <code>"/status"</code>
                         <code>"/project"</code>
                         <code>"/session"</code>

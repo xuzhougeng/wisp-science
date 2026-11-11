@@ -7,7 +7,7 @@ use crate::dto::{
     ProjectSummary, ResearchRecapItem,
 };
 use crate::i18n::Locale;
-use crate::research_journey::{call, clock, day_key, j, now};
+use crate::research_journey::{call, clock, day_key, now};
 use leptos::*;
 
 const DAY: i64 = 86_400;
@@ -39,13 +39,13 @@ struct Form {
 
 struct Template {
     icon: &'static str,
-    title: (&'static str, &'static str),
-    goal: (&'static str, &'static str),
-    /// name, definition, target, period — each (en, zh).
-    kpis: &'static [[(&'static str, &'static str); 4]],
-    autonomous: (&'static str, &'static str),
-    review_first: (&'static str, &'static str),
-    ask_for_help: (&'static str, &'static str),
+    title: &'static str,
+    goal: &'static str,
+    /// Catalog keys for name, definition, target and period.
+    kpis: &'static [[&'static str; 4]],
+    autonomous: &'static str,
+    review_first: &'static str,
+    ask_for_help: &'static str,
     review_mutations: bool,
     hours: i64,
     report_days: i64,
@@ -55,20 +55,20 @@ struct Template {
 static TEMPLATES: [Template; 4] = [
     Template {
         icon: "book",
-        title: ("Literature watch", "文献追踪"),
-        goal: (
-            "For the next 12 months, keep this project's literature current: find newly published work that bears on its research question, screen it, file what matters, and tell me what changes our plans. Report weekly.",
-            "未来 12 个月，持续跟进本项目相关文献：发现与研究问题相关的新工作，筛选并入库，告诉我哪些会影响我们的计划。每周向我汇报。",
-        ),
+        title: "automation.template.literature_watch",
+        goal: "mandates.template.for_the_next_12_months_keep_this_project_s_literature_current_fin",
         kpis: &[[
-            ("Papers screened and filed", "筛选并入库的文献"),
-            ("Read at abstract level or deeper, judged relevant, and saved to the project with a one-line reason", "至少读过摘要、判断相关、保存到项目并附一句理由的文献数"),
-            ("5", "5"),
-            ("per week", "每周"),
+            "mandates.template.papers_screened_and_filed",
+            "mandates.template.read_at_abstract_level_or_deeper_judged_relevant_and_saved_to_the",
+            "mandates.template.5",
+            "mandates.template.per_week",
         ]],
-        autonomous: ("Search literature databases, read papers, and save references and notes to the project.", "检索文献数据库、阅读论文、把文献和笔记保存到项目。"),
-        review_first: ("Changing the project's analysis plan or conclusions because of a paper.", "因某篇文献而修改项目的分析计划或结论。"),
-        ask_for_help: ("A paper needs an institutional login, or a finding contradicts our approach and needs your judgement.", "文献需要机构登录才能获取，或有发现与我们的方案冲突、需要你判断。"),
+        autonomous:
+            "mandates.template.search_literature_databases_read_papers_and_save_references_and_n",
+        review_first:
+            "mandates.template.changing_the_project_s_analysis_plan_or_conclusions_because_of_a",
+        ask_for_help:
+            "mandates.template.a_paper_needs_an_institutional_login_or_a_finding_contradicts_our",
         review_mutations: false,
         hours: 24,
         report_days: 7,
@@ -76,28 +76,28 @@ static TEMPLATES: [Template; 4] = [
     },
     Template {
         icon: "doc",
-        title: ("Submission follow-up", "投稿与返修跟进"),
-        goal: (
-            "Follow this manuscript from submission to acceptance: track the journal's status, prepare point-by-point responses and a revision checklist when reviews arrive, and keep every deadline in view. Report weekly and whenever the status changes.",
-            "跟进这篇稿件从投稿到接收：跟踪期刊状态，审稿意见返回后准备逐条回复和返修清单，盯住每一个截止日期。每周汇报，状态变化时立即汇报。",
-        ),
+        title: "mandates.template.submission_follow_up",
+        goal: "mandates.template.follow_this_manuscript_from_submission_to_acceptance_track_the_jo",
         kpis: &[
             [
-                ("Open reviewer points", "未回应的审稿意见"),
-                ("Reviewer comments that have no drafted response yet", "尚未起草回复的审稿意见条数"),
-                ("0", "0"),
-                ("before the revision deadline", "返修截止前"),
+                "mandates.template.open_reviewer_points",
+                "mandates.template.reviewer_comments_that_have_no_drafted_response_yet",
+                "mandates.template.0",
+                "mandates.template.before_the_revision_deadline",
             ],
             [
-                ("Revision checklist done (%)", "返修清单完成度（%）"),
-                ("Checklist items finished and checked against the manuscript", "已完成并对照稿件核对过的清单条目占比"),
-                ("100", "100"),
-                ("before the revision deadline", "返修截止前"),
+                "mandates.template.revision_checklist_done",
+                "mandates.template.checklist_items_finished_and_checked_against_the_manuscript",
+                "mandates.template.100",
+                "mandates.template.before_the_revision_deadline",
             ],
         ],
-        autonomous: ("Read the manuscript and reviews, draft responses and checklists, and check the journal's status page.", "阅读稿件和审稿意见，起草回复与清单，查看期刊状态页。"),
-        review_first: ("Any text sent to editors or reviewers, and any change to the manuscript.", "发给编辑或审稿人的任何文字，以及对稿件的任何修改。"),
-        ask_for_help: ("Logging in to the submission system, confirming authorship or payment, or deciding how to answer a contested point.", "登录投稿系统、确认作者身份或付款，或决定如何回应有争议的意见。"),
+        autonomous:
+            "mandates.template.read_the_manuscript_and_reviews_draft_responses_and_checklists_an",
+        review_first:
+            "mandates.template.any_text_sent_to_editors_or_reviewers_and_any_change_to_the_manus",
+        ask_for_help:
+            "mandates.template.logging_in_to_the_submission_system_confirming_authorship_or_paym",
         review_mutations: true,
         hours: 72,
         report_days: 7,
@@ -105,20 +105,20 @@ static TEMPLATES: [Template; 4] = [
     },
     Template {
         icon: "server",
-        title: ("Long-running compute", "长期计算任务"),
-        goal: (
-            "See this computation through to verified results: submit and monitor the runs, diagnose and resubmit failures, harvest the outputs, and confirm they pass the acceptance checks. Report daily while runs are active.",
-            "把这批计算跑到得到经过核验的结果：提交并监控运行，诊断并重提失败任务，取回产出，确认通过验收检查。运行期间每天汇报。",
-        ),
+        title: "mandates.template.long_running_compute",
+        goal: "mandates.template.see_this_computation_through_to_verified_results_submit_and_monit",
         kpis: &[[
-            ("Samples completed", "完成的样本数"),
-            ("Samples whose run succeeded and whose outputs were harvested and checked", "运行成功、产出已取回并核验的样本数"),
-            ("12", "12"),
-            ("by the end date", "截止日期前"),
+            "mandates.template.samples_completed",
+            "mandates.template.samples_whose_run_succeeded_and_whose_outputs_were_harvested_and",
+            "mandates.template.12",
+            "mandates.template.by_the_end_date",
         ]],
-        autonomous: ("Submit, monitor, cancel and resubmit runs on the configured servers; harvest outputs.", "在已配置的服务器上提交、监控、取消和重提运行；取回产出。"),
-        review_first: ("Changing analysis parameters, deleting data, or using more compute than agreed.", "修改分析参数、删除数据，或使用超出约定的算力。"),
-        ask_for_help: ("A server needs credentials or quota, or a failure repeats after two different fixes.", "服务器需要凭据或配额，或同一失败在两种修复后仍然重复。"),
+        autonomous:
+            "mandates.template.submit_monitor_cancel_and_resubmit_runs_on_the_configured_servers",
+        review_first:
+            "mandates.template.changing_analysis_parameters_deleting_data_or_using_more_compute",
+        ask_for_help:
+            "mandates.template.a_server_needs_credentials_or_quota_or_a_failure_repeats_after_tw",
         review_mutations: false,
         hours: 6,
         report_days: 1,
@@ -126,20 +126,20 @@ static TEMPLATES: [Template; 4] = [
     },
     Template {
         icon: "gauge",
-        title: ("Method metric iteration", "方法指标迭代"),
-        goal: (
-            "Over the next 3 months, improve this method against its benchmark: measure the baseline, find what limits it, try one change at a time, and keep only changes that hold up on held-out data. Report weekly with the current metric.",
-            "未来 3 个月，围绕基准持续改进这个方法：测定基线，找出限制因素，每次只改一处，只保留在留出数据上站得住的改动。每周汇报当前指标。",
-        ),
+        title: "mandates.template.method_metric_iteration",
+        goal: "mandates.template.over_the_next_3_months_improve_this_method_against_its_benchmark",
         kpis: &[[
-            ("Benchmark metric", "基准指标"),
-            ("The primary metric on the held-out benchmark, measured with the fixed evaluation script", "用固定评测脚本在留出基准上测得的主要指标"),
-            ("0.90", "0.90"),
-            ("by the end date", "截止日期前"),
+            "mandates.template.benchmark_metric",
+            "mandates.template.the_primary_metric_on_the_held_out_benchmark_measured_with_the_fi",
+            "mandates.template.0_90",
+            "mandates.template.by_the_end_date",
         ]],
-        autonomous: ("Run evaluations and experiments, analyze results, and prepare code changes for review.", "运行评测和实验，分析结果，准备可供审阅的代码改动。"),
-        review_first: ("Merging code, or changing the benchmark or the evaluation script.", "合并代码，或修改基准与评测脚本。"),
-        ask_for_help: ("The metric stalls for three rounds, or a result looks too good to explain.", "指标连续三轮停滞，或结果好得无法解释。"),
+        autonomous:
+            "mandates.template.run_evaluations_and_experiments_analyze_results_and_prepare_code",
+        review_first:
+            "mandates.template.merging_code_or_changing_the_benchmark_or_the_evaluation_script",
+        ask_for_help:
+            "mandates.template.the_metric_stalls_for_three_rounds_or_a_result_looks_too_good_to",
         review_mutations: true,
         hours: 24,
         report_days: 7,
@@ -147,17 +147,17 @@ static TEMPLATES: [Template; 4] = [
     },
 ];
 
-fn pick(loc: Locale, text: (&'static str, &'static str)) -> &'static str {
-    j(loc, text.0, text.1)
+fn pick(loc: Locale, key: &'static str) -> &'static str {
+    crate::i18n::tr(loc, key)
 }
 
 fn request_kind_label(loc: Locale, kind: &str) -> &'static str {
     match kind {
-        "login" => j(loc, "Sign-in", "登录"),
-        "materials" => j(loc, "Materials", "补充资料"),
-        "payment" => j(loc, "Payment", "付款授权"),
-        "release" => j(loc, "Release", "发布"),
-        _ => j(loc, "Your judgement", "需要你判断"),
+        "login" => crate::i18n::tr(loc, "mandates.sign_in"),
+        "materials" => crate::i18n::tr(loc, "mandates.materials"),
+        "payment" => crate::i18n::tr(loc, "mandates.payment"),
+        "release" => crate::i18n::tr(loc, "mandates.release"),
+        _ => crate::i18n::tr(loc, "mandates.your_judgement"),
     }
 }
 
@@ -169,14 +169,14 @@ fn report_view(loc: Locale, report: MandateReport) -> impl IntoView {
         day_key(report.period_from),
         day_key(report.period_until)
     );
-    let rounds = if loc == Locale::Zh {
-        format!("{} 轮", report.rounds)
-    } else {
-        format!("{} round(s)", report.rounds)
-    };
+    let rounds = crate::i18n::tf(
+        loc,
+        "mandates.round_count",
+        &[("count", &report.rounds.to_string())],
+    );
     // A period with rounds but no model was assembled from the ledger.
     let ledger = (report.rounds > 0 && report.body.model.is_empty())
-        .then(|| j(loc, " · from the ledger", " · 由账本整理"));
+        .then(|| crate::i18n::tr(loc, "mandates.from_the_ledger"));
     let sources = report.body.sources;
     let section = move |label: &'static str, items: Vec<ResearchRecapItem>| {
         let sources = sources.clone();
@@ -190,19 +190,19 @@ fn report_view(loc: Locale, report: MandateReport) -> impl IntoView {
     view! {<article class="mandate-report" data-testid="mandate-report">
         <small>{format!("{period} · {rounds}")}{ledger}</small>
         <strong>{report.body.headline}</strong>
-        {section.clone()(j(loc,"Done","已完成"), report.body.done)}
-        {section.clone()(j(loc,"Progress","进展"), report.body.findings)}
-        {section.clone()(j(loc,"Blocked","阻塞"), report.body.issues)}
-        {section(j(loc,"Next","下一步"), report.body.next)}
+        {section.clone()(crate::i18n::tr(loc, "mandates.done"), report.body.done)}
+        {section.clone()(crate::i18n::tr(loc, "mandates.progress"), report.body.findings)}
+        {section.clone()(crate::i18n::tr(loc, "mandates.blocked"), report.body.issues)}
+        {section(crate::i18n::tr(loc, "onboard.next"), report.body.next)}
     </article>}
 }
 
 fn status_label(loc: Locale, status: &str) -> &'static str {
     match status {
-        "paused" => j(loc, "Paused", "已暂停"),
-        "waiting" => j(loc, "Needs you", "等你处理"),
-        "done" => j(loc, "Closed", "已结束"),
-        _ => j(loc, "Active", "进行中"),
+        "paused" => crate::i18n::tr(loc, "runs.status.paused"),
+        "waiting" => crate::i18n::tr(loc, "mandates.needs_you"),
+        "done" => crate::i18n::tr(loc, "mandates.closed"),
+        _ => crate::i18n::tr(loc, "exploration.status_active"),
     }
 }
 
@@ -357,21 +357,15 @@ pub(crate) fn MandateSection(
         let loc = locale.get_untracked();
         if f.project_id.is_empty() || f.goal.trim().is_empty() {
             form_error.set(Some(
-                j(
-                    loc,
-                    "Choose a project and write a goal.",
-                    "请选择项目并填写目标。",
-                )
-                .into(),
+                crate::i18n::tr(loc, "mandates.choose_a_project_and_write_a_goal").into(),
             ));
             return;
         }
         if !f.end_date.is_empty() && end_of_day(&f.end_date).is_none_or(|end| end <= now()) {
             form_error.set(Some(
-                j(
+                crate::i18n::tr(
                     loc,
-                    "Choose an end date in the future, or leave it empty.",
-                    "请选择将来的结束日期，或留空。",
+                    "mandates.choose_an_end_date_in_the_future_or_leave_it_empty",
                 )
                 .into(),
             ));
@@ -411,69 +405,69 @@ pub(crate) fn MandateSection(
         {move || (form_open.get() && mandate_form.get()).then(|| {
             let loc = locale.get();
             let editing = form.with_untracked(|f| f.id.is_some());
-            let title = if editing { j(loc,"Edit mandate","编辑职责") } else { j(loc,"New mandate","新建职责") };
+            let title = if editing { crate::i18n::tr(loc, "mandates.edit_mandate") } else { crate::i18n::tr(loc, "mandates.new_mandate") };
             view! {<section class="automation-card automation-form mandate-form" data-testid="mandate-form" aria-label=title>
                 <h3>{title}</h3>
                 <div class="automation-form-grid">
-                    <label>{j(loc,"Project","项目")}<select prop:disabled=editing on:change=move |ev| form.update(|f| f.project_id = event_target_value(&ev))>
+                    <label>{crate::i18n::tr(loc, "permissions.scope.project")}<select prop:disabled=editing on:change=move |ev| form.update(|f| f.project_id = event_target_value(&ev))>
                         {projects.get().into_iter().map(|p| { let id = p.id.clone(); view! {<option value=p.id prop:selected=move || form.with(|f| f.project_id == id)>{p.name}</option>} }).collect_view()}
                     </select></label>
-                    <label>{j(loc,"Name","名称")}<input type="text" prop:value=move || form.with(|f| f.name.clone()) on:input=move |ev| form.update(|f| f.name = event_target_value(&ev))/></label>
-                    <label>{j(loc,"Until","截止日期")}<input type="date" prop:value=move || form.with(|f| f.end_date.clone()) on:input=move |ev| form.update(|f| f.end_date = event_target_value(&ev))/></label>
-                    <label class="automation-span">{j(loc,"Goal","目标")}<textarea rows="4" placeholder=j(loc,"Who is this for, what should be achieved, and for how long?","为谁工作、希望达成什么结果、持续多久？") prop:value=move || form.with(|f| f.goal.clone()) on:input=move |ev| form.update(|f| f.goal = event_target_value(&ev))></textarea></label>
+                    <label>{crate::i18n::tr(loc, "proj_settings.name")}<input type="text" prop:value=move || form.with(|f| f.name.clone()) on:input=move |ev| form.update(|f| f.name = event_target_value(&ev))/></label>
+                    <label>{crate::i18n::tr(loc, "mandates.until")}<input type="date" prop:value=move || form.with(|f| f.end_date.clone()) on:input=move |ev| form.update(|f| f.end_date = event_target_value(&ev))/></label>
+                    <label class="automation-span">{crate::i18n::tr(loc, "mandates.goal")}<textarea rows="4" placeholder=crate::i18n::tr(loc, "mandates.who_is_this_for_what_should_be_achieved_and_for_how_long") prop:value=move || form.with(|f| f.goal.clone()) on:input=move |ev| form.update(|f| f.goal = event_target_value(&ev))></textarea></label>
                 </div>
-                <fieldset class="mandate-fieldset"><legend>{j(loc,"KPIs","KPI")}</legend>
-                    <p class="automation-meta">{j(loc,"How progress is measured: say what is counted, the target, and the period it applies to.","怎样衡量进展：写清统计口径、目标值和统计周期。")}</p>
+                <fieldset class="mandate-fieldset"><legend>{crate::i18n::tr(loc, "mandates.kpis")}</legend>
+                    <p class="automation-meta">{crate::i18n::tr(loc, "mandates.how_progress_is_measured_say_what_is_counted_the_target_and_the_p")}</p>
                     {move || (0..kpi_rows.get()).map(|i| view! {<div class="mandate-kpi-row" data-testid="mandate-kpi-row">
-                        {kpi_input(i, j(loc,"KPI name","指标名称"), "mandate-kpi-name", |k| k.name.clone(), |k, v| k.name = v)}
-                        {kpi_input(i, j(loc,"How it is counted","统计口径"), "mandate-kpi-definition", |k| k.definition.clone(), |k, v| k.definition = v)}
-                        {kpi_input(i, j(loc,"Target","目标值"), "mandate-kpi-target", |k| k.target.clone(), |k, v| k.target = v)}
-                        {kpi_input(i, j(loc,"Period","统计周期"), "mandate-kpi-period", |k| k.period.clone(), |k, v| k.period = v)}
-                        <button type="button" class="calendar-icon" title=j(loc,"Remove KPI","移除指标") aria-label=j(loc,"Remove KPI","移除指标") on:click=move |_| form.update(|f| if i < f.kpis.len() { f.kpis.remove(i); })>{compose_icon("minus")}</button>
+                        {kpi_input(i, crate::i18n::tr(loc, "mandates.kpi_name"), "mandate-kpi-name", |k| k.name.clone(), |k, v| k.name = v)}
+                        {kpi_input(i, crate::i18n::tr(loc, "mandates.how_it_is_counted"), "mandate-kpi-definition", |k| k.definition.clone(), |k, v| k.definition = v)}
+                        {kpi_input(i, crate::i18n::tr(loc, "mandates.target"), "mandate-kpi-target", |k| k.target.clone(), |k, v| k.target = v)}
+                        {kpi_input(i, crate::i18n::tr(loc, "mandates.period"), "mandate-kpi-period", |k| k.period.clone(), |k, v| k.period = v)}
+                        <button type="button" class="calendar-icon" title=crate::i18n::tr(loc, "mandates.remove_kpi") aria-label=crate::i18n::tr(loc, "mandates.remove_kpi") on:click=move |_| form.update(|f| if i < f.kpis.len() { f.kpis.remove(i); })>{compose_icon("minus")}</button>
                     </div>}).collect_view()}
-                    <button type="button" class="btn-ghost mandate-add-kpi" data-testid="mandate-add-kpi" on:click=move |_| form.update(|f| f.kpis.push(MandateKpi::default()))>{compose_icon("plus")}{j(loc,"Add KPI","添加指标")}</button>
+                    <button type="button" class="btn-ghost mandate-add-kpi" data-testid="mandate-add-kpi" on:click=move |_| form.update(|f| f.kpis.push(MandateKpi::default()))>{compose_icon("plus")}{crate::i18n::tr(loc, "mandates.add_kpi")}</button>
                 </fieldset>
-                <fieldset class="mandate-fieldset"><legend>{j(loc,"Constraints","工作约束")}</legend>
+                <fieldset class="mandate-fieldset"><legend>{crate::i18n::tr(loc, "mandates.constraints")}</legend>
                     <div class="automation-form-grid">
-                        <label class="automation-span">{j(loc,"May do on its own","可自行完成")}<textarea rows="2" prop:value=move || form.with(|f| f.autonomous.clone()) on:input=move |ev| form.update(|f| f.autonomous = event_target_value(&ev))></textarea></label>
-                        <label class="automation-span">{j(loc,"Needs your review first","需要先审核")}<textarea rows="2" prop:value=move || form.with(|f| f.review_first.clone()) on:input=move |ev| form.update(|f| f.review_first = event_target_value(&ev))></textarea></label>
-                        <label class="automation-span">{j(loc,"Ask for help when","何时请求协助")}<textarea rows="2" prop:value=move || form.with(|f| f.ask_for_help.clone()) on:input=move |ev| form.update(|f| f.ask_for_help = event_target_value(&ev))></textarea></label>
-                        <label class="automation-span">{j(loc,"Standing instructions (one per line)","长期要求（每行一条）")}<textarea rows="3" data-testid="mandate-notes" placeholder=j(loc,"How the work should go from now on. Feedback you confirm in the mandate's conversation is added here.","之后的工作应当怎样做。在职责对话里确认过的反馈会加到这里。") prop:value=move || form.with(|f| f.notes.clone()) on:input=move |ev| form.update(|f| f.notes = event_target_value(&ev))></textarea></label>
-                        <label class="mandate-check automation-span"><input type="checkbox" data-testid="mandate-review-mutations" prop:checked=move || form.with(|f| f.review_mutations) on:change=move |ev| form.update(|f| f.review_mutations = event_target_checked(&ev))/>{j(loc,"Ask me before anything that changes files, runs commands or submits work","修改文件、运行命令或提交任何内容之前先问我")}</label>
+                        <label class="automation-span">{crate::i18n::tr(loc, "mandates.may_do_on_its_own")}<textarea rows="2" prop:value=move || form.with(|f| f.autonomous.clone()) on:input=move |ev| form.update(|f| f.autonomous = event_target_value(&ev))></textarea></label>
+                        <label class="automation-span">{crate::i18n::tr(loc, "mandates.needs_your_review_first")}<textarea rows="2" prop:value=move || form.with(|f| f.review_first.clone()) on:input=move |ev| form.update(|f| f.review_first = event_target_value(&ev))></textarea></label>
+                        <label class="automation-span">{crate::i18n::tr(loc, "mandates.ask_for_help_when")}<textarea rows="2" prop:value=move || form.with(|f| f.ask_for_help.clone()) on:input=move |ev| form.update(|f| f.ask_for_help = event_target_value(&ev))></textarea></label>
+                        <label class="automation-span">{crate::i18n::tr(loc, "mandates.standing_instructions_one_per_line")}<textarea rows="3" data-testid="mandate-notes" placeholder=crate::i18n::tr(loc, "mandates.how_the_work_should_go_from_now_on_feedback_you_confirm_in_the_ma") prop:value=move || form.with(|f| f.notes.clone()) on:input=move |ev| form.update(|f| f.notes = event_target_value(&ev))></textarea></label>
+                        <label class="mandate-check automation-span"><input type="checkbox" data-testid="mandate-review-mutations" prop:checked=move || form.with(|f| f.review_mutations) on:change=move |ev| form.update(|f| f.review_mutations = event_target_checked(&ev))/>{crate::i18n::tr(loc, "mandates.ask_me_before_anything_that_changes_files_runs_commands_or_submit")}</label>
                     </div>
                 </fieldset>
-                <fieldset class="mandate-fieldset"><legend>{j(loc,"Rhythm","工作节奏")}</legend>
+                <fieldset class="mandate-fieldset"><legend>{crate::i18n::tr(loc, "mandates.rhythm")}</legend>
                     <div class="automation-form-grid">
-                        <label>{j(loc,"Check in every (hours)","默认每隔（小时）")}<input type="number" min="1" max="720" prop:value=move || form.with(|f| f.hours.to_string()) on:input=move |ev| form.update(|f| f.hours = event_target_value(&ev).parse().unwrap_or(24))/></label>
-                        <label>{j(loc,"Report every (days)","汇报间隔（天）")}<input type="number" min="1" max="90" prop:value=move || form.with(|f| f.report_days.to_string()) on:input=move |ev| form.update(|f| f.report_days = event_target_value(&ev).parse().unwrap_or(7))/></label>
-                        <label>{j(loc,"Soonest next round (minutes)","最短间隔（分钟）")}<input type="number" min="5" max="43200" prop:value=move || form.with(|f| f.min_minutes.to_string()) on:input=move |ev| form.update(|f| f.min_minutes = event_target_value(&ev).parse().unwrap_or(15))/></label>
-                        <label>{j(loc,"Latest next round (days)","最长间隔（天）")}<input type="number" min="1" max="30" prop:value=move || form.with(|f| f.max_days.to_string()) on:input=move |ev| form.update(|f| f.max_days = event_target_value(&ev).parse().unwrap_or(7))/></label>
-                        <label>{j(loc,"Rounds per day at most","每天最多回合")}<input type="number" min="1" max="48" prop:value=move || form.with(|f| f.max_rounds.to_string()) on:input=move |ev| form.update(|f| f.max_rounds = event_target_value(&ev).parse().unwrap_or(6))/></label>
+                        <label>{crate::i18n::tr(loc, "mandates.check_in_every_hours")}<input type="number" min="1" max="720" prop:value=move || form.with(|f| f.hours.to_string()) on:input=move |ev| form.update(|f| f.hours = event_target_value(&ev).parse().unwrap_or(24))/></label>
+                        <label>{crate::i18n::tr(loc, "mandates.report_every_days")}<input type="number" min="1" max="90" prop:value=move || form.with(|f| f.report_days.to_string()) on:input=move |ev| form.update(|f| f.report_days = event_target_value(&ev).parse().unwrap_or(7))/></label>
+                        <label>{crate::i18n::tr(loc, "mandates.soonest_next_round_minutes")}<input type="number" min="5" max="43200" prop:value=move || form.with(|f| f.min_minutes.to_string()) on:input=move |ev| form.update(|f| f.min_minutes = event_target_value(&ev).parse().unwrap_or(15))/></label>
+                        <label>{crate::i18n::tr(loc, "mandates.latest_next_round_days")}<input type="number" min="1" max="30" prop:value=move || form.with(|f| f.max_days.to_string()) on:input=move |ev| form.update(|f| f.max_days = event_target_value(&ev).parse().unwrap_or(7))/></label>
+                        <label>{crate::i18n::tr(loc, "mandates.rounds_per_day_at_most")}<input type="number" min="1" max="48" prop:value=move || form.with(|f| f.max_rounds.to_string()) on:input=move |ev| form.update(|f| f.max_rounds = event_target_value(&ev).parse().unwrap_or(6))/></label>
                     </div>
                 </fieldset>
-                <p class="automation-meta">{j(loc,"The mandate works in its own conversation in the project and starts its first round right away. Rounds run only while Wisp is open; a missed round runs once on the next launch.","职责在所选项目中使用自己的一条对话，创建后立即开始第一轮。仅在 Wisp 运行时工作，错过的回合会在下次启动时补跑一次。")}</p>
+                <p class="automation-meta">{crate::i18n::tr(loc, "mandates.the_mandate_works_in_its_own_conversation_in_the_project_and_star")}</p>
                 {move || form_error.get().map(|e| view! {<p class="automation-error" role="alert">{e}</p>})}
                 <div class="automation-actions automation-form-actions">
-                    <button type="button" class="btn-ghost" on:click=move |_| form_open.set(false)>{j(loc,"Cancel","取消")}</button>
-                    <button type="button" class="btn-primary" data-testid="mandate-save" on:click=save>{if editing {j(loc,"Save","保存")} else {j(loc,"Create","创建")}}</button>
+                    <button type="button" class="btn-ghost" on:click=move |_| form_open.set(false)>{crate::i18n::tr(loc, "projects.cancel")}</button>
+                    <button type="button" class="btn-primary" data-testid="mandate-save" on:click=save>{if editing {crate::i18n::tr(loc, "settings.save")} else {crate::i18n::tr(loc, "projects.create")}}</button>
                 </div>
             </section>}
         })}
         <section class="automation-section" data-testid="mandate-section">
-            <div class="mandate-section-head"><h3>{move || j(locale.get(),"Research mandates","研究职责")}</h3>
-                <button type="button" class="btn-ghost" data-testid="mandate-create" on:click=move |_| start(None)>{compose_icon("plus")}{move || j(locale.get(),"New mandate","新建职责")}</button>
+            <div class="mandate-section-head"><h3>{move || crate::i18n::tr(locale.get(), "mandates.research_mandates")}</h3>
+                <button type="button" class="btn-ghost" data-testid="mandate-create" on:click=move |_| start(None)>{compose_icon("plus")}{move || crate::i18n::tr(locale.get(), "mandates.new_mandate")}</button>
             </div>
-            <p class="automation-meta mandate-intro">{move || j(locale.get(),"Hand over a responsibility instead of a prompt: a goal, how it is measured, and what may be done without asking. The agent carries it round by round and reports back.","交出一份职责而不是一段提示词：目标、衡量方式，以及哪些事可以不问就做。Agent 一轮轮推进，并向你汇报。")}</p>
+            <p class="automation-meta mandate-intro">{move || crate::i18n::tr(locale.get(), "mandates.hand_over_a_responsibility_instead_of_a_prompt_a_goal_how_it_is_m")}</p>
             {move || {
                 let loc = locale.get();
                 match mandates.get() {
-                    None => view! {<p class="automation-meta" role="status">{j(loc,"Loading…","正在读取…")}</p>}.into_view(),
+                    None => view! {<p class="automation-meta" role="status">{crate::i18n::tr(loc, "privacy.loading")}</p>}.into_view(),
                     Some(Err(e)) => view! {<p class="automation-error" role="alert">{e}</p>}.into_view(),
                     Some(Ok(rows)) => {
                         // Privacy mode hides a project's mandates with the project.
                         let rows: Vec<_> = rows.into_iter().filter_map(|o| project_name(&o.mandate.project_id).map(|name| (o, name))).collect();
                         if rows.is_empty() {
-                            return view! {<div class="automation-empty" data-testid="mandate-empty">{j(loc,"No mandates yet. Start from a template below or define your own.","还没有职责。可以从下方模板开始，或自己定义一份。")}</div>}.into_view();
+                            return view! {<div class="automation-empty" data-testid="mandate-empty">{crate::i18n::tr(loc, "mandates.no_mandates_yet_start_from_a_template_below_or_define_your_own")}</div>}.into_view();
                         }
                         rows.into_iter().map(|(o, project)| {
                             let last_round = o.last_round;
@@ -483,12 +477,12 @@ pub(crate) fn MandateSection(
                             let status = m.status.clone();
                             let running = matches!(status.as_str(), "active" | "waiting");
                             let when = match status.as_str() {
-                                "active" => format!("{} {} {}", j(loc,"Next round","下一轮"), day_key(m.next_run_at), clock(m.next_run_at)),
-                                "waiting" => j(loc,"Waiting for you","等待你的处理").into(),
-                                "paused" => j(loc,"Paused","已暂停").into(),
-                                _ => j(loc,"Closed","已结束").into(),
+                                "active" => format!("{} {} {}", crate::i18n::tr(loc, "mandates.next_round"), day_key(m.next_run_at), clock(m.next_run_at)),
+                                "waiting" => crate::i18n::tr(loc, "mandates.waiting_for_you").into(),
+                                "paused" => crate::i18n::tr(loc, "runs.status.paused").into(),
+                                _ => crate::i18n::tr(loc, "mandates.closed").into(),
                             };
-                            let until = m.ends_at.map(|end| format!(" · {} {}", j(loc,"until","截至"), day_key(end))).unwrap_or_default();
+                            let until = m.ends_at.map(|end| format!(" · {} {}", crate::i18n::tr(loc, "mandates.until_2"), day_key(end))).unwrap_or_default();
                             let (toggle_id, run_id, delete_id, confirm_id, remove_id) = (m.id.clone(), m.id.clone(), m.id.clone(), m.id.clone(), m.id.clone());
                             let report_id = m.id.clone();
                             let close_id = m.id.clone();
@@ -499,20 +493,20 @@ pub(crate) fn MandateSection(
                                 <div class="mandate-card-head">{compose_icon("research-trail")}<strong>{m.name.clone()}</strong>
                                     <span class="mandate-status">{status_label(loc, &status)}</span>
                                     <div class="automation-row-actions">
-                                        <label class="automation-toggle"><input type="checkbox" role="switch" aria-label=format!("{} {}", j(loc,"Enable","启用"), m.name) prop:checked=running on:change=move |ev| act("set_mandate_status", serde_json::json!({"id":toggle_id,"status": if event_target_checked(&ev) {"active"} else {"paused"}}))/></label>
-                                        <button type="button" class="calendar-icon" prop:disabled=closed title=j(loc,"Run a round now","立即运行一轮") aria-label=format!("{} {}", j(loc,"Run a round now","立即运行一轮"), m.name) on:click=move |_| { act("run_mandate_now", serde_json::json!({"id":run_id})); notice.set(Some(j(locale.get_untracked(),"Started a round. It runs in the mandate's conversation in that project.","已开始一轮，在该项目的职责对话中运行。").into())); }>{compose_icon("play")}</button>
-                                        <button type="button" class="calendar-icon" prop:disabled=closed title=j(loc,"Write a report now","立即生成汇报") aria-label=format!("{} {}", j(loc,"Write a report now","立即生成汇报"), m.name) on:click=move |_| { act("report_mandate_now", serde_json::json!({"id":report_id})); notice.set(Some(j(locale.get_untracked(),"Writing the report. It appears on the card when it is ready.","正在生成汇报，完成后显示在卡片上。").into())); }>{compose_icon("clipboard")}</button>
-                                        <button type="button" class="calendar-icon" prop:disabled=closed title=j(loc,"Close mandate","结束职责") aria-label=format!("{} {}", j(loc,"Close mandate","结束职责"), m.name) on:click=move |_| { act("set_mandate_status", serde_json::json!({"id":close_id,"status":"done"})); notice.set(Some(j(locale.get_untracked(),"Closed. A final report is being written; switch it back on to reopen.","已结束，正在生成收尾汇报；重新打开开关即可恢复。").into())); }>{compose_icon("circle-check")}</button>
-                                        <button type="button" class="calendar-icon" title=j(loc,"Edit","编辑") aria-label=format!("{} {}", j(loc,"Edit","编辑"), m.name) on:click=move |_| open_form(form_from(&edit))>{compose_icon("edit")}</button>
+                                        <label class="automation-toggle"><input type="checkbox" role="switch" aria-label=format!("{} {}", crate::i18n::tr(loc, "automation.enable"), m.name) prop:checked=running on:change=move |ev| act("set_mandate_status", serde_json::json!({"id":toggle_id,"status": if event_target_checked(&ev) {"active"} else {"paused"}}))/></label>
+                                        <button type="button" class="calendar-icon" prop:disabled=closed title=crate::i18n::tr(loc, "mandates.run_a_round_now") aria-label=format!("{} {}", crate::i18n::tr(loc, "mandates.run_a_round_now"), m.name) on:click=move |_| { act("run_mandate_now", serde_json::json!({"id":run_id})); notice.set(Some(crate::i18n::tr(locale.get_untracked(), "mandates.started_a_round_it_runs_in_the_mandate_s_conversation_in_that_pro").into())); }>{compose_icon("play")}</button>
+                                        <button type="button" class="calendar-icon" prop:disabled=closed title=crate::i18n::tr(loc, "mandates.write_a_report_now") aria-label=format!("{} {}", crate::i18n::tr(loc, "mandates.write_a_report_now"), m.name) on:click=move |_| { act("report_mandate_now", serde_json::json!({"id":report_id})); notice.set(Some(crate::i18n::tr(locale.get_untracked(), "mandates.writing_the_report_it_appears_on_the_card_when_it_is_ready").into())); }>{compose_icon("clipboard")}</button>
+                                        <button type="button" class="calendar-icon" prop:disabled=closed title=crate::i18n::tr(loc, "mandates.close_mandate") aria-label=format!("{} {}", crate::i18n::tr(loc, "mandates.close_mandate"), m.name) on:click=move |_| { act("set_mandate_status", serde_json::json!({"id":close_id,"status":"done"})); notice.set(Some(crate::i18n::tr(locale.get_untracked(), "mandates.closed_a_final_report_is_being_written_switch_it_back_on_to_reope").into())); }>{compose_icon("circle-check")}</button>
+                                        <button type="button" class="calendar-icon" title=crate::i18n::tr(loc, "menu.edit") aria-label=format!("{} {}", crate::i18n::tr(loc, "menu.edit"), m.name) on:click=move |_| open_form(form_from(&edit))>{compose_icon("edit")}</button>
                                         <button type="button" class="calendar-icon automation-delete" class:confirming=move || deleting.get().as_ref() == Some(&confirm_id)
-                                            title=move || if deleting.get().as_ref() == Some(&delete_id) {j(locale.get(),"Click again to delete","再次点击确认删除")} else {j(locale.get(),"Delete","删除")}
-                                            aria-label=format!("{} {}", j(loc,"Delete","删除"), m.name)
+                                            title=move || if deleting.get().as_ref() == Some(&delete_id) {crate::i18n::tr(locale.get(), "automation.click_again_to_delete")} else {crate::i18n::tr(locale.get(), "projects.delete")}
+                                            aria-label=format!("{} {}", crate::i18n::tr(loc, "projects.delete"), m.name)
                                             on:click=move |_| if deleting.get_untracked().as_ref() == Some(&remove_id) { deleting.set(None); act("delete_mandate", serde_json::json!({"id":remove_id.clone()})); } else { deleting.set(Some(remove_id.clone())); }>{compose_icon("trash")}</button>
                                     </div>
                                 </div>
                                 <small>{format!("{project} · {when}{until}")}</small>
                                 <p class="automation-prompt">{m.goal.clone()}</p>
-                                {(!notes.is_empty()).then(|| view! {<ul class="mandate-notes" data-testid="mandate-notes-list" aria-label=j(loc,"Standing instructions","长期要求")>
+                                {(!notes.is_empty()).then(|| view! {<ul class="mandate-notes" data-testid="mandate-notes-list" aria-label=crate::i18n::tr(loc, "mandates.standing_instructions")>
                                     {notes.iter().map(|note| view! {<li>{note.clone()}</li>}).collect_view()}
                                 </ul>})}
                                 {(!m.kpis.is_empty()).then(|| view! {<ul class="mandate-kpis">
@@ -524,12 +518,12 @@ pub(crate) fn MandateSection(
                                 </ul>})}
                                 {last_round.map(|r| {
                                     let at = format!("{} {}", day_key(r.created_at), clock(r.created_at));
-                                    let title = if loc == Locale::Zh { format!("第 {} 轮 · {at}", r.seq) } else { format!("Round {} · {at}", r.seq) };
+                                    let title = crate::i18n::tf(loc, "mandates.round_title", &[("seq", &r.seq.to_string()), ("at", &at)]);
                                     view! {<div class="mandate-round" data-testid="mandate-last-round">
-                                        <small>{title}{(r.source == "host").then(|| j(loc," · ended without a report"," · 未提交回合报告"))}</small>
-                                        <p><b>{j(loc,"Done","已完成")}</b>{r.done}</p>
-                                        {(!r.blockers.is_empty()).then(|| view! {<p class="mandate-round-blocked"><b>{j(loc,"Blocked","阻塞")}</b>{r.blockers}</p>})}
-                                        {(!r.next_step.is_empty()).then(|| view! {<p><b>{j(loc,"Next","下一步")}</b>{r.next_step}</p>})}
+                                        <small>{title}{(r.source == "host").then(|| crate::i18n::tr(loc, "mandates.ended_without_a_report"))}</small>
+                                        <p><b>{crate::i18n::tr(loc, "mandates.done")}</b>{r.done}</p>
+                                        {(!r.blockers.is_empty()).then(|| view! {<p class="mandate-round-blocked"><b>{crate::i18n::tr(loc, "mandates.blocked")}</b>{r.blockers}</p>})}
+                                        {(!r.next_step.is_empty()).then(|| view! {<p><b>{crate::i18n::tr(loc, "onboard.next")}</b>{r.next_step}</p>})}
                                     </div>}
                                 })}
                                 {request.map(|r| {
@@ -540,23 +534,23 @@ pub(crate) fn MandateSection(
                                         let text = reply.get_untracked();
                                         if text.trim().is_empty() { return; }
                                         act("reply_to_mandate", serde_json::json!({"id": reply_id.clone(), "text": text}));
-                                        notice.set(Some(j(locale.get_untracked(),"Sent. The mandate continues in its conversation.","已发送，职责在它的对话中继续。").into()));
+                                        notice.set(Some(crate::i18n::tr(locale.get_untracked(), "mandates.sent_the_mandate_continues_in_its_conversation").into()));
                                     };
                                     view! {<div class="mandate-request" data-testid="mandate-request">
-                                        <small>{format!("{} · {} {asked}", request_kind_label(loc, &r.kind), j(loc,"asked","提出于"))}</small>
-                                        <p><b>{j(loc,"Needs","需要")}</b>{r.what}</p>
-                                        {(!r.why.is_empty()).then(|| view! {<p><b>{j(loc,"Why","原因")}</b>{r.why}</p>})}
-                                        {(!r.then_what.is_empty()).then(|| view! {<p><b>{j(loc,"Then","之后")}</b>{r.then_what}</p>})}
+                                        <small>{format!("{} · {} {asked}", request_kind_label(loc, &r.kind), crate::i18n::tr(loc, "mandates.asked"))}</small>
+                                        <p><b>{crate::i18n::tr(loc, "mandates.needs")}</b>{r.what}</p>
+                                        {(!r.why.is_empty()).then(|| view! {<p><b>{crate::i18n::tr(loc, "mandates.why")}</b>{r.why}</p>})}
+                                        {(!r.then_what.is_empty()).then(|| view! {<p><b>{crate::i18n::tr(loc, "mandates.then")}</b>{r.then_what}</p>})}
                                         <div class="mandate-reply">
-                                            <textarea rows="2" data-testid="mandate-reply-text" aria-label=format!("{} {name}", j(loc,"Reply to","回复")) placeholder=j(loc,"What you did, decided or provided. Your reply starts the next round.","你做了什么、决定了什么或提供了什么。回复后立即开始下一轮。") prop:value=move || reply.get() on:input=move |ev| reply.set(event_target_value(&ev))></textarea>
-                                            <button type="button" class="btn-primary" data-testid="mandate-reply-send" prop:disabled=move || reply.with(|text| text.trim().is_empty()) on:click=send>{j(loc,"Reply","回复")}</button>
+                                            <textarea rows="2" data-testid="mandate-reply-text" aria-label=format!("{} {name}", crate::i18n::tr(loc, "mandates.reply_to")) placeholder=crate::i18n::tr(loc, "mandates.what_you_did_decided_or_provided_your_reply_starts_the_next_round") prop:value=move || reply.get() on:input=move |ev| reply.set(event_target_value(&ev))></textarea>
+                                            <button type="button" class="btn-primary" data-testid="mandate-reply-send" prop:disabled=move || reply.with(|text| text.trim().is_empty()) on:click=send>{crate::i18n::tr(loc, "trajectory.head.assistant")}</button>
                                         </div>
                                     </div>}
                                 })}
                                 {(!reports.is_empty()).then(|| {
                                     let latest = reports.first().map(|r| day_key(r.period_until)).unwrap_or_default();
                                     let count = reports.len();
-                                    let title = if loc == Locale::Zh { format!("汇报（{count}）· 最近 {latest}") } else { format!("Reports ({count}) · latest {latest}") };
+                                    let title = crate::i18n::tf(loc, "mandates.reports_title", &[("count", &count.to_string()), ("latest", &latest)]);
                                     view! {<details class="mandate-reports" data-testid="mandate-reports">
                                         <summary>{title}</summary>
                                         {reports.into_iter().map(|r| report_view(loc, r)).collect_view()}
@@ -567,13 +561,13 @@ pub(crate) fn MandateSection(
                     }
                 }
             }}
-            <p class="automation-meta mandate-intro">{move || j(locale.get(),"Start from a mandate template:","从职责模板开始：")}</p>
+            <p class="automation-meta mandate-intro">{move || crate::i18n::tr(locale.get(), "mandates.start_from_a_mandate_template")}</p>
             <div class="automation-templates">
                 {TEMPLATES.iter().map(|t| view! {
                     <button type="button" class="mandate-template" on:click=move |_| start(Some(t))>
                         <span class="automation-template-head">{compose_icon(t.icon)}<strong>{move || pick(locale.get(), t.title)}</strong></span>
                         <span class="automation-template-desc">{move || pick(locale.get(), t.goal)}</span>
-                        <small>{move || { let loc = locale.get(); if loc == Locale::Zh { format!("默认每 {} 小时 · 每 {} 天汇报", t.hours, t.report_days) } else { format!("Every {} h · report every {} d", t.hours, t.report_days) } }}</small>
+                        <small>{move || { let loc = locale.get(); crate::i18n::tf(loc, "mandates.template_cadence", &[("hours", &t.hours.to_string()), ("days", &t.report_days.to_string())]) }}</small>
                     </button>
                 }).collect_view()}
             </div>

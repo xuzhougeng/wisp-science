@@ -40,7 +40,6 @@ test("a container shows its scrollbar thumb only while it scrolls", async ({ pag
   await expect(box).toHaveClass(/is-scrolling/);
 
   // The thumb fades out again after the idle window elapses.
-  await page.waitForTimeout(1_200);
   await expect(box).not.toHaveClass(/is-scrolling/);
   await expect.poll(() => box.evaluate(thumbBackground)).toBe("rgba(0, 0, 0, 0)");
 

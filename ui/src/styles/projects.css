@@ -463,3 +463,5 @@ body:has(.window-titlebar) .conversation-search-dialog { max-height: min(660px, 
 .proj-card .pc-star.starred { color: var(--clay); }
 .proj-card .pc-star:hover { color: var(--clay); background: var(--surface-hover); }
 .proj-card .pc-star:disabled { cursor: wait; opacity: .35; }
+
+.new-plus svg { width: 18px; height: 18px; vertical-align: middle; }

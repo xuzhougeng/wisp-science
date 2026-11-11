@@ -1,3 +1,4 @@
+import { settleRendering } from "./async-observers";
 import { test, expect, type Page } from "@playwright/test";
 import { tauriMock } from "./mock-tauri";
 
@@ -272,7 +273,7 @@ test("selecting a row leaves the list scrolled where the reader left it", async 
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await expect(target).toHaveClass(/selected/);
   await expect(view.getByTestId("traj-inspector")).toBeVisible();
-  await page.waitForTimeout(250);
+  await settleRendering(page);
   expect(await list.evaluate((el) => el.scrollTop)).toBe(before);
 
   // Closing the inspector must not throw the reader back to the top either.
@@ -280,7 +281,7 @@ test("selecting a row leaves the list scrolled where the reader left it", async 
   // that actually matters: the row stays where the reader can see it.
   await view.getByTestId("traj-inspector-close").click();
   await expect(view.getByTestId("traj-inspector")).toHaveCount(0);
-  await page.waitForTimeout(250);
+  await settleRendering(page);
   const stillVisible = await target.evaluate((el) => {
     const listEl = el.closest("[data-testid='traj-list']")!;
     const row = el.getBoundingClientRect();

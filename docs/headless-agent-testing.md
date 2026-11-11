@@ -418,3 +418,16 @@ The offline suite runs on Linux, macOS, and Windows. Tests must never add a
 dependency on a real remote host, scheduler, API key, or language runtime.
 Platform integrations should use fake command runners and parsing tests; live
 provider suites belong in separately credentialed, non-blocking jobs.
+
+### Model limits
+
+Interactive, `run`, `rpc`, and live evaluation use the desktop's checked-in
+models.dev catalog with exact model IDs (including a gateway vendor prefix).
+`WISP_MAX_CONTEXT` and `WISP_MAX_TOKENS` may lower catalog limits; larger values
+are clamped. The input ceiling also applies when the catalog supplies one.
+An unknown model needs both explicit limits. Offline evaluation fixtures retain
+a deterministic 128,000-token context because they do not use a real model.
+
+交互、`run`、`rpc` 与在线评测按精确模型 ID 使用同一份 models.dev 目录；环境变量
+可调低上下文／输出上限，超出目录的值会被截断。未知模型必须显式设置
+`WISP_MAX_CONTEXT` 和 `WISP_MAX_TOKENS`。离线脚本评测保持固定上下文。

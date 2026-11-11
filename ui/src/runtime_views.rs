@@ -119,7 +119,7 @@ pub(crate) fn CenterRuntimeConsole(
                 }
             }}</pre>
             <div class="center-file-console-input" class:busy=move || busy.get().is_some()>
-                <span class="center-file-console-prompt" aria-hidden="true">{"›"}</span>
+                <span class="center-file-console-prompt" aria-hidden="true">{crate::app_support::compose_icon("chevron-right")}</span>
                 <textarea rows="2"
                     prop:value=move || draft.get()
                     placeholder=move || tf(

@@ -1,3 +1,4 @@
+import { trackInvokes, waitForInvokes } from "./async-observers";
 import { test, expect, type Page } from "@playwright/test";
 import { tauriMock } from "./mock-tauri";
 
@@ -144,9 +145,10 @@ test("failed install keeps confirmation and supports retry without duplicate ins
 
 test("cancelled preview ignores its late result and never installs", async ({ page }) => {
   await open(page, "slow");
+  await trackInvokes(page, ["preview_github_skills"]);
   await page.getByRole("button", { name: "Preview package", exact: true }).click();
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  await page.waitForTimeout(850);
+  await waitForInvokes(page);
   await expect(page.locator(".skill-store-candidate")).toHaveCount(0);
   expect(await installs(page)).toBe(0);
 });

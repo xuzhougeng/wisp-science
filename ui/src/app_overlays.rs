@@ -108,7 +108,7 @@ pub(crate) fn TurnMemoryOverlay(
                                 </option>
                                 {mandate.map(|name| view! {
                                     <option value="mandate" prop:selected=move || scope.get() == "mandate">
-                                        {move || format!("{}: {name}", crate::research_journey::j(locale.get(), "This mandate", "当前职责"))}
+                                        {move || format!("{}: {name}", crate::i18n::tr(locale.get(), "assistant.this_mandate"))}
                                     </option>
                                 })}
                             </select>
@@ -248,7 +248,7 @@ pub(crate) fn ProjectTransferOverlay(state: ProjectTransferOverlayState) -> impl
                             <button type="button" class="project-transfer-dismiss"
                                 aria-label=move || t(locale.get(), "projects.transfer.done")
                                 on:click=move |_| project_transfer.set(None)>
-                                <span aria-hidden="true">"×"</span>
+                                <span aria-hidden="true">{crate::app_support::compose_icon("close")}</span>
                             </button>
                         })}
                     </div>

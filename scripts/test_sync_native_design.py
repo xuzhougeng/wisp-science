@@ -189,6 +189,23 @@ class NativePaletteTests(unittest.TestCase):
                         "appearance.preview_answer", "appearance.preview_diff"):
                 self.assertTrue(catalog[locale][key], f"{locale}: {key}")
 
+    def test_automation_templates_resolve_the_shared_catalog(self):
+        source = '''static TEMPLATES: [Template; 1] = [
+            Template { icon: "book", title: "preset.title", prompt:
+                       "preset.prompt",
+                       cadence: Cadence::Weekly, time: "09:00", weekday: 1, }
+        ];'''
+        catalog = {"en": {"preset.title": "Literature watch", "preset.prompt": "Read papers"},
+                   "zh": {"preset.title": "文献追踪", "preset.prompt": "阅读文献"}}
+        self.assertEqual(design.automation_templates(source, catalog), [{
+            "icon": "book", "en": "Literature watch", "zh": "文献追踪",
+            "prompt_en": "Read papers", "prompt_zh": "阅读文献",
+            "cadence": "weekly", "time": "09:00", "weekday": 1,
+        }])
+        del catalog["zh"]["preset.prompt"]
+        with self.assertRaises(KeyError):
+            design.automation_templates(source, catalog)
+
     def test_locale_catalog_preserves_keys_multiline_hints_and_escapes(self):
         source = r'''(Locale::En, "settings.one") => Some(
             "Line one\nLine two with \"quotes\"",

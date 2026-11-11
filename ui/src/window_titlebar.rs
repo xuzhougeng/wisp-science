@@ -143,7 +143,7 @@ pub(super) fn WindowTitlebar(
                     attr:title=move || brand.get()>{move || brand.get()}</span>
                 <span class="window-brand-version">{concat!("v", env!("CARGO_PKG_VERSION"))}</span>
             </div>
-            <nav class="window-menu" aria-label="Application menu">
+            <nav class="window-menu" aria-label=move || crate::i18n::tr(locale.get(), "a11y.application_menu")>
                 {menus.iter().map(|(id, label_key, items, home_items)| {
                     let id = *id;
                     let label_key = *label_key;
@@ -200,13 +200,13 @@ pub(super) fn WindowTitlebar(
             <div class="window-drag" data-testid="window-snap-drag"
                 on:mousedown=begin_window_move></div>
             <div class="window-controls">
-                <button type="button" aria-label="Minimize"
-                    on:click=move |_| spawn_local(async { window_control("minimize").await })>"−"</button>
+                <button type="button" aria-label=move || crate::i18n::tr(locale.get(), "a11y.minimize")
+                    on:click=move |_| spawn_local(async { window_control("minimize").await })>{crate::app_support::compose_icon("minus")}</button>
                 <button type="button" id="titlebar-maximize" data-testid="window-maximize"
-                    aria-label="Maximize"
-                    on:click=move |_| spawn_local(async { window_control("toggle-maximize").await })>"□"</button>
-                <button type="button" class="window-close" aria-label="Close"
-                    on:click=move |_| spawn_local(async { window_control("close").await })>"×"</button>
+                    aria-label=move || crate::i18n::tr(locale.get(), "a11y.maximize")
+                    on:click=move |_| spawn_local(async { window_control("toggle-maximize").await })>{crate::app_support::compose_icon("square")}</button>
+                <button type="button" class="window-close" aria-label=move || crate::i18n::tr(locale.get(), "a11y.close")
+                    on:click=move |_| spawn_local(async { window_control("close").await })>{crate::app_support::compose_icon("close")}</button>
             </div>
         </header>
     }

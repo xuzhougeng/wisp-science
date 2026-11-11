@@ -1206,7 +1206,7 @@ textarea.host-input { min-height:64px; resize:vertical; }
 .graph-edge-summary:focus-visible .graph-target { color: var(--text); }
 .graph-edge-meta { margin: 3px 0 0 7px; color: var(--text-faint); font-size: calc(11.5px * var(--ui-font-scale, 1)); word-break: break-word; }
 .graph-rel { flex: 0 0 auto; padding: 1px 6px; border-radius: 999px; background: var(--clay-soft); color: var(--clay-strong); font-size: calc(11px * var(--ui-font-scale, 1)); font-weight: 600; }
-.graph-rel::after { content: " →"; }
+.graph-rel svg { width: 14px; height: 14px; margin-left: 4px; vertical-align: middle; }
 .graph-target { min-width: 0; word-break: break-word; }
 .research-graph-canvas {
   width: 100%;
@@ -1893,3 +1893,5 @@ button.run-review-dir:hover .run-review-filename {
 }
 /* Keyboard search can open above this collection; mirror the Escape order. */
 body:has(.shelved-sessions-modal) .conversation-search-overlay { z-index: 105; }
+
+.project-transfer-dismiss svg { width: 14px; height: 14px; }

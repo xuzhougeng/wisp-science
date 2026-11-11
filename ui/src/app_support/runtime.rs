@@ -3240,7 +3240,7 @@ fn MethodSearchRunPanel(
                                     <div><dt>{t(locale.get(), "method_search.context")}</dt><dd><code>{detail.run.context_id}</code></dd></div>
                                     <div><dt>{t(locale.get(), "method_search.baseline")}</dt><dd>{format!("{:.6} ± {:.6}", audit.baseline.median_primary, audit.baseline.spread)}</dd></div>
                                     <div><dt>{t(locale.get(), "method_search.noise")}</dt><dd>{format!("{:.6}", audit.baseline.noise_floor)}</dd></div>
-                                    <div><dt>{t(locale.get(), "method_search.reachability")}</dt><dd>{if audit.sentinel_reachable { "✓" } else { "×" }}</dd></div>
+                                    <div><dt>{t(locale.get(), "method_search.reachability")}</dt><dd>{crate::app_support::compose_icon(if audit.sentinel_reachable { "check" } else { "close" })}</dd></div>
                                     <div><dt>{t(locale.get(), "method_search.budget")}</dt><dd>{format!("{} · {} · {}s · eval {}s", spec.budget.max_candidates, spec.budget.max_cost_microunits, spec.budget.max_wall_seconds, spec.budget.max_evaluator_seconds)}</dd></div>
                                     <div><dt>{t(locale.get(), "method_search.protected")}</dt><dd>{spec.protected_paths.len().to_string()}</dd></div>
                                 </dl>

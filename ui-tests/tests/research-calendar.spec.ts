@@ -1,3 +1,4 @@
+import { trackInvokes, waitForInvokes } from "./async-observers";
 import { test, expect, type Page } from "@playwright/test";
 import { tauriMock } from "./mock-tauri";
 import { openSidebarEntry } from "./sidebar-nav";
@@ -144,12 +145,13 @@ test("daily requests follow daylight-saving day boundaries", async ({ browser })
 
 test("late month responses do not replace the newly selected month", async ({ page }) => {
   const calendar=await open(page);
+  await trackInvokes(page, ["get_research_calendar"]);
   await page.evaluate(()=>{(window as any).__calendarDelay=300;});
   await calendar.getByRole("button",{name:"Previous month",exact:true}).click();
   await page.evaluate(()=>{(window as any).__calendarDelay=0;});
   await calendar.getByRole("button",{name:"Today",exact:true}).click();
   await expect(page.getByTestId("home-calendar-details")).toContainText("Other project finding");
-  await page.waitForTimeout(400);
+  await waitForInvokes(page);
   await expect(calendar.getByTestId("calendar-month")).toContainText("2026 / 09");
   await expect(page.getByTestId("home-calendar-details")).toContainText("Other project finding");
   await expect(calendar.locator('[data-date="2026-09-09"] .calendar-dot')).toHaveCount(2);

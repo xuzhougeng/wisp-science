@@ -37,7 +37,8 @@ pub(crate) fn ProjectsScreen(
     let search_query = create_rw_signal(String::new());
     let search_active = create_rw_signal(0usize);
     let project_is_hidden = move |id: &str| {
-        !privacy_ready.get() || privacy_mode_active.get() && privacy_hidden_project_ids.with(|ids| ids.contains(id))
+        !privacy_ready.get()
+            || privacy_mode_active.get() && privacy_hidden_project_ids.with(|ids| ids.contains(id))
     };
     let demo_count = create_rw_signal(0usize);
     let creating = create_rw_signal(false);
@@ -703,8 +704,8 @@ pub(crate) fn ProjectsScreen(
                 <div class="projects-actions">
                     <div class="projects-quick-actions">
                         <button type="button" class="projects-icon-btn" data-testid="open-research-calendar"
-                            title=move || crate::research_journey::j(locale.get(), "Research calendar", "研究日历")
-                            aria-label=move || crate::research_journey::j(locale.get(), "Research calendar", "研究日历")
+                            title=move || crate::i18n::tr(locale.get(), "assistant.research_calendar")
+                            aria-label=move || crate::i18n::tr(locale.get(), "assistant.research_calendar")
                             on:click=move |_| calendar_open.set(true)>{compose_icon("calendar")}</button>
                         <button type="button" class="projects-icon-btn"
                             title=move || t(locale.get(), "sidebar.library")
@@ -744,7 +745,7 @@ pub(crate) fn ProjectsScreen(
                         <button class="btn-primary" on:click=move |_| {
                             creating.set(true);
                         }>
-                            <span class="new-plus">"+"</span>{move || t(locale.get(), "projects.new")}
+                            <span class="new-plus">{crate::app_support::compose_icon("plus")}</span>{move || t(locale.get(), "projects.new")}
                         </button>
                     </div>
                 </div>

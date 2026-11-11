@@ -352,7 +352,7 @@ pub(super) fn research_graph_list(
                                                 <button type="button" class="graph-edge-summary"
                                                     aria-label=edge_label
                                                     on:click=move |_| selected_edge.set(Some(selected.clone()))>
-                                                    <span class="graph-rel">{edge.relation}</span>
+                                                    <span class="graph-rel">{edge.relation}{compose_icon("arrow-right")}</span>
                                                     <span class="graph-target">{target}</span>
                                                 </button>
                                                 {(!metadata.is_empty()).then(|| view! {
@@ -476,7 +476,7 @@ pub(super) fn research_edge_detail(
             aria-label=t(locale, "graph.edge.details")>
             <div class="research-edge-detail-head">
                 <div>
-                    <span class="graph-rel">{edge.relation}</span>
+                    <span class="graph-rel">{edge.relation}{compose_icon("arrow-right")}</span>
                     <strong>{format!("{source} → {target}")}</strong>
                 </div>
                 <button type="button" class="ps-close"

@@ -1,3 +1,4 @@
+import { trackInvokes, waitForInvokes } from "./async-observers";
 import { test, expect, type Page } from "@playwright/test";
 import { tauriMock } from "./mock-tauri";
 
@@ -45,6 +46,7 @@ async function assertOutline(page: Page) {
 
 test("compacted history keeps 80 exact questions, timestamps and first/middle/latest jumps", async ({ page }) => {
   await setup(page);
+  await trackInvokes(page, ["load_session"]);
   await assertOutline(page);
   for (const index of [79, 45, 0, 79]) {
     await page.getByTestId("conversation-outline").getByRole("button", { name: `question ${index + 1}`, exact: true }).click();
@@ -65,6 +67,7 @@ test("compacted history keeps 80 exact questions, timestamps and first/middle/la
 
 test("loading older pages never changes the full outline or duplicates questions", async ({ page }) => {
   await setup(page);
+  await trackInvokes(page, ["load_session"]);
   await page.getByRole("button", { name: "Hide conversation outline" }).click();
   for (let attempt = 0; attempt < 12; attempt++) {
     const older = page.locator(".transcript-load-older").first();
@@ -79,18 +82,20 @@ test("loading older pages never changes the full outline or duplicates questions
 
 test("a late old-history jump cannot undo a newer selection", async ({ page }) => {
   await setup(page);
+  await trackInvokes(page, ["load_session"]);
   await page.evaluate(() => { (window as any).historyDelay = 400; });
   const outline = page.getByTestId("conversation-outline");
   await outline.getByRole("button", { name: "question 1", exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).historyRequests.includes(43))).toBe(true);
   await outline.getByRole("button", { name: "question 80", exact: true }).click();
-  await page.waitForTimeout(600);
+  await waitForInvokes(page);
   await expect(page.locator('[data-user-index="79"]')).toHaveClass(/outline-target/);
   await assertOutline(page);
 });
 
 test("history jump failures are visible and can be retried", async ({ page }) => {
   await setup(page);
+  await trackInvokes(page, ["load_session"]);
   await page.evaluate(() => { (window as any).historyFail = true; });
   await page.getByTestId("conversation-outline").getByRole("button", { name: "question 1", exact: true }).click();
   await expect(page.getByText(/history temporarily unavailable/)).toBeVisible();

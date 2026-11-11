@@ -1002,3 +1002,6 @@ button.run-status:hover { filter:brightness(0.96); }
 .mcp-app-isolation-controls button { flex: 0 0 auto; }
 .mcp-app-native-content { position: relative; flex: 1 1 0; min-height: 0; overflow: hidden; }
 .mcp-app-native-status { padding: 16px; }
+
+.file-preview-zoom-bar svg { width: 14px; height: 14px; vertical-align: middle; }
+.dynamic-task-remove svg { width: 14px; height: 14px; }

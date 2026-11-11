@@ -1,3 +1,4 @@
+import { trackInvokes, waitForInvokes } from "./async-observers";
 import { expect, test, type Page } from "@playwright/test";
 import { tauriMock } from "./mock-tauri";
 
@@ -187,6 +188,7 @@ for (const locale of ["en", "zh"]) {
   test(`transcript switch sits with the toolbar actions and folds into More (${locale})`, async ({ page }) => {
     await page.setViewportSize({ width: 1600, height: 900 });
     await openCompactedSession(page, compactionPayload(), locale);
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
     const toggle = page.getByTestId("transcript-view-toggle");
     const full = page.getByTestId("transcript-view-full");
     const model = page.getByTestId("transcript-view-model");
@@ -250,6 +252,7 @@ for (const locale of ["en", "zh"]) {
 
 test("compaction row expands the checkpoint and Escape closes only that layer", async ({ page }) => {
   await openCompactedSession(page);
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
   await page.getByTestId("conversation-outline-toggle").click();
   await expect(page.getByTestId("conversation-outline")).toBeVisible();
   await page.getByTestId("context-compaction-expand").click();
@@ -265,6 +268,7 @@ test("compaction row expands the checkpoint and Escape closes only that layer", 
 
 test("undo compaction invokes the command and marks the row undone", async ({ page }) => {
   await openCompactedSession(page);
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
   await page.getByTestId("context-compaction-expand").click();
   await page.getByTestId("undo-compaction").click();
   await expect.poll(() => lastInvokeArgs(page, "undo_compaction")).toMatchObject({
@@ -288,6 +292,7 @@ test("new turns disable undo and show the backend reason", async ({ page }) => {
 
 test("compacted bubbles are marked out of context and model view is read-only", async ({ page }) => {
   await openCompactedSession(page);
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
   const first = page.locator("[data-user-index='0']").first();
   const second = page.locator("[data-user-index='1']").first();
   await expect(first).toHaveAttribute("data-in-context", "false");
@@ -327,6 +332,7 @@ test("compacted bubbles are marked out of context and model view is read-only", 
 for (const emitEvent of [true, false]) {
   test(`undo restores the actual parent epoch and its undo action (event=${emitEvent})`, async ({ page }) => {
     await openCompactedSession(page, compactionPayload({ epoch: 2 }));
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
     await page.evaluate(emitEvent => { (window as any).__suppressUndoEvent = !emitEvent; }, emitEvent);
     await page.getByTestId("context-compaction-expand").last().click();
     await page.getByTestId("undo-compaction").click();
@@ -345,6 +351,7 @@ for (const emitEvent of [true, false]) {
 for (const automatic of [false, true]) {
   test(`live compaction refreshes checkpoint and epoch without replacing the transcript (auto=${automatic})`, async ({ page }) => {
     await openCompactedSession(page);
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
     await publishCompaction(page, automatic);
     await page.getByTestId("context-compaction-expand").last().click();
     await expect(page.getByTestId("context-compaction-details")).toContainText("Newly folded turns.");
@@ -357,11 +364,12 @@ for (const automatic of [false, true]) {
 
 test("a visible model view refreshes after compaction without falling back to full history", async ({ page }) => {
   await openCompactedSession(page);
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
   await page.getByTestId("transcript-view-model").click();
   await expect(page.locator(".thread")).toHaveAttribute("data-model-view", "true");
   await expect(page.getByTestId("context-checkpoint-row")).toContainText("Folded older turns.");
   await publishCompaction(page);
-  await page.waitForTimeout(300);
+  await waitForInvokes(page);
   await expect(page.getByTestId("transcript-view-model")).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".thread")).toHaveAttribute("data-model-view", "true");
   await expect(page.getByTestId("context-checkpoint-row")).toContainText("Folded older turns.");
@@ -370,6 +378,7 @@ test("a visible model view refreshes after compaction without falling back to fu
 
 test("a late compaction snapshot cannot overwrite a later undo", async ({ page }) => {
   await openCompactedSession(page, compactionPayload({ epoch: 2 }));
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
   await page.evaluate(() => {
     const w = window as any;
     w.__contextDelay = 800;
@@ -381,24 +390,26 @@ test("a late compaction snapshot cannot overwrite a later undo", async ({ page }
   await page.getByTestId("undo-compaction").click();
   await page.getByTestId("context-usage-trigger").click();
   await expect(page.getByTestId("context-usage-epoch")).toContainText("Epoch 1");
-  await page.waitForTimeout(900);
+  await waitForInvokes(page);
   await expect(page.getByTestId("context-usage-epoch")).toContainText("Epoch 1");
 });
 
 test("a late context refresh cannot alter another conversation", async ({ page }) => {
   await openCompactedSession(page);
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
   await page.evaluate(() => { (window as any).__contextDelay = 800; });
   await publishCompaction(page);
   await expect.poll(() => lastInvokeArgs(page, "load_session_context_state")).toMatchObject({ sessionId: "s-compact" });
   await page.evaluate(() => (window as any).__tauriEmit("open-session", { projectId: "default", sessionId: "s1" }));
   await expect(page.locator(".thread").getByText("first question", { exact: true })).toHaveCount(0);
-  await page.waitForTimeout(900);
+  await waitForInvokes(page);
   await expect(page.getByTestId("context-compaction-flag")).toHaveCount(0);
   await expect(page.getByTestId("context-usage-epoch")).toHaveCount(0);
 });
 
 test("slash compact opens a guided locked flow and reveals the compacted model context", async ({ page }) => {
   await openCompactedSession(page);
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
   await wireManualCompaction(page, { manualCompletion: true });
   const composer = page.locator("#composer-input");
   await composer.fill("/compact preserve the QC thresholds and blockers");
@@ -430,6 +441,7 @@ test("slash compact opens a guided locked flow and reveals the compacted model c
 
 test("context usage compact button opens the same instruction dialog", async ({ page }) => {
   await openCompactedSession(page, compactionPayload(), "zh");
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
   await page.getByTestId("context-usage-trigger").click();
   await page.getByTestId("context-usage-compact-header").click();
   await expect(page.getByTestId("compact-modal")).toBeVisible();
@@ -445,6 +457,7 @@ test("context usage compact button opens the same instruction dialog", async ({ 
 
 test("regular compact sends /compact and semantic compact sends --semantic", async ({ page }) => {
   await openCompactedSession(page);
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
   await wireManualCompaction(page);
   await page.getByTestId("context-usage-trigger").click({ force: true });
   await page.getByTestId("context-usage-compact-header").click({ force: true });
@@ -458,6 +471,7 @@ for (const locale of ["en", "zh"]) {
   test(`expanded compaction keeps horizontal counts and stacks details (${locale})`, async ({ page }) => {
     await page.setViewportSize({ width: 1600, height: 1000 });
     await openCompactedSession(page, compactionPayload({ before: 569400, after: 245500 }), locale);
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
     const flag = page.getByTestId("context-compaction-flag");
     await page.getByTestId("context-compaction-expand").click();
     for (const width of [1600, 760]) {
@@ -481,6 +495,7 @@ for (const locale of ["en", "zh"]) {
 
 test("compaction immediately replaces old occupancy before another Usage event", async ({ page }) => {
   await openCompactedSession(page);
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
   await page.evaluate(() => {
     const w = window as any;
     w.__tauriEmit("agent", { kind: "Usage", frame_id: "s-compact", input: 5350300, output: 1500,
@@ -502,6 +517,7 @@ test("compaction immediately replaces old occupancy before another Usage event",
 
 test("model view renders prune tombstones as archived rows instead of assistant bubbles", async ({ page }) => {
   await openCompactedSession(page);
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
   await page.evaluate(() => {
     const w = window as any;
     const tombstone = "[compacted; full content archived at wisp-history:550b23285f0042bfab0f08fb95bf12e7 — retrieve only narrow ranges with read/grep; do not load the whole archive back into context]";
@@ -535,6 +551,7 @@ test("model view renders prune tombstones as archived rows instead of assistant 
 
 test("model view renders epoch tool rows and streams continued chat from the same source", async ({ page }) => {
   await openCompactedSession(page);
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
   await page.evaluate(() => {
     const w = window as any;
     w.__contextView.splice(3, 0, { role: "tool", tool_name: "shell", text: "EPOCH TOOL OUTPUT", input: "echo epoch", ok: true });
@@ -579,6 +596,7 @@ test("model view renders epoch tool rows and streams continued chat from the sam
 
 test("a delayed epoch read cannot lose its checkpoint when Done refreshes the same epoch", async ({ page }) => {
   await openCompactedSession(page);
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
   await page.getByTestId("transcript-view-model").click();
   await expect(page.getByTestId("context-checkpoint-row")).toBeVisible();
   await page.evaluate(() => {
@@ -594,13 +612,14 @@ test("a delayed epoch read cannot lose its checkpoint when Done refreshes the sa
     w.__tauriEmit("agent", { kind: "Done", frame_id: "s-compact", stop_reason: "compact" });
   });
   await expect(page.getByTestId("context-checkpoint-row")).toContainText("EPOCH TWO CHECKPOINT");
-  await page.waitForTimeout(600);
+  await waitForInvokes(page);
   await expect(page.getByTestId("context-checkpoint-row")).toContainText("EPOCH TWO CHECKPOINT");
   await expect(page.locator(".thread").getByText("first question", { exact: true })).toHaveCount(0);
 });
 
 test("loading or failing model view never presents full history and can be retried", async ({ page }) => {
   await openCompactedSession(page);
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
   await page.evaluate(() => {
     const w = window as any;
     w.__contextViewDelay = 500;
@@ -617,6 +636,7 @@ test("loading or failing model view never presents full history and can be retri
 
 test("a long head epoch keeps its checkpoint at the beginning", async ({ page }) => {
   await openCompactedSession(page);
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
   await page.evaluate(() => {
     const w = window as any;
     w.__contextView = w.__contextView.slice(0, 2).concat(Array.from({ length: 65 }, (_, i) => [
@@ -631,11 +651,12 @@ test("a long head epoch keeps its checkpoint at the beginning", async ({ page })
 
 test("finishing a model read does not undo a switch back to full transcript", async ({ page }) => {
   await openCompactedSession(page);
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
   await page.evaluate(() => { (window as any).__contextViewDelay = 500; });
   await page.getByTestId("transcript-view-model").click();
   await expect(page.getByTestId("context-view-loading")).toBeVisible();
   await page.getByTestId("transcript-view-full").click();
-  await page.waitForTimeout(650);
+  await waitForInvokes(page);
   await expect(page.getByTestId("transcript-view-full")).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".thread").getByText("first question", { exact: true })).toBeVisible();
   await expect(page.getByTestId("context-checkpoint-row")).toHaveCount(0);
@@ -643,6 +664,7 @@ test("finishing a model read does not undo a switch back to full transcript", as
 
 test("a turn sent during model loading remains after the checkpoint", async ({ page }) => {
   await openCompactedSession(page);
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
   await page.evaluate(() => {
     const w = window as any;
     w.__contextViewDelay = 500;
@@ -672,6 +694,7 @@ test("session health flags shrinking compaction yield at low usage (#1541)", asy
   // band, but compaction has stopped buying room.
   await page.addInitScript(() => { (window as any).__epochTokens = [[1000, 200], [1000, 800]]; });
   await openCompactedSession(page, compactionPayload({ epoch: 2 }));
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
   const trigger = page.getByTestId("context-usage-trigger");
   await expect(trigger).toHaveAttribute("data-tone", "ok");
   await trigger.click();
@@ -688,6 +711,7 @@ test("session health flags shrinking compaction yield at low usage (#1541)", asy
 
 test("session health stays OK when every compaction frees most of the window (#1541)", async ({ page }) => {
   await openCompactedSession(page, compactionPayload({ epoch: 3 }));
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
   await page.getByTestId("context-usage-trigger").click();
   const panel = page.getByTestId("context-usage-panel");
   await expect(panel.getByTestId("context-usage-health")).toHaveText("Health: OK · compacted 3× · last freed 80%");
@@ -706,6 +730,7 @@ async function invokeCount(page: Page, cmd: string) {
 async function openSplitSoonSessionWithHandoff(page: Page, note: string | null) {
   await page.addInitScript(() => { (window as any).__epochTokens = [[1000, 200], [1000, 800]]; });
   await openCompactedSession(page, compactionPayload({ epoch: 2 }));
+  await trackInvokes(page, ["load_session_context_state", "load_session_context_view"]);
   await page.evaluate((text) => {
     const w = window as any;
     const original = w.__TAURI__.core.invoke;

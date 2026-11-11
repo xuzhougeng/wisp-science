@@ -1353,7 +1353,6 @@ fn insert_sorted<T: Ord + Copy>(target: &mut Vec<T>, value: T) {
 fn limit_greater<T: Ord>(selected: Option<T>, defaults: Option<T>) -> bool {
     match (selected, defaults) {
         (Some(selected), Some(default)) => selected > default,
-        (None, Some(_)) => true,
         _ => false,
     }
 }
@@ -1728,6 +1727,35 @@ mod tests {
             timeout_secs: None,
             input: json!({}),
         }
+    }
+
+    #[test]
+    fn unset_or_zero_budget_dimensions_do_not_request_elevation() {
+        let defaults = AgentBudget {
+            max_tokens: Some(100),
+            max_tool_calls: Some(10),
+            max_cost_microunits: Some(100),
+        };
+        assert!(!budget_is_elevated(None, &defaults));
+        assert!(!budget_is_elevated(
+            Some(&AgentBudget::default()),
+            &defaults
+        ));
+        assert!(!budget_is_elevated(
+            Some(&AgentBudget {
+                max_tokens: Some(0),
+                max_tool_calls: Some(0),
+                max_cost_microunits: Some(0),
+            }),
+            &defaults
+        ));
+        assert!(budget_is_elevated(
+            Some(&AgentBudget {
+                max_tool_calls: Some(11),
+                ..AgentBudget::default()
+            }),
+            &defaults
+        ));
     }
 
     #[test]

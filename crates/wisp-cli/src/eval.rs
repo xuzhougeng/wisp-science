@@ -29,7 +29,8 @@ const LIVE_COMPACTION_SUITE: &str = include_str!("../eval-suites/live-compaction
 const LIVE_MEMORY_SUITE: &str = include_str!("../eval-suites/live-memory-v1.yaml");
 #[cfg(test)]
 const MEMORY_SUITE: &str = include_str!("../eval-suites/memory-v1.yaml");
-const DEFAULT_MAX_CONTEXT: usize = 128_000;
+// Offline fixtures have no model; live attempts resolve the exact model catalog.
+const OFFLINE_MAX_CONTEXT: usize = 128_000;
 const DEFAULT_MAX_ROUNDS: usize = 12;
 const DEFAULT_TIMEOUT_MS: u64 = 60_000;
 
@@ -1249,7 +1250,7 @@ async fn run_case(
     let before = snapshot_workspace(workspace.path())?;
     let output = Arc::new(EvalOutput::new(&case.approval, case.plan_mode)?);
     let session_id = uuid::Uuid::new_v4().to_string();
-    let provider_source = match options.mode {
+    let mut provider_source = match options.mode {
         EvalMode::Offline => ProviderSource::Offline(ScriptedProvider::new(
             format!("scripted:{}", case.id),
             case.script.clone(),
@@ -1273,7 +1274,22 @@ async fn run_case(
         }
         _ => None,
     };
-    let max_context = limits.max_context_tokens.unwrap_or(DEFAULT_MAX_CONTEXT);
+    let max_context = match &mut provider_source {
+        ProviderSource::Offline(_) => limits.max_context_tokens.unwrap_or(OFFLINE_MAX_CONTEXT),
+        ProviderSource::Live(config) => {
+            let (context, output) = crate::model_limits::resolve(
+                config,
+                limits.max_context_tokens.or_else(|| {
+                    std::env::var("WISP_MAX_CONTEXT")
+                        .ok()
+                        .and_then(|v| v.parse().ok())
+                }),
+                Some(config.max_tokens),
+            )?;
+            config.max_tokens = output;
+            context
+        }
+    };
     let max_rounds = limits.max_rounds.unwrap_or(DEFAULT_MAX_ROUNDS);
     let run_store = open_project_store(workspace.path(), "eval", &case.id).await?;
     if case.fixture_mandate {

@@ -1,3 +1,4 @@
+import { trackIntervals, waitForIntervalTicks } from "./async-observers";
 import { test, expect, Page } from '@playwright/test';
 import { tauriMock } from './mock-tauri';
 
@@ -86,6 +87,7 @@ test('a running subagent can be stopped and a child conversation opened from the
 });
 
 test('a slow subagent read is never stacked by the one-second poll', async ({ page }) => {
+  await trackIntervals(page);
   const panel = await openAgentsPane(page);
   await expect(panel.getByTestId('agent-activity-running')).toContainText('Align the reads');
   await page.evaluate(() => {
@@ -109,7 +111,7 @@ test('a slow subagent read is never stacked by the one-second poll', async ({ pa
   const poll = (key: string) => page.evaluate((name) => (window as any).__agentPoll[name], key);
   await expect.poll(() => poll('active')).toBe(1);
   // Several ticks pass while the read is held; none may start another read.
-  await page.waitForTimeout(2_500);
+  await waitForIntervalTicks(page, 1000, 3);
   expect(await poll('calls')).toBe(1);
   expect(await poll('peak')).toBe(1);
   await page.evaluate(() => {

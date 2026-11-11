@@ -674,7 +674,7 @@ pub(crate) fn ContextUsagePanel(
                                     aria-hidden="true"></span>
                                 <span class="context-usage-label">{row.label}</span>
                                 <span class="context-usage-value">{fmt_context_tokens(row.tokens)}</span>
-                                {expandable.then(|| view! { <span class="context-usage-chevron">{"⌄"}</span> })}
+                                {expandable.then(|| view! { <span class="context-usage-chevron">{compose_icon("chevron-down")}</span> })}
                             </button>
                             {move || (context_usage_detail_open.get().as_deref() == Some(detail_color.as_str())).then(|| {
                                 let content = context_usage_details.get()

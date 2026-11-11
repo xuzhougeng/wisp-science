@@ -1,3 +1,4 @@
+import { trackIntervals, waitForIntervalTicks } from "./async-observers";
 import { expect, test, type Page } from "@playwright/test";
 import { tauriMock } from "./mock-tauri";
 
@@ -74,6 +75,7 @@ const successfulScan = (sessionId: string) => ({
 });
 
 test("an outdated connected extension gets a verified update and manual reload fallback", async ({ page }) => {
+  await trackIntervals(page);
   await page.addInitScript(() => {
     const status = {
       connected: true,
@@ -117,7 +119,7 @@ test("an outdated connected extension gets a verified update and manual reload f
 
   await page.keyboard.press("Escape");
   await expect(banner).toHaveCount(0);
-  await page.waitForTimeout(2_200);
+  await waitForIntervalTicks(page, 1000, 3);
   await expect(banner).toHaveCount(0);
 });
 

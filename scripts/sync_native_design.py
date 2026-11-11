@@ -95,6 +95,19 @@ def native_translation_keys(sources):
             yield key if receiver else prefix + key
 
 
+def automation_templates(source, catalog):
+    block = source.split("static TEMPLATES:", 1)[1].split("];", 1)[0]
+    pattern = r'Template \{\s*icon:\s*"([^"]+)",\s*title:\s*"([^"]+)",\s*prompt:\s*"([^"]+)",\s*cadence:\s*Cadence::(\w+),\s*time:\s*"([^"]+)",\s*weekday:\s*(\d+),\s*\}'
+    templates = []
+    for icon, title, prompt, cadence, time, weekday in re.findall(pattern, block):
+        templates.append(dict(icon=icon, en=catalog["en"][title], zh=catalog["zh"][title],
+                              prompt_en=catalog["en"][prompt], prompt_zh=catalog["zh"][prompt],
+                              cadence=cadence.lower(), time=time, weekday=int(weekday)))
+    if not templates or len(templates) != block.count("Template {"):
+        raise ValueError("Review automation template export after WebView changes")
+    return templates
+
+
 def exports():
     # Fail the build before a missing asset can abort a WinUI page constructor.
     native_icons = set()
@@ -171,13 +184,7 @@ def exports():
     # Keep native automation presets identical to the WebView, including weekday
     # conventions (the exported value remains JavaScript Sunday=0).
     automation = (ROOT / "ui/src/automation.rs").read_text(encoding="utf-8")
-    block = automation.split("static TEMPLATES:", 1)[1].split("];", 1)[0]
-    templates = []
-    pattern = r'Template \{\s*icon: "([^"]+)",\s*title: \("([^"]+)", "([^"]+)"\),\s*prompt: \(\s*("(?:[^"\\]|\\.)*"),\s*("(?:[^"\\]|\\.)*"),\s*\),\s*cadence: Cadence::(\w+),\s*time: "([^"]+)",\s*weekday: (\d+),\s*\}'
-    for icon, en, zh, prompt_en, prompt_zh, cadence, time, weekday in re.findall(pattern, block):
-        templates.append(dict(icon=icon, en=en, zh=zh, prompt_en=json.loads(prompt_en), prompt_zh=json.loads(prompt_zh), cadence=cadence.lower(), time=time, weekday=int(weekday)))
-    if len(templates) != 3:
-        raise ValueError("Review automation template export after WebView changes")
+    templates = automation_templates(automation, catalog)
     yield "automation-templates.json", (json.dumps(templates, ensure_ascii=False, indent=2) + "\n").encode()
     yield "settings-navigation.json", (json.dumps(navigation, ensure_ascii=False, indent=2) + "\n").encode()
     labels = {value: by_locale["En"][key] for key, value in by_locale["Zh"].items() if key in by_locale["En"]}
