@@ -125,6 +125,13 @@ export/import or manual project sync for complete, planned backup and migration.
 
 ## Path rules
 
+On Windows, ordinary imported project paths use the same drive-letter form as
+new projects, for example `D:\Wisp-Science\study`. Previously imported paths
+with a `\\?\` prefix are simplified when read, so existing projects do not need
+to be imported again. Paths that require Windows extended-path semantics keep
+their prefix, including long paths and special names; UNC network paths are
+preserved. This does not move project files or rewrite existing registrations.
+
 The ZIP never treats the source `workspace_dir` as the destination. Workspace
 files and local metadata paths are stored with `/`-separated relative paths.
 For example, `D:\research\study\figures\plot.png` becomes

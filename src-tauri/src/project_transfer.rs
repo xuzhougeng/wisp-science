@@ -728,7 +728,7 @@ async fn import_project_directory(
     let database_copy = database.0.clone();
     let (manifest, workspace) = tokio::task::spawn_blocking(move || {
         let (manifest, _) = read_project_directory(&package)?;
-        let workspace = std::fs::canonicalize(package.join(WORKSPACE_PREFIX))
+        let workspace = dunce::canonicalize(package.join(WORKSPACE_PREFIX))
             .map_err(|error| error.to_string())?;
         // Attach a disposable copy: SQLite must never create sidecars or modify
         // metadata in the user-selected package, including on failed imports.
@@ -1720,6 +1720,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(id, "project");
+        assert_eq!(
+            folders.get_project("project").await.unwrap().unwrap().1,
+            dunce::canonicalize(package.join(WORKSPACE_PREFIX))
+                .unwrap()
+                .to_string_lossy()
+        );
         std::fs::create_dir(base.path().join("unzipped")).unwrap();
         import_archived_project(
             &archives,

@@ -234,7 +234,7 @@ impl Store {
             self.registry.is_some() && self.project_scope.is_none(),
             "Application store required"
         );
-        let workspace = std::fs::canonicalize(workspace)?;
+        let workspace = dunce::canonicalize(workspace)?;
         for relative in [
             ".wisp",
             PROJECT_METADATA,
@@ -1703,6 +1703,15 @@ mod tests {
         assert_eq!(
             fresh.register_project_folder(&workspace).await.unwrap(),
             "p"
+        );
+        let registered_root: String =
+            sqlx::query_scalar("SELECT workspace_dir FROM projects WHERE id='p'")
+                .fetch_one(&fresh.pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            registered_root,
+            dunce::canonicalize(&workspace).unwrap().to_string_lossy()
         );
         assert_eq!(fresh.message_count("f").await.unwrap(), 1);
         fresh
