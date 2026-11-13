@@ -1107,6 +1107,7 @@ mod tests {
             user: Some("alice".into()),
             port: Some(22),
             identity_file: None,
+            proxy_jump: None,
             auth_method: crate::ssh_hosts::SshAuthMethod::Password,
         };
 

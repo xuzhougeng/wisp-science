@@ -364,6 +364,7 @@ fn ssh_host_contract() {
         user: Some("alice".into()),
         port: Some(2222),
         identity_file: None,
+        proxy_jump: Some("bob@bastion:2200,login".into()),
         notes: Some("lab box".into()),
         auth_method: Some("password".into()),
         has_password: true,
@@ -380,10 +381,22 @@ fn ssh_host_contract() {
     assert_eq!(dto.host_name.as_deref(), Some("10.0.0.5"));
     assert_eq!(dto.user.as_deref(), Some("alice"));
     assert_eq!(dto.port, Some(2222));
+    assert_eq!(dto.proxy_jump.as_deref(), Some("bob@bastion:2200,login"));
     assert_eq!(dto.notes.as_deref(), Some("lab box"));
     assert_eq!(dto.auth_method.as_deref(), Some("password"));
     assert!(dto.has_password);
     assert_eq!(dto.password, None);
+
+    // Older registries and clients omit the new route field.
+    let legacy: wisp_dto::SshHost = serde_json::from_value(json!({"alias": "old"})).unwrap();
+    assert_eq!(legacy.proxy_jump, None);
+    let mut request = dto;
+    request.proxy_jump = Some("bastion".into());
+    request.password = Some("updated-secret".into());
+    let backend: crate::ssh_hosts::SshHost =
+        serde_json::from_value(serde_json::to_value(request).unwrap()).unwrap();
+    assert_eq!(backend.proxy_jump.as_deref(), Some("bastion"));
+    assert_eq!(backend.password.as_deref(), Some("updated-secret"));
 }
 
 #[test]

@@ -2372,6 +2372,7 @@ fn test_handle(run_id: &str, confirmed: bool) -> RemoteRunHandle {
             user: None,
             port: None,
             identity_file: None,
+            proxy_jump: None,
             auth_method: crate::ssh_hosts::SshAuthMethod::Key,
         },
         workdir: format!(".wisp-science/runs/{run_id}"),

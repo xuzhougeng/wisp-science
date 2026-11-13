@@ -17,6 +17,10 @@ conversation and right panel, keeping the active research context visible.
   the host is configured for password auth, the stored keyring password is
   supplied through OpenSSH ASKPASS for the whole login — the helper files stay
   on disk until the SSH process exits.
+  The host editor's **Jump host (ProxyJump)** field also applies to the terminal.
+  Saved destination passwords require non-interactive authentication on every
+  jump host; see [SSH through jump hosts](ssh-jump-hosts.md) for setup and
+  password, MFA, and port-knocking limitations.
 
 Each **Open terminal** action creates an independent live terminal, including
 when another terminal already uses the same context. The dock keeps concurrent
