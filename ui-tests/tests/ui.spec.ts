@@ -7414,11 +7414,71 @@ test("settings edits an existing SSH server with its saved values", async ({ pag
   await expect(modal.locator("#add-host-alias")).toBeDisabled();
   await expect(modal.locator("#host-user")).toHaveValue("researcher");
   await expect(modal.locator("#host-port")).toHaveValue("22");
+  await expect(modal.getByLabel("Jump host (ProxyJump, optional)")).toHaveValue("");
   await expect(modal.locator("#host-notes")).toHaveValue("Mock GPU host");
 
   await page.keyboard.press("Escape");
   await expect(modal).toHaveCount(0);
   await expect(page.locator(".settings-page")).toBeVisible();
+});
+
+test("SSH ProxyJump is tested, saved, restored, cleared, and reset for new hosts", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Environments");
+  const edit = page.locator('.environment-settings-row[data-context-id="ssh:gpu-server"]')
+    .getByRole("button", { name: "Edit server" });
+  await edit.click();
+  const modal = page.locator(".host-modal");
+  const jump = modal.getByLabel("Jump host (ProxyJump, optional)");
+  await jump.fill("  alice@bastion:2200,login  ");
+  await modal.getByRole("button", { name: "Test connection", exact: true }).click();
+  await expect(modal.getByText("Connection successful", { exact: true })).toBeVisible();
+  await expect.poll(() => lastInvokeArgs(page, "test_ssh_connection")).toMatchObject({
+    host: { alias: "gpu-server", proxy_jump: "alice@bastion:2200,login" },
+  });
+
+  await modal.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(modal).toHaveCount(0);
+  await expect.poll(() => lastInvokeArgs(page, "add_ssh_host")).toMatchObject({
+    host: { alias: "gpu-server", proxy_jump: "alice@bastion:2200,login" },
+  });
+  await edit.click();
+  await expect(jump).toHaveValue("alice@bastion:2200,login");
+
+  // Opening a new form after editing must not reuse the previous host's route.
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".settings-page")).toBeVisible();
+  await page.getByRole("button", { name: "Add SSH host", exact: true }).click();
+  await expect(jump).toHaveValue("");
+  await page.keyboard.press("Escape");
+
+  await edit.click();
+  await jump.fill("");
+  await modal.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(modal).toHaveCount(0);
+  await expect.poll(async () => (await lastInvokeArgs(page, "add_ssh_host"))?.host?.proxy_jump)
+    .toBeUndefined();
+  await edit.click();
+  await expect(jump).toHaveValue("");
+});
+
+test("SSH jump authentication errors keep the route available for correction", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Environments");
+  await page.getByRole("button", { name: "Add SSH host", exact: true }).click();
+  const modal = page.locator(".host-modal");
+  await modal.locator("#add-host-alias").fill("private-gpu");
+  await modal.getByLabel("Jump host (ProxyJump, optional)").fill("bastion");
+  await modal.locator("select").selectOption("password");
+  await modal.locator("#host-password").fill("mock-destination-password");
+  await page.evaluate(() => {
+    (window as any).__mockSshConnectionError =
+      "SSH jump host `bastion` requires BatchMode yes in your local SSH config before Wisp can use a saved destination password.";
+  });
+  await modal.getByRole("button", { name: "Test connection", exact: true }).click();
+  await expect(modal.locator(".settings-status.fail")).toContainText("requires BatchMode yes");
+  await expect(modal.getByLabel("Jump host (ProxyJump, optional)")).toHaveValue("bastion");
+  await expect(modal.getByRole("button", { name: "Test connection", exact: true })).toBeEnabled();
 });
 
 test("Escape closes the topmost environment modal before settings", async ({ page }) => {

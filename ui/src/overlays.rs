@@ -25,6 +25,7 @@ pub(super) fn AddHostOverlay(
     host_user: RwSignal<String>,
     host_port: RwSignal<String>,
     host_identity: RwSignal<String>,
+    host_proxy_jump: RwSignal<String>,
     host_auth_method: RwSignal<String>,
     host_password: RwSignal<String>,
     host_has_password: RwSignal<bool>,
@@ -58,6 +59,7 @@ pub(super) fn AddHostOverlay(
                 None
             },
             notes: opt(host_notes.get()),
+            proxy_jump: opt(host_proxy_jump.get()),
             auth_method: Some(auth.into()),
             has_password: false,
             password: if auth == "password" {
@@ -109,6 +111,12 @@ pub(super) fn AddHostOverlay(
             <label class="host-label" for="host-port">{move || t(locale.get(), "hosts.port")}</label>
             <input id="host-port" class="host-input" placeholder="22" prop:value=move || host_port.get()
                 on:input=move |ev| host_port.set(event_target_value(&ev)) />
+            <label class="host-label" for="host-proxy-jump">{move || t(locale.get(), "hosts.proxy_jump")}</label>
+            <input id="host-proxy-jump" class="host-input"
+                placeholder=move || t(locale.get(), "hosts.proxy_jump_ph")
+                prop:value=move || host_proxy_jump.get()
+                on:input=move |ev| host_proxy_jump.set(event_target_value(&ev)) />
+            <p class="hint">{move || t(locale.get(), "hosts.proxy_jump_hint")}</p>
             <label class="host-label">{move || t(locale.get(), "hosts.auth_method")}</label>
             <select class="host-input" prop:value=move || host_auth_method.get()
                 on:change=move |ev| host_auth_method.set(dom_value(&ev))>
@@ -193,6 +201,7 @@ pub(super) fn AddHostOverlay(
                         });
                         host_alias.set(String::new()); host_hostname.set(String::new()); host_user.set(String::new()); host_port.set(String::new());
                         host_identity.set(String::new()); host_notes.set(String::new());
+                        host_proxy_jump.set(String::new());
                         host_auth_method.set("key".into()); host_password.set(String::new());
                         host_has_password.set(false);
                         editing_host_alias.set(None);

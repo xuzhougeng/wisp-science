@@ -1478,6 +1478,13 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     { name: "wolai_search", description: "Search Wolai pages", inputSchema: { type: "object", required: ["query"], properties: { query: { type: "string", description: "Words to search for." } } }, outputSchema: { type: "object", properties: { total: { type: "integer" } } } },
     { name: "wolai_create_page", description: "Create a Wolai page", inputSchema: { type: "object", properties: {} } },
   ];
+  const sshHosts: Record<string, unknown>[] = [{
+    alias: "gpu-server",
+    user: "researcher",
+    port: 22,
+    identity_file: null,
+    notes: "Mock GPU host",
+  }];
   const executionContexts = [
     {
       id: "local",
@@ -4436,13 +4443,21 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             mockChannels.device.hasToken = false;
             return null;
           case "list_ssh_hosts":
-            return [{
-              alias: "gpu-server",
-              user: "researcher",
-              port: 22,
-              identity_file: null,
-              notes: "Mock GPU host",
-            }];
+            return sshHosts;
+          case "test_ssh_connection":
+            if ((window as any).__mockSshConnectionError) {
+              throw new Error((window as any).__mockSshConnectionError);
+            }
+            return null;
+          case "add_ssh_host": {
+            const raw = arg("host");
+            const host = raw instanceof Map ? Object.fromEntries(raw) : { ...raw };
+            delete host.password;
+            const index = sshHosts.findIndex((item) => item.alias === host.alias);
+            if (index < 0) sshHosts.push(host);
+            else sshHosts[index] = host;
+            return sshHosts;
+          }
           case "remove_ssh_host":
             return [];
           case "list_execution_contexts":

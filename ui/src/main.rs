@@ -9642,6 +9642,7 @@ fn App() -> impl IntoView {
     let host_user = create_rw_signal(String::new());
     let host_port = create_rw_signal(String::new());
     let host_identity = create_rw_signal(String::new());
+    let host_proxy_jump = create_rw_signal(String::new());
     let host_notes = create_rw_signal(String::new());
     let host_auth_method = create_rw_signal(String::from("key"));
     let host_password = create_rw_signal(String::new());
@@ -9657,6 +9658,7 @@ fn App() -> impl IntoView {
         host_user.set(String::new());
         host_port.set(String::new());
         host_identity.set(String::new());
+        host_proxy_jump.set(String::new());
         host_notes.set(String::new());
         host_auth_method.set("key".into());
         host_password.set(String::new());
@@ -9698,6 +9700,12 @@ fn App() -> impl IntoView {
             existing
                 .as_ref()
                 .and_then(|host| host.notes.clone())
+                .unwrap_or_default(),
+        );
+        host_proxy_jump.set(
+            existing
+                .as_ref()
+                .and_then(|host| host.proxy_jump.clone())
                 .unwrap_or_default(),
         );
         let auth_method = existing
@@ -19951,6 +19959,7 @@ fn App() -> impl IntoView {
         <AddHostOverlay
             locale=locale show_add_host=show_add_host host_alias=host_alias host_hostname=host_hostname
             host_notes=host_notes host_user=host_user host_port=host_port host_identity=host_identity
+            host_proxy_jump=host_proxy_jump
             host_auth_method=host_auth_method host_password=host_password host_has_password=host_has_password
             editing_host_alias=editing_host_alias
             ssh_hosts=ssh_hosts execution_contexts=execution_contexts

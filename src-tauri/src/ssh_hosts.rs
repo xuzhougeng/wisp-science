@@ -181,7 +181,7 @@ pub async fn test_ssh_connection(host: SshHost) -> Result<(), String> {
             .map(str::trim)
             .filter(|p| !p.is_empty())
         {
-            Some(password) => build_password_askpass_env(password)?,
+            Some(password) => connection.password_auth_env_with_password(password)?,
             None => connection.password_auth_env()?,
         }
     } else {

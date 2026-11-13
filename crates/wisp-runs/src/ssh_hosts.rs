@@ -51,6 +51,10 @@ pub struct SshHost {
     pub port: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_file: Option<String>,
+    /// OpenSSH ProxyJump route, e.g. `alice@bastion:2222` or `gateway,login`.
+    /// Absent means OpenSSH may resolve the route from the user's SSH config.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_jump: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
     /// `key` (default) or `password`. Persisted in settings JSON only.
@@ -78,6 +82,8 @@ pub struct SshConnection {
     pub port: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_jump: Option<String>,
     #[serde(default)]
     pub auth_method: SshAuthMethod,
 }
@@ -132,6 +138,7 @@ impl SshConnection {
             user: optional_config_string(&config, "user")?,
             port: optional_config_port(&config)?,
             identity_file: optional_config_string(&config, "identity_file")?,
+            proxy_jump: optional_config_string(&config, "proxy_jump")?,
             auth_method: SshAuthMethod::parse(
                 optional_config_string(&config, "auth_method")?.as_deref(),
             ),
@@ -151,6 +158,11 @@ impl SshConnection {
             user: host.user.clone(),
             port: host.port,
             identity_file: host.identity_file.clone(),
+            proxy_jump: host
+                .proxy_jump
+                .as_ref()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
             auth_method: SshAuthMethod::parse(host.auth_method.as_deref()),
         };
         connection.validate()?;
@@ -171,6 +183,7 @@ impl SshConnection {
     }
 
     pub fn ssh_args(&self) -> Result<Vec<String>, String> {
+        self.validate()?;
         let mut args = if self.uses_password() {
             password_option_args()
         } else {
@@ -183,6 +196,7 @@ impl SshConnection {
         if !self.uses_password() {
             push_batch_identity_args(&mut args, self.identity_file.as_deref());
         }
+        self.push_jump_args(&mut args);
         args.push(self.target()?);
         Ok(args)
     }
@@ -216,6 +230,7 @@ impl SshConnection {
         if !self.uses_password() {
             push_interactive_identity_args(&mut args, self.identity_file.as_deref());
         }
+        self.push_jump_args(&mut args);
         args.push(self.target()?);
         Ok(args)
     }
@@ -244,6 +259,7 @@ impl SshConnection {
         if !self.uses_password() {
             push_batch_identity_args(&mut args, self.identity_file.as_deref());
         }
+        self.push_jump_args(&mut args);
         Ok(args)
     }
 
@@ -264,6 +280,7 @@ impl SshConnection {
         if !self.uses_password() {
             push_batch_identity_args(&mut parts, self.identity_file.as_deref());
         }
+        self.push_jump_args(&mut parts);
         Ok(parts
             .into_iter()
             .map(|part| {
@@ -275,6 +292,12 @@ impl SshConnection {
             })
             .collect::<Vec<_>>()
             .join(" "))
+    }
+
+    fn push_jump_args(&self, args: &mut Vec<String>) {
+        if let Some(proxy_jump) = &self.proxy_jump {
+            args.extend(["-J".into(), proxy_jump.clone()]);
+        }
     }
 
     /// Fail before spawning when a configured identity file is missing, or
@@ -316,7 +339,18 @@ impl SshConnection {
                 self.alias
             )
         })?;
-        build_password_askpass_env(&password)
+        self.password_auth_env_with_password(&password)
+    }
+
+    /// Also used by the editor's unsaved connection test. ProxyJump children
+    /// inherit ASKPASS, so require non-interactive hop authentication before
+    /// exposing the destination password to any SSH process.
+    pub fn password_auth_env_with_password(
+        &self,
+        password: &str,
+    ) -> Result<Vec<(String, String)>, String> {
+        require_batch_jump_hosts(self.ssh_args()?, read_ssh_config)?;
+        build_password_askpass_env(password)
     }
 
     fn validate(&self) -> Result<(), String> {
@@ -337,6 +371,9 @@ impl SshConnection {
             if identity_file.chars().any(char::is_control) {
                 return Err("SSH identity file must not contain control characters".into());
             }
+        }
+        if let Some(proxy_jump) = &self.proxy_jump {
+            parse_proxy_jump(proxy_jump)?;
         }
         if self.auth_method == SshAuthMethod::Password && self.user.is_none() {
             // user can come from ~/.ssh/config for the alias; warn only in UI.
@@ -614,6 +651,143 @@ fn validate_connection_name(label: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Validate a bounded subset of OpenSSH's jump syntax before it is expanded
+/// into OpenSSH's implicit ProxyCommand (which runs through a local shell).
+/// Return each hop's SSH arguments for the credential preflight as well.
+fn parse_proxy_jump(value: &str) -> Result<Vec<Vec<String>>, String> {
+    if value == "none" {
+        return Ok(Vec::new());
+    }
+    let invalid = || {
+        "SSH ProxyJump must be a comma-separated list of [user@]host[:port] or SSH config aliases; use [IPv6]:port for IPv6 and ports from 1 to 65535".to_string()
+    };
+    let mut hops = Vec::new();
+    for hop in value.split(',') {
+        if hops.len() >= 16 {
+            return Err("SSH ProxyJump supports at most 16 hops".into());
+        }
+        let hop = hop.strip_prefix("ssh://").unwrap_or(hop);
+        let (user, address) = match hop.rsplit_once('@') {
+            Some((user, address)) => {
+                validate_connection_name("SSH user", user).map_err(|_| invalid())?;
+                (Some(user), address)
+            }
+            None => (None, hop),
+        };
+        let (host, port) = if let Some(ipv6) = address.strip_prefix('[') {
+            let (ip, suffix) = ipv6.split_once(']').ok_or_else(invalid)?;
+            ip.parse::<std::net::Ipv6Addr>().map_err(|_| invalid())?;
+            let port = if suffix.is_empty() {
+                None
+            } else {
+                Some(suffix.strip_prefix(':').ok_or_else(invalid)?)
+            };
+            (ip, port)
+        } else {
+            let (host, port) = match address.split_once(':') {
+                Some((host, port)) => (host, Some(port)),
+                None => (address, None),
+            };
+            validate_connection_name("SSH jump host", host).map_err(|_| invalid())?;
+            if host == "none" {
+                return Err(invalid());
+            }
+            (host, port)
+        };
+        let mut args = Vec::new();
+        if let Some(user) = user {
+            args.extend(["-l".into(), user.into()]);
+        }
+        if let Some(port) = port {
+            if port.is_empty()
+                || !port.bytes().all(|byte| byte.is_ascii_digit())
+                || port.parse::<u16>().map_or(true, |port| port == 0)
+            {
+                return Err(invalid());
+            }
+            args.extend(["-p".into(), port.into()]);
+        }
+        args.push(host.into());
+        hops.push(args);
+    }
+    Ok(hops)
+}
+
+fn ssh_config_value<'a>(config: &'a str, key: &str) -> Option<&'a str> {
+    config.lines().find_map(|line| {
+        let (name, value) = line.split_once(char::is_whitespace)?;
+        name.eq_ignore_ascii_case(key).then(|| value.trim())
+    })
+}
+
+/// `ssh -G` resolves Include/Host/Match using the installed client without
+/// opening an SSH connection. No passwords or ASKPASS environment are attached.
+fn read_ssh_config(args: &[String]) -> Result<String, String> {
+    let mut cmd = std::process::Command::new("ssh");
+    cmd.arg("-G")
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    wisp_tools::process::hide_console(&mut cmd);
+    let output = cmd
+        .output()
+        .map_err(|error| format!("Could not resolve SSH jump-host configuration: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Could not resolve SSH jump-host configuration: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let config = String::from_utf8_lossy(&output.stdout).into_owned();
+    if ssh_config_value(&config, "hostname").is_none() {
+        return Err("Could not resolve SSH jump-host configuration: missing hostname".into());
+    }
+    Ok(config)
+}
+
+fn require_batch_jump_hosts(
+    target_args: Vec<String>,
+    mut resolve: impl FnMut(&[String]) -> Result<String, String>,
+) -> Result<(), String> {
+    // Later hops in an explicit chain receive -J for the preceding hops;
+    // only the first hop can inherit an additional route from its SSH config.
+    let mut pending = vec![(target_args, false, true)];
+    let mut inspected = 0;
+    while let Some((args, is_jump, inspect_route)) = pending.pop() {
+        inspected += 1;
+        if inspected > 32 {
+            return Err("SSH ProxyJump route is cyclic or has too many nested hops".into());
+        }
+        let config = resolve(&args)?;
+        if is_jump && ssh_config_value(&config, "batchmode") != Some("yes") {
+            let host = args.last().map(String::as_str).unwrap_or_default();
+            return Err(format!(
+                "SSH jump host `{host}` requires BatchMode yes in your local SSH config \
+                 before Wisp can use a saved destination password. Configure key/agent \
+                 authentication and verify the jump host's host key first. Wisp cannot \
+                 supply separate passwords or MFA codes for jump hosts."
+            ));
+        }
+        if inspect_route {
+            if let Some(route) = ssh_config_value(&config, "proxyjump") {
+                let mut preceding = Vec::new();
+                for (mut hop_args, spec) in
+                    parse_proxy_jump(route)?.into_iter().zip(route.split(','))
+                {
+                    if !preceding.is_empty() {
+                        let target = hop_args.pop().unwrap();
+                        hop_args.extend(["-J".into(), preceding.join(","), target]);
+                    }
+                    pending.push((hop_args, true, preceding.is_empty()));
+                    preceding.push(spec);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn optional_config_string(config: &serde_json::Value, key: &str) -> Result<Option<String>, String> {
     match config.get(key) {
         None | Some(serde_json::Value::Null) => Ok(None),
@@ -712,7 +886,7 @@ Use `set_runtime_interpreter` when the user provides a different Python or R exe
 **SSH authentication policy:** remote work is only allowed after a successful Probe \
 on the registered environment. Always use `run_in_context`, `python`, `r`, \
 `configure_ssh_trust`, or `transfer_between_contexts` with \
-the matching `context_id` so Wisp uses the configured alias/user/port/identity \
+the matching `context_id` so Wisp uses the configured alias/user/port/identity/ProxyJump \
 exactly. Free-form shell `ssh`/`scp` is disabled, and so is reaching the same host through \
 an SSH client library (`paramiko`, `fabric`, `ssh2`, …) from `python`/`r`/shell: that bypasses \
 the user's saved credentials and this policy, so never offer it as a fallback. \
@@ -929,6 +1103,12 @@ fn ssh_context_config_json(host: &SshHost) -> Result<String, String> {
     if let Some(port) = host.port {
         cfg.insert("port".into(), serde_json::Value::from(port));
     }
+    if let Some(proxy_jump) = host.proxy_jump.as_deref().filter(|s| !s.trim().is_empty()) {
+        cfg.insert(
+            "proxy_jump".into(),
+            serde_json::Value::String(proxy_jump.trim().into()),
+        );
+    }
     let auth = SshAuthMethod::parse(host.auth_method.as_deref());
     cfg.insert(
         "auth_method".into(),
@@ -969,6 +1149,11 @@ pub fn persistable_host(host: &SshHost) -> SshHost {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty()),
         port: host.port,
+        proxy_jump: host
+            .proxy_jump
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
         identity_file: if SshAuthMethod::parse(host.auth_method.as_deref()) == SshAuthMethod::Key {
             host.identity_file
                 .as_ref()
@@ -1344,6 +1529,7 @@ pub fn merge_config_aliases(mut hosts: Vec<SshHost>, aliases: Vec<String>) -> Ve
                 user: None,
                 port: None,
                 identity_file: None,
+                proxy_jump: None,
                 notes: None,
                 auth_method: None,
                 has_password: false,
@@ -1401,6 +1587,7 @@ mod tests {
             user: None,
             port: None,
             identity_file: None,
+            proxy_jump: None,
             notes: notes.map(Into::into),
             auth_method: None,
             has_password: false,
@@ -1416,6 +1603,7 @@ mod tests {
             user: None,
             port: None,
             identity_file: Some("/definitely/missing/wisp-test-key".into()),
+            proxy_jump: None,
             auth_method: SshAuthMethod::Key,
         };
         let err = connection.assert_ready_to_connect().unwrap_err();
@@ -1561,6 +1749,31 @@ Host -unsafe bad/name !negated
         );
 
         let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[tokio::test]
+    async fn syncing_hosts_persists_updates_and_clears_proxy_jump() {
+        let tmp =
+            std::env::temp_dir().join(format!("wisp_ssh_jump_{}.sqlite", uuid::Uuid::new_v4()));
+        let store = wisp_store::Store::open(&tmp).await.unwrap();
+        let mut registered = host("gpu", Some("private compute node"));
+        for route in [Some("bastion"), Some("alice@gateway:2200,login"), None] {
+            registered.proxy_jump = route.map(str::to_string);
+            save_and_sync_contexts(&store, &[registered.clone()])
+                .await
+                .unwrap();
+            assert_eq!(load(&store).await, vec![registered.clone()]);
+            let context = store
+                .get_execution_context("ssh:gpu")
+                .await
+                .unwrap()
+                .unwrap();
+            let connection = SshConnection::from_execution_context(&context).unwrap();
+            assert_eq!(connection.proxy_jump.as_deref(), route);
+            assert!(!context.config_json.contains("password"));
+        }
+        drop(store);
+        let _ = std::fs::remove_file(tmp);
     }
 
     #[tokio::test]
@@ -1777,6 +1990,248 @@ Host -unsafe bad/name !negated
     }
 
     #[test]
+    fn proxy_jump_reaches_every_transport_and_persisted_connection() {
+        for auth in [SshAuthMethod::Key, SshAuthMethod::Password] {
+            let mut registered = host("gpu", None);
+            registered.host_name = Some("10.0.0.5".into());
+            registered.user = Some("alice".into());
+            registered.port = Some(2222);
+            registered.proxy_jump = Some("  bob@bastion:2200,login  ".into());
+            registered.auth_method = Some(auth.as_str().into());
+            let connection = SshConnection::from_host(&registered).unwrap();
+            assert_eq!(
+                connection.proxy_jump.as_deref(),
+                Some("bob@bastion:2200,login")
+            );
+            for args in [
+                connection.ssh_args().unwrap(),
+                connection.interactive_ssh_args().unwrap(),
+                connection.scp_option_args().unwrap(),
+            ] {
+                assert_eq!(args.iter().filter(|arg| *arg == "-J").count(), 1);
+                assert!(args
+                    .windows(2)
+                    .any(|pair| pair == ["-J", "bob@bastion:2200,login"]));
+            }
+            assert_eq!(
+                connection.ssh_args().unwrap().last().unwrap(),
+                "alice@10.0.0.5"
+            );
+            assert_eq!(
+                connection.interactive_ssh_args().unwrap().last().unwrap(),
+                "alice@10.0.0.5"
+            );
+            assert!(connection
+                .rsync_rsh()
+                .unwrap()
+                .contains(" -J bob@bastion:2200,login"));
+
+            let saved = persistable_host(&registered);
+            let mut context = wisp_store::ExecutionContext::new("ssh:gpu", "GPU").unwrap();
+            context.config_json = ssh_context_config_json(&saved).unwrap();
+            assert_eq!(
+                SshConnection::from_execution_context(&context).unwrap(),
+                connection
+            );
+            let snapshot = serde_json::to_string(&connection).unwrap();
+            assert_eq!(
+                serde_json::from_str::<SshConnection>(&snapshot).unwrap(),
+                connection
+            );
+        }
+    }
+
+    #[test]
+    fn proxy_jump_omission_inherits_config_and_none_explicitly_disables_it() {
+        let mut legacy: SshHost = serde_json::from_str(r#"{"alias":"gpu"}"#).unwrap();
+        let snapshot: SshConnection = serde_json::from_str(r#"{"alias":"gpu"}"#).unwrap();
+        assert!(snapshot.proxy_jump.is_none());
+        for route in [None, Some("  ".into())] {
+            legacy.proxy_jump = route;
+            let saved = persistable_host(&legacy);
+            assert!(saved.proxy_jump.is_none());
+            assert!(!ssh_context_config_json(&saved)
+                .unwrap()
+                .contains("proxy_jump"));
+            let connection = SshConnection::from_host(&legacy).unwrap();
+            assert!(!connection.ssh_args().unwrap().contains(&"-J".into()));
+            assert!(!connection
+                .interactive_ssh_args()
+                .unwrap()
+                .contains(&"-J".into()));
+            assert!(!connection.scp_option_args().unwrap().contains(&"-J".into()));
+            assert!(!connection.rsync_rsh().unwrap().contains("-J"));
+        }
+        legacy.proxy_jump = Some("none".into());
+        assert!(SshConnection::from_host(&legacy)
+            .unwrap()
+            .ssh_args()
+            .unwrap()
+            .windows(2)
+            .any(|pair| pair == ["-J", "none"]));
+    }
+
+    #[test]
+    fn proxy_jump_accepts_aliases_ports_and_bracketed_ipv6() {
+        for value in [
+            "bastion",
+            "alice@bastion",
+            "bastion:22",
+            "user@tenant@bastion:65535",
+            "gateway,alice@login:2222",
+            "[2001:db8::1]",
+            "alice@[2001:db8::1]:2222",
+            "ssh://alice@bastion:22",
+            "none",
+        ] {
+            assert!(parse_proxy_jump(value).is_ok(), "rejected {value:?}");
+        }
+        assert_eq!(
+            parse_proxy_jump("alice@[2001:db8::1]:2222").unwrap(),
+            vec![vec!["-l", "alice", "-p", "2222", "2001:db8::1"]]
+        );
+    }
+
+    #[test]
+    fn proxy_jump_rejects_malformed_routes_and_shell_expansions_before_spawning() {
+        for value in [
+            "",
+            "-bastion",
+            "bastion,",
+            ",bastion",
+            "a,,b",
+            "a, b",
+            "a\nb",
+            "a\rb",
+            "a\tb",
+            "a\0b",
+            "bastion:0",
+            "bastion:65536",
+            "bastion:-1",
+            "bastion:+22",
+            "bastion:",
+            "bastion:abc",
+            "@bastion",
+            "user@",
+            "-user@host",
+            "bad/name",
+            "主机",
+            "a;id",
+            "a$(id)",
+            "a`id`",
+            "a&b",
+            "a|b",
+            "a%h",
+            "a'",
+            "a\"",
+            "a\\b",
+            "user:password@host",
+            "none,bastion",
+            "[invalid]",
+            "[2001:db8::1",
+            "[::1]suffix",
+            "2001:db8::1",
+            "ssh://host/path",
+        ] {
+            let mut registered = host("gpu", None);
+            registered.proxy_jump = Some(value.into());
+            // Host forms normalize blank input to omission; serialized snapshots
+            // and context configs must never turn a malformed route into arguments.
+            let mut connection = SshConnection::from_host(&host("gpu", None)).unwrap();
+            connection.proxy_jump = Some(value.into());
+            assert!(connection.ssh_args().is_err(), "accepted {value:?}");
+            assert!(
+                connection.interactive_ssh_args().is_err(),
+                "accepted {value:?}"
+            );
+            assert!(connection.scp_option_args().is_err(), "accepted {value:?}");
+            assert!(connection.rsync_rsh().is_err(), "accepted {value:?}");
+            if !value.is_empty() {
+                assert!(
+                    SshConnection::from_host(&registered).is_err(),
+                    "accepted {value:?}"
+                );
+            }
+        }
+        assert!(parse_proxy_jump(&vec!["bastion"; 17].join(",")).is_err());
+        let mut context = wisp_store::ExecutionContext::new("ssh:gpu", "GPU").unwrap();
+        context.config_json = r#"{"proxy_jump":22}"#.into();
+        assert!(SshConnection::from_execution_context(&context)
+            .unwrap_err()
+            .contains("must be a string"));
+    }
+
+    #[test]
+    fn saved_password_preflight_checks_all_jumps_and_inherited_first_hop_route() {
+        let mut resolved = Vec::new();
+        require_batch_jump_hosts(vec!["gpu".into()], |args| {
+            resolved.push(args.to_vec());
+            Ok(match args.last().unwrap().as_str() {
+                "gpu" => "batchmode no\nproxyjump alice@gateway:2222,login\n",
+                "gateway" => "batchmode yes\nproxyjump edge\n",
+                "edge" => "batchmode yes\n",
+                // Overridden by -J gateway, so this route must not be followed.
+                "login" => "batchmode yes\nproxyjump unrelated\n",
+                other => panic!("unexpected host {other}"),
+            }
+            .into())
+        })
+        .unwrap();
+        assert_eq!(resolved.len(), 4);
+        assert!(resolved.contains(&vec![
+            "-l".into(),
+            "alice".into(),
+            "-p".into(),
+            "2222".into(),
+            "gateway".into()
+        ]));
+        assert!(resolved.contains(&vec![
+            "-J".into(),
+            "alice@gateway:2222".into(),
+            "login".into()
+        ]));
+    }
+
+    #[test]
+    fn saved_password_preflight_refuses_interactive_hops_and_config_errors() {
+        for batch in ["batchmode no\n", ""] {
+            let error = require_batch_jump_hosts(vec!["gpu".into()], |args| {
+                Ok(if args.last().unwrap() == "gpu" {
+                    "proxyjump bastion\n".into()
+                } else {
+                    batch.into()
+                })
+            })
+            .unwrap_err();
+            assert!(
+                error.contains("`bastion` requires BatchMode yes"),
+                "{error}"
+            );
+        }
+        let error =
+            require_batch_jump_hosts(vec!["gpu".into()], |_| Err("bad config".into())).unwrap_err();
+        assert_eq!(error, "bad config");
+        let error = require_batch_jump_hosts(vec!["gpu".into()], |_| {
+            Ok("batchmode yes\nproxyjump cycle\n".into())
+        })
+        .unwrap_err();
+        assert!(error.contains("cyclic"), "{error}");
+    }
+
+    #[test]
+    fn saved_password_preflight_allows_direct_connections() {
+        for config in ["batchmode no\n", "batchmode no\nproxyjump none\n"] {
+            let mut calls = 0;
+            require_batch_jump_hosts(vec!["gpu".into()], |_| {
+                calls += 1;
+                Ok(config.into())
+            })
+            .unwrap();
+            assert_eq!(calls, 1);
+        }
+    }
+
+    #[test]
     fn ssh_connection_defaults_alias_from_context_id() {
         let ctx = wisp_store::ExecutionContext::new("ssh:gpu-box", "GPU").unwrap();
         let connection = SshConnection::from_execution_context(&ctx).unwrap();
@@ -1806,6 +2261,7 @@ Host -unsafe bad/name !negated
             user: Some("alice".into()),
             port: None,
             identity_file: None,
+            proxy_jump: None,
             auth_method: SshAuthMethod::Key,
         };
         assert_eq!(connection.target().unwrap(), "alice@10.0.0.5");
@@ -1820,6 +2276,7 @@ Host -unsafe bad/name !negated
                 user: None,
                 port: None,
                 identity_file: None,
+                proxy_jump: None,
                 auth_method: SshAuthMethod::Key,
             };
             assert!(
@@ -1838,6 +2295,7 @@ Host -unsafe bad/name !negated
             user: Some("myuser@mytenant".into()),
             port: Some(2222),
             identity_file: None,
+            proxy_jump: None,
             auth_method: SshAuthMethod::Password,
         };
         assert_eq!(
@@ -1866,6 +2324,7 @@ Host -unsafe bad/name !negated
                 user: None,
                 port: None,
                 identity_file: None,
+                proxy_jump: None,
                 auth_method: SshAuthMethod::Key,
             };
             assert!(connection.ssh_args().is_err(), "accepted alias {alias:?}");
@@ -1877,6 +2336,7 @@ Host -unsafe bad/name !negated
                 user: Some(user.into()),
                 port: None,
                 identity_file: None,
+                proxy_jump: None,
                 auth_method: SshAuthMethod::Key,
             };
             assert!(connection.target().is_err(), "accepted user {user:?}");
@@ -1887,6 +2347,7 @@ Host -unsafe bad/name !negated
             user: None,
             port: None,
             identity_file: Some("\n/tmp/key".into()),
+            proxy_jump: None,
             auth_method: SshAuthMethod::Key,
         };
         assert!(connection.scp_option_args().is_err());
@@ -1900,6 +2361,7 @@ Host -unsafe bad/name !negated
             user: Some("alice".into()),
             port: Some(22),
             identity_file: None,
+            proxy_jump: None,
             auth_method: SshAuthMethod::Password,
         };
         let args = connection.ssh_args().unwrap();
@@ -1919,6 +2381,7 @@ Host -unsafe bad/name !negated
             user: Some("alice".into()),
             port: None,
             identity_file: None,
+            proxy_jump: None,
             auth_method: SshAuthMethod::Password,
         };
         let args = connection.interactive_ssh_args().unwrap();

@@ -25,7 +25,9 @@ Selecting an SSH context opens the remote user's home directory and supports:
 
 Remote browsing uses the existing `ssh:<alias>` `ExecutionContext` connection
 snapshot and the system OpenSSH client. It honors the configured SSH alias,
-user, port, identity-file path, SSH config, and agent. No private-key contents
+user, port, identity-file path, ProxyJump route, SSH config, and agent. See
+[SSH through jump hosts](ssh-jump-hosts.md) for per-hop configuration. No
+private-key contents
 are stored in SQLite or copied by the browser. Batch SSH/SCP always enables
 OpenSSH `IdentitiesOnly` so unrelated agent keys are not offered to the server;
 agent-only users with a non-default key must name its `IdentityFile` in Wisp or
