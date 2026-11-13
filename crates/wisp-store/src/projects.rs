@@ -8,6 +8,15 @@ pub fn is_assistant_project_id(id: &str) -> bool {
     id == ASSISTANT_PROJECT_ID
 }
 
+/// Older Windows imports persisted canonical paths with a `\\?\` prefix.
+/// Simplify those on read without probing the filesystem or rewriting records.
+/// Keep paths that require verbatim semantics (long paths, reserved names, UNC).
+fn compatible_workspace_dir(workspace_dir: &str) -> String {
+    dunce::simplified(std::path::Path::new(workspace_dir))
+        .to_string_lossy()
+        .into_owned()
+}
+
 impl Store {
     pub async fn create_project(&self, id: &str, name: &str, workspace_dir: &str) -> Result<()> {
         if let Some(store) = self.route_project(id).await? {
@@ -55,7 +64,7 @@ impl Store {
         .bind(id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row)
+        Ok(row.map(|(name, workspace_dir)| (name, compatible_workspace_dir(&workspace_dir))))
     }
 
     /// Full editable metadata for the Project Settings modal: (name, description, workspace_dir).
@@ -67,7 +76,9 @@ impl Store {
             "SELECT COALESCE(name,''), COALESCE(description,''), COALESCE(workspace_dir,'') FROM projects WHERE id=?",
         )
         .bind(id).fetch_optional(&self.pool).await?;
-        Ok(row)
+        Ok(row.map(|(name, description, workspace_dir)| {
+            (name, description, compatible_workspace_dir(&workspace_dir))
+        }))
     }
 
     /// Update a project's user-visible name and description (touches updated_at).
@@ -186,7 +197,7 @@ impl Store {
             out.push((
                 r.try_get("id")?,
                 r.try_get("name")?,
-                r.try_get("ws")?,
+                compatible_workspace_dir(r.try_get::<&str, _>("ws")?),
                 r.try_get("created_at")?,
                 r.try_get("updated_at")?,
                 r.try_get("sessions")?,
@@ -217,5 +228,78 @@ impl Store {
             .await?;
         tx.commit().await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn assert_workspace_queries(cases: &[(String, String)]) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("projects.sqlite"))
+            .await
+            .unwrap();
+        for (index, (stored, expected)) in cases.iter().enumerate() {
+            let id = format!("project-{index}");
+            store.create_project(&id, "Project", stored).await.unwrap();
+            assert_eq!(store.get_project(&id).await.unwrap().unwrap().1, *expected);
+            assert_eq!(
+                store.get_project_meta(&id).await.unwrap().unwrap().2,
+                *expected
+            );
+            let projects = store.list_projects().await.unwrap();
+            let project = projects.iter().find(|project| project.0 == id).unwrap();
+            assert_eq!(project.2, *expected);
+            // Reading legacy metadata must not silently migrate its stored path.
+            let persisted: String =
+                sqlx::query_scalar("SELECT workspace_dir FROM projects WHERE id=?")
+                    .bind(&id)
+                    .fetch_one(&store.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(persisted, *stored);
+        }
+    }
+
+    #[tokio::test]
+    async fn workspace_queries_preserve_ordinary_paths() {
+        let cases = [
+            "",
+            "/Users/research/项目",
+            r"D:\Wisp-Science\XXX",
+            "relative/workspace",
+        ]
+        .map(|path| (path.to_owned(), path.to_owned()));
+        assert_workspace_queries(&cases).await;
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn workspace_queries_simplify_legacy_windows_imports_safely() {
+        let mut cases = vec![
+            (
+                r"\\?\D:\Wisp-Science\study".into(),
+                r"D:\Wisp-Science\study".into(),
+            ),
+            (r"\\?\E:\跨物种单细胞根".into(), r"E:\跨物种单细胞根".into()),
+        ];
+        for path in [
+            r"\\?\UNC\server\share\study".to_owned(),
+            r"\\server\share\study".to_owned(),
+            r"\\?\C:\study\NUL".to_owned(),
+            r"\\?\C:\study\trailing.".to_owned(),
+            format!(r"\\?\C:\{}\study", "directory\\".repeat(30)),
+        ] {
+            cases.push((path.clone(), path));
+        }
+        assert_workspace_queries(&cases).await;
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn workspace_queries_preserve_windows_path_text_on_other_platforms() {
+        let path = r"\\?\D:\Wisp-Science\study".to_owned();
+        assert_workspace_queries(&[(path.clone(), path)]).await;
     }
 }

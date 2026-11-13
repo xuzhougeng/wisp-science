@@ -849,7 +849,7 @@ mod tests {
         assert_eq!(d.b.message_count("f").await.unwrap(), 1);
         assert_eq!(
             d.b.get_project("p").await.unwrap().unwrap().1,
-            std::fs::canonicalize(&d.folder).unwrap().to_string_lossy()
+            dunce::canonicalize(&d.folder).unwrap().to_string_lossy()
         );
         // Enabling again is a no-op check, not a second root revision.
         assert_eq!(
