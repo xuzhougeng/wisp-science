@@ -1,5 +1,0 @@
-{
-  "build": {
-    "frontendDist": "../target/native-windows-host-assets"
-  }
-}

@@ -8,28 +8,24 @@ fn help_works_without_any_build_sdks() {
         .unwrap();
     assert!(output.status.success());
     let help = String::from_utf8(output.stdout).unwrap();
-    for command in [
-        "cargo run build",
-        "cargo run build-win",
-        "cargo run build-mac",
-    ] {
+    for command in ["cargo run build", "cargo run build-gpui", "cargo run gpui"] {
         assert!(help.contains(command));
     }
 }
 
 #[test]
-fn unsupported_native_build_has_an_actionable_error() {
-    let (command, required) = if cfg!(target_os = "windows") {
-        ("build-mac", "requires macOS")
-    } else {
-        ("build-win", "requires Windows")
-    };
-    let output = Command::new(env!("CARGO_BIN_EXE_wisp-dev"))
-        .arg(command)
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(2));
-    assert!(String::from_utf8(output.stderr).unwrap().contains(required));
+fn retired_native_builds_explain_the_replacement_without_starting_a_build() {
+    for command in ["build-mac", "build-win"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_wisp-dev"))
+            .env("CARGO", "this-build-tool-must-not-be-started")
+            .arg(command)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        let error = String::from_utf8(output.stderr).unwrap();
+        assert!(error.contains("build-gpui"));
+        assert!(error.contains("retired"));
+    }
 }
 
 #[cfg(unix)]

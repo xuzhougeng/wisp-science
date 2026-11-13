@@ -11,16 +11,12 @@ on:
         value: ${{ jobs.detect.outputs.desktop }}
       ui:
         value: ${{ jobs.detect.outputs.ui }}
-      macos:
-        value: ${{ jobs.detect.outputs.macos }}
-      windows:
-        value: ${{ jobs.detect.outputs.windows }}
+      gpui:
+        value: ${{ jobs.detect.outputs.gpui }}
       ios:
         value: ${{ jobs.detect.outputs.ios }}
       release_notes:
         value: ${{ jobs.detect.outputs.release_notes }}
-      shared_assets:
-        value: ${{ jobs.detect.outputs.shared_assets }}
       frontend_assets:
         value: ${{ jobs.detect.outputs.frontend_assets }}
       relay_worker:
@@ -38,11 +34,9 @@ jobs:
       headless: ${{ steps.scope.outputs.headless }}
       desktop: ${{ steps.scope.outputs.desktop }}
       ui: ${{ steps.scope.outputs.ui }}
-      macos: ${{ steps.scope.outputs.macos }}
-      windows: ${{ steps.scope.outputs.windows }}
+      gpui: ${{ steps.scope.outputs.gpui }}
       ios: ${{ steps.scope.outputs.ios }}
       release_notes: ${{ steps.scope.outputs.release_notes }}
-      shared_assets: ${{ steps.scope.outputs.shared_assets }}
       frontend_assets: ${{ steps.scope.outputs.frontend_assets }}
       relay_worker: ${{ steps.scope.outputs.relay_worker }}
     steps:

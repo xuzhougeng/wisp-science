@@ -6,13 +6,11 @@ const suffixes = {
   "linux-x64-deb": "amd64.deb", "linux-arm64-deb": "arm64.deb",
   "linux-x64-appimage": "amd64.AppImage", "linux-arm64-appimage": "aarch64.AppImage",
   "android-universal-apk": "android.apk",
-  "macos-arm64-swiftui": "aarch64.dmg", "macos-x64-swiftui": "x86_64.dmg",
-  "windows-x64-winui-self-contained": "x64-setup.exe",
 };
 const manifest = {
   schema: 1, tag: "v1.12.0",
   packages: Object.entries(suffixes).map(([id, suffix]) => {
-    const prefix = id.includes("swiftui") ? "Wisp-Science-SwiftUI" : id.includes("winui") ? "Wisp-Science-WinUI" : "wisp-science";
+    const prefix = "wisp-science";
     const name = `${prefix}_1.12.0_${suffix}`;
     return { id, name, sha256: "a".repeat(64), size: 24000000, key: `releases/v1.12.0/${"a".repeat(64)}/${name}` };
   }),
@@ -34,7 +32,7 @@ test("homepage download stays on the homepage and tutorials return to its downlo
   await expect(page.locator(".nav-cta .btn-primary")).toHaveAttribute("href", /\.\.\/index\.html.*#download/);
 });
 
-test("all standard, mobile and native packages resolve exact versioned mirror and GitHub links", async ({ page }) => {
+test("all supported desktop and mobile packages resolve exact versioned mirror and GitHub links", async ({ page }) => {
   await page.goto("/index.html#download");
   await expect(page.locator("#release-status")).toContainText("v1.12.0");
   for (const asset of manifest.packages) {
@@ -122,58 +120,32 @@ test("a release without the APK keeps desktop downloads and points Android to al
   await expect(page.locator("#download-github")).toHaveAttribute("href", "https://github.com/xuzhougeng/wisp-science/releases");
 });
 
-test("native builds keep their own version, installation guidance and language selection", async ({ page }) => {
-  const mixed = { ...manifest, tag: "v1.20.0", packages: manifest.packages.map(asset => ({ ...asset, tag: "v1.12.0" })) };
-  await page.route("https://wisp-science.sfl.bio/downloads/latest.json", route => route.fulfill({ json: mixed }));
-  await page.goto("/index.html#download");
+test("retired desktop formats are hidden even when an old cached manifest contains them", async ({ page }) => {
+  const native = { id: "windows-x64-winui-self-contained", tag: "v1.12.0",
+    name: "Wisp-Science-WinUI_1.12.0_x64-setup.exe", sha256: "a".repeat(64), size: 7,
+    key: `releases/v1.12.0/${"a".repeat(64)}/Wisp-Science-WinUI_1.12.0_x64-setup.exe` };
+  await page.route("https://wisp-science.sfl.bio/downloads/latest.json", route => route.fulfill({
+    json: { ...manifest, packages: [...manifest.packages, native] },
+  }));
+  await page.goto("/index.html?lang=en#download");
+  await page.locator("#download-os").selectOption("windows");
+  await expect(page.locator('#download-format option[value^="winui"]')).toHaveCount(0);
+  await expect(page.locator("#download-primary")).toHaveAttribute("href", /wisp-science_1\.12\.0_x64-setup\.exe$/);
   await page.locator("#download-os").selectOption("macos");
   await page.locator("#download-arch").selectOption("arm64");
-  await page.locator("#download-format").selectOption("swiftui");
-  await expect(page.locator("#release-status")).toHaveText("可下载版本 v1.12.0 · 最新发布 v1.20.0");
-  await expect(page.locator("#install-help")).toContainText("macOS 13");
-  await page.getByRole("button", { name: "EN", exact: true }).click();
-  await expect(page.locator("#download-format")).toHaveValue("swiftui");
-  await expect(page.locator("#release-status")).toHaveText("Available release v1.12.0 · Latest release v1.20.0");
-  await expect(page.locator("#download-github")).toHaveAttribute("href", /\/v1\.12\.0\/Wisp-Science-SwiftUI_1\.12\.0_aarch64\.dmg$/);
-  await page.locator("#download-os").selectOption("windows");
-  await page.locator("#download-format").selectOption("winui-self-contained");
-  await expect(page.locator("#install-help")).toContainText("Includes .NET");
-  await expect(page.locator("#install-help")).toContainText("WebView edition is not required");
-  await expect(page.locator("#install-help")).toContainText("automatically downloads and installs it if missing");
-  await expect(page.locator("#install-help")).toContainText("internet is required only for a missing runtime");
-  await expect(page.locator('#download-format option[value^="winui"]')).toHaveCount(1);
-  await expect(page.locator('#download-format option[value^="winui"]')).not.toContainText("Preview");
-  await expect(page.locator("#download-primary")).toHaveAttribute("href", /Wisp-Science-WinUI_1\.12\.0_x64-setup\.exe$/);
+  await expect(page.locator('#download-format option[value="swiftui"]')).toHaveCount(0);
+  await expect(page.locator("#download-primary")).toHaveAttribute("href", /wisp-science_1\.12\.0_aarch64\.dmg$/);
   await page.getByRole("button", { name: "中文", exact: true }).click();
-  await expect(page.locator("#install-help")).toContainText("缺失时联网下载安装");
-  await expect(page.locator("#install-help")).toContainText("无需另装 WebView 版");
+  await expect(page.locator("#download-format")).toHaveValue("dmg");
 });
 
-test("historical WinUI Preview fallback does not promise automatic WebView2 setup", async ({ page }) => {
-  const legacy = { ...manifest, packages: manifest.packages.map(asset => {
-    if (!asset.id.includes("winui")) return asset;
-    const name = "Wisp-Science-WinUI-Preview_1.12.0_x64-self-contained-setup.exe";
-    return { ...asset, name, key: asset.key.replace(asset.name, name) };
-  }) };
-  await page.route("https://wisp-science.sfl.bio/downloads/latest.json", route => route.fulfill({ json: legacy }));
+test("supported packages retain their actual release version", async ({ page }) => {
+  const mixed = { ...manifest, tag: "v1.20.0", packages: manifest.packages.map(asset => ({ ...asset, tag: "v1.12.0" })) };
+  await page.route("https://wisp-science.sfl.bio/downloads/latest.json", route => route.fulfill({ json: mixed }));
   await page.goto("/index.html?lang=en#download");
   await page.locator("#download-os").selectOption("windows");
-  await page.locator("#download-format").selectOption("winui-self-contained");
-  await expect(page.locator("#install-help")).toContainText("requires Microsoft WebView2 Runtime to be installed already");
-  await expect(page.locator("#install-help")).not.toContainText("automatically downloads");
-  await expect(page.locator("#download-primary")).toHaveAttribute("href", /WinUI-Preview_1\.12\.0_x64-self-contained-setup\.exe$/);
-});
-
-test("missing native packages preserve standard downloads and a clear GitHub fallback", async ({ page }) => {
-  const standard = { ...manifest, packages: manifest.packages.filter(asset => !asset.id.includes("swiftui") && !asset.id.includes("winui")) };
-  await page.route("https://wisp-science.sfl.bio/downloads/latest.json", route => route.fulfill({ json: standard }));
-  await page.goto("/index.html?lang=en#download");
-  await page.locator("#download-os").selectOption("windows");
-  await expect(page.locator("#download-primary")).toHaveAttribute("href", /x64-setup\.exe$/);
-  await page.locator("#download-format").selectOption("winui-self-contained");
-  await expect(page.locator("#download-primary")).not.toHaveAttribute("href");
-  await expect(page.locator("#package-name")).toContainText("does not include this package");
-  await expect(page.locator("#download-github")).toHaveAttribute("href", "https://github.com/xuzhougeng/wisp-science/releases");
+  await expect(page.locator("#release-status")).toHaveText("Available release v1.12.0 · Latest release v1.20.0");
+  await expect(page.locator("#download-primary")).toHaveAttribute("href", /wisp-science_1\.12\.0_x64-setup\.exe$/);
 });
 
 test("desktop download page", async ({ page }) => {

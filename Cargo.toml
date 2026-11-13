@@ -23,7 +23,7 @@ members = [
 ]
 # Keep repository commands independent of the agent's dependency graph.
 default-members = ["crates/wisp-dev"]
-exclude = ["vendor/tao"]
+exclude = ["vendor/tao", "apps/gpui"]
 
 # Published Tao (0.37.0 and 0.37.1) still deadlocks on macOS when
 # `handle_redraw` reenters the callback mutex from a nested AppKit run loop

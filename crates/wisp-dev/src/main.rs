@@ -5,13 +5,11 @@ use std::process::Command;
 const HELP: &str = "Repository commands:
   cargo run build                 Build the WebView desktop once (debug, no installer)
   cargo run build --release       Build release installers using the existing Tauri pipeline
-  cargo run build-win             Build the WinUI 3 app on Windows (debug)
-  cargo run build-win --release   Build the WinUI 3 app and Rust helpers in release mode
-  cargo run build-mac             Build the SwiftUI .app on macOS (debug)
-  cargo run build-mac --release   Build the SwiftUI .app and Rust helpers in release mode
+  cargo run build-gpui            Build the cross-platform GPUI desktop (debug)
+  cargo run build-gpui --release  Build the GPUI desktop in release mode
+  cargo run gpui                  Launch the GPUI desktop
   cargo run dev [TAURI OPTIONS]   Run the desktop with hot reload
 
-build-mac also accepts --qa and --target TARGET.
 Builds do not launch the app or watch source changes. See docs/development.md
 for output paths, prerequisites, and how to launch the built application.
 
@@ -79,32 +77,27 @@ fn plan(args: &[OsString], os: &str) -> Result<Step, String> {
                 )
             }
         }
-        "build-win" => {
+        "build-gpui" | "gpui" => {
             let release = release_option(options)?;
-            if os != "windows" {
-                return Err("build-win requires Windows with the .NET 8 SDK, Windows SDK, and Rust MSVC toolchain; it cannot cross-compile WinUI 3 from this host.".into());
+            if !matches!(os, "macos" | "windows" | "linux") {
+                return Err("GPUI desktop requires macOS, Windows, or Linux.".into());
             }
-            Step::new(
-                "powershell",
+            let mut step = Step::new(
+                "cargo",
                 &[
-                    "-NoProfile",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-File",
-                    "scripts/build_native_windows.ps1",
-                    "-Configuration",
-                    if release { "Release" } else { "Debug" },
+                    if name == "gpui" { "run" } else { "build" },
+                    "--locked",
+                    "--manifest-path",
+                    "apps/gpui/Cargo.toml",
                 ],
-            )
-        }
-        "build-mac" => {
-            // The script validates --qa/--release/--target and target values.
-            if os != "macos" {
-                return Err("build-mac requires macOS with Xcode Command Line Tools (Swift), Python 3, and Rust; it cannot cross-compile SwiftUI from this host.".into());
+            );
+            if release {
+                step.args.push("--release".into());
             }
-            let mut step = Step::new("bash", &["scripts/build_native_macos.sh"]);
-            step.args.extend_from_slice(options);
             step
+        }
+        "build-win" | "build-mac" => {
+            return Err("The SwiftUI and WinUI desktops have been retired. Use cargo run build-gpui on macOS, Windows, or Linux; see docs/gpui-desktop.md.".into());
         }
         "dev" => {
             let mut step = Step::new("cargo", &["tauri", "dev"]);
@@ -132,8 +125,7 @@ fn plan(args: &[OsString], os: &str) -> Result<Step, String> {
             step
         }
     };
-    step.fast_build = matches!(name, "build" | "build-win" | "build-mac")
-        && !options.iter().any(|arg| arg == "--release");
+    step.fast_build = matches!(name, "build") && !options.iter().any(|arg| arg == "--release");
     Ok(step)
 }
 
@@ -235,58 +227,40 @@ mod tests {
     }
 
     #[test]
-    fn native_builds_route_to_the_native_scripts_and_correct_profiles() {
-        let windows = task(&["build-win"], "windows").unwrap();
-        assert_eq!(windows.program, "powershell");
-        assert!(windows
-            .args
-            .contains(&"scripts/build_native_windows.ps1".into()));
-        assert_eq!(windows.args.last().unwrap(), "Debug");
-        assert!(windows.fast_build);
-        let release = task(&["build-win", "--release"], "windows").unwrap();
-        assert_eq!(release.args.last().unwrap(), "Release");
-        assert!(!release.fast_build);
-
-        let mac = task(
-            &["build-mac", "--qa", "--target", "aarch64-apple-darwin"],
-            "macos",
-        )
-        .unwrap();
-        assert_eq!(mac.program, "bash");
-        assert_eq!(
-            mac.args,
-            [
-                "scripts/build_native_macos.sh",
-                "--qa",
-                "--target",
-                "aarch64-apple-darwin"
-            ]
-        );
-        assert!(mac.fast_build);
-        assert!(
-            !task(&["build-mac", "--release"], "macos")
-                .unwrap()
-                .fast_build
-        );
+    fn gpui_build_and_launch_use_the_same_workspace_on_every_desktop() {
+        for os in ["macos", "windows", "linux"] {
+            for (name, command) in [("build-gpui", "build"), ("gpui", "run")] {
+                let debug = task(&[name], os).unwrap();
+                assert_eq!(debug.program, "cargo");
+                assert_eq!(
+                    debug.args,
+                    [
+                        command,
+                        "--locked",
+                        "--manifest-path",
+                        "apps/gpui/Cargo.toml"
+                    ]
+                );
+                assert!(!debug.fast_build);
+                let release = task(&[name, "--release"], os).unwrap();
+                assert_eq!(release.args.last().unwrap(), "--release");
+            }
+        }
+        assert!(task(&["build-gpui"], "android").is_err());
     }
 
     #[test]
-    fn unsupported_hosts_fail_before_invoking_build_tools() {
-        for os in ["linux", "macos"] {
-            assert!(task(&["build-win"], os)
-                .unwrap_err()
-                .contains("requires Windows"));
-        }
-        for os in ["linux", "windows"] {
-            assert!(task(&["build-mac"], os)
-                .unwrap_err()
-                .contains("requires macOS"));
+    fn retired_commands_explain_the_replacement_on_every_host() {
+        for os in ["macos", "windows", "linux"] {
+            for name in ["build-mac", "build-win"] {
+                assert!(task(&[name], os).unwrap_err().contains("build-gpui"));
+            }
         }
     }
 
     #[test]
     fn rejects_misspelled_or_conflicting_build_options() {
-        for name in ["build", "build-win"] {
+        for name in ["build", "build-gpui", "gpui"] {
             for args in [
                 vec![name, "--relase"],
                 vec![name, "--release", "--debug"],

@@ -28,6 +28,31 @@ impl Config {
         Self::parse(|name| std::env::var(name).ok())
     }
 
+    /// Embed the host in a local desktop without a listener or pairing setup.
+    /// Provider configuration and exact model limits are shared with the server.
+    pub fn local(data: PathBuf, workspace: PathBuf) -> Result<Self> {
+        Self::parse_local(data, workspace, |name| std::env::var(name).ok())
+    }
+
+    fn parse_local(
+        data: PathBuf,
+        workspace: PathBuf,
+        get: impl Fn(&str) -> Option<String>,
+    ) -> Result<Self> {
+        let code = RemoteCode::generate()?.display();
+        let mut config = Self::parse(|name| match name {
+            "WISP_SERVER_PUBLIC_URL" => Some("http://localhost/".into()),
+            "WISP_SERVER_CODE" => Some(code.clone()),
+            "WISP_SERVER_BIND" => Some("127.0.0.1:0".into()),
+            "WISP_SERVER_DATA" | "WISP_SERVER_WORKSPACE" => None,
+            _ => get(name),
+        })?;
+        // Keep OS paths lossless (in particular, non-UTF-8 Unix paths).
+        config.data = data;
+        config.workspace = workspace;
+        Ok(config)
+    }
+
     fn parse(get: impl Fn(&str) -> Option<String>) -> Result<Self> {
         let required = |name| {
             get(name)
@@ -180,5 +205,27 @@ mod tests {
         let limited = Config::parse(|k| values.get(k).cloned()).unwrap();
         assert_eq!(limited.max_context, config.max_context);
         assert!(limited.provider.max_tokens < 99999999);
+    }
+
+    #[test]
+    fn local_host_needs_no_remote_configuration_and_ignores_server_paths() {
+        let mut values = base();
+        values.remove("WISP_SERVER_PUBLIC_URL");
+        values.remove("WISP_SERVER_CODE");
+        values.insert("WISP_SERVER_BIND", "invalid".into());
+        values.insert("WISP_SERVER_DATA", "unrelated-server".into());
+        let local = Config::parse_local("desktop-data".into(), "project".into(), |k| {
+            values.get(k).cloned()
+        })
+        .unwrap();
+        assert_eq!(local.data, PathBuf::from("desktop-data"));
+        assert_eq!(local.workspace, PathBuf::from("project"));
+        assert_eq!(local.bind.port(), 0);
+        assert_eq!(local.max_context, 32_000);
+        values.remove("WISP_MAX_TOKENS");
+        assert!(Config::parse_local("data".into(), "project".into(), |k| {
+            values.get(k).cloned()
+        })
+        .is_err());
     }
 }

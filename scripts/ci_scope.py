@@ -8,20 +8,13 @@ import subprocess
 
 
 SCOPES = (
-    "rust", "headless", "desktop", "ui", "macos", "windows", "ios", "release_notes",
-    "shared_assets", "frontend_assets", "relay_worker",
+    "rust", "headless", "desktop", "ui", "gpui", "ios", "release_notes",
+    "frontend_assets", "relay_worker",
 )
 ALL = frozenset(SCOPES)
 APPLICATIONS = ALL - {"release_notes", "frontend_assets", "relay_worker"}
-BACKEND = frozenset({"rust", "headless", "desktop", "macos", "windows"})
-NATIVE = frozenset({"macos", "windows", "ios", "shared_assets"})
-TEST = ALL - NATIVE
-DESIGN_INPUTS = frozenset({
-    "ui/src/app_support/messages.rs", "ui/src/i18n.rs", "ui/src/app_support/settings.rs",
-    "ui/src/automation.rs", "ui/src/settings_view.rs", "ui/src/styles/base.css",
-    "ui/src/styles/chat.css", "docs/assets/wordmark-light.svg", "docs/assets/wordmark-dark.svg",
-    "apps/macos/native-settings-english.json", "ui/logo.svg",
-})
+BACKEND = frozenset({"rust", "headless", "desktop", "gpui"})
+TEST = ALL - {"gpui", "ios"}
 
 
 def scopes_for_path(path):
@@ -30,22 +23,14 @@ def scopes_for_path(path):
         return ALL
     if path == ".github/workflows/test.yml":
         return TEST
-    if path == ".github/workflows/native-preview.yml":
-        return NATIVE
-    if path.startswith("apps/ios/"):
+    if path == ".github/workflows/ios.yml" or path.startswith("apps/ios/"):
         return {"ios"}
+    if path == ".github/workflows/gpui.yml" or path.startswith("apps/gpui/"):
+        return {"gpui"}
     if path.startswith("apps/android/") or path == ".github/workflows/android.yml":
         return set()  # android.yml has its own path filters.
-    # WinUI links this particular resource directory from the macOS tree.
-    # Ordinary Swift/C# edits do not require the other platform's build.
-    if path.startswith("apps/macos/Sources/WispProjectBrowserUI/Resources/"):
-        return {"macos", "windows", "shared_assets"}
-    if path.startswith("apps/macos/"):
-        return {"macos", "shared_assets"} if path in DESIGN_INPUTS else {"macos"}
-    if path.startswith("apps/windows/"):
-        return {"windows", "shared_assets"}
     if path.startswith("crates/wisp-sync/cloudflare/"):
-        return {"relay_worker"}  # Plain JS, tested with node; no Rust build.
+        return {"relay_worker"}
     if path.startswith(("crates/wisp-dto/", "crates/wisp-sync/", "src-tauri/", "contracts/", ".cargo/")):
         return APPLICATIONS
     if path.startswith("crates/"):
@@ -53,45 +38,23 @@ def scopes_for_path(path):
     if path.startswith("vendor/leptos_reactive/"):
         return {"ui"}
     if path.startswith("vendor/tao/"):
-        return {"rust", "desktop", "macos", "windows"}
+        return {"rust", "desktop"}
     if path in {"Cargo.toml", "Cargo.lock", "rust-toolchain.toml"}:
         return APPLICATIONS
     if path.startswith(("python/", "skills/", "seed/", "r/", "browser-extension/")):
         return BACKEND
     if path.startswith("ui/"):
-        scopes = {"ui"}
-        if path in {"ui/build-fast.mjs", "ui/build-fast.test.mjs"}:
-            scopes.add("frontend_assets")
-        if path in DESIGN_INPUTS:
-            scopes.add("shared_assets")
-        # These are actually bundled by native clients, unlike general Leptos
-        # source which is validated by the independent wasm/browser jobs.
-        if path.startswith("ui/vendor-src/") or path in {
-            "ui/native-host.html", "ui/sync-vendor.mjs",
-        }:
-            scopes.update({"macos", "windows", "shared_assets"})
-        return scopes
+        return {"ui", "frontend_assets"} if path in {"ui/build-fast.mjs", "ui/build-fast.test.mjs"} else {"ui"}
     if path.startswith("ui-tests/website-tests/") or path == "ui-tests/playwright.website.config.ts":
-        return set()  # website.yml has its own path filters.
+        return set()
     if path.startswith("ui-tests/"):
         return {"ui"}
     if path.startswith("scripts/"):
         name = Path(path).name
         if name == "github_release_notes.sh":
             return {"release_notes"}
-        if name in {"sync_native_design.py", "sync_native_settings_contract.py",
-                    "test_sync_native_settings_contract.py"}:
-            return {"shared_assets"}
-        if "native_macos" in name:
-            return {"macos"}
-        if "native_windows" in name:
-            return {"windows"}
         if name in {"wasm-bindgen-wrapper.sh", "strip_reference_types.py"}:
             return {"ui"}
-        if name in {"check_native_parity.py", "test_check_native_parity.py"}:
-            return set()  # The parity-ledger job runs on every PR regardless.
-    if path in DESIGN_INPUTS:
-        return {"shared_assets"}
     if path.startswith(".github/release-notes/"):
         return {"release_notes"}
     if path.startswith(("docs/", ".github/ISSUE_TEMPLATE/")) or path in {
@@ -101,8 +64,7 @@ def scopes_for_path(path):
         ".github/workflows/docs-downloads-r2-sync.yml",
     }:
         return set()
-    # New build inputs and unknown directories must not silently lose coverage.
-    return ALL
+    return ALL  # New build inputs must not silently lose coverage.
 
 
 def select_scopes(paths):

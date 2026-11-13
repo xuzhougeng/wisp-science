@@ -218,3 +218,5 @@ Windows 安装包使用 [SSL.com](https://www.ssl.com/) Personal ID（IV）代�
   url       = {https://doi.org/10.5281/zenodo.22009273}
 }
 ```
+
+桌面端正在统一迁移到 [GPUI 前端](docs/gpui-desktop.md)。独立的 SwiftUI、WinUI 桌面客户端已移除，iOS/Android 保留；迁移期间发布的桌面安装包仍使用 WebView。

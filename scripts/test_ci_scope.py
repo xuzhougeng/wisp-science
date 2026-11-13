@@ -45,24 +45,16 @@ class ScopeTests(unittest.TestCase):
         ]), set())
         self.assertEqual(select_scopes(["ui-tests/package-lock.json"]), {"ui"})
 
-    def test_native_platform_source_is_independent(self):
-        self.assertEqual(select_scopes(["apps/windows/Wisp.Science.Preview/Theme.cs"]),
-                         {"windows", "shared_assets"})
-        self.assertEqual(select_scopes(["apps/macos/Sources/WispScience/App.swift"]), {"macos"})
-        self.assertEqual(select_scopes(["apps/macos/native-settings-english.json"]),
-                         {"macos", "shared_assets"})
-        self.assertEqual(select_scopes(["scripts/build_native_macos.sh"]), {"macos"})
-        self.assertEqual(select_scopes(["scripts/test_build_native_windows.ps1"]), {"windows"})
-
-    def test_shared_resources_only_select_their_consumers(self):
-        self.assertEqual(select_scopes(["apps/macos/Sources/WispProjectBrowserUI/Resources/palette.json"]),
-                         {"macos", "windows", "shared_assets"})
-        for path in ["scripts/sync_native_design.py", "scripts/sync_native_settings_contract.py",
-                     "docs/assets/wordmark-light.svg"]:
-            with self.subTest(path=path):
-                self.assertEqual(select_scopes([path]), {"shared_assets"})
-        self.assertEqual(select_scopes(["ui/vendor-src/scientific-preview.mjs"]),
-                         {"ui", "macos", "windows", "shared_assets"})
+    def test_gpui_source_is_independent_of_legacy_webview_and_mobile(self):
+        self.assertEqual(select_scopes([
+            "apps/gpui/src/main.rs", "apps/gpui/Cargo.toml", "apps/gpui/Cargo.lock",
+            ".github/workflows/gpui.yml",
+        ]), {"gpui"})
+        self.assertEqual(select_scopes(["apps/gpui/src/main.rs", "apps/ios/Package.swift"]),
+                         {"gpui", "ios"})
+        self.assertEqual(select_scopes(["ui/vendor-src/scientific-preview.mjs"]), {"ui"})
+        self.assertIn("gpui", select_scopes(["crates/wisp-server/src/lib.rs"]))
+        self.assertFalse({"macos", "windows", "shared_assets"} & ALL)
 
     def test_web_ui_dependencies_and_shared_icons(self):
         for path in ["ui/src/app.rs", "ui/Cargo.lock", "vendor/leptos_reactive/src/lib.rs"]:
@@ -71,10 +63,9 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(select_scopes(["ui/build-fast.mjs"]), {"ui", "frontend_assets"})
         self.assertEqual(select_scopes(["crates/wisp-sync/cloudflare/relay.mjs"]), {"relay_worker"})
         self.assertIn("rust", select_scopes(["crates/wisp-sync/src/remote.rs"]))
-        self.assertEqual(select_scopes(["ui/src/app_support/messages.rs"]), {"ui", "shared_assets"})
-        # The logo is an input of sync_native_design.py.
-        self.assertEqual(select_scopes(["ui/logo.svg"]), {"ui", "shared_assets"})
-        self.assertEqual(select_scopes(["vendor/tao/src/lib.rs"]), {"rust", "desktop", "macos", "windows"})
+        self.assertEqual(select_scopes(["ui/src/app_support/messages.rs"]), {"ui"})
+        self.assertEqual(select_scopes(["ui/logo.svg"]), {"ui"})
+        self.assertEqual(select_scopes(["vendor/tao/src/lib.rs"]), {"rust", "desktop"})
 
     def test_runtime_skills_are_not_documentation(self):
         self.assertIn("headless", select_scopes(["skills/example/SKILL.md"]))
@@ -85,11 +76,8 @@ class ScopeTests(unittest.TestCase):
                      "scripts/test_ci_scope.py", ".github/workflows/ci-changes.yml"]:
             with self.subTest(path=path):
                 self.assertEqual(select_scopes([path]), ALL)
-        self.assertEqual(select_scopes([".github/workflows/native-preview.yml"]),
-                         {"macos", "windows", "ios", "shared_assets"})
+        self.assertEqual(select_scopes([".github/workflows/ios.yml"]), {"ios"})
         self.assertEqual(select_scopes(["scripts/github_release_notes.sh"]), {"release_notes"})
-        self.assertEqual(select_scopes(["scripts/check_native_parity.py", "scripts/test_check_native_parity.py",
-                                        "docs/native-parity-ledger.md"]), set())
 
     def test_no_changes_skip_jobs_but_invalid_or_missing_diffs_run_all(self):
         self.assertEqual(select_scopes([]), set())
