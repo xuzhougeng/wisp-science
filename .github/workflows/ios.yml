@@ -1,0 +1,67 @@
+name: iOS
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    uses: ./.github/workflows/ci-changes.yml
+
+  ios:
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test iOS remote protocol package
+        run: swift test --package-path apps/ios --scratch-path target/ios-package
+      - name: Select an installed iPhone simulator
+        id: simulator
+        run: |
+          xcrun simctl list devices available --json > "$RUNNER_TEMP/ios-simulators.json"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          data = json.loads((Path(os.environ['RUNNER_TEMP']) / 'ios-simulators.json').read_text())
+          devices = [device for runtime, items in data['devices'].items()
+                     if '.iOS-' in runtime for device in items
+                     if device['name'].startswith('iPhone') and device['isAvailable']]
+          if not devices:
+              raise SystemExit('No available iPhone simulator in the runner Xcode installation')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('id=' + devices[0]['udid'] + '\n')
+          PY
+      - name: Compile iOS app, unit tests and UI tests without signing
+        env:
+          SIMULATOR_ID: ${{ steps.simulator.outputs.id }}
+        run: |
+          xcodebuild -project apps/ios/WispScience.xcodeproj -scheme WispScience \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -derivedDataPath target/ios-app CODE_SIGNING_ALLOWED=NO build-for-testing
+      - name: Run iOS app unit tests
+        env:
+          SIMULATOR_ID: ${{ steps.simulator.outputs.id }}
+        run: |
+          xcodebuild -project apps/ios/WispScience.xcodeproj -scheme WispScience \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -derivedDataPath target/ios-app -resultBundlePath target/ios-unit-tests.xcresult \
+            -only-testing:WispScienceTests CODE_SIGNING_ALLOWED=NO test-without-building
+      - name: Upload iOS test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS-unit-test-results
+          path: target/ios-unit-tests.xcresult
+          if-no-files-found: ignore

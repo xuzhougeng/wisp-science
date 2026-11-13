@@ -23,9 +23,8 @@ function render() {
     : os.value === "windows" ? [["x64", "Intel / AMD (64-bit)"]]
     : os.value === "android" ? [["universal", text("通用 · 手机与平板", "Universal · phones and tablets")]] : [];
   options(arch, architectures.length > 1 ? [["", text("请选择芯片", "Choose a processor")], ...architectures] : architectures, arch.value);
-  const formats = os.value === "windows" ? [["exe", text("常规版 · EXE · 推荐", "Standard · EXE · Recommended")], ["msi", text("常规版 · MSI", "Standard · MSI")],
-      ["winui-self-contained", text("WinUI 原生版 · 含运行时", "WinUI native · Runtimes included")]]
-    : os.value === "macos" ? [["dmg", text("常规版 · DMG · 推荐", "Standard · DMG · Recommended")], ["swiftui", text("SwiftUI 原生版 · DMG", "SwiftUI native · DMG")]]
+  const formats = os.value === "windows" ? [["exe", text("EXE · 推荐", "EXE · Recommended")], ["msi", "MSI"]]
+    : os.value === "macos" ? [["dmg", "DMG"]]
     : os.value === "linux" ? [["deb", "DEB · Debian / Ubuntu"], ["appimage", "AppImage"]]
     : os.value === "android" ? [["apk", "APK"]] : [];
   options(format, formats, format.value);
@@ -48,7 +47,7 @@ function render() {
     : text("正在读取可下载版本…", "Loading the available release…");
   primary.removeAttribute("href");
   primary.setAttribute("aria-disabled", String(!asset));
-  // Optional mobile/native installers can be absent from all published releases.
+  // The optional mobile installer can be absent from all published releases.
   const absent = manifest && pkg && !asset;
   document.getElementById("download-github").href = asset
     ? `${RELEASES}/download/${tag}/${encodeURIComponent(asset.name)}` : absent ? RELEASES : `${RELEASES}/latest`;
@@ -59,12 +58,7 @@ function render() {
   document.getElementById("checksum-details").hidden = !asset;
   setText("package-checksum", asset?.sha256 || "");
   if (asset) primary.href = `${DOWNLOAD_ORIGIN}/downloads/${asset.key}`;
-  setText("install-help", !pkg ? "" : pkg.format === "swiftui"
-    ? text("需要 macOS 13 或更高版本。打开 DMG，将 Wisp Science SwiftUI 拖入 Applications；可与常规版并存，更新需手动下载。", "Requires macOS 13 or later. Open the DMG and drag Wisp Science SwiftUI into Applications. It installs alongside the standard app and updates by manual download.")
-    : pkg.format === "winui-self-contained" ? text("无需另装 WebView 版。已包含 .NET、Windows App SDK 和应用服务。", "The WebView edition is not required. Includes .NET, Windows App SDK and app services.") + " " + (asset?.name.startsWith("Wisp-Science-WinUI-Preview_")
-      ? text("此历史 Preview 安装包需要系统已有 Microsoft WebView2 Runtime。", "This historical Preview installer requires Microsoft WebView2 Runtime to be installed already.")
-      : text("安装时自动检测 Microsoft WebView2 Runtime，缺失时联网下载安装；已有运行时则直接使用。", "Setup detects Microsoft WebView2 Runtime and automatically downloads and installs it if missing; internet is required only for a missing runtime."))
-    : pkg.os === "macos"
+  setText("install-help", !pkg ? "" : pkg.os === "macos"
     ? text("打开 DMG，将 Wisp Science 拖入 Applications。", "Open the DMG and drag Wisp Science into Applications.")
     : pkg.os === "windows" ? text("运行安装包并按提示完成安装。", "Run the installer and follow the setup steps.")
     : pkg.os === "android" ? text("下载后打开 APK；首次安装需允许浏览器“安装未知应用”。升级时直接覆盖安装，无需卸载。", "Open the downloaded APK and allow your browser to install unknown apps the first time. Install updates over the existing app; no uninstall needed.")

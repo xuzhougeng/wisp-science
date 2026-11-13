@@ -151,8 +151,8 @@ Prerequisites:
 
 ```bash
 cargo run build      # fast, one-shot desktop build; no watcher or installer
-cargo run build-win  # WinUI 3 preview, on Windows
-cargo run build-mac  # SwiftUI app, on macOS
+cargo run build-gpui # cross-platform GPUI preview; see docs/gpui-desktop.md
+cargo run gpui       # launch the GPUI preview
 cargo run dev        # hot-reload: Trunk serves the UI, Tauri opens the window
 cargo tauri dev      # hot-reload: Trunk serves the UI, Tauri opens the window
 cargo tauri build    # installers under target/release/bundle
@@ -172,34 +172,18 @@ build command again. No development server is needed to launch the result:
 | --- | --- |
 | `cargo run build` (Linux/macOS) | `./target/debug/wisp-tauri` |
 | `cargo run build` (Windows) | `.\target\debug\wisp-tauri.exe` |
-| `cargo run build-win` (Windows) | `.\target\native-windows\Wisp.Science.Preview.exe` |
-| `cargo run build-mac` (macOS) | `open "target/native-macos/Wisp Science SwiftUI.app"` |
+| `cargo run build-gpui` | `apps/gpui/target/debug/wisp-gpui` (`.exe` on Windows) |
 
-Keep the generated resource folders beside the executable. Native apps
-also package the Rust service and desktop helper; they use the existing native
-UI implementations and their current feature coverage. WinUI 3 needs Windows,
-.NET 8, the Windows SDK, the Rust MSVC toolchain, Python (`python` on PATH), and
-the WebView2 Runtime. SwiftUI needs macOS 13+, Xcode Command Line Tools (Swift),
-Rust, and Python 3. The native scripts use the small `native-host.html` helper
-and do not compile the Leptos frontend. These commands do not cross-compile
-WinUI 3 from Linux/macOS or SwiftUI from Linux/Windows.
+The SwiftUI and WinUI desktop clients and their release jobs have been retired.
+[GPUI desktop](gpui-desktop.md) documents the shared Rust frontend, dependencies,
+configuration, and migration coverage. `build-mac` and `build-win` now explain
+which command replaces them. Mobile clients are unchanged.
 
-For optimized builds, use `cargo run build --release` (the existing Tauri
-installer pipeline), `cargo run build-win --release` (all three executables in
-`target/native-windows-release`), or `cargo run build-mac --release` (the app in
-`target/native-macos-release`). Local native builds are for testing, without
-release signing/notarization. macOS also accepts `--qa` and
-`--target aarch64-apple-darwin|x86_64-apple-darwin`; architecture builds add that
-target directory under the native output folder. Plain desktop output paths
-above assume Cargo's default target directory and host target.
-
-Published releases continue to use the unchanged release profile and frontend
-release optimization. The Windows/Linux/macOS release workflows keep their
-Tauri release builds, and macOS's published SwiftUI build explicitly uses
-`--release`. The Windows preview CI explicitly selects `-Configuration Release`
-and uploads `target/native-windows-release`; the standalone PowerShell script
-also retains its Release default. Only the local `cargo run build*` shortcuts
-default to debug. No release workflow loads `tauri.fast.conf.json`.
+Use `cargo run build --release` for existing Tauri installers, or
+`cargo run build-gpui --release` for the GPUI executable. The GPUI preview has
+its own Cargo workspace and lockfile; it does not change CLI, server, or Tauri
+build dependencies. WebView installers remain the supported release channel
+until the migration acceptance criteria are met.
 
 Repository `cargo run` now compiles a dependency-free `wisp-dev` launcher;
 desktop commands no longer compile the entire headless agent just to dispatch
@@ -209,15 +193,10 @@ a build. Other arguments and no-argument interactive startup still forward to
 `cargo run -- --help` for build help. Bare `cargo build`/`cargo test` select the
 launcher; use `-p wisp-cli` for the agent or `--workspace` for all Rust crates.
 
-Build routing checks: `cargo test -p wisp-dev`, `node --test ui/build-fast.test.mjs`,
-`python3 scripts/test_build_native_macos.py`, and on Windows
-`powershell -NoProfile -File scripts/test_build_native_windows.ps1` use no real
-SDKs or network in their test cases. Manual smoke: build the applicable app,
-launch the output above, edit a source file and verify the running window stays
-open without rebuilding/reloading; close it, build again and verify the change
-appears. On Windows/macOS, check that opening a project starts both packaged
-Rust helpers, then repeat with `--release` and confirm the debug preview remains
-available in its separate directory.
+Build routing checks: `cargo test -p wisp-dev` and
+`node --test ui/build-fast.test.mjs` use no real SDKs or network in their test
+cases. GPUI state checks and platform acceptance steps are listed in
+[GPUI desktop](gpui-desktop.md). Local test execution requires explicit permission.
 
 The desktop icon uses the three-wisp design by
 [SpicyChicken6 in Discussion #1154](https://github.com/xuzhougeng/wisp-science/discussions/1154),
@@ -523,8 +502,9 @@ wisp-science/
 │  ├─ wisp-dto/     Shared data contracts for UI and application services
 │  └─ wisp-cli/     `wisp-science` headless binary
 ├─ src-tauri/       Tauri v2 desktop shell (commands + agent event stream)
-├─ apps/macos/      SwiftUI app + Foundation transport
-├─ apps/windows/    WinUI 3 preview, JSONL client, workspace actions, navigation and contract tests
+├─ apps/gpui/       Cross-platform GPUI desktop preview
+├─ apps/ios/        SwiftUI remote mobile client
+├─ apps/android/    Kotlin / Compose remote mobile client
 ├─ ui/              Leptos CSR frontend (built by Trunk, loaded in WebView2)
 ├─ python/          kernel_worker.py + mock MCP server (uv-managed)
 ├─ r/               optional system-R kernel worker (requires jsonlite)
@@ -542,11 +522,9 @@ wisp-science/
   counts, stars, sync metadata, and best-effort enrichment fallbacks are preserved.
   `projects::project_status_counts` also serves the desktop's individual project
   summaries. This crate has no Tauri or Leptos dependency and does not open a
-  separate database. The SwiftUI app and WinUI 3 preview use read-only `wisp-service`
-  processes through the same versioned boundary. See
-  [Native project browser](native-project-browser.md) for build instructions,
-  status limitations, and the JSONL protocol. Verify the query boundary with
-  `cargo test -p wisp-app`.
+  separate database. GPUI uses the in-process Rust host and the shared DTOs;
+  the `wisp-service` JSONL boundary remains available for project-browser consumers.
+  See [GPUI desktop](gpui-desktop.md) and [project-browser protocol](native-project-browser.md).
 - **Agent loop** (`wisp-core::agent`): read → think → tool-call → verify,
   streaming tokens to an `Output` sink. Stops on `attempt_completion` or when
   the model returns no tool calls.

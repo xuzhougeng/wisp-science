@@ -224,3 +224,5 @@ releases keep the license published with them.
   url       = {https://doi.org/10.5281/zenodo.22009273}
 }
 ```
+
+Desktop development is moving to one cross-platform [GPUI frontend](docs/gpui-desktop.md). The separate SwiftUI and WinUI desktop clients are retired; iOS/Android remain. Published desktop installers still use WebView during the migration.

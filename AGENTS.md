@@ -2,7 +2,7 @@
 
 ## Project Orientation
 
-wisp-science is a Rust/Tauri/Leptos local-first scientific computing agent. The long-term product direction is a research workbench: local, WSL, SSH servers, GPU hosts, schedulers, literature tools, runs, data assets, artifacts, papers, and decisions should be represented as one project-level control plane. The durable product nouns are `Project`, `ExecutionContext`, `DataAsset`, `Run`, `Artifact`, `Paper`, and `Decision`.
+wisp-science is a Rust local-first scientific computing agent. The long-term product direction is a research workbench: local, WSL, SSH servers, GPU hosts, schedulers, literature tools, runs, data assets, artifacts, papers, and decisions should be represented as one project-level control plane. The durable product nouns are `Project`, `ExecutionContext`, `DataAsset`, `Run`, `Artifact`, `Paper`, and `Decision`.
 
 Do not implement broad product vision in one change. Prefer small PRs that add one durable abstraction, persistence table, tool, UI surface, or testable behavior at a time.
 
@@ -26,11 +26,11 @@ Do not implement broad product vision in one change. Prefer small PRs that add o
 - `crates/wisp-service/`: local project-browser query and command service for the native clients.
 - `crates/wisp-server/`: headless Wisp host with built-in encrypted mobile web access (`deploy/server/` holds its container setup).
 - `crates/wisp-dev/`: dependency-free repository build launcher; the workspace `default-members` entry.
-- `apps/`: native clients (`macos`, `ios`, `windows`, `android`). `contracts/` holds the JSON fixtures the Rust host and those clients both honour.
+- `apps/`: the cross-platform GPUI desktop (`gpui`, independent Cargo workspace), plus mobile clients (`ios`, `android`). `contracts/` holds the JSON fixtures the Rust host and those clients both honour.
 - `vendor/`: patched third-party crates (`tao`, `leptos_reactive`); provenance and removal criteria live beside each.
 - `src-tauri/`: desktop shell, Tauri commands, app state, SSH host registry. `src/app_state.rs` owns `AppState`/`SessionRuntime`/`ActiveProject`; `src/agent_turn.rs` owns the send_message turn pipeline, turn queue, and stop_agent; `src/turn_hooks.rs` owns what runs when a turn ends (Stop: automatic review/correction before `Done`; AfterTurn: memory proposal and follow-up questions after it) and the shared side-model call `side_complete`; `lib.rs` keeps command registration, setup, and shared helpers.
 - `src-tauri/src/model_catalog_shared.rs`: distilled models.dev catalog types and exact-id lookup, compiled into both `build.rs` and the runtime. `build.rs` fetches `https://models.dev/api.json` at build time and falls back to the checked-in `src-tauri/model_catalog.snapshot.json` when offline (`WISP_CATALOG_OFFLINE=1` skips the fetch); run `scripts/refresh_model_catalog.sh` to refresh the snapshot before releases.
-- `ui/`: Leptos frontend.
+- `ui/`: legacy Leptos/WebView frontend, retained during the GPUI migration.
 - `ui-tests/`: Playwright tests with mocked Tauri bridge.
 - `skills/`: bundled scientific workflows.
 - `docs/superpowers/specs/` and `docs/superpowers/plans/`: architecture notes and implementation plans.
@@ -46,11 +46,11 @@ Do not implement broad product vision in one change. Prefer small PRs that add o
 - Model context/output ceilings come from the baked models.dev catalog via exact model-ID match (gateway `vendor/model` ids match on the tail segment). Never reintroduce prefix or family matching — a family id must not absorb a longer sibling.
 - Do not refactor or split modules solely because a file is long. Require a concrete reason tied to the active change, such as mixed responsibilities causing repeated edits, a needed dependency or test boundary, or a measured maintenance problem, and stop once that problem is solved. Large composition/root modules are acceptable; do not pursue arbitrary line-count targets or speculative abstractions.
 - Every dismissible overlay, dialog, menu, and popover must participate in a window-level Escape stack ordered from the visually topmost surface down. Root-owned state belongs in the app stack; component-local state may use a scoped window listener that is removed on cleanup. Do not rely on a DOM `keydown` handler receiving a bubbled event or on `autofocus`. A local handler is only appropriate when an inner state must consume Escape before its parent; it must prevent propagation. Tests must press Escape immediately after opening, without first moving focus inside, and verify that one press closes only the topmost layer while its parent remains open.
-- UI icons come from one shared set: `compose_icon()` in `ui/src/app_support/messages.rs` (Lucide-style 24×24 stroke SVGs, `stroke="currentColor"`). Never introduce icon fonts, emoji/unicode glyphs, or per-component CSS mask icons (the removed `.gi` system); add a new `compose_icon` kind instead. Give each action a distinct, semantically matching icon — do not reuse the same icon for two different entries in one menu. Size icons via a component-scoped `svg` CSS selector, not by adding wrapper classes to the shared set.
+- WebView UI icons come from one shared set: `compose_icon()` in `ui/src/app_support/messages.rs` (Lucide-style 24×24 stroke SVGs, `stroke="currentColor"`). Never introduce icon fonts, emoji/unicode glyphs, or per-component CSS mask icons (the removed `.gi` system); add a new `compose_icon` kind instead. Give each action a distinct, semantically matching icon — do not reuse the same icon for two different entries in one menu. Size icons via a component-scoped `svg` CSS selector, not by adding wrapper classes to the shared set.
 - Do not run local tests without the user's explicit permission. This includes unit, integration, end-to-end, smoke, and evaluation tests, plus scripts or development servers started to execute them. A request to implement, fix, commit, or push changes is not permission to run tests. Once authorized, stay within the approved scope; do not automatically expand to the full suite.
 - Add or update test code with every behavior change. Writing tests does not authorize running them.
 - Playwright tests in `ui-tests/` run fully parallel and sharded in CI: each test boots its own page and must not depend on another test running first or on module-level state another test mutated. Do not add `retries`; a failing test is a bug to fix.
-- A PR that changes the WebView UI (`ui/src/`) without changing the SwiftUI sources or tests must add a row to `docs/native-parity-ledger.md` (CI `parity-ledger` enforces this). Re-syncing `native-english.json` is not native work.
+- GPUI must reuse host-independent Rust services and `wisp-dto`; do not recreate SwiftUI/WinUI clients or introduce a hidden WebView host. Keep GPUI isolated from headless workspace dependencies. See `docs/gpui-desktop.md` for migration scope.
 - Update docs when user-visible behavior changes. Update release notes only when explicitly requested or when preparing a release (see Cutting a release).
 - If `cargo fmt --all -- --check` fails because of formatting drift, run `cargo fmt --all` and keep formatting-only changes in a separate commit.
 
@@ -116,14 +116,14 @@ When asked to release, follow this section. Create the GitHub Release with `gh` 
    gh release create vX.Y.Z --title $title --notes-file .github/release-notes/vX.Y.Z.md --target (git rev-parse HEAD)
    ```
 
-5. Confirm the release exists, then wait until CI has **started** (Create Release, Windows Release, Windows WinUI Release, macOS Release, Linux Release, Android Release, Relay Image):
+5. Confirm the release exists, then wait until CI has **started** (Create Release, Windows Release, macOS Release, Linux Release, Android Release, Relay Image):
 
    ```bash
    gh release view vX.Y.Z
    gh run list --branch vX.Y.Z
    ```
 
-   Create Release is a no-op when the release already exists. Platform workflows attach installers only; they must not be given a release body. Android Release is skipped until the repository variable `ANDROID_RELEASE_ENABLED` is `true`; once enabled it attaches the signed APK and refuses any APK whose signer does not match `ANDROID_SIGNING_CERT_SHA256`. Windows Release and Windows WinUI Release sign with eSigner and fail when any `ESIGNER_*` secret is missing; `publish=false` is the signing dry-run. Relay Image publishes `ghcr.io/xuzhougeng/wisp-relay:X.Y.Z` and `latest` and attaches nothing to the release. Only watch those runs to completion when the user asked to ship or verify the published assets.
+   Create Release is a no-op when the release already exists. Platform workflows attach installers only; they must not be given a release body. Android Release is skipped until the repository variable `ANDROID_RELEASE_ENABLED` is `true`; once enabled it attaches the signed APK and refuses any APK whose signer does not match `ANDROID_SIGNING_CERT_SHA256`. Windows Release signs with eSigner and fails when any `ESIGNER_*` secret is missing; `publish=false` is the signing dry-run. Relay Image publishes `ghcr.io/xuzhougeng/wisp-relay:X.Y.Z` and `latest` and attaches nothing to the release. Only watch those runs to completion when the user asked to ship or verify the published assets.
 
 Do not `git push origin vX.Y.Z` after `gh release create` — the tag already exists on GitHub. To fix notes on an existing release, edit the notes file and run the Create Release workflow with `overwrite_notes`, or `gh release edit`. Never use `tauri-action` / `action-gh-release` with a body on a published release.
 

@@ -1,13 +1,9 @@
 /target
-/apps/macos/.build/
-/apps/macos/.swiftpm/
 /apps/ios/.build/
 /apps/ios/.swiftpm/
 /apps/ios/DerivedData/
 /apps/ios/**/*.xcuserstate
 /apps/ios/**/xcuserdata/
-/apps/windows/**/bin/
-/apps/windows/**/obj/
 /**/target
 /wisp
 Cargo.lock.bak
@@ -50,3 +46,9 @@ __pycache__/
 /docs/worker-configuration.d.ts
 # design QA screenshots/evidence: keep out of git (clone size)
 /docs/design-qa/
+
+# Build caches left by the retired SwiftUI/WinUI desktop clients.
+/apps/macos/.build/
+/apps/macos/.swiftpm/
+/apps/windows/**/bin/
+/apps/windows/**/obj/

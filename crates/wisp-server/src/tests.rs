@@ -77,6 +77,47 @@ fn models(calls: Arc<AtomicUsize>, write: bool) -> ModelFactory {
     })
 }
 
+#[tokio::test]
+async fn local_project_registration_preserves_identity_and_is_not_remotely_exposed() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let project = temp.path().join("研究 project");
+    std::fs::create_dir(&project).unwrap();
+    let first = server.register_local_project(&project).await.unwrap();
+    assert_eq!(
+        server
+            .register_local_project(&project.join("."))
+            .await
+            .unwrap(),
+        first
+    );
+    assert!(server.register_local_project(temp.path()).await.is_err());
+    assert!(server
+        .register_local_project(&temp.path().join("data"))
+        .await
+        .is_err());
+    assert!(server
+        .register_local_project(&temp.path().join("missing"))
+        .await
+        .is_err());
+    assert!(!server.commands().contains(&"register_local_project"));
+    let session = call(&server, "native_conversation_create", &first, json!({}))
+        .await
+        .unwrap();
+    let result = call(
+        &server,
+        "native_conversation_snapshot",
+        &first,
+        json!({"session_id": session}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result["project_id"], first);
+    server.shutdown().await;
+}
+
 async fn call(server: &Server, command: &str, project: &str, args: Value) -> Result<Value, String> {
     server
         .dispatch(RemoteRequest {

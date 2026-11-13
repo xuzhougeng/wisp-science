@@ -63,6 +63,35 @@ impl Server {
         Self::open_with_models(config, Arc::new(wisp_llm::build)).await
     }
 
+    /// Explicit local action; intentionally absent from the remote allowlist.
+    /// The desktop's OS folder picker is the authority to register this root.
+    pub async fn register_local_project(&self, root: &std::path::Path) -> Result<String> {
+        let _admission = self.0.admission.write().await;
+        ensure!(
+            !self.0.shutting_down.load(Ordering::Relaxed),
+            "Host is shutting down"
+        );
+        let root = tokio::fs::canonicalize(root).await?;
+        ensure!(root.is_dir(), "Select a project directory");
+        ensure!(
+            !self.0.config.data.starts_with(&root) && !root.starts_with(&self.0.config.data),
+            "Keep project files separate from the host data directory"
+        );
+        let path = root.to_str().context("Project path must be UTF-8")?;
+        for (id, _, existing, ..) in self.0.store.list_projects().await? {
+            if std::path::Path::new(&existing) == root {
+                return Ok(id);
+            }
+        }
+        let name = root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("Workspace");
+        let id = uuid::Uuid::new_v4().to_string();
+        self.0.store.create_project(&id, name, path).await?;
+        Ok(id)
+    }
+
     async fn open_with_models(mut config: Config, models: ModelFactory) -> Result<Self> {
         tokio::fs::create_dir_all(&config.data).await?;
         config.data = tokio::fs::canonicalize(&config.data).await?;

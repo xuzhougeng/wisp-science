@@ -1,0 +1,47 @@
+name: GPUI desktop
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    uses: ./.github/workflows/ci-changes.yml
+
+  desktop:
+    needs: changes
+    if: needs.changes.outputs.gpui == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/gpui -> target
+          shared-key: gpui-${{ matrix.os }}
+      - name: Install Linux native build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config cmake clang libclang-dev libdbus-1-dev \
+            libfontconfig1-dev libfreetype6-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev libxcb1-dev libxcb-xkb-dev libxcb-randr0-dev \
+            libxcb-shape0-dev libxcb-xfixes0-dev libxcb-sync-dev libxcb-render0-dev \
+            libxcb-shm0-dev libegl1-mesa-dev libvulkan-dev libasound2-dev libssl-dev
+      - name: Check the desktop and offline state tests
+        run: cargo check --locked --manifest-path apps/gpui/Cargo.toml --all-targets
+      - name: Exercise state without opening a window
+        run: cargo test --locked --manifest-path apps/gpui/Cargo.toml state::tests

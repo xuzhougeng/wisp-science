@@ -9,12 +9,13 @@ import { selectAssets, syncRelease } from "../scripts/sync-downloads.mjs";
 const release = () => ({ tagName: "v1.12.0", isDraft: false, isPrerelease: false,
   assets: PACKAGES.map(pkg => ({ id: "github-asset-id", name: assetName("v1.12.0", pkg), size: 7 })) });
 
-test("selects exact standard, mobile and native installer names and excludes updater/source archives", () => {
+test("selects supported installers and excludes retired desktops and updater/source archives", () => {
   const data = release();
   data.assets.push({ name: "latest.json", size: 123 }, { name: "wisp-science_1.12.0_x64.app.tar.gz", size: 123 });
-  assert.equal(selectAssets(data).length, 12);
-  assert.ok(selectAssets(data).some(asset => asset.name === "Wisp-Science-SwiftUI_1.12.0_x86_64.dmg"));
-  assert.ok(selectAssets(data).some(asset => asset.name === "Wisp-Science-WinUI_1.12.0_x64-setup.exe"));
+  data.assets.push({ name: "Wisp-Science-SwiftUI_1.12.0_x86_64.dmg", size: 7 },
+    { name: "Wisp-Science-WinUI_1.12.0_x64-setup.exe", size: 7 });
+  assert.equal(selectAssets(data).length, PACKAGES.length);
+  assert.equal(selectAssets(data).some(asset => /SwiftUI|WinUI/.test(asset.name)), false);
   data.assets.pop();
   data.assets.shift();
   assert.throws(() => selectAssets(data), /Missing/);
@@ -24,7 +25,7 @@ test("selects exact standard, mobile and native installer names and excludes upd
   assert.throws(() => selectAssets(duplicate), /ambiguous/);
 });
 
-test("optional mobile and native builds never block standard installers, but published ones are validated", () => {
+test("optional mobile builds never block desktop installers, but published ones are validated", () => {
   const desktop = release();
   desktop.assets = desktop.assets.filter(asset => PACKAGES.some(pkg => !pkg.optional && asset.name === assetName(desktop.tagName, pkg)));
   assert.equal(selectAssets(desktop).length, 8);
@@ -40,34 +41,22 @@ test("optional mobile and native builds never block standard installers, but pub
   assert.throws(() => selectAssets(empty), /wisp-science_1.12.0_android.apk/);
 });
 
-test("WinUI keeps one self-contained option and prefers the formal asset over a rebuilt Preview", () => {
-  const pkg = PACKAGES.find(pkg => pkg.id === "windows-x64-winui-self-contained");
-  assert.equal(PACKAGES.filter(pkg => pkg.prefix?.includes("WinUI")).length, 1);
-  const legacyName = "Wisp-Science-WinUI-Preview_1.12.0_x64-self-contained-setup.exe";
-  const legacy = release();
-  legacy.assets.find(asset => asset.name === assetName(legacy.tagName, pkg)).name = legacyName;
-  legacy.assets.push({ name: "Wisp-Science-WinUI-Preview_1.12.0_x64-framework-dependent-setup.exe", size: 7 });
-  assert.equal(selectAssets(legacy).find(asset => asset.id === pkg.id).name, legacyName);
-  assert.equal(selectAssets(legacy).filter(asset => asset.os === "windows").length, 3);
-  legacy.assets.push({ name: assetName(legacy.tagName, pkg), size: 7 });
-  assert.equal(selectAssets(legacy).find(asset => asset.id === pkg.id).name, assetName(legacy.tagName, pkg));
-});
-
-test("cached Preview manifests stay readable while hiding the retired lightweight package", async t => {
+test("cached manifests hide retired desktops while immutable download URLs stay valid", async t => {
   const { deps } = await fixture(t);
   const manifest = await syncRelease(release(), deps);
-  const native = manifest.packages.find(asset => asset.id === "windows-x64-winui-self-contained");
+  const native = { id: "windows-x64-winui-self-contained", tag: manifest.tag,
+    name: "Wisp-Science-WinUI_1.12.0_x64-setup.exe", sha256: "a".repeat(64), size: 7 };
+  native.key = `releases/${native.tag}/${native.sha256}/${native.name}`;
+  manifest.packages.push(native);
+  const validated = validateManifest(manifest);
+  assert.equal(validated.packages.length, PACKAGES.length);
+  assert.equal(validated.packages.some(asset => asset.id === native.id), false);
+  assert.equal(validDownloadKey(native.key), true);
   const legacyName = "Wisp-Science-WinUI-Preview_1.12.0_x64-self-contained-setup.exe";
   native.key = native.key.replace(native.name, legacyName);
   native.name = legacyName;
-  const thinName = "Wisp-Science-WinUI-Preview_1.12.0_x64-framework-dependent-setup.exe";
-  const thin = { ...native, id: "windows-x64-winui-framework", name: thinName, key: native.key.replace(legacyName, thinName) };
-  manifest.packages.push(thin);
-  const validated = validateManifest(manifest);
-  assert.equal(validated.packages.length, 12);
-  assert.equal(validated.packages.some(asset => asset.id === thin.id), false);
-  assert.equal(validated.packages.find(asset => asset.id === native.id).name, legacyName);
-  thin.key += "/extra";
+  assert.equal(validateManifest(manifest).packages.length, PACKAGES.length);
+  native.key += "/extra";
   assert.throws(() => validateManifest(manifest), /Invalid package/);
 });
 
@@ -107,7 +96,7 @@ async function fixture(t, overrides = {}) {
 test("publishes validated, checksummed manifest after every installer", async t => {
   const { uploads, deps } = await fixture(t);
   const manifest = await syncRelease(release(), deps);
-  assert.equal(uploads.length, 13);
+  assert.equal(uploads.length, PACKAGES.length + 1);
   assert.equal(uploads.at(-1).key, "latest.json");
   assert.deepEqual(JSON.parse(uploads.at(-1).body), validateManifest(manifest));
   assert.ok(uploads.slice(0, -1).every(({ key }) => validDownloadKey(key)));
@@ -121,7 +110,7 @@ test("manifest without the APK stays valid; unknown or duplicate packages do not
   const manifest = await syncRelease(release(), deps);
   const apk = manifest.packages.find(asset => asset.id === "android-universal-apk");
   const desktop = manifest.packages.filter(asset => asset !== apk);
-  assert.equal(validateManifest({ ...manifest, packages: desktop }).packages.length, 11);
+  assert.equal(validateManifest({ ...manifest, packages: desktop }).packages.length, PACKAGES.length - 1);
   assert.throws(() => validateManifest({ ...manifest, packages: [...manifest.packages, apk] }));
   assert.throws(() => validateManifest({ ...manifest, packages: [...desktop, { ...apk, id: "ios-universal-ipa" }] }), /Invalid download manifest/);
   assert.throws(() => validateManifest({ ...manifest, packages: [...desktop, { ...apk, name: "wisp-science_1.12.0_x64.dmg" }] }), /android-universal-apk/);
@@ -132,9 +121,9 @@ test("incomplete latest builds retain the newest published package, regardless o
   const older = { ...release(), tagName: "v1.9.0", assets: PACKAGES.map(pkg => ({ name: assetName("v1.9.0", pkg), size: 7 })) };
   const latest = { ...release(), tagName: "v1.20.0", assets: [{ name: "wisp-science_1.20.0_android.apk", size: 7 }] };
   const selected = selectAssets(latest, [older, previous, { ...previous, tagName: "v1.21.0" }, { ...previous, isDraft: true }]);
-  assert.equal(selected.length, 12);
+  assert.equal(selected.length, PACKAGES.length);
   assert.equal(selected.find(asset => asset.os === "android").tag, "v1.20.0");
-  assert.equal(selected.find(asset => asset.id === "macos-x64-swiftui").name, "Wisp-Science-SwiftUI_1.12.0_x86_64.dmg");
+  assert.equal(selected.find(asset => asset.id === "macos-x64-dmg").name, "wisp-science_1.12.0_x64.dmg");
   assert.equal(selected.find(asset => asset.id === "windows-x64-exe").tag, "v1.12.0");
   latest.assets.push({ name: "wisp-science_1.20.0_x64-setup.exe", size: 0 });
   assert.throws(() => selectAssets(latest, [previous]), /Missing or ambiguous/);
@@ -149,7 +138,7 @@ test("mixed-version synchronization downloads and links each package from its ac
   });
   const manifest = await syncRelease(latest, deps);
   const apk = manifest.packages.find(asset => asset.id === "android-universal-apk");
-  const native = manifest.packages.find(asset => asset.id === "windows-x64-winui-self-contained");
+  const native = manifest.packages.find(asset => asset.id === "windows-x64-exe");
   assert.equal(manifest.tag, "v1.20.0");
   assert.equal(apk.tag, "v1.20.0");
   assert.equal(native.tag, "v1.12.0");

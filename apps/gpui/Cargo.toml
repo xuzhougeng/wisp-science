@@ -1,0 +1,32 @@
+[package]
+name = "wisp-gpui"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "AGPL-3.0-only"
+description = "Wisp's cross-platform GPUI desktop migration"
+
+# Like ui/, keep renderer dependencies out of headless builds and their MSRV.
+[workspace]
+
+[dependencies]
+anyhow = "1"
+dirs = "5"
+# Compile Metal at launch in this preview, so building does not require the
+# separately downloaded Xcode Metal Toolchain. Other backends are unaffected.
+gpui = { version = "=0.2.2", features = ["runtime_shaders"] }
+gpui-component = { version = "=0.5.1", default-features = false }
+serde = "1"
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+uuid = { version = "1", features = ["v4"] }
+wisp-dto = { path = "../../crates/wisp-dto" }
+wisp-server = { path = "../../crates/wisp-server" }
+wisp-sync = { path = "../../crates/wisp-sync" }
+
+[profile.dev]
+debug = 1
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

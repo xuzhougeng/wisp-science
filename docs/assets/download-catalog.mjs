@@ -12,14 +12,14 @@ export const PACKAGES = [
   // Optional: Android Release runs only once signing is configured, and desktop
   // downloads must never wait for (or be withdrawn by) a missing APK.
   { id: "android-universal-apk", os: "android", arch: "universal", format: "apk", suffix: "android.apk", optional: true },
+];
+// Existing immutable links and cached manifests remain readable during rollout.
+// Retired desktop packages are never selected for new manifests or offered by the UI.
+const RETIRED_PACKAGES = [
   { id: "macos-arm64-swiftui", os: "macos", arch: "arm64", format: "swiftui", prefix: "Wisp-Science-SwiftUI", suffix: "aarch64.dmg", optional: true },
   { id: "macos-x64-swiftui", os: "macos", arch: "x64", format: "swiftui", prefix: "Wisp-Science-SwiftUI", suffix: "x86_64.dmg", optional: true },
   { id: "windows-x64-winui-self-contained", os: "windows", arch: "x64", format: "winui-self-contained", prefix: "Wisp-Science-WinUI", suffix: "x64-setup.exe", optional: true,
     legacy: { prefix: "Wisp-Science-WinUI-Preview", suffix: "x64-self-contained-setup.exe" } },
-];
-// Existing immutable links and cached manifests remain readable during rollout.
-// This retired package is never selected for a new manifest or offered by the UI.
-const RETIRED_PACKAGES = [
   { id: "windows-x64-winui-framework", prefix: "Wisp-Science-WinUI-Preview", suffix: "x64-framework-dependent-setup.exe", optional: true },
 ];
 const READABLE_PACKAGES = [...PACKAGES, ...RETIRED_PACKAGES];
