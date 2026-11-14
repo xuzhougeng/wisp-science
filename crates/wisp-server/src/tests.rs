@@ -4229,3 +4229,84 @@ async fn the_desktop_makes_renames_and_trashes_project_files() {
     }
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_projects_journey_lists_what_happened_and_what_the_researcher_recorded() {
+    use wisp_dto::ResearchJournalInput;
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let (from, until) = (now - 86_400, now + 86_400);
+    assert!(server
+        .journey(PROJECT, from, until)
+        .await
+        .unwrap()
+        .entries
+        .is_empty());
+
+    // What was asked in a conversation is part of the history.
+    let session = create(&server).await;
+    send(&server, &session, "align the reads").await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    // So is what the researcher writes down, dated when it happened.
+    let record = |title: &str, category: &str, occurred_at: i64| ResearchJournalInput {
+        title: title.into(),
+        body: "Mapping rate 98%.".into(),
+        category: category.into(),
+        occurred_at,
+    };
+    let id = server
+        .add_journal_entry(PROJECT, record(" Reads are clean ", "finding", now - 3_600))
+        .await
+        .unwrap();
+    for refused in [
+        record("", "finding", now),
+        record("Title", "gossip", now),
+        record("Title", "finding", -5),
+    ] {
+        assert!(server.add_journal_entry(PROJECT, refused).await.is_err());
+    }
+    assert!(server
+        .add_journal_entry("missing", record("Title", "finding", now))
+        .await
+        .is_err());
+
+    let journey = server.journey(PROJECT, from, until).await.unwrap();
+    let kinds: Vec<_> = journey
+        .entries
+        .iter()
+        .map(|entry| (entry.kind.as_str(), entry.title.as_str(), entry.manual))
+        .collect();
+    // Newest first: the question just asked, then the record dated an hour ago.
+    assert_eq!(
+        kinds,
+        [
+            ("session", "align the reads", false),
+            ("finding", "Reads are clean", true)
+        ]
+    );
+    assert_eq!(journey.entries[1].source_id, id);
+    assert_eq!(journey.entries[1].summary, "Mapping rate 98%.");
+    assert_eq!(
+        journey.entries[0].frame_id.as_deref(),
+        Some(session.as_str())
+    );
+
+    // Only what falls in the range, and never more than a month at a time.
+    let earlier = server
+        .journey(PROJECT, now - 10 * 86_400, now - 86_400)
+        .await
+        .unwrap();
+    assert!(earlier.entries.is_empty());
+    assert!(server
+        .journey(PROJECT, now - 40 * 86_400, now)
+        .await
+        .is_err());
+    assert!(server.journey("missing", from, until).await.is_err());
+    server.shutdown().await;
+}

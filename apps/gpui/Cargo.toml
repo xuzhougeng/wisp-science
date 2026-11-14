@@ -11,6 +11,8 @@ description = "Wisp's cross-platform GPUI desktop migration"
 
 [dependencies]
 anyhow = "1"
+# Local dates for the research history; already built for the host crates.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 dirs = "5"
 # Compile Metal at launch in this preview, so building does not require the
 # separately downloaded Xcode Metal Toolchain. Other backends are unaffected.

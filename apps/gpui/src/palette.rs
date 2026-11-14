@@ -42,6 +42,7 @@ pub enum Command {
     Feedback,
     ProjectSettings,
     Find,
+    Journey,
 }
 
 impl Command {
@@ -64,6 +65,7 @@ impl Command {
             Command::Feedback => "Report a problem",
             Command::ProjectSettings => "Project settings",
             Command::Find => "Find in this conversation",
+            Command::Journey => "Research journey",
         }
     }
 
@@ -85,6 +87,7 @@ impl Command {
             Command::Feedback => "bubble",
             Command::ProjectSettings => "adjustments",
             Command::Find => "search",
+            Command::Journey => "timeline",
         }
     }
 
@@ -101,7 +104,8 @@ impl Command {
             | Command::Highlights
             | Command::Archived
             | Command::ProjectSettings
-            | Command::Find => screen == Screen::Project,
+            | Command::Find
+            | Command::Journey => screen == Screen::Project,
             Command::OpenFolder
             | Command::Refresh
             | Command::Settings
@@ -111,7 +115,7 @@ impl Command {
         }
     }
 
-    const ALL: [Command; 17] = [
+    const ALL: [Command; 18] = [
         Command::NewConversation,
         Command::OpenFolder,
         Command::Home,
@@ -129,6 +133,7 @@ impl Command {
         Command::Feedback,
         Command::ProjectSettings,
         Command::Find,
+        Command::Journey,
     ];
 }
 

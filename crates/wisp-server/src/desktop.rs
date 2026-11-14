@@ -748,6 +748,38 @@ impl Server {
         Ok(())
     }
 
+    /// What happened in a project from `from` up to `until` (seconds since
+    /// 1970, at most 32 days apart): runs, files, what was asked in its
+    /// conversations, decisions, and the researcher's own records, newest
+    /// first.
+    pub async fn journey(
+        &self,
+        project: &str,
+        from: i64,
+        until: i64,
+    ) -> Result<wisp_dto::ResearchJourney> {
+        self.known_project(project).await?;
+        self.0
+            .store
+            .research_journey(&wisp_store::StateScope::mainline(project), from, until)
+            .await
+    }
+
+    /// Adds a record the researcher writes themselves to the project's
+    /// history: progress, a finding, a decision or what comes next.
+    pub async fn add_journal_entry(
+        &self,
+        project: &str,
+        input: wisp_dto::ResearchJournalInput,
+    ) -> Result<String> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        self.0
+            .store
+            .add_research_journal_entry(&wisp_store::StateScope::mainline(project), &input)
+            .await
+    }
+
     /// A project's name, description, and the rules the model is given in
     /// it. The rules are the project's own `.wisp/WISP.md`.
     pub async fn project_settings(&self, project: &str) -> Result<ProjectSettings> {

@@ -134,6 +134,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Search | Titles and message text across the project, archived conversations included |
 | Command palette | One box over everything: projects, files by name in every project, conversations by title or message text, and the window's commands; arrow keys, Return, Escape |
 | Pictures in answers | When an answer shows a picture of the project with Markdown image syntax, the picture is drawn under the answer |
+| Research journey | A page for the open project: one month of what happened, by day (what you asked, runs, files, decisions, your own records), a filter, and a form to add a record of your own |
 | Outline | A button in the conversation's header lists what you asked, in order; choosing one scrolls to it |
 | Find in conversation | Cmd/Ctrl+F, or the command palette: a bar over the transcript marks every message, and every tool call, that contains the words; Return and the arrows move between them |
 | Help | Documentation (home page, Settings, palette) and Report a problem (Settings, palette) open the tutorials and the issue tracker in the system's browser |
@@ -351,6 +352,14 @@ Limits of this slice:
   fetched. A picture that only a tool wrote, or that the answer mentions
   without image syntax, is not shown; it is in the Artifacts tab and the
   Files panel. There is no zoom and no click to open.
+- The research journey reads the project's history from the same tables the
+  WebView does, a month at a time, grouped into your computer's local days.
+  A record of your own is progress, a finding, a decision or what comes
+  next, and is dated when you save it; it cannot be dated otherwise, changed
+  or removed here. A row that came from a conversation opens it. The
+  relation graph, the daily recap the model drafts, the sources of a file,
+  and the history of an exploration branch are not ported, and neither is
+  the calendar across projects.
 - The outline lists your own messages in the part of the conversation that
   is loaded, by their first line; earlier ones appear once they are loaded.
   It has no headings from the answers and no search of its own.
@@ -648,6 +657,14 @@ with the pencil. Press the trash on it, then Escape (the question goes, the
 panel stays); press it again and confirm: the folder leaves the list, the
 panel says where it went, and it is there under `.wisp/trash` in the project
 with its file.
+In a project press Journey: this month's records are listed under their
+days, newest first. Type a word in the filter and confirm the count says
+how many of them are shown. Go to an earlier month and back with the
+arrows; the later arrow is off in the present month. Press Add a record,
+choose Finding, give it a line and save: it is the newest record of today.
+Save one without a title and confirm it is refused and the form stays.
+Press a row that came from a conversation and confirm that conversation
+opens. Open Journey again and press Escape: the page closes.
 In a conversation with several messages press the outline button in the
 header: your messages are listed in order; choose the first and confirm the
 transcript scrolls to it; open the outline again and press Escape, and

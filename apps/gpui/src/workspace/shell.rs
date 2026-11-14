@@ -212,6 +212,10 @@ impl Workspace {
             .child(files)
             .child(memos)
             .child(
+                nav_row("journey", "timeline", "Journey", false, has_project, cx)
+                    .on_click(cx.listener(|this, _, window, cx| this.open_journey(window, cx))),
+            )
+            .child(
                 nav_row("favorites", "star", "Favorites", false, true, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.open_favorites(window, cx))),
             )

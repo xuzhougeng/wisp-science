@@ -86,7 +86,7 @@ to find in the running app.
 | Sort and group options [排序与分组] | Yes | Done: date sections are elapsed spans, not calendar days | ui |
 | Copy or move a conversation to another project | Yes *(source)* | Partial: transcript only; moving its artifacts along is not ported | store |
 | Files entry [文件] | Opens the Files panel | Done | served |
-| Research journey [研究历程] | Section 7 | Missing | store |
+| Research journey [研究历程] | Section 7 | Partial: see section 7 | store |
 | Memos [备忘录] | Section 6 | Done | store |
 | Paper evidence [论文证据] | Section 7 | Missing | store |
 | Favorites [收藏库] | Section 1 | Done | store |
@@ -183,7 +183,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 
 | Feature | WebView | GPUI | Host |
 | --- | --- | --- | --- |
-| Research journey [研究历程]: by day, relation graph, search, add record, recap, artifact sources | Yes | Missing | store |
+| Research journey [研究历程]: by day, relation graph, search, add record, recap, artifact sources | Yes | Partial: a month at a time by day, a filter, and adding a record of your own; no relation graph, recap or artifact sources | store |
 | Paper evidence [论文证据]: papers, versions, figures and tables with their sources | Yes | Missing | store |
 
 ## 8. Settings
@@ -325,7 +325,7 @@ before the things that hang in it.
    servers; 9h done: Environments, SSH hosts and the default; 9i done: Network, routes
    and package sources; 9j done: checking an SSH host)*
 10. **Project pages** — research journey, calendar, paper evidence, research
-    assistant, trajectory, archive.
+    assistant, trajectory, archive. *(10a done: the research journey)*
 11. **Project transfer and sync** — import, export, relay sync, remote access.
 12. **Experts, workflows, quick actions, ACP, accounts, plugins, browser.**
 13. **Finish** — localization, notifications, several windows, updates,

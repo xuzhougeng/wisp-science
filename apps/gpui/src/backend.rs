@@ -197,6 +197,25 @@ impl Backend {
         self.local(move |host| async move { host.project_file(&project, &path).await })
     }
 
+    /// What happened in a project between two moments, newest first.
+    pub fn journey(
+        &self,
+        project: String,
+        from: i64,
+        until: i64,
+    ) -> Reply<wisp_dto::ResearchJourney> {
+        self.local(move |host| async move { host.journey(&project, from, until).await })
+    }
+
+    /// Adds a record the researcher wrote to the project's history.
+    pub fn add_journal_entry(
+        &self,
+        project: String,
+        input: wisp_dto::ResearchJournalInput,
+    ) -> Reply<String> {
+        self.local(move |host| async move { host.add_journal_entry(&project, input).await })
+    }
+
     pub fn project_settings(&self, project: String) -> Reply<ProjectSettings> {
         self.local(move |host| async move { host.project_settings(&project).await })
     }

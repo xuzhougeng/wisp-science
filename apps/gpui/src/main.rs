@@ -9,6 +9,7 @@ mod files;
 mod find;
 mod home;
 mod inline;
+mod journey;
 mod layers;
 mod links;
 mod memory;

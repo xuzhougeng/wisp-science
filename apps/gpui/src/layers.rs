@@ -33,6 +33,10 @@ pub enum Layer {
     Find,
     /// The outline of the open conversation, under its header.
     Outline,
+    /// The research journey of the open project: a page of its own.
+    Journey,
+    /// The form on the journey page for a record of the researcher's own.
+    JournalForm,
     /// The name field in the Files panel: a new folder or file, or a rename.
     FileName,
     /// Question in the Files panel before an entry goes to the trash.
@@ -123,6 +127,7 @@ impl Layer {
             | Layer::EnvironmentForm
             | Layer::ConfirmRemoveEnvironment => Some(Layer::Settings),
             Layer::ConfirmRemoveFavorite => Some(Layer::Favorites),
+            Layer::JournalForm => Some(Layer::Journey),
             Layer::BatchGroupMenu | Layer::ConfirmBatchDelete => Some(Layer::SelectMode),
             _ => None,
         }
@@ -417,6 +422,14 @@ mod tests {
         stack.open(Layer::ConfirmTrashFile);
         assert!(stack.close(Layer::FilesPanel));
         assert!(!stack.contains(Layer::ConfirmTrashFile));
+        // The journey is a page, and its form is inside it.
+        stack.open(Layer::Journey);
+        stack.open(Layer::JournalForm);
+        assert_eq!(stack.dismiss_top(), Some(Layer::JournalForm));
+        assert!(stack.contains(Layer::Journey));
+        stack.open(Layer::JournalForm);
+        assert!(stack.close(Layer::Journey));
+        assert!(!stack.contains(Layer::JournalForm));
         // The project dialog opens over whatever is showing; Escape closes
         // it alone, and what was under it is still there.
         stack.open(Layer::FilesPanel);

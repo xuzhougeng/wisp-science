@@ -4,6 +4,7 @@ mod files_panel;
 mod find_view;
 mod home_view;
 mod inline_view;
+mod journey_view;
 mod memory_view;
 mod memos_view;
 mod organise_view;
@@ -80,6 +81,16 @@ pub struct Workspace {
     copied: Option<usize>,
     palette: PaletteState,
     palette_input: Entity<InputState>,
+    /// The month of the open project's history that is shown, its records
+    /// once read, the counter that drops late answers, the filter field,
+    /// and the form for a record of the researcher's own (title, details)
+    /// with the kind chosen for it.
+    journey_month: Option<crate::journey::Month>,
+    journey: Option<wisp_dto::ResearchJourney>,
+    journey_request: u64,
+    journey_search: Entity<InputState>,
+    journal_fields: [Entity<InputState>; 2],
+    journal_category: &'static str,
     /// What the Files panel's name field is for, and the field; the entry
     /// the trash question is about; why the last change was refused; and
     /// where the last trashed entry went.
@@ -326,6 +337,12 @@ impl Workspace {
         let find_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Find in this conversation…"));
         let file_name_input = cx.new(|cx| InputState::new(window, cx));
+        let journey_search =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Filter this month…"));
+        let journal_fields = [
+            cx.new(|cx| InputState::new(window, cx).placeholder("The reads are clean")),
+            cx.new(|cx| InputState::new(window, cx).multi_line(true)),
+        ];
         let mcp_target = cx.new(|cx| InputState::new(window, cx));
         let mcp_token = cx.new(|cx| InputState::new(window, cx).masked(true));
         let skills_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find a skill…"));
@@ -365,6 +382,12 @@ impl Workspace {
                     _ => {}
                 },
             ),
+            // Filtering is done as the page is drawn.
+            cx.subscribe_in(&journey_search, window, |_, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            }),
             cx.subscribe_in(&file_name_input, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::PressEnter { .. }) {
                     this.save_file_name(window, cx);
@@ -482,6 +505,12 @@ impl Workspace {
             palette_input,
             find: Default::default(),
             find_input,
+            journey_month: None,
+            journey: None,
+            journey_request: 0,
+            journey_search,
+            journal_fields,
+            journal_category: "progress",
             file_naming: None,
             file_name_input,
             file_trashing: None,
@@ -655,6 +684,12 @@ impl Workspace {
                 self.focus_composer(window, cx);
             }
             Some(Layer::Outline) => self.focus_composer(window, cx),
+            Some(Layer::Journey) => {
+                self.journey = None;
+                self.focus_composer(window, cx);
+            }
+            // The page stays open underneath.
+            Some(Layer::JournalForm) => {}
             Some(Layer::ConfirmTrashFile) => self.file_trashing = None,
             // Menus and questions that hold no focus of their own.
             Some(
@@ -698,6 +733,7 @@ impl Workspace {
                 if self.screen != Screen::Project
                     || self.state.session.is_none()
                     || self.layers.contains(Layer::Settings)
+                    || self.layers.contains(Layer::Journey)
                     || self.layers.contains(Layer::Favorites)
                     || self.layers.contains(Layer::Palette)
                     || self.layers.contains(Layer::ProjectSettings)
@@ -710,6 +746,7 @@ impl Workspace {
             Shortcut::NewConversation => {
                 if self.screen != Screen::Project
                     || self.layers.contains(Layer::Settings)
+                    || self.layers.contains(Layer::Journey)
                     || self.layers.contains(Layer::Favorites)
                     || self.layers.contains(Layer::Palette)
                 {
@@ -1982,9 +2019,13 @@ impl Render for Workspace {
             return root.child(self.render_startup(cx));
         }
         // A page takes the whole window; of two, the one opened last shows.
-        let page = self.layers.top_of(&[Layer::Settings, Layer::Favorites]);
+        let page = self
+            .layers
+            .top_of(&[Layer::Settings, Layer::Favorites, Layer::Journey]);
         let root = if page == Some(Layer::Settings) {
             root.child(self.render_settings(cx))
+        } else if page == Some(Layer::Journey) {
+            root.child(self.render_journey(cx))
         } else if page == Some(Layer::Favorites) {
             root.child(self.render_favorites(window, cx))
         } else {
