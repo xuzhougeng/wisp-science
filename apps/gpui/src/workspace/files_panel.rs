@@ -553,6 +553,14 @@ impl Workspace {
                         )
                         .child(div().flex_1())
                         .child(
+                            icon_button(
+                                "files-terminal",
+                                "terminal",
+                                "Open a terminal in this folder",
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| this.open_terminal(cx))),
+                        )
+                        .child(
                             icon_button("files-new-folder", "folder-plus", tr("New folder here"))
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.start_naming(Naming::Folder, window, cx)

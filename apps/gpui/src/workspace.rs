@@ -942,6 +942,29 @@ impl Workspace {
         }
     }
 
+    /// Opens the system's terminal in the folder being browsed, or in the
+    /// project's own when the Files tab is at its root.
+    pub(super) fn open_terminal(&mut self, cx: &mut Context<Self>) {
+        let Some(root) = self
+            .state
+            .project
+            .as_ref()
+            .and_then(|id| self.projects.iter().find(|project| &project.id == id))
+            .map(|project| std::path::PathBuf::from(&project.workspace_dir))
+        else {
+            return;
+        };
+        // The path browsed is the project's own listing: relative, and
+        // without a way out of the folder.
+        let browsed = std::path::Path::new(&self.files.path);
+        let inside = browsed
+            .components()
+            .all(|part| matches!(part, std::path::Component::Normal(_)));
+        let folder = if inside { root.join(browsed) } else { root };
+        self.error = crate::terminal::open(&folder).err();
+        cx.notify();
+    }
+
     /// Tells a user who is not looking at the window that the open
     /// conversation needs them, in the way they chose.
     fn tell_user(&self, event: crate::notify::Event, window: &Window) {

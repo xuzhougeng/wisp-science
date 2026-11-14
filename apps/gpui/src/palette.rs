@@ -52,6 +52,7 @@ pub enum Command {
     SaveAsSkill,
     Review,
     ModelView,
+    Terminal,
 }
 
 impl Command {
@@ -83,6 +84,7 @@ impl Command {
             Command::SaveAsSkill => tr("Save this conversation as a skill"),
             Command::Review => tr("Review this conversation"),
             Command::ModelView => tr("What the model is sent"),
+            Command::Terminal => tr("Open a terminal in the project folder"),
         }
     }
 
@@ -113,6 +115,7 @@ impl Command {
             Command::SaveAsSkill => "skill",
             Command::Review => "review",
             Command::ModelView => "eye",
+            Command::Terminal => "terminal",
         }
     }
 
@@ -136,7 +139,8 @@ impl Command {
             | Command::Aside
             | Command::SaveAsSkill
             | Command::Review
-            | Command::ModelView => screen == Screen::Project,
+            | Command::ModelView
+            | Command::Terminal => screen == Screen::Project,
             Command::OpenFolder
             | Command::Refresh
             | Command::Settings
@@ -148,7 +152,7 @@ impl Command {
         }
     }
 
-    const ALL: [Command; 26] = [
+    const ALL: [Command; 27] = [
         Command::NewConversation,
         Command::OpenFolder,
         Command::Home,
@@ -175,6 +179,7 @@ impl Command {
         Command::SaveAsSkill,
         Command::Review,
         Command::ModelView,
+        Command::Terminal,
     ];
 }
 

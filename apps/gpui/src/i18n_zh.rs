@@ -691,4 +691,9 @@ pub const ZH: &[(&str, &str)] = &[
     ("Read the log again", "重新读取日志"),
     ("Whole log", "完整日志"),
     ("Read everything the run wrote, from its folder", "从运行的文件夹中读取它的全部输出"),
+    // Terminal.
+    ("Open a terminal in this folder", "在此文件夹中打开终端"),
+    ("Open a terminal in the project folder", "在项目文件夹中打开终端"),
+    ("The folder {} is not there.", "文件夹 {} 不存在。"),
+    ("Could not open a terminal: {}", "无法打开终端：{}"),
 ];

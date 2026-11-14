@@ -227,6 +227,10 @@ impl Workspace {
             Command::Trajectory => return self.open_trajectory(window, cx),
             Command::Review => return self.open_review(window, cx),
             Command::ModelView => return self.open_model_view(window, cx),
+            Command::Terminal => {
+                self.layers.close(Layer::Palette);
+                return self.open_terminal(cx);
+            }
             Command::SaveAsSkill => {
                 self.layers.close(Layer::Palette);
                 return self.ask_for_skill(window, cx);

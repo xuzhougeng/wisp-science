@@ -153,7 +153,7 @@ to find in the running app.
 | Trajectory [轨迹] | Yes | Done: a dialog with the totals and every turn's steps; a step opens to its whole text | store |
 | Research archive [研究归档] | Yes | Missing | store |
 | Pending decisions [N 个待处理] | Yes | Done (sidebar inbox) | served |
-| Terminal [打开终端] | Yes | Missing | tauri |
+| Terminal [打开终端] | Yes | Partial: opens the system's terminal in the project folder or the folder being browsed; no terminal inside the app and none on SSH hosts | tauri |
 | Toggle right panel [切换面板] | Yes | Partial: Files, Runs and Artifacts tabs; the other tools are not ported | ui |
 
 ## 6. Right panel
