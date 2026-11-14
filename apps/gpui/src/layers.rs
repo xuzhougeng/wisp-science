@@ -23,6 +23,15 @@ pub enum Layer {
     ConfirmFullAccess,
     /// Reasoning-effort choices above the composer.
     EffortMenu,
+    /// Model choices above the composer.
+    ModelMenu,
+    /// Confirmation in Settings before a saved model is removed.
+    ConfirmDeleteModel,
+}
+
+impl Layer {
+    /// Menus that open above the composer; only one shows at a time.
+    pub const COMPOSER_MENUS: [Layer; 2] = [Layer::EffortMenu, Layer::ModelMenu];
 }
 
 impl Layer {
@@ -30,6 +39,7 @@ impl Layer {
     fn parent(self) -> Option<Layer> {
         match self {
             Layer::FilePreview => Some(Layer::FilesPanel),
+            Layer::ConfirmDeleteModel => Some(Layer::Settings),
             _ => None,
         }
     }
@@ -190,5 +200,23 @@ mod tests {
         assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmFullAccess));
         assert!(stack.contains(Layer::FilesPanel));
         assert!(!stack.close(Layer::EffortMenu));
+    }
+
+    #[test]
+    fn closing_settings_takes_its_delete_question_with_it() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::Settings);
+        stack.open(Layer::ConfirmDeleteModel);
+        // Escape answers the question first and leaves Settings open.
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmDeleteModel));
+        assert!(stack.contains(Layer::Settings));
+        stack.open(Layer::ConfirmDeleteModel);
+        assert!(stack.close(Layer::Settings));
+        assert!(!stack.contains(Layer::ConfirmDeleteModel));
+        // The composer menus are ordinary layers of their own.
+        for menu in Layer::COMPOSER_MENUS {
+            stack.open(menu);
+            assert_eq!(stack.dismiss_top(), Some(menu));
+        }
     }
 }

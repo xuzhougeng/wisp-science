@@ -105,7 +105,7 @@ to find in the running app.
 | Browse project files to attach [你的文件] | Yes | Missing | served |
 | Paste or drop files | Yes | Missing | tauri |
 | `@` artifact, `#` conversation, `/` skill mentions | Yes | Missing | store + shared |
-| Model picker per conversation | Yes | Missing | store |
+| Model picker per conversation | Yes | Done: saved API models, or follow the default | served |
 | Reasoning effort / fast mode | Yes | Partial: effort per conversation, kept across restarts; no fast mode | store |
 | Permission mode [默认 / 完全权限] | Yes | Done: Ask first or Full access per conversation, with a question before it turns on; dangerous shell commands still ask | served |
 | Plan first [先计划] | Yes | Missing | tauri |
@@ -194,7 +194,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Conversation [对话]: iteration limit, auto-continue, auto-compaction and threshold, follow-up questions | Yes | Missing | tauri |
 | Appearance [外观]: system/light/dark, theme, accent, fonts and sizes, live preview | Yes | Partial: follows the system with the Wisp palette; the dark palette has not been looked at in the running app | ui |
 | Pet [宠物] | Yes | Missing | ui |
-| Models [模型]: one API model with provider, URL, key, limits, effort | Several profiles, presets, default | Partial: one model | store |
+| Models [模型]: API models with provider, URL, key, limits, effort | Several profiles, presets, default | Done: any number of models, the six presets, a default, a connection test | served |
 | Models: ACP agents, subscription accounts, decision model | Yes | Missing | tauri |
 | Quick actions [快捷动作] | Yes | Missing | store |
 | Workflows [工作流]: library, graph editor, approval policy | Yes | Missing | store |
@@ -302,7 +302,7 @@ before the things that hang in it.
    (the plan-mode prompt and plan card live in `src-tauri`; reasoning text is
    not in the snapshot).
 4. **Model profiles** — several saved models, presets, default, connection
-   test, and the model per conversation.
+   test, and the model per conversation. *(done)*
 4a. **Plan first and thinking** — plan mode with its plan card; reasoning
    shown while it streams.
 5. **Attachments and mentions** — files, images, `@`, `#`, `/`.

@@ -157,16 +157,10 @@ impl Server {
         })))
     }
 
-    /// Model new turns will use; empty until one is configured.
-    fn model_id(&self) -> String {
-        self.0
-            .model
-            .read()
-            .unwrap()
-            .active
-            .as_ref()
-            .map(|model| model.provider.model.clone())
-            .unwrap_or_default()
+    /// Model a conversation that chose `profile` runs on (an empty id is the
+    /// default); empty until one is configured.
+    fn model_id(&self, profile: &str) -> String {
+        self.0.model.read().unwrap().model_id(profile)
     }
 
     fn session(&self, id: &str) -> Arc<Session> {
@@ -291,7 +285,7 @@ impl Server {
             let id = uuid::Uuid::new_v4().to_string();
             self.0
                 .store
-                .create_frame(&id, project, "main", &self.model_id())
+                .create_frame(&id, project, "main", &self.model_id(""))
                 .await?;
             self.0
                 .store
@@ -379,14 +373,9 @@ impl Server {
             !self.0.shutting_down.load(Ordering::Relaxed),
             "Server is shutting down"
         );
-        let model = self
-            .0
-            .model
-            .read()
-            .unwrap()
-            .active
-            .clone()
-            .context("Configure a model in Settings before sending a message")?;
+        // Read once here: a change made while the turn runs applies to the next.
+        let options = self.stored_options(&request.session_id).await?;
+        let model = self.0.model.read().unwrap().pick(&options.model)?;
         let request_json = serde_json::to_string(&request)?;
         let reply = serde_json::to_value(dto::SendAccepted {
             request_id: request.request_id.clone(),
@@ -415,8 +404,6 @@ impl Server {
             .clone()
             .try_acquire_owned()
             .context("Server is busy; at most four turns can run concurrently")?;
-        // Read once here: a change made while the turn runs applies to the next.
-        let options = self.stored_options(&request.session_id).await?;
         let full_access = options.full_access;
         let agent = runtime::build(
             &self.0.config,
@@ -530,6 +517,7 @@ impl Server {
         session: &Session,
         generation: u64,
     ) -> Result<Option<Value>> {
+        let profile = self.stored_options(&request.session_id).await?.model;
         let page = self
             .0
             .store
@@ -600,7 +588,7 @@ impl Server {
             stopping: live.running && session.cancel.load(Ordering::Relaxed),
             activity_status: None,
             read_only: false,
-            model_id: self.model_id(),
+            model_id: self.model_id(&profile),
             composer_references: Some(false),
             context_view: Some(false),
             file_browser: Some(true),

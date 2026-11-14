@@ -61,16 +61,24 @@ No configuration is needed to launch:
 cargo run gpui
 ```
 
-On first launch Settings opens by itself. Choose the provider (`openai`,
-`openai_responses` or `anthropic`), the endpoint, the model ID and the API key,
-then save. The host validates the form with the same rules as the server:
-limits come from the checked-in exact-ID catalog, and a model outside it needs
-an explicit context window and output limit. A rejected form changes nothing.
+On first launch Settings opens by itself on Models. Add a model: choose the
+provider (`openai`, `openai_responses` or `anthropic`), the endpoint, the model
+ID and the API key, or start from one of the provider presets and add the key.
+"Test connection" sends one short request with the form as typed and saves
+nothing. The host validates the form with the same rules as the server: limits
+come from the checked-in exact-ID catalog, and a model outside it needs an
+explicit context window and output limit. A rejected form changes nothing.
 Saving takes effect for the next message without a restart; a turn already
 running keeps its model.
 
-The non-secret fields are saved in the preview database. The API key goes to
-the existing Wisp keyring path, one key per data directory, and is never
+Any number of models can be saved. One is the default: new conversations, and
+conversations that chose nothing, run on it. The model button in the composer
+picks a different one for that conversation. Removing a model sends the
+conversations that used it back to the default. The single model saved by an
+earlier build of this preview shows up as a profile with its key intact.
+
+The non-secret fields are saved in the preview database. Each model's API key
+goes to the existing Wisp keyring path, per data directory, and is never
 written to SQLite or shown again. As elsewhere in Wisp, debug builds keep
 secrets in a plaintext development file in the home directory instead of the OS
 keyring; release builds use the keyring. If the key is missing at launch, the
@@ -119,7 +127,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Conversation management | Rename, pin (shown first), archive and restore, delete with confirmation |
 | Search | Titles and message text across the project, archived conversations included |
 | Command palette | One box over everything: projects, files by name in every project, conversations by title or message text, and the window's commands; arrow keys, Return, Escape |
-| Settings | Provider, endpoint, model, API key and limits in the window; applied without restart |
+| Settings | Saved models with provider, endpoint, key and limits; presets, a default, a connection test; applied without restart |
 | Inbox | Conversations in any project that are waiting for you; opens across projects |
 | Read state | A finished answer is marked read once it is on screen in the active window |
 | Transcript | Virtualized Markdown, selectable text, paginated history |
@@ -127,14 +135,14 @@ folder registers its research root; it does not import existing desktop chats.
 | Runs | Runs started by the conversation: kind, status, exit code, command and output tails on demand |
 | Files | Project file browser beside the transcript, available before the first conversation; read-only text and Markdown preview |
 | Composer | Native multiline input; Enter for newline, Cmd/Ctrl+Enter to send |
-| Conversation options | Ask first or Full access, and reasoning effort, per conversation; both are kept across restarts and apply from the next message |
+| Conversation options | Ask first or Full access, the model, and reasoning effort, per conversation; both are kept across restarts and apply from the next message |
 | Usage | How full the context is, and the tokens the running or latest turn used |
 | Questions | When the model asks, a card with its options: one click answers, or type the answer |
 | Messages | Copy any message as Markdown |
 | Drafts | Survive navigation; preserved on send failure, cleared on durable acceptance |
 | Execution | Shared agent/tools, streamed snapshots while running, stop and errors |
 | Approvals | Exact pending request; allow once, allow that tool for the rest of the conversation, or deny |
-| Escape | One window-level stack: Escape closes only the topmost of command palette, file preview, Files panel, Settings, title editor, delete confirmation, remove-project confirmation, the Full access question and the effort menu |
+| Escape | One window-level stack: Escape closes only the topmost of command palette, file preview, Files panel, Settings, title editor, delete confirmation, remove-project confirmation, the Full access question, the model and effort menus and the remove-model question |
 | Shortcuts | Cmd/Ctrl+K opens the command palette; Cmd/Ctrl+N starts a conversation in the open project; Cmd/Ctrl+, opens Settings |
 | Lifecycle | Background IO, stale-result rejection, cancel/clean workers on exit |
 
@@ -158,8 +166,9 @@ conversation and now matches none.
 
 Limits of this slice:
 
-- One model for the whole app. Per-conversation models, several saved profiles,
-  account login, the decision model and connection testing are not ported.
+- Models are API models only. ACP agents, subscription accounts, the decision
+  model and image or video models are not ported. A broken model chosen for a
+  conversation is reported when a message is sent, not replaced silently.
 - Deleting removes the conversation and its messages; files it wrote stay in the
   project. A running conversation must be stopped before it can be archived or
   deleted. There are no folders, export, import, share or branch views yet.
@@ -181,7 +190,7 @@ Limits of this slice:
   app restarts; "Ask again" under the transcript revokes it sooner.
 - Options changed while a turn runs apply to the next one. Token usage is not
   stored: after a restart it is empty until the next turn. Plan first, thinking
-  blocks, fast mode and a model per conversation are not ported.
+  blocks and fast mode are not ported.
 - Runs are read-only. Cancel, harvest, review and the full log need host
   commands this build does not serve.
 - Status refreshes every two seconds while any turn is running and once more
@@ -250,6 +259,10 @@ the conversation; have it run again and confirm no question appears; press Ask
 again and confirm the next run asks. Click Ask first, press Escape, then turn
 Full access on, restart, and confirm it and the chosen effort are still set.
 Open the effort menu and press Escape. Copy a message and paste it elsewhere.
+In Settings add two models, test the connection of one, make the second the
+default, choose the first for one conversation and confirm the header names it;
+ask to remove a model, press Escape (Settings stays), then remove it and confirm
+the conversation falls back to the default.
 Type a word that occurs only in a message, and one that matches nothing. Press
 Escape with the palette over Settings and over the Files panel: only the
 palette closes. Click outside it: it closes.

@@ -15,6 +15,7 @@ use crate::{
     controls::{self, Question},
     layers::Layer,
     present::{self, Tone},
+    settings,
 };
 
 pub(super) fn glyph(name: &str) -> Icon {
@@ -683,14 +684,14 @@ impl Workspace {
         Some(approvals)
     }
 
-    /// Reasoning-effort choices, drawn just above the button that opens them.
-    fn effort_menu(&self, current: &str, cx: &mut Context<Self>) -> Div {
-        let hover = cx.theme().list_hover;
-        let mut menu = div()
+    /// The card a composer menu's rows sit in, drawn just above the button
+    /// that opens it.
+    fn composer_menu(width: f32, cx: &App) -> Div {
+        div()
             .absolute()
             .bottom(px(34.))
             .left_0()
-            .w(px(190.))
+            .w(px(width))
             .v_flex()
             .p_1()
             .occlude()
@@ -698,28 +699,94 @@ impl Workspace {
             .border_1()
             .border_color(cx.theme().border)
             .bg(cx.theme().popover)
-            .shadow_md();
-        for (effort, label) in controls::EFFORTS {
-            let chosen = effort == current;
-            menu = menu.child(
+            .shadow_md()
+    }
+
+    fn menu_row(
+        id: SharedString,
+        label: impl Into<SharedString>,
+        detail: impl Into<SharedString>,
+        chosen: bool,
+        cx: &App,
+    ) -> Stateful<Div> {
+        let hover = cx.theme().list_hover;
+        div()
+            .id(id)
+            .h_flex()
+            .gap_2()
+            .px_2()
+            .h(px(30.))
+            .rounded(cx.theme().radius)
+            .text_sm()
+            .cursor_pointer()
+            .hover(|style| style.bg(hover))
+            .child(div().flex_shrink_0().child(label.into()))
+            .child(
                 div()
-                    .id(SharedString::from(format!("effort-{effort}")))
-                    .h_flex()
-                    .gap_2()
-                    .px_2()
-                    .h(px(30.))
-                    .rounded(cx.theme().radius)
-                    .text_sm()
-                    .cursor_pointer()
-                    .hover(|style| style.bg(hover))
-                    .child(div().flex_1().child(label))
-                    .when(chosen, |row| {
-                        row.child(icon("check").text_color(cx.theme().primary))
-                    })
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.choose_effort(effort, window, cx)
-                    })),
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(detail.into()),
+            )
+            .when(chosen, |row| {
+                row.child(icon("check").text_color(cx.theme().primary))
+            })
+    }
+
+    fn effort_menu(&self, current: &str, cx: &mut Context<Self>) -> Div {
+        let mut menu = Self::composer_menu(190., cx);
+        for (effort, label) in controls::EFFORTS {
+            menu = menu.child(
+                Self::menu_row(
+                    SharedString::from(format!("effort-{effort}")),
+                    label,
+                    "",
+                    effort == current,
+                    cx,
+                )
+                .on_click(
+                    cx.listener(move |this, _, window, cx| this.choose_effort(effort, window, cx)),
+                ),
             );
+        }
+        menu
+    }
+
+    /// The saved models, with "follow the default" first.
+    fn model_menu(&self, current: &str, cx: &mut Context<Self>) -> Div {
+        let mut menu = Self::composer_menu(300., cx);
+        let Some(models) = self.settings.current() else {
+            return menu;
+        };
+        let default = settings::default_profile(models)
+            .map(|profile| profile.name.clone())
+            .unwrap_or_default();
+        let chosen = models.profiles.iter().any(|profile| profile.id == current);
+        menu = menu.child(
+            Self::menu_row("model-default".into(), "Default", default, !chosen, cx).on_click(
+                cx.listener(|this, _, window, cx| this.choose_model(String::new(), window, cx)),
+            ),
+        );
+        for profile in &models.profiles {
+            let id = profile.id.clone();
+            menu =
+                menu.child(
+                    Self::menu_row(
+                        SharedString::from(format!("model-choice-{id}")),
+                        profile.name.clone(),
+                        match &profile.problem {
+                            Some(_) => "Needs attention in Settings".to_owned(),
+                            None => profile.fields.model.clone(),
+                        },
+                        profile.id == current,
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.choose_model(id.clone(), window, cx)
+                    })),
+                );
         }
         menu
     }
@@ -758,12 +825,34 @@ impl Workspace {
                 .ghost()
                 .selected(effort_open)
                 .tooltip("How hard the model thinks, from the next message")
-                .on_click(cx.listener(|this, _, window, cx| this.toggle_effort_menu(window, cx))),
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.toggle_composer_menu(Layer::EffortMenu, window, cx)
+                })),
         );
         if effort_open {
             // Painted after everything else: a parent's border is drawn over
             // its own children, and the composer box has one.
             effort = effort.child(deferred(self.effort_menu(&options.reasoning_effort, cx)));
+        }
+
+        let model_open = self.layers.contains(Layer::ModelMenu);
+        let mut model = div().relative().child(
+            Button::new("model")
+                .icon(glyph("bot"))
+                .label(settings::model_label(
+                    self.settings.current(),
+                    &options.model,
+                ))
+                .small()
+                .ghost()
+                .selected(model_open)
+                .tooltip("The model this conversation runs on, from the next message")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.toggle_composer_menu(Layer::ModelMenu, window, cx)
+                })),
+        );
+        if model_open {
+            model = model.child(deferred(self.model_menu(&options.model, cx)));
         }
 
         let mut actions = div().h_flex().gap_2();
@@ -886,7 +975,14 @@ impl Workspace {
                     div()
                         .h_flex()
                         .justify_between()
-                        .child(div().h_flex().gap_1().child(access).child(effort))
+                        .child(
+                            div()
+                                .h_flex()
+                                .gap_1()
+                                .child(access)
+                                .child(model)
+                                .child(effort),
+                        )
                         .child(actions),
                 ),
         )

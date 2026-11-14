@@ -220,8 +220,21 @@ impl Backend {
         self.local(|host| async move { host.model_settings().await })
     }
 
-    pub fn save_model_settings(&self, input: ModelInput) -> Reply<ModelSettings> {
-        self.local(move |host| async move { host.save_model_settings(input).await })
+    pub fn save_model_profile(&self, input: ModelInput) -> Reply<ModelSettings> {
+        self.local(move |host| async move { host.save_model_profile(input).await })
+    }
+
+    pub fn set_default_model(&self, id: String) -> Reply<ModelSettings> {
+        self.local(move |host| async move { host.set_default_model(&id).await })
+    }
+
+    pub fn delete_model_profile(&self, id: String) -> Reply<ModelSettings> {
+        self.local(move |host| async move { host.delete_model_profile(&id).await })
+    }
+
+    /// Sends one request with the form as typed; nothing is saved.
+    pub fn test_model(&self, input: ModelInput) -> Reply<String> {
+        self.local(move |host| async move { host.test_model(input).await })
     }
 
     pub async fn shutdown(&self) {

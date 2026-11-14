@@ -266,9 +266,11 @@ impl Workspace {
                 self.focus_composer(window, cx)
             }
             Some(Layer::ConfirmRemoveProject) => self.removing = None,
-            Some(Layer::Palette | Layer::ConfirmFullAccess | Layer::EffortMenu) => {
-                self.focus_composer(window, cx)
-            }
+            Some(
+                Layer::Palette | Layer::ConfirmFullAccess | Layer::EffortMenu | Layer::ModelMenu,
+            ) => self.focus_composer(window, cx),
+            // Settings stays open underneath and keeps its focus.
+            Some(Layer::ConfirmDeleteModel) => {}
             None => return false,
         }
         cx.notify();
@@ -335,6 +337,7 @@ impl Workspace {
             Layer::ConfirmDelete,
             Layer::ConfirmFullAccess,
             Layer::EffortMenu,
+            Layer::ModelMenu,
         ] {
             self.layers.close(layer);
         }
@@ -1016,7 +1019,9 @@ impl Workspace {
 
     /// Turning full access on asks first; turning it off does not.
     fn toggle_full_access(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.layers.close(Layer::EffortMenu);
+        for menu in Layer::COMPOSER_MENUS {
+            self.layers.close(menu);
+        }
         if self.options().full_access {
             self.layers.close(Layer::ConfirmFullAccess);
             let options = ConversationOptions {
@@ -1043,13 +1048,33 @@ impl Workspace {
         cx.notify();
     }
 
-    fn toggle_effort_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Opens one of the menus above the composer, or closes it if it is the
+    /// one already open. Only one shows at a time.
+    fn toggle_composer_menu(&mut self, menu: Layer, window: &mut Window, cx: &mut Context<Self>) {
         self.layers.close(Layer::ConfirmFullAccess);
-        if self.layers.close(Layer::EffortMenu) {
+        let was_open = self.layers.contains(menu);
+        for other in Layer::COMPOSER_MENUS {
+            self.layers.close(other);
+        }
+        if was_open {
             self.focus_composer(window, cx);
         } else {
-            self.layers.open(Layer::EffortMenu);
+            self.layers.open(menu);
         }
+        cx.notify();
+    }
+
+    /// An empty id follows the default model.
+    fn choose_model(&mut self, model: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.layers.close(Layer::ModelMenu);
+        let options = ConversationOptions {
+            model,
+            ..self.options()
+        };
+        self.set_options(options, window, cx);
+        // The header names the model this conversation runs on.
+        self.start_poll(window, cx);
+        self.focus_composer(window, cx);
         cx.notify();
     }
 

@@ -622,8 +622,8 @@ async fn a_running_conversation_is_not_archived_or_deleted() {
 }
 
 #[tokio::test]
-async fn desktop_model_settings_are_validated_saved_and_applied_without_restart() {
-    use desktop::{ModelFields, ModelInput, ModelSource};
+async fn desktop_model_profiles_are_validated_saved_and_chosen_per_conversation() {
+    use desktop::{ConversationOptions, ModelFields, ModelInput, ModelSource};
     let temp = tempfile::tempdir().unwrap();
     let mut cfg = config(temp.path());
     cfg.model = None;
@@ -640,86 +640,99 @@ async fn desktop_model_settings_are_validated_saved_and_applied_without_restart(
             })
         })
     };
+    let last_used = |used: &Arc<std::sync::Mutex<Vec<(String, String)>>>| {
+        used.lock().unwrap().last().cloned().unwrap()
+    };
+    let fields = |model: &str| ModelFields {
+        provider: "openai".into(),
+        api_url: "http://127.0.0.1:9/v1".into(),
+        model: model.into(),
+        max_context: "32000".into(),
+        max_tokens: "4000".into(),
+        reasoning_effort: String::new(),
+    };
+    let input = |id: Option<&str>, name: &str, fields: ModelFields, key: Option<&str>| ModelInput {
+        id: id.map(Into::into),
+        name: name.into(),
+        fields,
+        api_key: key.map(Into::into),
+    };
     let server = Server::open_with(cfg.clone(), factory(used.clone()), secrets.clone())
         .await
         .unwrap();
     let initial = server.model_settings().await.unwrap();
     assert_eq!(initial.source, ModelSource::None);
-    assert!(!initial.has_api_key && initial.problem.is_none());
-    assert_eq!(initial.fields.provider, "openai");
-    assert_eq!(initial.fields.api_url, "https://api.openai.com/v1");
+    assert!(initial.profiles.is_empty());
 
     let session = create(&server).await;
     let refused = send(&server, &session, "hello").await.unwrap_err();
     assert!(refused.contains("Configure a model"), "{refused}");
 
-    let fields = ModelFields {
-        provider: "openai".into(),
-        api_url: "http://127.0.0.1:9/v1".into(),
-        model: "lab-model".into(),
-        max_context: "32000".into(),
-        max_tokens: "4000".into(),
-        reasoning_effort: String::new(),
-    };
     let empty = server
-        .save_model_settings(ModelInput {
-            fields: ModelFields::default(),
-            api_key: None,
-        })
+        .save_model_profile(input(None, "", ModelFields::default(), None))
         .await
         .unwrap_err();
     assert_eq!(empty.to_string(), "Enter a model ID");
-    // A rejected form changes nothing, and a key is required the first time.
-    for (fields, key) in [
-        (fields.clone(), None),
-        (
+    // A rejected form changes nothing: no key, an unknown model without
+    // limits, a name that is too long, a profile that does not exist.
+    for bad in [
+        input(None, "", fields("lab-model"), None),
+        input(
+            None,
+            "",
             ModelFields {
                 max_context: String::new(),
-                ..fields.clone()
+                ..fields("lab-model")
             },
-            Some("first-key".to_string()),
+            Some("first-key"),
         ),
+        input(
+            None,
+            &"n".repeat(61),
+            fields("lab-model"),
+            Some("first-key"),
+        ),
+        input(Some("ghost"), "", fields("lab-model"), Some("first-key")),
     ] {
-        assert!(server
-            .save_model_settings(ModelInput {
-                fields,
-                api_key: key
-            })
-            .await
-            .is_err());
+        assert!(server.save_model_profile(bad).await.is_err());
     }
+    // A connection test uses the form as typed and saves nothing.
     assert_eq!(
-        server.model_settings().await.unwrap().source,
-        ModelSource::None
+        server
+            .test_model(input(None, "", fields("lab-model"), Some("probe-key")))
+            .await
+            .unwrap(),
+        "Saved result"
     );
+    assert_eq!(last_used(&used), ("lab-model".into(), "probe-key".into()));
+    assert!(server
+        .test_model(input(None, "", fields("lab-model"), None))
+        .await
+        .is_err());
+    assert!(server.model_settings().await.unwrap().profiles.is_empty());
 
+    // The first profile becomes the default and is named after its model.
     let saved = server
-        .save_model_settings(ModelInput {
-            fields: fields.clone(),
-            api_key: Some(" first-key ".into()),
-        })
+        .save_model_profile(input(None, " ", fields("lab-model"), Some(" first-key ")))
         .await
         .unwrap();
     assert_eq!(saved.source, ModelSource::Saved);
-    assert!(saved.has_api_key);
-    assert_eq!(saved.fields, fields);
+    let first = saved.profiles[0].clone();
+    assert_eq!(first.name, "lab-model");
+    assert!(first.is_default && first.has_api_key && first.problem.is_none());
     send(&server, &session, "hello").await.unwrap();
     let done = wait_for(&server, &session, |s| !s.running).await;
     assert_eq!(done.model_id, "lab-model");
-    assert_eq!(
-        used.lock().unwrap().last().cloned(),
-        Some(("lab-model".to_string(), "first-key".to_string()))
-    );
+    assert_eq!(last_used(&used), ("lab-model".into(), "first-key".into()));
 
-    // Changing the model keeps the stored key when none is typed.
+    // Editing a profile keeps its stored key when none is typed.
     server
-        .save_model_settings(ModelInput {
-            fields: ModelFields {
-                model: "lab-model-2".into(),
-                ..fields.clone()
-            },
-            api_key: Some("  ".into()),
-        })
+        .save_model_profile(input(
+            Some(&first.id),
+            "Lab",
+            fields("lab-model-2"),
+            Some("  "),
+        ))
         .await
         .unwrap();
     send(&server, &session, "again").await.unwrap();
@@ -727,39 +740,99 @@ async fn desktop_model_settings_are_validated_saved_and_applied_without_restart(
         !s.running && s.model_id == "lab-model-2"
     })
     .await;
-    assert_eq!(
-        used.lock().unwrap().last().cloned(),
-        Some(("lab-model-2".to_string(), "first-key".to_string()))
-    );
+    assert_eq!(last_used(&used), ("lab-model-2".into(), "first-key".into()));
 
-    // The key is in the secret store only: not in settings, not in the database file.
+    // A second profile has its own key and does not take over.
+    let both = server
+        .save_model_profile(input(
+            None,
+            "Deep",
+            fields("deep-model"),
+            Some("second-key"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(both.profiles.len(), 2);
+    let deep = both
+        .profiles
+        .iter()
+        .find(|profile| profile.name == "Deep")
+        .unwrap()
+        .clone();
+    assert!(!deep.is_default);
+    let other_session = create(&server).await;
+
+    // One conversation chooses it; the other keeps following the default.
+    let choose = |model: &str| ConversationOptions {
+        model: model.into(),
+        ..Default::default()
+    };
+    assert!(server
+        .set_conversation_options(PROJECT, &session, choose("ghost"))
+        .await
+        .is_err());
+    server
+        .set_conversation_options(PROJECT, &session, choose(&deep.id))
+        .await
+        .unwrap();
+    assert_eq!(snapshot(&server, &session).await.model_id, "deep-model");
+    assert_eq!(
+        snapshot(&server, &other_session).await.model_id,
+        "lab-model-2"
+    );
+    send(&server, &session, "third").await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    assert_eq!(last_used(&used), ("deep-model".into(), "second-key".into()));
+
+    let switched = server.set_default_model(&deep.id).await.unwrap();
+    assert!(switched
+        .profiles
+        .iter()
+        .all(|profile| profile.is_default == (profile.id == deep.id)));
+    assert_eq!(
+        snapshot(&server, &other_session).await.model_id,
+        "deep-model"
+    );
+    assert!(server.set_default_model("ghost").await.is_err());
+
+    // Deleting the profile sends both conversations to what is left.
+    let left = server.delete_model_profile(&deep.id).await.unwrap();
+    assert_eq!(left.profiles.len(), 1);
+    assert!(left.profiles[0].is_default);
+    for id in [&session, &other_session] {
+        assert_eq!(snapshot(&server, id).await.model_id, "lab-model-2");
+    }
+    assert!(server.delete_model_profile(&deep.id).await.is_err());
+
+    // Keys are in the secret store only: not in settings, not in the database.
     let raw = server
         .0
         .store
-        .get_setting("desktop.model")
+        .get_setting("desktop.models")
         .await
         .unwrap()
         .unwrap();
-    assert!(!raw.contains("first-key"));
-    // Another data directory has its own key, even with the same secret store.
+    assert!(!raw.contains("first-key") && !raw.contains("second-key"));
+    // Another data directory has its own keys, even with the same secret store.
     let other_root = tempfile::tempdir().unwrap();
     let mut other_cfg = config(other_root.path());
     other_cfg.model = None;
     let other = Server::open_with(other_cfg, factory(used.clone()), secrets.clone())
         .await
         .unwrap();
-    assert!(!other.model_settings().await.unwrap().has_api_key);
+    assert!(other.model_settings().await.unwrap().profiles.is_empty());
     other.shutdown().await;
     server.shutdown().await;
     drop(server);
 
-    // Saved settings survive a restart; a lost key is reported, not fatal.
+    // Profiles survive a restart; a lost key is reported, not fatal.
     let reopened = Server::open_with(cfg.clone(), factory(used.clone()), secrets)
         .await
         .unwrap();
     let restored = reopened.model_settings().await.unwrap();
     assert_eq!(restored.source, ModelSource::Saved);
-    assert_eq!(restored.fields.model, "lab-model-2");
+    assert_eq!(restored.profiles[0].name, "Lab");
+    assert_eq!(restored.profiles[0].fields.model, "lab-model-2");
     reopened.shutdown().await;
     drop(reopened);
     let without_key = Server::open_with(
@@ -771,8 +844,14 @@ async fn desktop_model_settings_are_validated_saved_and_applied_without_restart(
     .unwrap();
     let broken = without_key.model_settings().await.unwrap();
     assert_eq!(broken.source, ModelSource::None);
-    assert!(broken.problem.unwrap().contains("API key is missing"));
-    assert_eq!(broken.fields.model, "lab-model-2");
+    let profile = &broken.profiles[0];
+    assert!(!profile.has_api_key);
+    assert!(profile
+        .problem
+        .as_ref()
+        .unwrap()
+        .contains("API key is missing"));
+    assert_eq!(profile.fields.model, "lab-model-2");
     without_key.shutdown().await;
     drop(without_key);
 
@@ -782,17 +861,85 @@ async fn desktop_model_settings_are_validated_saved_and_applied_without_restart(
         .unwrap();
     let env = from_env.model_settings().await.unwrap();
     assert_eq!(env.source, ModelSource::Environment);
-    assert_eq!(env.fields.model, "offline");
-    assert!(from_env
-        .save_model_settings(ModelInput {
-            fields,
-            api_key: Some("k".into()),
+    assert_eq!(env.profiles.len(), 1);
+    assert_eq!(env.profiles[0].fields.model, "offline");
+    assert!(env.profiles[0].is_default);
+    let id = env.profiles[0].id.clone();
+    for refused in [
+        from_env
+            .save_model_profile(input(None, "", fields("lab-model"), Some("k")))
+            .await,
+        from_env.set_default_model(&id).await,
+        from_env.delete_model_profile(&id).await,
+    ] {
+        assert!(refused.unwrap_err().to_string().contains("environment"));
+    }
+    from_env.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_single_model_saved_by_an_earlier_build_is_kept_as_a_profile() {
+    use desktop::{ModelFields, ModelInput, SecretStore};
+    let temp = tempfile::tempdir().unwrap();
+    let mut cfg = config(temp.path());
+    cfg.model = None;
+    let secrets = Arc::new(desktop::MemorySecrets::default());
+    let fields = ModelFields {
+        provider: "openai".into(),
+        api_url: "http://127.0.0.1:9/v1".into(),
+        model: "old-model".into(),
+        max_context: "32000".into(),
+        max_tokens: "4000".into(),
+        reasoning_effort: String::new(),
+    };
+    // What the earlier build left behind: one settings row and one key.
+    {
+        let server = Server::open_with(cfg.clone(), models(Arc::default(), false), secrets.clone())
+            .await
+            .unwrap();
+        let store = &server.0.store;
+        store
+            .set_setting("desktop.model", &serde_json::to_string(&fields).unwrap())
+            .await
+            .unwrap();
+        store
+            .set_setting("desktop.model.key_id", "kid")
+            .await
+            .unwrap();
+        secrets.set("desktop.model.api_key.kid", "old-key").unwrap();
+        server.shutdown().await;
+    }
+    let server = Server::open_with(cfg, models(Arc::default(), false), secrets.clone())
+        .await
+        .unwrap();
+    let settings = server.model_settings().await.unwrap();
+    assert_eq!(settings.profiles.len(), 1);
+    let old = settings.profiles[0].clone();
+    assert_eq!(old.name, "old-model");
+    assert!(old.is_default && old.has_api_key && old.problem.is_none());
+    let session = create(&server).await;
+    send(&server, &session, "hello").await.unwrap();
+    assert_eq!(
+        wait_for(&server, &session, |s| !s.running).await.model_id,
+        "old-model"
+    );
+    // Adding another profile keeps it, still usable with its old key.
+    let both = server
+        .save_model_profile(ModelInput {
+            id: None,
+            name: "New".into(),
+            fields: ModelFields {
+                model: "new-model".into(),
+                ..fields
+            },
+            api_key: Some("new-key".into()),
         })
         .await
-        .unwrap_err()
-        .to_string()
-        .contains("environment"));
-    from_env.shutdown().await;
+        .unwrap();
+    assert_eq!(both.profiles.len(), 2);
+    let kept = both.profiles.iter().find(|p| p.id == old.id).unwrap();
+    assert!(kept.is_default && kept.problem.is_none());
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -1038,6 +1185,7 @@ async fn desktop_conversation_options_shape_the_next_turn() {
     let options = |full_access, effort: &str| desktop::ConversationOptions {
         full_access,
         reasoning_effort: effort.into(),
+        model: String::new(),
     };
     let asking = create(&server).await;
     assert_eq!(

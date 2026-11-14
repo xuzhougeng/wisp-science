@@ -3,10 +3,7 @@
 //! dispatch commands, so nothing here can be reached through the remote
 //! allowlist.
 pub use crate::output::{tool_question, TokenUsage};
-use crate::{
-    config::{default_api_url, ModelConfig},
-    Server,
-};
+use crate::{config::ModelConfig, Server};
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::Ordering;
@@ -14,10 +11,18 @@ use wisp_dto::SessionSearchInfo;
 use wisp_llm::ProviderKind;
 use wisp_store::Store;
 
-const MODEL_SETTING: &str = "desktop.model";
-/// Names this database's key in the secret store. Keys are per data
+/// The saved model profiles: `{"profiles": [...], "default": "<id>"}`.
+const MODELS_SETTING: &str = "desktop.models";
+/// The single model earlier builds saved. It is read as a profile with
+/// [`LEGACY_PROFILE`] as its id, so nothing has to be migrated.
+const LEGACY_SETTING: &str = "desktop.model";
+const LEGACY_PROFILE: &str = "default";
+/// Id of the read-only profile shown while `WISP_*` variables set the model.
+const ENVIRONMENT_PROFILE: &str = "env";
+/// Names this database's keys in the secret store. Keys are per data
 /// directory, like the settings they belong to.
 const MODEL_KEY_ID: &str = "desktop.model.key_id";
+const NAME_LIMIT: usize = 60;
 const TITLE_LIMIT: usize = 200;
 
 /// Where API keys live. The key never enters SQLite or a snapshot.
@@ -79,25 +84,60 @@ pub enum ModelSource {
     Saved,
 }
 
+/// One saved model, as the settings page lists it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ModelSettings {
+pub struct ModelProfile {
+    pub id: String,
+    pub name: String,
     pub fields: ModelFields,
     pub has_api_key: bool,
-    pub source: ModelSource,
-    /// Why the saved settings are not in use, if they are not.
+    /// New conversations, and conversations that chose nothing, use this one.
+    pub is_default: bool,
+    /// Why this profile cannot be used as it is saved, if it cannot.
     pub problem: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelSettings {
+    pub profiles: Vec<ModelProfile>,
+    pub source: ModelSource,
+}
+
 pub struct ModelInput {
+    /// `None` adds a profile; `Some` replaces that one.
+    pub id: Option<String>,
+    /// Blank means "call it by its model ID".
+    pub name: String,
     pub fields: ModelFields,
     /// `None` keeps the stored key.
     pub api_key: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+struct SavedProfile {
+    id: String,
+    name: String,
+    fields: ModelFields,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+#[serde(default)]
+struct SavedModels {
+    profiles: Vec<SavedProfile>,
+    default: String,
+}
+
+struct Loaded {
+    profile: SavedProfile,
+    has_api_key: bool,
+    model: std::result::Result<ModelConfig, String>,
+}
+
 pub(crate) struct ModelState {
-    pub active: Option<ModelConfig>,
     source: ModelSource,
-    problem: Option<String>,
+    profiles: Vec<Loaded>,
+    default: String,
 }
 
 fn resolve(fields: &ModelFields, key: &str) -> Result<ModelConfig> {
@@ -143,56 +183,162 @@ fn provider_name(kind: &ProviderKind) -> &'static str {
 
 impl ModelState {
     pub fn environment(model: ModelConfig) -> Self {
+        let fields = ModelFields {
+            provider: provider_name(&model.provider.kind).into(),
+            api_url: model.provider.base_url.clone(),
+            model: model.provider.model.clone(),
+            max_context: model.max_context.to_string(),
+            max_tokens: model.provider.max_tokens.to_string(),
+            reasoning_effort: model.provider.reasoning_effort.clone().unwrap_or_default(),
+        };
         Self {
-            active: Some(model),
             source: ModelSource::Environment,
-            problem: None,
+            profiles: vec![Loaded {
+                profile: SavedProfile {
+                    id: ENVIRONMENT_PROFILE.into(),
+                    name: fields.model.clone(),
+                    fields,
+                },
+                has_api_key: true,
+                model: Ok(model),
+            }],
+            default: ENVIRONMENT_PROFILE.into(),
         }
     }
 
-    /// Saved settings that no longer validate leave the host unconfigured and
-    /// say why, instead of failing startup.
+    /// A profile that no longer validates stays listed with its problem; it
+    /// never fails startup.
     pub async fn saved(store: &Store, secrets: &dyn SecretStore) -> Self {
-        let unconfigured = |problem| Self {
-            active: None,
-            source: ModelSource::None,
-            problem,
+        let saved = match saved_models(store).await {
+            Ok(saved) => saved,
+            Err(error) => {
+                tracing::warn!(%error, "Saved model profiles are unreadable");
+                SavedModels::default()
+            }
         };
-        let fields = match saved_fields(store).await {
-            Ok(Some(fields)) => fields,
-            Ok(None) => return unconfigured(None),
-            Err(error) => return unconfigured(Some(format!("{error:#}"))),
+        let key_id = store.get_setting(MODEL_KEY_ID).await.ok().flatten();
+        let profiles: Vec<_> = saved
+            .profiles
+            .into_iter()
+            .map(|profile| {
+                let key = key_id
+                    .as_deref()
+                    .and_then(|id| secrets.get(&key_name(id, &profile.id)));
+                let model = match &key {
+                    Some(key) => resolve(&profile.fields, key).map_err(|e| format!("{e:#}")),
+                    None => Err("The saved API key is missing; enter it again".into()),
+                };
+                Loaded {
+                    profile,
+                    has_api_key: key.is_some(),
+                    model,
+                }
+            })
+            .collect();
+        let state = Self {
+            source: ModelSource::Saved,
+            profiles,
+            default: saved.default,
         };
-        let Some(key) = saved_key(store, secrets).await else {
-            return unconfigured(Some("The saved API key is missing; enter it again".into()));
-        };
-        match resolve(&fields, &key) {
-            Ok(model) => Self {
-                active: Some(model),
-                source: ModelSource::Saved,
-                problem: None,
+        Self {
+            source: if state.pick("").is_ok() {
+                ModelSource::Saved
+            } else {
+                ModelSource::None
             },
-            Err(error) => unconfigured(Some(format!("{error:#}"))),
+            ..state
+        }
+    }
+
+    fn default_profile(&self) -> Option<&Loaded> {
+        self.profiles
+            .iter()
+            .find(|loaded| loaded.profile.id == self.default)
+            .or_else(|| self.profiles.first())
+    }
+
+    fn profile(&self, id: &str) -> Option<&Loaded> {
+        if id.is_empty() {
+            self.default_profile()
+        } else {
+            self.profiles.iter().find(|loaded| loaded.profile.id == id)
+        }
+    }
+
+    /// The model for a conversation that chose profile `id`; an empty id is
+    /// the default. A choice that was deleted since falls back to the
+    /// default, but a broken one is reported rather than silently replaced.
+    pub fn pick(&self, id: &str) -> Result<ModelConfig> {
+        let loaded = self
+            .profile(id)
+            .or_else(|| self.default_profile())
+            .context("Configure a model in Settings before sending a message")?;
+        loaded.model.clone().map_err(|problem| {
+            anyhow::anyhow!(
+                "The model \"{}\" cannot be used: {problem}",
+                loaded.profile.name
+            )
+        })
+    }
+
+    /// The model ID a conversation that chose profile `id` runs on, or
+    /// empty when nothing usable is configured.
+    pub fn model_id(&self, id: &str) -> String {
+        self.pick(id)
+            .map(|model| model.provider.model)
+            .unwrap_or_default()
+    }
+
+    fn settings(&self) -> ModelSettings {
+        let default = self
+            .default_profile()
+            .map(|loaded| loaded.profile.id.clone());
+        ModelSettings {
+            source: self.source,
+            profiles: self
+                .profiles
+                .iter()
+                .map(|loaded| ModelProfile {
+                    id: loaded.profile.id.clone(),
+                    name: loaded.profile.name.clone(),
+                    fields: loaded.profile.fields.clone(),
+                    has_api_key: loaded.has_api_key,
+                    is_default: Some(&loaded.profile.id) == default.as_ref(),
+                    problem: loaded.model.as_ref().err().cloned(),
+                })
+                .collect(),
         }
     }
 }
 
-async fn saved_fields(store: &Store) -> Result<Option<ModelFields>> {
-    match store.get_setting(MODEL_SETTING).await? {
-        Some(raw) => Ok(Some(
-            serde_json::from_str(&raw).context("Saved model settings are unreadable")?,
-        )),
-        None => Ok(None),
+async fn saved_models(store: &Store) -> Result<SavedModels> {
+    if let Some(raw) = store.get_setting(MODELS_SETTING).await? {
+        return serde_json::from_str(&raw).context("Saved model profiles are unreadable");
     }
+    Ok(match store.get_setting(LEGACY_SETTING).await? {
+        Some(raw) => {
+            let fields: ModelFields =
+                serde_json::from_str(&raw).context("Saved model settings are unreadable")?;
+            SavedModels {
+                profiles: vec![SavedProfile {
+                    id: LEGACY_PROFILE.into(),
+                    name: fields.model.trim().to_owned(),
+                    fields,
+                }],
+                default: LEGACY_PROFILE.into(),
+            }
+        }
+        None => SavedModels::default(),
+    })
 }
 
-fn key_name(id: &str) -> String {
-    format!("desktop.model.api_key.{id}")
-}
-
-async fn saved_key(store: &Store, secrets: &dyn SecretStore) -> Option<String> {
-    let id = store.get_setting(MODEL_KEY_ID).await.ok()??;
-    secrets.get(&key_name(&id))
+/// The earlier single model keeps the secret name it was saved under.
+fn key_name(key_id: &str, profile: &str) -> String {
+    if profile == LEGACY_PROFILE {
+        format!("desktop.model.api_key.{key_id}")
+    } else {
+        format!("desktop.model.api_key.{key_id}.{profile}")
+    }
 }
 
 /// Conversations of one project for the sidebar.
@@ -205,84 +351,170 @@ pub struct ConversationList {
 
 impl Server {
     pub async fn model_settings(&self) -> Result<ModelSettings> {
-        let (source, problem, active) = {
-            let state = self.0.model.read().unwrap();
-            (state.source, state.problem.clone(), state.active.clone())
-        };
-        if let (ModelSource::Environment, Some(model)) = (source, &active) {
-            let provider = provider_name(&model.provider.kind);
-            return Ok(ModelSettings {
-                fields: ModelFields {
-                    provider: provider.into(),
-                    api_url: model.provider.base_url.clone(),
-                    model: model.provider.model.clone(),
-                    max_context: model.max_context.to_string(),
-                    max_tokens: model.provider.max_tokens.to_string(),
-                    reasoning_effort: model.provider.reasoning_effort.clone().unwrap_or_default(),
-                },
-                has_api_key: true,
-                source,
-                problem: None,
-            });
-        }
-        let mut fields = saved_fields(&self.0.store).await?.unwrap_or_default();
-        if fields.provider.is_empty() {
-            fields.provider = "openai".into();
-        }
-        if fields.api_url.is_empty() {
-            fields.api_url = default_api_url(&fields.provider).into();
-        }
-        Ok(ModelSettings {
-            fields,
-            has_api_key: saved_key(&self.0.store, self.0.secrets.as_ref())
-                .await
-                .is_some(),
-            source,
-            problem,
-        })
+        Ok(self.0.model.read().unwrap().settings())
     }
 
-    /// Validates first, so a rejected form never replaces working settings.
-    /// Turns already running keep the model they started with.
-    pub async fn save_model_settings(&self, input: ModelInput) -> Result<ModelSettings> {
+    fn editable_models(&self) -> Result<()> {
         ensure!(
             self.0.model.read().unwrap().source != ModelSource::Environment,
             "The model is set by WISP_* environment variables; unset them to edit it here"
         );
+        Ok(())
+    }
+
+    async fn key_id(&self) -> Result<String> {
+        Ok(match self.0.store.get_setting(MODEL_KEY_ID).await? {
+            Some(id) => id,
+            None => {
+                let id = uuid::Uuid::new_v4().to_string();
+                self.0.store.set_setting(MODEL_KEY_ID, &id).await?;
+                id
+            }
+        })
+    }
+
+    /// Validates a form against the key typed into it, or the one stored for
+    /// the profile it edits.
+    async fn resolve_input(&self, input: &ModelInput) -> Result<(ModelConfig, Option<String>)> {
         // Report the first empty field first, in the order the form shows them.
         ensure!(!input.fields.model.trim().is_empty(), "Enter a model ID");
         let typed = input
             .api_key
-            .map(|key| key.trim().to_owned())
-            .filter(|key| !key.is_empty());
-        let key = match &typed {
-            Some(key) => key.clone(),
-            None => saved_key(&self.0.store, self.0.secrets.as_ref())
-                .await
-                .context("Enter an API key")?,
+            .as_deref()
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
+            .map(str::to_owned);
+        let key = match (&typed, &input.id) {
+            (Some(key), _) => key.clone(),
+            (None, Some(id)) => {
+                let key_id = self.0.store.get_setting(MODEL_KEY_ID).await?;
+                key_id
+                    .and_then(|key_id| self.0.secrets.get(&key_name(&key_id, id)))
+                    .context("Enter an API key")?
+            }
+            (None, None) => bail!("Enter an API key"),
         };
-        let model = resolve(&input.fields, &key)?;
-        if let Some(key) = &typed {
-            let id = match self.0.store.get_setting(MODEL_KEY_ID).await? {
-                Some(id) => id,
-                None => {
-                    let id = uuid::Uuid::new_v4().to_string();
-                    self.0.store.set_setting(MODEL_KEY_ID, &id).await?;
-                    id
-                }
-            };
-            self.0.secrets.set(&key_name(&id), key)?;
-        }
+        Ok((resolve(&input.fields, &key)?, typed))
+    }
+
+    async fn store_models(&self, saved: &SavedModels) -> Result<ModelSettings> {
         self.0
             .store
-            .set_setting(MODEL_SETTING, &serde_json::to_string(&input.fields)?)
+            .set_setting(MODELS_SETTING, &serde_json::to_string(saved)?)
             .await?;
-        *self.0.model.write().unwrap() = ModelState {
-            active: Some(model),
-            source: ModelSource::Saved,
-            problem: None,
+        let state = ModelState::saved(&self.0.store, self.0.secrets.as_ref()).await;
+        let settings = state.settings();
+        *self.0.model.write().unwrap() = state;
+        Ok(settings)
+    }
+
+    /// Adds a profile or replaces one. Validates first, so a rejected form
+    /// never replaces working settings. Turns already running keep the model
+    /// they started with. The first profile saved becomes the default.
+    pub async fn save_model_profile(&self, input: ModelInput) -> Result<ModelSettings> {
+        self.editable_models()?;
+        let (_, typed) = self.resolve_input(&input).await?;
+        let name = match input.name.trim() {
+            "" => input.fields.model.trim(),
+            name => name,
         };
-        self.model_settings().await
+        ensure!(
+            name.chars().count() <= NAME_LIMIT,
+            "Keep the name within {NAME_LIMIT} characters"
+        );
+        let mut saved = saved_models(&self.0.store).await?;
+        let id = match &input.id {
+            Some(id) => {
+                ensure!(
+                    saved.profiles.iter().any(|profile| &profile.id == id),
+                    "That model was removed; add it again"
+                );
+                id.clone()
+            }
+            None => uuid::Uuid::new_v4().to_string(),
+        };
+        if let Some(key) = &typed {
+            self.0
+                .secrets
+                .set(&key_name(&self.key_id().await?, &id), key)?;
+        }
+        let profile = SavedProfile {
+            id: id.clone(),
+            name: name.to_owned(),
+            fields: input.fields,
+        };
+        match saved.profiles.iter_mut().find(|profile| profile.id == id) {
+            Some(existing) => *existing = profile,
+            None => saved.profiles.push(profile),
+        }
+        if !saved.profiles.iter().any(|p| p.id == saved.default) {
+            saved.default = id;
+        }
+        self.store_models(&saved).await
+    }
+
+    /// Conversations that chose nothing, and new ones, use this profile.
+    pub async fn set_default_model(&self, id: &str) -> Result<ModelSettings> {
+        self.editable_models()?;
+        let mut saved = saved_models(&self.0.store).await?;
+        ensure!(
+            saved.profiles.iter().any(|profile| profile.id == id),
+            "That model was removed"
+        );
+        saved.default = id.into();
+        self.store_models(&saved).await
+    }
+
+    /// Removes a profile and its key. Conversations that had chosen it go
+    /// back to the default.
+    pub async fn delete_model_profile(&self, id: &str) -> Result<ModelSettings> {
+        self.editable_models()?;
+        let mut saved = saved_models(&self.0.store).await?;
+        let before = saved.profiles.len();
+        saved.profiles.retain(|profile| profile.id != id);
+        ensure!(saved.profiles.len() < before, "That model was removed");
+        if saved.default == id {
+            saved.default = saved
+                .profiles
+                .first()
+                .map(|profile| profile.id.clone())
+                .unwrap_or_default();
+        }
+        if let Some(key_id) = self.0.store.get_setting(MODEL_KEY_ID).await? {
+            // The secret store has no delete; an empty value reads as absent.
+            self.0.secrets.set(&key_name(&key_id, id), "")?;
+        }
+        self.store_models(&saved).await
+    }
+
+    /// Sends one short request with the form as typed, without saving it,
+    /// and returns what the model said.
+    pub async fn test_model(&self, input: ModelInput) -> Result<String> {
+        let (model, _) = self.resolve_input(&input).await?;
+        let provider = (self.0.models)(model.provider);
+        let ask = [wisp_llm::Message::user("Reply with the single word: ready")];
+        let reply = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            provider.complete(&ask, &[]),
+        )
+        .await
+        .context("The model did not answer within 30 seconds")?
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+        // One line is enough to show that it answered.
+        let text: String = reply
+            .content
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or_default()
+            .chars()
+            .take(120)
+            .collect();
+        Ok(if text.is_empty() {
+            "The model answered.".into()
+        } else {
+            text
+        })
     }
 
     /// Newest conversations across every project, for the home page.
@@ -561,6 +793,12 @@ impl Server {
                 .frame_reasoning_effort(session)
                 .await?
                 .unwrap_or_default(),
+            model: self
+                .0
+                .store
+                .get_setting(&model_choice_key(session))
+                .await?
+                .unwrap_or_default(),
         })
     }
 
@@ -608,6 +846,23 @@ impl Server {
             self.0.store.set_setting(&key, "1").await?;
         } else {
             self.0.store.delete_setting(&key).await?;
+        }
+        let key = model_choice_key(session);
+        if options.model.is_empty() {
+            self.0.store.delete_setting(&key).await?;
+        } else {
+            ensure!(
+                self.0
+                    .model
+                    .read()
+                    .unwrap()
+                    .settings()
+                    .profiles
+                    .iter()
+                    .any(|profile| profile.id == options.model),
+                "That model was removed; choose another"
+            );
+            self.0.store.set_setting(&key, &options.model).await?;
         }
         self.stored_options(session).await
     }
@@ -668,10 +923,9 @@ impl Server {
         self.own_conversation(project, session).await?;
         self.ensure_idle(session, "delete")?;
         self.0.store.delete_session(session, project).await?;
-        self.0
-            .store
-            .delete_setting(&full_access_key(session))
-            .await?;
+        for key in [full_access_key(session), model_choice_key(session)] {
+            self.0.store.delete_setting(&key).await?;
+        }
         self.0.sessions.lock().unwrap().remove(session);
         let runtime = live.runtime.lock().unwrap().take();
         if let Some(runtime) = runtime {
@@ -694,6 +948,9 @@ pub struct ConversationOptions {
     pub full_access: bool,
     /// One of [`EFFORTS`].
     pub reasoning_effort: String,
+    /// Id of the model profile this conversation runs on. Empty follows the
+    /// default profile, whichever that is at the time.
+    pub model: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -703,6 +960,10 @@ pub struct ConversationStatus {
     pub usage: Option<TokenUsage>,
     /// Tools allowed for the rest of this conversation, sorted.
     pub allowed_tools: Vec<String>,
+}
+
+fn model_choice_key(session: &str) -> String {
+    format!("desktop.conversation.model.{session}")
 }
 
 fn full_access_key(session: &str) -> String {
