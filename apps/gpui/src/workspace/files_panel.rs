@@ -272,6 +272,7 @@ impl Workspace {
             self.files.close_preview();
             self.file_image = None;
             self.file_problem = None;
+            self.file_origin = None;
             self.restore_focus(window, cx);
             // A file revealed from the palette has no listing under it yet.
             self.ensure_files(window, cx);
@@ -426,6 +427,98 @@ impl Workspace {
         }
     }
 
+    /// Looks up which tool call wrote the file being previewed.
+    fn load_file_origin(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(project), Some(path)) =
+            (self.state.project.clone(), self.files.preview_path.clone())
+        else {
+            return;
+        };
+        let reply = self
+            .backend
+            .file_origin(project, self.state.session.clone(), path.clone());
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                // Another file may be in the preview by now.
+                if this.files.preview_path.as_deref() == Some(path.as_str()) {
+                    this.file_origin = Some((path, result));
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Where the previewed file came from, once it was asked.
+    fn render_file_origin(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
+        let (path, found) = self.file_origin.as_ref()?;
+        if self.files.preview_path.as_deref() != Some(path.as_str()) {
+            return None;
+        }
+        let muted = cx.theme().muted_foreground;
+        let mut block = div()
+            .v_flex()
+            .gap_2()
+            .p_3()
+            .border_b_1()
+            .border_color(cx.theme().border);
+        match found {
+            Err(problem) => {
+                block = block.child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().danger)
+                        .child(problem.clone()),
+                );
+            }
+            Ok(origin) => {
+                block = block.child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(files::origin_line(origin.as_ref())),
+                );
+                if let Some(origin) = origin {
+                    let detail = files::origin_detail(origin);
+                    if !detail.is_empty() {
+                        block = block.child(
+                            div().max_h(px(220.)).overflow_hidden().child(
+                                gpui_component::text::TextView::markdown(
+                                    "file-origin-detail",
+                                    detail,
+                                    window,
+                                    cx,
+                                )
+                                .selectable(true),
+                            ),
+                        );
+                    }
+                    if let Some(project) = self.state.project.clone() {
+                        let session = origin.session.clone();
+                        block = block.child(
+                            div().h_flex().child(
+                                Button::new("file-origin-open")
+                                    .label(tr("Open the conversation"))
+                                    .xsmall()
+                                    .ghost()
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.open_session(
+                                            project.clone(),
+                                            session.clone(),
+                                            window,
+                                            cx,
+                                        )
+                                    })),
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+        Some(block)
+    }
+
     pub(super) fn render_files(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let previewing = self.layers.contains(Layer::FilePreview);
         let muted = cx.theme().muted_foreground;
@@ -465,6 +558,18 @@ impl Workspace {
                                 .child(div().text_xs().text_color(muted).child(note)),
                         )
                         .child(
+                            Button::new("file-preview-origin")
+                                .label(tr("Origin"))
+                                .small()
+                                .ghost()
+                                .tooltip(tr(
+                                    "Which tool call wrote this file, and in which conversation",
+                                ))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.load_file_origin(window, cx)
+                                })),
+                        )
+                        .child(
                             Button::new("file-preview-back")
                                 .label(tr("Back to files"))
                                 .small()
@@ -473,6 +578,7 @@ impl Workspace {
                                 })),
                         ),
                 )
+                .children(self.render_file_origin(window, cx))
                 .child(self.render_preview(window, cx))
                 .into_any_element();
         }

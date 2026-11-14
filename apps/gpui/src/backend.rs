@@ -718,6 +718,18 @@ impl Backend {
         self.local(move |host| async move { host.review_conversation(&project, &session).await })
     }
 
+    /// The tool call that last wrote a project file, if one is known.
+    pub fn file_origin(
+        &self,
+        project: String,
+        session: Option<String>,
+        path: String,
+    ) -> Reply<Option<wisp_server::desktop::FileOrigin>> {
+        self.local(move |host| async move {
+            host.file_origin(&project, session.as_deref(), &path).await
+        })
+    }
+
     /// What a run on this computer wrote, in full or its end.
     pub fn run_log(&self, project: String, run: String) -> Reply<wisp_server::desktop::RunLog> {
         self.local(move |host| async move { host.run_log(&project, &run).await })

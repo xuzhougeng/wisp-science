@@ -5405,6 +5405,75 @@ async fn a_conversation_started_as_an_expert_works_under_its_instructions() {
 }
 
 #[tokio::test]
+async fn a_file_is_traced_back_to_the_call_that_wrote_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    // A model that writes answer.txt, then answers.
+    let server = Server::open_with_models(config(temp.path()), models(calls, true))
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    // Nothing has written it yet.
+    assert_eq!(
+        server
+            .file_origin(PROJECT, Some(&session), "answer.txt")
+            .await
+            .unwrap(),
+        None
+    );
+    send(&server, &session, "write the file").await.unwrap();
+    let asked = wait_for(&server, &session, |s| !s.approvals.is_empty() || !s.running).await;
+    for approval in &asked.approvals {
+        server
+            .answer_approval(
+                PROJECT,
+                &session,
+                &approval.approval_id,
+                true,
+                desktop::Remember::No,
+            )
+            .await
+            .unwrap();
+    }
+    wait_for(&server, &session, |s| !s.running).await;
+
+    let origin = server
+        .file_origin(PROJECT, Some(&session), "answer.txt")
+        .await
+        .unwrap()
+        .expect("the write was kept");
+    assert_eq!(origin.session, session);
+    assert_eq!(origin.title, "write the file");
+    assert_eq!(origin.tool, "write");
+    // Found from another conversation of the project too, and by the
+    // file's full path.
+    let other = create(&server).await;
+    let full = temp.path().join("workspace/answer.txt");
+    let again = server
+        .file_origin(PROJECT, Some(&other), &full.to_string_lossy())
+        .await
+        .unwrap();
+    assert_eq!(again.map(|origin| origin.session), Some(session.clone()));
+    // A file nobody wrote here has no origin; a path outside is refused.
+    assert_eq!(
+        server
+            .file_origin(PROJECT, None, "notes.txt")
+            .await
+            .unwrap(),
+        None
+    );
+    assert!(server
+        .file_origin(PROJECT, None, "../outside.txt")
+        .await
+        .is_err());
+    assert!(server
+        .file_origin("missing", None, "answer.txt")
+        .await
+        .is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_conversation_is_exported_whole_as_markdown() {
     let temp = tempfile::tempdir().unwrap();
     let calls = Arc::new(AtomicUsize::new(0));

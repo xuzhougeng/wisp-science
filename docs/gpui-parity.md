@@ -175,7 +175,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Runs: harvest, transfer, full log, workspace review | Yes | Partial: the whole log of a run on this computer; no harvest, transfer or workspace review, and no whole log for runs on SSH hosts | shared |
 | Notebook [Notebook]: code cells and outputs | Yes | Done: a panel tab with the loaded conversation's cells and outputs, copy, save to favorites and show in the conversation | store |
 | Highlights [划线] | Yes | Done: lists what the conversation saved, with use, copy and remove | store |
-| Provenance [溯源]: tool evidence behind a claim | Yes | Missing | store |
+| Provenance [溯源]: tool evidence behind a claim | Yes | Partial: a file's preview shows which tool call wrote it, with the code, what it read and the conversation; no panel tab and no tracing of a claim in an answer | store |
 | Side question [侧边问答]: ask without changing the main thread | Yes | Partial: an Aside tab where the conversation's model answers from its latest turns; no evidence list, no question scoped to a run or to selected text | tauri |
 | Memos [备忘录]: private notes the model cannot read | Yes | Done: no search, no `/memo` command | store |
 

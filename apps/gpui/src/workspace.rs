@@ -155,6 +155,12 @@ pub struct Workspace {
     tabs: crate::tabs::Tabs,
     /// Whole logs that were asked for, by run: the log, or why not.
     run_logs: HashMap<String, Result<wisp_server::desktop::RunLog, String>>,
+    /// Where the previewed file came from, once asked: its path, and the
+    /// call that wrote it, none known, or why it could not be looked up.
+    file_origin: Option<(
+        String,
+        Result<Option<wisp_server::desktop::FileOrigin>, String>,
+    )>,
     pinned: Vec<String>,
     show_archived: bool,
     /// Only the latest list request may replace the rows on screen.
@@ -625,6 +631,7 @@ impl Workspace {
             known: HashMap::new(),
             tabs: Default::default(),
             run_logs: HashMap::new(),
+            file_origin: None,
             pinned: vec![],
             show_archived: false,
             list_request: 0,

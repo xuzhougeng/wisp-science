@@ -9,6 +9,7 @@ mod follow_ups;
 pub mod mcp;
 mod model_view;
 mod network;
+mod origin;
 mod output;
 mod project_archive;
 mod project_folder;
@@ -519,6 +520,7 @@ impl Server {
             live.reviewing = false;
             session.suggested.notify_waiters();
             live.calls.clear();
+            live.provenance.clear();
             live.reasoning.clear();
             live.written.clear();
             live.draft.clear();

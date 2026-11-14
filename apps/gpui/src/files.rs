@@ -244,9 +244,82 @@ pub fn size_label(bytes: u64) -> String {
     format!("{value:.1} {}", UNITS[unit])
 }
 
+/// Where a file came from, in a line: the tool and the conversation, or
+/// that nothing is known.
+pub fn origin_line(origin: Option<&wisp_server::desktop::FileOrigin>) -> String {
+    match origin {
+        None => {
+            crate::i18n::tr("No conversation of this project is known to have written this file.")
+                .to_owned()
+        }
+        Some(origin) => {
+            let title = match origin.title.trim() {
+                "" => crate::i18n::tr("a conversation"),
+                title => title,
+            };
+            crate::i18n::fill(
+                crate::i18n::tr("Written by {} in “{}”."),
+                &[&origin.tool, &title],
+            )
+        }
+    }
+}
+
+/// What the call ran and what it read, as Markdown; nothing when the call
+/// kept neither.
+pub fn origin_detail(origin: &wisp_server::desktop::FileOrigin) -> String {
+    let mut parts = Vec::new();
+    if !origin.source.trim().is_empty() {
+        parts.push(crate::present::fenced(&origin.source, &origin.language));
+    }
+    if !origin.read.is_empty() {
+        let read = origin
+            .read
+            .iter()
+            .map(|path| format!("- `{path}`"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        parts.push(format!("{}\n\n{read}", crate::i18n::tr("It read:")));
+    }
+    parts.join("\n\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_files_origin_names_the_call_and_shows_what_it_ran() {
+        let origin = wisp_server::desktop::FileOrigin {
+            session: "s1".into(),
+            title: " Count the reads ".into(),
+            tool: "python".into(),
+            language: "python".into(),
+            source: "df.to_csv('counts.csv')".into(),
+            read: vec!["data/reads.fq".into(), "config.yml".into()],
+        };
+        assert_eq!(
+            origin_line(Some(&origin)),
+            "Written by python in “Count the reads”."
+        );
+        assert_eq!(
+            origin_detail(&origin),
+            "```python\ndf.to_csv('counts.csv')\n```\n\nIt read:\n\n- `data/reads.fq`\n- `config.yml`"
+        );
+        // A conversation without a title, and a call that kept nothing.
+        let bare = wisp_server::desktop::FileOrigin {
+            title: String::new(),
+            source: "  ".into(),
+            read: vec![],
+            ..origin
+        };
+        assert_eq!(
+            origin_line(Some(&bare)),
+            "Written by python in “a conversation”."
+        );
+        assert_eq!(origin_detail(&bare), "");
+        assert!(origin_line(None).starts_with("No conversation of this project"));
+    }
 
     fn directory(project: &str, path: &str, names: &[&str]) -> Directory {
         Directory {

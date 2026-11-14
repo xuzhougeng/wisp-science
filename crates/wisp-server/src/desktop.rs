@@ -2788,6 +2788,38 @@ impl Server {
             .map_err(anyhow::Error::msg)
     }
 
+    /// The tool call that last wrote a project file, if one of the
+    /// project's conversations did: looked for in `session` first, when
+    /// one is given, then in the others. A file the user put there, or one
+    /// written before this was kept, has none.
+    pub async fn file_origin(
+        &self,
+        project: &str,
+        session: Option<&str>,
+        path: &str,
+    ) -> Result<Option<FileOrigin>> {
+        let root = std::path::PathBuf::from(self.project_root(project).await?);
+        // The folder may be spelt its real way or the way it was opened.
+        let real = tokio::fs::canonicalize(&root).await.unwrap_or(root.clone());
+        let spelt = tokio::fs::canonicalize(path)
+            .await
+            .ok()
+            .filter(|_| std::path::Path::new(path).is_absolute())
+            .map(|found| found.to_string_lossy().into_owned());
+        let path = crate::origin::relative(&root, path)
+            .or_else(|| crate::origin::relative(&real, path))
+            .or_else(|| spelt.and_then(|spelt| crate::origin::relative(&real, &spelt)))
+            .context("That is not a project file")?;
+        let mut frames = self.0.store.list_project_frame_ids(project).await?;
+        if let Some(open) = session {
+            // Only a conversation of this project is looked in.
+            if let Some(at) = frames.iter().position(|frame| frame == open) {
+                frames.swap(0, at);
+            }
+        }
+        crate::origin::find(&self.0.store, &frames, &path).await
+    }
+
     /// What a run wrote in full, or the end of it when it is very long.
     /// Only a run on this computer keeps its log where it can be read; a
     /// run on another machine has its last lines in the run record.
@@ -3971,6 +4003,7 @@ pub struct ProjectGrants {
 pub use crate::aside::Exchange as AsideExchange;
 pub use crate::experts::{Expert, ExpertInput};
 pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow};
+pub use crate::origin::FileOrigin;
 pub use crate::review::{Finding as ReviewFinding, Outcome as ReviewOutcome, Review};
 pub use crate::run_log::RunLog;
 pub use crate::updates::UpdateCheck;

@@ -697,6 +697,11 @@ pub async fn run(
             seq += 1;
         }
     }
+    // What its tool calls ran and wrote, so a file can be traced back.
+    let reported = std::mem::take(&mut session.live.lock().unwrap().provenance);
+    if let Err(error) = crate::origin::record(&store, &request.session_id, &root, reported).await {
+        tracing::warn!(%error, "Could not keep the turn's execution log");
+    }
     // Whatever the turn's outcome, the files it wrote exist and are its work.
     let written = std::mem::take(&mut session.live.lock().unwrap().written);
     record_artifacts(

@@ -113,6 +113,9 @@ pub struct Live {
     pub review: Option<Result<crate::review::Review, String>>,
     /// The reviewer is reading the latest turn right now.
     pub reviewing: bool,
+    /// What the running turn's tool calls reported doing, to be kept in
+    /// the execution log when it ends.
+    pub provenance: Vec<wisp_core::provenance::ProvenanceRecord>,
 }
 
 pub struct Session {
@@ -194,14 +197,11 @@ impl Output for ServerOutput {
         self.session.live.lock().unwrap().written.push(path.into());
     }
     fn provenance(&self, record: &wisp_core::provenance::ProvenanceRecord) {
+        let mut live = self.session.live.lock().unwrap();
         if record.success {
-            self.session
-                .live
-                .lock()
-                .unwrap()
-                .written
-                .extend(record.files_written.iter().cloned());
+            live.written.extend(record.files_written.iter().cloned());
         }
+        live.provenance.push(record.clone());
     }
     fn tool_result(&self, _: &str, ok: bool, _: &str, duration_ms: u64) {
         self.session.live.lock().unwrap().last_result = Some((ok, duration_ms));

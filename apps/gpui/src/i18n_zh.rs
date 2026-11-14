@@ -696,4 +696,11 @@ pub const ZH: &[(&str, &str)] = &[
     ("Open a terminal in the project folder", "在项目文件夹中打开终端"),
     ("The folder {} is not there.", "文件夹 {} 不存在。"),
     ("Could not open a terminal: {}", "无法打开终端：{}"),
+    // Where a file came from.
+    ("Origin", "来源"),
+    ("Which tool call wrote this file, and in which conversation", "这个文件由哪次工具调用写入、出自哪个会话"),
+    ("No conversation of this project is known to have written this file.", "没有记录显示此项目的哪个会话写过这个文件。"),
+    ("a conversation", "某个会话"),
+    ("Written by {} in “{}”.", "由 {} 在“{}”中写入。"),
+    ("It read:", "它读取了："),
 ];

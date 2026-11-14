@@ -137,6 +137,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Project archives | Export on a project's card writes the project, its records and its files, as one zip; Import on the home page reads one and puts the project in a folder you choose |
 | Capabilities | A dialog for the open project: how many skills, connectors, MCP servers and SSH hosts are on or usable, the state of memory, and which command-line tools were found on this computer |
 | Follow-up questions | After an answer, up to three questions you could ask next show above the composer; picking one puts it in the composer to send or change, and the list can be put away |
+| File origin | A file's preview has Origin: which tool call last wrote it, with the code it ran, the project files it read and the conversation, which it can open |
 | Terminal | The Files tab's terminal button (or the command palette) opens the system's terminal in the folder being browsed |
 | Updates | Settings, General, has Check for updates: it says whether a newer release has been published and opens the release page |
 | Tabs | The conversations you open in a window line up as tabs above the conversation, across projects; click one to go back to it, close one to drop it from the strip |
@@ -330,6 +331,15 @@ Limits of this slice:
   for a last word without tools. Compaction uses the WebView's keys
   (`auto_compact`, `auto_compact_percent`). Auto-continue, compaction on a
   model switch and after idle hours are not ported.
+- Origin is known only for files written by tool calls since this was
+  added: each call that reports what it ran is kept in the store's
+  execution log (the table the WebView fills) when its turn ends, with
+  up to 64 KB of its code. A file you put in the folder yourself, one a
+  shell command wrote without saying so, or one written earlier has no
+  origin. The open conversation is looked in first, then the project's
+  others; the latest call in the conversation it is found in is shown,
+  not necessarily the latest overall. Deleting a conversation deletes
+  what it knew.
 - The terminal is the system's, not one inside the app: Terminal on
   macOS, `cmd.exe` on Windows, whatever `x-terminal-emulator` is on
   Linux, and a message when there is none. It opens in the folder the
@@ -800,6 +810,10 @@ press Escape (the page stays), press Escape again (the page closes). Open the
 conversation an item came from. Have a turn write an image, save it from
 Artifacts, delete the file and confirm the figure still shows in Favorites.
 Delete a conversation and confirm what was saved from it is still listed.
+Have a turn write a file, open the file in the Files tab and press
+Origin: the line names the tool and the conversation, the code is shown,
+and Open the conversation goes there. For a file you made yourself it
+says none is known.
 In the Files tab go into a folder and press the terminal button: the
 system's terminal opens in that folder. Do the same from the command
 palette. With the project's folder moved away, confirm a message says it
