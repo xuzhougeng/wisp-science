@@ -143,6 +143,7 @@ impl Workspace {
             prompt,
             interval_secs,
             start_at,
+            session: None,
         });
         self.change_schedules(reply, None, window, cx);
     }
@@ -313,7 +314,12 @@ impl Workspace {
                             .font_weight(FontWeight::MEDIUM)
                             .child(row.name.clone()),
                     )
-                    .child(chip(row.project_name.clone(), Tone::Neutral, cx)),
+                    .child(chip(row.project_name.clone(), Tone::Neutral, cx))
+                    .children(
+                        row.session
+                            .is_some()
+                            .then(|| chip(tr("A conversation's timer"), Tone::Active, cx)),
+                    ),
             )
             .child(
                 div()

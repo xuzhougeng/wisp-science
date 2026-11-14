@@ -150,7 +150,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Interpreters | The Python and R interpreters a conversation keeps between tool calls show above the composer with their version and state; Stop ends one, Dismiss takes a stopped one off the list |
 | Experts | Settings, Experts, keeps personas (a name and instructions); the composer's Expert menu starts a new conversation as one, and its instructions hold for the whole conversation |
 | Quick actions | Settings, Quick actions, keeps requests you make often under a name; the composer's quick actions menu puts one into the message box, after whatever is already typed, to finish and send |
-| Slash commands | A message that is only a command does something instead of being sent: `/review`, `/trajectory`, `/context`, `/btw <question>`, `/plan`, `/save-as-skill`, `/skills`, `/files`, `/upload`, `/memo`, `/remember`, `/archive`, `/compact`, `/help`; the composer's "/" button lists them |
+| Slash commands | A message that is only a command does something instead of being sent: `/review`, `/trajectory`, `/context`, `/btw <question>`, `/plan`, `/save-as-skill`, `/skills`, `/files`, `/upload`, `/memo`, `/remember`, `/archive`, `/compact`, `/timer 30m <prompt>`, `/help`; the composer's "/" button lists them |
 | Browser | Settings, Browser, switches on a bridge to the Wisp extension in your own Chrome or Chromium; conversations can then open a tab, read it and run a script in it, only in tabs they opened themselves, and hosts can be blocked or preferred |
 | Workflows | Settings, Workflows, keeps templates of a goal broken into tasks, each saying which earlier tasks it needs; Run starts a conversation in the open project and gives the model the tasks stage by stage |
 | Remote web access | Settings, Remote access, opens this desktop's projects in a phone or a browser through a wisp-relay of your own: it dials out (no inbound port), shows whether the tunnel is up and how many browsers are connected, and gives a link and a code that can be copied or replaced |
@@ -476,6 +476,13 @@ Limits of this slice:
   `desktop.quick_actions` and neither reads nor changes the WebView's.
   It starts with four that can be changed or removed; at most 40 are
   kept, a name is at most 60 characters and a request 8,000.
+- `/timer` makes a scheduled task bound to the open conversation: the
+  prompt is sent into it every so many minutes, hours or days while the
+  app is open, as a new turn each time. It does not replace the turn
+  before it as the WebView's timer does, cannot be paused, and a firing
+  that finds a turn running there is recorded as failed rather than
+  queued. `/timer off` removes the conversation's timers; they are also
+  listed, marked, on the Scheduled tasks page.
 - `/compact` archives the conversation's whole history under the
   project's `.wisp/history/` and shortens what the model is sent, as a
   turn does by itself when the context fills up. It is refused while a
@@ -485,8 +492,7 @@ Limits of this slice:
 - A slash command is read only when it is the first word of the message
   and one of the known ones, so a message that starts with a path is
   sent as a message. There is no list that narrows as you type. The
-  WebView's `/timer`, `/fork`, `/rewind`, `/permission` and `/share`
-  are answered with a note that they are not available here,
+  WebView's `/fork`, `/rewind`, `/permission` and `/share` are answered with a note that they are not available here,
   and what was typed stays in the composer.
 - The browser bridge is off until it is switched on, and then listens
   on this computer only, on the port the extension dials
@@ -1078,6 +1084,11 @@ counts it. Remove the evidence, change the figure's title, remove the
 figure. With a form open press Escape: only the form closes; press it
 again: the page closes. Rename the paper, then remove it: the question
 has to be answered first.
+Send `/timer 1m say the time`: a note confirms it, the Scheduled tasks
+page lists it as a conversation's timer, and within a minute and a half
+the prompt arrives in the same conversation as a turn. Send `/timer
+off`: a note says one was cancelled. Send `/timer soon`: it is refused
+and the text comes back.
 After a few turns send `/compact`: a note says how many tokens there
 were before and after, a file appears under `.wisp/history/`, and What
 the model is sent is shorter while the transcript is not.

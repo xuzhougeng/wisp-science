@@ -36,6 +36,9 @@ pub struct ScheduleInput {
     /// When it first fires, in Unix seconds; `None` is one interval from
     /// now, and a time already past fires at the next look.
     pub start_at: Option<i64>,
+    /// The conversation it is sent into each time: a conversation's
+    /// timer. `None` starts a new conversation per firing.
+    pub session: Option<String>,
 }
 
 /// How a task's latest firing went.
@@ -59,6 +62,8 @@ pub struct ScheduleRow {
     pub interval_secs: i64,
     pub enabled: bool,
     pub next_run_at: i64,
+    /// The conversation it is sent into, when it is a conversation's timer.
+    pub session: Option<String>,
     /// Newest first, at most five.
     pub runs: Vec<ScheduleRun>,
 }
@@ -82,7 +87,7 @@ fn record(input: &ScheduleInput, now: i64) -> Result<ScheduleRecord> {
     Ok(ScheduleRecord {
         id: uuid::Uuid::new_v4().to_string(),
         project_id: input.project.clone(),
-        frame_id: None,
+        frame_id: input.session.clone(),
         replace_previous_turn: false,
         name: name.chars().take(NAME_LIMIT).collect(),
         prompt: prompt.to_owned(),
@@ -131,6 +136,7 @@ impl Server {
                     interval_secs: schedule.interval_secs,
                     enabled: schedule.enabled,
                     next_run_at: schedule.next_run_at,
+                    session: schedule.frame_id,
                     runs,
                 });
             }
@@ -148,8 +154,28 @@ impl Server {
             .get_project(&input.project)
             .await?
             .context("Choose a project for the task")?;
+        if let Some(session) = &input.session {
+            self.own_conversation(&input.project, session).await?;
+        }
         let schedule = record(&input, chrono::Utc::now().timestamp())?;
         self.0.store.create_schedule(&schedule).await
+    }
+
+    /// Removes the timers of one conversation. Returns how many there were.
+    pub async fn cancel_conversation_schedules(
+        &self,
+        project: &str,
+        session: &str,
+    ) -> Result<usize> {
+        let _admission = self.0.admission.read().await;
+        let mut removed = 0;
+        for schedule in self.0.store.list_schedules(project).await? {
+            if !schedule.replace_previous_turn && schedule.frame_id.as_deref() == Some(session) {
+                self.0.store.delete_schedule(&schedule.id).await?;
+                removed += 1;
+            }
+        }
+        Ok(removed)
     }
 
     /// A task of this page; a conversation's timer is not one.
@@ -239,12 +265,20 @@ impl Server {
     }
 
     async fn send_scheduled(&self, schedule: &ScheduleRecord) -> Result<String> {
-        let session = self.create_conversation(&schedule.project_id).await?;
-        // Named after the task, so it can be told from the others.
-        self.0
-            .store
-            .rename_session(&session, &schedule.project_id, &schedule.name)
-            .await?;
+        let session = match &schedule.frame_id {
+            // A conversation's timer goes into that conversation. While a
+            // turn runs there the send is refused and recorded as such.
+            Some(session) => session.clone(),
+            None => {
+                let session = self.create_conversation(&schedule.project_id).await?;
+                // Named after the task, so it can be told from the others.
+                self.0
+                    .store
+                    .rename_session(&session, &schedule.project_id, &schedule.name)
+                    .await?;
+                session
+            }
+        };
         self.execute(RemoteRequest {
             nonce: "schedule".into(),
             seq: 0,
@@ -295,6 +329,7 @@ mod tests {
             prompt: prompt.into(),
             interval_secs,
             start_at: None,
+            session: None,
         }
     }
 
@@ -305,6 +340,11 @@ mod tests {
         assert_eq!(made.prompt, "Summarise the week\nwith runs");
         assert_eq!(made.next_run_at, 4_600);
         assert!(made.enabled && made.frame_id.is_none() && !made.replace_previous_turn);
+        let timer = ScheduleInput {
+            session: Some("c1".into()),
+            ..input("check the queue", 600)
+        };
+        assert_eq!(record(&timer, 0).unwrap().frame_id.as_deref(), Some("c1"));
         assert_eq!(
             message(&made),
             "[Scheduled task: Summarise the week]\n\nSummarise the week\nwith runs"

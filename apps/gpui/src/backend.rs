@@ -904,6 +904,13 @@ impl Backend {
         self.local(move |host| async move { host.delete_schedule(&id).await })
     }
 
+    /// Removes one conversation's timers; how many there were.
+    pub fn cancel_conversation_schedules(&self, project: String, session: String) -> Reply<usize> {
+        self.local(move |host| async move {
+            host.cancel_conversation_schedules(&project, &session).await
+        })
+    }
+
     /// Fires a task at once; the conversation it was sent into.
     pub fn run_schedule_now(&self, id: String) -> Reply<String> {
         self.local(move |host| async move { host.run_schedule_now(&id).await })

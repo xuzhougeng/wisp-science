@@ -23,12 +23,14 @@ pub enum Slash {
     Archive,
     /// Shortens what the model is sent, now.
     Compact,
+    /// Repeats a prompt in this conversation on an interval.
+    Timer,
     /// Lists the commands.
     Help,
 }
 
 /// The commands with what each does, in the order they are listed.
-pub const COMMANDS: [(&str, Slash, &str); 14] = [
+pub const COMMANDS: [(&str, Slash, &str); 15] = [
     ("/review", Slash::Review, "Review this conversation"),
     (
         "/trajectory",
@@ -54,11 +56,16 @@ pub const COMMANDS: [(&str, Slash, &str); 14] = [
         "Archive this conversation's research",
     ),
     ("/compact", Slash::Compact, "Compact this conversation now"),
+    (
+        "/timer",
+        Slash::Timer,
+        "Repeat a prompt here: /timer 30m <prompt>, /timer off",
+    ),
     ("/help", Slash::Help, "List these commands"),
 ];
 
 /// Commands the WebView desktop has that this one does not yet.
-const NOT_HERE: [&str; 5] = ["/timer", "/fork", "/rewind", "/permission", "/share"];
+const NOT_HERE: [&str; 4] = ["/fork", "/rewind", "/permission", "/share"];
 
 /// What a typed message is, when it starts with a command.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -107,10 +114,7 @@ mod tests {
                 "why did the fit fail?\nand when".into()
             ))
         );
-        assert_eq!(
-            parse("/timer 1h check"),
-            Some(Typed::NotHere("/timer".into()))
-        );
+        assert_eq!(parse("/fork now"), Some(Typed::NotHere("/fork".into())));
         // Paths, unknown words and a slash later in the text are messages.
         for message in [
             "/data/reads.fq looks odd",
@@ -167,5 +171,90 @@ mod note_tests {
             "Compacted: about 90000 tokens before, 12000 after. The whole history is archived in the project. Earlier turns were folded into a summary."
         );
         assert!(super::compacted_note(10, 9, false).ends_with("no summary was needed."));
+    }
+}
+
+/// What `/timer` was asked to do.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TimerAsk {
+    /// Send `prompt` into the conversation every `secs` seconds.
+    Every { secs: i64, prompt: String },
+    /// Cancel the conversation's timers.
+    Off,
+}
+
+/// Reads what follows `/timer`: `off`, or an interval (`10m`, `2h`,
+/// `1d`) and the prompt to repeat.
+pub fn timer(rest: &str) -> Result<TimerAsk, &'static str> {
+    use crate::i18n::tr;
+    let rest = rest.trim();
+    if matches!(
+        rest.to_ascii_lowercase().as_str(),
+        "off" | "stop" | "cancel"
+    ) {
+        return Ok(TimerAsk::Off);
+    }
+    let usage = tr("Write /timer 30m <prompt> (m, h or d), or /timer off.");
+    let (interval, prompt) = rest.split_once(char::is_whitespace).ok_or(usage)?;
+    let digits = interval.trim_end_matches(|ch: char| ch.is_ascii_alphabetic());
+    let unit = match interval[digits.len()..].to_ascii_lowercase().as_str() {
+        "m" | "min" => 60,
+        "h" => 3_600,
+        "d" => 86_400,
+        _ => return Err(usage),
+    };
+    let count: i64 = digits.parse().map_err(|_| usage)?;
+    let secs = count.checked_mul(unit).ok_or(usage)?;
+    if !(60..=366 * 86_400).contains(&secs) {
+        return Err(tr(
+            "A timer repeats at least every minute and at most once a year.",
+        ));
+    }
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        return Err(usage);
+    }
+    Ok(TimerAsk::Every {
+        secs,
+        prompt: prompt.to_owned(),
+    })
+}
+
+#[cfg(test)]
+mod timer_tests {
+    use super::*;
+
+    #[test]
+    fn a_timer_is_an_interval_and_a_prompt_or_off() {
+        assert_eq!(
+            timer(" 30m  check the queue\nand report "),
+            Ok(TimerAsk::Every {
+                secs: 1_800,
+                prompt: "check the queue\nand report".into()
+            })
+        );
+        assert_eq!(
+            timer("2H look"),
+            Ok(TimerAsk::Every {
+                secs: 7_200,
+                prompt: "look".into()
+            })
+        );
+        for off in ["off", " OFF ", "stop", "cancel"] {
+            assert_eq!(timer(off), Ok(TimerAsk::Off));
+        }
+        for wrong in [
+            "",
+            "30m",
+            "30m  ",
+            "soon check",
+            "30s check",
+            "0m check",
+            "m check",
+            "400d check",
+            "30x check",
+        ] {
+            assert!(timer(wrong).is_err(), "{wrong}");
+        }
     }
 }

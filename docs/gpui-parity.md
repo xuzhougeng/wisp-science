@@ -239,11 +239,11 @@ row says what is there.
 | Home | Search across projects, conversations and recent artifacts (projects, conversations and files are in the palette; artifacts are not) | store |
 | Home | Import a folder in place, a ZIP, or recover conversations from a workspace; transfer progress | tauri |
 | Home | Sync now, device code, conflict resolution (use remote / use local), cloud-folder badges | shared |
-| Sidebar | Conversation menu: copy title, export conversation, export debug request, reload project rules | tauri |
+| Sidebar | Conversation menu: copy title, export conversation, export debug request, reload project rules — exporting a conversation as Markdown is **Done**, and project rules are read again every turn; the rest is Missing | tauri |
 | Sidebar | Nested children: branches are nested — **Done**. Sub-agents, explorations and "load earlier" paging — Missing | store |
 | Sidebar | Update-available card; "done / failed in another project" notices (an update check is in Settings, General, and a turn that ends raises a system notification; there is no card in the sidebar) | tauri |
-| Composer | Slash commands: `/timer` `/archive` `/compact` `/fork` `/btw` `/rewind` `/review` `/remember` `/context` `/plan` `/permission` `/save-as-skill` `/skills` `/files` `/upload` `/share` `/trajectory` `/memo` — thirteen run here and are listed under the composer's "/" button; `/timer` `/fork` `/rewind` `/permission` `/share` are Missing | tauri |
-| Composer | Conversation timer: repeat a prompt on an interval, pause, resume, cancel | store |
+| Composer | Slash commands: `/timer` `/archive` `/compact` `/fork` `/btw` `/rewind` `/review` `/remember` `/context` `/plan` `/permission` `/save-as-skill` `/skills` `/files` `/upload` `/share` `/trajectory` `/memo` — fourteen run here and are listed under the composer's "/" button; `/fork` `/rewind` `/permission` `/share` are Missing | tauri |
+| Composer | Conversation timer: repeat a prompt on an interval, pause, resume, cancel — `/timer 30m <prompt>` and `/timer off` are there, each firing a new turn; no pause or resume, and the turn before is not replaced | store |
 | Composer | Queue panel: edit, remove, reorder, "guide now" | tauri |
 | Composer | Plan progress strip; read-only states (sample, archived notebook, sub-agent, frozen branch) | served |
 | Composer | ACP agent conversations and their mode / config options | tauri |

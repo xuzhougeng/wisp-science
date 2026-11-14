@@ -237,6 +237,7 @@ mod tests {
             interval_secs: DAY,
             enabled: true,
             next_run_at: at,
+            session: None,
             runs: vec![],
         };
         assert_eq!(next_label(&row, &zone()), "Next: 2026-11-11 10:00");

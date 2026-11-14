@@ -78,12 +78,75 @@ impl Workspace {
             Slash::Remember => self.show_panel_tab(PanelTab::Memory, window, cx),
             Slash::Archive => self.open_research_archive(window, cx),
             Slash::Compact => self.compact_now(window, cx),
+            Slash::Timer => self.set_timer(rest, window, cx),
             Slash::Help => {
                 self.layers.open(Layer::SlashMenu);
                 self.focus_composer(window, cx);
             }
         }
         cx.notify();
+    }
+
+    /// Sets or cancels the open conversation's timer.
+    fn set_timer(&mut self, rest: String, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(project), Some(session)) =
+            (self.state.project.clone(), self.state.session.clone())
+        else {
+            return;
+        };
+        let ask = match slash::timer(&rest) {
+            Ok(ask) => ask,
+            Err(problem) => {
+                // What was typed comes back, to be corrected.
+                let typed = format!("/timer {rest}");
+                self.state.save_draft(typed.clone());
+                self.composer
+                    .update(cx, |input, cx| input.set_value(typed, window, cx));
+                self.error = Some(problem.to_owned());
+                return;
+            }
+        };
+        let said = |this: &mut Self, result: Result<String, String>, cx: &mut Context<Self>| {
+            match result {
+                Ok(note) => this.notice = Some(note),
+                Err(error) => this.error = Some(error),
+            }
+            cx.notify();
+        };
+        match ask {
+            slash::TimerAsk::Off => {
+                let reply = self.backend.cancel_conversation_schedules(project, session);
+                cx.spawn_in(window, async move |this, cx| {
+                    let result = crate::backend::receive(reply).await.map(|removed| {
+                        crate::i18n::fill(tr("Timers cancelled here: {}"), &[&removed])
+                    });
+                    let _ = this.update(cx, |this, cx| said(this, result, cx));
+                })
+                .detach();
+            }
+            slash::TimerAsk::Every { secs, prompt } => {
+                let reply = self
+                    .backend
+                    .create_schedule(wisp_server::desktop::ScheduleInput {
+                        project,
+                        name: String::new(),
+                        prompt,
+                        interval_secs: secs,
+                        start_at: None,
+                        session: Some(session),
+                    });
+                cx.spawn_in(window, async move |this, cx| {
+                    let result = crate::backend::receive(reply).await.map(|()| {
+                        crate::i18n::fill(
+                            tr("Timer set: {} in this conversation, while the app is open. /timer off cancels it."),
+                            &[&crate::schedules::cadence_label(secs)],
+                        )
+                    });
+                    let _ = this.update(cx, |this, cx| said(this, result, cx));
+                })
+                .detach();
+            }
+        }
     }
 
     /// Compacts the open conversation and says what that did.

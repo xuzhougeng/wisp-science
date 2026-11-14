@@ -935,4 +935,10 @@ pub const ZH: &[(&str, &str)] = &[
     ("Earlier turns were folded into a summary.", "较早的回合已折叠为摘要。"),
     ("Old tool output was pruned; no summary was needed.", "已清理旧的工具输出；无需生成摘要。"),
     ("Compacted: about {} tokens before, {} after. The whole history is archived in the project.", "已压缩：之前约 {} 个 token，之后 {} 个。完整历史已归档在项目中。"),
+    ("Repeat a prompt here: /timer 30m <prompt>, /timer off", "在此重复发送提示词：/timer 30m <提示词>，/timer off"),
+    ("Write /timer 30m <prompt> (m, h or d), or /timer off.", "请写成 /timer 30m <提示词>（m、h 或 d），或 /timer off。"),
+    ("A timer repeats at least every minute and at most once a year.", "定时器最短每分钟一次，最长每年一次。"),
+    ("Timers cancelled here: {}", "此处已取消的定时器：{}"),
+    ("Timer set: {} in this conversation, while the app is open. /timer off cancels it.", "定时器已设置：{}，在此对话中，应用打开期间有效。/timer off 可取消。"),
+    ("A conversation's timer", "对话的定时器"),
 ];

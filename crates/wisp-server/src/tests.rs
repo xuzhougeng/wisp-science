@@ -6202,6 +6202,7 @@ async fn a_scheduled_task_fires_once_per_time_into_a_new_conversation() {
         prompt: prompt.into(),
         interval_secs: 3_600,
         start_at,
+        session: None,
     };
     // A project that is not there, and a form that is not filled in.
     let elsewhere = ScheduleInput {
@@ -6297,6 +6298,47 @@ async fn a_scheduled_task_fires_once_per_time_into_a_new_conversation() {
 
     server.delete_schedule(&due).await.unwrap();
     assert!(server.delete_schedule(&due).await.is_err());
+    assert_eq!(server.schedules().await.unwrap().len(), 1);
+
+    // A conversation's timer is sent into that conversation each time,
+    // and goes when the conversation's timers are cancelled.
+    let bound = ScheduleInput {
+        session: Some(session.clone()),
+        ..task("check the queue again", Some(now - 5))
+    };
+    let stranger = ScheduleInput {
+        session: Some("absent".into()),
+        ..task("nowhere", None)
+    };
+    assert!(server.create_schedule(stranger).await.is_err());
+    server.create_schedule(bound).await.unwrap();
+    let before = server.0.store.list_sessions(PROJECT).await.unwrap().len();
+    assert_eq!(server.fire_due_schedules(now).await.unwrap(), 1);
+    let listed = server.schedules().await.unwrap();
+    let timer = listed
+        .iter()
+        .find(|row| row.session.as_deref() == Some(session.as_str()))
+        .unwrap();
+    assert_eq!(timer.runs[0].session.as_deref(), Some(session.as_str()));
+    assert!(timer.runs[0].error.is_none());
+    wait_for(&server, &session, |s| !s.running).await;
+    assert_eq!(
+        server.0.store.list_sessions(PROJECT).await.unwrap().len(),
+        before,
+        "no new conversation"
+    );
+    assert!(seen
+        .lock()
+        .unwrap()
+        .join("\n")
+        .contains("[Scheduled task: check the queue again]"));
+    assert_eq!(
+        server
+            .cancel_conversation_schedules(PROJECT, &session)
+            .await
+            .unwrap(),
+        1
+    );
     assert_eq!(server.schedules().await.unwrap().len(), 1);
     server.shutdown().await;
 }
