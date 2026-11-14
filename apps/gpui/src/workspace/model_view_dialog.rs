@@ -1,5 +1,6 @@
 //! What the model is sent for the open conversation: a dialog that lists
 //! the saved working set row by row, with how much of it each row is.
+use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{ActiveTheme, Sizable, StyledExt, button::Button};
 
@@ -78,14 +79,14 @@ impl Workspace {
                 div()
                     .text_lg()
                     .font_weight(FontWeight::MEDIUM)
-                    .child("What the model is sent"),
+                    .child(tr("What the model is sent")),
             );
         if let Some(error) = &self.model_view_error {
             card = card.child(error_banner(error, cx));
         }
         match &self.model_view {
             None if self.model_view_error.is_none() => {
-                card = card.child(div().text_sm().text_color(muted).child("Reading…"));
+                card = card.child(div().text_sm().text_color(muted).child(tr("Reading…")));
             }
             None => {}
             Some(view) => {
@@ -181,7 +182,7 @@ impl Workspace {
         card = card.child(
             div().h_flex().justify_end().pt_2().child(
                 Button::new("model-view-close")
-                    .label("Close")
+                    .label(tr("Close"))
                     .small()
                     .on_click(cx.listener(|this, _, window, cx| this.close_model_view(window, cx))),
             ),

@@ -77,7 +77,7 @@ impl Workspace {
         let muted = cx.theme().muted_foreground;
         let page = self.settings_page(cx);
         let Some(view) = &self.usage else {
-            return page.child(div().text_sm().text_color(muted).child("Loading…"));
+            return page.child(div().text_sm().text_color(muted).child(tr("Loading…")));
         };
         if view.projects.is_empty() {
             return page.child(div().text_sm().text_color(muted).child(tr(
@@ -220,7 +220,7 @@ impl Workspace {
         let muted = cx.theme().muted_foreground;
         let page = self.settings_page(cx);
         let Some(view) = &self.storage else {
-            return page.child(div().text_sm().text_color(muted).child("Loading…"));
+            return page.child(div().text_sm().text_color(muted).child(tr("Loading…")));
         };
         let folder = std::path::PathBuf::from(&view.data_dir);
         let line = |name: &'static str, note: &'static str, bytes: u64| {

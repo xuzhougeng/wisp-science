@@ -1,6 +1,7 @@
 //! Moving a whole project between computers: writing it as an archive and
 //! reading one back in. Where the archive goes, which one is read and
 //! where the project is put are all chosen in the system's own dialogs.
+use crate::i18n::tr;
 use gpui::{prelude::*, *};
 
 use super::Workspace;
@@ -69,7 +70,7 @@ impl Workspace {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("Import".into()),
+            prompt: Some(tr("Import").into()),
         });
         let backend = self.backend.clone();
         cx.spawn_in(window, async move |this, cx| {
@@ -84,7 +85,7 @@ impl Workspace {
                     files: false,
                     directories: true,
                     multiple: false,
-                    prompt: Some("Put the project here".into()),
+                    prompt: Some(tr("Put the project here").into()),
                 })
             }) else {
                 return;
@@ -105,7 +106,7 @@ impl Workspace {
                 this.pending = false;
                 match result {
                     Ok(_) => {
-                        this.notice = Some("The project was imported.".into());
+                        this.notice = Some(tr("The project was imported.").into());
                         this.load_projects(window, cx);
                         this.load_recent(window, cx);
                     }

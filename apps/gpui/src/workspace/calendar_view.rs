@@ -1,6 +1,7 @@
 //! The research calendar: a page that shows one month across every
 //! project, how much happened on each day, and what happened on the day
 //! that is chosen.
+use crate::i18n::tr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{Datelike, Local};
@@ -87,7 +88,10 @@ impl Workspace {
         self.projects
             .iter()
             .find(|project| project.id == id)
-            .map_or_else(|| "A project".to_owned(), |project| project.name.clone())
+            .map_or_else(
+                || tr("A project").to_owned(),
+                |project| project.name.clone(),
+            )
     }
 
     pub(super) fn render_calendar(&self, cx: &mut Context<Self>) -> Div {
@@ -101,79 +105,77 @@ impl Workspace {
         let this_month = Month::containing(now(), &Local);
         let today = today_in(month);
 
-        let mut side =
-            div()
-                .v_flex()
-                .w(px(260.))
-                .flex_shrink_0()
-                .h_full()
-                .p_2()
-                .gap_1()
-                .bg(cx.theme().sidebar)
-                .border_r_1()
-                .border_color(cx.theme().sidebar_border)
-                .child(
-                    nav_row("calendar-back", "arrow-left", "Back", false, true, cx).on_click(
-                        cx.listener(|this, _, window, cx| this.close_calendar(window, cx)),
-                    ),
-                )
-                .child(
-                    div()
-                        .px_2()
-                        .pt_3()
-                        .text_lg()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child("Research calendar"),
-                )
-                .child(div().px_2().pb_2().text_xs().text_color(muted).child(
-                    "How much happened in your projects on each day. Choose a day to see what.",
-                ))
-                .child(
-                    div()
-                        .h_flex()
-                        .gap_1()
-                        .px_1()
-                        .child(
-                            icon_button("calendar-previous", "chevron-left", "Earlier month")
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.show_calendar_month(month.previous(), window, cx)
-                                })),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .text_sm()
-                                .font_weight(FontWeight::MEDIUM)
-                                .child(month.label()),
-                        )
-                        .child(
-                            icon_button("calendar-next", "chevron-right", "Later month")
-                                .disabled(month == this_month)
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.show_calendar_month(month.next(), window, cx)
-                                })),
-                        ),
-                )
-                .child(
-                    div().px_1().pt_1().child(
-                        Button::new("calendar-today")
-                            .label("This month")
-                            .xsmall()
-                            .ghost()
+        let mut side = div()
+            .v_flex()
+            .w(px(260.))
+            .flex_shrink_0()
+            .h_full()
+            .p_2()
+            .gap_1()
+            .bg(cx.theme().sidebar)
+            .border_r_1()
+            .border_color(cx.theme().sidebar_border)
+            .child(
+                nav_row("calendar-back", "arrow-left", tr("Back"), false, true, cx)
+                    .on_click(cx.listener(|this, _, window, cx| this.close_calendar(window, cx))),
+            )
+            .child(
+                div()
+                    .px_2()
+                    .pt_3()
+                    .text_lg()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(tr("Research calendar")),
+            )
+            .child(div().px_2().pb_2().text_xs().text_color(muted).child(tr(
+                "How much happened in your projects on each day. Choose a day to see what.",
+            )))
+            .child(
+                div()
+                    .h_flex()
+                    .gap_1()
+                    .px_1()
+                    .child(
+                        icon_button("calendar-previous", "chevron-left", tr("Earlier month"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.show_calendar_month(month.previous(), window, cx)
+                            })),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(month.label()),
+                    )
+                    .child(
+                        icon_button("calendar-next", "chevron-right", tr("Later month"))
                             .disabled(month == this_month)
                             .on_click(cx.listener(move |this, _, window, cx| {
-                                this.show_calendar_month(this_month, window, cx)
+                                this.show_calendar_month(month.next(), window, cx)
                             })),
                     ),
-                )
-                .child(
-                    div()
-                        .px_2()
-                        .pt_3()
-                        .text_xs()
-                        .text_color(muted)
-                        .child("Projects"),
-                );
+            )
+            .child(
+                div().px_1().pt_1().child(
+                    Button::new("calendar-today")
+                        .label(tr("This month"))
+                        .xsmall()
+                        .ghost()
+                        .disabled(month == this_month)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.show_calendar_month(this_month, window, cx)
+                        })),
+                ),
+            )
+            .child(
+                div()
+                    .px_2()
+                    .pt_3()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(tr("Projects")),
+            );
         for project in &self.projects {
             let id = project.id.clone();
             let shown = !self.calendar_hidden.contains(&project.id);
@@ -186,9 +188,9 @@ impl Workspace {
                         .ghost()
                         .selected(shown)
                         .tooltip(if shown {
-                            "Shown; press to leave it out"
+                            tr("Shown; press to leave it out")
                         } else {
-                            "Left out; press to show it"
+                            tr("Left out; press to show it")
                         })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             if !this.calendar_hidden.remove(&id) {
@@ -221,7 +223,7 @@ impl Workspace {
                         .child(if self.error.is_some() {
                             ""
                         } else {
-                            "Loading…"
+                            tr("Loading…")
                         }),
                 ),
             );
@@ -313,7 +315,7 @@ impl Workspace {
                     div()
                         .text_sm()
                         .text_color(muted)
-                        .child("Nothing is recorded for this month."),
+                        .child(tr("Nothing is recorded for this month.")),
                 ),
             );
         };

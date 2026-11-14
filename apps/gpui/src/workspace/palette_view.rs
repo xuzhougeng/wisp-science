@@ -1,6 +1,7 @@
 //! The command palette: one box that finds projects, files and conversations
 //! in every project and runs the window's commands. It is a layer in the
 //! Escape stack, drawn over whatever screen is showing.
+use crate::i18n::tr;
 use std::time::Duration;
 
 use gpui::{prelude::*, *};
@@ -37,8 +38,8 @@ impl Workspace {
             self.palette.reset(mode);
             self.layers.open(Layer::Palette);
             let placeholder = match mode {
-                Mode::Open => "Search conversations, projects and files…",
-                Mode::Attach => "Add a file, a conversation or a skill to this message…",
+                Mode::Open => tr("Search conversations, projects and files…"),
+                Mode::Attach => tr("Add a file, a conversation or a skill to this message…"),
             };
             self.palette_input.update(cx, |input, cx| {
                 input.set_placeholder(placeholder, window, cx);
@@ -369,7 +370,7 @@ impl Workspace {
         if entries.is_empty() {
             list = list.child(div().p_4().text_sm().text_color(muted).child(
                 if self.palette.query.is_empty() {
-                    "Type a file name, a word from a conversation, or a skill.".to_owned()
+                    tr("Type a file name, a word from a conversation, or a skill.").to_owned()
                 } else {
                     format!("Nothing matches “{}”.", self.palette.query)
                 },

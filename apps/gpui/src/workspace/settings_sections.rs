@@ -288,7 +288,7 @@ impl Workspace {
         let muted = cx.theme().muted_foreground;
         let page = self.settings_page(cx);
         let Some(skills) = &self.skills else {
-            return page.child(div().text_sm().text_color(muted).child("Loading…"));
+            return page.child(div().text_sm().text_color(muted).child(tr("Loading…")));
         };
         let query = self.skills_search.read(cx).value().to_string();
         let mut page = page
@@ -315,7 +315,7 @@ impl Workspace {
                     .child(
                         Button::new("skills-reload")
                             .icon(glyph("refresh"))
-                            .label("Reload")
+                            .label(tr("Reload"))
                             .small()
                             .flex_shrink_0()
                             .tooltip(tr("Read the skill folders again"))
@@ -445,7 +445,7 @@ impl Workspace {
         let muted = cx.theme().muted_foreground;
         let page = self.settings_page(cx);
         let Some(connectors) = &self.connectors else {
-            return page.child(div().text_sm().text_color(muted).child("Loading…"));
+            return page.child(div().text_sm().text_color(muted).child(tr("Loading…")));
         };
         let query = self.connectors_search.read(cx).value().to_string();
         let mut page = page
@@ -597,10 +597,11 @@ impl Workspace {
         let language = self.backend.preference(LANGUAGE);
         cx.spawn_in(window, async move |this, cx| {
             let saved = receive(language).await.ok().flatten();
-            let _ = this.update(cx, |this, cx| {
+            let _ = this.update_in(cx, |this, window, cx| {
                 this.language =
                     crate::i18n::Language::from_key(saved.as_deref().unwrap_or_default());
                 crate::i18n::apply(this.language);
+                this.word_fields(window, cx);
                 // Everything on screen is worded again.
                 cx.refresh_windows();
             });
@@ -696,6 +697,7 @@ impl Workspace {
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.language = choice;
                         crate::i18n::apply(choice);
+                        this.word_fields(window, cx);
                         this.save_general(LANGUAGE, choice.key().into(), window, cx);
                         cx.refresh_windows();
                     })),
@@ -831,7 +833,7 @@ impl Workspace {
                 )),
         );
         if self.credentials.is_empty() {
-            page = page.child(div().text_sm().text_color(muted).child("Loading…"));
+            page = page.child(div().text_sm().text_color(muted).child(tr("Loading…")));
         }
         for (row, field) in &self.credentials {
             let id = row.id;
@@ -839,7 +841,7 @@ impl Workspace {
             // what Forget is for.
             let mut buttons = div().h_flex().gap_2().child(
                 Button::new(SharedString::from(format!("credential-save-{id}")))
-                    .label("Save")
+                    .label(tr("Save"))
                     .small()
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.save_credential(id, false, window, cx)
@@ -914,7 +916,7 @@ impl Workspace {
                 div()
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
-                    .child("Loading…"),
+                    .child(tr("Loading…")),
             );
         };
         let (low, high) = defaults.compact_range;
@@ -952,7 +954,7 @@ impl Workspace {
                 )
                 .child(
                     Button::new("steps-save")
-                        .label("Save")
+                        .label(tr("Save"))
                         .small()
                         .on_click(cx.listener(|this, _, window, cx| this.save_steps(window, cx))),
                 ),
@@ -1107,7 +1109,7 @@ impl Workspace {
         let muted = cx.theme().muted_foreground;
         let page = self.settings_page(cx);
         let Some(defaults) = self.turn_defaults else {
-            return page.child(div().text_sm().text_color(muted).child("Loading…"));
+            return page.child(div().text_sm().text_color(muted).child(tr("Loading…")));
         };
         let mode = |id: &'static str, label: &'static str, full_access: bool| {
             Button::new(id)

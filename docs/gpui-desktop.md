@@ -325,10 +325,10 @@ Limits of this slice:
   for a last word without tools. Compaction uses the WebView's keys
   (`auto_compact`, `auto_compact_percent`). Auto-continue, compaction on a
   model switch and after idle hours are not ported.
-- The Chinese interface is not complete: the home page, the sidebar, the
-  transcript's actions, the composer and the conversation's actions are
-  translated; the other pages, text that has a number or a name set into
-  it, the placeholders of text fields and everything the host says
+- The Chinese interface is not complete: the fixed text of the pages,
+  panels and dialogs and the placeholders of text fields are translated;
+  the names of panel tabs, palette commands and settings sections, text
+  that has a number or a name set into it, and everything the host says
   (errors, tool questions) are still English. A text without a
   translation shows in English rather than not at all. The system's
   language is read from the macOS locale, or from `LC_ALL`, `LC_MESSAGES`

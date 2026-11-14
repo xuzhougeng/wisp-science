@@ -1,5 +1,6 @@
 //! The side panel's tabs beside Files: the conversation's runs, which can be
 //! stopped from here, and the files conversations produced.
+use crate::i18n::tr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui::{prelude::*, *};
@@ -153,7 +154,7 @@ impl Workspace {
             .border_color(cx.theme().border)
             .child(tabs)
             .child(
-                icon_button("panel-close", "close", "Close the panel")
+                icon_button("panel-close", "close", tr("Close the panel"))
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_files(window, cx))),
             )
     }
@@ -183,9 +184,9 @@ impl Workspace {
         if runs.is_empty() {
             list = list.child(div().p_3().text_sm().text_color(muted).child(
                 if self.state.session.is_some() {
-                    "This conversation has not started any runs."
+                    tr("This conversation has not started any runs.")
                 } else {
-                    "Open a conversation to see its runs."
+                    tr("Open a conversation to see its runs.")
                 },
             ));
         }
@@ -196,7 +197,11 @@ impl Workspace {
             let toggle = id.clone();
             let mut actions = div().h_flex().gap_1().child(
                 Button::new(SharedString::from(format!("run-{id}")))
-                    .label(if expanded { "Hide output" } else { "Output" })
+                    .label(if expanded {
+                        tr("Hide output")
+                    } else {
+                        tr("Output")
+                    })
                     .xsmall()
                     .ghost()
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -213,7 +218,7 @@ impl Workspace {
                 actions = actions.child(
                     Button::new(SharedString::from(format!("run-cancel-{id}")))
                         .icon(glyph("stop"))
-                        .label("Cancel")
+                        .label(tr("Cancel"))
                         .xsmall()
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.cancel_run(cancel.clone(), window, cx)
@@ -279,11 +284,11 @@ impl Workspace {
             .px_3()
             .py_2()
             .flex_shrink_0()
-            .child(scope("artifacts-own", "This conversation", false))
-            .child(scope("artifacts-all", "Whole project", true))
+            .child(scope("artifacts-own", tr("This conversation"), false))
+            .child(scope("artifacts-all", tr("Whole project"), true))
             .child(div().flex_1())
             .child(
-                icon_button("artifacts-reload", "refresh", "Reload")
+                icon_button("artifacts-reload", "refresh", tr("Reload"))
                     .xsmall()
                     .on_click(cx.listener(|this, _, window, cx| this.load_artifacts(window, cx))),
             );
@@ -296,11 +301,11 @@ impl Workspace {
         if self.artifacts.is_empty() {
             list = list.child(div().p_3().text_sm().text_color(muted).child(
                 if self.artifacts_all {
-                    "No conversation in this project has produced a file yet."
+                    tr("No conversation in this project has produced a file yet.")
                 } else if self.state.session.is_some() {
-                    "This conversation has not produced any files yet."
+                    tr("This conversation has not produced any files yet.")
                 } else {
-                    "Open a conversation, or look at the whole project."
+                    tr("Open a conversation, or look at the whole project.")
                 },
             ));
         }
@@ -352,7 +357,7 @@ impl Workspace {
                     icon_button(
                         ("artifact-star", index),
                         "star",
-                        "Save this figure to favorites",
+                        tr("Save this figure to favorites"),
                     )
                     .xsmall()
                     .on_click(cx.listener(move |this, _, window, cx| {

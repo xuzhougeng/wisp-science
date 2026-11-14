@@ -2,6 +2,7 @@
 //! select mode with its batch actions, the user's groups, and sending the
 //! open conversation to another project. Every surface that opens here is a
 //! layer in the window's Escape stack.
+use crate::i18n::tr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui::{prelude::*, *};
@@ -473,7 +474,7 @@ impl Workspace {
             .child(icon("circle-check").text_color(success))
             .child(div().flex_1().min_w_0().child(message.to_owned()))
             .child(
-                icon_button("notice-close", "close", "Dismiss")
+                icon_button("notice-close", "close", tr("Dismiss"))
                     .xsmall()
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.notice = None;
@@ -486,7 +487,7 @@ impl Workspace {
         let mut menu = popup(190., cx)
             .top(px(34.))
             .right(px(4.))
-            .child(caption("Group by", cx));
+            .child(caption(tr("Group by"), cx));
         for grouping in Grouping::ALL {
             let next = Arrangement {
                 grouping,
@@ -505,7 +506,7 @@ impl Workspace {
                 ),
             );
         }
-        menu = menu.child(caption("Sort by", cx));
+        menu = menu.child(caption(tr("Sort by"), cx));
         for sorting in Sorting::ALL {
             let next = Arrangement {
                 sorting,
@@ -540,7 +541,7 @@ impl Workspace {
         let choose = |folder: Option<String>| {
             cx.listener(move |this: &mut Self, _: &ClickEvent, window, cx| {
                 if batch {
-                    this.run_batch(BatchAction::Group(folder.clone()), "Moved", window, cx)
+                    this.run_batch(BatchAction::Group(folder.clone()), tr("Moved"), window, cx)
                 } else {
                     this.group_current(folder.clone(), window, cx)
                 }
@@ -553,7 +554,7 @@ impl Workspace {
                     .py_1()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child("This project has no groups yet."),
+                    .child(tr("This project has no groups yet.")),
             );
         }
         for folder in &self.folders {
@@ -572,7 +573,7 @@ impl Workspace {
             menu = menu.child(
                 Self::menu_row(
                     SharedString::from(format!("{prefix}-none")),
-                    "No group",
+                    tr("No group"),
                     "",
                     !batch && current.is_none(),
                     cx,
@@ -583,7 +584,7 @@ impl Workspace {
         menu.child(
             Self::menu_row(
                 SharedString::from(format!("{prefix}-new")),
-                "New group…",
+                tr("New group…"),
                 "",
                 false,
                 cx,
@@ -616,7 +617,7 @@ impl Workspace {
                 )
                 .child(
                     Button::new("select-all")
-                        .label(if all { "None" } else { "All" })
+                        .label(if all { tr("None") } else { tr("All") })
                         .xsmall()
                         .ghost()
                         .disabled(shown.is_empty())
@@ -624,7 +625,7 @@ impl Workspace {
                 )
                 .child(
                     Button::new("select-done")
-                        .label("Done")
+                        .label(tr("Done"))
                         .xsmall()
                         .on_click(cx.listener(|this, _, _, cx| this.toggle_select_mode(cx))),
                 );
@@ -632,14 +633,14 @@ impl Workspace {
         let sorting = self.layers.contains(Layer::SortMenu);
         let mut heading = heading.child(div().flex_1().text_xs().text_color(muted).child(
             if self.show_archived {
-                "Archived"
+                tr("Archived")
             } else {
-                "Conversations"
+                tr("Conversations")
             },
         ));
         if !self.show_archived {
             heading = heading.child(
-                icon_button("new-group", "folder-plus", "New group")
+                icon_button("new-group", "folder-plus", tr("New group"))
                     .xsmall()
                     .disabled(disabled)
                     .on_click(
@@ -650,13 +651,13 @@ impl Workspace {
         heading =
             heading
                 .child(
-                    icon_button("select", "check-square", "Select conversations")
+                    icon_button("select", "check-square", tr("Select conversations"))
                         .xsmall()
                         .disabled(disabled || self.sessions.is_empty())
                         .on_click(cx.listener(|this, _, _, cx| this.toggle_select_mode(cx))),
                 )
                 .child(
-                    icon_button("sort", "adjustments", "Sort and group")
+                    icon_button("sort", "adjustments", tr("Sort and group"))
                         .xsmall()
                         .selected(sorting)
                         .on_click(cx.listener(|this, _, _, cx| {
@@ -668,9 +669,9 @@ impl Workspace {
                         "archive-view",
                         "archive",
                         if self.show_archived {
-                            "Back to conversations"
+                            tr("Back to conversations")
                         } else {
-                            "Archived conversations"
+                            tr("Archived conversations")
                         },
                     )
                     .xsmall()
@@ -707,9 +708,9 @@ impl Workspace {
             .child(
                 Button::new("folder-name-save")
                     .label(if self.folder_target.is_some() {
-                        "Save"
+                        tr("Save")
                     } else {
-                        "Add"
+                        tr("Add")
                     })
                     .xsmall()
                     .primary()
@@ -717,7 +718,7 @@ impl Workspace {
                     .on_click(cx.listener(|this, _, window, cx| this.save_folder_name(window, cx))),
             )
             .child(
-                icon_button("folder-name-cancel", "close", "Cancel")
+                icon_button("folder-name-cancel", "close", tr("Cancel"))
                     .xsmall()
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.cancel_sidebar_layer(Layer::FolderName, window, cx)
@@ -790,7 +791,7 @@ impl Workspace {
                 icon_button(
                     SharedString::from(format!("folder-more-{folder}")),
                     "more",
-                    "Group actions",
+                    tr("Group actions"),
                 )
                 .xsmall()
                 .selected(self.folder_layer(Some(folder)) == Some(Layer::FolderMenu))
@@ -821,7 +822,7 @@ impl Workspace {
             .flex_shrink_0()
             .child(
                 Button::new("folder-rename")
-                    .label("Rename")
+                    .label(tr("Rename"))
                     .xsmall()
                     .ghost()
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -829,7 +830,7 @@ impl Workspace {
                     })),
             )
             .child(
-                icon_button("folder-up", "chevron-up", "Move up")
+                icon_button("folder-up", "chevron-up", tr("Move up"))
                     .xsmall()
                     .disabled(first || self.pending)
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -837,7 +838,7 @@ impl Workspace {
                     })),
             )
             .child(
-                icon_button("folder-down", "chevron-down", "Move down")
+                icon_button("folder-down", "chevron-down", tr("Move down"))
                     .xsmall()
                     .disabled(last || self.pending)
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -846,7 +847,7 @@ impl Workspace {
             )
             .child(
                 Button::new("folder-delete")
-                    .label("Delete")
+                    .label(tr("Delete"))
                     .xsmall()
                     .ghost()
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -867,7 +868,7 @@ impl Workspace {
                 div()
                     .text_xs()
                     .text_color(cx.theme().danger)
-                    .child("Delete this group? Its conversations are kept."),
+                    .child(tr("Delete this group? Its conversations are kept.")),
             )
             .child(
                 div()
@@ -875,7 +876,7 @@ impl Workspace {
                     .gap_1()
                     .child(
                         Button::new("folder-delete-confirm")
-                            .label("Delete group")
+                            .label(tr("Delete group"))
                             .xsmall()
                             .danger()
                             .disabled(self.pending)
@@ -885,7 +886,7 @@ impl Workspace {
                     )
                     .child(
                         Button::new("folder-delete-cancel")
-                            .label("Cancel")
+                            .label(tr("Cancel"))
                             .xsmall()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.cancel_sidebar_layer(Layer::ConfirmDeleteFolder, window, cx)
@@ -977,9 +978,9 @@ impl Workspace {
         if rows.is_empty() && self.state.project.is_some() {
             list = list.child(div().px_2().py_1().text_xs().text_color(muted).child(
                 match self.listing(cx) {
-                    Listing::Search => "No conversation matches.",
-                    Listing::Archive => "Nothing is archived.",
-                    Listing::Browse => "No conversations yet.",
+                    Listing::Search => tr("No conversation matches."),
+                    Listing::Archive => tr("Nothing is archived."),
+                    Listing::Browse => tr("No conversations yet."),
                 },
             ));
         }
@@ -1040,9 +1041,9 @@ impl Workspace {
             .border_color(cx.theme().sidebar_border);
         if self.layers.contains(Layer::ConfirmBatchDelete) {
             let what = if count == 1 {
-                "Delete 1 conversation and its messages permanently? \
-                 Project files it wrote are kept."
-                    .to_string()
+                tr("Delete 1 conversation and its messages permanently? \
+                 Project files it wrote are kept.")
+                .to_string()
             } else {
                 format!(
                     "Delete {count} conversations and their messages permanently? \
@@ -1064,17 +1065,17 @@ impl Workspace {
                         .px_1()
                         .child(
                             Button::new("batch-delete-confirm")
-                                .label("Delete permanently")
+                                .label(tr("Delete permanently"))
                                 .xsmall()
                                 .danger()
                                 .disabled(idle)
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.run_batch(BatchAction::Delete, "Deleted", window, cx)
+                                    this.run_batch(BatchAction::Delete, tr("Deleted"), window, cx)
                                 })),
                         )
                         .child(
                             Button::new("batch-delete-cancel")
-                                .label("Cancel")
+                                .label(tr("Cancel"))
                                 .xsmall()
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.cancel_sidebar_layer(Layer::ConfirmBatchDelete, window, cx)
@@ -1088,7 +1089,7 @@ impl Workspace {
         let mut group = div().relative().child(
             Button::new("batch-group")
                 .icon(glyph("folder-move"))
-                .label("Group")
+                .label(tr("Group"))
                 .xsmall()
                 .ghost()
                 .selected(grouping)
@@ -1110,22 +1111,26 @@ impl Workspace {
                 .child(
                     Button::new("batch-archive")
                         .icon(glyph("archive"))
-                        .label(if archived { "Restore" } else { "Archive" })
+                        .label(if archived {
+                            tr("Restore")
+                        } else {
+                            tr("Archive")
+                        })
                         .xsmall()
                         .ghost()
                         .disabled(idle)
                         .on_click(cx.listener(move |this, _, window, cx| {
                             if archived {
-                                this.run_batch(BatchAction::Restore, "Restored", window, cx)
+                                this.run_batch(BatchAction::Restore, tr("Restored"), window, cx)
                             } else {
-                                this.run_batch(BatchAction::Archive, "Archived", window, cx)
+                                this.run_batch(BatchAction::Archive, tr("Archived"), window, cx)
                             }
                         })),
                 )
                 .child(
                     Button::new("batch-delete")
                         .icon(glyph("trash"))
-                        .label("Delete")
+                        .label(tr("Delete"))
                         .xsmall()
                         .ghost()
                         .disabled(idle)
@@ -1135,13 +1140,9 @@ impl Workspace {
                 ),
         );
         if count == 0 {
-            bar = bar.child(
-                div()
-                    .px_2()
-                    .text_xs()
-                    .text_color(muted)
-                    .child("Click conversations to pick them. Shift-click picks a range."),
-            );
+            bar = bar.child(div().px_2().text_xs().text_color(muted).child(tr(
+                "Click conversations to pick them. Shift-click picks a range.",
+            )));
         }
         Some(bar)
     }
@@ -1151,7 +1152,7 @@ impl Workspace {
         let open = self.layers.contains(Layer::GroupMenu);
         let mut button = div().relative().child(
             Button::new("conversation-group")
-                .label("Group")
+                .label(tr("Group"))
                 .small()
                 .ghost()
                 .selected(open)
@@ -1179,7 +1180,7 @@ impl Workspace {
         let open = self.layers.contains(Layer::TransferMenu);
         let mut button = div().relative().child(
             Button::new("conversation-transfer")
-                .label("Move")
+                .label(tr("Move"))
                 .small()
                 .ghost()
                 .selected(open)
@@ -1209,8 +1210,8 @@ impl Workspace {
                 .h_flex()
                 .gap_1()
                 .px_1()
-                .child(mode("transfer-move", "Move", false))
-                .child(mode("transfer-copy", "Copy", true)),
+                .child(mode("transfer-move", tr("Move"), false))
+                .child(mode("transfer-copy", tr("Copy"), true)),
         );
         menu = menu.child(
             div()
@@ -1219,11 +1220,15 @@ impl Workspace {
                 .text_xs()
                 .text_color(muted)
                 .child(if copy {
-                    "A copy of the transcript is added to the project you choose. \
-                     This conversation stays here."
+                    tr(
+                        "A copy of the transcript is added to the project you choose. \
+                     This conversation stays here.",
+                    )
                 } else {
-                    "The transcript moves to the project you choose. Its files, \
-                     runs and artifacts stay in this project."
+                    tr(
+                        "The transcript moves to the project you choose. Its files, \
+                     runs and artifacts stay in this project.",
+                    )
                 }),
         );
         let home_dir = dirs::home_dir().map(|path| path.to_string_lossy().into_owned());
@@ -1254,14 +1259,9 @@ impl Workspace {
                 );
         }
         if !any {
-            targets = targets.child(
-                div()
-                    .px_2()
-                    .py_1()
-                    .text_sm()
-                    .text_color(muted)
-                    .child("There is no other project yet. Open one from the home page."),
-            );
+            targets = targets.child(div().px_2().py_1().text_sm().text_color(muted).child(tr(
+                "There is no other project yet. Open one from the home page.",
+            )));
         }
         button = button.child(deferred(menu.child(targets)));
         button

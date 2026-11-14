@@ -1,5 +1,6 @@
 //! The Notebook tab of the side panel: the code of the open conversation
 //! as cells, with what each run returned.
+use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{ActiveTheme, StyledExt, text::TextView};
 
@@ -68,14 +69,9 @@ impl Workspace {
                     .child(notebook::summary(&cells)),
             );
         if self.before.is_some() {
-            list = list.child(
-                div()
-                    .px_3()
-                    .pt_1()
-                    .text_xs()
-                    .text_color(muted)
-                    .child("Code in earlier messages is listed once they are loaded."),
-            );
+            list = list.child(div().px_3().pt_1().text_xs().text_color(muted).child(tr(
+                "Code in earlier messages is listed once they are loaded.",
+            )));
         }
         for cell in cells {
             let saved = self
@@ -109,25 +105,31 @@ impl Workspace {
                         .child(div().text_xs().text_color(muted).child(if cell.ran {
                             "run"
                         } else {
-                            "shown, not run"
+                            tr("shown, not run")
                         }))
                         .child(div().flex_1())
                         .child(
-                            icon_button(("notebook-copy", cell.number), "copy", "Copy the code")
-                                .on_click(cx.listener(move |_, _, _, cx| {
+                            icon_button(
+                                ("notebook-copy", cell.number),
+                                "copy",
+                                tr("Copy the code"),
+                            )
+                            .on_click(cx.listener(
+                                move |_, _, _, cx| {
                                     cx.write_to_clipboard(ClipboardItem::new_string(
                                         copying.clone(),
                                     ))
-                                })),
+                                },
+                            )),
                         )
                         .child(
                             icon_button(
                                 ("notebook-star", cell.number),
                                 if saved { "star-filled" } else { "star" },
                                 if saved {
-                                    "Take it out of your favorites"
+                                    tr("Take it out of your favorites")
                                 } else {
-                                    "Save the code to your favorites"
+                                    tr("Save the code to your favorites")
                                 },
                             )
                             .on_click(cx.listener(
@@ -140,7 +142,7 @@ impl Workspace {
                             icon_button(
                                 ("notebook-show", cell.number),
                                 "arrow-right",
-                                "Show it in the conversation",
+                                tr("Show it in the conversation"),
                             )
                             .on_click(cx.listener(
                                 move |this, _, _, cx| {
@@ -174,7 +176,7 @@ impl Workspace {
                     div()
                         .text_xs()
                         .text_color(muted)
-                        .child("… the rest is in the conversation"),
+                        .child(tr("… the rest is in the conversation")),
                 );
             }
             list = list.child(block);

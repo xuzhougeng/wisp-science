@@ -1,6 +1,7 @@
 //! The side panel's Memory tab: one switch, the habits the model is shown in
 //! every project, and this project's notes, which it can search. The editor
 //! and the delete question are layers inside the panel.
+use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
@@ -251,9 +252,9 @@ impl Workspace {
         let mut buttons = div().h_flex().flex_wrap().gap_2();
         buttons = match target {
             Target::Remember { .. } => buttons
-                .child(save("memory-save-project", "Save for this project", false).primary())
-                .child(save("memory-save-habit", "Save as a habit", true)),
-            _ => buttons.child(save("memory-save", "Save", false).primary()),
+                .child(save("memory-save-project", tr("Save for this project"), false).primary())
+                .child(save("memory-save-habit", tr("Save as a habit"), true)),
+            _ => buttons.child(save("memory-save", tr("Save"), false).primary()),
         };
         let mut editor = div()
             .v_flex()
@@ -283,7 +284,7 @@ impl Workspace {
         editor.child(
             buttons.child(
                 Button::new("memory-cancel")
-                    .label("Cancel")
+                    .label(tr("Cancel"))
                     .small()
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.close_memory_layer(Layer::MemoryEditor, window, cx)
@@ -325,8 +326,10 @@ impl Workspace {
         }
         if asking {
             let what = match target {
-                Target::Note(_) => "Delete this day's note? The file is removed from the project.",
-                _ => "Delete this habit? It stops applying in every project.",
+                Target::Note(_) => {
+                    tr("Delete this day's note? The file is removed from the project.")
+                }
+                _ => tr("Delete this habit? It stops applying in every project."),
             };
             return card
                 .child(div().text_xs().text_color(cx.theme().danger).child(what))
@@ -336,7 +339,7 @@ impl Workspace {
                         .gap_1()
                         .child(
                             Button::new("memory-delete-confirm")
-                                .label("Delete")
+                                .label(tr("Delete"))
                                 .xsmall()
                                 .danger()
                                 .disabled(self.pending)
@@ -346,7 +349,7 @@ impl Workspace {
                         )
                         .child(
                             Button::new("memory-delete-cancel")
-                                .label("Cancel")
+                                .label(tr("Cancel"))
                                 .xsmall()
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.close_memory_layer(Layer::ConfirmDeleteMemory, window, cx)
@@ -361,7 +364,7 @@ impl Workspace {
                 .justify_end()
                 .gap_0p5()
                 .child(
-                    icon_button(SharedString::from(format!("{id}-edit")), "edit", "Edit")
+                    icon_button(SharedString::from(format!("{id}-edit")), "edit", tr("Edit"))
                         .xsmall()
                         .on_click(
                             cx.listener(move |this, _, window, cx| match editing.clone() {
@@ -375,7 +378,7 @@ impl Workspace {
                     icon_button(
                         SharedString::from(format!("{id}-delete")),
                         "trash",
-                        "Delete",
+                        tr("Delete"),
                     )
                     .xsmall()
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -434,7 +437,7 @@ impl Workspace {
         }
         let Some(view) = &self.memory else {
             return list
-                .child(div().text_sm().text_color(muted).child("Loading…"))
+                .child(div().text_sm().text_color(muted).child(tr("Loading…")))
                 .into_any_element();
         };
         let enabled = view.enabled;
@@ -452,21 +455,25 @@ impl Workspace {
                         .flex_1()
                         .min_w_0()
                         .child(div().text_sm().child(if enabled {
-                            "Memory is on"
+                            tr("Memory is on")
                         } else {
-                            "Memory is off"
+                            tr("Memory is off")
                         }))
                         .child(div().text_xs().text_color(muted).child(if enabled {
                             memory::summary(view)
                         } else {
-                            "The model is not shown habits and cannot search notes. \
-                             Nothing is deleted."
-                                .to_owned()
+                            tr("The model is not shown habits and cannot search notes. \
+                             Nothing is deleted.")
+                            .to_owned()
                         })),
                 )
                 .child(
                     Button::new("memory-toggle")
-                        .label(if enabled { "Turn off" } else { "Turn on" })
+                        .label(if enabled {
+                            tr("Turn off")
+                        } else {
+                            tr("Turn on")
+                        })
                         .small()
                         .flex_shrink_0()
                         .disabled(self.pending)
@@ -477,19 +484,18 @@ impl Workspace {
         );
 
         list = list.child(Self::memory_heading(
-            "Habits",
-            "Shown to the model in every project.",
+            tr("Habits"),
+            tr("Shown to the model in every project."),
             Button::new("habit-new")
                 .icon(glyph("plus"))
-                .label("Add")
+                .label(tr("Add"))
                 .on_click(cx.listener(|this, _, window, cx| this.edit_habit(None, window, cx))),
             cx,
         ));
         if view.habits.is_empty() {
-            list =
-                list.child(div().text_xs().text_color(muted).child(
-                    "None yet. For example: \"Report medians with the interquartile range.\"",
-                ));
+            list = list.child(div().text_xs().text_color(muted).child(tr(
+                "None yet. For example: \"Report medians with the interquartile range.\"",
+            )));
         }
         for habit in &view.habits {
             list = list.child(self.memory_card(
@@ -503,22 +509,21 @@ impl Workspace {
 
         let today = view.today.clone();
         list = list.child(Self::memory_heading(
-            "This project's notes",
-            "One per day, in .wisp/memory. The model searches them when it needs to.",
+            tr("This project's notes"),
+            tr("One per day, in .wisp/memory. The model searches them when it needs to."),
             Button::new("note-new")
                 .icon(glyph("note-plus"))
-                .label("Today")
-                .tooltip("Open today's note")
+                .label(tr("Today"))
+                .tooltip(tr("Open today's note"))
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.edit_note(today.clone(), window, cx)
                 })),
             cx,
         ));
         if view.notes.is_empty() {
-            list =
-                list.child(div().text_xs().text_color(muted).child(
-                    "None yet. Save a finding from a message with the memory button under it.",
-                ));
+            list = list.child(div().text_xs().text_color(muted).child(tr(
+                "None yet. Save a finding from a message with the memory button under it.",
+            )));
         }
         for note in &view.notes {
             list = list.child(self.memory_card(

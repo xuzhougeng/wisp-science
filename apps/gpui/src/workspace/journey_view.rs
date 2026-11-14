@@ -1,6 +1,7 @@
 //! The research journey of the open project: a page that shows one month
 //! of what happened, grouped by day, and lets the researcher add records
 //! of their own.
+use crate::i18n::tr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::Local;
@@ -156,21 +157,26 @@ impl Workspace {
                 div()
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
-                    .child("Add a record"),
+                    .child(tr("Add a record")),
             )
-            .child(div().text_xs().text_color(muted).child(
+            .child(div().text_xs().text_color(muted).child(tr(
                 "Something you want the project to remember as of now. The model does not \
                  write these; you do.",
-            ))
+            )))
             .child(kinds)
             .child(
                 div()
                     .text_xs()
                     .text_color(muted)
-                    .child("What happened, in a line"),
+                    .child(tr("What happened, in a line")),
             )
             .child(Input::new(&self.journal_fields[0]).small())
-            .child(div().text_xs().text_color(muted).child("Details, if any"))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(tr("Details, if any")),
+            )
             .child(
                 div()
                     .h(px(120.))
@@ -182,7 +188,7 @@ impl Workspace {
                     .gap_2()
                     .child(
                         Button::new("journal-save")
-                            .label("Save")
+                            .label(tr("Save"))
                             .small()
                             .primary()
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -191,7 +197,7 @@ impl Workspace {
                     )
                     .child(
                         Button::new("journal-cancel")
-                            .label("Cancel")
+                            .label(tr("Cancel"))
                             .small()
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.layers.close(Layer::JournalForm);
@@ -228,7 +234,7 @@ impl Workspace {
             .border_r_1()
             .border_color(cx.theme().sidebar_border)
             .child(
-                nav_row("journey-back", "arrow-left", "Back", false, true, cx)
+                nav_row("journey-back", "arrow-left", tr("Back"), false, true, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.close_journey(window, cx))),
             )
             .child(
@@ -237,7 +243,7 @@ impl Workspace {
                     .pt_3()
                     .text_lg()
                     .font_weight(FontWeight::MEDIUM)
-                    .child("Research journey"),
+                    .child(tr("Research journey")),
             )
             .child(
                 div()
@@ -248,21 +254,20 @@ impl Workspace {
                     .text_color(muted)
                     .child(project_name),
             )
-            .child(div().px_2().pb_2().text_xs().text_color(muted).child(
+            .child(div().px_2().pb_2().text_xs().text_color(muted).child(tr(
                 "What happened in this project, day by day: what you asked, runs, files, \
                      decisions, and what you wrote down yourself.",
-            ))
+            )))
             .child(
                 div()
                     .h_flex()
                     .gap_1()
                     .px_1()
                     .child(
-                        icon_button("journey-previous", "chevron-left", "Earlier month").on_click(
-                            cx.listener(move |this, _, window, cx| {
+                        icon_button("journey-previous", "chevron-left", tr("Earlier month"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
                                 this.show_month(month.previous(), window, cx)
-                            }),
-                        ),
+                            })),
                     )
                     .child(
                         div()
@@ -272,7 +277,7 @@ impl Workspace {
                             .child(month.label()),
                     )
                     .child(
-                        icon_button("journey-next", "chevron-right", "Later month")
+                        icon_button("journey-next", "chevron-right", tr("Later month"))
                             // There is nothing after the present.
                             .disabled(month == this_month)
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -283,7 +288,7 @@ impl Workspace {
             .child(
                 div().px_1().pt_1().child(
                     Button::new("journey-today")
-                        .label("This month")
+                        .label(tr("This month"))
                         .xsmall()
                         .ghost()
                         .disabled(month == this_month)
@@ -303,7 +308,7 @@ impl Workspace {
                 div().px_1().pt_2().child(
                     Button::new("journey-add")
                         .icon(glyph("plus"))
-                        .label("Add a record")
+                        .label(tr("Add a record"))
                         .small()
                         .on_click(
                             cx.listener(|this, _, window, cx| this.open_journal_form(window, cx)),
@@ -335,7 +340,7 @@ impl Workspace {
                         .child(if self.error.is_some() {
                             ""
                         } else {
-                            "Loading…"
+                            tr("Loading…")
                         }),
                 ),
             );

@@ -2,6 +2,7 @@
 //! saves it; the side panel's Highlights tab lists what this conversation
 //! saved; the Favorites page, a layer shown in place of the window like
 //! Settings, lists everything from every project.
+use crate::i18n::tr;
 use std::{
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -188,14 +189,21 @@ impl Workspace {
                 div()
                     .h_flex()
                     .gap_2()
-                    .child(div().flex_1().min_w_0().text_xs().text_color(muted).child(
-                        "What you saved from this conversation. Everything you saved, \
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(tr(
+                                "What you saved from this conversation. Everything you saved, \
                          from every project, is in Favorites.",
-                    ))
+                            )),
+                    )
                     .child(
                         Button::new("highlights-all")
                             .icon(glyph("star"))
-                            .label("Favorites")
+                            .label(tr("Favorites"))
                             .small()
                             .flex_shrink_0()
                             .on_click(
@@ -209,9 +217,9 @@ impl Workspace {
         if self.saved.is_empty() {
             list = list.child(div().text_sm().text_color(muted).child(
                 if self.state.session.is_some() {
-                    "Nothing saved yet. Press the star under a message to keep it."
+                    tr("Nothing saved yet. Press the star under a message to keep it.")
                 } else {
-                    "Open a conversation to see what was saved from it."
+                    tr("Open a conversation to see what was saved from it.")
                 },
             ));
         }
@@ -228,10 +236,10 @@ impl Workspace {
                 actions = actions.child(
                     Button::new(("saved-use", index))
                         .icon(glyph("arrow-right"))
-                        .label("Use")
+                        .label(tr("Use"))
                         .xsmall()
                         .ghost()
-                        .tooltip("Put this into the message box")
+                        .tooltip(tr("Put this into the message box"))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.use_saved(&using, window, cx)
                         })),
@@ -240,7 +248,7 @@ impl Workspace {
             actions = actions.child(div().flex_1());
             if words {
                 actions = actions.child(
-                    icon_button(("saved-copy", index), "copy", "Copy")
+                    icon_button(("saved-copy", index), "copy", tr("Copy"))
                         .xsmall()
                         .on_click(cx.listener(move |_, _, _, cx| {
                             cx.write_to_clipboard(ClipboardItem::new_string(copying.clone()))
@@ -249,7 +257,7 @@ impl Workspace {
             }
             actions = actions
                 .child(
-                    icon_button(("saved-open", index), "expand", "Open in Favorites")
+                    icon_button(("saved-open", index), "expand", tr("Open in Favorites"))
                         .xsmall()
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.open_favorites(window, cx);
@@ -260,7 +268,7 @@ impl Workspace {
                     icon_button(
                         ("saved-remove", index),
                         "star-filled",
-                        "Remove from favorites",
+                        tr("Remove from favorites"),
                     )
                     .xsmall()
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -414,7 +422,7 @@ impl Workspace {
             actions = actions.child(
                 Button::new("favorite-copy")
                     .icon(glyph("copy"))
-                    .label("Copy")
+                    .label(tr("Copy"))
                     .small()
                     .on_click(cx.listener(move |_, _, _, cx| {
                         cx.write_to_clipboard(ClipboardItem::new_string(copying.clone()))
@@ -424,13 +432,13 @@ impl Workspace {
         actions = actions.child(
             Button::new("favorite-source")
                 .icon(glyph("chat"))
-                .label("Open the conversation")
+                .label(tr("Open the conversation"))
                 .small()
                 .disabled(!here)
                 .tooltip(if here {
-                    "Go to the conversation this was saved from"
+                    tr("Go to the conversation this was saved from")
                 } else {
-                    "The project this came from is no longer in Wisp"
+                    tr("The project this came from is no longer in Wisp")
                 })
                 .on_click(cx.listener(|this, _, window, cx| this.open_favorite_source(window, cx))),
         );
@@ -439,7 +447,7 @@ impl Workspace {
             actions
                 .child(
                     Button::new("favorite-remove-confirm")
-                        .label("Remove for good")
+                        .label(tr("Remove for good"))
                         .small()
                         .danger()
                         .on_click(cx.listener(move |this, _, window, cx| {
@@ -448,7 +456,7 @@ impl Workspace {
                 )
                 .child(
                     Button::new("favorite-remove-cancel")
-                        .label("Keep")
+                        .label(tr("Keep"))
                         .small()
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.layers.close(Layer::ConfirmRemoveFavorite);
@@ -459,7 +467,7 @@ impl Workspace {
             actions.child(
                 Button::new("favorite-remove")
                     .icon(glyph("trash"))
-                    .label("Remove")
+                    .label(tr("Remove"))
                     .small()
                     .ghost()
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -490,10 +498,10 @@ impl Workspace {
             )
             .child(actions);
         if self.layers.contains(Layer::ConfirmRemoveFavorite) {
-            detail = detail.child(div().text_sm().text_color(cx.theme().danger).child(
+            detail = detail.child(div().text_sm().text_color(cx.theme().danger).child(tr(
                 "Remove this from your favorites? The copy kept here is deleted; \
                  the conversation it came from is not touched.",
-            ));
+            )));
         }
         if let Some(path) = &item.source_path {
             detail = detail.child(
@@ -515,7 +523,7 @@ impl Workspace {
                 None => div()
                     .text_sm()
                     .text_color(muted)
-                    .child("This picture cannot be shown here."),
+                    .child(tr("This picture cannot be shown here.")),
             });
         }
         detail.child(
@@ -559,14 +567,22 @@ impl Workspace {
             || self.favorites_filter != Filter::All;
         match &self.favorites {
             None => {
-                list = list.child(div().p_2().text_sm().text_color(muted).child("Loading…"));
+                list = list.child(
+                    div()
+                        .p_2()
+                        .text_sm()
+                        .text_color(muted)
+                        .child(tr("Loading…")),
+                );
             }
             Some(items) if items.is_empty() => {
                 list = list.child(div().p_2().text_sm().text_color(muted).child(if searching {
-                    "Nothing saved matches."
+                    tr("Nothing saved matches.")
                 } else {
-                    "Nothing saved yet. Press the star under a message, or beside \
-                     an image in Artifacts, to keep it here."
+                    tr(
+                        "Nothing saved yet. Press the star under a message, or beside \
+                     an image in Artifacts, to keep it here.",
+                    )
                 }));
             }
             Some(items) => {
@@ -624,7 +640,7 @@ impl Workspace {
             .border_r_1()
             .border_color(cx.theme().sidebar_border)
             .child(
-                nav_row("favorites-back", "arrow-left", "Back", false, true, cx)
+                nav_row("favorites-back", "arrow-left", tr("Back"), false, true, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.close_favorites(window, cx))),
             )
             .child(
@@ -634,13 +650,11 @@ impl Workspace {
                     .pb_1()
                     .text_lg()
                     .font_weight(FontWeight::MEDIUM)
-                    .child("Favorites"),
+                    .child(tr("Favorites")),
             )
-            .child(
-                div().px_2().pb_1().text_xs().text_color(muted).child(
-                    "Passages, code and figures you saved, as they were when you saved them.",
-                ),
-            )
+            .child(div().px_2().pb_1().text_xs().text_color(muted).child(tr(
+                "Passages, code and figures you saved, as they were when you saved them.",
+            )))
             .child(
                 div().py_1().child(
                     Input::new(&self.favorites_search)
@@ -667,7 +681,7 @@ impl Workspace {
                     .p_6()
                     .text_sm()
                     .text_color(muted)
-                    .child("Choose something on the left to read it."),
+                    .child(tr("Choose something on the left to read it.")),
             ),
         };
         div().h_flex().size_full().child(side).child(body)

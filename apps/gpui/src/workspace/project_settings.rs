@@ -1,6 +1,7 @@
 //! Project settings: a dialog for a project's name, its description, and
 //! the rules the model is given in it. It is a layer of its own on the
 //! Escape stack, opened from the home page or from inside the project.
+use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
@@ -124,23 +125,28 @@ impl Workspace {
                 div()
                     .text_lg()
                     .font_weight(FontWeight::MEDIUM)
-                    .child("Project settings"),
+                    .child(tr("Project settings")),
             );
         if let Some(error) = &self.project_form_error {
             card = card.child(error_banner(error, cx));
         }
         card = card
-            .child(label("Name", "What the project is called in lists."))
+            .child(label(
+                tr("Name"),
+                tr("What the project is called in lists."),
+            ))
             .child(Input::new(&self.project_fields[0]).small())
             .child(label(
-                "Description",
-                "For you: what the project is about. The model is not shown it.",
+                tr("Description"),
+                tr("For you: what the project is about. The model is not shown it."),
             ))
             .child(Input::new(&self.project_fields[1]).small())
             .child(label(
-                "Rules for the model",
-                "What Wisp should always do or never do in this project, in your own words. \
+                tr("Rules for the model"),
+                tr(
+                    "What Wisp should always do or never do in this project, in your own words. \
                  Kept in the project folder as .wisp/WISP.md and read again every turn.",
+                ),
             ))
             .child(
                 div()
@@ -155,7 +161,7 @@ impl Workspace {
                     .pt_1()
                     .child(
                         Button::new("project-settings-cancel")
-                            .label("Cancel")
+                            .label(tr("Cancel"))
                             .small()
                             .on_click(
                                 cx.listener(|this, _, _, cx| this.close_project_settings(cx)),
@@ -163,7 +169,7 @@ impl Workspace {
                     )
                     .child(
                         Button::new("project-settings-save")
-                            .label("Save")
+                            .label(tr("Save"))
                             .small()
                             .primary()
                             .disabled(!self.project_form_ready)

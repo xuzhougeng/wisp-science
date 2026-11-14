@@ -1,6 +1,7 @@
 //! The review of the open conversation: a dialog that has the model read
 //! the conversation as a reviewer and lists what it found, with a way to
 //! ask for the corrections.
+use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Sizable, StyledExt,
@@ -135,7 +136,7 @@ impl Workspace {
             let found = found.clone();
             line = line.child(
                 Button::new("review-banner-see")
-                    .label("See")
+                    .label(tr("See"))
                     .small()
                     .on_click(
                         cx.listener(move |this, _, _, cx| this.see_review(found.clone(), cx)),
@@ -144,7 +145,7 @@ impl Workspace {
         }
         if *outcome != wisp_server::desktop::ReviewOutcome::Reading {
             line = line.child(
-                super::shell::icon_button("review-banner-dismiss", "close", "Put this away")
+                super::shell::icon_button("review-banner-dismiss", "close", tr("Put this away"))
                     .xsmall()
                     .on_click(cx.listener(|this, _, window, cx| this.dismiss_review(window, cx))),
             );
@@ -194,15 +195,15 @@ impl Workspace {
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(div().text_lg().font_weight(FontWeight::MEDIUM).child(
                 if self.review_turn.is_some() {
-                    "Review of one turn"
+                    tr("Review of one turn")
                 } else {
-                    "Review"
+                    tr("Review")
                 },
             ))
-            .child(div().text_xs().text_color(muted).child(
+            .child(div().text_xs().text_color(muted).child(tr(
                 "The conversation's model reads it as a reviewer and reports claims that \
                  its own tool output does not support. Nothing is added to the conversation.",
-            ));
+            )));
         let mut actions = div().h_flex().gap_2().justify_end().pt_2();
         match &self.review {
             None | Some(Asked::Reading) => {
@@ -211,7 +212,7 @@ impl Workspace {
                         .py_4()
                         .text_sm()
                         .text_color(muted)
-                        .child("Reading the conversation…"),
+                        .child(tr("Reading the conversation…")),
                 );
             }
             Some(Asked::Failed(error)) => {
@@ -263,9 +264,9 @@ impl Workspace {
                                     .text_color(tone_color(tone, cx))
                                     .child(heading),
                             )
-                            .child(line("Claim", &finding.claim))
-                            .child(line("Evidence", &finding.evidence))
-                            .child(line("Fix", &finding.fix)),
+                            .child(line(tr("Claim"), &finding.claim))
+                            .child(line(tr("Evidence"), &finding.evidence))
+                            .child(line(tr("Fix"), &finding.fix)),
                     );
                 }
                 card = card.child(
@@ -278,10 +279,10 @@ impl Workspace {
                 if !found.findings.is_empty() {
                     actions = actions.child(
                         Button::new("review-correct")
-                            .label("Ask Wisp to correct")
+                            .label(tr("Ask Wisp to correct"))
                             .small()
                             .primary()
-                            .tooltip("Put the corrections in the composer, to send or change")
+                            .tooltip(tr("Put the corrections in the composer, to send or change"))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.ask_for_corrections(window, cx)
                             })),
@@ -291,7 +292,7 @@ impl Workspace {
         }
         actions = actions.child(
             Button::new("review-close")
-                .label("Close")
+                .label(tr("Close"))
                 .small()
                 .on_click(cx.listener(|this, _, window, cx| this.close_review(window, cx))),
         );
@@ -316,7 +317,7 @@ impl Workspace {
 
     fn review_again(&self, cx: &mut Context<Self>) -> Button {
         Button::new("review-again")
-            .label("Review again")
+            .label(tr("Review again"))
             .small()
             .ghost()
             .on_click(cx.listener(|this, _, window, cx| this.ask_review(window, cx)))

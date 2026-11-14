@@ -190,7 +190,7 @@ impl Workspace {
                     tr("Add an MCP server")
                 },
             ))
-            .child(label("Name"))
+            .child(label(tr("Name")))
             .child(Input::new(&self.mcp_name).small())
             .child(
                 div()
@@ -225,7 +225,7 @@ impl Workspace {
                 .pt_1()
                 .child(
                     Button::new("mcp-save")
-                        .label("Save")
+                        .label(tr("Save"))
                         .small()
                         .primary()
                         .on_click(cx.listener(|this, _, window, cx| this.save_mcp(window, cx))),
@@ -307,7 +307,7 @@ impl Workspace {
                 )
                 .child(
                     Button::new("mcp-remove-cancel")
-                        .label("Keep")
+                        .label(tr("Keep"))
                         .xsmall()
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.layers.close(Layer::ConfirmRemoveMcp);
@@ -399,7 +399,7 @@ impl Workspace {
                 .child(
                     Button::new("mcp-add")
                         .icon(glyph("plus"))
-                        .label("Add")
+                        .label(tr("Add"))
                         .small()
                         .flex_shrink_0()
                         .disabled(self.layers.contains(Layer::McpForm))
@@ -413,7 +413,13 @@ impl Workspace {
         }
         match &self.mcp_servers {
             None => {
-                section = section.child(div().pt_2().text_xs().text_color(muted).child("Loading…"));
+                section = section.child(
+                    div()
+                        .pt_2()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(tr("Loading…")),
+                );
             }
             Some(servers) if servers.is_empty() => {
                 if !self.layers.contains(Layer::McpForm) {

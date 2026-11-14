@@ -546,7 +546,7 @@ impl Workspace {
                     }),
             )
             .child(field(
-                "Name",
+                tr("Name"),
                 tr("What this model is called in lists and in the composer."),
                 &form.name,
             ))
@@ -648,7 +648,11 @@ impl Workspace {
             .gap_2()
             .child(
                 Button::new("settings-save")
-                    .label(if saved.is_some() { "Save" } else { "Add" })
+                    .label(if saved.is_some() {
+                        tr("Save")
+                    } else {
+                        tr("Add")
+                    })
                     .primary()
                     .disabled(locked)
                     .on_click(cx.listener(|this, _, window, cx| this.save_settings(window, cx))),
@@ -700,7 +704,7 @@ impl Workspace {
             .border_r_1()
             .border_color(cx.theme().sidebar_border)
             .child(
-                nav_row("settings-back", "arrow-left", "Back", false, true, cx)
+                nav_row("settings-back", "arrow-left", tr("Back"), false, true, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.close_settings(window, cx))),
             )
             .child(

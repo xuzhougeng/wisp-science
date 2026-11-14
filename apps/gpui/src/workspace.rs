@@ -29,6 +29,7 @@ mod shell;
 mod trajectory_view;
 mod transfer_view;
 
+use crate::i18n::tr;
 use std::{
     collections::{HashMap, HashSet},
     time::Duration,
@@ -329,25 +330,27 @@ impl Workspace {
             InputState::new(window, cx)
                 .auto_grow(3, 9)
                 .placeholder(if cfg!(target_os = "macos") {
-                    "Describe your research task…  ⌘Return to send"
+                    tr("Describe your research task…  ⌘Return to send")
                 } else {
-                    "Describe your research task…  Ctrl+Enter to send"
+                    tr("Describe your research task…  Ctrl+Enter to send")
                 })
         });
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search conversations…"));
-        let rename = cx.new(|cx| InputState::new(window, cx).placeholder("Conversation title"));
-        let folder_name = cx.new(|cx| InputState::new(window, cx).placeholder("Group name"));
+        let search =
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Search conversations…")));
+        let rename = cx.new(|cx| InputState::new(window, cx).placeholder(tr("Conversation title")));
+        let folder_name = cx.new(|cx| InputState::new(window, cx).placeholder(tr("Group name")));
         let delete_name_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Type the project's name"));
-        let memo_title = cx.new(|cx| InputState::new(window, cx).placeholder("Title (optional)"));
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Type the project's name")));
+        let memo_title =
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Title (optional)")));
         let memo_body = cx.new(|cx| {
             InputState::new(window, cx)
                 .multi_line(true)
-                .placeholder("A prompt you reuse, a server address, a reminder…")
+                .placeholder(tr("A prompt you reuse, a server address, a reminder…"))
         });
         let settings = settings_view::SettingsForm::new(window, cx);
         let palette_input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Search conversations, projects and files…")
+            InputState::new(window, cx).placeholder(tr("Search conversations, projects and files…"))
         });
         // In-editor search would be a nested surface outside the Escape stack.
         let file_view = cx.new(|cx| {
@@ -357,7 +360,7 @@ impl Workspace {
         });
         let memory_text = cx.new(|cx| InputState::new(window, cx).multi_line(true));
         let steps_input = cx.new(|cx| InputState::new(window, cx));
-        let mcp_name = cx.new(|cx| InputState::new(window, cx).placeholder("Lab notebook"));
+        let mcp_name = cx.new(|cx| InputState::new(window, cx).placeholder(tr("Lab notebook")));
         let env_fields = ["gpu", "10.0.0.8", "", "22", "~/.ssh/id_ed25519", "", ""]
             .map(|hint| cx.new(|cx| InputState::new(window, cx).placeholder(hint)));
         let network_fields = [
@@ -375,29 +378,30 @@ impl Workspace {
             cx.new(|cx| {
                 InputState::new(window, cx)
                     .multi_line(true)
-                    .placeholder("Always report effect sizes with confidence intervals.")
+                    .placeholder(tr("Always report effect sizes with confidence intervals."))
             }),
         ];
         let find_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Find in this conversation…"));
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Find in this conversation…")));
         let file_name_input = cx.new(|cx| InputState::new(window, cx));
-        let aside_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Ask about this conversation…"));
+        let aside_input = cx
+            .new(|cx| InputState::new(window, cx).placeholder(tr("Ask about this conversation…")));
         let journey_search =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Filter this month…"));
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Filter this month…")));
         let journal_fields = [
-            cx.new(|cx| InputState::new(window, cx).placeholder("The reads are clean")),
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("The reads are clean"))),
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
         ];
         let mcp_target = cx.new(|cx| InputState::new(window, cx));
         let mcp_token = cx.new(|cx| InputState::new(window, cx).masked(true));
-        let skills_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find a skill…"));
+        let skills_search =
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Find a skill…")));
         let settings_search =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Search settings…"));
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Search settings…")));
         let connectors_search =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Find a connector or a tool…"));
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Find a connector or a tool…")));
         let favorites_search =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Search your favorites…"));
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Search your favorites…")));
         let handle = window.window_handle();
         let weak = cx.weak_entity();
         let subscriptions = vec![
@@ -867,6 +871,44 @@ impl Workspace {
     fn restore_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.file_view.read(cx).focus_handle(cx).is_focused(window) {
             self.focus_composer(window, cx);
+        }
+    }
+
+    /// Words the empty text fields again, after the language changed: a
+    /// field keeps the placeholder it was made with otherwise.
+    pub(super) fn word_fields(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let composer = if cfg!(target_os = "macos") {
+            tr("Describe your research task…  ⌘Return to send")
+        } else {
+            tr("Describe your research task…  Ctrl+Enter to send")
+        };
+        let fields = [
+            (&self.composer, composer),
+            (&self.search, tr("Search conversations…")),
+            (&self.rename, tr("Conversation title")),
+            (&self.folder_name, tr("Group name")),
+            (&self.delete_name_input, tr("Type the project's name")),
+            (&self.memo_title, tr("Title (optional)")),
+            (
+                &self.memo_body,
+                tr("A prompt you reuse, a server address, a reminder…"),
+            ),
+            (&self.mcp_name, tr("Lab notebook")),
+            (
+                &self.project_fields[2],
+                tr("Always report effect sizes with confidence intervals."),
+            ),
+            (&self.find_input, tr("Find in this conversation…")),
+            (&self.aside_input, tr("Ask about this conversation…")),
+            (&self.journey_search, tr("Filter this month…")),
+            (&self.journal_fields[0], tr("The reads are clean")),
+            (&self.skills_search, tr("Find a skill…")),
+            (&self.settings_search, tr("Search settings…")),
+            (&self.connectors_search, tr("Find a connector or a tool…")),
+            (&self.favorites_search, tr("Search your favorites…")),
+        ];
+        for (field, text) in fields {
+            field.update(cx, |input, cx| input.set_placeholder(text, window, cx));
         }
     }
 
@@ -1740,7 +1782,7 @@ impl Workspace {
             files: true,
             directories: false,
             multiple: true,
-            prompt: Some("Attach".into()),
+            prompt: Some(tr("Attach").into()),
         });
         let backend = self.backend.clone();
         cx.spawn_in(window, async move |this, cx| {
@@ -2202,7 +2244,7 @@ impl Workspace {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("Open research folder".into()),
+            prompt: Some(tr("Open research folder").into()),
         });
         let backend = self.backend.clone();
         cx.spawn_in(window, async move |this, cx| {

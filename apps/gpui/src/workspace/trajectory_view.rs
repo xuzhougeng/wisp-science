@@ -1,6 +1,7 @@
 //! The trajectory of the open conversation: a dialog with the totals over
 //! the whole conversation and, turn by turn, every step in the order it
 //! happened. A step with more to show than its row opens in place.
+use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{ActiveTheme, Sizable, StyledExt, button::Button};
 
@@ -85,14 +86,14 @@ impl Workspace {
                 div()
                     .text_lg()
                     .font_weight(FontWeight::MEDIUM)
-                    .child("Trajectory"),
+                    .child(tr("Trajectory")),
             );
         if let Some(error) = &self.trajectory_error {
             card = card.child(error_banner(error, cx));
         }
         match &self.trajectory {
             None if self.trajectory_error.is_none() => {
-                card = card.child(div().text_sm().text_color(muted).child("Reading…"));
+                card = card.child(div().text_sm().text_color(muted).child(tr("Reading…")));
             }
             None => {}
             Some(found) => {
@@ -126,7 +127,7 @@ impl Workspace {
         card = card.child(
             div().h_flex().justify_end().pt_2().child(
                 Button::new("trajectory-close")
-                    .label("Close")
+                    .label(tr("Close"))
                     .small()
                     .on_click(cx.listener(|this, _, window, cx| this.close_trajectory(window, cx))),
             ),

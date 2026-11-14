@@ -1,5 +1,6 @@
 //! Project file browser beside the transcript: one directory at a time and a
 //! read-only preview, both served by the host's confined project file access.
+use crate::i18n::tr;
 use std::ops::Range;
 
 use gpui::{prelude::*, *};
@@ -231,7 +232,7 @@ impl Workspace {
                             });
                             if this.file_image.is_none() {
                                 this.file_problem =
-                                    Some("This kind of picture cannot be shown here.".into());
+                                    Some(tr("This kind of picture cannot be shown here.").into());
                             }
                         }
                         Err(error) => this.file_problem = Some(error),
@@ -286,7 +287,7 @@ impl Workspace {
         let is_dir = entry.is_dir;
         let hover = cx.theme().list_hover;
         let (name, detail) = if is_dir {
-            (format!("{}/", entry.name), "Folder".to_string())
+            (format!("{}/", entry.name), tr("Folder").to_string())
         } else {
             (entry.name.clone(), files::size_label(entry.size))
         };
@@ -314,7 +315,7 @@ impl Workspace {
                     .h_flex()
                     .flex_shrink_0()
                     .child(
-                        icon_button(("file-rename", index), "edit", "Rename").on_click(
+                        icon_button(("file-rename", index), "edit", tr("Rename")).on_click(
                             cx.listener(move |this, _, window, cx| {
                                 // The row underneath opens the entry.
                                 cx.stop_propagation();
@@ -326,7 +327,7 @@ impl Workspace {
                         icon_button(
                             ("file-trash", index),
                             "trash",
-                            "Move to the project's trash",
+                            tr("Move to the project's trash"),
                         )
                         .on_click(cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
@@ -385,7 +386,7 @@ impl Workspace {
                     .text_color(cx.theme().danger)
                     .child(error.clone())
                     .into_any_element(),
-                None => message("Loading preview…"),
+                None => message(tr("Loading preview…")),
             };
         };
         match files::preview_mode(content) {
@@ -397,10 +398,10 @@ impl Workspace {
                         .text_color(cx.theme().danger)
                         .child(problem.clone())
                         .into_any_element(),
-                    None => message("Loading the picture…"),
+                    None => message(tr("Loading the picture…")),
                 }
             }
-            PreviewMode::Binary => message("This file is not text. Preview is not available."),
+            PreviewMode::Binary => message(tr("This file is not text. Preview is not available.")),
             PreviewMode::Markdown => div()
                 .flex_1()
                 .min_h_0()
@@ -465,7 +466,7 @@ impl Workspace {
                         )
                         .child(
                             Button::new("file-preview-back")
-                                .label("Back to files")
+                                .label(tr("Back to files"))
                                 .small()
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.close_preview(window, cx)
@@ -512,58 +513,59 @@ impl Workspace {
             PanelTab::Files => {}
         }
         let location = if self.files.path.is_empty() {
-            "Project root".to_string()
+            tr("Project root").to_string()
         } else {
             self.files.path.clone()
         };
         let parent = files::parent(&self.files.path);
-        let mut panel =
-            panel.child(
-                div()
-                    .v_flex()
-                    .gap_2()
-                    .p_3()
-                    .border_b_1()
-                    .border_color(border)
-                    .child(div().truncate().text_xs().text_color(muted).child(location))
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap_2()
-                            .child(
-                                Button::new("files-up")
-                                    .label("Up")
-                                    .small()
-                                    .disabled(parent.is_none())
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        if let Some(parent) = parent.clone() {
-                                            this.load_directory(parent, window, cx);
-                                        }
-                                    })),
-                            )
-                            .child(
-                                Button::new("files-reload")
-                                    .label("Reload")
-                                    .small()
-                                    .on_click(cx.listener(|this, _, window, cx| {
+        let mut panel = panel.child(
+            div()
+                .v_flex()
+                .gap_2()
+                .p_3()
+                .border_b_1()
+                .border_color(border)
+                .child(div().truncate().text_xs().text_color(muted).child(location))
+                .child(
+                    div()
+                        .h_flex()
+                        .gap_2()
+                        .child(
+                            Button::new("files-up")
+                                .label(tr("Up"))
+                                .small()
+                                .disabled(parent.is_none())
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    if let Some(parent) = parent.clone() {
+                                        this.load_directory(parent, window, cx);
+                                    }
+                                })),
+                        )
+                        .child(
+                            Button::new("files-reload")
+                                .label(tr("Reload"))
+                                .small()
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| {
                                         this.reload_files(window, cx)
-                                    })),
-                            )
-                            .child(div().flex_1())
-                            .child(
-                                icon_button("files-new-folder", "folder-plus", "New folder here")
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.start_naming(Naming::Folder, window, cx)
-                                    })),
-                            )
-                            .child(
-                                icon_button("files-new-file", "note-plus", "New file here")
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.start_naming(Naming::File, window, cx)
-                                    })),
-                            ),
-                    ),
-            );
+                                    }),
+                                ),
+                        )
+                        .child(div().flex_1())
+                        .child(
+                            icon_button("files-new-folder", "folder-plus", tr("New folder here"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.start_naming(Naming::Folder, window, cx)
+                                })),
+                        )
+                        .child(
+                            icon_button("files-new-file", "note-plus", tr("New file here"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.start_naming(Naming::File, window, cx)
+                                })),
+                        ),
+                ),
+        );
         if let Some(problem) = &self.file_problem {
             panel = panel.child(div().px_3().pt_2().child(error_banner(problem, cx)));
         }
@@ -587,7 +589,7 @@ impl Workspace {
                             .gap_2()
                             .child(
                                 Button::new("file-name-save")
-                                    .label("Save")
+                                    .label(tr("Save"))
                                     .small()
                                     .primary()
                                     .on_click(cx.listener(|this, _, window, cx| {
@@ -596,7 +598,7 @@ impl Workspace {
                             )
                             .child(
                                 Button::new("file-name-cancel")
-                                    .label("Cancel")
+                                    .label(tr("Cancel"))
                                     .small()
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.layers.close(Layer::FileName);
@@ -632,7 +634,7 @@ impl Workspace {
                             .child(
                                 Button::new("file-trash-confirm")
                                     .icon(glyph("trash"))
-                                    .label("Move to trash")
+                                    .label(tr("Move to trash"))
                                     .small()
                                     .danger()
                                     .on_click(cx.listener(|this, _, window, cx| {
@@ -641,7 +643,7 @@ impl Workspace {
                             )
                             .child(
                                 Button::new("file-trash-cancel")
-                                    .label("Keep")
+                                    .label(tr("Keep"))
                                     .small()
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.layers.close(Layer::ConfirmTrashFile);
@@ -672,9 +674,9 @@ impl Workspace {
             );
         }
         let hint = if self.files.loading && self.files.entries.is_empty() {
-            Some("Loading…")
+            Some(tr("Loading…"))
         } else if self.files.loaded && self.files.entries.is_empty() {
-            Some("This folder is empty.")
+            Some(tr("This folder is empty."))
         } else {
             None
         };

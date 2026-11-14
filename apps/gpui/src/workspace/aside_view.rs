@@ -1,5 +1,6 @@
 //! The Aside tab of the side panel: questions about the open conversation
 //! that are answered beside it and never become part of it.
+use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
@@ -95,7 +96,7 @@ impl Workspace {
                                 icon_button(
                                     SharedString::from(format!("aside-copy-{index}")),
                                     "copy",
-                                    "Copy the answer",
+                                    tr("Copy the answer"),
                                 )
                                 .xsmall()
                                 .on_click(cx.listener(
@@ -128,17 +129,17 @@ impl Workspace {
                             .font_weight(FontWeight::MEDIUM)
                             .child(question.clone()),
                     )
-                    .child(div().text_sm().text_color(muted).child("Asking…")),
+                    .child(div().text_sm().text_color(muted).child(tr("Asking…"))),
             );
         }
         let mut actions = div().h_flex().gap_2().justify_end();
         if thread.is_some_and(|thread| !thread.is_empty()) {
             actions = actions.child(
                 Button::new("aside-clear")
-                    .label("Clear")
+                    .label(tr("Clear"))
                     .small()
                     .ghost()
-                    .tooltip("Forget these questions and answers")
+                    .tooltip(tr("Forget these questions and answers"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         if let Some(session) = &this.state.session {
                             if let Some(thread) = this.asides.get_mut(session) {
@@ -151,7 +152,7 @@ impl Workspace {
         }
         actions = actions.child(
             Button::new("aside-ask")
-                .label("Ask")
+                .label(tr("Ask"))
                 .small()
                 .primary()
                 .disabled(session.is_none() || asking)

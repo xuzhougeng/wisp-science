@@ -1,5 +1,6 @@
 //! Find in the open conversation: the bar over the transcript, moving
 //! between matches, and marking the rows that match.
+use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{ActiveTheme, StyledExt, input::Input};
 
@@ -95,11 +96,11 @@ impl Workspace {
                     .child(self.find.label()),
             )
             .child(
-                icon_button("find-older", "chevron-up", "Earlier match (Return)")
+                icon_button("find-older", "chevron-up", tr("Earlier match (Return)"))
                     .on_click(cx.listener(|this, _, _, cx| this.step_find(true, cx))),
             )
             .child(
-                icon_button("find-newer", "chevron-down", "Later match")
+                icon_button("find-newer", "chevron-down", tr("Later match"))
                     .on_click(cx.listener(|this, _, _, cx| this.step_find(false, cx))),
             )
             .child(div().flex_1())
@@ -108,13 +109,13 @@ impl Workspace {
                     .text_xs()
                     .text_color(muted)
                     .child(if self.before.is_some() {
-                        "Searches the messages that are loaded; load earlier ones to search them"
+                        tr("Searches the messages that are loaded; load earlier ones to search them")
                     } else {
                         ""
                     }),
             )
             .child(
-                icon_button("find-close", "close", "Close (Esc)")
+                icon_button("find-close", "close", tr("Close (Esc)"))
                     .on_click(cx.listener(|this, _, window, cx| this.close_find(window, cx))),
             )
     }

@@ -116,7 +116,7 @@ impl Workspace {
         let muted = cx.theme().muted_foreground;
         let page = self.settings_page(cx);
         let Some(saved) = &self.network else {
-            return page.child(div().text_sm().text_color(muted).child("Loading…"));
+            return page.child(div().text_sm().text_color(muted).child(tr("Loading…")));
         };
         let typed = self.typed_network(saved, cx);
         let values = settings::network_values(&typed);
@@ -167,7 +167,7 @@ impl Workspace {
         }
         let mut actions = div().h_flex().gap_3().pt_4().child(
             Button::new("network-save")
-                .label("Save")
+                .label(tr("Save"))
                 .small()
                 .primary()
                 .on_click(cx.listener(|this, _, window, cx| this.save_network(window, cx))),

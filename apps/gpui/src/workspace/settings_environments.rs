@@ -209,7 +209,7 @@ impl Workspace {
                 .pt_1()
                 .child(
                     Button::new("environment-save")
-                        .label("Save")
+                        .label(tr("Save"))
                         .small()
                         .primary()
                         .on_click(
@@ -233,7 +233,7 @@ impl Workspace {
         let muted = cx.theme().muted_foreground;
         let page = self.settings_page(cx);
         let Some(view) = &self.environments else {
-            return page.child(div().text_sm().text_color(muted).child("Loading…"));
+            return page.child(div().text_sm().text_color(muted).child(tr("Loading…")));
         };
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -303,7 +303,7 @@ impl Workspace {
                     .child(
                         Button::new("environment-add")
                             .icon(glyph("plus"))
-                            .label("Add")
+                            .label(tr("Add"))
                             .small()
                             .flex_shrink_0()
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -395,7 +395,7 @@ impl Workspace {
                     )
                     .child(
                         Button::new("environment-remove-cancel")
-                            .label("Keep")
+                            .label(tr("Keep"))
                             .xsmall()
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.layers.close(Layer::ConfirmRemoveEnvironment);

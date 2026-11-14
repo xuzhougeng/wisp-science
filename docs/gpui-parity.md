@@ -222,7 +222,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Read state: answer marked read when on screen | Yes | Done | served |
 | Background status for conversations not on screen | Pushed | Done (2 s poll while a turn runs) | served |
 | Shared icon set | Lucide-style | Done (same drawings, `apps/gpui/assets/icons`) | ui |
-| Chinese and English | Yes | Partial: a Language choice in Settings (System, English, 中文); the home page, sidebar, transcript actions, composer and the conversation's actions are in Chinese, the other pages and all sentences with figures in them are still English | ui |
+| Chinese and English | Yes | Partial: a Language choice in Settings (System, English, 中文); the fixed text of every page, panel and dialog and the placeholders of text fields are in Chinese; names of tabs, commands and settings sections, sentences with figures or names set into them, and what the host says are still English | ui |
 | Desktop notifications and sound | Yes | Missing | ui |
 | Update check and install | Yes | Missing | tauri |
 | Several windows | Yes | Partial: any number on the same host, each with its own page and conversation; not restored at the next start | ui |

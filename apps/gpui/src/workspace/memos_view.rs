@@ -2,6 +2,7 @@
 //! The model does not read them; a memo reaches a conversation only when it
 //! is put into the message box and sent. The editor and the delete question
 //! are layers inside the panel.
+use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
@@ -209,9 +210,9 @@ impl Workspace {
             .p_3()
             .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(
                 if self.memo_target.is_some() {
-                    "Edit memo"
+                    tr("Edit memo")
                 } else {
-                    "New memo"
+                    tr("New memo")
                 },
             ))
             .child(Input::new(&self.memo_title).small())
@@ -225,7 +226,7 @@ impl Workspace {
                 div()
                     .text_xs()
                     .text_color(muted)
-                    .child("A title is optional. The model does not read memos."),
+                    .child(tr("A title is optional. The model does not read memos.")),
             )
             .child(
                 div()
@@ -233,7 +234,7 @@ impl Workspace {
                     .gap_2()
                     .child(
                         Button::new("memo-save")
-                            .label("Save memo")
+                            .label(tr("Save memo"))
                             .small()
                             .primary()
                             .disabled(!ready)
@@ -241,11 +242,14 @@ impl Workspace {
                                 cx.listener(|this, _, window, cx| this.save_memo(window, cx)),
                             ),
                     )
-                    .child(Button::new("memo-cancel").label("Cancel").small().on_click(
-                        cx.listener(|this, _, window, cx| {
-                            this.close_memo_layer(Layer::MemoEditor, window, cx)
-                        }),
-                    )),
+                    .child(
+                        Button::new("memo-cancel")
+                            .label(tr("Cancel"))
+                            .small()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.close_memo_layer(Layer::MemoEditor, window, cx)
+                            })),
+                    ),
             )
     }
 
@@ -285,7 +289,7 @@ impl Workspace {
                     div()
                         .text_xs()
                         .text_color(cx.theme().danger)
-                        .child("Delete this memo? It cannot be brought back."),
+                        .child(tr("Delete this memo? It cannot be brought back.")),
                 )
                 .child(
                     div()
@@ -293,7 +297,7 @@ impl Workspace {
                         .gap_1()
                         .child(
                             Button::new("memo-delete-confirm")
-                                .label("Delete memo")
+                                .label(tr("Delete memo"))
                                 .xsmall()
                                 .danger()
                                 .disabled(self.pending)
@@ -303,7 +307,7 @@ impl Workspace {
                         )
                         .child(
                             Button::new("memo-delete-cancel")
-                                .label("Cancel")
+                                .label(tr("Cancel"))
                                 .xsmall()
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.close_memo_layer(Layer::ConfirmDeleteMemo, window, cx)
@@ -327,10 +331,10 @@ impl Workspace {
                 .child(
                     Button::new(("memo-use", index))
                         .icon(glyph("arrow-right"))
-                        .label("Use")
+                        .label(tr("Use"))
                         .xsmall()
                         .ghost()
-                        .tooltip("Put this memo into the message box")
+                        .tooltip(tr("Put this memo into the message box"))
                         .disabled(!can_use)
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.use_memo(&using, window, cx)
@@ -338,7 +342,7 @@ impl Workspace {
                 )
                 .child(div().flex_1())
                 .child(
-                    icon_button(("memo-copy", index), "copy", "Copy")
+                    icon_button(("memo-copy", index), "copy", tr("Copy"))
                         .xsmall()
                         .on_click(cx.listener(move |_, _, _, cx| {
                             cx.write_to_clipboard(ClipboardItem::new_string(copying.clone()))
@@ -348,7 +352,11 @@ impl Workspace {
                     icon_button(
                         ("memo-pin", index),
                         "pin",
-                        if pinned { "Unpin" } else { "Pin to the top" },
+                        if pinned {
+                            tr("Unpin")
+                        } else {
+                            tr("Pin to the top")
+                        },
                     )
                     .xsmall()
                     .disabled(self.pending)
@@ -357,14 +365,14 @@ impl Workspace {
                     })),
                 )
                 .child(
-                    icon_button(("memo-edit", index), "edit", "Edit")
+                    icon_button(("memo-edit", index), "edit", tr("Edit"))
                         .xsmall()
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.edit_memo(Some(editing.clone()), window, cx)
                         })),
                 )
                 .child(
-                    icon_button(("memo-delete", index), "trash", "Delete")
+                    icon_button(("memo-delete", index), "trash", tr("Delete"))
                         .xsmall()
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.ask_delete_memo(deleting.clone(), cx)
@@ -394,14 +402,21 @@ impl Workspace {
                 div()
                     .h_flex()
                     .gap_2()
-                    .child(div().flex_1().min_w_0().text_xs().text_color(muted).child(
-                        "Your own notes for this project. The model does not read them \
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(tr(
+                                "Your own notes for this project. The model does not read them \
                          unless you put one into a message.",
-                    ))
+                            )),
+                    )
                     .child(
                         Button::new("memo-new")
                             .icon(glyph("note-plus"))
-                            .label("New memo")
+                            .label(tr("New memo"))
                             .small()
                             .flex_shrink_0()
                             .on_click(
@@ -413,11 +428,11 @@ impl Workspace {
             list = list.child(error_banner(error, cx));
         }
         match &self.memos {
-            None => list = list.child(div().text_sm().text_color(muted).child("Loading…")),
+            None => list = list.child(div().text_sm().text_color(muted).child(tr("Loading…"))),
             Some(memos) if memos.is_empty() => {
-                list = list.child(div().text_sm().text_color(muted).child(
+                list = list.child(div().text_sm().text_color(muted).child(tr(
                     "No memos yet. Keep a prompt you reuse, a server address or a reminder here.",
-                ));
+                )));
             }
             Some(memos) => {
                 for (index, memo) in memos.iter().enumerate() {

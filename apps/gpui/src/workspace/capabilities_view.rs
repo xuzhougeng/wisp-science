@@ -1,5 +1,6 @@
 //! The capabilities overview: a dialog that counts what Wisp can draw on
 //! in the open project and which command-line tools this computer has.
+use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Sizable, StyledExt,
@@ -69,18 +70,18 @@ impl Workspace {
                 div()
                     .text_lg()
                     .font_weight(FontWeight::MEDIUM)
-                    .child("Capabilities"),
+                    .child(tr("Capabilities")),
             )
-            .child(div().text_xs().text_color(muted).child(
+            .child(div().text_xs().text_color(muted).child(tr(
                 "What Wisp can draw on in this project, and the tools it found on this \
                  computer.",
-            ));
+            )));
         if let Some(error) = &self.capabilities_error {
             card = card.child(error_banner(error, cx));
         }
         match &self.capabilities {
             None if self.capabilities_error.is_none() => {
-                card = card.child(div().text_sm().text_color(muted).child("Looking…"));
+                card = card.child(div().text_sm().text_color(muted).child(tr("Looking…")));
             }
             None => {}
             Some(found) => {
@@ -103,7 +104,7 @@ impl Workspace {
                     if let Some(section) = section {
                         row = row.child(
                             Button::new(SharedString::from(format!("capability-{label}")))
-                                .label("Settings")
+                                .label(tr("Settings"))
                                 .xsmall()
                                 .ghost()
                                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -121,7 +122,7 @@ impl Workspace {
                         .pt_3()
                         .text_sm()
                         .font_weight(FontWeight::MEDIUM)
-                        .child("Tools on this computer"),
+                        .child(tr("Tools on this computer")),
                 );
                 for tool in &found.tools {
                     card = card.child(
@@ -155,7 +156,7 @@ impl Workspace {
         card = card.child(
             div().h_flex().justify_end().pt_2().child(
                 Button::new("capabilities-close")
-                    .label("Close")
+                    .label(tr("Close"))
                     .small()
                     .on_click(
                         cx.listener(|this, _, window, cx| this.close_capabilities(window, cx)),
