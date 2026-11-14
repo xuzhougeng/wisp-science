@@ -18,6 +18,14 @@ async function start(page: Page, locale = "en") {
   });
 }
 
+async function sentSessionId(page: Page) {
+  return page.evaluate(() => {
+    const calls = (window as any).__skillInvokeLog as { cmd: string; args: any }[];
+    const args = calls.filter(call => call.cmd === "send_message").at(-1)!.args;
+    return (args instanceof Map ? args.get("sessionId") : args.sessionId) as string;
+  });
+}
+
 async function emit(page: Page, frameId: string, event: Record<string, unknown>) {
   await page.evaluate(payload => (window as any).__tauriEmit("agent", payload), { frame_id: frameId, ...event });
 }
@@ -154,11 +162,7 @@ for (const locale of ["en", "zh"]) {
     await expect(pending.locator("svg > path")).toHaveCSS("animation-name", "steps-orbit");
     await expect(page.locator(".msg.user").last()).toContainText("PENDINGDEMO");
 
-    const frameId = await page.evaluate(() => {
-      const calls = (window as any).__skillInvokeLog as { cmd: string; args: any }[];
-      const args = calls.filter(call => call.cmd === "send_message").at(-1)!.args;
-      return (args instanceof Map ? args.get("sessionId") : args.sessionId) as string;
-    });
+    const frameId = await sentSessionId(page);
     // The first visible output takes the waiting row's place.
     await emit(page, frameId, { kind: "Text", delta: "Two related papers found." });
     await expect(page.locator(".msg.assistant").last()).toContainText("Two related papers found.");
@@ -169,3 +173,41 @@ for (const locale of ["en", "zh"]) {
     await expect(pending).toHaveCount(0);
   });
 }
+
+test("a turn that stops at the iteration limit says where to raise it (#1723)", async ({ page }) => {
+  await page.goto("/?mockLocale=en");
+  await page.locator(".proj-card-main").first().click();
+  const composer = page.locator("#composer-input");
+  const send = page.getByRole("button", { name: "Send", exact: true });
+  await composer.fill("PENDINGDEMO · long task");
+  await send.click();
+  await expect(page.getByTestId("turn-pending")).toBeVisible();
+  const frameId = await sentSessionId(page);
+
+  const notice = page.getByTestId("iteration-limit-notice");
+  await emit(page, frameId, { kind: "Text", delta: "Reached the limit; two files remain." });
+  await expect(page.locator(".msg.assistant").last()).toContainText("two files remain");
+  // Nothing is said while the turn is still running.
+  await expect(notice).toHaveCount(0);
+  await page.evaluate(() => (window as any).__finishPendingTurn("max_iterations"));
+  await expect(notice).toContainText("This turn stopped at the iteration limit");
+  await expect(notice).toContainText("Maximum agent iterations per turn");
+
+  // The button opens Settings on the section that holds the limit.
+  await page.getByTestId("iteration-limit-settings").click();
+  await expect(page.getByTestId("session-settings-pane")).toBeVisible();
+  await expect(page.getByTestId("max-iter")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("session-settings-pane")).not.toBeVisible();
+  await expect(notice).toBeVisible();
+
+  // The next turn has its own allowance, so the notice goes with the old one,
+  // and an ordinary finish does not bring it back.
+  await composer.fill("PENDINGDEMO · continue");
+  await send.click();
+  await expect(page.getByTestId("turn-pending")).toBeVisible();
+  await expect(notice).toHaveCount(0);
+  await page.evaluate(() => (window as any).__finishPendingTurn());
+  await expect(page.getByTestId("turn-pending")).toHaveCount(0);
+  await expect(notice).toHaveCount(0);
+});

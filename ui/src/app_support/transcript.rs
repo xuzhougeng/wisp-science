@@ -163,6 +163,25 @@ pub(crate) fn review_message_ui_index(items: &[ChatItem], message_index: usize) 
 }
 
 #[cfg(test)]
+mod iteration_limit_tests {
+    use super::*;
+
+    #[test]
+    fn the_iteration_limit_mark_follows_each_sessions_last_turn() {
+        let mut sessions = HashSet::new();
+        assert!(mark_iteration_limit(&mut sessions, "a", true));
+        // Marking again, or clearing a session that has no mark, changes nothing.
+        assert!(!mark_iteration_limit(&mut sessions, "a", true));
+        assert!(!mark_iteration_limit(&mut sessions, "b", false));
+        assert!(sessions.contains("a") && !sessions.contains("b"));
+        // The next turn of that session clears its own mark only.
+        assert!(mark_iteration_limit(&mut sessions, "b", true));
+        assert!(mark_iteration_limit(&mut sessions, "a", false));
+        assert_eq!(sessions, HashSet::from(["b".to_string()]));
+    }
+}
+
+#[cfg(test)]
 mod review_jump_tests {
     use super::{
         browser_offline_notice_from_items, browser_setup_live_retrieval,
@@ -397,6 +416,34 @@ pub(crate) fn set_browser_offline_notice(
                 *current = None;
             }
         }),
+    }
+}
+
+/// Record whether `frame_id`'s last turn stopped at the iteration limit, and
+/// say whether that changed anything.
+pub(crate) fn mark_iteration_limit(
+    sessions: &mut HashSet<String>,
+    frame_id: &str,
+    at_limit: bool,
+) -> bool {
+    if at_limit {
+        sessions.insert(frame_id.to_string())
+    } else {
+        sessions.remove(frame_id)
+    }
+}
+
+/// Signal wrapper for `mark_iteration_limit`. It writes only on a change, so
+/// an ordinary turn end or turn start does not wake the thread.
+pub(crate) fn set_iteration_limit_notice(
+    sessions: RwSignal<HashSet<String>>,
+    frame_id: &str,
+    at_limit: bool,
+) {
+    if sessions.with_untracked(|all| all.contains(frame_id)) != at_limit {
+        sessions.update(|all| {
+            mark_iteration_limit(all, frame_id, at_limit);
+        });
     }
 }
 

@@ -7008,8 +7008,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             // test emits whatever comes next and then finishes the turn.
             if (String(arg("message") ?? "").includes("PENDINGDEMO")) {
               return await new Promise<string>((resolve) => {
-                (window as any).__finishPendingTurn = () => {
-                  emit("agent", { kind: "Done", frame_id: fid });
+                (window as any).__finishPendingTurn = (stopReason?: string) => {
+                  emit("agent", { kind: "Done", frame_id: fid, ...(stopReason ? { stop_reason: stopReason } : {}) });
                   resolve(fid);
                 };
                 emit("agent", { kind: "User", frame_id: fid, text: msg });

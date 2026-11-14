@@ -1414,6 +1414,16 @@ fn App() -> impl IntoView {
             .get()
             .and_then(|id| stream_recovery_sessions.with(|all| all.get(&id).cloned()))
     });
+    // Sessions whose last turn stopped at the iteration limit (#1723). The
+    // model's closing summary says the limit was reached but cannot know where
+    // this app keeps the setting, so the thread adds that until the next turn.
+    let iteration_limit_sessions = create_rw_signal(HashSet::<String>::new());
+    let iteration_limit_active = create_memo(move |_| {
+        !busy.get()
+            && active_session
+                .get()
+                .is_some_and(|id| iteration_limit_sessions.with(|all| all.contains(&id)))
+    });
     // The running turn has rendered nothing yet (#1720). Compaction and stream
     // recovery already explain a quiet turn with their own live notices.
     let turn_pending = create_memo(move |_| {
@@ -4003,6 +4013,8 @@ fn App() -> impl IntoView {
                 queue_id,
             } => {
                 dismiss_follow_up_questions(follow_up_questions, &frame_id);
+                // A new turn has its own allowance of iterations.
+                set_iteration_limit_notice(iteration_limit_sessions, &frame_id, false);
                 // The banner judges the answer on screen; a new turn has none yet.
                 set_browser_offline_notice(browser_offline_cb, &frame_id, None);
                 set_pet_activity(&frame_id, "running");
@@ -4497,6 +4509,11 @@ fn App() -> impl IntoView {
             } => {
                 finish_compaction(&frame_id);
                 clear_stream_recovery(&frame_id);
+                set_iteration_limit_notice(
+                    iteration_limit_sessions,
+                    &frame_id,
+                    stop_reason.as_deref() == Some("max_iterations"),
+                );
                 if stop_reason.as_deref() == Some("compact")
                     && compact_dialog_cb.get_untracked().as_deref() == Some(frame_id.as_str())
                 {
@@ -15240,6 +15257,20 @@ fn App() -> impl IntoView {
                                 <span class="context-compaction-rule" aria-hidden="true"></span>
                             </div>
                         }
+                    })}
+                    {move || iteration_limit_active.get().then(|| view! {
+                        <div class="context-compaction-status iteration-limit-notice" role="status" aria-live="polite"
+                            data-testid="iteration-limit-notice">
+                            <span class="context-compaction-mark" aria-hidden="true">{compose_icon("circle-alert")}</span>
+                            <span class="context-compaction-copy">
+                                <strong>{move || t(locale.get(), "chat.iteration_limit_title")}</strong>
+                                <span class="context-compaction-detail">{move || t(locale.get(), "chat.iteration_limit_note")}</span>
+                            </span>
+                            <button type="button" class="iteration-limit-open" data-testid="iteration-limit-settings"
+                                on:click=move |_| open_capability_settings.call("session".into())>
+                                {move || t(locale.get(), "chat.iteration_limit_open")}
+                            </button>
+                        </div>
                     })}
                     {move || (!busy.get()).then(|| active_session.get()).flatten().and_then(|frame_id| {
                         follow_up_questions.with(|all| all.get(&frame_id).cloned()).map(|questions| {
