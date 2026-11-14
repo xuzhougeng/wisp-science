@@ -334,6 +334,17 @@
   min-width: 0; white-space: nowrap; font-variant-numeric: tabular-nums;
 }
 .context-compaction-reduction { color: var(--clay-strong); }
+/* After a turn stops at the iteration limit (#1723): says where the limit is set. */
+.iteration-limit-notice .context-compaction-mark {
+  border-color: color-mix(in srgb, var(--warn) 30%, var(--border));
+  color: var(--warn); background: var(--warn-soft);
+}
+.iteration-limit-open {
+  flex: 0 0 auto; padding: 4px 10px; border-radius: var(--radius-xs);
+  border: 1px solid var(--border-strong); background: transparent; color: var(--text);
+  font: inherit; font-size: calc(12px * var(--ui-font-scale, 1)); cursor: pointer;
+}
+.iteration-limit-open:hover { background: var(--surface-hover); }
 .context-compaction-rule {
   flex: 1; min-width: 16px; height: 1px; margin-left: 4px;
   background: linear-gradient(90deg, var(--border), transparent);
