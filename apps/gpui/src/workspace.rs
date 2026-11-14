@@ -215,6 +215,8 @@ pub struct Workspace {
     /// The item open on the Favorites page, and its picture if it has one.
     favorite: Option<Favorite>,
     favorite_image: Option<std::sync::Arc<Image>>,
+    /// The picture being previewed in the Files panel, with its path.
+    file_image: Option<(String, std::sync::Arc<Image>)>,
     favorite_request: u64,
     rename: Entity<InputState>,
     settings: settings_view::SettingsForm,
@@ -550,6 +552,7 @@ impl Workspace {
             favorites_search,
             favorite: None,
             favorite_image: None,
+            file_image: None,
             favorite_request: 0,
             rename,
             settings,
@@ -586,6 +589,7 @@ impl Workspace {
         match self.layers.dismiss_top() {
             Some(Layer::FilePreview) => {
                 self.files.close_preview();
+                self.file_image = None;
                 self.restore_focus(window, cx);
                 // A file revealed from the palette has no listing under it yet.
                 self.ensure_files(window, cx);

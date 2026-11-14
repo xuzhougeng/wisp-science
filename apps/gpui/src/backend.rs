@@ -157,6 +157,11 @@ impl Backend {
         self.local(move |host| async move { host.project_directory(&project, &path).await })
     }
 
+    /// A picture in the project: its content type and its bytes.
+    pub fn project_image(&self, project: String, path: String) -> Reply<(String, Vec<u8>)> {
+        self.local(move |host| async move { host.project_image(&project, &path).await })
+    }
+
     /// Makes an empty folder or file in a project folder.
     pub fn create_project_entry(
         &self,

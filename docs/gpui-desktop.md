@@ -146,7 +146,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Favorites | A star under any message saves it as it reads now; an image in Artifacts can be saved as a figure. Highlights lists what this conversation saved; the Favorites page lists everything from every project, with search, a kind filter, the item in full, its source conversation and removal after a confirmation |
 | Memory | One switch; habits the model is shown in every project; this project's notes by day, which the model can search; add, edit and delete either, and save any message to one or the other |
 | Memos | Your own notes per project: add, edit, pin, copy, delete after a confirmation, and put one into the message box. The model is never shown them |
-| Files | Project file browser, available before the first conversation; read-only text and Markdown preview; new folder, new file, rename, and move to the project's trash |
+| Files | Project file browser, available before the first conversation; read-only text and Markdown preview, and pictures (PNG, JPEG, GIF, WebP, SVG, BMP); new folder, new file, rename, and move to the project's trash |
 | Composer | Native multiline input; Enter for newline, Cmd/Ctrl+Enter to send. While a turn runs the same key queues the message: it is sent when the turn ends |
 | Plan first | The model investigates and submits a plan as a card; nothing is changed until you approve it, which leaves plan mode and starts the work |
 | Thinking | What the model is thinking, above the composer, while it thinks |
@@ -337,7 +337,9 @@ Limits of this slice:
   want the space back, which the Storage page counts as part of `.wisp`.
   The WebView erases at once instead. A link is renamed or moved as a
   link; what it points at is left alone. Uploading into a folder, moving
-  between folders, sorting and the grid view are not ported.
+  between folders, sorting and the grid view are not ported. A picture is
+  shown whole, scaled to the panel, when it is at most 32 MB; there is no
+  zoom. PDF, Office, notebook and table previews are not ported.
 - Find looks through the part of the conversation that is loaded, ignoring
   case, in messages and in what tools printed. It marks whole rows, not the
   words inside them, and does not open a folded tool row. Earlier messages
@@ -613,6 +615,8 @@ connector route and run a PubMed search, and press Test on an HTTP MCP
 server. Set a Python package index, ask the model to install a package and
 confirm it uses the index. Restart and confirm the page still shows what was
 saved.
+In Files open a PNG or a JPEG: the picture is shown, with its size above
+it, and Escape returns to the listing.
 In Files make a folder and, inside it, a file; try a name with a slash and
 confirm it is refused and the field keeps what you typed. Rename the folder
 with the pencil. Press the trash on it, then Escape (the question goes, the

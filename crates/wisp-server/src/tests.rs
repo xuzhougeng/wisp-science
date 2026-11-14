@@ -4205,5 +4205,27 @@ async fn the_desktop_makes_renames_and_trashes_project_files() {
     assert!(names("figures").await.is_empty());
     assert!(temp.path().join("workspace").join(&gone).is_file());
     assert_eq!(names("").await, ["figures"]);
+
+    // A picture is handed over whole, with what kind it is; other files,
+    // and anything outside the project, are not.
+    let workspace = temp.path().join("workspace");
+    std::fs::write(workspace.join("figures/plot.PNG"), b"\x89PNG fake").unwrap();
+    std::fs::write(workspace.join("figures/notes.txt"), "words").unwrap();
+    let (kind, bytes) = server
+        .project_image(PROJECT, "figures/plot.PNG")
+        .await
+        .unwrap();
+    assert_eq!(
+        (kind.as_str(), bytes.as_slice()),
+        ("image/png", &b"\x89PNG fake"[..])
+    );
+    for path in [
+        "figures/notes.txt",
+        "figures",
+        "figures/missing.png",
+        "../x.png",
+    ] {
+        assert!(server.project_image(PROJECT, path).await.is_err(), "{path}");
+    }
     server.shutdown().await;
 }

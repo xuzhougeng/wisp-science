@@ -29,7 +29,7 @@ use crate::{
     memos,
 };
 
-fn image_format(content_type: Option<&str>) -> Option<ImageFormat> {
+pub(super) fn image_format(content_type: Option<&str>) -> Option<ImageFormat> {
     Some(match content_type? {
         "image/png" => ImageFormat::Png,
         "image/jpeg" => ImageFormat::Jpeg,

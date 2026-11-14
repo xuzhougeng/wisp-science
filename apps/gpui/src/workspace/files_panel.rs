@@ -12,6 +12,7 @@ use gpui_component::{
 
 use super::{
     Workspace,
+    favorites_view::image_format,
     shell::{error_banner, glyph, icon_button},
 };
 use crate::{
@@ -204,6 +205,42 @@ impl Workspace {
             return;
         };
         self.layers.open(Layer::FilePreview);
+        self.file_image = None;
+        self.file_problem = None;
+        // A picture is fetched whole, beside the text preview that tells
+        // its size.
+        if crate::favorites::is_image(&path) {
+            let reply = self
+                .backend
+                .project_image(ticket.project.clone(), path.clone());
+            let wanted = path.clone();
+            cx.spawn_in(window, async move |this, cx| {
+                let result = receive(reply).await;
+                let _ = this.update(cx, |this, cx| {
+                    // Another file, or none, is being looked at by now.
+                    if this.files.preview_path.as_deref() != Some(wanted.as_str()) {
+                        return;
+                    }
+                    match result {
+                        Ok((kind, bytes)) => {
+                            this.file_image = image_format(Some(&kind)).map(|format| {
+                                (
+                                    wanted,
+                                    std::sync::Arc::new(Image::from_bytes(format, bytes)),
+                                )
+                            });
+                            if this.file_image.is_none() {
+                                this.file_problem =
+                                    Some("This kind of picture cannot be shown here.".into());
+                            }
+                        }
+                        Err(error) => this.file_problem = Some(error),
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
         let reply = self.backend.project_file(ticket.project.clone(), path);
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
@@ -232,6 +269,8 @@ impl Workspace {
     fn close_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.layers.close(Layer::FilePreview) {
             self.files.close_preview();
+            self.file_image = None;
+            self.file_problem = None;
             self.restore_focus(window, cx);
             // A file revealed from the palette has no listing under it yet.
             self.ensure_files(window, cx);
@@ -318,6 +357,26 @@ impl Workspace {
                 .child(text)
                 .into_any_element()
         };
+        if let Some((_, image)) = self
+            .file_image
+            .as_ref()
+            .filter(|(path, _)| self.files.preview_path.as_deref() == Some(path.as_str()))
+        {
+            return div()
+                .flex_1()
+                .min_h_0()
+                .p_3()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    img(image.clone())
+                        .max_w_full()
+                        .max_h_full()
+                        .object_fit(ObjectFit::Contain),
+                )
+                .into_any_element();
+        }
         let Some(content) = &self.files.preview else {
             return match &self.files.error {
                 Some(error) => div()
@@ -330,6 +389,17 @@ impl Workspace {
             };
         };
         match files::preview_mode(content) {
+            PreviewMode::Binary if crate::favorites::is_image(&content.path) => {
+                match &self.file_problem {
+                    Some(problem) => div()
+                        .p_4()
+                        .text_sm()
+                        .text_color(cx.theme().danger)
+                        .child(problem.clone())
+                        .into_any_element(),
+                    None => message("Loading the picture…"),
+                }
+            }
             PreviewMode::Binary => message("This file is not text. Preview is not available."),
             PreviewMode::Markdown => div()
                 .flex_1()

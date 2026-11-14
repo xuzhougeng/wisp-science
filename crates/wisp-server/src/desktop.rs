@@ -681,6 +681,22 @@ impl Server {
         Ok(serde_json::from_value(value)?)
     }
 
+    /// A picture in the project, whole, for the file browser to show: its
+    /// content type and its bytes. Anything that is not a picture by its
+    /// name, or is larger than a figure may be, is refused.
+    pub async fn project_image(&self, project: &str, path: &str) -> Result<(String, Vec<u8>)> {
+        let root = std::path::PathBuf::from(self.project_root(project).await?);
+        let real = crate::files::resolve(&root, path).await?;
+        let content_type = image_type(&real).context("That file is not a picture")?;
+        let meta = tokio::fs::metadata(&real).await?;
+        ensure!(meta.is_file(), "That is not a file");
+        ensure!(
+            meta.len() <= FIGURE_LIMIT,
+            "Pictures of more than 32 MB are not shown here"
+        );
+        Ok((content_type.to_owned(), tokio::fs::read(&real).await?))
+    }
+
     /// Makes an empty folder (`folder`) or file named `name` in the project
     /// folder `parent`; the reply is its project-relative path.
     pub async fn create_project_entry(
