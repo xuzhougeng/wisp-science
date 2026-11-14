@@ -53,6 +53,7 @@ pub enum Command {
     Review,
     ModelView,
     Terminal,
+    ResearchArchive,
 }
 
 impl Command {
@@ -85,6 +86,7 @@ impl Command {
             Command::Review => tr("Review this conversation"),
             Command::ModelView => tr("What the model is sent"),
             Command::Terminal => tr("Open a terminal in the project folder"),
+            Command::ResearchArchive => tr("Archive this conversation's research"),
         }
     }
 
@@ -116,6 +118,7 @@ impl Command {
             Command::Review => "review",
             Command::ModelView => "eye",
             Command::Terminal => "terminal",
+            Command::ResearchArchive => "archive-export",
         }
     }
 
@@ -140,7 +143,8 @@ impl Command {
             | Command::SaveAsSkill
             | Command::Review
             | Command::ModelView
-            | Command::Terminal => screen == Screen::Project,
+            | Command::Terminal
+            | Command::ResearchArchive => screen == Screen::Project,
             Command::OpenFolder
             | Command::Refresh
             | Command::Settings
@@ -152,7 +156,7 @@ impl Command {
         }
     }
 
-    const ALL: [Command; 27] = [
+    const ALL: [Command; 28] = [
         Command::NewConversation,
         Command::OpenFolder,
         Command::Home,
@@ -180,6 +184,7 @@ impl Command {
         Command::Review,
         Command::ModelView,
         Command::Terminal,
+        Command::ResearchArchive,
     ];
 }
 

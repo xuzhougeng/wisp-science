@@ -491,6 +491,19 @@ impl Workspace {
                     .on_click(cx.listener(|this, _, window, cx| this.open_review(window, cx))),
             )
             .child(
+                Button::new("conversation-research-archive")
+                    .label(tr("Research archive"))
+                    .small()
+                    .ghost()
+                    .tooltip(tr(
+                        "Write this conversation's findings up as a report and freeze it",
+                    ))
+                    .disabled(running)
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.open_research_archive(window, cx)),
+                    ),
+            )
+            .child(
                 Button::new("conversation-skill")
                     .label(tr("Save as skill"))
                     .small()

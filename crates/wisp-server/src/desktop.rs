@@ -3016,6 +3016,113 @@ impl Server {
         crate::updates::check().await
     }
 
+    /// The research archive of a conversation, if it has been frozen.
+    pub async fn research_archive(
+        &self,
+        project: &str,
+        session: &str,
+    ) -> Result<Option<ResearchArchive>> {
+        self.own_conversation(project, session).await?;
+        Ok(self
+            .0
+            .store
+            .research_archive(session)
+            .await?
+            .filter(|archive| archive.frozen_at.is_some()))
+    }
+
+    /// Has the conversation's model write a draft archive of it: a report
+    /// and the scripts that can be put together from what was run. Nothing
+    /// is saved; the researcher reviews the draft and freezes it.
+    pub async fn draft_research_archive(
+        &self,
+        project: &str,
+        session: &str,
+    ) -> Result<ArchiveDraft> {
+        self.archivable(project, session).await?;
+        let store = &self.0.store;
+        let options = self.stored_options(session).await?;
+        let mut model = self.0.model.read().unwrap().pick(&options.model)?.provider;
+        let routes = crate::network::load(store).await;
+        if let Some(route) = crate::network::route(&routes.model_proxy_url) {
+            model.proxy = Some(route);
+        }
+        // A draft is a document to write, not a problem to think about.
+        model.reasoning_effort = None;
+        let messages = self.whole_transcript(session).await?;
+        let provider = (self.0.models)(model);
+        let transcript = crate::review::transcript(&messages);
+        match crate::research_archive::draft(provider.as_ref(), transcript).await {
+            Ok(draft) => Ok(draft),
+            Err(error) => bail!(
+                "{}",
+                crate::network::explain(store, &format!("{error:#}")).await
+            ),
+        }
+    }
+
+    /// Freezes `draft` as the conversation's research archive: the report
+    /// and scripts are written under `.wisp/research-archives/` in the
+    /// project and the record is kept. From then on the conversation is
+    /// read-only. No project file is moved or deleted.
+    pub async fn freeze_research_archive(
+        &self,
+        project: &str,
+        session: &str,
+        draft: ArchiveDraft,
+    ) -> Result<ResearchArchive> {
+        let _admission = self.0.admission.write().await;
+        self.archivable(project, session).await?;
+        let draft = crate::research_archive::checked(draft)?;
+        let store = &self.0.store;
+        let root = std::path::PathBuf::from(self.project_root(project).await?);
+        let id = uuid::Uuid::new_v4().to_string();
+        let (_, source_hash) = store.research_archive_source(session).await?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs() as i64)
+            .unwrap_or_default();
+        let folder = crate::research_archive::folder(&root, &id);
+        let written = draft.clone();
+        let target = folder.clone();
+        tokio::task::spawn_blocking(move || crate::research_archive::write(&target, &written))
+            .await??;
+        let mut record =
+            crate::research_archive::record(id, project, session, source_hash, draft, now);
+        let kept = async {
+            store.save_research_archive_draft(&record).await?;
+            record.frozen_at = Some(now);
+            store.freeze_research_archive(&record).await
+        }
+        .await;
+        if let Err(error) = kept {
+            // Nothing was frozen: the files written for it go again.
+            let _ = tokio::fs::remove_dir_all(&folder).await;
+            return Err(error);
+        }
+        // What the conversation kept running is no longer needed.
+        let runtime = self.session(session).runtime.lock().unwrap().take();
+        if let Some(runtime) = runtime {
+            runtime.shutdown_all().await;
+        }
+        Ok(record)
+    }
+
+    /// A conversation can be archived once: when it is the project's own,
+    /// no turn is running in it and it has not been archived before.
+    async fn archivable(&self, project: &str, session: &str) -> Result<()> {
+        self.own_conversation(project, session).await?;
+        ensure!(
+            !self.session(session).live.lock().unwrap().running,
+            "Wait for the turn to end before you archive this conversation"
+        );
+        ensure!(
+            !self.archived(session).await?,
+            "This conversation's research is already archived"
+        );
+        Ok(())
+    }
+
     /// The experts a conversation can be started as.
     pub async fn experts(&self) -> Result<Vec<Expert>> {
         Ok(crate::experts::list(&self.0.store).await)
@@ -4120,9 +4227,11 @@ pub use crate::experts::{Expert, ExpertInput};
 pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow};
 pub use crate::origin::FileOrigin;
 pub use crate::remote_dir::RemoteDirectory;
+pub use crate::research_archive::ArchiveDraft;
 pub use crate::review::{Finding as ReviewFinding, Outcome as ReviewOutcome, Review};
 pub use crate::run_log::RunLog;
 pub use crate::updates::UpdateCheck;
+pub use wisp_dto::{ArchiveScript, ResearchArchive};
 
 /// A project's folder, as the question before it is deleted describes it.
 #[derive(Clone, Debug, PartialEq, Eq)]

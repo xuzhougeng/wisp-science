@@ -151,7 +151,7 @@ to find in the running app.
 | Conversation tabs | Yes | Done: the conversations opened in a window show as tabs above the conversation, across projects; not kept across restarts | ui |
 | Share conversation [分享对话] | Yes | Partial: as an exported Markdown file; no share link | tauri |
 | Trajectory [轨迹] | Yes | Done: a dialog with the totals and every turn's steps; a step opens to its whole text | store |
-| Research archive [研究归档] | Yes | Missing | store |
+| Research archive [研究归档] | Yes | Partial: the model drafts a report and scripts, you edit title and report, and freezing writes them into the project and makes the conversation read-only; no choice of files to snapshot or delete, no script editing, no continuation link | store |
 | Pending decisions [N 个待处理] | Yes | Done (sidebar inbox) | served |
 | Terminal [打开终端] | Yes | Partial: opens the system's terminal in the project folder or the folder being browsed; no terminal inside the app and none on SSH hosts | tauri |
 | Toggle right panel [切换面板] | Yes | Partial: Files, Runs and Artifacts tabs; the other tools are not ported | ui |

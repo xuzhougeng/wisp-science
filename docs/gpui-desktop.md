@@ -149,6 +149,7 @@ folder registers its research root; it does not import existing desktop chats.
 | What the model is sent | Clicking the context percentage by the composer (or the command palette) lists the conversation's working set: the instructions, the summary that stands in for compacted turns, and each message with about how many tokens it takes |
 | Interpreters | The Python and R interpreters a conversation keeps between tool calls show above the composer with their version and state; Stop ends one, Dismiss takes a stopped one off the list |
 | Experts | Settings, Experts, keeps personas (a name and instructions); the composer's Expert menu starts a new conversation as one, and its instructions hold for the whole conversation |
+| Research archive | A conversation's Research archive button (or the command palette) has the model draft a report of its findings with the scripts behind them; you change the draft and freeze it, which writes it into the project and makes the conversation read-only |
 | Review turns | The composer's Review turns switch has each turn that used a tool, or said a good deal, reviewed when it ends; the result shows above the composer, and See opens the findings |
 | Review | A conversation's Review button (or the command palette) has the model read the conversation as a reviewer and lists claims its own tool output does not support, each with the evidence and a fix; Ask Wisp to correct puts the corrections in the composer |
 | Save as skill | A conversation's Save as skill button (or the command palette) puts a request in the composer that asks Wisp to distill the conversation into a reusable skill; you send it, changed or not |
@@ -458,6 +459,19 @@ Limits of this slice:
   WebView's one-shot built-ins (reviewer, reader, archivist, recap) are
   not offered. The built-in Scientific Illustrator draws SVG; this host
   has no image-generation tool.
+- A research archive is written once and cannot be undone from here:
+  the report and scripts go to `.wisp/research-archives/<id>/` in the
+  project, the record goes to the store's `research_archives` table (the
+  WebView reads both), and the conversation is read-only from then on,
+  for this desktop, the WebView and a paired phone. The draft is one
+  model request over the conversation's latest 80,000 characters, with
+  tool output cut at 4,000 each, so a long conversation is drafted from
+  its end; the model is given five minutes. Unlike the WebView nothing
+  is snapshotted, moved or deleted: project files stay exactly as they
+  are, the scripts in a draft are frozen as the model wrote them (their
+  names are listed, their text is not editable here), and there is no
+  "continue from this archive" link in a new conversation. Closing the
+  dialog before freezing throws the draft away.
 - Review turns is off until switched on, per conversation; Settings,
   Conversation, sets what conversations start with (the WebView's keys,
   `frame_auto_review:<id>` and `auto_review_default_enabled`). A
@@ -905,6 +919,13 @@ sent that the Instructions row ends with the expert's section; the menu
 is then off and names the expert. Remove the expert in Settings: the
 conversation still carries its instructions. Press Escape with the form
 open: only the form closes.
+In a conversation with results press Research archive: the dialog says a
+draft is being written, then shows a title and a report to edit and the
+scripts that go with it. Change a sentence and press Freeze: the dialog
+shows the frozen report and where it is; `.wisp/research-archives/<id>/`
+holds REPORT.md with your change and the scripts; the composer no longer
+sends in this conversation, and a new conversation works as before.
+Press Escape on a draft: nothing is written.
 Switch Review turns on in the composer and have a turn run a tool: when
 it ends the line above the composer reads Reviewing the answer…, then the
 result. Press See: the findings open; Ask Wisp to correct puts them in the

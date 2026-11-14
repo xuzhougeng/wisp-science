@@ -723,6 +723,37 @@ impl Backend {
         self.local(move |host| async move { host.create_sample_project(&parent).await })
     }
 
+    /// The research archive of a conversation, if it has been frozen.
+    pub fn research_archive(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<Option<wisp_server::desktop::ResearchArchive>> {
+        self.local(move |host| async move { host.research_archive(&project, &session).await })
+    }
+
+    /// Has the model draft an archive of a conversation; nothing is saved.
+    pub fn draft_research_archive(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<wisp_server::desktop::ArchiveDraft> {
+        self.local(move |host| async move { host.draft_research_archive(&project, &session).await })
+    }
+
+    /// Freezes a reviewed draft as the conversation's research archive.
+    pub fn freeze_research_archive(
+        &self,
+        project: String,
+        session: String,
+        draft: wisp_server::desktop::ArchiveDraft,
+    ) -> Reply<wisp_server::desktop::ResearchArchive> {
+        self.local(move |host| async move {
+            host.freeze_research_archive(&project, &session, draft)
+                .await
+        })
+    }
+
     /// One folder of a saved SSH host, to look at.
     pub fn remote_directory(
         &self,

@@ -219,7 +219,7 @@ pub(crate) async fn ask(model: &dyn Provider, messages: &[Message]) -> Result<Re
 /// user asked, what the agent said, and each tool's arguments and output,
 /// with long tool text cut. When it is too long the oldest blocks go; the
 /// numbers stay those of the whole conversation.
-fn transcript(messages: &[Message]) -> String {
+pub(crate) fn transcript(messages: &[Message]) -> String {
     let arguments: HashMap<&str, &str> = messages
         .iter()
         .flat_map(|message| &message.tool_calls)

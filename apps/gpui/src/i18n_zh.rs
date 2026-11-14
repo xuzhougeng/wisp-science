@@ -719,4 +719,17 @@ pub const ZH: &[(&str, &str)] = &[
     ("Look at this host's folders", "查看这台主机上的文件夹"),
     ("Home folder", "主目录"),
     ("There is more in this folder than is listed.", "这个文件夹里的内容比列出的更多。"),
+    // Research archive.
+    ("Research archive", "研究归档"),
+    ("Archive this conversation's research", "归档本会话的研究"),
+    ("Write this conversation's findings up as a report and freeze it", "把本会话的发现写成报告并冻结"),
+    ("No scripts go with it.", "没有随附的脚本。"),
+    ("Scripts that go with it: {}", "随附的脚本：{}"),
+    ("The model is writing a draft from the conversation. This can take a while.", "模型正在根据会话撰写草稿，可能需要一些时间。"),
+    ("Read the draft and change what is not right: it is your record. Freezing writes the report into the project and makes this conversation read-only; work goes on in a new one. No project file is moved or deleted.", "请阅读草稿并改正不对的地方：这是你的记录。冻结后报告会写入项目，本会话变为只读；后续工作在新会话中进行。不会移动或删除任何项目文件。"),
+    ("Title", "标题"),
+    ("Report, in Markdown", "报告（Markdown）"),
+    ("Draft again", "重新起草"),
+    ("Freeze", "冻结"),
+    ("Frozen. The report is in the project at {}. This conversation is read-only.", "已冻结。报告位于项目的 {}。本会话为只读。"),
 ];

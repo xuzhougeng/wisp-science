@@ -14,6 +14,7 @@ mod output;
 mod project_archive;
 mod project_folder;
 mod remote_dir;
+mod research_archive;
 mod review;
 mod run_log;
 mod runtime;
@@ -433,6 +434,12 @@ impl Server {
             !self.0.shutting_down.load(Ordering::Relaxed),
             "Server is shutting down"
         );
+        // A conversation whose research was archived is a record: it is
+        // read, and work goes on in a new one.
+        ensure!(
+            !self.archived(&request.session_id).await?,
+            "This conversation's research is archived and it is read-only; continue in a new conversation"
+        );
         // Read once here: a change made while the turn runs applies to the next.
         let options = self.stored_options(&request.session_id).await?;
         let model = self.0.model.read().unwrap().pick(&options.model)?;
@@ -640,6 +647,16 @@ impl Server {
         session.suggested.notify_waiters();
     }
 
+    /// Whether a conversation's research has been frozen as an archive.
+    pub(crate) async fn archived(&self, session: &str) -> Result<bool> {
+        Ok(self
+            .0
+            .store
+            .research_archive(session)
+            .await?
+            .is_some_and(|archive| archive.frozen_at.is_some()))
+    }
+
     /// Asks the conversation's model what could be asked next and keeps
     /// the answer for the snapshot, unless a newer turn began meanwhile.
     /// A failure costs the user nothing but the suggestions.
@@ -704,6 +721,7 @@ impl Server {
         generation: u64,
     ) -> Result<Option<Value>> {
         let options = self.stored_options(&request.session_id).await?;
+        let archived = self.archived(&request.session_id).await?;
         let profile = options.model;
         let page = self
             .0
@@ -774,7 +792,7 @@ impl Server {
             running: live.running,
             stopping: live.running && session.cancel.load(Ordering::Relaxed),
             activity_status: None,
-            read_only: false,
+            read_only: archived,
             model_id: self.model_id(&profile),
             composer_references: Some(false),
             context_view: Some(false),

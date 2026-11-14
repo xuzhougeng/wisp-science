@@ -1,4 +1,5 @@
 mod agents_view;
+mod archive_view;
 mod aside_view;
 mod calendar_view;
 mod capabilities_view;
@@ -102,6 +103,11 @@ pub struct Workspace {
     /// why it could not be.
     capabilities: Option<wisp_server::desktop::Capabilities>,
     capabilities_error: Option<String>,
+    /// Where the research archive dialog stands.
+    archive: Option<archive_view::ArchiveView>,
+    archive_error: Option<String>,
+    /// Title, report.
+    archive_fields: [Entity<InputState>; 2],
     model_view: Option<wisp_server::desktop::ModelView>,
     model_view_error: Option<String>,
     /// The rows opened to show their whole text.
@@ -422,6 +428,10 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
         ];
         let mcp_target = cx.new(|cx| InputState::new(window, cx));
+        let archive_fields = [
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx).multi_line(true)),
+        ];
         let expert_fields = [
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx)),
@@ -608,6 +618,9 @@ impl Workspace {
             asides: HashMap::new(),
             capabilities: None,
             capabilities_error: None,
+            archive: None,
+            archive_error: None,
+            archive_fields,
             model_view: None,
             model_view_error: None,
             model_view_open: HashSet::new(),
@@ -841,6 +854,11 @@ impl Workspace {
                 self.clear_model_view();
                 self.focus_composer(window, cx);
             }
+            Some(Layer::ResearchArchive) => {
+                self.archive = None;
+                self.archive_error = None;
+                self.focus_composer(window, cx);
+            }
             // The page stays open underneath.
             Some(Layer::JournalForm) => {}
             Some(Layer::ConfirmTrashFile) => self.file_trashing = None,
@@ -1042,9 +1060,11 @@ impl Workspace {
             Layer::Trajectory,
             Layer::Review,
             Layer::ModelView,
+            Layer::ResearchArchive,
         ] {
             self.layers.close(layer);
         }
+        self.archive = None;
         self.clear_trajectory();
         self.clear_model_view();
         self.review = None;
@@ -2470,6 +2490,11 @@ impl Render for Workspace {
         };
         let root = if self.layers.contains(Layer::ModelView) {
             root.child(self.render_model_view(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::ResearchArchive) {
+            root.child(self.render_research_archive(window, cx))
         } else {
             root
         };

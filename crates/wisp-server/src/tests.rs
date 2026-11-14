@@ -5595,6 +5595,131 @@ async fn a_sample_project_is_made_where_the_user_says() {
 }
 
 #[tokio::test]
+async fn a_conversations_research_is_drafted_reviewed_and_frozen() {
+    // A model that answers a turn, and drafts an archive when asked to.
+    struct Archivist;
+    #[async_trait]
+    impl Provider for Archivist {
+        fn name(&self) -> &str {
+            "offline"
+        }
+        fn model(&self) -> &str {
+            "offline"
+        }
+        async fn complete(
+            &self,
+            messages: &[Message],
+            _: &[ToolSchema],
+        ) -> wisp_llm::Result<Completion> {
+            let system = messages[0].content.as_text();
+            let content = if system.starts_with("Prepare a research notebook archive") {
+                assert!(messages[1].content.as_text().contains("count the reads"));
+                r###"{"title":"Read counts","report":"## Findings\n100 reads.",
+                    "scripts":[{"filename":"count.sh","content":"wc -l reads.fq"}]}"###
+            } else {
+                "[]"
+            };
+            Ok(Completion {
+                content: content.into(),
+                finish_reason: Some("stop".into()),
+                ..Default::default()
+            })
+        }
+        async fn stream(
+            &self,
+            _: &[Message],
+            _: &[ToolSchema],
+            sink: &mut dyn StreamSink,
+        ) -> wisp_llm::Result<Completion> {
+            sink.on_text("There are 100 reads.");
+            Ok(Completion {
+                content: "There are 100 reads.".into(),
+                finish_reason: Some("stop".into()),
+                ..Default::default()
+            })
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let factory: ModelFactory = Arc::new(|_| Box::new(Archivist));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    // Nothing said yet: nothing to archive.
+    assert!(server
+        .draft_research_archive(PROJECT, &session)
+        .await
+        .is_err());
+    send(&server, &session, "count the reads").await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    assert_eq!(
+        server.research_archive(PROJECT, &session).await.unwrap(),
+        None
+    );
+
+    // The draft is the model's; nothing is saved by drafting.
+    let mut draft = server
+        .draft_research_archive(PROJECT, &session)
+        .await
+        .unwrap();
+    assert_eq!(draft.title, "Read counts");
+    assert_eq!(draft.scripts.len(), 1);
+    assert_eq!(
+        server.research_archive(PROJECT, &session).await.unwrap(),
+        None
+    );
+    assert!(!snapshot(&server, &session).await.read_only);
+
+    // What is frozen is what the researcher made of it.
+    draft.report.push_str("\n\nChecked by hand.");
+    let refused = desktop::ArchiveDraft {
+        title: " ".into(),
+        ..draft.clone()
+    };
+    assert!(server
+        .freeze_research_archive(PROJECT, &session, refused)
+        .await
+        .is_err());
+    let frozen = server
+        .freeze_research_archive(PROJECT, &session, draft)
+        .await
+        .unwrap();
+    assert!(frozen.frozen_at.is_some());
+    let folder = temp
+        .path()
+        .join("workspace/.wisp/research-archives")
+        .join(&frozen.id);
+    assert_eq!(
+        std::fs::read_to_string(folder.join("REPORT.md")).unwrap(),
+        "# Read counts\n\n## Findings\n100 reads.\n\nChecked by hand.\n"
+    );
+    assert!(folder.join("scripts/count.sh").is_file());
+    assert_eq!(
+        server.research_archive(PROJECT, &session).await.unwrap(),
+        Some(frozen.clone())
+    );
+
+    // From now on it is a record: read, not continued or archived again.
+    assert!(snapshot(&server, &session).await.read_only);
+    let late = send(&server, &session, "one more thing").await.unwrap_err();
+    assert!(late.contains("read-only"), "{late}");
+    assert!(server
+        .draft_research_archive(PROJECT, &session)
+        .await
+        .is_err());
+    // Another conversation of the project is untouched.
+    let next = create(&server).await;
+    send(&server, &next, "count the reads again").await.unwrap();
+    wait_for(&server, &next, |s| !s.running).await;
+    assert!(server.research_archive("missing", &session).await.is_err());
+    assert!(!server
+        .commands()
+        .iter()
+        .any(|name| name.contains("archive_research")));
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_conversation_is_exported_whole_as_markdown() {
     let temp = tempfile::tempdir().unwrap();
     let calls = Arc::new(AtomicUsize::new(0));

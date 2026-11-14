@@ -49,6 +49,8 @@ pub enum Layer {
     Review,
     /// What the model is sent for the open conversation: a dialog over it.
     ModelView,
+    /// The research archive of the open conversation: a dialog over it.
+    ResearchArchive,
     /// The name field in the Files panel: a new folder or file, or a rename.
     FileName,
     /// Question in the Files panel before an entry goes to the trash.
@@ -470,6 +472,11 @@ mod tests {
         stack.open(Layer::Trajectory);
         assert_eq!(stack.dismiss_top(), Some(Layer::Trajectory));
         assert!(stack.contains(Layer::FilesPanel));
+        assert!(stack.close(Layer::FilesPanel));
+        // So is the research archive.
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::ResearchArchive);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ResearchArchive));
         assert!(stack.close(Layer::FilesPanel));
         // So is the list of what the model is sent.
         stack.open(Layer::FilesPanel);
