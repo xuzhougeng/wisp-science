@@ -62,7 +62,7 @@ to find in the running app.
 | Recent conversations across projects with status [最近会话] | Yes | Done | store |
 | Sample project, read-only [示例项目] | Yes | Missing | tauri |
 | Research assistant [科研助理] | Scheduled tasks and plans | Missing | store |
-| Research calendar [研究日历] | Month grid, per-project filter, day detail | Missing | store |
+| Research calendar [研究日历] | Month grid, per-project filter, day detail | Done: month grid with counts, projects can be left out, and the chosen day's records | store |
 | Favorites library [收藏库] | Saved code, figures, highlights; search and kind filter | Done: a page of its own; saved snippets cannot be edited into versions | store |
 | Command palette [搜索, ⌘K] | Projects, files, conversations, commands | Partial: finds projects, files and conversations in every project and runs GPUI's own commands; no open-in-new-window or attach-from-result, and the commands for features not ported yet are absent | served + ui |
 | Documentation [文档] | Opens the docs | Done: from the home page, Settings and the command palette, in the system's browser | ui |
@@ -325,7 +325,8 @@ before the things that hang in it.
    servers; 9h done: Environments, SSH hosts and the default; 9i done: Network, routes
    and package sources; 9j done: checking an SSH host)*
 10. **Project pages** — research journey, calendar, paper evidence, research
-    assistant, trajectory, archive. *(10a done: the research journey)*
+    assistant, trajectory, archive. *(10a done: the research journey; 10b done: the
+    research calendar)*
 11. **Project transfer and sync** — import, export, relay sync, remote access.
 12. **Experts, workflows, quick actions, ACP, accounts, plugins, browser.**
 13. **Finish** — localization, notifications, several windows, updates,

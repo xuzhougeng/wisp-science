@@ -1,3 +1,4 @@
+mod calendar_view;
 mod conversation_actions;
 mod favorites_view;
 mod files_panel;
@@ -81,6 +82,14 @@ pub struct Workspace {
     copied: Option<usize>,
     palette: PaletteState,
     palette_input: Entity<InputState>,
+    /// The calendar across projects: the month shown, every project's
+    /// records once read, the counter that drops late answers, the day
+    /// that is chosen, and the projects left out.
+    calendar_month: Option<crate::journey::Month>,
+    calendar: Option<Vec<wisp_dto::ResearchCalendarProject>>,
+    calendar_request: u64,
+    calendar_day: Option<u32>,
+    calendar_hidden: HashSet<String>,
     /// The month of the open project's history that is shown, its records
     /// once read, the counter that drops late answers, the filter field,
     /// and the form for a record of the researcher's own (title, details)
@@ -505,6 +514,11 @@ impl Workspace {
             palette_input,
             find: Default::default(),
             find_input,
+            calendar_month: None,
+            calendar: None,
+            calendar_request: 0,
+            calendar_day: None,
+            calendar_hidden: HashSet::new(),
             journey_month: None,
             journey: None,
             journey_request: 0,
@@ -688,6 +702,10 @@ impl Workspace {
                 self.journey = None;
                 self.focus_composer(window, cx);
             }
+            Some(Layer::Calendar) => {
+                self.calendar = None;
+                self.focus_composer(window, cx);
+            }
             // The page stays open underneath.
             Some(Layer::JournalForm) => {}
             Some(Layer::ConfirmTrashFile) => self.file_trashing = None,
@@ -733,6 +751,7 @@ impl Workspace {
                 if self.screen != Screen::Project
                     || self.state.session.is_none()
                     || self.layers.contains(Layer::Settings)
+                    || self.layers.contains(Layer::Calendar)
                     || self.layers.contains(Layer::Journey)
                     || self.layers.contains(Layer::Favorites)
                     || self.layers.contains(Layer::Palette)
@@ -746,6 +765,7 @@ impl Workspace {
             Shortcut::NewConversation => {
                 if self.screen != Screen::Project
                     || self.layers.contains(Layer::Settings)
+                    || self.layers.contains(Layer::Calendar)
                     || self.layers.contains(Layer::Journey)
                     || self.layers.contains(Layer::Favorites)
                     || self.layers.contains(Layer::Palette)
@@ -2019,11 +2039,16 @@ impl Render for Workspace {
             return root.child(self.render_startup(cx));
         }
         // A page takes the whole window; of two, the one opened last shows.
-        let page = self
-            .layers
-            .top_of(&[Layer::Settings, Layer::Favorites, Layer::Journey]);
+        let page = self.layers.top_of(&[
+            Layer::Settings,
+            Layer::Favorites,
+            Layer::Journey,
+            Layer::Calendar,
+        ]);
         let root = if page == Some(Layer::Settings) {
             root.child(self.render_settings(cx))
+        } else if page == Some(Layer::Calendar) {
+            root.child(self.render_calendar(cx))
         } else if page == Some(Layer::Journey) {
             root.child(self.render_journey(cx))
         } else if page == Some(Layer::Favorites) {

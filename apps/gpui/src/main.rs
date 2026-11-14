@@ -2,6 +2,7 @@
 
 mod assets;
 mod backend;
+mod calendar;
 mod compose;
 mod controls;
 mod favorites;

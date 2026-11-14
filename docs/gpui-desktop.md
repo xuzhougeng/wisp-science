@@ -134,6 +134,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Search | Titles and message text across the project, archived conversations included |
 | Command palette | One box over everything: projects, files by name in every project, conversations by title or message text, and the window's commands; arrow keys, Return, Escape |
 | Pictures in answers | When an answer shows a picture of the project with Markdown image syntax, the picture is drawn under the answer |
+| Research calendar | A page across every project: a month as a grid with how many records each day holds, and the chosen day's records; projects can be left out |
 | Research journey | A page for the open project: one month of what happened, by day (what you asked, runs, files, decisions, your own records), a filter, and a form to add a record of your own |
 | Outline | A button in the conversation's header lists what you asked, in order; choosing one scrolls to it |
 | Find in conversation | Cmd/Ctrl+F, or the command palette: a bar over the transcript marks every message, and every tool call, that contains the words; Return and the arrows move between them |
@@ -359,7 +360,14 @@ Limits of this slice:
   or removed here. A row that came from a conversation opens it. The
   relation graph, the daily recap the model drafts, the sources of a file,
   and the history of an exploration branch are not ported, and neither is
-  the calendar across projects.
+  the calendar across projects, which is a page of its own.
+- The research calendar reads the same history as the journey for every
+  project at once, a month at a time, in your computer's local days. It
+  opens on today; another month opens on its last day with something on
+  it. A project that cannot be read is named with the reason instead of
+  being shown as empty. Which projects are left out is kept only while the
+  app runs. A row that came from a conversation opens it. Records cannot be
+  added from the calendar.
 - The outline lists your own messages in the part of the conversation that
   is loaded, by their first line; earlier ones appear once they are loaded.
   It has no headings from the answers and no search of its own.
@@ -657,6 +665,12 @@ with the pencil. Press the trash on it, then Escape (the question goes, the
 panel stays); press it again and confirm: the folder leaves the list, the
 panel says where it went, and it is there under `.wisp/trash` in the project
 with its file.
+On the home page press the calendar: the month is a grid, each day that
+has records says how many, and today is chosen with its records listed
+below. Choose another day; leave a project out and confirm the counts
+drop; go to an earlier month and back. Press a row that came from a
+conversation and confirm it opens in its project. Press Escape with the
+calendar open: it closes.
 In a project press Journey: this month's records are listed under their
 days, newest first. Type a word in the filter and confirm the count says
 how many of them are shown. Go to an earlier month and back with the

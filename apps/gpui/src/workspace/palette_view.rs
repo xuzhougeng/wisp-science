@@ -221,6 +221,7 @@ impl Workspace {
             Command::Feedback => return cx.open_url(crate::links::ISSUES),
             Command::Find => return self.open_find(window, cx),
             Command::Journey => return self.open_journey(window, cx),
+            Command::Calendar => return self.open_calendar(window, cx),
             Command::ProjectSettings => {
                 if let Some(project) = self.state.project.clone() {
                     self.open_project_settings(project, window, cx);

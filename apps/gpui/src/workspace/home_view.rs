@@ -221,6 +221,11 @@ impl Workspace {
                             cx.listener(|this, _, window, cx| this.toggle_palette(window, cx)),
                         ),
                     )
+                    .child(
+                        icon_button("home-calendar", "calendar", "Research calendar").on_click(
+                            cx.listener(|this, _, window, cx| this.open_calendar(window, cx)),
+                        ),
+                    )
                     .child(icon_button("home-favorites", "star", "Favorites").on_click(
                         cx.listener(|this, _, window, cx| this.open_favorites(window, cx)),
                     ))

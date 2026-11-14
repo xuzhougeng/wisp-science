@@ -207,6 +207,11 @@ impl Backend {
         self.local(move |host| async move { host.journey(&project, from, until).await })
     }
 
+    /// Every project's history between two moments, for the calendar.
+    pub fn calendar(&self, from: i64, until: i64) -> Reply<Vec<wisp_dto::ResearchCalendarProject>> {
+        self.local(move |host| async move { host.calendar(from, until).await })
+    }
+
     /// Adds a record the researcher wrote to the project's history.
     pub fn add_journal_entry(
         &self,

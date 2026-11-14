@@ -37,6 +37,8 @@ pub enum Layer {
     Journey,
     /// The form on the journey page for a record of the researcher's own.
     JournalForm,
+    /// The research calendar across projects: a page of its own.
+    Calendar,
     /// The name field in the Files panel: a new folder or file, or a rename.
     FileName,
     /// Question in the Files panel before an entry goes to the trash.
@@ -422,6 +424,9 @@ mod tests {
         stack.open(Layer::ConfirmTrashFile);
         assert!(stack.close(Layer::FilesPanel));
         assert!(!stack.contains(Layer::ConfirmTrashFile));
+        // The calendar is a page like any other: Escape closes it alone.
+        stack.open(Layer::Calendar);
+        assert_eq!(stack.dismiss_top(), Some(Layer::Calendar));
         // The journey is a page, and its form is inside it.
         stack.open(Layer::Journey);
         stack.open(Layer::JournalForm);

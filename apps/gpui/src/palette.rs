@@ -43,6 +43,7 @@ pub enum Command {
     ProjectSettings,
     Find,
     Journey,
+    Calendar,
 }
 
 impl Command {
@@ -66,6 +67,7 @@ impl Command {
             Command::ProjectSettings => "Project settings",
             Command::Find => "Find in this conversation",
             Command::Journey => "Research journey",
+            Command::Calendar => "Research calendar",
         }
     }
 
@@ -88,6 +90,7 @@ impl Command {
             Command::ProjectSettings => "adjustments",
             Command::Find => "search",
             Command::Journey => "timeline",
+            Command::Calendar => "calendar",
         }
     }
 
@@ -111,11 +114,12 @@ impl Command {
             | Command::Settings
             | Command::Favorites
             | Command::Docs
-            | Command::Feedback => true,
+            | Command::Feedback
+            | Command::Calendar => true,
         }
     }
 
-    const ALL: [Command; 18] = [
+    const ALL: [Command; 19] = [
         Command::NewConversation,
         Command::OpenFolder,
         Command::Home,
@@ -134,6 +138,7 @@ impl Command {
         Command::ProjectSettings,
         Command::Find,
         Command::Journey,
+        Command::Calendar,
     ];
 }
 
@@ -423,6 +428,7 @@ mod tests {
                 Section::Projects,
                 Section::Projects,
                 Section::Conversations,
+                Section::Commands,
                 Section::Commands,
                 Section::Commands,
                 Section::Commands,

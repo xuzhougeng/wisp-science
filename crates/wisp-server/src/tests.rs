@@ -4308,5 +4308,27 @@ async fn a_projects_journey_lists_what_happened_and_what_the_researcher_recorded
         .await
         .is_err());
     assert!(server.journey("missing", from, until).await.is_err());
+
+    // The calendar is the same history for every project at once.
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    server
+        .add_journal_entry(&lab, record("Ordered primers", "progress", now))
+        .await
+        .unwrap();
+    let calendar = server.calendar(from, until).await.unwrap();
+    let mut seen: Vec<_> = calendar
+        .iter()
+        .map(|project| {
+            assert_eq!(project.error, None);
+            (project.project_id.as_str(), project.history.entries.len())
+        })
+        .collect();
+    seen.sort();
+    let mut expected = [(PROJECT, 2), (lab.as_str(), 1)];
+    expected.sort();
+    assert_eq!(seen, expected);
+    assert!(server.calendar(now - 40 * 86_400, now).await.is_err());
     server.shutdown().await;
 }

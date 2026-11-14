@@ -765,6 +765,26 @@ impl Server {
             .await
     }
 
+    /// Every project's history from `from` up to `until` (at most 32 days
+    /// apart), for the calendar across projects. A project that cannot be
+    /// read is listed with why, so the calendar never looks empty when it
+    /// is only incomplete.
+    pub async fn calendar(
+        &self,
+        from: i64,
+        until: i64,
+    ) -> Result<Vec<wisp_dto::ResearchCalendarProject>> {
+        let projects: Vec<String> = self
+            .0
+            .store
+            .list_projects()
+            .await?
+            .into_iter()
+            .map(|(id, ..)| id)
+            .collect();
+        self.0.store.research_calendar(&projects, from, until).await
+    }
+
     /// Adds a record the researcher writes themselves to the project's
     /// history: progress, a finding, a decision or what comes next.
     pub async fn add_journal_entry(
