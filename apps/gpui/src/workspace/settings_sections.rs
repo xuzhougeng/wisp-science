@@ -1,6 +1,7 @@
 //! The Settings pages besides Models: how turns run (Conversation) and what
 //! runs without asking (Permissions). Each change is saved as it is made and
 //! applies from the next turn.
+use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
@@ -21,6 +22,7 @@ use crate::{
 
 /// Names the General page's choices are saved under.
 const APPEARANCE: &str = "appearance";
+const LANGUAGE: &str = "language";
 const LAUNCH: &str = "launch";
 const LAST_OPEN: &str = "last_open";
 
@@ -54,7 +56,12 @@ pub(super) fn setting(
                 .w(px(NOTE_WIDTH))
                 .flex_shrink_0()
                 .gap_1()
-                .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(title))
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(tr(title)),
+                )
                 .child(
                     div()
                         .text_xs()
@@ -582,6 +589,18 @@ impl Workspace {
     /// chosen palette and, if asked to, reopens the conversation that was
     /// open last time.
     pub(super) fn load_general(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let language = self.backend.preference(LANGUAGE);
+        cx.spawn_in(window, async move |this, cx| {
+            let saved = receive(language).await.ok().flatten();
+            let _ = this.update(cx, |this, cx| {
+                this.language =
+                    crate::i18n::Language::from_key(saved.as_deref().unwrap_or_default());
+                crate::i18n::apply(this.language);
+                // Everything on screen is worded again.
+                cx.refresh_windows();
+            });
+        })
+        .detach();
         let (appearance, launch, place) = (
             self.backend.preference(APPEARANCE),
             self.backend.preference(LAUNCH),
@@ -650,13 +669,30 @@ impl Workspace {
         for choice in crate::theme::Appearance::ALL {
             looks = looks.child(
                 Button::new(SharedString::from(format!("appearance-{}", choice.key())))
-                    .label(choice.label())
+                    .label(tr(choice.label()))
                     .small()
                     .selected(self.appearance == choice)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.appearance = choice;
                         crate::theme::apply(choice, window, cx);
                         this.save_general(APPEARANCE, choice.key().into(), window, cx);
+                    })),
+            );
+        }
+        let mut languages = div().h_flex().gap_1();
+        for choice in crate::i18n::Language::ALL {
+            languages = languages.child(
+                Button::new(SharedString::from(format!("language-{}", choice.key())))
+                    // "System" is a word of the interface; the languages
+                    // are named in themselves.
+                    .label(tr(choice.label()))
+                    .small()
+                    .selected(self.language == choice)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.language = choice;
+                        crate::i18n::apply(choice);
+                        this.save_general(LANGUAGE, choice.key().into(), window, cx);
+                        cx.refresh_windows();
                     })),
             );
         }
@@ -675,7 +711,17 @@ impl Workspace {
         }
         self.settings_page(cx)
             .child(setting(
-                "Appearance",
+                tr("Language"),
+                tr(
+                    "The language of the interface. System follows your computer's language: \
+                 Chinese when it is set to Chinese, English otherwise. What the model \
+                 writes is not affected.",
+                ),
+                languages,
+                cx,
+            ))
+            .child(setting(
+                tr("Appearance"),
                 "System follows your computer's light or dark setting and changes with it.",
                 looks,
                 cx,
@@ -967,7 +1013,7 @@ impl Workspace {
             cx,
         ))
         .child(setting(
-            "Review turns",
+            tr("Review turns"),
             "When a turn that used a tool, or said a good deal, ends, a reviewer checks its \
              claims against the tool output and the result shows above the composer. This \
              is what conversations start with; each can be switched in its composer.",
@@ -1060,8 +1106,8 @@ impl Workspace {
             div()
                 .h_flex()
                 .gap_1()
-                .child(mode("default-ask", "Ask first", false))
-                .child(mode("default-full", "Full access", true)),
+                .child(mode("default-ask", tr("Ask first"), false))
+                .child(mode("default-full", tr("Full access"), true)),
             cx,
         ));
         page = page.child(

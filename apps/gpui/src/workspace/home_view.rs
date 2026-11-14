@@ -1,5 +1,6 @@
 //! The home page: every project and the most recent conversations. Removing
 //! a project asks first, in a layer that Escape closes.
+use crate::i18n::tr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui::{prelude::*, *};
@@ -45,7 +46,7 @@ impl Workspace {
     fn render_delete_folder(&self, question: &home::FolderQuestion, cx: &mut Context<Self>) -> Div {
         let danger = cx.theme().danger;
         let cancel = Button::new("delete-folder-cancel")
-            .label("Cancel")
+            .label(tr("Cancel"))
             .small()
             .on_click(cx.listener(|this, _, _, cx| this.cancel_remove_project(cx)));
         let block = div().v_flex().gap_2().pt_1();
@@ -56,7 +57,7 @@ impl Workspace {
                         div()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child("Looking at the folder…"),
+                            .child(tr("Looking at the folder…")),
                     )
                     .child(div().h_flex().justify_end().child(cancel));
             }
@@ -96,7 +97,7 @@ impl Workspace {
                     .justify_end()
                     .child(
                         Button::new("delete-folder-confirm")
-                            .label("Delete project and folder")
+                            .label(tr("Delete project and folder"))
                             .small()
                             .danger()
                             .disabled(!ready)
@@ -154,10 +155,16 @@ impl Workspace {
             // Not a link while the question is open: a stray click must not
             // open the project that is about to be removed.
             return card
-                .child(div().pt_1().text_xs().text_color(cx.theme().danger).child(
-                    "Remove this project and its conversations from Wisp? The folder \
+                .child(
+                    div()
+                        .pt_1()
+                        .text_xs()
+                        .text_color(cx.theme().danger)
+                        .child(tr(
+                            "Remove this project and its conversations from Wisp? The folder \
                          and its files stay on disk.",
-                ))
+                        )),
+                )
                 .child(
                     div()
                         .h_flex()
@@ -165,7 +172,7 @@ impl Workspace {
                         .justify_end()
                         .child(
                             Button::new("remove-confirm")
-                                .label("Remove")
+                                .label(tr("Remove"))
                                 .small()
                                 .danger()
                                 .disabled(self.pending)
@@ -175,10 +182,12 @@ impl Workspace {
                         )
                         .child(
                             Button::new("remove-with-folder")
-                                .label("Delete folder too…")
+                                .label(tr("Delete folder too…"))
                                 .small()
                                 .ghost()
-                                .tooltip("Also delete the project's folder and its files, for good")
+                                .tooltip(tr(
+                                    "Also delete the project's folder and its files, for good",
+                                ))
                                 .disabled(self.pending)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.ask_delete_project_folder(window, cx)
@@ -186,7 +195,7 @@ impl Workspace {
                         )
                         .child(
                             Button::new("remove-cancel")
-                                .label("Cancel")
+                                .label(tr("Cancel"))
                                 .small()
                                 .on_click(
                                     cx.listener(|this, _, _, cx| this.cancel_remove_project(cx)),
@@ -201,9 +210,9 @@ impl Workspace {
                 SharedString::from(format!("star-{id}")),
                 if starred { "star-filled" } else { "star" },
                 if starred {
-                    "Stop keeping first"
+                    tr("Stop keeping first")
                 } else {
-                    "Keep first"
+                    tr("Keep first")
                 },
             )
             .on_click(cx.listener(move |this, _, window, cx| {
@@ -217,7 +226,7 @@ impl Workspace {
             icon_button(
                 SharedString::from(format!("project-settings-{id}")),
                 "adjustments",
-                "Project settings",
+                tr("Project settings"),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
@@ -229,7 +238,7 @@ impl Workspace {
             icon_button(
                 SharedString::from(format!("project-export-{id}")),
                 "archive-export",
-                "Export the project as an archive",
+                tr("Export the project as an archive"),
             )
             .disabled(self.pending)
             .on_click(cx.listener(move |this, _, window, cx| {
@@ -243,7 +252,7 @@ impl Workspace {
                 icon_button(
                     SharedString::from(format!("remove-{id}")),
                     "trash",
-                    "Remove from Wisp",
+                    tr("Remove from Wisp"),
                 )
                 .disabled(self.pending)
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -300,45 +309,53 @@ impl Workspace {
                     .child(
                         div()
                             .text_color(muted)
-                            .child("Rigorous research, with Wisp at your side."),
+                            .child(tr("Rigorous research, with Wisp at your side.")),
                     ),
             )
             .child(
                 div()
                     .h_flex()
                     .gap_2()
-                    .child(chip("GPUI preview", Tone::Neutral, cx))
+                    .child(chip(tr("GPUI preview"), Tone::Neutral, cx))
                     .child(
-                        icon_button("home-search", "search", "Search everything").on_click(
+                        icon_button("home-search", "search", tr("Search everything")).on_click(
                             cx.listener(|this, _, window, cx| this.toggle_palette(window, cx)),
                         ),
                     )
                     .child(
-                        icon_button("home-import", "archive-import", "Import a project archive")
-                            .disabled(self.pending)
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.import_project(window, cx)),
-                            ),
+                        icon_button(
+                            "home-import",
+                            "archive-import",
+                            tr("Import a project archive"),
+                        )
+                        .disabled(self.pending)
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.import_project(window, cx)),
+                        ),
                     )
                     .child(
-                        icon_button("home-calendar", "calendar", "Research calendar").on_click(
+                        icon_button("home-calendar", "calendar", tr("Research calendar")).on_click(
                             cx.listener(|this, _, window, cx| this.open_calendar(window, cx)),
                         ),
                     )
-                    .child(icon_button("home-favorites", "star", "Favorites").on_click(
-                        cx.listener(|this, _, window, cx| this.open_favorites(window, cx)),
-                    ))
-                    .child(icon_button("home-settings", "gear", "Settings").on_click(
-                        cx.listener(|this, _, window, cx| this.open_settings(window, cx)),
-                    ))
                     .child(
-                        icon_button("home-docs", "book", "Documentation, in your browser")
+                        icon_button("home-favorites", "star", tr("Favorites")).on_click(
+                            cx.listener(|this, _, window, cx| this.open_favorites(window, cx)),
+                        ),
+                    )
+                    .child(
+                        icon_button("home-settings", "gear", tr("Settings")).on_click(
+                            cx.listener(|this, _, window, cx| this.open_settings(window, cx)),
+                        ),
+                    )
+                    .child(
+                        icon_button("home-docs", "book", tr("Documentation, in your browser"))
                             .on_click(cx.listener(|_, _, _, cx| cx.open_url(crate::links::DOCS))),
                     )
                     .child(
                         Button::new("open-project")
                             .icon(glyph("folder-plus"))
-                            .label("Open folder")
+                            .label(tr("Open folder"))
                             .primary()
                             .disabled(self.pending)
                             .on_click(
@@ -352,7 +369,7 @@ impl Workspace {
             .gap_2()
             .flex_1()
             .min_w_0()
-            .child(section("Projects", cx));
+            .child(section(tr("Projects"), cx));
         for project in &self.projects {
             projects = projects.child(self.project_card(project, now, home_dir.as_deref(), cx));
         }
@@ -362,14 +379,14 @@ impl Workspace {
             .gap_2()
             .flex_1()
             .min_w_0()
-            .child(section("Recent conversations", cx));
+            .child(section(tr("Recent conversations"), cx));
         if self.recent.is_empty() {
             recent = recent.child(
                 div()
                     .py_2()
                     .text_sm()
                     .text_color(muted)
-                    .child("Conversations you start will appear here."),
+                    .child(tr("Conversations you start will appear here.")),
             );
         }
         for row in &self.recent {
@@ -422,15 +439,12 @@ impl Workspace {
                     .py_3()
                     .rounded(cx.theme().radius_lg)
                     .bg(cx.theme().muted)
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_sm()
-                            .child("Choose a model before you start: Wisp needs one to answer."),
-                    )
+                    .child(div().flex_1().text_sm().child(tr(
+                        "Choose a model before you start: Wisp needs one to answer.",
+                    )))
                     .child(
                         Button::new("home-configure-model")
-                            .label("Open Settings")
+                            .label(tr("Open Settings"))
                             .small()
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.open_settings(window, cx)),

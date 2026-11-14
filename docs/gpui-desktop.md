@@ -137,6 +137,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Project archives | Export on a project's card writes the project, its records and its files, as one zip; Import on the home page reads one and puts the project in a folder you choose |
 | Capabilities | A dialog for the open project: how many skills, connectors, MCP servers and SSH hosts are on or usable, the state of memory, and which command-line tools were found on this computer |
 | Follow-up questions | After an answer, up to three questions you could ask next show above the composer; picking one puts it in the composer to send or change, and the list can be put away |
+| Language | Settings, General, chooses the interface language: System (Chinese on a Chinese system, English otherwise), English or 中文 |
 | Delete a project's folder | Removing a project offers Delete folder too: after you type the project's name, the project is removed and its folder is deleted with every file in it |
 | What the model is sent | Clicking the context percentage by the composer (or the command palette) lists the conversation's working set: the instructions, the summary that stands in for compacted turns, and each message with about how many tokens it takes |
 | Interpreters | The Python and R interpreters a conversation keeps between tool calls show above the composer with their version and state; Stop ends one, Dismiss takes a stopped one off the list |
@@ -324,6 +325,15 @@ Limits of this slice:
   for a last word without tools. Compaction uses the WebView's keys
   (`auto_compact`, `auto_compact_percent`). Auto-continue, compaction on a
   model switch and after idle hours are not ported.
+- The Chinese interface is not complete: the home page, the sidebar, the
+  transcript's actions, the composer and the conversation's actions are
+  translated; the other pages, text that has a number or a name set into
+  it, the placeholders of text fields and everything the host says
+  (errors, tool questions) are still English. A text without a
+  translation shows in English rather than not at all. The system's
+  language is read from the macOS locale, or from `LC_ALL`, `LC_MESSAGES`
+  or `LANG`; where none says, System is English. The model's replies are
+  not affected by this setting.
 - Delete folder too deletes for good: nothing goes to the Trash and there
   is no undo. It deletes only the folder registered for the project, and
   refuses one that is a whole disk or volume, sits at the top of a disk,
@@ -733,6 +743,10 @@ press Escape (the page stays), press Escape again (the page closes). Open the
 conversation an item came from. Have a turn write an image, save it from
 Artifacts, delete the file and confirm the figure still shows in Favorites.
 Delete a conversation and confirm what was saved from it is still listed.
+In Settings, General, choose 中文: the sidebar, the home page and the
+composer read in Chinese at once, without a restart; choose English and
+they read in English; choose System on a Chinese system and they read in
+Chinese. Restart and confirm the choice was kept.
 On a project you can lose (a folder made for the test), press its remove
 button and then Delete folder too: the question names the folder's full
 path, its file count and size. Type part of the name: the delete button

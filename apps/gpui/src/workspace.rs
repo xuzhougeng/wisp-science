@@ -192,6 +192,7 @@ pub struct Workspace {
     memory_text: Entity<InputState>,
     /// Which palette the window wears.
     appearance: crate::theme::Appearance,
+    language: crate::i18n::Language,
     /// What the app opens on.
     launch: crate::settings::Launch,
     /// The Settings page that is showing.
@@ -621,6 +622,7 @@ impl Workspace {
             memory_target: None,
             memory_text,
             appearance: Default::default(),
+            language: Default::default(),
             launch: Default::default(),
             settings_section: Default::default(),
             turn_defaults: None,

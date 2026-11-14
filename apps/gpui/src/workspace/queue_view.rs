@@ -1,6 +1,7 @@
 //! The queue of messages written while a turn runs: adding to it, sending
 //! from it when the turn ends, and the strip above the composer that shows
 //! what is waiting.
+use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Sizable, StyledExt,
@@ -110,7 +111,8 @@ impl Workspace {
                 .get(&session)
                 .is_some_and(|chips| !chips.chips().is_empty());
         if writing {
-            self.error = Some("Send or clear what you are writing before changing another".into());
+            self.error =
+                Some(tr("Send or clear what you are writing before changing another").into());
             return cx.notify();
         }
         if let Some(queued) = self.queue.remove(&session, id) {
@@ -149,7 +151,7 @@ impl Workspace {
         if hold.is_some() {
             heading = heading.child(
                 Button::new("queue-send-next")
-                    .label("Send the next one")
+                    .label(tr("Send the next one"))
                     .xsmall()
                     .ghost()
                     .on_click(cx.listener(|this, _, window, cx| this.send_next_queued(window, cx))),
@@ -181,7 +183,7 @@ impl Workspace {
                             .icon(glyph("edit"))
                             .xsmall()
                             .ghost()
-                            .tooltip("Take it back to change it")
+                            .tooltip(tr("Take it back to change it"))
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.take_back_queued(id, window, cx)
                             })),
@@ -191,7 +193,7 @@ impl Workspace {
                             .icon(glyph("close"))
                             .xsmall()
                             .ghost()
-                            .tooltip("Do not send it")
+                            .tooltip(tr("Do not send it"))
                             .on_click(
                                 cx.listener(move |this, _, _, cx| this.remove_queued(id, cx)),
                             ),

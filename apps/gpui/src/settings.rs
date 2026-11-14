@@ -77,7 +77,10 @@ impl Section {
     /// The page's own name is searched as well.
     fn keywords(self) -> &'static str {
         match self {
-            Section::General => "appearance theme dark light system start launch open home",
+            Section::General => {
+                "appearance theme dark light system start launch open home language \
+                 chinese english 中文 语言"
+            }
             Section::Network => {
                 "proxy route socks http direct mirror conda pip pypi index package \
                  certificate ca bundle"

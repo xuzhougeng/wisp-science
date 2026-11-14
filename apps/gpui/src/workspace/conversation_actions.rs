@@ -1,5 +1,6 @@
 //! Rename, pin, group, move, archive and delete for the open conversation.
 //! What the bar turns into or opens is a layer in the window's Escape stack.
+use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
@@ -309,9 +310,9 @@ impl Workspace {
                         if this.state.project.as_ref() == Some(&project) {
                             this.open_session(project, branch, window, cx);
                             this.notice = Some(
-                                "This is a branch: a copy to take in another direction. \
-                                 The conversation it came from is unchanged."
-                                    .into(),
+                                tr("This is a branch: a copy to take in another direction. \
+                                 The conversation it came from is unchanged.")
+                                .into(),
                             );
                         }
                         this.refresh_lists(window, cx);
@@ -360,7 +361,7 @@ impl Workspace {
                 bar.child(div().flex_1().min_w_0().child(Input::new(&self.rename)))
                     .child(
                         Button::new("rename-save")
-                            .label("Save title")
+                            .label(tr("Save title"))
                             .small()
                             .primary()
                             .disabled(busy)
@@ -370,7 +371,7 @@ impl Workspace {
                     )
                     .child(
                         Button::new("rename-cancel")
-                            .label("Cancel")
+                            .label(tr("Cancel"))
                             .small()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.cancel_layer(Layer::Rename, window, cx)
@@ -386,14 +387,14 @@ impl Workspace {
                         .min_w_0()
                         .text_sm()
                         .text_color(cx.theme().danger)
-                        .child(
+                        .child(tr(
                             "Delete this conversation and its messages permanently? \
                              Project files it wrote are kept.",
-                        ),
+                        )),
                 )
                 .child(
                     Button::new("delete-confirm")
-                        .label("Delete permanently")
+                        .label(tr("Delete permanently"))
                         .small()
                         .danger()
                         .disabled(busy)
@@ -401,7 +402,7 @@ impl Workspace {
                 )
                 .child(
                     Button::new("delete-cancel")
-                        .label("Cancel")
+                        .label(tr("Cancel"))
                         .small()
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.cancel_layer(Layer::ConfirmDelete, window, cx)
@@ -411,14 +412,14 @@ impl Workspace {
         }
         if self.layers.contains(Layer::ConfirmRewind) {
             return Some(
-                bar.child(div().flex_1().min_w_0().text_sm().child(
+                bar.child(div().flex_1().min_w_0().text_sm().child(tr(
                     "Go back to this message? It and everything after it leave the \
                      conversation, and its text returns to the composer to be \
                      changed. Files already written stay as they are.",
-                ))
+                )))
                 .child(
                     Button::new("rewind-confirm")
-                        .label("Go back and edit")
+                        .label(tr("Go back and edit"))
                         .small()
                         .primary()
                         .disabled(busy || running)
@@ -426,7 +427,7 @@ impl Workspace {
                 )
                 .child(
                     Button::new("rewind-cancel")
-                        .label("Cancel")
+                        .label(tr("Cancel"))
                         .small()
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.rewind_turn = None;
@@ -440,7 +441,7 @@ impl Workspace {
         Some(
             bar.child(
                 Button::new("conversation-rename")
-                    .label("Rename")
+                    .label(tr("Rename"))
                     .small()
                     .ghost()
                     .disabled(busy)
@@ -448,7 +449,7 @@ impl Workspace {
             )
             .child(
                 Button::new("conversation-pin")
-                    .label(if pinned { "Unpin" } else { "Pin" })
+                    .label(if pinned { tr("Unpin") } else { tr("Pin") })
                     .small()
                     .ghost()
                     .disabled(busy || archived)
@@ -458,10 +459,10 @@ impl Workspace {
             .child(self.transfer_button(busy || running, cx))
             .child(
                 Button::new("conversation-export")
-                    .label("Export")
+                    .label(tr("Export"))
                     .small()
                     .ghost()
-                    .tooltip("Save the whole conversation as a Markdown file")
+                    .tooltip(tr("Save the whole conversation as a Markdown file"))
                     .disabled(busy)
                     .on_click(
                         cx.listener(|this, _, window, cx| this.export_conversation(window, cx)),
@@ -469,35 +470,41 @@ impl Workspace {
             )
             .child(
                 Button::new("conversation-trajectory")
-                    .label("Trajectory")
+                    .label(tr("Trajectory"))
                     .small()
                     .ghost()
-                    .tooltip("Every step of this conversation, with what it took")
+                    .tooltip(tr("Every step of this conversation, with what it took"))
                     .on_click(cx.listener(|this, _, window, cx| this.open_trajectory(window, cx))),
             )
             .child(
                 Button::new("conversation-review")
-                    .label("Review")
+                    .label(tr("Review"))
                     .small()
                     .ghost()
-                    .tooltip(
+                    .tooltip(tr(
                         "Have the model check this conversation's claims against its tool output",
-                    )
+                    ))
                     .disabled(running)
                     .on_click(cx.listener(|this, _, window, cx| this.open_review(window, cx))),
             )
             .child(
                 Button::new("conversation-skill")
-                    .label("Save as skill")
+                    .label(tr("Save as skill"))
                     .small()
                     .ghost()
-                    .tooltip("Ask Wisp to distill this conversation into a reusable skill")
+                    .tooltip(tr(
+                        "Ask Wisp to distill this conversation into a reusable skill",
+                    ))
                     .disabled(archived)
                     .on_click(cx.listener(|this, _, window, cx| this.ask_for_skill(window, cx))),
             )
             .child(
                 Button::new("conversation-archive")
-                    .label(if archived { "Unarchive" } else { "Archive" })
+                    .label(if archived {
+                        tr("Unarchive")
+                    } else {
+                        tr("Archive")
+                    })
                     .small()
                     .ghost()
                     // The host refuses to archive or delete a running turn.
@@ -506,7 +513,7 @@ impl Workspace {
             )
             .child(
                 Button::new("conversation-delete")
-                    .label("Delete")
+                    .label(tr("Delete"))
                     .small()
                     .ghost()
                     .disabled(busy || running)

@@ -1,6 +1,7 @@
 //! The questions the model suggests after an answer: a short list above
 //! the composer. Picking one puts it in the composer to be sent or changed;
 //! the list can be put away, and is gone when the next turn starts.
+use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{ActiveTheme, Sizable, StyledExt};
 
@@ -97,10 +98,10 @@ impl Workspace {
                         div()
                             .text_xs()
                             .text_color(muted)
-                            .child("You could ask next"),
+                            .child(tr("You could ask next")),
                     )
                     .child(
-                        icon_button("follow-ups-dismiss", "close", "Put these away")
+                        icon_button("follow-ups-dismiss", "close", tr("Put these away"))
                             .xsmall()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.dismiss_follow_ups(window, cx)

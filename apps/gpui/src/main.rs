@@ -10,6 +10,8 @@ mod favorites;
 mod files;
 mod find;
 mod home;
+mod i18n;
+mod i18n_zh;
 mod inline;
 mod journey;
 mod layers;
@@ -85,6 +87,8 @@ fn main() -> anyhow::Result<()> {
         .run(move |cx| {
             gpui_component::init(cx);
             theme::install(cx);
+            // The system's language until the saved choice has been read.
+            i18n::apply(i18n::Language::System);
             cx.on_app_quit(move |_| {
                 // GPUI gives returned futures only 100ms and macOS terminates the
                 // process without returning from Application::run. Finish the host's

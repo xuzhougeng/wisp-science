@@ -1,5 +1,6 @@
 //! The project screen: sidebar, top bar, transcript rows, approvals and the
 //! composer. State changes live in the parent module; this file only draws.
+use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Icon, Selectable, Sizable, StyledExt,
@@ -31,7 +32,8 @@ pub(super) fn icon_button(id: impl Into<ElementId>, name: &str, tooltip: &'stati
         .icon(glyph(name))
         .ghost()
         .small()
-        .tooltip(tooltip)
+        // Tooltips are written in English where the button is made.
+        .tooltip(tr(tooltip))
 }
 
 /// One line of sidebar navigation. The caller attaches the click handler only
@@ -94,20 +96,20 @@ impl Workspace {
             .gap_3()
             .p_8();
         if self.pending {
-            return body.child(div().text_color(muted).child("Starting Wisp…"));
+            return body.child(div().text_color(muted).child(tr("Starting Wisp…")));
         }
         body = body
-            .child(div().text_lg().child("Wisp could not start"))
-            .child(div().max_w(px(520.)).text_sm().text_color(muted).child(
+            .child(div().text_lg().child(tr("Wisp could not start")))
+            .child(div().max_w(px(520.)).text_sm().text_color(muted).child(tr(
                 "Another Wisp desktop may already be using this data directory. \
                          See docs/gpui-desktop.md for the data and workspace locations.",
-            ));
+            )));
         if let Some(error) = &self.error {
             body = body.child(div().max_w(px(520.)).child(error_banner(error, cx)));
         }
         body.child(
             Button::new("retry")
-                .label("Try again")
+                .label(tr("Try again"))
                 .primary()
                 .on_click(cx.listener(|this, _, window, cx| this.initialize(window, cx))),
         )
@@ -125,13 +127,13 @@ impl Workspace {
             .as_ref()
             .and_then(|id| self.projects.iter().find(|project| &project.id == id))
             .map(|project| project.name.clone())
-            .unwrap_or_else(|| "Project".into());
+            .unwrap_or_else(|| tr("Project").into());
 
         let mut new_chat =
             nav_row(
                 "new-chat",
                 "plus",
-                "New conversation",
+                tr("New conversation"),
                 false,
                 !disabled && has_project,
                 cx,
@@ -150,7 +152,7 @@ impl Workspace {
         let mut files = nav_row(
             "files",
             "folder",
-            "Files",
+            tr("Files"),
             self.layers.contains(Layer::FilesPanel) && self.panel_tab == PanelTab::Files,
             has_project,
             cx,
@@ -168,7 +170,14 @@ impl Workspace {
 
         let memos_open =
             self.layers.contains(Layer::FilesPanel) && self.panel_tab == PanelTab::Memos;
-        let mut memos = nav_row("memos", "note-plus", "Memos", memos_open, has_project, cx);
+        let mut memos = nav_row(
+            "memos",
+            "note-plus",
+            tr("Memos"),
+            memos_open,
+            has_project,
+            cx,
+        );
         if has_project {
             memos = memos.on_click(cx.listener(|this, _, window, cx| {
                 if this.layers.contains(Layer::FilesPanel) && this.panel_tab == PanelTab::Memos {
@@ -196,7 +205,7 @@ impl Workspace {
                     .h(px(36.))
                     .flex_shrink_0()
                     .child(
-                        icon_button("home", "arrow-left", "All projects")
+                        icon_button("home", "arrow-left", tr("All projects"))
                             .on_click(cx.listener(|this, _, window, cx| this.go_home(window, cx))),
                     )
                     .child(
@@ -215,7 +224,7 @@ impl Workspace {
                 nav_row(
                     "capabilities",
                     "sparkles",
-                    "Capabilities",
+                    tr("Capabilities"),
                     false,
                     has_project,
                     cx,
@@ -223,11 +232,11 @@ impl Workspace {
                 .on_click(cx.listener(|this, _, window, cx| this.open_capabilities(window, cx))),
             )
             .child(
-                nav_row("journey", "timeline", "Journey", false, has_project, cx)
+                nav_row("journey", "timeline", tr("Journey"), false, has_project, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.open_journey(window, cx))),
             )
             .child(
-                nav_row("favorites", "star", "Favorites", false, true, cx)
+                nav_row("favorites", "star", tr("Favorites"), false, true, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.open_favorites(window, cx))),
             )
             .child(
@@ -289,7 +298,7 @@ impl Workspace {
                         .text_xs()
                         .text_color(attention)
                         .child(icon("bell").text_color(attention))
-                        .child("Needs you"),
+                        .child(tr("Needs you")),
                 )
                 .child(inbox);
         }
@@ -302,7 +311,7 @@ impl Workspace {
         }
 
         sidebar.child(
-            nav_row("settings", "gear", "Settings", false, true, cx)
+            nav_row("settings", "gear", tr("Settings"), false, true, cx)
                 .on_click(cx.listener(|this, _, window, cx| this.open_settings(window, cx))),
         )
     }
@@ -311,7 +320,7 @@ impl Workspace {
         let title = self
             .current_row()
             .map(|row| row.title.clone())
-            .unwrap_or_else(|| "New research".into());
+            .unwrap_or_else(|| tr("New research").into());
         let mut heading = div().v_flex().flex_1().min_w_0().child(
             div()
                 .truncate()
@@ -341,14 +350,14 @@ impl Workspace {
                     .h_flex()
                     .gap_1()
                     .child(
-                        icon_button("palette", "search", "Search everything").on_click(
+                        icon_button("palette", "search", tr("Search everything")).on_click(
                             cx.listener(|this, _, window, cx| this.toggle_palette(window, cx)),
                         ),
                     )
                     .child({
                         let open = self.layers.contains(Layer::Outline);
                         let button = div().relative().child(
-                            icon_button("outline", "list", "Outline: what you asked, in order")
+                            icon_button("outline", "list", tr("Outline: what you asked, in order"))
                                 .selected(open)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     if this.layers.close(Layer::Outline) {
@@ -367,7 +376,7 @@ impl Workspace {
                         }
                     })
                     .child(
-                        icon_button("refresh", "refresh", "Refresh")
+                        icon_button("refresh", "refresh", tr("Refresh"))
                             .disabled(self.pending)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.error = None;
@@ -377,7 +386,7 @@ impl Workspace {
                             })),
                     )
                     .child(
-                        icon_button("files-toggle", "panel", "Files")
+                        icon_button("files-toggle", "panel", tr("Files"))
                             .selected(self.layers.contains(Layer::FilesPanel))
                             .disabled(self.state.project.is_none())
                             .on_click(
@@ -396,13 +405,13 @@ impl Workspace {
                 icon_button(
                     ("copy-row", index),
                     if copied { "check" } else { "copy" },
-                    if copied { "Copied" } else { "Copy" },
+                    if copied { tr("Copied") } else { tr("Copy") },
                 )
                 .xsmall()
                 .on_click(cx.listener(move |this, _, window, cx| this.copy_row(index, window, cx))),
             )
             .child(
-                icon_button(("remember-row", index), "memory", "Save to memory")
+                icon_button(("remember-row", index), "memory", tr("Save to memory"))
                     .xsmall()
                     .on_click(
                         cx.listener(move |this, _, window, cx| {
@@ -419,9 +428,9 @@ impl Workspace {
                 ("star-row", index),
                 if starred { "star-filled" } else { "star" },
                 if starred {
-                    "In your favorites. Click to remove"
+                    tr("In your favorites. Click to remove")
                 } else {
-                    "Save to favorites"
+                    tr("Save to favorites")
                 },
             )
             .xsmall()
@@ -434,14 +443,14 @@ impl Workspace {
         let idle = !running && !self.pending;
         match self.rows.get(index).map(|row| row.role.as_str()) {
             Some("user") if !archived => actions.child(
-                icon_button(("edit-row", index), "edit", "Edit and send again")
+                icon_button(("edit-row", index), "edit", tr("Edit and send again"))
                     .xsmall()
                     .disabled(!idle)
                     .on_click(cx.listener(move |this, _, _, cx| this.ask_rewind(index, cx))),
             ),
             Some("assistant") if controls::turn_of(&self.rows, index).is_some() => actions
                 .child(
-                    icon_button(("branch-row", index), "branch", "Branch from here")
+                    icon_button(("branch-row", index), "branch", tr("Branch from here"))
                         .xsmall()
                         .disabled(!idle)
                         .on_click(cx.listener(move |this, _, window, cx| {
@@ -449,7 +458,7 @@ impl Workspace {
                         })),
                 )
                 .child(
-                    icon_button(("review-row", index), "review", "Review this turn")
+                    icon_button(("review-row", index), "review", tr("Review this turn"))
                         .xsmall()
                         .disabled(!idle)
                         .on_click(cx.listener(move |this, _, window, cx| {
@@ -487,9 +496,9 @@ impl Workspace {
                     .gap_2()
                     .child(icon("circle-help").text_color(info))
                     .child(div().font_weight(FontWeight::MEDIUM).child(if waiting {
-                        "Wisp needs your decision"
+                        tr("Wisp needs your decision")
                     } else {
-                        "Wisp asked"
+                        tr("Wisp asked")
                     })),
             )
             .child(TextView::markdown(id, question.question, window, cx).selectable(true));
@@ -533,9 +542,9 @@ impl Workspace {
             }
             card = card.child(div().text_xs().text_color(muted).child(
                 if question.allow_freeform {
-                    "Or type your own answer below."
+                    tr("Or type your own answer below.")
                 } else {
-                    "Pick one of these to continue."
+                    tr("Pick one of these to continue.")
                 },
             ));
         }
@@ -569,9 +578,9 @@ impl Workspace {
                     .gap_2()
                     .child(icon("plan").text_color(accent))
                     .child(div().font_weight(FontWeight::MEDIUM).child(if waiting {
-                        "Proposed plan — waiting for you"
+                        tr("Proposed plan — waiting for you")
                     } else {
-                        "Proposed plan"
+                        tr("Proposed plan")
                     })),
             );
         for (number, (step, status)) in steps.into_iter().enumerate() {
@@ -615,7 +624,7 @@ impl Workspace {
                         )
                         .child(
                             Button::new(("plan-exit", index))
-                                .label("Leave plan mode")
+                                .label(tr("Leave plan mode"))
                                 .small()
                                 .disabled(self.pending)
                                 .on_click(cx.listener(|this, _, window, cx| {
@@ -623,10 +632,10 @@ impl Workspace {
                                 })),
                         ),
                 )
-                .child(div().text_xs().text_color(muted).child(
+                .child(div().text_xs().text_color(muted).child(tr(
                     "To change the plan, say what to change below and send. \
                      Anything typed there is sent with the approval.",
-                ));
+                )));
         }
         div().w_full().px_6().py_2().child(card).into_any_element()
     }
@@ -779,21 +788,26 @@ impl Workspace {
                 .h_flex()
                 .flex_wrap()
                 .gap_2()
-                .child(answer("Allow once", "check", true, Remember::No).primary());
+                .child(answer(tr("Allow once"), "check", true, Remember::No).primary());
             if controls::can_allow_for_conversation(approval) {
                 buttons = buttons
                     .child(answer(
-                        "Allow for this conversation",
+                        tr("Allow for this conversation"),
                         "circle-check",
                         true,
                         Remember::Conversation,
                     ))
                     .child(
-                        answer("Always in this project", "shield", true, Remember::Project)
-                            .tooltip("Take it back in Settings, under Permissions"),
+                        answer(
+                            tr("Always in this project"),
+                            "shield",
+                            true,
+                            Remember::Project,
+                        )
+                        .tooltip(tr("Take it back in Settings, under Permissions")),
                     );
             }
-            buttons = buttons.child(answer("Deny", "ban", false, Remember::No));
+            buttons = buttons.child(answer(tr("Deny"), "ban", false, Remember::No));
             approvals = approvals.child(
                 div()
                     .v_flex()
@@ -915,7 +929,7 @@ impl Workspace {
             .unwrap_or_default();
         let chosen = models.profiles.iter().any(|profile| profile.id == current);
         menu = menu.child(
-            Self::menu_row("model-default".into(), "Default", default, !chosen, cx).on_click(
+            Self::menu_row("model-default".into(), tr("Default"), default, !chosen, cx).on_click(
                 cx.listener(|this, _, window, cx| this.choose_model(String::new(), window, cx)),
             ),
         );
@@ -927,7 +941,7 @@ impl Workspace {
                         SharedString::from(format!("model-choice-{id}")),
                         profile.name.clone(),
                         match &profile.problem {
-                            Some(_) => "Needs attention in Settings".to_owned(),
+                            Some(_) => tr("Needs attention in Settings").to_owned(),
                             None => profile.fields.model.clone(),
                         },
                         profile.id == current,
@@ -957,7 +971,7 @@ impl Workspace {
             .child(
                 Self::menu_row(
                     "runs-on-default".into(),
-                    "Default",
+                    tr("Default"),
                     format!(
                         "{}, as Settings says",
                         settings::runs_on_label("", view.default.as_deref())
@@ -970,8 +984,8 @@ impl Workspace {
             .child(
                 Self::menu_row(
                     "runs-on-local".into(),
-                    "This computer",
-                    "Runs start here",
+                    tr("This computer"),
+                    tr("Runs start here"),
                     current == RUNS_LOCALLY,
                     cx,
                 )
@@ -1023,7 +1037,7 @@ impl Workspace {
                     .p_3()
                     .text_sm()
                     .text_color(muted)
-                    .child("Nothing has been asked here yet."),
+                    .child(tr("Nothing has been asked here yet.")),
             );
         }
         if self.before.is_some() {
@@ -1033,7 +1047,7 @@ impl Workspace {
                     .py_1()
                     .text_xs()
                     .text_color(muted)
-                    .child("Earlier messages are listed once they are loaded."),
+                    .child(tr("Earlier messages are listed once they are loaded.")),
             );
         }
         for entry in entries {
@@ -1109,27 +1123,35 @@ impl Workspace {
         let planning = options.plan_first;
         let plan = Button::new("plan-first")
             .icon(glyph("plan"))
-            .label(if planning { "Planning" } else { "Plan first" })
+            .label(if planning {
+                tr("Planning")
+            } else {
+                tr("Plan first")
+            })
             .small()
             .ghost()
             .selected(planning)
             .tooltip(if planning {
-                "Wisp investigates and proposes a plan; it changes nothing until you approve"
+                tr("Wisp investigates and proposes a plan; it changes nothing until you approve")
             } else {
-                "Have Wisp propose a plan before it changes anything"
+                tr("Have Wisp propose a plan before it changes anything")
             })
             .on_click(cx.listener(|this, _, window, cx| this.toggle_plan_first(window, cx)));
 
         let access = Button::new("access")
             .icon(glyph(if full { "bolt" } else { "shield" }))
-            .label(if full { "Full access" } else { "Ask first" })
+            .label(if full {
+                tr("Full access")
+            } else {
+                tr("Ask first")
+            })
             .small()
             .ghost()
             .selected(full || self.layers.contains(Layer::ConfirmFullAccess))
             .tooltip(if full {
-                "Wisp changes files and runs commands without asking"
+                tr("Wisp changes files and runs commands without asking")
             } else {
-                "Wisp asks before it changes files or runs commands"
+                tr("Wisp asks before it changes files or runs commands")
             })
             .on_click(cx.listener(|this, _, window, cx| this.toggle_full_access(window, cx)));
         let effort_open = self.layers.contains(Layer::EffortMenu);
@@ -1143,7 +1165,7 @@ impl Workspace {
                 .small()
                 .ghost()
                 .selected(effort_open)
-                .tooltip("How hard the model thinks, from the next message")
+                .tooltip(tr("How hard the model thinks, from the next message"))
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.toggle_composer_menu(Layer::EffortMenu, window, cx)
                 })),
@@ -1165,7 +1187,9 @@ impl Workspace {
                 .small()
                 .ghost()
                 .selected(model_open)
-                .tooltip("The model this conversation runs on, from the next message")
+                .tooltip(tr(
+                    "The model this conversation runs on, from the next message",
+                ))
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.toggle_composer_menu(Layer::ModelMenu, window, cx)
                 })),
@@ -1190,7 +1214,9 @@ impl Workspace {
                     .small()
                     .ghost()
                     .selected(open)
-                    .tooltip("Where this conversation's runs start, from the next message")
+                    .tooltip(tr(
+                        "Where this conversation's runs start, from the next message",
+                    ))
                     .on_click(cx.listener(|this, _, window, cx| {
                         // A host may have been added or checked since.
                         this.load_environments(window, cx);
@@ -1222,7 +1248,7 @@ impl Workspace {
                     .cursor_pointer()
                     .hover(|meter| meter.text_color(cx.theme().foreground))
                     .tooltip(|window, cx| {
-                        gpui_component::tooltip::Tooltip::new("See what the model is sent")
+                        gpui_component::tooltip::Tooltip::new(tr("See what the model is sent"))
                             .build(window, cx)
                     })
                     .on_click(cx.listener(|this, _, window, cx| this.open_model_view(window, cx)))
@@ -1233,7 +1259,7 @@ impl Workspace {
             actions = actions.child(
                 Button::new("stop")
                     .icon(glyph("stop"))
-                    .label("Stop")
+                    .label(tr("Stop"))
                     .small()
                     .disabled(self.pending)
                     .on_click(cx.listener(|this, _, window, cx| {
@@ -1250,14 +1276,14 @@ impl Workspace {
         actions = actions.child(
             Button::new("send")
                 .icon(glyph(if running { "clock" } else { "arrow-up" }))
-                .label(if running { "Queue" } else { "Send" })
+                .label(if running { tr("Queue") } else { tr("Send") })
                 .small()
                 .primary()
                 .disabled(!(can_send || can_queue))
                 .tooltip(if running {
-                    "Send it when this turn ends"
+                    tr("Send it when this turn ends")
                 } else {
-                    "Send"
+                    tr("Send")
                 })
                 .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
         );
@@ -1322,7 +1348,7 @@ impl Workspace {
                     ))
                     .child(
                         Button::new("revoke-allowed")
-                            .label("Ask again")
+                            .label(tr("Ask again"))
                             .xsmall()
                             .ghost()
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -1358,7 +1384,7 @@ impl Workspace {
                             .text_xs()
                             .text_color(muted)
                             .child(icon("brain").text_color(muted))
-                            .child("Thinking"),
+                            .child(tr("Thinking")),
                     )
                     .child(
                         div()
@@ -1381,13 +1407,13 @@ impl Workspace {
                     .rounded(cx.theme().radius)
                     .bg(attention.opacity(0.08))
                     .child(icon("bolt").text_color(attention))
-                    .child(div().flex_1().min_w_0().text_sm().child(
+                    .child(div().flex_1().min_w_0().text_sm().child(tr(
                         "Let Wisp change files and run commands in this conversation without \
                          asking? Dangerous shell commands still ask.",
-                    ))
+                    )))
                     .child(
                         Button::new("full-access-confirm")
-                            .label("Turn on")
+                            .label(tr("Turn on"))
                             .small()
                             .primary()
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -1396,7 +1422,7 @@ impl Workspace {
                     )
                     .child(
                         Button::new("full-access-cancel")
-                            .label("Cancel")
+                            .label(tr("Cancel"))
                             .small()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.toggle_full_access(window, cx)
@@ -1420,7 +1446,7 @@ impl Workspace {
                         .child(icon(chip.icon()).text_color(muted))
                         .child(div().max_w(px(220.)).truncate().child(chip.label()))
                         .child(
-                            icon_button(("detach", index), "close", "Remove")
+                            icon_button(("detach", index), "close", tr("Remove"))
                                 .xsmall()
                                 .on_click(
                                     cx.listener(move |this, _, _, cx| this.detach(index, cx)),
@@ -1433,7 +1459,7 @@ impl Workspace {
         let attach = div()
             .h_flex()
             .child(
-                icon_button("attach-files", "attach", "Attach files")
+                icon_button("attach-files", "attach", tr("Attach files"))
                     .disabled(self.pending)
                     .on_click(cx.listener(|this, _, window, cx| this.attach_files(window, cx))),
             )
@@ -1441,7 +1467,7 @@ impl Workspace {
                 icon_button(
                     "attach-context",
                     "link",
-                    "Add a project file, a conversation or a skill",
+                    tr("Add a project file, a conversation or a skill"),
                 )
                 .on_click(
                     cx.listener(|this, _, window, cx| this.toggle_attach_palette(window, cx)),
@@ -1472,17 +1498,17 @@ impl Workspace {
                                     Button::new("auto-review")
                                         .icon(glyph("review"))
                                         .label(if options.auto_review {
-                                            "Reviewing"
+                                            tr("Reviewing")
                                         } else {
-                                            "Review turns"
+                                            tr("Review turns")
                                         })
                                         .small()
                                         .ghost()
                                         .selected(options.auto_review)
                                         .tooltip(if options.auto_review {
-                                            "Each turn that used a tool is reviewed when it ends"
+                                            tr("Each turn that used a tool is reviewed when it ends")
                                         } else {
-                                            "Have each turn that used a tool reviewed when it ends"
+                                            tr("Have each turn that used a tool reviewed when it ends")
                                         })
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.toggle_auto_review(window, cx)
@@ -1524,15 +1550,12 @@ impl Workspace {
                     .flex_shrink_0()
                     .bg(attention.opacity(0.08))
                     .child(icon("circle-alert").text_color(attention))
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_sm()
-                            .child("No model is configured, so messages cannot be sent yet."),
-                    )
+                    .child(div().flex_1().text_sm().child(tr(
+                        "No model is configured, so messages cannot be sent yet.",
+                    )))
                     .child(
                         Button::new("configure-model")
-                            .label("Open Settings")
+                            .label(tr("Open Settings"))
                             .small()
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.open_settings(window, cx)),
@@ -1563,18 +1586,18 @@ impl Workspace {
                     .child(
                         div()
                             .text_2xl()
-                            .child("What would you like to research today?"),
+                            .child(tr("What would you like to research today?")),
                     )
                     .child(
                         div()
                             .text_sm()
                             .text_color(cx.theme().muted_foreground)
-                            .child("Start a conversation, or pick one on the left."),
+                            .child(tr("Start a conversation, or pick one on the left.")),
                     )
                     .child(
                         Button::new("empty-new-chat")
                             .icon(glyph("plus"))
-                            .label("New conversation")
+                            .label(tr("New conversation"))
                             .primary()
                             .disabled(!can_start)
                             .on_click(
@@ -1588,7 +1611,7 @@ impl Workspace {
                 div().h_flex().justify_center().py_2().child(
                     Button::new("older")
                         .icon(glyph("history"))
-                        .label("Load earlier messages")
+                        .label(tr("Load earlier messages"))
                         .small()
                         .ghost()
                         .disabled(self.loading_history || self.pending || running)
