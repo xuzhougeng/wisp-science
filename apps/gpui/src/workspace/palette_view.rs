@@ -216,6 +216,9 @@ impl Workspace {
     fn run_command(&mut self, command: Command, window: &mut Window, cx: &mut Context<Self>) {
         match command {
             Command::Settings => return self.open_settings(window, cx),
+            // These leave the app: they open in the system's browser.
+            Command::Docs => return cx.open_url(crate::links::DOCS),
+            Command::Feedback => return cx.open_url(crate::links::ISSUES),
             Command::Favorites => return self.open_favorites(window, cx),
             Command::OpenFolder => return self.open_project(window, cx),
             Command::Refresh => {

@@ -38,6 +38,8 @@ pub enum Command {
     Archived,
     Refresh,
     Settings,
+    Docs,
+    Feedback,
 }
 
 impl Command {
@@ -56,6 +58,8 @@ impl Command {
             Command::Archived => "Show or hide archived conversations",
             Command::Refresh => "Refresh",
             Command::Settings => "Settings",
+            Command::Docs => "Documentation",
+            Command::Feedback => "Report a problem",
         }
     }
 
@@ -73,6 +77,8 @@ impl Command {
             Command::Archived => "archive",
             Command::Refresh => "refresh",
             Command::Settings => "gear",
+            Command::Docs => "book",
+            Command::Feedback => "bubble",
         }
     }
 
@@ -88,11 +94,16 @@ impl Command {
             | Command::Memory
             | Command::Highlights
             | Command::Archived => screen == Screen::Project,
-            Command::OpenFolder | Command::Refresh | Command::Settings | Command::Favorites => true,
+            Command::OpenFolder
+            | Command::Refresh
+            | Command::Settings
+            | Command::Favorites
+            | Command::Docs
+            | Command::Feedback => true,
         }
     }
 
-    const ALL: [Command; 13] = [
+    const ALL: [Command; 15] = [
         Command::NewConversation,
         Command::OpenFolder,
         Command::Home,
@@ -106,6 +117,8 @@ impl Command {
         Command::Archived,
         Command::Refresh,
         Command::Settings,
+        Command::Docs,
+        Command::Feedback,
     ];
 }
 
@@ -398,6 +411,8 @@ mod tests {
                 Section::Commands,
                 Section::Commands,
                 Section::Commands,
+                Section::Commands,
+                Section::Commands,
                 Section::Commands
             ]
         );
@@ -406,6 +421,11 @@ mod tests {
         assert!(inside.contains(&Entry::Command(Command::NewConversation)));
         assert!(!home.contains(&Entry::Command(Command::NewConversation)));
         assert!(home.contains(&Entry::Command(Command::Settings)));
+        // Help is offered wherever you are, and is found by what it is for.
+        for help in [Command::Docs, Command::Feedback] {
+            assert!(home.contains(&Entry::Command(help)));
+            assert!(inside.contains(&Entry::Command(help)));
+        }
         // Favorites span projects, so they are offered from the home page;
         // one conversation's highlights are not.
         assert!(home.contains(&Entry::Command(Command::Favorites)));

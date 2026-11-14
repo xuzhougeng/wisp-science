@@ -65,7 +65,7 @@ to find in the running app.
 | Research calendar [研究日历] | Month grid, per-project filter, day detail | Missing | store |
 | Favorites library [收藏库] | Saved code, figures, highlights; search and kind filter | Done: a page of its own; saved snippets cannot be edited into versions | store |
 | Command palette [搜索, ⌘K] | Projects, files, conversations, commands | Partial: finds projects, files and conversations in every project and runs GPUI's own commands; no open-in-new-window or attach-from-result, and the commands for features not ported yet are absent | served + ui |
-| Documentation [文档] | Opens the docs | Missing | ui |
+| Documentation [文档] | Opens the docs | Done: from the home page, Settings and the command palette, in the system's browser | ui |
 | Settings entry | Yes | Done | ui |
 
 ## 2. Workspace sidebar
@@ -91,7 +91,7 @@ to find in the running app.
 | Paper evidence [论文证据] | Section 7 | Missing | store |
 | Favorites [收藏库] | Section 1 | Done | store |
 | Capability summary [能力]: skills, MCP, memory counts, local tools found | Dialog | Missing | shared |
-| Feedback [反馈] | Yes | Missing | ui |
+| Feedback [反馈] | Yes | Partial: "Report a problem" in Settings and the command palette opens the issue tracker; the report the model drafts with the app's version and system is not ported | ui |
 
 ## 3. Composer
 

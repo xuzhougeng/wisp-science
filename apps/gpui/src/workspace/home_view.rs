@@ -216,6 +216,10 @@ impl Workspace {
                         cx.listener(|this, _, window, cx| this.open_settings(window, cx)),
                     ))
                     .child(
+                        icon_button("home-docs", "book", "Documentation, in your browser")
+                            .on_click(cx.listener(|_, _, _, cx| cx.open_url(crate::links::DOCS))),
+                    )
+                    .child(
                         Button::new("open-project")
                             .icon(glyph("folder-plus"))
                             .label("Open folder")

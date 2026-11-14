@@ -730,6 +730,31 @@ impl Workspace {
                 })),
             );
         }
+        // Help is not a page: both rows open in the system's browser.
+        nav = nav
+            .child(
+                div()
+                    .px_2()
+                    .pt_2()
+                    .text_xs()
+                    .text_color(muted)
+                    .child("Help"),
+            )
+            .child(
+                nav_row("settings-docs", "book", "Documentation", false, true, cx)
+                    .on_click(cx.listener(|_, _, _, cx| cx.open_url(crate::links::DOCS))),
+            )
+            .child(
+                nav_row(
+                    "settings-feedback",
+                    "bubble",
+                    "Report a problem",
+                    false,
+                    true,
+                    cx,
+                )
+                .on_click(cx.listener(|_, _, _, cx| cx.open_url(crate::links::ISSUES))),
+            );
         let body = match self.settings_section {
             Section::Models => div()
                 .h_flex()
