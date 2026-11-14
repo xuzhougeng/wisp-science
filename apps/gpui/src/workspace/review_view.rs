@@ -17,6 +17,27 @@ use crate::{
 impl Workspace {
     /// Opens the dialog and asks for a review of the open conversation.
     pub(super) fn open_review(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.review_turn = None;
+        self.ask_review(window, cx);
+    }
+
+    /// Opens the dialog and asks for a review of the turn the transcript
+    /// row at `index` belongs to, without what came after it.
+    pub(super) fn open_review_of(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(turn) = crate::controls::turn_of(&self.rows, index) else {
+            return;
+        };
+        self.review_turn = Some(turn);
+        self.ask_review(window, cx);
+    }
+
+    /// Asks for the review the dialog is about: one turn, or all of it.
+    fn ask_review(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(project), Some(session)) =
             (self.state.project.clone(), self.state.session.clone())
         else {
@@ -25,7 +46,10 @@ impl Workspace {
         self.layers.close(Layer::Palette);
         self.layers.open(Layer::Review);
         self.review = Some(Asked::Reading);
-        let reply = self.backend.review_conversation(project, session.clone());
+        let reply = match self.review_turn.clone() {
+            Some(turn) => self.backend.review_turn(project, session.clone(), turn),
+            None => self.backend.review_conversation(project, session.clone()),
+        };
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
             let _ = this.update(cx, |this, cx| {
@@ -51,6 +75,8 @@ impl Workspace {
     /// Opens the dialog on the review that followed the latest turn.
     fn see_review(&mut self, found: wisp_server::desktop::Review, cx: &mut Context<Self>) {
         self.review = Some(Asked::Done(found));
+        // Review again then reviews the conversation as it is now.
+        self.review_turn = None;
         self.layers.open(Layer::Review);
         cx.notify();
     }
@@ -166,12 +192,13 @@ impl Workspace {
             .shadow_lg()
             // A click inside is not a click on the backdrop.
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child("Review"),
-            )
+            .child(div().text_lg().font_weight(FontWeight::MEDIUM).child(
+                if self.review_turn.is_some() {
+                    "Review of one turn"
+                } else {
+                    "Review"
+                },
+            ))
             .child(div().text_xs().text_color(muted).child(
                 "The conversation's model reads it as a reviewer and reports claims that \
                  its own tool output does not support. Nothing is added to the conversation.",
@@ -292,6 +319,6 @@ impl Workspace {
             .label("Review again")
             .small()
             .ghost()
-            .on_click(cx.listener(|this, _, window, cx| this.open_review(window, cx)))
+            .on_click(cx.listener(|this, _, window, cx| this.ask_review(window, cx)))
     }
 }

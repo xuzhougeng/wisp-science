@@ -439,14 +439,23 @@ impl Workspace {
                     .disabled(!idle)
                     .on_click(cx.listener(move |this, _, _, cx| this.ask_rewind(index, cx))),
             ),
-            Some("assistant") if controls::turn_of(&self.rows, index).is_some() => actions.child(
-                icon_button(("branch-row", index), "branch", "Branch from here")
-                    .xsmall()
-                    .disabled(!idle)
-                    .on_click(
-                        cx.listener(move |this, _, window, cx| this.branch_from(index, window, cx)),
-                    ),
-            ),
+            Some("assistant") if controls::turn_of(&self.rows, index).is_some() => actions
+                .child(
+                    icon_button(("branch-row", index), "branch", "Branch from here")
+                        .xsmall()
+                        .disabled(!idle)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.branch_from(index, window, cx)
+                        })),
+                )
+                .child(
+                    icon_button(("review-row", index), "review", "Review this turn")
+                        .xsmall()
+                        .disabled(!idle)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.open_review_of(index, window, cx)
+                        })),
+                ),
             _ => actions,
         }
     }

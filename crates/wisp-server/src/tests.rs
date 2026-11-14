@@ -4881,6 +4881,33 @@ async fn a_review_reports_what_the_tool_output_does_not_support() {
     let after = snapshot(&server, &session).await;
     assert_eq!(after.items.len(), before.items.len());
 
+    // One turn reviewed by itself: the reviewer reads up to its end and
+    // nothing that came after.
+    send(&server, &session, "and thanks").await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    let first = desktop::TurnRef {
+        from_end: 1,
+        text: "write the file".into(),
+    };
+    server.review_turn(PROJECT, &session, &first).await.unwrap();
+    let earlier = read.lock().unwrap().last().unwrap().clone();
+    assert!(earlier.contains("write the file"), "{earlier}");
+    assert!(!earlier.contains("and thanks"), "{earlier}");
+    server.review_conversation(PROJECT, &session).await.unwrap();
+    assert!(read.lock().unwrap().last().unwrap().contains("and thanks"));
+    // A turn that is not there is refused, and nobody is asked.
+    let asked = read.lock().unwrap().len();
+    let wrong = desktop::TurnRef {
+        from_end: 1,
+        text: "something else".into(),
+    };
+    assert!(server.review_turn(PROJECT, &session, &wrong).await.is_err());
+    assert!(server
+        .review_turn("missing", &session, &first)
+        .await
+        .is_err());
+    assert_eq!(read.lock().unwrap().len(), asked);
+
     assert!(server
         .review_conversation("missing", &session)
         .await

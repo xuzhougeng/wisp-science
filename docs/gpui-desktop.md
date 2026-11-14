@@ -364,8 +364,9 @@ Limits of this slice:
   a paired phone's included, though a phone is not shown the result.
 - A review is one model request without tools, made by the reviewer model
   chosen in Settings, Conversation, or by the conversation's own model
-  when none is chosen or the chosen one was removed. There is no review
-  of a single turn. It reads the
+  when none is chosen or the chosen one was removed. The review button
+  under an answer reviews the conversation up to the end of that turn,
+  leaving out what came after. It reads the
   conversation's latest messages up to 80,000 characters, with each
   tool's arguments and output cut at 4,000, so a claim that rests on
   something older or longer cannot be traced and is not reported. The
@@ -761,6 +762,8 @@ gone. Put a result away with its close button. In Settings, Conversation,
 turn Review turns on and confirm a new conversation starts with the
 switch on while one you switched off stays off; choose a Reviewer model
 and confirm the Review dialog names it.
+Under an earlier answer press its review button: the dialog is titled
+Review of one turn and what it reports does not draw on later turns.
 In a conversation where a tool ran, press Review: the dialog says it is
 reading, then lists what was found, each with its claim, evidence and
 fix, or says nothing was found. Press Ask Wisp to correct: the dialog

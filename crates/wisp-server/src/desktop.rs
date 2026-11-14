@@ -909,6 +909,17 @@ impl Server {
 
     /// Every saved message of a conversation, oldest first.
     pub(crate) async fn whole_transcript(&self, session: &str) -> Result<Vec<wisp_llm::Message>> {
+        Ok(self
+            .numbered_transcript(session)
+            .await?
+            .into_iter()
+            .map(|(_, message)| message)
+            .collect())
+    }
+
+    /// Every saved message of a conversation with its sequence number,
+    /// oldest first.
+    async fn numbered_transcript(&self, session: &str) -> Result<Vec<(i64, wisp_llm::Message)>> {
         // Pages come newest first.
         let mut pages = Vec::new();
         let mut before = None;
@@ -924,12 +935,7 @@ impl Server {
                 break;
             }
         }
-        Ok(pages
-            .into_iter()
-            .rev()
-            .flatten()
-            .map(|(_, message)| message)
-            .collect())
+        Ok(pages.into_iter().rev().flatten().collect())
     }
 
     /// What happened in a project from `from` up to `until` (seconds since
@@ -3226,6 +3232,34 @@ impl Server {
     /// cannot be judged.
     pub async fn review_conversation(&self, project: &str, session: &str) -> Result<Review> {
         self.own_conversation(project, session).await?;
+        let messages = self.whole_transcript(session).await?;
+        self.review_messages(session, messages).await
+    }
+
+    /// Reviews the conversation as it stood when the turn `turn` names had
+    /// ended: that turn and what led to it, without what came after. A
+    /// turn that cannot be found is refused, never guessed.
+    pub async fn review_turn(
+        &self,
+        project: &str,
+        session: &str,
+        turn: &TurnRef,
+    ) -> Result<Review> {
+        self.own_conversation(project, session).await?;
+        let (_, next) = self.locate_turn(session, turn).await?;
+        let mut messages = self.numbered_transcript(session).await?;
+        if let Some(next) = next {
+            messages.retain(|(seq, _)| *seq < next);
+        }
+        let messages = messages.into_iter().map(|(_, message)| message).collect();
+        self.review_messages(session, messages).await
+    }
+
+    async fn review_messages(
+        &self,
+        session: &str,
+        messages: Vec<wisp_llm::Message>,
+    ) -> Result<Review> {
         ensure!(
             !self.session(session).live.lock().unwrap().running,
             "Wait for the turn to end before you ask for a review"
@@ -3233,7 +3267,6 @@ impl Server {
         let store = &self.0.store;
         let options = self.stored_options(session).await?;
         let own = self.0.model.read().unwrap().pick(&options.model)?.provider;
-        let messages = self.whole_transcript(session).await?;
         let provider = self.reviewer(own).await;
         match crate::review::ask(provider.as_ref(), &messages).await {
             Ok(review) => Ok(review),

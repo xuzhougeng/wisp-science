@@ -101,6 +101,8 @@ pub struct Workspace {
     model_view_error: Option<String>,
     /// The rows opened to show their whole text.
     model_view_open: HashSet<usize>,
+    /// The turn the review dialog is about; `None` is the whole conversation.
+    review_turn: Option<wisp_server::desktop::TurnRef>,
     /// The review the dialog is showing or waiting for.
     review: Option<crate::review::Asked>,
     trajectory: Option<wisp_dto::TrajectorySnapshotDto>,
@@ -571,6 +573,7 @@ impl Workspace {
             model_view_error: None,
             model_view_open: HashSet::new(),
             review: None,
+            review_turn: None,
             trajectory: None,
             trajectory_error: None,
             trajectory_open: HashSet::new(),

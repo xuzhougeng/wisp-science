@@ -718,6 +718,16 @@ impl Backend {
         self.local(move |host| async move { host.review_conversation(&project, &session).await })
     }
 
+    /// Has one turn reviewed: the conversation as it stood when it ended.
+    pub fn review_turn(
+        &self,
+        project: String,
+        session: String,
+        turn: wisp_server::desktop::TurnRef,
+    ) -> Reply<wisp_server::desktop::Review> {
+        self.local(move |host| async move { host.review_turn(&project, &session, &turn).await })
+    }
+
     /// Asks the conversation's model a question about the conversation,
     /// without adding anything to it.
     pub fn ask_aside(

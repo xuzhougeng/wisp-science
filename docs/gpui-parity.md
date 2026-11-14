@@ -137,7 +137,7 @@ to find in the running app.
 | Rewind to a message [回溯 / 撤销] | Yes | Partial: goes back and returns the text to the composer; written files are not undone | store |
 | Branch from a message [分支] | Yes | Partial: a copy through that turn, nested under its source; no branch card or merge back | store |
 | Save to memory [记忆] | Yes | Partial: the message is opened for trimming and saved for the project or as a habit; no model-written suggestion | store |
-| Review a turn [审查] | Yes | Missing | tauri |
+| Review a turn [审查] | Yes | Partial: a review button under each answer reviews the conversation as it stood when that turn ended; the report is not kept with the turn | tauri |
 | Select text: add to chat, ask aside, highlight | Yes | Partial: a whole message is saved with its star; a selected passage cannot be, and there is no add-to-chat or ask-aside | store |
 | Full record / model view toggles [完整记录 / 模型视角] | Yes | Partial: the transcript is the full record; What the model is sent lists the model's working set in a dialog, with each message's share; no context breakdown by kind and no undo of a compaction | served |
 | Conversation outline [展开对话目录] | Yes | Partial: your messages in the loaded part of the conversation, to jump to | store |
