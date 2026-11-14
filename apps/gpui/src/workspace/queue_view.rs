@@ -146,7 +146,10 @@ impl Workspace {
                 .child(match (waiting.len(), hold) {
                     (_, Some(why)) => why.to_owned(),
                     (1, None) => "1 message waits for this turn to end".to_owned(),
-                    (n, None) => format!("{n} messages wait for this turn to end, in this order"),
+                    (n, None) => crate::i18n::fill(
+                        tr("{} messages wait for this turn to end, in this order"),
+                        &[&n],
+                    ),
                 });
         if hold.is_some() {
             heading = heading.child(

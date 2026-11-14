@@ -808,42 +808,44 @@ impl Workspace {
                     );
             }
             buttons = buttons.child(answer(tr("Deny"), "ban", false, Remember::No));
-            approvals = approvals.child(
-                div()
-                    .v_flex()
-                    .gap_2()
-                    .p_3()
-                    .rounded(cx.theme().radius_lg)
-                    .border_1()
-                    .border_color(attention.opacity(0.5))
-                    .bg(attention.opacity(0.06))
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap_2()
-                            .child(icon("shield").text_color(attention))
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child(format!("{} needs your approval", approval.tool)),
-                            ),
-                    )
-                    .child(div().text_sm().child(approval.message.clone()))
-                    // A long preview scrolls by itself; the answer stays in view.
-                    .child(
-                        div()
-                            .id(SharedString::from(format!("approval-preview-{id}")))
-                            .max_h(px(110.))
-                            .overflow_y_scroll()
-                            .p_2()
-                            .rounded(cx.theme().radius)
-                            .bg(cx.theme().muted)
-                            .text_xs()
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .child(approval.preview.clone()),
-                    )
-                    .child(buttons),
-            );
+            approvals =
+                approvals.child(
+                    div()
+                        .v_flex()
+                        .gap_2()
+                        .p_3()
+                        .rounded(cx.theme().radius_lg)
+                        .border_1()
+                        .border_color(attention.opacity(0.5))
+                        .bg(attention.opacity(0.06))
+                        .child(
+                            div()
+                                .h_flex()
+                                .gap_2()
+                                .child(icon("shield").text_color(attention))
+                                .child(div().font_weight(FontWeight::MEDIUM).child(
+                                    crate::i18n::fill(
+                                        tr("{} needs your approval"),
+                                        &[&approval.tool],
+                                    ),
+                                )),
+                        )
+                        .child(div().text_sm().child(approval.message.clone()))
+                        // A long preview scrolls by itself; the answer stays in view.
+                        .child(
+                            div()
+                                .id(SharedString::from(format!("approval-preview-{id}")))
+                                .max_h(px(110.))
+                                .overflow_y_scroll()
+                                .p_2()
+                                .rounded(cx.theme().radius)
+                                .bg(cx.theme().muted)
+                                .text_xs()
+                                .font_family(cx.theme().mono_font_family.clone())
+                                .child(approval.preview.clone()),
+                        )
+                        .child(buttons),
+                );
         }
         Some(approvals)
     }
@@ -972,9 +974,9 @@ impl Workspace {
                 Self::menu_row(
                     "runs-on-default".into(),
                     tr("Default"),
-                    format!(
-                        "{}, as Settings says",
-                        settings::runs_on_label("", view.default.as_deref())
+                    crate::i18n::fill(
+                        tr("{}, as Settings says"),
+                        &[&settings::runs_on_label("", view.default.as_deref())],
                     ),
                     current.is_empty(),
                     cx,
@@ -1158,9 +1160,9 @@ impl Workspace {
         let mut effort = div().relative().child(
             Button::new("effort")
                 .icon(glyph("gauge"))
-                .label(format!(
-                    "Effort: {}",
-                    controls::effort_label(&options.reasoning_effort)
+                .label(crate::i18n::fill(
+                    tr("Effort: {}"),
+                    &[&controls::effort_label(&options.reasoning_effort)],
                 ))
                 .small()
                 .ghost()
@@ -1252,7 +1254,7 @@ impl Workspace {
                             .build(window, cx)
                     })
                     .on_click(cx.listener(|this, _, window, cx| this.open_model_view(window, cx)))
-                    .child(format!("Context {percent}%")),
+                    .child(crate::i18n::fill(tr("Context {}%"), &[&percent])),
             );
         }
         if running {
@@ -1343,8 +1345,9 @@ impl Workspace {
             }
             if !allowed.is_empty() {
                 line = line
-                    .child(format!(
-                        "Runs without asking in this conversation: {allowed}"
+                    .child(crate::i18n::fill(
+                        tr("Runs without asking in this conversation: {}"),
+                        &[&allowed],
                     ))
                     .child(
                         Button::new("revoke-allowed")

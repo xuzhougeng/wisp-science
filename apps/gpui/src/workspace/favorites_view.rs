@@ -157,7 +157,10 @@ impl Workspace {
         self.change_favorites(
             reply,
             |this, item: LibraryItem, _, _| {
-                this.notice = Some(format!("Saved {} to your favorites.", item.title));
+                this.notice = Some(crate::i18n::fill(
+                    tr("Saved {} to your favorites."),
+                    &[&item.title],
+                ));
             },
             window,
             cx,

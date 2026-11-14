@@ -100,15 +100,17 @@ impl Workspace {
                     return Ok(None);
                 };
                 let text = receive(backend.export_conversation(project, session)).await?;
-                std::fs::write(&path, text)
-                    .map_err(|error| format!("Could not save {}: {error}", path.display()))?;
+                std::fs::write(&path, text).map_err(|error| {
+                    crate::i18n::fill(tr("Could not save {}: {}"), &[&path.display(), &error])
+                })?;
                 Ok::<_, String>(Some(path))
             }
             .await;
             let _ = this.update(cx, |this, cx| {
                 match result {
                     Ok(Some(path)) => {
-                        this.notice = Some(format!("Saved to {}", path.display()));
+                        this.notice =
+                            Some(crate::i18n::fill(tr("Saved to {}"), &[&path.display()]));
                     }
                     Ok(None) => {}
                     Err(error) => this.error = Some(error),

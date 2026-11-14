@@ -1173,7 +1173,10 @@ impl Workspace {
                 this.removing_folder = None;
                 match result {
                     Ok(()) => {
-                        this.notice = Some(format!("Deleted \"{}\" and its folder.", folder.name));
+                        this.notice = Some(crate::i18n::fill(
+                            tr("Deleted \"{}\" and its folder."),
+                            &[&folder.name],
+                        ));
                     }
                     Err(error) => this.error = Some(error),
                 }

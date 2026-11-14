@@ -279,7 +279,7 @@ impl Workspace {
                     if tools.is_empty() {
                         tr("Connected. It offers no tools.").to_owned()
                     } else {
-                        format!("Connected: {}", tools.join(", "))
+                        crate::i18n::fill(tr("Connected: {}"), &[&tools.join(", ")])
                     },
                 ));
             }

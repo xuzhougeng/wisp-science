@@ -131,10 +131,9 @@ impl Workspace {
         let busiest = usage::busiest(days).map_or_else(
             || tr("No use in this period.").to_owned(),
             |(date, tokens)| {
-                format!(
-                    "Busiest: {} with {} tokens.",
-                    usage::day_label(date),
-                    compact(*tokens)
+                crate::i18n::fill(
+                    tr("Busiest: {} with {} tokens."),
+                    &[&usage::day_label(date), &compact(*tokens)],
                 )
             },
         );
@@ -206,10 +205,9 @@ impl Workspace {
                                 },
                             )),
                     )
-                    .child(div().text_color(muted).child(format!(
-                        "Input {} · output {}",
-                        compact(row.input),
-                        compact(row.output)
+                    .child(div().text_color(muted).child(crate::i18n::fill(
+                        tr("Input {} · output {}"),
+                        &[&compact(row.input), &compact(row.output)],
                     ))),
             );
         }

@@ -938,11 +938,12 @@ impl Workspace {
         };
         page.child(setting(
             tr("Steps per turn"),
-            format!(
-                "How many times the model may call tools or answer within one turn, from {} \
+            crate::i18n::fill(
+                tr(
+                    "How many times the model may call tools or answer within one turn, from {} \
                  to {}. At the limit it stops and says where it got to.",
-                STEPS.start(),
-                STEPS.end()
+                ),
+                &[&STEPS.start(), &STEPS.end()],
             ),
             div()
                 .h_flex()
@@ -988,9 +989,12 @@ impl Workspace {
         ))
         .child(setting(
             tr("Compact at"),
-            format!(
-                "How full the context is when that happens, from {low}% to {high}%. Lower \
-                 compacts sooner and keeps more room for long tool output."
+            crate::i18n::fill(
+                tr(
+                    "How full the context is when that happens, from {}% to {}%. Lower \
+                 compacts sooner and keeps more room for long tool output.",
+                ),
+                &[&low, &high],
             ),
             div()
                 .h_flex()

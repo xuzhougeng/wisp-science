@@ -146,7 +146,9 @@ impl Workspace {
                                     .text_color(muted)
                                     .child(match &tool.path {
                                         Some(path) => format!("{} · {path}", tool.what),
-                                        None => format!("{} · not found", tool.what),
+                                        None => {
+                                            crate::i18n::fill(tr("{} · not found"), &[&tool.what])
+                                        }
                                     }),
                             ),
                     );

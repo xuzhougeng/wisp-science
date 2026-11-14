@@ -63,9 +63,10 @@ impl Workspace {
             }
             home::FolderQuestion::Refused(reason) => {
                 return block
-                    .child(div().text_xs().text_color(danger).child(format!(
-                        "The folder was not deleted: {reason}. You can still remove the \
-                         project from Wisp and keep its files."
+                    .child(div().text_xs().text_color(danger).child(crate::i18n::fill(
+                        tr("The folder was not deleted: {}. You can still remove the \
+                         project from Wisp and keep its files."),
+                        &[&reason],
                     )))
                     .child(div().h_flex().justify_end().child(cancel));
             }
@@ -84,9 +85,9 @@ impl Workspace {
                 div()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child(format!(
-                        "Type the project's name, {}, to go on.",
-                        folder.name
+                    .child(crate::i18n::fill(
+                        tr("Type the project's name, {}, to go on."),
+                        &[&folder.name],
                     )),
             )
             .child(Input::new(&self.delete_name_input).small())

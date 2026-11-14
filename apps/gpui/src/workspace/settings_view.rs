@@ -401,7 +401,10 @@ impl Workspace {
                 this.settings.busy = false;
                 match result {
                     Ok(answer) => {
-                        this.settings.notice = Some(format!("It works. The model said: {answer}"))
+                        this.settings.notice = Some(crate::i18n::fill(
+                            tr("It works. The model said: {}"),
+                            &[&answer],
+                        ))
                     }
                     Err(error) => this.settings.error = Some(error),
                 }

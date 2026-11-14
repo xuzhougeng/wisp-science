@@ -129,6 +129,40 @@ pub fn in_locale(locale: Locale, text: &'static str) -> &'static str {
     }
 }
 
+/// `template`, already in the language in use (`fill(tr("…"), …)`), with
+/// `values` set into it: each `{}`
+/// takes the next value, and `{0}`, `{1}` take one by position, so a
+/// translation may put them in another order. A place with no value for it
+/// is left as written.
+pub fn fill(template: &str, values: &[&dyn std::fmt::Display]) -> String {
+    let mut filled = String::with_capacity(template.len() + 16);
+    let mut next = 0;
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        filled.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('}') else {
+            rest = &rest[open..];
+            break;
+        };
+        let place = &after[..close];
+        let value = match place {
+            "" => {
+                next += 1;
+                values.get(next - 1)
+            }
+            numbered => numbered.parse::<usize>().ok().and_then(|at| values.get(at)),
+        };
+        match value {
+            Some(value) => filled.push_str(&value.to_string()),
+            None => filled.push_str(&rest[open..open + close + 2]),
+        }
+        rest = &after[close + 1..];
+    }
+    filled.push_str(rest);
+    filled
+}
+
 fn chinese() -> &'static HashMap<&'static str, &'static str> {
     static TABLE: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     TABLE.get_or_init(|| crate::i18n_zh::ZH.iter().copied().collect())
@@ -180,6 +214,33 @@ mod tests {
                 chinese.ends_with('…'),
                 "ellipsis differs: {english}"
             );
+        }
+    }
+
+    #[test]
+    fn values_are_set_into_a_sentence_in_order_or_by_position() {
+        assert_eq!(fill("Context {}%", &[&42]), "Context 42%");
+        assert_eq!(
+            fill("{} could not be read: {}", &[&"a.txt", &"denied"]),
+            "a.txt could not be read: denied"
+        );
+        // A translation may turn the order round.
+        assert_eq!(
+            fill("{1} 中的 {0}", &[&"file", &"folder"]),
+            "folder 中的 file"
+        );
+        // Too few values, or a brace that is not a place, is left alone.
+        assert_eq!(fill("{} and {}", &[&"one"]), "one and {}");
+        assert_eq!(fill("a { b", &[&1]), "a { b");
+        assert_eq!(fill("{name}", &[&1]), "{name}");
+        assert_eq!(fill("plain", &[]), "plain");
+    }
+
+    #[test]
+    fn a_translated_sentence_takes_the_values_its_english_takes() {
+        let places = |text: &str| text.matches('{').count();
+        for (english, chinese) in ZH {
+            assert_eq!(places(english), places(chinese), "places differ: {english}");
         }
     }
 

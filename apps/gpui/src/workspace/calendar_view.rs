@@ -231,10 +231,12 @@ impl Workspace {
         // A project that could not be read is said, never silently empty.
         for project in projects.iter().filter(|project| project.error.is_some()) {
             body = body.child(error_banner(
-                &format!(
-                    "{} could not be read: {}",
-                    self.project_name(&project.project_id),
-                    project.error.clone().unwrap_or_default()
+                &crate::i18n::fill(
+                    tr("{} could not be read: {}"),
+                    &[
+                        &self.project_name(&project.project_id),
+                        &project.error.clone().unwrap_or_default(),
+                    ],
                 ),
                 cx,
             ));

@@ -372,7 +372,7 @@ impl Workspace {
                 if self.palette.query.is_empty() {
                     tr("Type a file name, a word from a conversation, or a skill.").to_owned()
                 } else {
-                    format!("Nothing matches “{}”.", self.palette.query)
+                    crate::i18n::fill(tr("Nothing matches “{}”."), &[&self.palette.query])
                 },
             ));
         }

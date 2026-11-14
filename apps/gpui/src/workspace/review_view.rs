@@ -273,7 +273,7 @@ impl Workspace {
                     div()
                         .text_xs()
                         .text_color(muted)
-                        .child(format!("Reviewed by {}.", found.model)),
+                        .child(crate::i18n::fill(tr("Reviewed by {}."), &[&found.model])),
                 );
                 actions = actions.child(self.review_again(cx));
                 if !found.findings.is_empty() {

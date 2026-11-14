@@ -441,7 +441,7 @@ impl Workspace {
             reply,
             move |this, _, window, cx| {
                 if keep {
-                    this.notice = Some(format!("Copied to {name}."));
+                    this.notice = Some(crate::i18n::fill(tr("Copied to {}."), &[&name]));
                     return;
                 }
                 this.known.remove(&session);
@@ -451,8 +451,9 @@ impl Workspace {
                 if this.state.current(&selection) {
                     this.leave_conversation(window, cx);
                 }
-                this.notice = Some(format!(
-                    "Moved to {name}. Its files, runs and artifacts stay in this project."
+                this.notice = Some(crate::i18n::fill(
+                    tr("Moved to {}. Its files, runs and artifacts stay in this project."),
+                    &[&name],
                 ));
             },
             window,
@@ -1045,9 +1046,10 @@ impl Workspace {
                  Project files it wrote are kept.")
                 .to_string()
             } else {
-                format!(
-                    "Delete {count} conversations and their messages permanently? \
-                     Project files they wrote are kept."
+                crate::i18n::fill(
+                    tr("Delete {} conversations and their messages permanently? \
+                     Project files they wrote are kept."),
+                    &[&count],
                 )
             };
             return Some(

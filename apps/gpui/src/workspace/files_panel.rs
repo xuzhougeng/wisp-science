@@ -623,10 +623,7 @@ impl Workspace {
                     .p_3()
                     .border_b_1()
                     .border_color(border)
-                    .child(div().text_sm().child(format!(
-                        "Move {} to the project's trash? It is kept in .wisp/trash, not erased.",
-                        files::file_name(path)
-                    )))
+                    .child(div().text_sm().child(crate::i18n::fill(tr("Move {} to the project's trash? It is kept in .wisp/trash, not erased."), &[&files::file_name(path)])))
                     .child(
                         div()
                             .h_flex()

@@ -38,14 +38,16 @@ impl Workspace {
             };
             let _ = this.update(cx, |this, cx| {
                 this.pending = true;
-                this.notice = Some(format!("Writing {}…", path.display()));
+                this.notice = Some(crate::i18n::fill(tr("Writing {}…"), &[&path.display()]));
                 cx.notify();
             });
             let result = receive(backend.export_project(project, path.clone())).await;
             let _ = this.update(cx, |this, cx| {
                 this.pending = false;
                 match result {
-                    Ok(()) => this.notice = Some(format!("Saved to {}", path.display())),
+                    Ok(()) => {
+                        this.notice = Some(crate::i18n::fill(tr("Saved to {}"), &[&path.display()]))
+                    }
                     Err(error) => {
                         this.notice = None;
                         this.error = Some(error);
@@ -98,7 +100,7 @@ impl Workspace {
             };
             let _ = this.update(cx, |this, cx| {
                 this.pending = true;
-                this.notice = Some(format!("Reading {}…", archive.display()));
+                this.notice = Some(crate::i18n::fill(tr("Reading {}…"), &[&archive.display()]));
                 cx.notify();
             });
             let result = receive(backend.import_project(archive, parent)).await;

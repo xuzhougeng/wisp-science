@@ -125,7 +125,7 @@ impl Workspace {
             // tooltip, so more tabs still fit a narrow panel. Runs that are
             // still going show their count either way.
             let label = match (tab, active, selected) {
-                (PanelTab::Runs, 1.., true) => Some(format!("Runs · {active}")),
+                (PanelTab::Runs, 1.., true) => Some(crate::i18n::fill(tr("Runs · {}"), &[&active])),
                 (PanelTab::Runs, 1.., false) => Some(active.to_string()),
                 (_, _, true) => Some(tab.label().to_owned()),
                 _ => None,
