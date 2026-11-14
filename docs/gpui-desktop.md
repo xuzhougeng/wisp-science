@@ -150,6 +150,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Interpreters | The Python and R interpreters a conversation keeps between tool calls show above the composer with their version and state; Stop ends one, Dismiss takes a stopped one off the list |
 | Experts | Settings, Experts, keeps personas (a name and instructions); the composer's Expert menu starts a new conversation as one, and its instructions hold for the whole conversation |
 | Quick actions | Settings, Quick actions, keeps requests you make often under a name; the composer's quick actions menu puts one into the message box, after whatever is already typed, to finish and send |
+| Undo a turn | Going back to the latest message can also undo its files: a file the turn edited gets its earlier content, a file it created goes to the project's trash, and a file changed again since is left and named |
 | File actions | A previewed file's path can be copied, the file attached to the message, shown in the file manager or opened with the system's own application |
 | Slash commands | A message that is only a command does something instead of being sent: `/review`, `/trajectory`, `/context`, `/btw <question>`, `/plan`, `/save-as-skill`, `/skills`, `/files`, `/upload`, `/memo`, `/remember`, `/archive`, `/compact`, `/timer 30m <prompt>`, `/help`; the composer's "/" button lists them |
 | Browser | Settings, Browser, switches on a bridge to the Wisp extension in your own Chrome or Chromium; conversations can then open a tab, read it and run a script in it, only in tabs they opened themselves, and hosts can be blocked or preferred |
@@ -477,6 +478,14 @@ Limits of this slice:
   `desktop.quick_actions` and neither reads nor changes the WebView's.
   It starts with four that can be changed or removed; at most 40 are
   kept, a name is at most 60 characters and a request 8,000.
+- Only the latest turn's files can be undone, and only text files the
+  write and edit tools changed, up to 10 MiB each: what a shell command
+  or a script wrote or deleted is not known and stays. The earlier
+  content is kept under the project's `.wisp/undo/` from the end of the
+  turn, so a turn made before this was added, or one that was stopped
+  before it ended, has nothing to put back. There is no preview of
+  what will be undone before it is done; the note afterwards says what
+  was. Files the turn created are moved to `.wisp/trash/`, not erased.
 - `/timer` makes a scheduled task bound to the open conversation: the
   prompt is sent into it every so many minutes, hours or days while the
   app is open, as a new turn each time. It does not replace the turn
@@ -1093,6 +1102,12 @@ and the text comes back.
 After a few turns send `/compact`: a note says how many tokens there
 were before and after, a file appears under `.wisp/history/`, and What
 the model is sent is shorter while the transcript is not.
+Ask the model to write a new file and to edit an existing one, with
+Full access on. Point at the message, choose to go back, and press Go
+back and undo its files: the new file is in `.wisp/trash/`, the edited
+one reads as before, the message is back in the composer and a note
+lists both. Repeat after changing the edited file by hand: it is left
+as it is and the note says why.
 Preview a file in Files: Copy path puts its full path on the clipboard,
 Attach adds it to the message as a chip, Show in the file manager and
 Open with the system's application do what they say.

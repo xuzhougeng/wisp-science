@@ -234,7 +234,7 @@ impl Workspace {
         cx.notify();
     }
 
-    fn rewind(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn rewind(&mut self, undo_files: bool, window: &mut Window, cx: &mut Context<Self>) {
         if !self.layers.contains(Layer::ConfirmRewind) {
             return;
         }
@@ -246,7 +246,9 @@ impl Workspace {
         self.error = None;
         self.notice = None;
         let selection = self.state.selection();
-        let reply = self.backend.rewind_conversation(project, session, turn);
+        let reply = self
+            .backend
+            .rewind_or_undo(project, session, turn, undo_files);
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -255,7 +257,8 @@ impl Workspace {
                 this.layers.close(Layer::ConfirmRewind);
                 this.rewind_turn = None;
                 match result {
-                    Ok(text) if this.state.current(&selection) => {
+                    Ok((text, files)) if this.state.current(&selection) => {
+                        this.notice = files.as_ref().and_then(crate::compose::undo_note);
                         this.reload_conversation(window, cx);
                         this.state.save_draft(text.clone());
                         this.composer.update(cx, |input, cx| {
@@ -426,7 +429,27 @@ impl Workspace {
                         .small()
                         .primary()
                         .disabled(busy || running)
-                        .on_click(cx.listener(|this, _, window, cx| this.rewind(window, cx))),
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.rewind(false, window, cx)),
+                        ),
+                )
+                // Only the latest turn's files can be put back.
+                .children(
+                    self.rewind_turn
+                        .as_ref()
+                        .is_some_and(|turn| turn.from_end == 0)
+                        .then(|| {
+                            Button::new("rewind-undo-files")
+                                .label(tr("Go back and undo its files"))
+                                .small()
+                                .disabled(busy || running)
+                                .tooltip(tr(
+                                    "Also puts back the files this turn edited and moves the ones it created to the project's trash",
+                                ))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.rewind(true, window, cx)
+                                }))
+                        }),
                 )
                 .child(
                     Button::new("rewind-cancel")

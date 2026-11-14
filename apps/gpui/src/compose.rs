@@ -188,6 +188,31 @@ pub fn user_text(item: &Item) -> String {
         .join("\n\n")
 }
 
+/// What undoing a turn did to the project's files, in a line or two;
+/// nothing when the turn changed no file.
+pub fn undo_note(files: &wisp_server::desktop::TurnFiles) -> Option<String> {
+    use crate::i18n::{fill, tr};
+    let mut parts = vec![];
+    if !files.restored.is_empty() {
+        parts.push(fill(tr("Put back: {}."), &[&files.restored.join(", ")]));
+    }
+    if !files.removed.is_empty() {
+        parts.push(fill(
+            tr("Moved to the project's trash: {}."),
+            &[&files.removed.join(", ")],
+        ));
+    }
+    if !files.left.is_empty() {
+        let left: Vec<String> = files
+            .left
+            .iter()
+            .map(|(path, why)| format!("{path} ({why})"))
+            .collect();
+        parts.push(fill(tr("Left as they are: {}."), &[&left.join(", ")]));
+    }
+    (!parts.is_empty()).then(|| parts.join(" "))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,6 +230,25 @@ mod tests {
         assert_eq!(with_skill_prompt(&after_draft), after_draft);
         assert_eq!(with_skill_prompt(SKILL_PROMPT), SKILL_PROMPT);
         assert!(SKILL_PROMPT.contains("skill-creator"));
+    }
+
+    #[test]
+    fn undoing_a_turn_says_what_happened_to_each_file() {
+        use wisp_server::desktop::TurnFiles;
+        assert_eq!(undo_note(&TurnFiles::default()), None);
+        let files = TurnFiles {
+            restored: vec!["fit.py".into()],
+            removed: vec!["out.csv".into(), "plot.png".into()],
+            left: vec![(
+                "notes.md".into(),
+                "was changed again after this turn".into(),
+            )],
+        };
+        assert_eq!(
+            undo_note(&files).unwrap(),
+            "Put back: fit.py. Moved to the project's trash: out.csv, plot.png. \
+             Left as they are: notes.md (was changed again after this turn)."
+        );
     }
 
     #[test]

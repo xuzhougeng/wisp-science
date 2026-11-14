@@ -399,6 +399,26 @@ impl Backend {
         )
     }
 
+    /// Goes back to a message; with `undo_files`, the latest turn's files
+    /// are put back as well and what was done to them is said.
+    pub fn rewind_or_undo(
+        &self,
+        project: String,
+        session: String,
+        turn: TurnRef,
+        undo_files: bool,
+    ) -> Reply<(String, Option<wisp_server::desktop::TurnFiles>)> {
+        self.local(move |host| async move {
+            if undo_files {
+                let (text, files) = host.undo_turn(&project, &session, &turn).await?;
+                Ok((text, Some(files)))
+            } else {
+                let text = host.rewind_conversation(&project, &session, &turn).await?;
+                Ok((text, None))
+            }
+        })
+    }
+
     /// Copies the conversation, or its part through `upto`'s reply, into a
     /// new one and returns its id.
     pub fn branch_conversation(

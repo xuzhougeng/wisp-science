@@ -251,7 +251,7 @@ row says what is there.
 | Transcript | Generated-artifact strip (the files are in the Artifacts tab, not yet under the message); image and video generation cards | store |
 | Transcript | Run cards: send to background, cancel, harvest outputs, details | shared |
 | Transcript | Compaction markers, undo compaction, stream-recovery and reviewer banners | tauri |
-| Transcript | Undo a turn (restore or remove the files it wrote) | store |
+| Transcript | Undo a turn (restore or remove the files it wrote) — **Done** for the latest turn's text files from the go-back question; no preview beforehand | store |
 | Transcript | Quote a range of turns into another conversation; distill an experience | tauri |
 | Transcript | Explorations: start, diff, promote to mainline, discard, abandon | store |
 | Transcript | Branch cards and merge a branch back with a summary | store |

@@ -1907,6 +1907,12 @@ impl Server {
         let _accept = live.accept.lock().await;
         let _admission = self.0.admission.read().await;
         self.own_conversation(project, session).await?;
+        self.rewind_locked(&live, session, turn).await
+    }
+
+    /// Whether the conversation can be rewound to `turn`, and the row the
+    /// turn's message is in.
+    pub(crate) async fn rewind_target(&self, session: &str, turn: &TurnRef) -> Result<i64> {
         self.ensure_idle(session, "rewind")?;
         let store = &self.0.store;
         store.require_unarchived_session(session).await?;
@@ -1917,7 +1923,18 @@ impl Server {
             ),
             "A branch that was merged or lost its source cannot be rewound"
         );
-        let (seq, _) = self.locate_turn(session, turn).await?;
+        Ok(self.locate_turn(session, turn).await?.0)
+    }
+
+    /// The rewind itself; the caller holds the conversation's accept lock.
+    pub(crate) async fn rewind_locked(
+        &self,
+        live: &std::sync::Arc<crate::output::Session>,
+        session: &str,
+        turn: &TurnRef,
+    ) -> Result<String> {
+        let store = &self.0.store;
+        let seq = self.rewind_target(session, turn).await?;
         let keep = seq - 1;
         // The row before the message decides which context the conversation
         // returns to. A missing row is refused: assuming the first context
@@ -4465,6 +4482,7 @@ pub use crate::research_archive::ArchiveDraft;
 pub use crate::review::{Finding as ReviewFinding, Outcome as ReviewOutcome, Review};
 pub use crate::run_log::RunLog;
 pub use crate::schedules::{ScheduleInput, ScheduleRow, ScheduleRun, MIN_INTERVAL_SECS};
+pub use crate::turn_undo::TurnFiles;
 pub use crate::updates::UpdateCheck;
 pub use crate::workflows::{
     Workflow, WorkflowInput, WorkflowTask, TASK_LIMIT as WORKFLOW_TASK_LIMIT,

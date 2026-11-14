@@ -741,6 +741,25 @@ pub async fn run(
     }
     // What its tool calls ran and wrote, so a file can be traced back.
     let reported = std::mem::take(&mut session.live.lock().unwrap().provenance);
+    // And what its files held before, so the turn can be undone. They are
+    // kept under the turn's own message.
+    if reported
+        .iter()
+        .any(|record| !record.file_changes.is_empty())
+    {
+        let rows = store.load_messages_with_seq(&request.session_id).await?;
+        let user = |(seq, message): &&(i64, wisp_llm::Message)| {
+            (message.role == Role::User).then_some(*seq)
+        };
+        let started = rows
+            .iter()
+            .filter(|(seq, _)| *seq > start_seq)
+            .find_map(|row| user(&row))
+            .or_else(|| rows.iter().rev().find_map(|row| user(&row)));
+        if let Some(user_seq) = started {
+            crate::turn_undo::keep(&store, &root, &request.session_id, user_seq, &reported).await;
+        }
+    }
     if let Err(error) = crate::origin::record(&store, &request.session_id, &root, reported).await {
         tracing::warn!(%error, "Could not keep the turn's execution log");
     }

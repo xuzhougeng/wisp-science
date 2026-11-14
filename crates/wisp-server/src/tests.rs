@@ -6816,3 +6816,92 @@ async fn a_conversation_is_compacted_on_request_and_its_history_archived() {
         .contains("what did we find?"));
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn undoing_the_latest_turn_puts_its_files_back() {
+    use desktop::TurnRef;
+    let temp = tempfile::tempdir().unwrap();
+    let cfg = config(temp.path());
+    let server = Server::open_with_models(cfg.clone(), models(Arc::default(), true))
+        .await
+        .unwrap();
+    assert!(!server
+        .commands()
+        .iter()
+        .any(|command| command.contains("undo")));
+    let answer = cfg.workspace.join("answer.txt");
+    let write = |session: String| {
+        let server = &server;
+        async move {
+            server
+                .set_conversation_options(
+                    PROJECT,
+                    &session,
+                    desktop::ConversationOptions {
+                        full_access: true,
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            send(server, &session, "write the answer").await.unwrap();
+            wait_for(server, &session, |s| !s.running).await;
+        }
+    };
+    let turn = TurnRef {
+        from_end: 0,
+        text: "write the answer".into(),
+    };
+
+    // A file the turn created goes to the project's trash.
+    let created = create(&server).await;
+    write(created.clone()).await;
+    assert_eq!(std::fs::read_to_string(&answer).unwrap(), "offline result");
+    let earlier = TurnRef {
+        from_end: 1,
+        ..turn.clone()
+    };
+    assert!(server.undo_turn(PROJECT, &created, &earlier).await.is_err());
+    let (text, files) = server.undo_turn(PROJECT, &created, &turn).await.unwrap();
+    assert_eq!(text, "write the answer");
+    assert_eq!(files.removed, ["answer.txt"]);
+    assert!(
+        files.restored.is_empty() && files.left.is_empty(),
+        "{files:?}"
+    );
+    assert!(!answer.exists());
+    let trash: Vec<_> = std::fs::read_dir(cfg.workspace.join(".wisp/trash"))
+        .unwrap()
+        .collect();
+    assert_eq!(trash.len(), 1);
+    assert!(snapshot(&server, &created).await.items.is_empty());
+
+    // A file the turn overwrote gets its earlier content back.
+    std::fs::write(&answer, "what the researcher wrote").unwrap();
+    let overwrote = create(&server).await;
+    write(overwrote.clone()).await;
+    assert_eq!(std::fs::read_to_string(&answer).unwrap(), "offline result");
+    let (_, files) = server.undo_turn(PROJECT, &overwrote, &turn).await.unwrap();
+    assert_eq!(files.restored, ["answer.txt"]);
+    assert_eq!(
+        std::fs::read_to_string(&answer).unwrap(),
+        "what the researcher wrote"
+    );
+
+    // A file changed again since the turn is left as it is, and named.
+    let changed = create(&server).await;
+    write(changed.clone()).await;
+    std::fs::write(&answer, "edited by hand afterwards").unwrap();
+    let (_, files) = server.undo_turn(PROJECT, &changed, &turn).await.unwrap();
+    assert!(files.restored.is_empty() && files.removed.is_empty());
+    assert_eq!(files.left.len(), 1);
+    assert_eq!(files.left[0].0, "answer.txt");
+    assert!(files.left[0].1.contains("changed again"), "{files:?}");
+    assert_eq!(
+        std::fs::read_to_string(&answer).unwrap(),
+        "edited by hand afterwards"
+    );
+    // The conversation is rewound all the same.
+    assert!(snapshot(&server, &changed).await.items.is_empty());
+    server.shutdown().await;
+}

@@ -947,4 +947,9 @@ pub const ZH: &[(&str, &str)] = &[
     ("Attached to the message.", "已附加到消息。"),
     ("Show in the file manager", "在文件管理器中显示"),
     ("Open with the system's application", "用系统应用打开"),
+    ("Put back: {}.", "已恢复：{}。"),
+    ("Moved to the project's trash: {}.", "已移入项目回收站：{}。"),
+    ("Left as they are: {}.", "保持原样：{}。"),
+    ("Go back and undo its files", "返回并撤销它的文件"),
+    ("Also puts back the files this turn edited and moves the ones it created to the project's trash", "同时恢复这一回合修改过的文件，并把它新建的文件移入项目回收站"),
 ];
