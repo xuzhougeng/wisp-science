@@ -805,6 +805,7 @@ impl Workspace {
             Section::Connections => self.render_connection_settings(cx),
             Section::Credentials => self.render_credential_settings(cx),
             Section::Environments => self.render_environment_settings(cx),
+            Section::Experts => self.render_expert_settings(cx),
             Section::Network => self.render_network_settings(cx),
             Section::Usage => self.render_usage_settings(cx),
             Section::Storage => self.render_storage_settings(cx),

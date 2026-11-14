@@ -21,6 +21,7 @@ mod queue_view;
 mod review_view;
 mod settings_data;
 mod settings_environments;
+mod settings_experts;
 mod settings_mcp;
 mod settings_network;
 mod settings_sections;
@@ -240,6 +241,12 @@ pub struct Workspace {
     /// host, notes.
     env_fields: [Entity<InputState>; 7],
     /// The user's MCP servers; `None` until read.
+    /// The personas a conversation can be started as.
+    experts: Vec<wisp_server::desktop::Expert>,
+    /// The expert in the form or the remove question; empty is a new one.
+    expert_editing: Option<String>,
+    /// Name, description, instructions.
+    expert_fields: [Entity<InputState>; 3],
     mcp_servers: Option<Vec<wisp_server::desktop::McpServerRow>>,
     /// The server the form changes or the remove question is about; `None`
     /// in the form means a new one.
@@ -393,6 +400,11 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
         ];
         let mcp_target = cx.new(|cx| InputState::new(window, cx));
+        let expert_fields = [
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx).multi_line(true)),
+        ];
         let mcp_token = cx.new(|cx| InputState::new(window, cx).masked(true));
         let skills_search =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Find a skill…")));
@@ -651,6 +663,9 @@ impl Workspace {
             project_form_ready: false,
             project_form_error: None,
             env_fields,
+            experts: Vec::new(),
+            expert_editing: None,
+            expert_fields,
             mcp_servers: None,
             mcp_editing: None,
             mcp_http: true,
@@ -726,7 +741,8 @@ impl Workspace {
                 | Layer::ConfirmFullAccess
                 | Layer::EffortMenu
                 | Layer::ModelMenu
-                | Layer::RunsOnMenu,
+                | Layer::RunsOnMenu
+                | Layer::ExpertMenu,
             ) => self.focus_composer(window, cx),
             // Settings stays open underneath and keeps its focus.
             Some(Layer::ConfirmDeleteModel) => {}
@@ -755,6 +771,7 @@ impl Workspace {
             // The page stays open underneath and keeps its focus.
             Some(Layer::ConfirmRemoveFavorite) => {}
             Some(Layer::McpForm | Layer::ConfirmRemoveMcp) => self.mcp_editing = None,
+            Some(Layer::ExpertForm | Layer::ConfirmRemoveExpert) => self.expert_editing = None,
             Some(Layer::EnvironmentForm | Layer::ConfirmRemoveEnvironment) => {
                 self.env_target = None
             }
@@ -954,6 +971,7 @@ impl Workspace {
             Layer::EffortMenu,
             Layer::ModelMenu,
             Layer::RunsOnMenu,
+            Layer::ExpertMenu,
             Layer::Find,
             Layer::Outline,
             Layer::Trajectory,
@@ -1984,6 +2002,18 @@ impl Workspace {
         self.set_options(options, window, cx);
         // The header names the model this conversation runs on.
         self.start_poll(window, cx);
+        self.focus_composer(window, cx);
+        cx.notify();
+    }
+
+    /// Starts this conversation as `expert`, or as none with an empty id.
+    fn choose_expert(&mut self, expert: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.layers.close(Layer::ExpertMenu);
+        let options = ConversationOptions {
+            expert,
+            ..self.options()
+        };
+        self.set_options(options, window, cx);
         self.focus_composer(window, cx);
         cx.notify();
     }

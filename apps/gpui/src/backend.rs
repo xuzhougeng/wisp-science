@@ -718,6 +718,22 @@ impl Backend {
         self.local(move |host| async move { host.review_conversation(&project, &session).await })
     }
 
+    /// The experts a conversation can be started as.
+    pub fn experts(&self) -> Reply<Vec<wisp_server::desktop::Expert>> {
+        self.local(|host| async move { host.experts().await })
+    }
+
+    pub fn save_expert(
+        &self,
+        input: wisp_server::desktop::ExpertInput,
+    ) -> Reply<Vec<wisp_server::desktop::Expert>> {
+        self.local(move |host| async move { host.save_expert(input).await })
+    }
+
+    pub fn delete_expert(&self, id: String) -> Reply<Vec<wisp_server::desktop::Expert>> {
+        self.local(move |host| async move { host.delete_expert(&id).await })
+    }
+
     /// Has one turn reviewed: the conversation as it stood when it ended.
     pub fn review_turn(
         &self,

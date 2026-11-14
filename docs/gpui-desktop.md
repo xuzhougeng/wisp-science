@@ -141,6 +141,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Delete a project's folder | Removing a project offers Delete folder too: after you type the project's name, the project is removed and its folder is deleted with every file in it |
 | What the model is sent | Clicking the context percentage by the composer (or the command palette) lists the conversation's working set: the instructions, the summary that stands in for compacted turns, and each message with about how many tokens it takes |
 | Interpreters | The Python and R interpreters a conversation keeps between tool calls show above the composer with their version and state; Stop ends one, Dismiss takes a stopped one off the list |
+| Experts | Settings, Experts, keeps personas (a name and instructions); the composer's Expert menu starts a new conversation as one, and its instructions hold for the whole conversation |
 | Review turns | The composer's Review turns switch has each turn that used a tool, or said a good deal, reviewed when it ends; the result shows above the composer, and See opens the findings |
 | Review | A conversation's Review button (or the command palette) has the model read the conversation as a reviewer and lists claims its own tool output does not support, each with the evidence and a fix; Ask Wisp to correct puts the corrections in the composer |
 | Save as skill | A conversation's Save as skill button (or the command palette) puts a request in the composer that asks Wisp to distill the conversation into a reusable skill; you send it, changed or not |
@@ -365,6 +366,18 @@ Limits of this slice:
   a new one. There is no list of variables, no restart button and no
   memory limit; interpreters are also stopped when the conversation or
   its project is removed and when the app quits.
+- An expert is chosen before a conversation's first message and cannot
+  be changed afterwards: its instructions are written into the system
+  prompt with the first turn and stay as they were then, also if the
+  expert is later changed or removed. The list and each conversation's
+  choice are kept under the WebView's keys (`specialists`,
+  `frame_specialist:<id>`), and what the WebView keeps on an expert that
+  this desktop does not use (its own model, skill and connector lists) is
+  left as it is but not applied here: a conversation started as an expert
+  runs on the conversation's model with every enabled skill. The
+  WebView's one-shot built-ins (reviewer, reader, archivist, recap) are
+  not offered. The built-in Scientific Illustrator draws SVG; this host
+  has no image-generation tool.
 - Review turns is off until switched on, per conversation; Settings,
   Conversation, sets what conversations start with (the WebView's keys,
   `frame_auto_review:<id>` and `auto_review_default_enabled`). A
@@ -772,6 +785,13 @@ running while code runs. Point at it for its path and memory. Press
 Stop: it reads stopped; ask the model to use the variable it had set and
 confirm the reply says the interpreter was stopped. Press Dismiss: the
 chip goes, and the next code call starts a fresh interpreter.
+In Settings, Experts, add an expert with a name and instructions; a
+name already in use is refused. In a new conversation choose it from the
+composer's Expert menu, send a message, and confirm in What the model is
+sent that the Instructions row ends with the expert's section; the menu
+is then off and names the expert. Remove the expert in Settings: the
+conversation still carries its instructions. Press Escape with the form
+open: only the form closes.
 Switch Review turns on in the composer and have a turn run a tool: when
 it ends the line above the composer reads Reviewing the answer…, then the
 result. Press See: the findings open; Ask Wisp to correct puts them in the

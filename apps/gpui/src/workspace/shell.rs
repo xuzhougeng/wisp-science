@@ -920,6 +920,33 @@ impl Workspace {
         menu
     }
 
+    /// The experts, with "none" first.
+    fn expert_menu(&self, current: &str, cx: &mut Context<Self>) -> Div {
+        let mut menu = Self::composer_menu(320., cx);
+        let chosen = self.experts.iter().any(|expert| expert.id == current);
+        menu = menu.child(
+            Self::menu_row("expert-none".into(), tr("No expert"), "", !chosen, cx).on_click(
+                cx.listener(|this, _, window, cx| this.choose_expert(String::new(), window, cx)),
+            ),
+        );
+        for expert in &self.experts {
+            let id = expert.id.clone();
+            menu = menu.child(
+                Self::menu_row(
+                    SharedString::from(format!("expert-choice-{id}")),
+                    expert.name.clone(),
+                    expert.description.clone(),
+                    expert.id == current,
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.choose_expert(id.clone(), window, cx)
+                })),
+            );
+        }
+        menu
+    }
+
     /// The saved models, with "follow the default" first.
     fn model_menu(&self, current: &str, cx: &mut Context<Self>) -> Div {
         let mut menu = Self::composer_menu(300., cx);
@@ -1199,6 +1226,38 @@ impl Workspace {
         if model_open {
             model = model.child(deferred(self.model_menu(&options.model, cx)));
         }
+
+        // Who the conversation is started as. It is chosen before the
+        // first message and only named afterwards.
+        let started = !self.rows.is_empty() || running;
+        let expert =
+            (!self.experts.is_empty() && (!started || !options.expert.is_empty())).then(|| {
+                let open = self.layers.contains(Layer::ExpertMenu);
+                let button = div().relative().child(
+                    Button::new("expert")
+                        .icon(glyph("user"))
+                        .label(settings::expert_label(&self.experts, &options.expert))
+                        .small()
+                        .ghost()
+                        .selected(open)
+                        .disabled(started)
+                        .tooltip(if started {
+                            tr("The expert this conversation was started as")
+                        } else {
+                            tr("Start this conversation as an expert")
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            // One may have been added or removed since.
+                            this.load_experts(window, cx);
+                            this.toggle_composer_menu(Layer::ExpertMenu, window, cx)
+                        })),
+                );
+                if open {
+                    button.child(deferred(self.expert_menu(&options.expert, cx)))
+                } else {
+                    button
+                }
+            });
 
         // Offered once there is a host to choose, or a choice to undo.
         let hosts = self.environments.as_ref();
@@ -1497,6 +1556,7 @@ impl Workspace {
                                 .child(model)
                                 .child(effort)
                                 .children(runs_on)
+                                .children(expert)
                                 .child(
                                     Button::new("auto-review")
                                         .icon(glyph("review"))

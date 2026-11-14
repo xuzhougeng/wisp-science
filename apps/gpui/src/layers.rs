@@ -27,6 +27,8 @@ pub enum Layer {
     ModelMenu,
     /// Where the conversation's work runs, above the composer.
     RunsOnMenu,
+    /// The expert a new conversation is started as, above the composer.
+    ExpertMenu,
     /// The dialog for a project's name, description and rules.
     ProjectSettings,
     /// The find bar over the open conversation.
@@ -90,6 +92,10 @@ pub enum Layer {
     McpForm,
     /// Question before an MCP server is removed.
     ConfirmRemoveMcp,
+    /// The form for an expert, on the Experts page of Settings.
+    ExpertForm,
+    /// Question before an expert is removed.
+    ConfirmRemoveExpert,
     /// The form for an SSH host, on the Environments page of Settings.
     EnvironmentForm,
     /// Question before an SSH host is removed.
@@ -98,7 +104,12 @@ pub enum Layer {
 
 impl Layer {
     /// Menus that open above the composer; only one shows at a time.
-    pub const COMPOSER_MENUS: [Layer; 3] = [Layer::EffortMenu, Layer::ModelMenu, Layer::RunsOnMenu];
+    pub const COMPOSER_MENUS: [Layer; 4] = [
+        Layer::EffortMenu,
+        Layer::ModelMenu,
+        Layer::RunsOnMenu,
+        Layer::ExpertMenu,
+    ];
     /// What the row under the conversation's title can turn into, one at a
     /// time.
     pub const CONVERSATION_BAR: [Layer; 5] = [
@@ -135,7 +146,9 @@ impl Layer {
             | Layer::McpForm
             | Layer::ConfirmRemoveMcp
             | Layer::EnvironmentForm
-            | Layer::ConfirmRemoveEnvironment => Some(Layer::Settings),
+            | Layer::ConfirmRemoveEnvironment
+            | Layer::ExpertForm
+            | Layer::ConfirmRemoveExpert => Some(Layer::Settings),
             Layer::ConfirmRemoveFavorite => Some(Layer::Favorites),
             Layer::JournalForm => Some(Layer::Journey),
             Layer::BatchGroupMenu | Layer::ConfirmBatchDelete => Some(Layer::SelectMode),
@@ -418,6 +431,14 @@ mod tests {
         stack.open(Layer::ConfirmDeleteModel);
         assert!(stack.close(Layer::Settings));
         assert!(!stack.contains(Layer::ConfirmDeleteModel));
+        // The expert form is inside Settings: Escape leaves it first, and
+        // closing Settings takes it along.
+        stack.open(Layer::Settings);
+        stack.open(Layer::ExpertForm);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ExpertForm));
+        stack.open(Layer::ConfirmRemoveExpert);
+        assert!(stack.close(Layer::Settings));
+        assert!(!stack.contains(Layer::ConfirmRemoveExpert));
         // The composer menus are ordinary layers of their own.
         for menu in Layer::COMPOSER_MENUS {
             stack.open(menu);

@@ -109,7 +109,7 @@ to find in the running app.
 | Reasoning effort / fast mode | Yes | Partial: effort per conversation, kept across restarts; no fast mode | store |
 | Permission mode [默认 / 完全权限] | Yes | Done: Ask first or Full access per conversation, with a question before it turns on; dangerous shell commands still ask | served |
 | Plan first [先计划] | Yes | Done: the model investigates and submits a plan; tools that change things refuse until the plan is approved or plan mode is left | served |
-| Expert (persona) for the conversation [专家] | Yes | Missing | tauri |
+| Expert (persona) for the conversation [专家] | Yes | Partial: chosen in the composer before the first message; its instructions join the system prompt; an expert's own model and skill or connector lists are not applied | tauri |
 | Automatic review toggle and review model [自动审查] | Yes | Partial: per conversation, with a default and a reviewer model in Settings; the result shows above the composer and corrections are asked for by hand, not made automatically | tauri |
 | Sub-agent model [子智能体模型] | Yes | Missing | store |
 | Compute environment for the conversation [计算环境] | Yes | Partial: the default, this computer or a saved SSH host, for where runs start; Python, R and the shell stay on this computer | store |
@@ -199,7 +199,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Models: ACP agents, subscription accounts, decision model | Yes | Missing | tauri |
 | Quick actions [快捷动作] | Yes | Missing | store |
 | Workflows [工作流]: library, graph editor, approval policy | Yes | Missing | store |
-| Experts [专家]: built-in and custom, default sub-agent model | Yes | Missing | tauri |
+| Experts [专家]: built-in and custom, default sub-agent model | Yes | Partial: an Experts page lists the built-in illustrator and your own, with add, change and remove; no model per expert, no skill or connector lists, no sub-agent model | tauri |
 | Memory [记忆]: project notes, global habits, enable switch | Yes | Done, as a side-panel tab rather than a Settings page; no "clear all", automatic proposals or weekly tidy | store |
 | Hooks [钩子]: automatic review, tool-failure analysis, command hooks | Yes | Missing | tauri |
 | Skills [技能]: list, tags, enable, community, GitHub, reload | Yes | Partial: list with source and tags, search, on or off, reload; no tag editing, community catalog or GitHub install | shared |

@@ -5304,6 +5304,107 @@ async fn a_conversation_that_asks_for_it_is_reviewed_after_each_turn_worth_it() 
 }
 
 #[tokio::test]
+async fn a_conversation_started_as_an_expert_works_under_its_instructions() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let experts = server
+        .save_expert(desktop::ExpertInput {
+            id: String::new(),
+            name: "Statistician".into(),
+            description: "Numbers".into(),
+            instructions: "Always report medians with the interquartile range.".into(),
+        })
+        .await
+        .unwrap();
+    let stats = experts
+        .iter()
+        .find(|expert| expert.name == "Statistician")
+        .unwrap()
+        .clone();
+    assert_eq!(server.experts().await.unwrap(), experts);
+
+    let choose = |session: String, expert: String| {
+        let server = &server;
+        async move {
+            let options = server
+                .conversation_status(PROJECT, &session)
+                .await
+                .unwrap()
+                .options;
+            server
+                .set_conversation_options(
+                    PROJECT,
+                    &session,
+                    desktop::ConversationOptions { expert, ..options },
+                )
+                .await
+        }
+    };
+    let prompt = |session: String| {
+        let server = &server;
+        async move {
+            server.model_view(PROJECT, &session).await.unwrap().rows[0]
+                .text
+                .clone()
+        }
+    };
+    let session = create(&server).await;
+    assert!(choose(session.clone(), "ghost".into()).await.is_err());
+    assert_eq!(
+        choose(session.clone(), stats.id.clone())
+            .await
+            .unwrap()
+            .expert,
+        stats.id
+    );
+    send(&server, &session, "summarise the counts")
+        .await
+        .unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    let instructed = prompt(session.clone()).await;
+    assert!(
+        instructed.ends_with(
+            "## Specialist: Statistician\nAlways report medians with the interquartile range."
+        ) || instructed.contains(
+            "## Specialist: Statistician\nAlways report medians with the interquartile range."
+        ),
+        "{instructed}"
+    );
+    // Once it has started, the conversation is what it is.
+    let late = choose(session.clone(), String::new()).await.unwrap_err();
+    assert!(
+        late.to_string().contains("before the first message"),
+        "{late}"
+    );
+    // Removing the expert does not rewrite the conversation.
+    server.delete_expert(&stats.id).await.unwrap();
+    send(&server, &session, "and again").await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    assert!(prompt(session.clone())
+        .await
+        .contains("## Specialist: Statistician"));
+    assert_eq!(
+        server
+            .conversation_status(PROJECT, &session)
+            .await
+            .unwrap()
+            .options
+            .expert,
+        ""
+    );
+
+    // A conversation with no expert has no such section.
+    let plain = create(&server).await;
+    send(&server, &plain, "hello").await.unwrap();
+    wait_for(&server, &plain, |s| !s.running).await;
+    assert!(!prompt(plain).await.contains("## Specialist"));
+    assert!(!server.commands().iter().any(|name| name.contains("expert")));
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_conversation_is_exported_whole_as_markdown() {
     let temp = tempfile::tempdir().unwrap();
     let calls = Arc::new(AtomicUsize::new(0));

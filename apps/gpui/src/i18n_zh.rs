@@ -655,4 +655,16 @@ pub const ZH: &[(&str, &str)] = &[
     ("failed", "失败"),
     ("cancelled", "已取消"),
     ("source discarded", "来源已丢弃"),
+    // Experts.
+    ("Experts", "专家"),
+    ("Expert", "专家"),
+    ("No expert", "不使用专家"),
+    ("The expert this conversation was started as", "本会话开始时选定的专家"),
+    ("Start this conversation as an expert", "以某位专家的身份开始本会话"),
+    ("Description, for you: what the expert is for. The model is not shown it.", "描述（给你自己看）：这位专家的用途。不会展示给模型。"),
+    ("This expert ships with Wisp: its instructions cannot be changed.", "这位专家是 Wisp 自带的：其指令不可修改。"),
+    ("Instructions: what the model works under for the whole conversation.", "指令：模型在整个会话中遵循的要求。"),
+    ("Remove this expert? Conversations started as it keep the instructions they were given.", "要移除这位专家吗？以它开始的会话会保留当时的指令。"),
+    ("An expert is a persona a conversation is started as: a name and the instructions the model works under throughout. Choose one in the composer before the first message.", "专家是会话开始时选定的角色：一个名称，加上模型在整个会话中遵循的指令。请在发送第一条消息之前，在输入栏中选择。"),
+    ("Add an expert", "添加专家"),
 ];

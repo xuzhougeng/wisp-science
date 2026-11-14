@@ -2,6 +2,7 @@ mod aside;
 pub mod config;
 pub mod desktop;
 mod excerpt;
+mod experts;
 mod export;
 mod files;
 mod follow_ups;

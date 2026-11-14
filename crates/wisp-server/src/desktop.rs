@@ -2818,6 +2818,11 @@ impl Server {
                 .as_deref()
                 == Some("true"),
             auto_review: crate::review::automatic(&self.0.store, session).await,
+            // One that was removed since reads as none.
+            expert: crate::experts::of_conversation(&self.0.store, session)
+                .await
+                .map(|expert| expert.id)
+                .unwrap_or_default(),
             runs_on: runs_on(
                 &wisp_runs::ssh_hosts::stored_session_default_execution_context(
                     &self.0.store,
@@ -2896,6 +2901,23 @@ impl Server {
             runtimes,
             review,
         })
+    }
+
+    /// The experts a conversation can be started as.
+    pub async fn experts(&self) -> Result<Vec<Expert>> {
+        Ok(crate::experts::list(&self.0.store).await)
+    }
+
+    /// Adds an expert, or changes the one `input.id` names. One that ships
+    /// with Wisp keeps its instructions.
+    pub async fn save_expert(&self, input: ExpertInput) -> Result<Vec<Expert>> {
+        crate::experts::upsert(&self.0.store, input).await
+    }
+
+    /// Removes an expert of the user's own. Conversations started as it go
+    /// on under the instructions they were given.
+    pub async fn delete_expert(&self, id: &str) -> Result<Vec<Expert>> {
+        crate::experts::remove(&self.0.store, id).await
     }
 
     /// Puts away the review that followed the latest turn.
@@ -3044,6 +3066,36 @@ impl Server {
                 "That model was removed; choose another"
             );
             self.0.store.set_setting(&key, &options.model).await?;
+        }
+        let started_as = crate::experts::of_conversation(&self.0.store, session)
+            .await
+            .map(|expert| expert.id)
+            .unwrap_or_default();
+        if options.expert != started_as {
+            // The instructions go in with the first turn; later they would
+            // not be what the conversation was held under.
+            ensure!(
+                !self
+                    .0
+                    .store
+                    .load_messages(session)
+                    .await?
+                    .iter()
+                    .any(|message| message.role != wisp_llm::Role::System),
+                "An expert is chosen before the first message"
+            );
+            let key = crate::experts::frame_key(session);
+            if options.expert.is_empty() {
+                self.0.store.delete_setting(&key).await?;
+            } else {
+                ensure!(
+                    crate::experts::get(&self.0.store, &options.expert)
+                        .await
+                        .is_some(),
+                    "That expert was removed; choose another"
+                );
+                self.0.store.set_setting(&key, &options.expert).await?;
+            }
         }
         // Written only when it is the conversation's own choice, so one
         // that never chose keeps following the default.
@@ -3446,6 +3498,9 @@ pub struct ConversationOptions {
     /// Have each turn that used a tool or said a good deal reviewed when it
     /// ends. A conversation that never chose follows the default.
     pub auto_review: bool,
+    /// Id of the expert the conversation is started as; empty is none. It
+    /// can only be chosen before the first message.
+    pub expert: String,
     /// Where this conversation's work runs unless the model is told
     /// otherwise: empty follows the default in Settings, [`RUNS_LOCALLY`]
     /// is this computer, anything else is the name of an SSH host.
@@ -3884,6 +3939,7 @@ pub struct ProjectGrants {
 }
 
 pub use crate::aside::Exchange as AsideExchange;
+pub use crate::experts::{Expert, ExpertInput};
 pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow};
 pub use crate::review::{Finding as ReviewFinding, Outcome as ReviewOutcome, Review};
 

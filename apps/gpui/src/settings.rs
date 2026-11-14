@@ -16,6 +16,8 @@ pub enum Section {
     #[default]
     Models,
     Conversation,
+    /// Personas a conversation can be started as.
+    Experts,
     Skills,
     Connections,
     Credentials,
@@ -28,11 +30,12 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 11] = [
+    pub const ALL: [Section; 12] = [
         Section::General,
         Section::Network,
         Section::Models,
         Section::Conversation,
+        Section::Experts,
         Section::Skills,
         Section::Connections,
         Section::Credentials,
@@ -48,6 +51,7 @@ impl Section {
             Section::Network => tr("Network"),
             Section::Models => tr("Models"),
             Section::Conversation => tr("Conversation"),
+            Section::Experts => tr("Experts"),
             Section::Skills => tr("Skills"),
             Section::Connections => tr("Connections"),
             Section::Credentials => tr("Credentials"),
@@ -64,6 +68,7 @@ impl Section {
             Section::Network => "share",
             Section::Models => "bot",
             Section::Conversation => "chat",
+            Section::Experts => "user",
             Section::Skills => "skill",
             Section::Connections => "link",
             Section::Credentials => "lock",
@@ -94,6 +99,7 @@ impl Section {
                 "steps iterations turn limit compact compaction context follow-up questions \
                  suggestions suggest next review reviewer automatic check"
             }
+            Section::Experts => "expert persona specialist role instructions illustrator 专家",
             Section::Skills => "skill workflow bundled folder reload",
             Section::Connections => {
                 "mcp server connector tool literature biology pubmed uniprot token http"
@@ -113,7 +119,7 @@ impl Section {
     pub fn group(self) -> &'static str {
         match self {
             Section::General | Section::Network => tr("App"),
-            Section::Models | Section::Conversation => "AI",
+            Section::Models | Section::Conversation | Section::Experts => "AI",
             Section::Skills
             | Section::Connections
             | Section::Credentials
@@ -122,6 +128,15 @@ impl Section {
             Section::Usage | Section::Storage => tr("Data"),
         }
     }
+}
+
+/// The composer's expert button: the name of the expert the conversation
+/// is started as, or the word for choosing one.
+pub fn expert_label(experts: &[wisp_server::desktop::Expert], chosen: &str) -> String {
+    experts
+        .iter()
+        .find(|expert| expert.id == chosen)
+        .map_or_else(|| tr("Expert").to_owned(), |expert| expert.name.clone())
 }
 
 /// The pages that have to do with what was typed, in the order they are
@@ -675,6 +690,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_expert_button_names_the_expert_or_offers_to_choose_one() {
+        let experts = [wisp_server::desktop::Expert {
+            id: "sp-1".into(),
+            name: "Statistician".into(),
+            ..Default::default()
+        }];
+        assert_eq!(expert_label(&experts, "sp-1"), "Statistician");
+        assert_eq!(expert_label(&experts, ""), "Expert");
+        // One that was removed since reads as none.
+        assert_eq!(expert_label(&experts, "sp-gone"), "Expert");
+        // It has a page of its own in Settings, found by what it is about.
+        assert!(search_sections("persona").contains(&Section::Experts));
+    }
+
+    #[test]
     fn sections_are_listed_under_their_groups_in_order() {
         let groups: Vec<_> = Section::ALL.iter().map(|section| section.group()).collect();
         assert_eq!(
@@ -682,6 +712,7 @@ mod tests {
             [
                 "App",
                 "App",
+                "AI",
                 "AI",
                 "AI",
                 "Capabilities",

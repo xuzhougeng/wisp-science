@@ -296,6 +296,12 @@ pub async fn build(
     // The server configures its own skill paths and does not read ~/.wisp.
     let compute = compute_section(store, frame).await;
     agent.seed_system_prompt(&skills, Some(compute.clone()), None);
+    // A conversation started as an expert is given the expert's
+    // instructions with its first turn, and keeps them as they were then.
+    let expert = match agent.ctx.messages.iter().any(|m| m.role != Role::System) {
+        true => None,
+        false => crate::experts::of_conversation(store, frame).await,
+    };
     // Plan mode is part of the system prompt, so switching it applies from
     // the next turn and the saved prompt always says which mode it was.
     if let Some(wisp_llm::Content::Text(prompt)) = agent
@@ -305,6 +311,9 @@ pub async fn build(
         .filter(|message| message.role == Role::System)
         .map(|message| &mut message.content)
     {
+        if let Some(expert) = &expert {
+            crate::experts::seed(prompt, expert);
+        }
         wisp_tools::plan::sync_plan_prompt(prompt, plan_mode);
         // A conversation that was started before a host was added, checked
         // or made the default is told about it from its next turn.
