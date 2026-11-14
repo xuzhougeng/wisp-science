@@ -419,7 +419,9 @@ Limits of this slice:
   only as far as it has been saved, and its model calls appear when it
   ends. Saved times are whole seconds: model time and speed are rough for
   short calls, and a call is timed from the question or the latest tool
-  result before it. A tool's own time is measured to the millisecond.
+  result before it. A tool's own time is measured to the millisecond. A
+  model call with nothing in its turn to be timed from is listed, but is
+  left out of the model time and the speed.
   Conversations from the WebView desktop show their steps, but that
   desktop records tool outcomes differently, so their tools show no
   outcome or time here. A step's opened text stops at 4,000 characters.

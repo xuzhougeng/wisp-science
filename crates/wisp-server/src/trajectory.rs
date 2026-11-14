@@ -142,6 +142,8 @@ pub(crate) fn fold(
         }
     }
 
+    // The turn the latest model call went to, and its round.
+    let mut latest_call: Option<(usize, i64)> = None;
     for record in events {
         let Ok(saved) = serde_json::from_str::<Saved>(&record.event_json) else {
             continue;
@@ -165,7 +167,17 @@ pub(crate) fn fold(
                         ready: vec![],
                     });
                 }
-                let at = turn_at(&turns, ts);
+                let mut at = turn_at(&turns, ts);
+                // Times are whole seconds, so a turn's last call and the
+                // start of a message that was waiting for it can share one.
+                // A turn's calls are saved with rising rounds: a round that
+                // rose still belongs to the turn before.
+                if let Some((turn, round)) = latest_call {
+                    if saved.round > round && at == turn + 1 && turns[at].started_at == ts {
+                        at = turn;
+                    }
+                }
+                latest_call = Some((at, saved.round));
                 turns[at].cells.push(TrajectoryCellDto {
                     kind: "usage".into(),
                     summary: format!(
@@ -190,6 +202,8 @@ pub(crate) fn fold(
 
     let mut stats = TrajectoryStatsDto::default();
     let mut model = None;
+    // What the calls that could be timed wrote: the speed is theirs alone.
+    let mut timed_output = 0;
     let turns: Vec<_> = turns
         .into_iter()
         .enumerate()
@@ -204,10 +218,13 @@ pub(crate) fn fold(
                     stats.steps += 1;
                     // A model call ran from when it last had something new
                     // to read, or from the call before it, to when it ended.
+                    // A call from before the turn had anything to answer
+                    // has nothing to be timed from.
                     if let Some(ts) = cell.ts {
                         let asked = turn.ready.iter().copied().filter(|ready| *ready <= ts);
-                        if let Some(before) = asked.chain(answered).max() {
-                            stats.llm_ms += ts - before;
+                        if let Some(asked) = asked.max() {
+                            stats.llm_ms += ts - answered.map_or(asked, |before| asked.max(before));
+                            timed_output += usage.output_tokens;
                         }
                         answered = Some(ts);
                     }
@@ -233,7 +250,7 @@ pub(crate) fn fold(
         stats.cache_hit_pct = Some(stats.cached_input_tokens as f64 / read as f64 * 100.0);
     }
     if stats.llm_ms > 0 {
-        stats.tokens_per_sec = Some(stats.output_tokens as f64 / (stats.llm_ms as f64 / 1000.0));
+        stats.tokens_per_sec = Some(timed_output as f64 / (stats.llm_ms as f64 / 1000.0));
     }
     TrajectorySnapshotDto {
         frame_id: frame.into(),
@@ -406,6 +423,55 @@ mod tests {
         );
         assert_eq!(stats.cache_hit_pct, Some(60.0));
         assert_eq!(stats.tokens_per_sec, Some(22.0));
+    }
+
+    #[test]
+    fn a_call_stays_with_its_own_turn_and_is_timed_only_from_what_it_answered() {
+        let messages = [
+            at(Message::user("slow"), 100),
+            calling("c1", "shell", "{}", 101),
+            at(Message::tool("c1", "shell", "finished"), 146),
+            at(Message::assistant("Done."), 147),
+            // Written while the first turn ran, and sent the second it ended.
+            at(Message::user("hello"), 147),
+            at(Message::assistant("Hi."), 148),
+        ];
+        let events = [
+            // Saved long before anything was asked here.
+            usage(0, 0, 40, 5, 5, 0),
+            usage(1, 3, 60, 5, 5, 0),
+            usage(2, 0, 101, 10, 5, 0),
+            usage(3, 1, 147, 10, 5, 0),
+            usage(4, 0, 148, 10, 5, 0),
+        ];
+        let snapshot = fold("f", &messages, &events);
+        let kinds = |turn: usize| -> Vec<_> {
+            snapshot.turns[turn]
+                .cells
+                .iter()
+                .map(|cell| cell.kind.as_str())
+                .collect()
+        };
+        // The call that ended at 147 answered the first turn's tool.
+        assert_eq!(
+            kinds(0),
+            [
+                "usage",
+                "usage",
+                "user",
+                "tool",
+                "usage",
+                "assistant",
+                "usage"
+            ]
+        );
+        assert_eq!(kinds(1), ["user", "assistant", "usage"]);
+        assert_eq!(snapshot.stats.steps, 5);
+        // 100→101, 146→147 and 147→148; the two early calls are not timed,
+        // so what they wrote is not in the speed either.
+        assert_eq!(snapshot.stats.llm_ms, 3_000);
+        assert_eq!(snapshot.stats.output_tokens, 25);
+        assert_eq!(snapshot.stats.tokens_per_sec, Some(5.0));
     }
 
     #[test]

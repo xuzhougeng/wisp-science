@@ -52,7 +52,13 @@ pub fn totals(stats: &TrajectoryStatsDto) -> Vec<(&'static str, String)> {
         ));
     }
     if let Some(speed) = stats.tokens_per_sec {
-        totals.push(("Speed", format!("{speed:.0} tokens/s")));
+        // A slow model is not shown as standing still.
+        let speed = if speed < 10.0 {
+            format!("{speed:.1}")
+        } else {
+            format!("{speed:.0}")
+        };
+        totals.push(("Speed", format!("{speed} tokens/s")));
     }
     totals
 }
@@ -188,7 +194,7 @@ pub fn detail(cell: &TrajectoryCellDto) -> Option<String> {
     }
     let text = parts.join("\n\n");
     // A one-line message is already whole in its row.
-    (!text.is_empty() && text != cell.summary).then_some(text)
+    (!text.is_empty() && text.trim() != cell.summary.trim()).then_some(text)
 }
 
 fn clipped(text: &str) -> String {
@@ -275,6 +281,11 @@ mod tests {
         };
         let labels: Vec<_> = totals(&bare).into_iter().map(|(label, _)| label).collect();
         assert_eq!(labels, ["Turns", "Model calls", "Input", "Output"]);
+        let slow = TrajectoryStatsDto {
+            tokens_per_sec: Some(0.44),
+            ..bare
+        };
+        assert_eq!(totals(&slow).last().unwrap().1, "0.4 tokens/s");
     }
 
     #[test]
@@ -345,6 +356,9 @@ mod tests {
         // A one-line message is whole in its row.
         let mut said = cell("assistant", "done");
         said.detail_output = Some("done".into());
+        assert_eq!(detail(&said), None);
+        // The row trims what was said; that is not more to show.
+        said.detail_output = Some("done \n".into());
         assert_eq!(detail(&said), None);
         said.detail_output = Some("done\nand more".into());
         assert_eq!(detail(&said).as_deref(), Some("done\nand more"));
