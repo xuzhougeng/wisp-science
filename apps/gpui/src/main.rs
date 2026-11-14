@@ -42,6 +42,7 @@ mod terminal;
 mod theme;
 mod trajectory;
 mod usage;
+mod workflows;
 mod workspace;
 
 use gpui::{prelude::*, *};

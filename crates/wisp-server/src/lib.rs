@@ -31,6 +31,7 @@ mod tests;
 mod tools_found;
 mod trajectory;
 mod updates;
+mod workflows;
 
 use anyhow::{bail, ensure, Context, Result};
 use async_trait::async_trait;

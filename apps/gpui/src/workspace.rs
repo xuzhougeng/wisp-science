@@ -36,6 +36,7 @@ mod settings_quick;
 mod settings_remote;
 mod settings_sections;
 mod settings_view;
+mod settings_workflows;
 mod shell;
 mod tabs_view;
 mod trajectory_view;
@@ -322,6 +323,14 @@ pub struct Workspace {
     /// What the last save or test said.
     decision_note: Option<String>,
     decision_testing: bool,
+    /// The workflow templates.
+    workflows: Vec<wisp_server::desktop::Workflow>,
+    /// The workflow in the form or the remove question; empty is a new one.
+    workflow_editing: Option<String>,
+    /// Name, goal.
+    workflow_fields: [Entity<InputState>; 2],
+    /// The tasks of the workflow in the form.
+    workflow_tasks: Vec<settings_workflows::TaskDraft>,
     /// Remote web access as the host has it; `None` until it answered.
     remote_access: Option<wisp_server::desktop::RemoteAccess>,
     /// Relay address, relay token.
@@ -515,6 +524,10 @@ impl Workspace {
         let paper_source_fields = [
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx)),
+        ];
+        let workflow_fields = [
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx).multi_line(true)),
         ];
         let remote_fields = [
             cx.new(|cx| InputState::new(window, cx).placeholder("https://relay.example")),
@@ -841,6 +854,10 @@ impl Workspace {
             decision_fields,
             decision_note: None,
             decision_testing: false,
+            workflows: Vec::new(),
+            workflow_editing: None,
+            workflow_fields,
+            workflow_tasks: Vec::new(),
             remote_access: None,
             remote_fields,
             remote_watch: 0,
@@ -962,6 +979,11 @@ impl Workspace {
             Some(Layer::ExpertForm | Layer::ConfirmRemoveExpert) => self.expert_editing = None,
             Some(Layer::ConfirmRemovePlugin) => self.plugin_removing = None,
             Some(Layer::ConfirmResetRemoteCode) => {}
+            Some(Layer::WorkflowForm) => {
+                self.workflow_editing = None;
+                self.workflow_tasks.clear();
+            }
+            Some(Layer::ConfirmRemoveWorkflow) => self.workflow_editing = None,
             Some(Layer::QuickActionForm | Layer::ConfirmRemoveQuickAction) => {
                 self.quick_editing = None
             }

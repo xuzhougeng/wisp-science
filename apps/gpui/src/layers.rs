@@ -116,6 +116,10 @@ pub enum Layer {
     ConfirmResetRemoteCode,
     /// Question before a plugin is removed, on its page of Settings.
     ConfirmRemovePlugin,
+    /// The form for a workflow, on its page of Settings.
+    WorkflowForm,
+    /// Question before a workflow is removed.
+    ConfirmRemoveWorkflow,
     /// The form for a quick action, on its page of Settings.
     QuickActionForm,
     /// Question before a quick action is removed.
@@ -179,6 +183,8 @@ impl Layer {
             | Layer::ExpertForm
             | Layer::ConfirmRemoveExpert
             | Layer::QuickActionForm
+            | Layer::WorkflowForm
+            | Layer::ConfirmRemoveWorkflow
             | Layer::ConfirmRemovePlugin
             | Layer::ConfirmResetRemoteCode
             | Layer::ConfirmRemoveQuickAction => Some(Layer::Settings),
@@ -490,6 +496,16 @@ mod tests {
         stack.open(Layer::ConfirmRemovePlugin);
         assert!(stack.close(Layer::Settings));
         assert!(!stack.contains(Layer::ConfirmRemovePlugin));
+        // The workflow form and its remove question are inside Settings.
+        stack.open(Layer::Settings);
+        stack.open(Layer::WorkflowForm);
+        assert_eq!(stack.dismiss_top(), Some(Layer::WorkflowForm));
+        stack.open(Layer::ConfirmRemoveWorkflow);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmRemoveWorkflow));
+        assert!(stack.contains(Layer::Settings));
+        stack.open(Layer::WorkflowForm);
+        assert!(stack.close(Layer::Settings));
+        assert!(!stack.contains(Layer::WorkflowForm));
         // So is the quick action form, and the question before removing one.
         stack.open(Layer::Settings);
         stack.open(Layer::QuickActionForm);

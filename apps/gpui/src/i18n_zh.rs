@@ -890,4 +890,15 @@ pub const ZH: &[(&str, &str)] = &[
     ("A new code stops every old link and drops the browsers connected now.", "新的连接码会让所有旧链接失效，并断开当前已连接的浏览器。"),
     ("Open the link in a browser, or type the code on the relay's page.", "在浏览器中打开链接，或在中继页面上输入连接码。"),
     ("A browser can list projects and conversations, read and send messages, stop a turn and answer an approval once. It cannot change settings, and what it starts asks before writing files or running commands.", "浏览器可以列出项目和对话、阅读和发送消息、停止回合，以及对一次审批作出回答。它不能更改设置，由它发起的操作在写文件或运行命令前都会先询问。"),
+    // Workflows.
+    ("Workflows", "工作流"),
+    ("{} tasks · {} stages", "{} 个任务 · {} 个阶段"),
+    (" · up to {} independent", " · 最多 {} 个互不依赖"),
+    ("Goal: what the whole workflow is to achieve. What it is about is typed into the conversation after it starts.", "目标：整个工作流要达成什么。具体针对什么内容，在它开始后输入到对话中。"),
+    ("After task", "在任务之后"),
+    ("Task {}", "任务 {}"),
+    ("Add task", "添加任务"),
+    ("New workflow", "新建工作流"),
+    ("A workflow is a goal broken into tasks that say which earlier tasks they need. Run starts a conversation in the open project and gives the model the tasks stage by stage; it carries them out in that order itself, as one conversation with the usual approvals.", "工作流是把一个目标拆成若干任务，每个任务说明它依赖前面的哪些任务。运行会在已打开的项目中新建一个对话，并把任务按阶段交给模型；模型自己按这个顺序完成它们，整个过程是一个对话，照常需要审批。"),
+    ("Open a project to run a workflow in it.", "打开一个项目后才能在其中运行工作流。"),
 ];

@@ -790,6 +790,27 @@ impl Backend {
         self.local(|host| async move { host.check_for_update().await })
     }
 
+    /// The workflow templates.
+    pub fn workflows(&self) -> Reply<Vec<wisp_server::desktop::Workflow>> {
+        self.local(|host| async move { host.workflows().await })
+    }
+
+    pub fn save_workflow(
+        &self,
+        input: wisp_server::desktop::WorkflowInput,
+    ) -> Reply<Vec<wisp_server::desktop::Workflow>> {
+        self.local(move |host| async move { host.save_workflow(input).await })
+    }
+
+    pub fn delete_workflow(&self, id: String) -> Reply<Vec<wisp_server::desktop::Workflow>> {
+        self.local(move |host| async move { host.delete_workflow(&id).await })
+    }
+
+    /// Starts a run in `project`; the conversation it runs in.
+    pub fn run_workflow(&self, project: String, id: String) -> Reply<String> {
+        self.local(move |host| async move { host.run_workflow(&project, &id).await })
+    }
+
     /// Remote web access as it stands.
     pub fn remote_access(&self) -> Reply<wisp_server::desktop::RemoteAccess> {
         self.local(|host| async move { host.remote_access().await })

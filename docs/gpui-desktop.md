@@ -150,6 +150,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Interpreters | The Python and R interpreters a conversation keeps between tool calls show above the composer with their version and state; Stop ends one, Dismiss takes a stopped one off the list |
 | Experts | Settings, Experts, keeps personas (a name and instructions); the composer's Expert menu starts a new conversation as one, and its instructions hold for the whole conversation |
 | Quick actions | Settings, Quick actions, keeps requests you make often under a name; the composer's quick actions menu puts one into the message box, after whatever is already typed, to finish and send |
+| Workflows | Settings, Workflows, keeps templates of a goal broken into tasks, each saying which earlier tasks it needs; Run starts a conversation in the open project and gives the model the tasks stage by stage |
 | Remote web access | Settings, Remote access, opens this desktop's projects in a phone or a browser through a wisp-relay of your own: it dials out (no inbound port), shows whether the tunnel is up and how many browsers are connected, and gives a link and a code that can be copied or replaced |
 | Plugins | Settings, Plugins, installs a plugin from a folder in the Claude plugin layout (`.claude-plugin/plugin.json`, `skills/*/SKILL.md`) into the app's data without running anything in it, lists what each brings, switches one on for the open project, whose conversations then have its skills, and removes it |
 | Decision model | Settings, Decision model, sets up one fast endpoint (TypeSafe Jev, StartLux-Decision hosted or self-hosted, or a custom System One server) with its key, thinking mode and timeout, and tests it; while one is in use the model's `map_items` tool, which runs one step over many items, also offers its `decide` step |
@@ -473,6 +474,20 @@ Limits of this slice:
   `desktop.quick_actions` and neither reads nor changes the WebView's.
   It starts with four that can be changed or removed; at most 40 are
   kept, a name is at most 60 characters and a request 8,000.
+- A workflow here runs as one conversation: the host lays the tasks out
+  in the stages their dependencies allow and the conversation's model
+  carries them out in that order, with the usual approvals. There are
+  no separate agents per task, no executors or per-task models, no
+  permissions or output contracts per task, no approval policy, no
+  retries of a single task and no run history; tasks of one stage are
+  not run at the same time. A task can only need tasks listed before
+  it, and there is no graph editor and no converting skills into a
+  workflow. Because the WebView's templates describe agents this host
+  cannot run, the two libraries are separate: this desktop keeps its
+  own under `desktop.workflows` and neither reads nor changes the
+  WebView's `workflow_templates`. It starts with two that can be
+  changed or removed; a workflow has at most 20 tasks and there are at
+  most 40.
 - Remote web access is the only channel ported: there is no project
   sync through the relay, Feishu, WeChat, StickS3 or Wisp-Lab. A browser
   gets the commands a headless `wisp-server` offers (projects,
@@ -1029,6 +1044,16 @@ counts it. Remove the evidence, change the figure's title, remove the
 figure. With a form open press Escape: only the form closes; press it
 again: the page closes. Rename the paper, then remove it: the question
 has to be answered first.
+In Settings, Workflows, two are listed with their tasks and stages. Press
+New workflow, give a name and a goal, add a second and a third task and
+mark the third as after tasks 1 and 2: saved, it reads "3 tasks · 2
+stages · up to 2 independent". Change it and remove the first task:
+the remaining dependency follows the task it pointed at. Leave a title
+empty: it is refused and the form stays. Press Escape with the form
+open: only the form closes. With a project open press Run: Settings
+closes and a conversation named after the workflow shows the goal and
+the tasks under Stage 1 and Stage 2. Remove the workflow: the question
+has to be answered.
 In Settings, Remote access, switch it on with nothing filled in: it is
 refused. Give a relay address that is plain http on another machine: it
 is refused. With a relay of your own running, give its https address

@@ -4463,6 +4463,9 @@ pub use crate::review::{Finding as ReviewFinding, Outcome as ReviewOutcome, Revi
 pub use crate::run_log::RunLog;
 pub use crate::schedules::{ScheduleInput, ScheduleRow, ScheduleRun, MIN_INTERVAL_SECS};
 pub use crate::updates::UpdateCheck;
+pub use crate::workflows::{
+    Workflow, WorkflowInput, WorkflowTask, TASK_LIMIT as WORKFLOW_TASK_LIMIT,
+};
 pub use wisp_dto::{ArchiveScript, ResearchArchive};
 
 /// A project's folder, as the question before it is deleted describes it.

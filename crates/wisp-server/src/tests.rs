@@ -6593,3 +6593,41 @@ async fn remote_access_dials_a_relay_and_answers_a_browser_that_holds_the_code()
     assert_eq!((off.state, off.clients), (RemoteState::Off, 0));
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_workflow_runs_as_one_conversation_given_its_staged_tasks() {
+    let temp = tempfile::tempdir().unwrap();
+    let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let record = seen.clone();
+    let factory: ModelFactory = Arc::new(move |_| Box::new(Everything(record.clone())));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    assert!(!server
+        .commands()
+        .iter()
+        .any(|command| command.contains("workflow")));
+    let workflows = server.workflows().await.unwrap();
+    assert_eq!(workflows.len(), 2);
+    let review = workflows[0].clone();
+    assert_eq!(review.shape(), (3, 2));
+
+    assert!(server.run_workflow(PROJECT, "absent").await.is_err());
+    assert!(server.run_workflow("missing", &review.id).await.is_err());
+    let session = server.run_workflow(PROJECT, &review.id).await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    let sent = seen.lock().unwrap().join("\n");
+    assert!(sent.contains("[Workflow: Literature evidence review]"));
+    assert!(sent.contains("- Task 3 — Weigh the evidence (after task 1, task 2): "));
+    assert!(sent.find("\nStage 1\n").unwrap() < sent.find("\nStage 3\n").unwrap());
+    // The conversation is named after the workflow.
+    let sessions = server.0.store.list_sessions(PROJECT).await.unwrap();
+    assert!(sessions
+        .iter()
+        .any(|row| format!("{row:?}").contains("Literature evidence review")));
+
+    let kept = server.delete_workflow(&review.id).await.unwrap();
+    assert_eq!(kept.len(), 1);
+    assert!(server.run_workflow(PROJECT, &review.id).await.is_err());
+    server.shutdown().await;
+}

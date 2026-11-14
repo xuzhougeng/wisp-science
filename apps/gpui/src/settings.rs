@@ -20,6 +20,8 @@ pub enum Section {
     Experts,
     /// Requests kept under a name.
     QuickActions,
+    /// Goals broken into tasks, run as one conversation.
+    Workflows,
     /// The fast endpoint that answers typed questions.
     DecisionModel,
     Skills,
@@ -40,7 +42,7 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 17] = [
+    pub const ALL: [Section; 18] = [
         Section::General,
         Section::Network,
         Section::Remote,
@@ -50,6 +52,7 @@ impl Section {
         Section::Conversation,
         Section::Experts,
         Section::QuickActions,
+        Section::Workflows,
         Section::Skills,
         Section::Plugins,
         Section::Connections,
@@ -68,6 +71,7 @@ impl Section {
             Section::Conversation => tr("Conversation"),
             Section::Experts => tr("Experts"),
             Section::QuickActions => tr("Quick actions"),
+            Section::Workflows => tr("Workflows"),
             Section::Pet => tr("Pet"),
             Section::Remote => tr("Remote access"),
             Section::DecisionModel => tr("Decision model"),
@@ -90,6 +94,7 @@ impl Section {
             Section::Conversation => "chat",
             Section::Experts => "user",
             Section::QuickActions => "bolt",
+            Section::Workflows => "split",
             Section::Pet => "sparkles",
             Section::Remote => "monitor",
             Section::DecisionModel => "check-square",
@@ -133,6 +138,7 @@ impl Section {
             }
             Section::Remote => "remote access web browser phone relay tunnel code link 远程接入",
             Section::Pet => "pet companion mascot animation sprite 宠物",
+            Section::Workflows => "workflow template task stage dependency run 工作流",
             Section::QuickActions => "quick action prompt template shortcut reuse 快捷动作",
             Section::Skills => "skill workflow bundled folder reload",
             Section::Plugins => "plugin package install extension claude 插件",
@@ -158,7 +164,8 @@ impl Section {
             | Section::DecisionModel
             | Section::Conversation
             | Section::Experts
-            | Section::QuickActions => "AI",
+            | Section::QuickActions
+            | Section::Workflows => "AI",
             Section::Skills
             | Section::Plugins
             | Section::Connections
@@ -824,6 +831,7 @@ mod tests {
                 "App",
                 "App",
                 "App",
+                "AI",
                 "AI",
                 "AI",
                 "AI",
