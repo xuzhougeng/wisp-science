@@ -187,6 +187,8 @@ pub struct Workspace {
     file_trashing: Option<String>,
     file_problem: Option<String>,
     file_notice: Option<String>,
+    /// A table file is shown as its text instead.
+    file_as_text: bool,
     /// What is being looked for in the open conversation, and its field.
     find: crate::find::Find,
     find_input: Entity<InputState>,
@@ -798,6 +800,7 @@ impl Workspace {
             file_trashing: None,
             file_problem: None,
             file_notice: None,
+            file_as_text: false,
             palette_scroll: ScrollHandle::new(),
             sessions: vec![],
             inbox: vec![],

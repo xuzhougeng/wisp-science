@@ -151,6 +151,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Experts | Settings, Experts, keeps personas (a name and instructions); the composer's Expert menu starts a new conversation as one, and its instructions hold for the whole conversation |
 | Quick actions | Settings, Quick actions, keeps requests you make often under a name; the composer's quick actions menu puts one into the message box, after whatever is already typed, to finish and send |
 | Undo a turn | Going back to the latest message can also undo its files: a file the turn edited gets its earlier content, a file it created goes to the project's trash, and a file changed again since is left and named |
+| Table preview | A `.csv` or `.tsv` file is previewed as a grid of its first 200 rows and 30 columns, with a switch to its text |
 | File actions | A previewed file's path can be copied, the file attached to the message, shown in the file manager or opened with the system's own application |
 | Slash commands | A message that is only a command does something instead of being sent: `/review`, `/trajectory`, `/context`, `/btw <question>`, `/plan`, `/save-as-skill`, `/skills`, `/files`, `/upload`, `/memo`, `/remember`, `/archive`, `/compact`, `/timer 30m <prompt>`, `/fork`, `/rewind`, `/permission`, `/share`, `/help`; the composer's "/" button lists them |
 | Browser | Settings, Browser, switches on a bridge to the Wisp extension in your own Chrome or Chromium; conversations can then open a tab, read it and run a script in it, only in tabs they opened themselves, and hosts can be blocked or preferred |
@@ -478,6 +479,11 @@ Limits of this slice:
   `desktop.quick_actions` and neither reads nor changes the WebView's.
   It starts with four that can be changed or removed; at most 40 are
   kept, a name is at most 60 characters and a request 8,000.
+- The table preview reads the usual quoting (a quoted field may hold the
+  delimiter, a line break or a doubled quote) and takes the first row as
+  the header. It shows what the host sent, so of a file over 1 MB only
+  the rows in the first 1 MB; cells are cut at 80 characters and show
+  their first line. There is no sorting, filtering or column resizing.
 - Only the latest turn's files can be undone, and only text files the
   write and edit tools changed, up to 10 MiB each: what a shell command
   or a script wrote or deleted is not known and stays. The earlier
@@ -1110,6 +1116,8 @@ back and undo its files: the new file is in `.wisp/trash/`, the edited
 one reads as before, the message is back in the composer and a note
 lists both. Repeat after changing the edited file by hand: it is left
 as it is and the note says why.
+Preview a `.csv` file: it shows as a grid with its header in bold, and
+Show as text switches to the file's text and back.
 Preview a file in Files: Copy path puts its full path on the clipboard,
 Attach adds it to the message as a chip, Show in the file manager and
 Open with the system's application do what they say.

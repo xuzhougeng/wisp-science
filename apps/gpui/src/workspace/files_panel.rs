@@ -325,6 +325,7 @@ impl Workspace {
             self.file_image = None;
             self.file_problem = None;
             self.file_origin = None;
+            self.file_as_text = false;
             self.restore_focus(window, cx);
             // A file revealed from the palette has no listing under it yet.
             self.ensure_files(window, cx);
@@ -470,13 +471,94 @@ impl Workspace {
                     .scrollable(true),
                 )
                 .into_any_element(),
-            // Disabled keeps selection, copy and keyboard scrolling but no edits.
-            PreviewMode::Text => div()
+            PreviewMode::Text => {
+                let table = content
+                    .text
+                    .as_deref()
+                    .and_then(|text| files::table(&content.path, text));
+                match table {
+                    Some(table) => self.render_table(&table, cx),
+                    None => self.render_text_preview(),
+                }
+            }
+        }
+    }
+
+    /// Verbatim text. Disabled keeps selection, copy and keyboard scrolling
+    /// but no edits.
+    fn render_text_preview(&self) -> AnyElement {
+        div()
+            .flex_1()
+            .min_h_0()
+            .child(Input::new(&self.file_view).disabled(true).h_full())
+            .into_any_element()
+    }
+
+    /// A delimited file as a grid, with a switch to its text.
+    fn render_table(&self, table: &files::Table, cx: &mut Context<Self>) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        let border = cx.theme().border;
+        let mut bar = div().h_flex().gap_3().px_3().py_1().child(
+            Button::new("file-table-switch")
+                .label(if self.file_as_text {
+                    tr("Show as a table")
+                } else {
+                    tr("Show as text")
+                })
+                .xsmall()
+                .ghost()
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.file_as_text = !this.file_as_text;
+                    cx.notify();
+                })),
+        );
+        if self.file_as_text {
+            return div()
+                .v_flex()
                 .flex_1()
                 .min_h_0()
-                .child(Input::new(&self.file_view).disabled(true).h_full())
-                .into_any_element(),
+                .child(bar)
+                .child(self.render_text_preview())
+                .into_any_element();
         }
+        if let Some(note) = files::table_note(table) {
+            bar = bar.child(div().text_xs().text_color(muted).child(note));
+        }
+        let line = |cells: &[String], head: bool| {
+            let mut row = div().h_flex().border_b_1().border_color(border);
+            for cell in cells {
+                let mut cell = div()
+                    .w(px(150.))
+                    .flex_shrink_0()
+                    .px_2()
+                    .py_1()
+                    .truncate()
+                    .text_xs()
+                    .child(cell.lines().next().unwrap_or_default().to_owned());
+                if head {
+                    cell = cell.font_weight(FontWeight::SEMIBOLD);
+                }
+                row = row.child(cell);
+            }
+            row
+        };
+        let mut grid = div()
+            .id("file-table")
+            .flex_1()
+            .min_h_0()
+            .overflow_scroll()
+            .font_family(cx.theme().mono_font_family.clone())
+            .child(line(&table.header, true));
+        for row in &table.rows {
+            grid = grid.child(line(row, false));
+        }
+        div()
+            .v_flex()
+            .flex_1()
+            .min_h_0()
+            .child(bar)
+            .child(grid)
+            .into_any_element()
     }
 
     /// Looks up which tool call wrote the file being previewed.

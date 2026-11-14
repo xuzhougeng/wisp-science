@@ -311,6 +311,112 @@ pub fn origin_detail(origin: &wisp_server::desktop::FileOrigin) -> String {
     parts.join("\n\n")
 }
 
+/// A delimited text file laid out as a table: the first rows and
+/// columns, each cell bounded.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Table {
+    pub header: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+    /// Rows of the file that are not shown.
+    pub more_rows: usize,
+    /// Columns of the widest row that are not shown.
+    pub more_columns: usize,
+}
+
+pub const TABLE_ROWS: usize = 200;
+pub const TABLE_COLUMNS: usize = 30;
+const TABLE_CELL: usize = 80;
+
+/// One record of a delimited file, by the usual quoting rules: a quoted
+/// field may hold the delimiter, a line break and a doubled quote.
+fn records(text: &str, delimiter: char) -> Vec<Vec<String>> {
+    let mut records = vec![];
+    let mut record = vec![];
+    let mut field = String::new();
+    let mut quoted = false;
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' if quoted && chars.peek() == Some(&'"') => {
+                chars.next();
+                field.push('"');
+            }
+            '"' if quoted => quoted = false,
+            '"' if field.is_empty() => quoted = true,
+            ch if ch == delimiter && !quoted => record.push(std::mem::take(&mut field)),
+            '\r' if !quoted => {}
+            '\n' if !quoted => {
+                record.push(std::mem::take(&mut field));
+                records.push(std::mem::take(&mut record));
+            }
+            ch => field.push(ch),
+        }
+    }
+    if !field.is_empty() || !record.is_empty() {
+        record.push(field);
+        records.push(record);
+    }
+    // A blank line is not a record.
+    records.retain(|record| record.len() > 1 || !record[0].trim().is_empty());
+    records
+}
+
+/// The table in a `.csv` or `.tsv` file, when it has one: at least a
+/// header and two columns. Anything else is shown as text.
+pub fn table(path: &str, text: &str) -> Option<Table> {
+    let name = file_name(path).to_ascii_lowercase();
+    let delimiter = if name.ends_with(".csv") {
+        ','
+    } else if name.ends_with(".tsv") || name.ends_with(".tab") {
+        '\t'
+    } else {
+        return None;
+    };
+    let mut all = records(text, delimiter);
+    let widest = all.iter().map(Vec::len).max()?;
+    if widest < 2 {
+        return None;
+    }
+    let clip = |cell: &String| -> String {
+        let cell = cell.trim();
+        if cell.chars().count() <= TABLE_CELL {
+            cell.to_owned()
+        } else {
+            let mut cut: String = cell.chars().take(TABLE_CELL).collect();
+            cut.push('…');
+            cut
+        }
+    };
+    let shown = widest.min(TABLE_COLUMNS);
+    let row = |record: &Vec<String>| -> Vec<String> {
+        (0..shown)
+            .map(|column| record.get(column).map(clip).unwrap_or_default())
+            .collect()
+    };
+    let header = row(&all.remove(0));
+    let more_rows = all.len().saturating_sub(TABLE_ROWS);
+    Some(Table {
+        header,
+        rows: all.iter().take(TABLE_ROWS).map(row).collect(),
+        more_rows,
+        more_columns: widest - shown,
+    })
+}
+
+/// What a table leaves out, in a line; nothing when it shows everything.
+pub fn table_note(table: &Table) -> Option<String> {
+    use crate::i18n::{fill, tr};
+    match (table.more_rows, table.more_columns) {
+        (0, 0) => None,
+        (rows, 0) => Some(fill(tr("{} more rows are not shown."), &[&rows])),
+        (0, columns) => Some(fill(tr("{} more columns are not shown."), &[&columns])),
+        (rows, columns) => Some(fill(
+            tr("{} more rows and {} more columns are not shown."),
+            &[&rows, &columns],
+        )),
+    }
+}
+
 /// Where a project file is on disk: the project's folder joined with a
 /// path of the project's own listing. A path that would leave the folder
 /// is not one of those and gives nothing.
@@ -462,6 +568,49 @@ mod tests {
         assert!(files.accept_directory(&ticket, directory("p", "", &["a"])));
         files.set_project(Some("p"));
         assert!(files.loaded);
+    }
+
+    #[test]
+    fn a_delimited_file_is_laid_out_as_a_table() {
+        let text = "sample,reads,note\r\nS01,1200,\"clean, no adapters\"\nS02,  950 ,\"said \"\"odd\"\"\nand more\"\n\nS03,10\n";
+        let found = table("results/qc.CSV", text).unwrap();
+        assert_eq!(found.header, ["sample", "reads", "note"]);
+        assert_eq!(
+            found.rows,
+            [
+                vec!["S01", "1200", "clean, no adapters"],
+                vec!["S02", "950", "said \"odd\"\nand more"],
+                // A short row is padded, a blank line skipped.
+                vec!["S03", "10", ""],
+            ]
+        );
+        assert_eq!((found.more_rows, found.more_columns), (0, 0));
+        assert_eq!(table_note(&found), None);
+
+        let tabbed = table("counts.tsv", "gene\tcount\nrecA\t7\n").unwrap();
+        assert_eq!(tabbed.rows, [vec!["recA", "7"]]);
+        // Not a table: another kind of file, one column, nothing at all.
+        assert_eq!(table("notes.txt", "a,b\n1,2\n"), None);
+        assert_eq!(table("list.csv", "only\nvalues\n"), None);
+        assert_eq!(table("empty.csv", ""), None);
+    }
+
+    #[test]
+    fn a_big_table_shows_its_first_rows_and_columns_and_says_so() {
+        let wide: Vec<String> = (0..TABLE_COLUMNS + 5).map(|n| format!("c{n}")).collect();
+        let mut text = wide.join(",");
+        for row in 0..TABLE_ROWS + 12 {
+            text.push_str(&format!("\n{row},{}", "x".repeat(200)));
+        }
+        let found = table("big.csv", &text).unwrap();
+        assert_eq!(found.header.len(), TABLE_COLUMNS);
+        assert_eq!(found.rows.len(), TABLE_ROWS);
+        assert_eq!((found.more_rows, found.more_columns), (12, 5));
+        assert_eq!(found.rows[0][1].chars().count(), 81);
+        assert_eq!(
+            table_note(&found).unwrap(),
+            "12 more rows and 5 more columns are not shown."
+        );
     }
 
     #[test]

@@ -957,4 +957,9 @@ pub const ZH: &[(&str, &str)] = &[
     ("Switch full access on or off", "开启或关闭完全访问"),
     ("Export this conversation as Markdown", "将此对话导出为 Markdown"),
     ("Send it earlier", "提前发送"),
+    ("{} more rows are not shown.", "还有 {} 行未显示。"),
+    ("{} more columns are not shown.", "还有 {} 列未显示。"),
+    ("{} more rows and {} more columns are not shown.", "还有 {} 行和 {} 列未显示。"),
+    ("Show as a table", "以表格显示"),
+    ("Show as text", "以文本显示"),
 ];
