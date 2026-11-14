@@ -1,5 +1,5 @@
 use crate::{
-    config::Config,
+    config::{Config, ModelConfig},
     output::{OutcomeEvent, PersistedMessage, ServerOutput, Session},
 };
 use anyhow::Result;
@@ -16,6 +16,7 @@ use wisp_store::{OpenContextEpoch, Store};
 
 pub async fn build(
     config: &Config,
+    model: &ModelConfig,
     store: &Store,
     runs: wisp_runs::RunManager,
     project: &str,
@@ -23,31 +24,38 @@ pub async fn build(
     frame: &str,
     session: &Session,
     models: &crate::ModelFactory,
+    reasoning_effort: Option<String>,
 ) -> Result<Agent> {
     let root = PathBuf::from(root);
     let mut paths = config.skills.clone();
     paths.push(root.join(".wisp/skills"));
     paths.push(root.join("skills"));
     let skills = Arc::new(SkillIndex::load(&paths));
-    let cfg = config.provider.clone().with_session_id(frame);
+    let mut cfg = model.provider.clone().with_session_id(frame);
+    // The conversation's own choice outranks the model's default.
+    if reasoning_effort.is_some() {
+        cfg.reasoning_effort = reasoning_effort;
+    }
     let mut tools =
         wisp_core::build_registry(skills.clone(), Arc::new(MemoryManager::new(&root)), true);
+    // The model's way to stop and ask; the answer is the next user message.
+    tools.add(Box::new(wisp_tools::ask_user::AskUserTool));
     tools.add(Box::new(wisp_core::ExploreTool::from_config(
         cfg.clone(),
-        config.max_context,
+        model.max_context,
     )));
     let mut agent = Agent::from_parts(
         models(cfg),
         None,
         tools,
-        wisp_core::ContextManager::new(config.max_context),
+        wisp_core::ContextManager::new(model.max_context),
         root.clone(),
         config.max_iterations,
         root.join(".wisp/server-sessions")
             .join(format!("{frame}.json")),
     );
     agent.ctx.messages = store.load_messages(frame).await?;
-    agent.ctx.supports_vision = config.supports_vision;
+    agent.ctx.supports_vision = model.supports_vision;
     let repaired = wisp_core::repair_unpaired_tool_calls(&mut agent.ctx.messages);
     // The server configures its own skill paths and does not read ~/.wisp.
     agent.seed_system_prompt(
@@ -151,6 +159,7 @@ pub async fn run(
     session: Arc<Session>,
     project: String,
     request: SendRequest,
+    full_access: bool,
 ) -> Result<()> {
     let start_seq = store.max_message_seq(&request.session_id).await?;
     let mut next_event = store.next_session_ui_event_seq(&request.session_id).await?;
@@ -192,6 +201,7 @@ pub async fn run(
         project,
         turn: request.request_id,
         persist: tx,
+        full_access,
     };
     let result = agent
         .run(&request.message, &out, Some(&session.cancel))

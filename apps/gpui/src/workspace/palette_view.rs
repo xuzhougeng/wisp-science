@@ -1,0 +1,338 @@
+//! The command palette: one box that finds projects, files and conversations
+//! in every project and runs the window's commands. It is a layer in the
+//! Escape stack, drawn over whatever screen is showing.
+use std::time::Duration;
+
+use gpui::{prelude::*, *};
+use gpui_component::{ActiveTheme, StyledExt, input::Input};
+
+use super::Workspace;
+use crate::{
+    assets::icon,
+    backend::receive,
+    files,
+    home::{self, Screen},
+    layers::Layer,
+    palette::{self, Command, Entry},
+};
+
+impl Workspace {
+    pub(super) fn toggle_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.layers.close(Layer::Palette) {
+            self.focus_composer(window, cx);
+        } else {
+            self.palette.reset();
+            self.layers.open(Layer::Palette);
+            self.palette_input.update(cx, |input, cx| {
+                input.set_value("", window, cx);
+                input.focus(window, cx);
+            });
+            // The list with nothing typed is the recent conversations.
+            self.load_recent(window, cx);
+        }
+        cx.notify();
+    }
+
+    fn palette_entries(&self) -> Vec<Entry> {
+        self.palette
+            .entries(&self.projects, &self.recent, self.screen)
+    }
+
+    /// Searches the host for what is typed, after a pause so fast typing
+    /// costs one search rather than one per letter.
+    pub(super) fn search_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.layers.contains(Layer::Palette) {
+            return;
+        }
+        let typed = self.palette_input.read(cx).value().to_string();
+        let ticket = self.palette.begin(&typed);
+        self.palette_scroll.scroll_to_item(0);
+        cx.notify();
+        let query = self.palette.query.clone();
+        if query.is_empty() {
+            return;
+        }
+        let backend = self.backend.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(120))
+                .await;
+            if !this
+                .update(cx, |this, _| this.palette.current(ticket))
+                .unwrap_or(false)
+            {
+                return;
+            }
+            let conversations = backend.find_conversations(query.clone(), 12);
+            let found = backend.find_files(query, 6);
+            let conversations = receive(conversations).await;
+            let _ = this.update(cx, |this, cx| {
+                match conversations {
+                    Ok(rows) => {
+                        this.palette.accept_conversations(ticket, rows);
+                    }
+                    Err(error) if this.palette.current(ticket) => this.error = Some(error),
+                    Err(_) => {}
+                }
+                cx.notify();
+            });
+            let found = receive(found).await;
+            let _ = this.update(cx, |this, cx| {
+                match found {
+                    Ok(found) => {
+                        this.palette.accept_files(ticket, found);
+                    }
+                    Err(error) if this.palette.current(ticket) => this.error = Some(error),
+                    Err(_) => {}
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Moves the selection with the arrow keys. Returns false when the
+    /// palette is closed, so the keys keep their usual meaning elsewhere.
+    pub(super) fn step_palette(&mut self, delta: isize, cx: &mut Context<Self>) -> bool {
+        if !self.layers.contains(Layer::Palette) {
+            return false;
+        }
+        let entries = self.palette_entries();
+        self.palette.move_selection(delta, entries.len());
+        if let Some(selected) = self.palette.selection(entries.len()) {
+            self.palette_scroll
+                .scroll_to_item(palette::child_index(&entries, selected));
+        }
+        cx.notify();
+        true
+    }
+
+    /// Opens the clicked row, or the selected one when Enter was pressed.
+    pub(super) fn activate_palette(
+        &mut self,
+        index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.layers.contains(Layer::Palette) {
+            return;
+        }
+        let entries = self.palette_entries();
+        let Some(entry) = index
+            .or_else(|| self.palette.selection(entries.len()))
+            .and_then(|index| entries.into_iter().nth(index))
+        else {
+            return;
+        };
+        self.layers.close(Layer::Palette);
+        match entry {
+            Entry::Command(command) => self.run_command(command, window, cx),
+            // Everything else goes somewhere that Settings would cover.
+            Entry::Project { id, .. } => {
+                self.layers.close(Layer::Settings);
+                self.enter_project(id, window, cx);
+                self.focus_composer(window, cx);
+            }
+            Entry::Conversation { project, id, .. } => {
+                self.layers.close(Layer::Settings);
+                self.open_session(project, id, window, cx);
+            }
+            Entry::File(file) => {
+                self.layers.close(Layer::Settings);
+                if self.screen != Screen::Project
+                    || self.state.project.as_ref() != Some(&file.project_id)
+                {
+                    self.enter_project(file.project_id, window, cx);
+                }
+                self.reveal_file(file.path, window, cx);
+                self.focus_composer(window, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    fn run_command(&mut self, command: Command, window: &mut Window, cx: &mut Context<Self>) {
+        match command {
+            Command::Settings => return self.open_settings(window, cx),
+            Command::OpenFolder => return self.open_project(window, cx),
+            Command::Refresh => {
+                self.error = None;
+                self.refresh_lists(window, cx);
+                self.start_poll(window, cx);
+                self.reload_files(window, cx);
+            }
+            Command::NewConversation | Command::Home | Command::Files | Command::Archived => {
+                self.layers.close(Layer::Settings);
+                match command {
+                    Command::NewConversation => self.create_session(window, cx),
+                    Command::Home => self.go_home(window, cx),
+                    Command::Files => self.toggle_files(window, cx),
+                    _ => {
+                        self.show_archived = !self.show_archived;
+                        self.sessions.clear();
+                        self.load_sessions(window, cx);
+                    }
+                }
+            }
+        }
+        self.focus_composer(window, cx);
+    }
+
+    pub(super) fn render_palette(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let entries = self.palette_entries();
+        let selected = self.palette.selection(entries.len());
+        let muted = cx.theme().muted_foreground;
+        let active = cx.theme().list_active;
+        let hover = cx.theme().list_hover;
+        let border = cx.theme().border;
+        let radius = cx.theme().radius;
+        let home_dir = dirs::home_dir().map(|path| path.to_string_lossy().into_owned());
+
+        let mut list = div()
+            .id("palette-results")
+            .track_scroll(&self.palette_scroll)
+            .v_flex()
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .p_1();
+        let mut section = None;
+        for (index, entry) in entries.iter().enumerate() {
+            if section != Some(entry.section()) {
+                section = Some(entry.section());
+                list = list.child(
+                    div()
+                        .px_2()
+                        .pt_2()
+                        .pb_1()
+                        .flex_shrink_0()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(entry.section().title()),
+                );
+            }
+            let (glyph, title, detail) = match entry {
+                Entry::Project { name, path, .. } => (
+                    "folder",
+                    name.clone(),
+                    home::short_path(path, home_dir.as_deref()),
+                ),
+                Entry::File(file) => (
+                    "doc",
+                    files::file_name(&file.path).to_owned(),
+                    format!("{} · {}", file.project_name, file.path),
+                ),
+                Entry::Conversation { title, place, .. } => ("chat", title.clone(), place.clone()),
+                Entry::Command(command) => {
+                    (command.icon(), command.label().to_owned(), String::new())
+                }
+            };
+            list = list.child(
+                div()
+                    .id(("palette-row", index))
+                    .h_flex()
+                    .gap_2()
+                    .px_2()
+                    .h(px(34.))
+                    .flex_shrink_0()
+                    .rounded(radius)
+                    .cursor_pointer()
+                    .hover(|style| style.bg(hover))
+                    .when(selected == Some(index), |row| row.bg(active))
+                    .child(icon(glyph).text_color(muted))
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .max_w(px(340.))
+                            .truncate()
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(detail),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.activate_palette(Some(index), window, cx)
+                    })),
+            );
+        }
+        if entries.is_empty() {
+            list = list.child(
+                div()
+                    .p_4()
+                    .text_sm()
+                    .text_color(muted)
+                    .child(format!("Nothing matches “{}”.", self.palette.query)),
+            );
+        }
+
+        let card = div()
+            .id("palette")
+            .v_flex()
+            .w(px(640.))
+            .max_h(px(520.))
+            .overflow_hidden()
+            .rounded(cx.theme().radius_lg)
+            .border_1()
+            .border_color(border)
+            .bg(cx.theme().popover)
+            .shadow_lg()
+            // A click inside is not a click on the backdrop.
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                div()
+                    .h_flex()
+                    .px_2()
+                    .h(px(46.))
+                    .flex_shrink_0()
+                    .border_b_1()
+                    .border_color(border)
+                    .child(
+                        Input::new(&self.palette_input)
+                            .appearance(false)
+                            .prefix(icon("search").text_color(muted)),
+                    ),
+            )
+            .child(list)
+            .child(
+                div()
+                    .h_flex()
+                    .px_3()
+                    .h(px(30.))
+                    .flex_shrink_0()
+                    .border_t_1()
+                    .border_color(border)
+                    .text_xs()
+                    .text_color(muted)
+                    .child("↑ ↓ to move · Return to open · Esc to close"),
+            );
+
+        div()
+            .id("palette-backdrop")
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .occlude()
+            .flex()
+            .justify_center()
+            .items_start()
+            .pt(px(96.))
+            .bg(cx.theme().overlay)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    if this.layers.close(Layer::Palette) {
+                        this.focus_composer(window, cx);
+                        cx.notify();
+                    }
+                }),
+            )
+            .child(card)
+    }
+}

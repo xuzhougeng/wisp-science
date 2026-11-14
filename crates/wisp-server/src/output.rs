@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -29,6 +29,25 @@ pub struct PersistedMessage {
     pub outcome: Option<ToolOutcome>,
 }
 
+/// Tokens the running or latest turn has used, summed over its model calls,
+/// and how full the context was after the last one.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TokenUsage {
+    pub input: u64,
+    pub output: u64,
+    pub reasoning: u64,
+    pub cached: u64,
+    pub context_tokens: usize,
+    pub max_context: usize,
+}
+
+/// The question the registry asks before a tool that needs approval runs.
+/// Anything else (a dangerous shell command, for one) is a different question
+/// and is never answered by a remembered "allow this tool".
+pub fn tool_question(tool: &str) -> String {
+    format!("Run tool '{tool}'?")
+}
+
 #[derive(Default)]
 pub struct Live {
     pub running: bool,
@@ -43,6 +62,10 @@ pub struct Live {
     pub last_result: Option<(bool, u64)>,
     pub outcomes: HashMap<String, ToolOutcome>,
     pub approvals: HashMap<String, (PendingToolApproval, oneshot::Sender<ConfirmDecision>)>,
+    pub usage: Option<TokenUsage>,
+    /// Tools the user allowed for the rest of this conversation. Kept in
+    /// memory only: a restart asks again.
+    pub allowed_tools: HashSet<String>,
 }
 
 pub struct Session {
@@ -86,6 +109,8 @@ pub struct ServerOutput {
     pub project: String,
     pub turn: String,
     pub persist: mpsc::UnboundedSender<PersistedMessage>,
+    /// The conversation runs tools that change things without asking.
+    pub full_access: bool,
 }
 
 impl Output for ServerOutput {
@@ -106,6 +131,26 @@ impl Output for ServerOutput {
     }
     fn tool_result(&self, _: &str, ok: bool, _: &str, duration_ms: u64) {
         self.session.live.lock().unwrap().last_result = Some((ok, duration_ms));
+    }
+    fn usage(
+        &self,
+        _round: usize,
+        input: u64,
+        output: u64,
+        reasoning: u64,
+        cached: u64,
+        ctx_tokens: usize,
+        max_context: usize,
+        _: wisp_core::ContextUsage,
+    ) {
+        let mut live = self.session.live.lock().unwrap();
+        let usage = live.usage.get_or_insert_with(TokenUsage::default);
+        usage.input += input;
+        usage.output += output;
+        usage.reasoning += reasoning;
+        usage.cached += cached;
+        usage.context_tokens = ctx_tokens;
+        usage.max_context = max_context;
     }
     fn on_message(&self, msg: &Message) {
         let mut live = self.session.live.lock().unwrap();
@@ -144,7 +189,11 @@ impl Output for ServerOutput {
         Approval::Allow
     }
     fn force_ask_mutations(&self) -> bool {
-        true
+        !self.full_access
+    }
+    fn approval_bypass(&self) -> bool {
+        // Dangerous shell commands keep their own question either way.
+        self.full_access
     }
     fn confirm(&self, _: &str) -> bool {
         false
@@ -164,6 +213,9 @@ impl Output for ServerOutput {
                     };
                 }
                 let tool = live.tool.clone();
+                if live.allowed_tools.contains(&tool) && message == tool_question(&tool) {
+                    return ConfirmDecision::Approved;
+                }
                 let preview = live.preview.clone();
                 live.approvals.insert(
                     id.clone(),
@@ -213,8 +265,10 @@ mod tests {
             project: "p".into(),
             turn: "t".into(),
             persist: tx,
+            full_access: false,
         };
         assert!(out.force_ask_mutations());
+        assert!(!out.approval_bypass());
         let approval = out.confirm_decision_async("write file");
         tokio::pin!(approval);
         tokio::select! { _ = &mut approval => panic!("must wait"), _ = tokio::task::yield_now() => {} }
@@ -225,5 +279,67 @@ mod tests {
             out.confirm_decision_async("later").await,
             ConfirmDecision::Denied { .. }
         ));
+    }
+
+    fn output(session: &Arc<Session>, full_access: bool) -> ServerOutput {
+        ServerOutput {
+            session: session.clone(),
+            frame: "s".into(),
+            project: "p".into(),
+            turn: "t".into(),
+            persist: mpsc::unbounded_channel().0,
+            full_access,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_tool_allowed_for_the_conversation_is_not_asked_about_again() {
+        let session = Arc::new(Session::default());
+        let out = output(&session, false);
+        {
+            let mut live = session.live.lock().unwrap();
+            live.tool = "write".into();
+            live.allowed_tools.insert("write".into());
+        }
+        assert!(matches!(
+            out.confirm_decision_async(&tool_question("write")).await,
+            ConfirmDecision::Approved
+        ));
+        assert!(session.live.lock().unwrap().approvals.is_empty());
+        // A different question about the same tool still reaches the user,
+        // and so does the standard question about another tool.
+        for (tool, message) in [
+            ("write", "This command deletes files. Run it?".to_string()),
+            ("shell", tool_question("shell")),
+        ] {
+            session.live.lock().unwrap().tool = tool.into();
+            let asked = out.confirm_decision_async(&message);
+            tokio::pin!(asked);
+            tokio::select! { _ = &mut asked => panic!("must wait"), _ = tokio::task::yield_now() => {} }
+            assert_eq!(session.live.lock().unwrap().approvals.len(), 1);
+            session.live.lock().unwrap().approvals.clear();
+        }
+    }
+
+    #[test]
+    fn full_access_stops_asking_and_usage_adds_up_over_a_turn() {
+        let session = Arc::new(Session::default());
+        let out = output(&session, true);
+        assert!(!out.force_ask_mutations() && out.approval_bypass());
+        // Dangerous commands are a separate switch that stays off.
+        assert!(!out.danger_auto_approve());
+        out.usage(1, 100, 20, 5, 40, 900, 64_000, Default::default());
+        out.usage(2, 150, 30, 0, 90, 1_200, 64_000, Default::default());
+        assert_eq!(
+            session.live.lock().unwrap().usage,
+            Some(TokenUsage {
+                input: 250,
+                output: 50,
+                reasoning: 5,
+                cached: 130,
+                context_tokens: 1_200,
+                max_context: 64_000,
+            })
+        );
     }
 }

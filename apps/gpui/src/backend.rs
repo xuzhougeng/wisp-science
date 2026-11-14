@@ -5,8 +5,19 @@ use std::{future::Future, path::PathBuf, sync::Arc};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio::{runtime::Runtime, sync::OnceCell, task::JoinHandle};
-use wisp_dto::remote_access::RemoteRequest;
-use wisp_server::{Server, config::Config};
+use wisp_dto::{
+    SessionSearchInfo,
+    native_files::{Directory, Preview},
+    remote_access::RemoteRequest,
+};
+use wisp_server::{
+    Server,
+    config::Config,
+    desktop::{
+        ConversationList, ConversationOptions, ConversationStatus, FileMatch, ModelInput,
+        ModelSettings,
+    },
+};
 use wisp_sync::DirectRemoteHost;
 
 #[derive(Clone)]
@@ -78,15 +89,139 @@ impl Backend {
         })
     }
 
-    pub fn register_project(&self, path: PathBuf) -> Reply<String> {
+    /// Runs a desktop-only host operation. These are direct method calls and
+    /// have no remote command name.
+    fn local<T, F>(&self, work: impl FnOnce(Server) -> F + Send + 'static) -> Reply<T>
+    where
+        T: Send + 'static,
+        F: Future<Output = anyhow::Result<T>> + Send,
+    {
         let host = self.host.clone();
         self.spawn(async move {
-            host.get()
-                .ok_or("Host is not ready")?
-                .register_local_project(&path)
-                .await
-                .map_err(|e| format!("{e:#}"))
+            let host = host.get().ok_or("Host is not ready")?.clone();
+            work(host).await.map_err(|e| format!("{e:#}"))
         })
+    }
+
+    pub fn register_project(&self, path: PathBuf) -> Reply<String> {
+        self.local(move |host| async move { host.register_local_project(&path).await })
+    }
+
+    pub fn recent_conversations(&self, limit: usize) -> Reply<Vec<SessionSearchInfo>> {
+        self.local(move |host| async move { host.recent_conversations(limit).await })
+    }
+
+    pub fn find_conversations(&self, query: String, limit: usize) -> Reply<Vec<SessionSearchInfo>> {
+        self.local(move |host| async move { host.find_conversations(&query, limit).await })
+    }
+
+    /// Files by name across every project.
+    pub fn find_files(&self, query: String, limit: usize) -> Reply<Vec<FileMatch>> {
+        self.local(move |host| async move { host.find_files(None, &query, limit).await })
+    }
+
+    pub fn project_directory(&self, project: String, path: String) -> Reply<Directory> {
+        self.local(move |host| async move { host.project_directory(&project, &path).await })
+    }
+
+    pub fn project_file(&self, project: String, path: String) -> Reply<Preview> {
+        self.local(move |host| async move { host.project_file(&project, &path).await })
+    }
+
+    pub fn star_project(&self, project: String, starred: bool) -> Reply<()> {
+        self.local(move |host| async move { host.star_project(&project, starred).await })
+    }
+
+    pub fn remove_project(&self, project: String) -> Reply<()> {
+        self.local(move |host| async move { host.remove_project(&project).await })
+    }
+
+    pub fn conversations(
+        &self,
+        project: String,
+        query: String,
+        archived: bool,
+    ) -> Reply<ConversationList> {
+        self.local(move |host| async move { host.conversations(&project, &query, archived).await })
+    }
+
+    pub fn rename_conversation(
+        &self,
+        project: String,
+        session: String,
+        title: String,
+    ) -> Reply<()> {
+        self.local(
+            move |host| async move { host.rename_conversation(&project, &session, &title).await },
+        )
+    }
+
+    pub fn pin_conversation(&self, project: String, session: String, pinned: bool) -> Reply<()> {
+        self.local(
+            move |host| async move { host.pin_conversation(&project, &session, pinned).await },
+        )
+    }
+
+    pub fn archive_conversation(
+        &self,
+        project: String,
+        session: String,
+        archived: bool,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.archive_conversation(&project, &session, archived)
+                .await
+        })
+    }
+
+    pub fn delete_conversation(&self, project: String, session: String) -> Reply<()> {
+        self.local(move |host| async move { host.delete_conversation(&project, &session).await })
+    }
+
+    pub fn conversation_status(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<ConversationStatus> {
+        self.local(move |host| async move { host.conversation_status(&project, &session).await })
+    }
+
+    pub fn set_conversation_options(
+        &self,
+        project: String,
+        session: String,
+        options: ConversationOptions,
+    ) -> Reply<ConversationOptions> {
+        self.local(move |host| async move {
+            host.set_conversation_options(&project, &session, options)
+                .await
+        })
+    }
+
+    pub fn answer_approval(
+        &self,
+        project: String,
+        session: String,
+        approval: String,
+        approved: bool,
+        for_conversation: bool,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.answer_approval(&project, &session, &approval, approved, for_conversation)
+                .await
+        })
+    }
+
+    pub fn revoke_allowed_tools(&self, project: String, session: String) -> Reply<()> {
+        self.local(move |host| async move { host.revoke_allowed_tools(&project, &session).await })
+    }
+
+    pub fn model_settings(&self) -> Reply<ModelSettings> {
+        self.local(|host| async move { host.model_settings().await })
+    }
+
+    pub fn save_model_settings(&self, input: ModelInput) -> Reply<ModelSettings> {
+        self.local(move |host| async move { host.save_model_settings(input).await })
     }
 
     pub async fn shutdown(&self) {

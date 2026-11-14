@@ -36,6 +36,70 @@ async fn resolve(root: &Path, path: &str) -> Result<PathBuf> {
     Ok(resolved)
 }
 
+/// Folders that hold tooling rather than research files. They stay
+/// browsable; a name search just does not descend into them.
+fn searchable(name: &str) -> bool {
+    !name.starts_with('.') && !matches!(name, "node_modules" | "__pycache__")
+}
+
+/// Project-relative paths of files whose name contains `query`, ignoring
+/// case. The walk is breadth-first so files near the root come first, never
+/// follows links, and stops after `budget` entries so a huge tree cannot
+/// stall the caller. Names that start with the query lead.
+pub async fn search(root: &Path, query: &str, limit: usize, budget: usize) -> Result<Vec<String>> {
+    let needle = query.trim().to_lowercase();
+    if needle.is_empty() || limit == 0 {
+        return Ok(Vec::new());
+    }
+    let root = tokio::fs::canonicalize(root).await?;
+    tokio::task::spawn_blocking(move || {
+        let mut found: Vec<(bool, String)> = Vec::new();
+        let mut queue = std::collections::VecDeque::from([(root.clone(), String::new())]);
+        let mut visited = 0usize;
+        'walk: while let Some((directory, prefix)) = queue.pop_front() {
+            let Ok(entries) = std::fs::read_dir(&directory) else {
+                continue;
+            };
+            let mut entries: Vec<_> = entries.flatten().collect();
+            entries.sort_by_key(|entry| entry.file_name());
+            for entry in entries {
+                visited += 1;
+                if visited > budget {
+                    break 'walk;
+                }
+                let name = entry.file_name().to_string_lossy().into_owned();
+                // `file_type` does not follow links, so links are skipped.
+                let Ok(kind) = entry.file_type() else {
+                    continue;
+                };
+                let path = if prefix.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{prefix}/{name}")
+                };
+                if kind.is_dir() {
+                    if searchable(&name) {
+                        queue.push_back((entry.path(), path));
+                    }
+                } else if kind.is_file() {
+                    let lower = name.to_lowercase();
+                    if lower.contains(&needle) {
+                        found.push((!lower.starts_with(&needle), path));
+                    }
+                }
+            }
+            if found.len() >= limit * 4 {
+                break;
+            }
+        }
+        found.sort_by(|a, b| a.0.cmp(&b.0));
+        found.truncate(limit);
+        found.into_iter().map(|(_, path)| path).collect()
+    })
+    .await
+    .map_err(Into::into)
+}
+
 pub async fn read(
     project: &str,
     root: &str,
@@ -134,5 +198,48 @@ mod tests {
             std::os::unix::fs::symlink(outside.path(), tmp.path().join("link")).unwrap();
             assert!(resolve(tmp.path(), "link").await.is_err());
         }
+    }
+
+    #[tokio::test]
+    async fn name_search_is_bounded_ranked_and_skips_tooling_and_links() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for dir in ["data/raw", ".git", ".venv/lib", "node_modules/pkg", "notes"] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        for file in [
+            "data/raw/Counts_matrix.csv",
+            "data/summary-counts.tsv",
+            "counts.md",
+            "notes/plan.md",
+            ".git/counts",
+            ".venv/lib/counts.py",
+            "node_modules/pkg/counts.js",
+        ] {
+            std::fs::write(root.join(file), "x").unwrap();
+        }
+        #[cfg(unix)]
+        {
+            let outside = tempfile::tempdir().unwrap();
+            std::fs::write(outside.path().join("counts-secret.txt"), "x").unwrap();
+            std::os::unix::fs::symlink(outside.path(), root.join("linked")).unwrap();
+        }
+        // Prefix matches lead; within a rank, files nearer the root come first.
+        assert_eq!(
+            search(root, " COUNTS ", 10, 10_000).await.unwrap(),
+            [
+                "counts.md",
+                "data/raw/Counts_matrix.csv",
+                "data/summary-counts.tsv"
+            ]
+        );
+        assert_eq!(
+            search(root, "counts", 1, 10_000).await.unwrap(),
+            ["counts.md"]
+        );
+        assert!(search(root, "", 10, 10_000).await.unwrap().is_empty());
+        assert!(search(root, "absent", 10, 10_000).await.unwrap().is_empty());
+        // A tiny budget ends the walk early instead of scanning everything.
+        assert!(search(root, "matrix", 10, 3).await.unwrap().is_empty());
     }
 }

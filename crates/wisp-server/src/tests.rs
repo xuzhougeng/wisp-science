@@ -60,9 +60,15 @@ fn config(root: &Path) -> Config {
         bind: "127.0.0.1:0".parse().unwrap(),
         public_url: "https://test.invalid/".into(),
         code: wisp_sync::RemoteCode::generate().unwrap(),
-        provider: wisp_llm::ProviderConfig::openai("http://127.0.0.1:9", "synthetic", "offline"),
-        max_context: 128_000,
-        supports_vision: false,
+        model: Some(crate::config::ModelConfig {
+            provider: wisp_llm::ProviderConfig::openai(
+                "http://127.0.0.1:9",
+                "synthetic",
+                "offline",
+            ),
+            max_context: 128_000,
+            supports_vision: false,
+        }),
         max_iterations: 5,
         skills: vec![],
     }
@@ -454,4 +460,684 @@ async fn one_server_owns_each_database_and_shutdown_rejects_new_work() {
     assert!(call(&server, "arbitrary_command", PROJECT, json!({}))
         .await
         .is_err());
+}
+
+async fn send(server: &Server, session: &str, message: &str) -> Result<Value, String> {
+    call(
+        server,
+        "native_conversation_send",
+        PROJECT,
+        json!({"session_id": session, "request_id": uuid::Uuid::new_v4().to_string(), "message": message}),
+    )
+    .await
+}
+
+async fn create(server: &Server) -> String {
+    call(server, "native_conversation_create", PROJECT, json!({}))
+        .await
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+#[tokio::test]
+async fn desktop_manages_conversations_without_exposing_it_remotely() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let alpha = create(&server).await;
+    let beta = create(&server).await;
+    send(&server, &alpha, "sequence alignment plan")
+        .await
+        .unwrap();
+    wait_for(&server, &alpha, |s| !s.running).await;
+
+    server
+        .rename_conversation(PROJECT, &beta, "  基因组 notes  ")
+        .await
+        .unwrap();
+    assert!(server
+        .rename_conversation(PROJECT, &beta, " ")
+        .await
+        .is_err());
+    assert!(server
+        .rename_conversation(PROJECT, &beta, &"x".repeat(201))
+        .await
+        .is_err());
+    assert!(server
+        .rename_conversation("other-project", &beta, "stolen")
+        .await
+        .is_err());
+    server.pin_conversation(PROJECT, &beta, true).await.unwrap();
+
+    let recent = server.conversations(PROJECT, "", false).await.unwrap();
+    assert_eq!(recent.pinned, [beta.clone()]);
+    let title = |list: &desktop::ConversationList, id: &str| {
+        list.rows
+            .iter()
+            .find(|row| row.id == id)
+            .map(|row| row.title.clone())
+    };
+    assert_eq!(title(&recent, &beta).as_deref(), Some("基因组 notes"));
+    assert!(title(&recent, &alpha).is_some());
+
+    // Keyword search reads message text, not only titles.
+    let found = server
+        .conversations(PROJECT, " alignment ", false)
+        .await
+        .unwrap();
+    assert!(title(&found, &alpha).is_some());
+    assert!(title(&found, &beta).is_none());
+
+    server
+        .archive_conversation(PROJECT, &alpha, true)
+        .await
+        .unwrap();
+    let recent = server.conversations(PROJECT, "", false).await.unwrap();
+    assert!(title(&recent, &alpha).is_none());
+    let archive = server.conversations(PROJECT, "", true).await.unwrap();
+    assert_eq!(archive.rows.len(), 1);
+    assert!(archive.rows[0].shelved && archive.rows[0].id == alpha);
+    // An archived conversation is still found by keyword and can come back.
+    let found = server
+        .conversations(PROJECT, "alignment", false)
+        .await
+        .unwrap();
+    assert!(found.rows.iter().any(|row| row.id == alpha && row.shelved));
+    server
+        .archive_conversation(PROJECT, &alpha, false)
+        .await
+        .unwrap();
+    assert!(title(
+        &server.conversations(PROJECT, "", false).await.unwrap(),
+        &alpha
+    )
+    .is_some());
+
+    assert!(server
+        .delete_conversation("other-project", &alpha)
+        .await
+        .is_err());
+    server.delete_conversation(PROJECT, &alpha).await.unwrap();
+    assert!(server.delete_conversation(PROJECT, &alpha).await.is_err());
+    assert!(call(
+        &server,
+        "native_conversation_snapshot",
+        PROJECT,
+        json!({"session_id": alpha}),
+    )
+    .await
+    .is_err());
+    let left = server.conversations(PROJECT, "", false).await.unwrap();
+    assert!(title(&left, &alpha).is_none() && title(&left, &beta).is_some());
+
+    // None of this is a remote command.
+    for command in [
+        "native_conversation_rename",
+        "native_conversation_pin",
+        "native_conversation_delete",
+        "native_project_session_shelve",
+    ] {
+        assert!(!server.commands().contains(&command));
+        assert!(call(&server, command, PROJECT, json!({"session_id": beta}))
+            .await
+            .is_err());
+    }
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_running_conversation_is_not_archived_or_deleted() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), true))
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    send(&server, &session, "write the answer").await.unwrap();
+    // The write tool waits for approval, which keeps the turn running.
+    wait_for(&server, &session, |s| !s.approvals.is_empty()).await;
+    for result in [
+        server.archive_conversation(PROJECT, &session, true).await,
+        server.delete_conversation(PROJECT, &session).await,
+    ] {
+        assert!(result.unwrap_err().to_string().contains("Stop the running"));
+    }
+    server
+        .pin_conversation(PROJECT, &session, true)
+        .await
+        .unwrap();
+    call(
+        &server,
+        "native_conversation_stop",
+        PROJECT,
+        json!({"session_id": session}),
+    )
+    .await
+    .unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    server.delete_conversation(PROJECT, &session).await.unwrap();
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn desktop_model_settings_are_validated_saved_and_applied_without_restart() {
+    use desktop::{ModelFields, ModelInput, ModelSource};
+    let temp = tempfile::tempdir().unwrap();
+    let mut cfg = config(temp.path());
+    cfg.model = None;
+    let secrets = Arc::new(desktop::MemorySecrets::default());
+    let used = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let factory = |used: Arc<std::sync::Mutex<Vec<(String, String)>>>| -> ModelFactory {
+        Arc::new(move |provider| {
+            used.lock()
+                .unwrap()
+                .push((provider.model.clone(), provider.api_key.clone()));
+            Box::new(FakeModel {
+                calls: Arc::default(),
+                write: false,
+            })
+        })
+    };
+    let server = Server::open_with(cfg.clone(), factory(used.clone()), secrets.clone())
+        .await
+        .unwrap();
+    let initial = server.model_settings().await.unwrap();
+    assert_eq!(initial.source, ModelSource::None);
+    assert!(!initial.has_api_key && initial.problem.is_none());
+    assert_eq!(initial.fields.provider, "openai");
+    assert_eq!(initial.fields.api_url, "https://api.openai.com/v1");
+
+    let session = create(&server).await;
+    let refused = send(&server, &session, "hello").await.unwrap_err();
+    assert!(refused.contains("Configure a model"), "{refused}");
+
+    let fields = ModelFields {
+        provider: "openai".into(),
+        api_url: "http://127.0.0.1:9/v1".into(),
+        model: "lab-model".into(),
+        max_context: "32000".into(),
+        max_tokens: "4000".into(),
+        reasoning_effort: String::new(),
+    };
+    let empty = server
+        .save_model_settings(ModelInput {
+            fields: ModelFields::default(),
+            api_key: None,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(empty.to_string(), "Enter a model ID");
+    // A rejected form changes nothing, and a key is required the first time.
+    for (fields, key) in [
+        (fields.clone(), None),
+        (
+            ModelFields {
+                max_context: String::new(),
+                ..fields.clone()
+            },
+            Some("first-key".to_string()),
+        ),
+    ] {
+        assert!(server
+            .save_model_settings(ModelInput {
+                fields,
+                api_key: key
+            })
+            .await
+            .is_err());
+    }
+    assert_eq!(
+        server.model_settings().await.unwrap().source,
+        ModelSource::None
+    );
+
+    let saved = server
+        .save_model_settings(ModelInput {
+            fields: fields.clone(),
+            api_key: Some(" first-key ".into()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(saved.source, ModelSource::Saved);
+    assert!(saved.has_api_key);
+    assert_eq!(saved.fields, fields);
+    send(&server, &session, "hello").await.unwrap();
+    let done = wait_for(&server, &session, |s| !s.running).await;
+    assert_eq!(done.model_id, "lab-model");
+    assert_eq!(
+        used.lock().unwrap().last().cloned(),
+        Some(("lab-model".to_string(), "first-key".to_string()))
+    );
+
+    // Changing the model keeps the stored key when none is typed.
+    server
+        .save_model_settings(ModelInput {
+            fields: ModelFields {
+                model: "lab-model-2".into(),
+                ..fields.clone()
+            },
+            api_key: Some("  ".into()),
+        })
+        .await
+        .unwrap();
+    send(&server, &session, "again").await.unwrap();
+    wait_for(&server, &session, |s| {
+        !s.running && s.model_id == "lab-model-2"
+    })
+    .await;
+    assert_eq!(
+        used.lock().unwrap().last().cloned(),
+        Some(("lab-model-2".to_string(), "first-key".to_string()))
+    );
+
+    // The key is in the secret store only: not in settings, not in the database file.
+    let raw = server
+        .0
+        .store
+        .get_setting("desktop.model")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!raw.contains("first-key"));
+    // Another data directory has its own key, even with the same secret store.
+    let other_root = tempfile::tempdir().unwrap();
+    let mut other_cfg = config(other_root.path());
+    other_cfg.model = None;
+    let other = Server::open_with(other_cfg, factory(used.clone()), secrets.clone())
+        .await
+        .unwrap();
+    assert!(!other.model_settings().await.unwrap().has_api_key);
+    other.shutdown().await;
+    server.shutdown().await;
+    drop(server);
+
+    // Saved settings survive a restart; a lost key is reported, not fatal.
+    let reopened = Server::open_with(cfg.clone(), factory(used.clone()), secrets)
+        .await
+        .unwrap();
+    let restored = reopened.model_settings().await.unwrap();
+    assert_eq!(restored.source, ModelSource::Saved);
+    assert_eq!(restored.fields.model, "lab-model-2");
+    reopened.shutdown().await;
+    drop(reopened);
+    let without_key = Server::open_with(
+        cfg.clone(),
+        factory(used.clone()),
+        Arc::new(desktop::MemorySecrets::default()),
+    )
+    .await
+    .unwrap();
+    let broken = without_key.model_settings().await.unwrap();
+    assert_eq!(broken.source, ModelSource::None);
+    assert!(broken.problem.unwrap().contains("API key is missing"));
+    assert_eq!(broken.fields.model, "lab-model-2");
+    without_key.shutdown().await;
+    drop(without_key);
+
+    // WISP_* variables win and are not editable from the desktop.
+    let from_env = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let env = from_env.model_settings().await.unwrap();
+    assert_eq!(env.source, ModelSource::Environment);
+    assert_eq!(env.fields.model, "offline");
+    assert!(from_env
+        .save_model_settings(ModelInput {
+            fields,
+            api_key: Some("k".into()),
+        })
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("environment"));
+    from_env.shutdown().await;
+}
+
+#[tokio::test]
+async fn desktop_home_lists_recent_work_and_manages_projects() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), true))
+        .await
+        .unwrap();
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::write(folder.join("data.csv"), "a,b\n1,2\n").unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    let session = call(&server, "native_conversation_create", &lab, json!({}))
+        .await
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let running = || async {
+        let value = call(
+            &server,
+            "native_conversation_snapshot",
+            &lab,
+            json!({"session_id": session}),
+        )
+        .await
+        .unwrap();
+        serde_json::from_value::<dto::Snapshot>(value).unwrap()
+    };
+    call(
+        &server,
+        "native_conversation_send",
+        &lab,
+        json!({"session_id": session, "request_id": "home-1", "message": "write the answer"}),
+    )
+    .await
+    .unwrap();
+    // The write tool waits for approval, which keeps the turn running.
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while running().await.approvals.is_empty() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+
+    // Recent work spans projects and says where each conversation lives.
+    let recent = server.recent_conversations(10).await.unwrap();
+    let row = recent.iter().find(|row| row.id == session).unwrap();
+    assert_eq!(row.project_id, lab);
+    assert_eq!(row.project_name, "lab");
+    assert_eq!(row.status, "needs_you");
+    assert!(server.recent_conversations(0).await.unwrap().is_empty());
+
+    let host = &server;
+    let starred = |id: String| async move {
+        let value = call(host, "list_projects", "", json!({})).await.unwrap();
+        serde_json::from_value::<Vec<wisp_dto::ProjectSummary>>(value)
+            .unwrap()
+            .into_iter()
+            .find(|project| project.id == id)
+            .map(|project| project.starred)
+    };
+    server.star_project(&lab, true).await.unwrap();
+    assert_eq!(starred(lab.clone()).await, Some(true));
+    server.star_project(&lab, false).await.unwrap();
+    assert_eq!(starred(lab.clone()).await, Some(false));
+    assert!(server.star_project("missing", true).await.is_err());
+
+    let refused = server.remove_project(&lab).await.unwrap_err().to_string();
+    assert!(refused.contains("Stop the running"), "{refused}");
+    assert!(server.remove_project(PROJECT).await.is_err());
+    assert!(server.remove_project("missing").await.is_err());
+    call(
+        &server,
+        "native_conversation_stop",
+        &lab,
+        json!({"session_id": session}),
+    )
+    .await
+    .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while running().await.running {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+
+    server.remove_project(&lab).await.unwrap();
+    assert_eq!(starred(lab.clone()).await, None);
+    assert!(server
+        .recent_conversations(10)
+        .await
+        .unwrap()
+        .iter()
+        .all(|row| row.project_id != lab));
+    // Removing a project never touches its folder.
+    assert_eq!(
+        std::fs::read_to_string(folder.join("data.csv")).unwrap(),
+        "a,b\n1,2\n"
+    );
+    // The same folder can be opened again as a fresh project.
+    let again = server.register_local_project(&folder).await.unwrap();
+    assert_ne!(again, lab);
+
+    // None of this is a remote command.
+    for command in [
+        "set_project_starred",
+        "delete_project",
+        "list_recent_sessions",
+    ] {
+        assert!(!server.commands().contains(&command));
+        assert!(call(&server, command, &again, json!({})).await.is_err());
+    }
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn desktop_search_and_project_files_need_no_conversation() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let folder = temp.path().join("lab");
+    std::fs::create_dir_all(folder.join("data")).unwrap();
+    std::fs::create_dir_all(folder.join(".wisp")).unwrap();
+    std::fs::write(folder.join("data/counts.csv"), "gene,count\nTP53,7\n").unwrap();
+    std::fs::write(folder.join(".wisp/counts.sqlite"), "internal").unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+
+    // The project has no conversation yet; its files are still reachable.
+    let root = server.project_directory(&lab, "").await.unwrap();
+    assert_eq!(root.project_id, lab);
+    assert_eq!(root.session_id, None);
+    let names: Vec<_> = root.entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, ["data"]);
+    let file = server.project_file(&lab, "data/counts.csv").await.unwrap();
+    assert_eq!(file.requested_path, "data/counts.csv");
+    assert_eq!(file.content.text.as_deref(), Some("gene,count\nTP53,7\n"));
+    for path in [
+        "../lab/data/counts.csv",
+        ".wisp/counts.sqlite",
+        "/etc/hosts",
+    ] {
+        assert!(server.project_file(&lab, path).await.is_err(), "{path}");
+    }
+    assert!(server.project_directory("missing", "").await.is_err());
+
+    // Name search covers every project, or just the one asked for.
+    let everywhere = server.find_files(None, "COUNTS", 5).await.unwrap();
+    assert_eq!(
+        everywhere,
+        [desktop::FileMatch {
+            project_id: lab.clone(),
+            project_name: "lab".into(),
+            path: "data/counts.csv".into(),
+        }]
+    );
+    assert!(server
+        .find_files(Some(PROJECT), "counts", 5)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(server.find_files(None, " ", 5).await.unwrap().is_empty());
+
+    // Conversation search reads messages in any project, archive included.
+    let session = create(&server).await;
+    send(&server, &session, "sequence alignment plan")
+        .await
+        .unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    let found = server.find_conversations(" alignment ", 5).await.unwrap();
+    assert_eq!(found.len(), 1);
+    // The instructions every conversation starts with are not its content:
+    // a word that occurs only there must not match every conversation.
+    let instructions = server
+        .0
+        .store
+        .load_system_messages(std::slice::from_ref(&session))
+        .await
+        .unwrap()
+        .remove(&session)
+        .unwrap();
+    let word = instructions
+        .split(|c: char| !c.is_ascii_alphabetic())
+        .max_by_key(|word| word.len())
+        .unwrap();
+    assert!(word.len() >= 6, "{word}");
+    assert!(server.find_conversations(word, 5).await.unwrap().is_empty());
+    assert_eq!(
+        (found[0].id.as_str(), found[0].shelved),
+        (session.as_str(), false)
+    );
+    server
+        .archive_conversation(PROJECT, &session, true)
+        .await
+        .unwrap();
+    let found = server.find_conversations("alignment", 5).await.unwrap();
+    assert_eq!(
+        (found[0].id.as_str(), found[0].shelved),
+        (session.as_str(), true)
+    );
+    // With nothing typed it is the recent list, which leaves the archive out.
+    assert!(server.find_conversations("", 5).await.unwrap().is_empty());
+    assert!(server
+        .find_conversations("alignment", 0)
+        .await
+        .unwrap()
+        .is_empty());
+
+    // None of this is a remote command.
+    for command in [
+        "native_project_file_directory",
+        "native_project_file_read",
+        "native_project_file_search",
+        "search_sessions",
+    ] {
+        assert!(!server.commands().contains(&command));
+        assert!(call(&server, command, &lab, json!({"path": ""}))
+            .await
+            .is_err());
+    }
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn desktop_conversation_options_shape_the_next_turn() {
+    let temp = tempfile::tempdir().unwrap();
+    let cfg = config(temp.path());
+    let efforts: Arc<std::sync::Mutex<Vec<Option<String>>>> = Arc::default();
+    let seen = efforts.clone();
+    let factory: ModelFactory = Arc::new(move |provider| {
+        seen.lock().unwrap().push(provider.reasoning_effort.clone());
+        Box::new(FakeModel {
+            calls: Arc::default(),
+            write: true,
+        })
+    });
+    let server = Server::open_with_models(cfg.clone(), factory)
+        .await
+        .unwrap();
+    let options = |full_access, effort: &str| desktop::ConversationOptions {
+        full_access,
+        reasoning_effort: effort.into(),
+    };
+    let asking = create(&server).await;
+    assert_eq!(
+        server.conversation_status(PROJECT, &asking).await.unwrap(),
+        desktop::ConversationStatus::default()
+    );
+
+    // Effort is validated, stored, and reaches the model on the next turn.
+    assert!(server
+        .set_conversation_options(PROJECT, &asking, options(false, "extreme"))
+        .await
+        .is_err());
+    assert!(server
+        .set_conversation_options("other", &asking, options(false, "high"))
+        .await
+        .is_err());
+    assert_eq!(
+        server
+            .set_conversation_options(PROJECT, &asking, options(false, " high "))
+            .await
+            .unwrap(),
+        options(false, "high")
+    );
+    send(&server, &asking, "write the answer").await.unwrap();
+    let pending = wait_for(&server, &asking, |s| !s.approvals.is_empty()).await;
+    assert_eq!(
+        efforts.lock().unwrap().last().unwrap().as_deref(),
+        Some("high")
+    );
+    let approval = pending.approvals[0].approval_id.clone();
+    // "Deny for the conversation" does not exist; the request stays open.
+    assert!(server
+        .answer_approval(PROJECT, &asking, &approval, false, true)
+        .await
+        .is_err());
+    assert!(server
+        .answer_approval(PROJECT, &asking, "missing", true, false)
+        .await
+        .is_err());
+    server
+        .answer_approval(PROJECT, &asking, &approval, true, true)
+        .await
+        .unwrap();
+    wait_for(&server, &asking, |s| !s.running).await;
+    assert!(cfg.workspace.join("answer.txt").exists());
+    let status = server.conversation_status(PROJECT, &asking).await.unwrap();
+    assert_eq!(status.allowed_tools, ["write"]);
+    assert_eq!(status.options, options(false, "high"));
+    assert!(status.usage.is_some());
+    server.revoke_allowed_tools(PROJECT, &asking).await.unwrap();
+    assert!(server
+        .conversation_status(PROJECT, &asking)
+        .await
+        .unwrap()
+        .allowed_tools
+        .is_empty());
+
+    // Full access: the same write runs without a question.
+    std::fs::remove_file(cfg.workspace.join("answer.txt")).unwrap();
+    let trusted = create(&server).await;
+    server
+        .set_conversation_options(PROJECT, &trusted, options(true, ""))
+        .await
+        .unwrap();
+    send(&server, &trusted, "write the answer").await.unwrap();
+    let done = wait_for(&server, &trusted, |s| !s.running).await;
+    assert!(done.approvals.is_empty() && done.error.is_none());
+    assert!(cfg.workspace.join("answer.txt").exists());
+    assert_eq!(efforts.lock().unwrap().last().unwrap(), &None);
+    // It belongs to that conversation only, and goes away with it.
+    assert!(
+        !server
+            .conversation_status(PROJECT, &asking)
+            .await
+            .unwrap()
+            .options
+            .full_access
+    );
+    server.delete_conversation(PROJECT, &trusted).await.unwrap();
+    assert_eq!(
+        server
+            .0
+            .store
+            .get_setting(&format!("desktop.conversation.full_access.{trusted}"))
+            .await
+            .unwrap(),
+        None
+    );
+
+    // None of this is a remote command, and a remote approval is still once.
+    for command in [
+        "set_session_full_permission",
+        "set_session_reasoning_effort",
+    ] {
+        assert!(!server.commands().contains(&command));
+        assert!(
+            call(&server, command, PROJECT, json!({"session_id": asking}))
+                .await
+                .is_err()
+        );
+    }
+    server.shutdown().await;
 }

@@ -1,4 +1,5 @@
 pub mod config;
+pub mod desktop;
 mod files;
 mod output;
 mod runtime;
@@ -53,6 +54,9 @@ struct Inner {
     admission: RwLock<()>,
     _lock: File,
     models: ModelFactory,
+    /// The model new turns use. A desktop can replace it while running.
+    model: std::sync::RwLock<desktop::ModelState>,
+    secrets: Arc<dyn desktop::SecretStore>,
 }
 
 type ModelFactory =
@@ -60,7 +64,12 @@ type ModelFactory =
 
 impl Server {
     pub async fn open(config: Config) -> Result<Self> {
-        Self::open_with_models(config, Arc::new(wisp_llm::build)).await
+        Self::open_with(
+            config,
+            Arc::new(wisp_llm::build),
+            Arc::new(desktop::Keyring),
+        )
+        .await
     }
 
     /// Explicit local action; intentionally absent from the remote allowlist.
@@ -92,7 +101,16 @@ impl Server {
         Ok(id)
     }
 
-    async fn open_with_models(mut config: Config, models: ModelFactory) -> Result<Self> {
+    #[cfg(test)]
+    async fn open_with_models(config: Config, models: ModelFactory) -> Result<Self> {
+        Self::open_with(config, models, Arc::new(desktop::MemorySecrets::default())).await
+    }
+
+    async fn open_with(
+        mut config: Config,
+        models: ModelFactory,
+        secrets: Arc<dyn desktop::SecretStore>,
+    ) -> Result<Self> {
         tokio::fs::create_dir_all(&config.data).await?;
         config.data = tokio::fs::canonicalize(&config.data).await?;
         tokio::fs::create_dir_all(&config.workspace).await?;
@@ -118,6 +136,10 @@ impl Server {
         }
         let runs = wisp_runs::RunManager::new();
         runs.recover(&store).await.map_err(anyhow::Error::msg)?;
+        let model = match config.model.take() {
+            Some(model) => desktop::ModelState::environment(model),
+            None => desktop::ModelState::saved(&store, secrets.as_ref()).await,
+        };
         Ok(Self(Arc::new(Inner {
             config,
             store,
@@ -130,7 +152,21 @@ impl Server {
             admission: RwLock::new(()),
             _lock: lock,
             models,
+            model: std::sync::RwLock::new(model),
+            secrets,
         })))
+    }
+
+    /// Model new turns will use; empty until one is configured.
+    fn model_id(&self) -> String {
+        self.0
+            .model
+            .read()
+            .unwrap()
+            .active
+            .as_ref()
+            .map(|model| model.provider.model.clone())
+            .unwrap_or_default()
     }
 
     fn session(&self, id: &str) -> Arc<Session> {
@@ -159,12 +195,35 @@ impl Server {
     }
 
     async fn sessions(&self, project: Option<&str>) -> Result<Value> {
+        Ok(serde_json::to_value(
+            self.session_rows(project, "", false).await?,
+        )?)
+    }
+
+    /// Recent conversations, or keyword matches when `query` is not empty.
+    /// Only a keyword search may include archived conversations.
+    async fn session_rows(
+        &self,
+        project: Option<&str>,
+        query: &str,
+        include_archived: bool,
+    ) -> Result<Vec<wisp_dto::SessionSearchInfo>> {
         let (running, awaiting) = self.activity();
         let mut rows = Vec::new();
         for row in self
             .0
             .store
-            .search_sessions(project, "", 100, None, project)
+            .search_sessions_with_options(
+                project,
+                query,
+                100,
+                None,
+                project,
+                &[],
+                wisp_store::SessionSearchOptions {
+                    include_shelved: include_archived,
+                },
+            )
             .await?
         {
             let status = if awaiting.contains(&row.id) {
@@ -187,7 +246,7 @@ impl Server {
                 shelved: row.shelved,
             });
         }
-        Ok(serde_json::to_value(rows)?)
+        Ok(rows)
     }
 
     async fn execute(&self, request: RemoteRequest) -> Result<Value> {
@@ -232,7 +291,7 @@ impl Server {
             let id = uuid::Uuid::new_v4().to_string();
             self.0
                 .store
-                .create_frame(&id, project, "main", &self.0.config.provider.model)
+                .create_frame(&id, project, "main", &self.model_id())
                 .await?;
             self.0
                 .store
@@ -320,6 +379,14 @@ impl Server {
             !self.0.shutting_down.load(Ordering::Relaxed),
             "Server is shutting down"
         );
+        let model = self
+            .0
+            .model
+            .read()
+            .unwrap()
+            .active
+            .clone()
+            .context("Configure a model in Settings before sending a message")?;
         let request_json = serde_json::to_string(&request)?;
         let reply = serde_json::to_value(dto::SendAccepted {
             request_id: request.request_id.clone(),
@@ -348,8 +415,12 @@ impl Server {
             .clone()
             .try_acquire_owned()
             .context("Server is busy; at most four turns can run concurrently")?;
+        // Read once here: a change made while the turn runs applies to the next.
+        let options = self.stored_options(&request.session_id).await?;
+        let full_access = options.full_access;
         let agent = runtime::build(
             &self.0.config,
+            &model,
             &self.0.store,
             self.0.runs.clone(),
             project,
@@ -357,6 +428,7 @@ impl Server {
             &request.session_id,
             &session,
             &self.0.models,
+            (!options.reasoning_effort.is_empty()).then_some(options.reasoning_effort),
         )
         .await?;
         let page = self
@@ -389,6 +461,7 @@ impl Server {
             live.running = true;
             live.generation = live.generation.wrapping_add(1);
             live.error = None;
+            live.usage = None;
             live.draft.clear();
             live.messages = page.messages.into_iter().map(|(_, msg)| msg).collect();
             live.next_before_seq = page.next_before_seq;
@@ -403,7 +476,15 @@ impl Server {
             let running = session.clone();
             let input = request.clone();
             let task = tokio::spawn(async move {
-                runtime::run(inner.0.store.clone(), agent, running, project, input).await
+                runtime::run(
+                    inner.0.store.clone(),
+                    agent,
+                    running,
+                    project,
+                    input,
+                    full_access,
+                )
+                .await
             });
             let mut error = match task.await {
                 Ok(Ok(())) => None,
@@ -519,7 +600,7 @@ impl Server {
             stopping: live.running && session.cancel.load(Ordering::Relaxed),
             activity_status: None,
             read_only: false,
-            model_id: self.0.config.provider.model.clone(),
+            model_id: self.model_id(),
             composer_references: Some(false),
             context_view: Some(false),
             file_browser: Some(true),
