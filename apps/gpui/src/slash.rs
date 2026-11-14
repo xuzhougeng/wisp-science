@@ -21,12 +21,14 @@ pub enum Slash {
     Memo,
     Remember,
     Archive,
+    /// Shortens what the model is sent, now.
+    Compact,
     /// Lists the commands.
     Help,
 }
 
 /// The commands with what each does, in the order they are listed.
-pub const COMMANDS: [(&str, Slash, &str); 13] = [
+pub const COMMANDS: [(&str, Slash, &str); 14] = [
     ("/review", Slash::Review, "Review this conversation"),
     (
         "/trajectory",
@@ -51,18 +53,12 @@ pub const COMMANDS: [(&str, Slash, &str); 13] = [
         Slash::Archive,
         "Archive this conversation's research",
     ),
+    ("/compact", Slash::Compact, "Compact this conversation now"),
     ("/help", Slash::Help, "List these commands"),
 ];
 
 /// Commands the WebView desktop has that this one does not yet.
-const NOT_HERE: [&str; 6] = [
-    "/timer",
-    "/compact",
-    "/fork",
-    "/rewind",
-    "/permission",
-    "/share",
-];
+const NOT_HERE: [&str; 5] = ["/timer", "/fork", "/rewind", "/permission", "/share"];
 
 /// What a typed message is, when it starts with a command.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -140,5 +136,36 @@ mod tests {
             );
             assert!(!NOT_HERE.contains(name));
         }
+    }
+}
+
+/// What a finished compaction says.
+pub fn compacted_note(before: usize, after: usize, summarised: bool) -> String {
+    use crate::i18n::{fill, tr};
+    let how = if summarised {
+        tr("Earlier turns were folded into a summary.")
+    } else {
+        tr("Old tool output was pruned; no summary was needed.")
+    };
+    format!(
+        "{} {how}",
+        fill(
+            tr(
+                "Compacted: about {} tokens before, {} after. The whole history is archived in the project."
+            ),
+            &[&before, &after],
+        )
+    )
+}
+
+#[cfg(test)]
+mod note_tests {
+    #[test]
+    fn a_compaction_says_what_it_did() {
+        assert_eq!(
+            super::compacted_note(90_000, 12_000, true),
+            "Compacted: about 90000 tokens before, 12000 after. The whole history is archived in the project. Earlier turns were folded into a summary."
+        );
+        assert!(super::compacted_note(10, 9, false).ends_with("no summary was needed."));
     }
 }

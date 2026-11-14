@@ -150,7 +150,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Interpreters | The Python and R interpreters a conversation keeps between tool calls show above the composer with their version and state; Stop ends one, Dismiss takes a stopped one off the list |
 | Experts | Settings, Experts, keeps personas (a name and instructions); the composer's Expert menu starts a new conversation as one, and its instructions hold for the whole conversation |
 | Quick actions | Settings, Quick actions, keeps requests you make often under a name; the composer's quick actions menu puts one into the message box, after whatever is already typed, to finish and send |
-| Slash commands | A message that is only a command does something instead of being sent: `/review`, `/trajectory`, `/context`, `/btw <question>`, `/plan`, `/save-as-skill`, `/skills`, `/files`, `/upload`, `/memo`, `/remember`, `/archive`, `/help`; the composer's "/" button lists them |
+| Slash commands | A message that is only a command does something instead of being sent: `/review`, `/trajectory`, `/context`, `/btw <question>`, `/plan`, `/save-as-skill`, `/skills`, `/files`, `/upload`, `/memo`, `/remember`, `/archive`, `/compact`, `/help`; the composer's "/" button lists them |
 | Browser | Settings, Browser, switches on a bridge to the Wisp extension in your own Chrome or Chromium; conversations can then open a tab, read it and run a script in it, only in tabs they opened themselves, and hosts can be blocked or preferred |
 | Workflows | Settings, Workflows, keeps templates of a goal broken into tasks, each saying which earlier tasks it needs; Run starts a conversation in the open project and gives the model the tasks stage by stage |
 | Remote web access | Settings, Remote access, opens this desktop's projects in a phone or a browser through a wisp-relay of your own: it dials out (no inbound port), shows whether the tunnel is up and how many browsers are connected, and gives a link and a code that can be copied or replaced |
@@ -476,11 +476,17 @@ Limits of this slice:
   `desktop.quick_actions` and neither reads nor changes the WebView's.
   It starts with four that can be changed or removed; at most 40 are
   kept, a name is at most 60 characters and a request 8,000.
+- `/compact` archives the conversation's whole history under the
+  project's `.wisp/history/` and shortens what the model is sent, as a
+  turn does by itself when the context fills up. It is refused while a
+  turn runs and in an archived conversation. There is no choice between
+  pruning and summarising, no instruction for the summary and no undo;
+  the transcript on screen keeps its length.
 - A slash command is read only when it is the first word of the message
   and one of the known ones, so a message that starts with a path is
   sent as a message. There is no list that narrows as you type. The
-  WebView's `/timer`, `/compact`, `/fork`, `/rewind`, `/permission` and
-  `/share` are answered with a note that they are not available here,
+  WebView's `/timer`, `/fork`, `/rewind`, `/permission` and `/share`
+  are answered with a note that they are not available here,
   and what was typed stays in the composer.
 - The browser bridge is off until it is switched on, and then listens
   on this computer only, on the port the extension dials
@@ -1072,6 +1078,9 @@ counts it. Remove the evidence, change the figure's title, remove the
 figure. With a form open press Escape: only the form closes; press it
 again: the page closes. Rename the paper, then remove it: the question
 has to be answered first.
+After a few turns send `/compact`: a note says how many tokens there
+were before and after, a file appears under `.wisp/history/`, and What
+the model is sent is shorter while the transcript is not.
 In a conversation type `/trajectory` and send: the trajectory opens and
 nothing is added to the transcript. Send `/btw why did that fail?`: the
 Aside tab opens and the question is asked there. Send `/timer 1h`: a

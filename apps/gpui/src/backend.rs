@@ -792,6 +792,15 @@ impl Backend {
         self.local(|host| async move { host.check_for_update().await })
     }
 
+    /// Compacts a conversation now.
+    pub fn compact_conversation(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<wisp_server::desktop::Compacted> {
+        self.local(move |host| async move { host.compact_conversation(&project, &session).await })
+    }
+
     /// The browser tools as they stand.
     pub fn browser_settings(&self) -> Reply<wisp_server::desktop::BrowserSettings> {
         self.local(|host| async move { host.browser_settings().await })

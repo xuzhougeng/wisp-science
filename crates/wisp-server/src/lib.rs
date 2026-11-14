@@ -1,6 +1,7 @@
 mod aside;
 mod browser;
 mod browser_filters;
+mod compact;
 pub mod config;
 mod decision_model;
 pub mod desktop;

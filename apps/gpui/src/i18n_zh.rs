@@ -930,4 +930,9 @@ pub const ZH: &[(&str, &str)] = &[
     ("Show the skills in Settings", "在设置中查看技能"),
     ("Attach files to the message", "为消息附加文件"),
     ("List these commands", "列出这些命令"),
+    ("Compact this conversation now", "立即压缩此对话"),
+    ("Compacting…", "正在压缩…"),
+    ("Earlier turns were folded into a summary.", "较早的回合已折叠为摘要。"),
+    ("Old tool output was pruned; no summary was needed.", "已清理旧的工具输出；无需生成摘要。"),
+    ("Compacted: about {} tokens before, {} after. The whole history is archived in the project.", "已压缩：之前约 {} 个 token，之后 {} 个。完整历史已归档在项目中。"),
 ];

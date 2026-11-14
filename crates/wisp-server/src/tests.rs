@@ -6721,3 +6721,56 @@ async fn the_browser_tools_are_offered_only_while_the_bridge_is_switched_on() {
     assert!(blocked.problem.unwrap().contains("cannot listen"));
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_conversation_is_compacted_on_request_and_its_history_archived() {
+    let temp = tempfile::tempdir().unwrap();
+    let cfg = config(temp.path());
+    let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let record = seen.clone();
+    let factory: ModelFactory = Arc::new(move |_| Box::new(Everything(record.clone())));
+    let server = Server::open_with_models(cfg.clone(), factory)
+        .await
+        .unwrap();
+    assert!(!server
+        .commands()
+        .iter()
+        .any(|command| command.contains("compact")));
+    let session = create(&server).await;
+    // Nothing was said yet, and a conversation of another project is not ours.
+    assert!(server
+        .compact_conversation(PROJECT, &session)
+        .await
+        .is_err());
+    assert!(server
+        .compact_conversation("missing", &session)
+        .await
+        .is_err());
+
+    for message in ["align the reads", "now call variants", "and summarise"] {
+        send(&server, &session, message).await.unwrap();
+        wait_for(&server, &session, |s| !s.running).await;
+    }
+    let shown_before = snapshot(&server, &session).await.items.len();
+    let done = server
+        .compact_conversation(PROJECT, &session)
+        .await
+        .unwrap();
+    assert!(done.after <= done.before, "{done:?}");
+    // The whole history is archived in the project.
+    let archives: Vec<_> = std::fs::read_dir(cfg.workspace.join(".wisp/history"))
+        .unwrap()
+        .collect();
+    assert_eq!(archives.len(), 1);
+    // The transcript on screen is as long as it was.
+    assert_eq!(snapshot(&server, &session).await.items.len(), shown_before);
+    // The conversation goes on from what was kept.
+    send(&server, &session, "what did we find?").await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    assert!(seen
+        .lock()
+        .unwrap()
+        .join("\n")
+        .contains("what did we find?"));
+    server.shutdown().await;
+}

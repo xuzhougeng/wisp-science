@@ -242,7 +242,7 @@ row says what is there.
 | Sidebar | Conversation menu: copy title, export conversation, export debug request, reload project rules | tauri |
 | Sidebar | Nested children: branches are nested — **Done**. Sub-agents, explorations and "load earlier" paging — Missing | store |
 | Sidebar | Update-available card; "done / failed in another project" notices (an update check is in Settings, General, and a turn that ends raises a system notification; there is no card in the sidebar) | tauri |
-| Composer | Slash commands: `/timer` `/archive` `/compact` `/fork` `/btw` `/rewind` `/review` `/remember` `/context` `/plan` `/permission` `/save-as-skill` `/skills` `/files` `/upload` `/share` `/trajectory` `/memo` — twelve run here and are listed under the composer's "/" button; `/timer` `/compact` `/fork` `/rewind` `/permission` `/share` are Missing | tauri |
+| Composer | Slash commands: `/timer` `/archive` `/compact` `/fork` `/btw` `/rewind` `/review` `/remember` `/context` `/plan` `/permission` `/save-as-skill` `/skills` `/files` `/upload` `/share` `/trajectory` `/memo` — thirteen run here and are listed under the composer's "/" button; `/timer` `/fork` `/rewind` `/permission` `/share` are Missing | tauri |
 | Composer | Conversation timer: repeat a prompt on an interval, pause, resume, cancel | store |
 | Composer | Queue panel: edit, remove, reorder, "guide now" | tauri |
 | Composer | Plan progress strip; read-only states (sample, archived notebook, sub-agent, frozen branch) | served |
@@ -258,7 +258,7 @@ row says what is there.
 | Transcript | Plan card: approve and run, or leave plan mode — **Done**. Plan review with per-step feedback, and the execution-plan progress strip — Missing | served |
 | Transcript | Reviewer findings panel and the automatic correction pass — review on request, of one turn and after every turn are **Done**; the correction is put into the composer to send, not run by itself | tauri |
 | Transcript | MCP App previews; Motif DNA selection | tauri |
-| Context | Usage breakdown panel, compact dialog (regular / semantic), handoff note to a new conversation, too-long recovery — what the model is sent, message by message with token estimates, is **Done**; the rest is Missing | tauri |
+| Context | Usage breakdown panel, compact dialog (regular / semantic), handoff note to a new conversation, too-long recovery — what the model is sent, message by message with token estimates, is **Done**, and `/compact` compacts on request without a choice of kind; the rest is Missing | tauri |
 | Top bar | Find in conversation (⌘F) — **Done**; search the project's chat history (⌘⇧F) — Missing | store |
 | Top bar | Import Codex and Claude Code conversations; import a conversation archive | tauri |
 | Centre | Open a file as a centre tab, split chat beside a document, snapshot, open in an external editor | ui |

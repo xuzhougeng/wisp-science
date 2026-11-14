@@ -77,12 +77,47 @@ impl Workspace {
             Slash::Memo => self.show_panel_tab(PanelTab::Memos, window, cx),
             Slash::Remember => self.show_panel_tab(PanelTab::Memory, window, cx),
             Slash::Archive => self.open_research_archive(window, cx),
+            Slash::Compact => self.compact_now(window, cx),
             Slash::Help => {
                 self.layers.open(Layer::SlashMenu);
                 self.focus_composer(window, cx);
             }
         }
         cx.notify();
+    }
+
+    /// Compacts the open conversation and says what that did.
+    fn compact_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(project), Some(session)) =
+            (self.state.project.clone(), self.state.session.clone())
+        else {
+            return;
+        };
+        self.notice = Some(tr("Compacting…").to_owned());
+        let reply = self.backend.compact_conversation(project, session.clone());
+        cx.spawn_in(window, async move |this, cx| {
+            let result = crate::backend::receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                // Said only where it was asked.
+                if this.state.session.as_ref() == Some(&session) {
+                    match result {
+                        Ok(done) => {
+                            this.notice = Some(slash::compacted_note(
+                                done.before,
+                                done.after,
+                                done.summarised,
+                            ))
+                        }
+                        Err(error) => {
+                            this.notice = None;
+                            this.error = Some(error);
+                        }
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// The "/" button of the composer, with the list of commands above it

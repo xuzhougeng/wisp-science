@@ -1228,7 +1228,7 @@ impl Server {
         Ok(())
     }
 
-    async fn own_conversation(&self, project: &str, session: &str) -> Result<()> {
+    pub(crate) async fn own_conversation(&self, project: &str, session: &str) -> Result<()> {
         ensure!(
             !self.0.shutting_down.load(Ordering::Relaxed),
             "Host is shutting down"
@@ -4448,6 +4448,7 @@ pub struct ProjectGrants {
 pub use crate::aside::Exchange as AsideExchange;
 pub use crate::browser::{BrowserSettings, BrowserStatus};
 pub use crate::browser_filters::{BrowserFilters, BrowserHostRule};
+pub use crate::compact::Compacted;
 pub use crate::experts::{Expert, ExpertInput};
 pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow};
 pub use crate::origin::FileOrigin;
