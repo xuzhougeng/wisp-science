@@ -178,8 +178,8 @@ pub fn network_form(typed: [String; 6], saved: &NetworkSettings) -> NetworkSetti
 /// What a route's value means, in words.
 pub fn route_note(value: &str) -> String {
     match value.trim() {
-        "" => "Follows the system".into(),
-        "none" => "Connects directly".into(),
+        "" => tr("Follows the system").into(),
+        "none" => tr("Connects directly").into(),
         proxy => format!("Through {proxy}"),
     }
 }
@@ -187,9 +187,9 @@ pub fn route_note(value: &str) -> String {
 /// Where a skill comes from, in words.
 pub fn skill_source(source: &str) -> &'static str {
     match source {
-        "bundled" => "Ships with Wisp",
-        "project" => "This project",
-        _ => "Added folder",
+        "bundled" => tr("Ships with Wisp"),
+        "project" => tr("This project"),
+        _ => tr("Added folder"),
     }
 }
 
@@ -197,7 +197,7 @@ pub fn skill_source(source: &str) -> &'static str {
 pub fn skills_summary(rows: &[SkillRow]) -> String {
     let off = rows.iter().filter(|row| !row.enabled).count();
     let total = match rows.len() {
-        0 => return "No skills were found.".into(),
+        0 => return tr("No skills were found.").into(),
         1 => "1 skill".to_string(),
         n => format!("{n} skills"),
     };
@@ -308,7 +308,7 @@ pub fn transport_line(transport: &McpTransport) -> String {
 /// How an SSH host is reached, on one line.
 pub fn ssh_target(host: &SshHostRow) -> String {
     if host.host_name.is_empty() {
-        return "From the entry of that name in your SSH config".into();
+        return tr("From the entry of that name in your SSH config").into();
     }
     let mut line = String::new();
     if !host.user.is_empty() {
@@ -338,31 +338,31 @@ pub fn capability_lines(found: &Capabilities) -> Vec<(&'static str, String, Opti
     };
     vec![
         (
-            "Skills",
-            of(found.skills, "None found"),
+            tr("Skills"),
+            of(found.skills, tr("None found")),
             Some(Section::Skills),
         ),
         (
-            "Connectors",
-            of(found.connectors, "None"),
+            tr("Connectors"),
+            of(found.connectors, tr("None")),
             Some(Section::Connections),
         ),
         (
-            "MCP servers",
-            of(found.mcp_servers, "None added"),
+            tr("MCP servers"),
+            of(found.mcp_servers, tr("None added")),
             Some(Section::Connections),
         ),
         (
-            "SSH hosts",
+            tr("SSH hosts"),
             match found.hosts {
-                (_, 0) => "None added".to_owned(),
+                (_, 0) => tr("None added").to_owned(),
                 (ready, total) if ready == total => format!("{total}, all checked"),
                 (ready, total) => format!("{ready} checked of {total}"),
             },
             Some(Section::Environments),
         ),
         (
-            "Memory",
+            tr("Memory"),
             if found.memory_on {
                 format!(
                     "On · {} · {}",
@@ -370,7 +370,7 @@ pub fn capability_lines(found: &Capabilities) -> Vec<(&'static str, String, Opti
                     plural(found.habits, "habit", "habits")
                 )
             } else {
-                "Off".to_owned()
+                tr("Off").to_owned()
             },
             None,
         ),
@@ -389,7 +389,7 @@ fn plural(count: usize, one: &str, many: &str) -> String {
 /// Settings names, if any).
 pub fn runs_on_label(choice: &str, default: Option<&str>) -> String {
     match (choice, default) {
-        ("", None) | (RUNS_LOCALLY, _) => "This computer".into(),
+        ("", None) | (RUNS_LOCALLY, _) => tr("This computer").into(),
         ("", Some(host)) => host.to_owned(),
         (host, _) => host.to_owned(),
     }
@@ -399,8 +399,8 @@ pub fn runs_on_label(choice: &str, default: Option<&str>) -> String {
 /// check first.
 pub fn host_caution(check: Option<&EnvironmentCheck>) -> Option<&'static str> {
     match check {
-        None => Some("Not checked yet; check it in Settings"),
-        Some(check) if check.error.is_some() => Some("Last check failed; see Settings"),
+        None => Some(tr("Not checked yet; check it in Settings")),
+        Some(check) if check.error.is_some() => Some(tr("Last check failed; see Settings")),
         Some(_) => None,
     }
 }
@@ -415,18 +415,19 @@ pub fn check_facts(found: &ProbeResult) -> Vec<(&'static str, String)> {
         .filter_map(known)
         .collect();
     if !system.is_empty() {
+        // Not the "System" of the language and appearance choices.
         facts.push(("System", system.join(" · ")));
     }
     if let Some(count) = found.cpu_count {
-        facts.push(("Processors", count.to_string()));
+        facts.push((tr("Processors"), count.to_string()));
     }
     // The model is told not to plan GPU work without one, so say so here.
     facts.push((
         "GPU",
-        known(&found.gpu_summary).unwrap_or_else(|| "None found".into()),
+        known(&found.gpu_summary).unwrap_or_else(|| tr("None found").into()),
     ));
     if let Some(scheduler) = known(&found.scheduler) {
-        facts.push(("Scheduler", scheduler));
+        facts.push((tr("Scheduler"), scheduler));
     }
     let interpreter =
         |version: &Option<String>, path: &Option<String>| match (known(version), known(path)) {
@@ -446,10 +447,10 @@ pub fn check_facts(found: &ProbeResult) -> Vec<(&'static str, String)> {
 /// check of this host is under way.
 pub fn check_line(check: Option<&EnvironmentCheck>, checking: bool, now: i64) -> String {
     if checking {
-        return "Checking…".into();
+        return tr("Checking…").into();
     }
     match check {
-        None => "Not checked yet. Work runs here only after a check passes.".into(),
+        None => tr("Not checked yet. Work runs here only after a check passes.").into(),
         Some(check) => {
             let when = crate::home::age(now, check.at);
             match &check.error {
@@ -469,7 +470,7 @@ pub fn port(text: &str) -> Result<Option<u16>, String> {
     }
     match text.parse::<u16>() {
         Ok(port) if port > 0 => Ok(Some(port)),
-        _ => Err("A port is a number from 1 to 65535.".into()),
+        _ => Err(tr("A port is a number from 1 to 65535.").into()),
     }
 }
 
@@ -525,9 +526,9 @@ pub fn decode_place(saved: &str) -> Option<(String, String)> {
 /// What a credential's field says before anything is typed.
 pub fn credential_placeholder(saved: bool, secret: bool) -> &'static str {
     match (saved, secret) {
-        (true, _) => "Saved. Type a new value to replace it",
-        (false, true) => "Paste the key",
-        (false, false) => "Not set",
+        (true, _) => tr("Saved. Type a new value to replace it"),
+        (false, true) => tr("Paste the key"),
+        (false, false) => tr("Not set"),
     }
 }
 
@@ -620,16 +621,16 @@ pub fn summary(settings: &ModelSettings) -> String {
             None => format!("New conversations use {}.", profile.name),
         },
         (_, None) => {
-            "No model is configured yet. Messages cannot be sent until one is saved.".into()
+            tr("No model is configured yet. Messages cannot be sent until one is saved.").into()
         }
     }
 }
 
 pub fn key_placeholder(has_api_key: bool) -> &'static str {
     if has_api_key {
-        "Saved in the system keychain; leave blank to keep it"
+        tr("Saved in the system keychain; leave blank to keep it")
     } else {
-        "API key (kept in the system keychain)"
+        tr("API key (kept in the system keychain)")
     }
 }
 
@@ -659,14 +660,14 @@ pub fn added(before: Option<&ModelSettings>, after: &ModelSettings) -> Option<St
 /// reads as the default, which is what the host will run.
 pub fn model_label(settings: Option<&ModelSettings>, choice: &str) -> String {
     let Some(settings) = settings else {
-        return "Model".into();
+        return tr("Model").into();
     };
     settings
         .profiles
         .iter()
         .find(|profile| !choice.is_empty() && profile.id == choice)
         .or_else(|| default_profile(settings))
-        .map_or_else(|| "No model".into(), |profile| profile.name.clone())
+        .map_or_else(|| tr("No model").into(), |profile| profile.name.clone())
 }
 
 #[cfg(test)]

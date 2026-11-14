@@ -325,17 +325,18 @@ Limits of this slice:
   for a last word without tools. Compaction uses the WebView's keys
   (`auto_compact`, `auto_compact_percent`). Auto-continue, compaction on a
   model switch and after idle hours are not ported.
-- The Chinese interface is not complete: the fixed text of the pages,
-  panels and dialogs, the names of panel tabs, palette commands and
-  settings sections, and the placeholders of text fields are translated;
-  text that has a number or a name set into it, dates, month names,
-  statuses, and everything the host says (errors, tool questions) are
-  still English. In Chinese the command palette matches the Chinese
-  names of commands, not the English ones. A text without a
-  translation shows in English rather than not at all. The system's
-  language is read from the macOS locale, or from `LC_ALL`, `LC_MESSAGES`
-  or `LANG`; where none says, System is English. The model's replies are
-  not affected by this setting.
+- The Chinese interface is not complete. Translated: the fixed text of
+  the pages, panels and dialogs, the names of panel tabs, palette commands
+  and settings sections, the placeholders of text fields, statuses,
+  project counts, ages and most sentences with a value set into them.
+  Still English: dates, month and weekday names, the figures of the
+  trajectory, usage and storage pages, units, and everything the host
+  says (errors, tool questions, run statuses). A text without a
+  translation shows in English rather than not at all. In Chinese the
+  command palette matches the Chinese names of commands, not the English
+  ones. The system's language is read from the macOS locale, or from
+  `LC_ALL`, `LC_MESSAGES` or `LANG`; where none says, System is English.
+  The model's replies are not affected by this setting.
 - Delete folder too deletes for good: nothing goes to the Trash and there
   is no undo. It deletes only the folder registered for the project, and
   refuses one that is a whole disk or volume, sits at the top of a disk,

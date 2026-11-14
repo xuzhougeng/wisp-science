@@ -2,6 +2,7 @@
 //! were written, and go one at a time as each turn ends. The queue lives in
 //! the window: it is not saved, and it only moves while its conversation is
 //! the one that is open.
+use crate::i18n::tr;
 use std::collections::{HashMap, VecDeque};
 
 use crate::compose::Pending;
@@ -29,7 +30,7 @@ impl Queue {
     pub fn push(&mut self, session: &str, text: &str, carried: Pending) -> Result<u64, String> {
         let text = text.trim();
         if text.is_empty() && carried.attachments().is_empty() {
-            return Err("Write a message first".into());
+            return Err(tr("Write a message first").into());
         }
         let waiting = self.waiting.entry(session.to_owned()).or_default();
         if waiting.len() >= LIMIT {
@@ -92,9 +93,9 @@ impl Queue {
 pub fn hold(failed: bool, asking: bool) -> Option<&'static str> {
     if asking {
         // A queued message must not be taken for the answer.
-        Some("Waiting for your answer above")
+        Some(tr("Waiting for your answer above"))
     } else if failed {
-        Some("Held because the last turn failed")
+        Some(tr("Held because the last turn failed"))
     } else {
         None
     }

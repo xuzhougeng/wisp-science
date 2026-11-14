@@ -45,9 +45,9 @@ pub fn kind_label(kind: &str, language: Option<&str>) -> String {
             .filter(|language| !language.is_empty()),
     ) {
         ("code", Some(language)) => format!("Code · {language}"),
-        ("code", None) => "Code".into(),
-        ("figure", _) => "Figure".into(),
-        _ => "Text".into(),
+        ("code", None) => tr("Code").into(),
+        ("figure", _) => tr("Figure").into(),
+        _ => tr("Text").into(),
     }
 }
 

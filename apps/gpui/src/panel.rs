@@ -94,7 +94,7 @@ pub fn artifact_detail(artifact: &ArtifactRow, now: i64, name_conversation: bool
             Some((folder, _)) => parts.push(format!("{folder}/")),
             None => {}
         },
-        None => parts.push("Not a project file".to_owned()),
+        None => parts.push(tr("Not a project file").to_owned()),
     }
     if let Some(size) = artifact.size_bytes {
         parts.push(size_label(size));

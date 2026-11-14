@@ -1,5 +1,6 @@
 //! Wording and small decisions for the conversation's controls: reasoning
 //! effort, token usage, approvals and the model's questions. No graphics.
+use crate::i18n::tr;
 use wisp_dto::{PendingToolApproval, native_conversations::Item};
 use wisp_server::desktop::{
     RuntimeLanguage, RuntimeRow, RuntimeState, TokenUsage, TurnRef, tool_question,
@@ -41,7 +42,7 @@ pub fn runtime_detail(row: &RuntimeRow) -> String {
         parts.push(error.to_owned());
     }
     if parts.is_empty() {
-        return "Kept between tool calls, with its variables".into();
+        return tr("Kept between tool calls, with its variables").into();
     }
     parts.join(" · ")
 }
@@ -51,13 +52,13 @@ pub fn runtime_detail(row: &RuntimeRow) -> String {
 pub fn runtime_action(row: &RuntimeRow) -> Option<(&'static str, &'static str)> {
     match row.state {
         RuntimeState::Stopped => Some((
-            "Dismiss",
-            "Take it off the list; the next call starts a fresh one",
+            tr("Dismiss"),
+            tr("Take it off the list; the next call starts a fresh one"),
         )),
         RuntimeState::Stopping => None,
         _ => Some((
-            "Stop",
-            "Stop this interpreter; what it has in memory is lost, files stay",
+            tr("Stop"),
+            tr("Stop this interpreter; what it has in memory is lost, files stay"),
         )),
     }
 }
@@ -78,7 +79,7 @@ pub fn effort_label(id: &str) -> &'static str {
     EFFORTS
         .iter()
         .find(|(effort, _)| *effort == id)
-        .map_or("Default", |(_, label)| label)
+        .map_or(tr("Default"), |(_, label)| tr(label))
 }
 
 /// A token count short enough for a status line: 950, 19.8k, 1.2M.

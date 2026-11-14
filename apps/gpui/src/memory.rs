@@ -1,5 +1,6 @@
 //! Wording and small rules for memory: the project's notes the model can
 //! search, and the habits it is shown in every project. No graphics state.
+use crate::i18n::tr;
 use wisp_server::desktop::MemoryView;
 
 /// Characters one remembered entry or habit may hold; the host enforces it.
@@ -20,9 +21,9 @@ pub enum Target {
 impl Target {
     pub fn title(&self) -> String {
         match self {
-            Target::Remember { .. } => "Save to memory".into(),
-            Target::Habit(None) => "New habit".into(),
-            Target::Habit(Some(_)) => "Edit habit".into(),
+            Target::Remember { .. } => tr("Save to memory").into(),
+            Target::Habit(None) => tr("New habit").into(),
+            Target::Habit(Some(_)) => tr("Edit habit").into(),
             Target::Note(name) => format!("Note {}", note_day(name)),
         }
     }
@@ -30,18 +31,18 @@ impl Target {
     /// What the editor says under the text.
     pub fn hint(&self) -> &'static str {
         match self {
-            Target::Remember { .. } => {
+            Target::Remember { .. } => tr(
                 "Trim it to what is worth keeping. For this project it joins today's note, \
-                 which the model can search; as a habit it is shown to the model in every project."
-            }
-            Target::Habit(_) => {
+                 which the model can search; as a habit it is shown to the model in every project.",
+            ),
+            Target::Habit(_) => tr(
                 "How you like to work, in a sentence or two. The model is shown your habits \
-                 at the start of every turn, in every project."
-            }
-            Target::Note(_) => {
+                 at the start of every turn, in every project.",
+            ),
+            Target::Note(_) => tr(
                 "The whole note for that day. Entries are apart by an empty line; the model \
-                 finds them by searching."
-            }
+                 finds them by searching.",
+            ),
         }
     }
 
@@ -87,7 +88,7 @@ pub fn offered(text: &str) -> String {
 pub fn problem(target: &Target, text: &str) -> Option<String> {
     let length = text.trim().chars().count();
     if length == 0 {
-        return Some("Write something first.".into());
+        return Some(tr("Write something first.").into());
     }
     (target.limited() && length > LIMIT)
         .then(|| format!("{length} characters; one entry holds at most {LIMIT}."))

@@ -159,7 +159,7 @@ pub fn run_output(run: &RunRecord) -> String {
         }
     }
     if parts.is_empty() {
-        "No output captured yet.".into()
+        tr("No output captured yet.").into()
     } else {
         parts.join("\n\n")
     }

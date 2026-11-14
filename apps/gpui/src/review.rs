@@ -78,8 +78,8 @@ fn count(number: usize, noun: &str) -> String {
 /// A finding's heading: how sure the reviewer is and how much it matters.
 pub fn finding_heading(finding: &ReviewFinding) -> (String, Tone) {
     let (kind, tone) = match finding.verdict.as_str() {
-        "fail" => ("Wrong", Tone::Danger),
-        _ => ("Doubtful", Tone::Attention),
+        "fail" => (tr("Wrong"), Tone::Danger),
+        _ => (tr("Doubtful"), Tone::Attention),
     };
     let weight = match finding.severity.as_str() {
         "high" => "matters a lot",

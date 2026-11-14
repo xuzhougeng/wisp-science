@@ -907,7 +907,7 @@ impl Workspace {
             menu = menu.child(
                 Self::menu_row(
                     SharedString::from(format!("effort-{effort}")),
-                    label,
+                    tr(label),
                     "",
                     effort == current,
                     cx,
