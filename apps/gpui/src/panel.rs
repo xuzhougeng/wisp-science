@@ -1,4 +1,5 @@
 //! The side panel's tabs and the wording of what they list. No graphics.
+use crate::i18n::tr;
 use wisp_dto::RunRecord;
 use wisp_server::desktop::ArtifactRow;
 
@@ -32,14 +33,14 @@ impl PanelTab {
 
     pub fn label(self) -> &'static str {
         match self {
-            PanelTab::Files => "Files",
-            PanelTab::Runs => "Runs",
-            PanelTab::Artifacts => "Artifacts",
-            PanelTab::Memos => "Memos",
-            PanelTab::Memory => "Memory",
-            PanelTab::Highlights => "Highlights",
-            PanelTab::Notebook => "Notebook",
-            PanelTab::Aside => "Aside",
+            PanelTab::Files => tr("Files"),
+            PanelTab::Runs => tr("Runs"),
+            PanelTab::Artifacts => tr("Artifacts"),
+            PanelTab::Memos => tr("Memos"),
+            PanelTab::Memory => tr("Memory"),
+            PanelTab::Highlights => tr("Highlights"),
+            PanelTab::Notebook => tr("Notebook"),
+            PanelTab::Aside => tr("Aside"),
         }
     }
 

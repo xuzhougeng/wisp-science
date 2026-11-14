@@ -1,6 +1,7 @@
 //! How the sidebar arranges a project's conversations: the sort and grouping
 //! the user chose, the rows that follow from them, and what select mode has
 //! picked. It holds no graphics state and is exercised without a window.
+use crate::i18n::tr;
 use std::collections::{HashMap, HashSet};
 
 use wisp_dto::SessionSearchInfo;
@@ -21,9 +22,9 @@ impl Grouping {
 
     pub fn label(self) -> &'static str {
         match self {
-            Grouping::Groups => "Groups",
-            Grouping::Date => "Date",
-            Grouping::None => "None",
+            Grouping::Groups => tr("Groups"),
+            Grouping::Date => tr("Date"),
+            Grouping::None => tr("None"),
         }
     }
 
@@ -48,8 +49,8 @@ impl Sorting {
 
     pub fn label(self) -> &'static str {
         match self {
-            Sorting::Newest => "Newest",
-            Sorting::Name => "Name",
+            Sorting::Newest => tr("Newest"),
+            Sorting::Name => tr("Name"),
         }
     }
 

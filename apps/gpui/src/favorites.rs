@@ -1,5 +1,6 @@
 //! Wording and small rules for favorites: passages, code and figures saved
 //! from conversations into one library for every project. No graphics state.
+use crate::i18n::tr;
 use wisp_server::desktop::LibraryItem;
 
 /// Which kind of saved item a list shows.
@@ -17,10 +18,10 @@ impl Filter {
 
     pub fn label(self) -> &'static str {
         match self {
-            Filter::All => "All",
-            Filter::Text => "Text",
-            Filter::Code => "Code",
-            Filter::Figures => "Figures",
+            Filter::All => tr("All"),
+            Filter::Text => tr("Text"),
+            Filter::Code => tr("Code"),
+            Filter::Figures => tr("Figures"),
         }
     }
 

@@ -1,5 +1,6 @@
 //! A review of the open conversation, as its dialog words it. The host
 //! asks the model and reads the report; this only says what it found.
+use crate::i18n::tr;
 use wisp_server::desktop::{Review, ReviewFinding, ReviewOutcome};
 
 use crate::present::Tone;
@@ -18,7 +19,7 @@ pub enum Asked {
 /// turn, and whether there is a report to open.
 pub fn banner(outcome: &ReviewOutcome) -> (String, Tone, bool) {
     match outcome {
-        ReviewOutcome::Reading => ("Reviewing the answer…".into(), Tone::Neutral, false),
+        ReviewOutcome::Reading => (tr("Reviewing the answer…").into(), Tone::Neutral, false),
         ReviewOutcome::Failed(problem) => (
             format!("The answer was not reviewed: {problem}"),
             Tone::Attention,
@@ -45,7 +46,7 @@ fn outcome_of(review: &Review) -> (String, Tone) {
     let warned = review.findings.len() - failed;
     match (failed, warned) {
         (0, 0) => (
-            "No problems found in what was checked.".into(),
+            tr("No problems found in what was checked.").into(),
             Tone::Success,
         ),
         (0, warned) => (

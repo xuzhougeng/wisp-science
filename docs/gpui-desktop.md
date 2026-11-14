@@ -326,10 +326,12 @@ Limits of this slice:
   (`auto_compact`, `auto_compact_percent`). Auto-continue, compaction on a
   model switch and after idle hours are not ported.
 - The Chinese interface is not complete: the fixed text of the pages,
-  panels and dialogs and the placeholders of text fields are translated;
-  the names of panel tabs, palette commands and settings sections, text
-  that has a number or a name set into it, and everything the host says
-  (errors, tool questions) are still English. A text without a
+  panels and dialogs, the names of panel tabs, palette commands and
+  settings sections, and the placeholders of text fields are translated;
+  text that has a number or a name set into it, dates, month names,
+  statuses, and everything the host says (errors, tool questions) are
+  still English. In Chinese the command palette matches the Chinese
+  names of commands, not the English ones. A text without a
   translation shows in English rather than not at all. The system's
   language is read from the macOS locale, or from `LC_ALL`, `LC_MESSAGES`
   or `LANG`; where none says, System is English. The model's replies are

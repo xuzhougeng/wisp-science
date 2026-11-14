@@ -1,5 +1,6 @@
 //! What the model is sent, as its dialog words it. The host reads the
 //! conversation's saved working set; this only says what is in it.
+use crate::i18n::tr;
 use wisp_server::desktop::{ModelRowKind, ModelView, ModelViewRow};
 
 use crate::controls::compact;
@@ -18,7 +19,7 @@ fn tokens(chars: usize) -> String {
 /// whole conversation.
 pub fn summary(view: &ModelView) -> String {
     if view.rows.is_empty() {
-        return "Nothing has been sent in this conversation yet.".into();
+        return tr("Nothing has been sent in this conversation yet.").into();
     }
     let size = format!(
         "{} messages, about {} tokens by length.",
@@ -38,13 +39,13 @@ pub fn summary(view: &ModelView) -> String {
 /// Who a row is from, as its label.
 pub fn label(row: &ModelViewRow) -> String {
     match row.kind {
-        ModelRowKind::System => "Instructions".into(),
-        ModelRowKind::Summary => "Summary".into(),
-        ModelRowKind::User => "You".into(),
+        ModelRowKind::System => tr("Instructions").into(),
+        ModelRowKind::Summary => tr("Summary").into(),
+        ModelRowKind::User => tr("You").into(),
         ModelRowKind::Assistant => "Wisp".into(),
         ModelRowKind::Tool => match row.tool.as_deref().filter(|name| !name.is_empty()) {
             Some(name) => name.to_owned(),
-            None => "Tool".into(),
+            None => tr("Tool").into(),
         },
     }
 }

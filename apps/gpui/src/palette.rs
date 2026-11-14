@@ -2,6 +2,7 @@
 //! and which row the keyboard is on. It holds no graphics state. Results
 //! arrive from the host out of order, so every search carries a ticket and
 //! only the latest one may fill the list.
+use crate::i18n::tr;
 use wisp_dto::{ProjectSummary, SessionSearchInfo};
 use wisp_server::desktop::{FileMatch, ReferenceOption};
 
@@ -56,32 +57,32 @@ pub enum Command {
 impl Command {
     pub fn label(self) -> &'static str {
         match self {
-            Command::NewConversation => "New conversation",
-            Command::OpenFolder => "Open folder…",
-            Command::Home => "All projects",
-            Command::Files => "Show or hide Files",
-            Command::Runs => "Show runs",
-            Command::Artifacts => "Show artifacts",
-            Command::Memos => "Show memos",
-            Command::Memory => "Show memory",
-            Command::Highlights => "Show highlights",
-            Command::Favorites => "Favorites",
-            Command::Archived => "Show or hide archived conversations",
-            Command::Refresh => "Refresh",
-            Command::Settings => "Settings",
-            Command::Docs => "Documentation",
-            Command::Feedback => "Report a problem",
-            Command::ProjectSettings => "Project settings",
-            Command::Find => "Find in this conversation",
-            Command::Journey => "Research journey",
-            Command::Calendar => "Research calendar",
-            Command::NewWindow => "New window",
-            Command::Capabilities => "Capabilities of this project",
-            Command::Trajectory => "Trajectory of this conversation",
-            Command::Aside => "Ask aside about this conversation",
-            Command::SaveAsSkill => "Save this conversation as a skill",
-            Command::Review => "Review this conversation",
-            Command::ModelView => "What the model is sent",
+            Command::NewConversation => tr("New conversation"),
+            Command::OpenFolder => tr("Open folder…"),
+            Command::Home => tr("All projects"),
+            Command::Files => tr("Show or hide Files"),
+            Command::Runs => tr("Show runs"),
+            Command::Artifacts => tr("Show artifacts"),
+            Command::Memos => tr("Show memos"),
+            Command::Memory => tr("Show memory"),
+            Command::Highlights => tr("Show highlights"),
+            Command::Favorites => tr("Favorites"),
+            Command::Archived => tr("Show or hide archived conversations"),
+            Command::Refresh => tr("Refresh"),
+            Command::Settings => tr("Settings"),
+            Command::Docs => tr("Documentation"),
+            Command::Feedback => tr("Report a problem"),
+            Command::ProjectSettings => tr("Project settings"),
+            Command::Find => tr("Find in this conversation"),
+            Command::Journey => tr("Research journey"),
+            Command::Calendar => tr("Research calendar"),
+            Command::NewWindow => tr("New window"),
+            Command::Capabilities => tr("Capabilities of this project"),
+            Command::Trajectory => tr("Trajectory of this conversation"),
+            Command::Aside => tr("Ask aside about this conversation"),
+            Command::SaveAsSkill => tr("Save this conversation as a skill"),
+            Command::Review => tr("Review this conversation"),
+            Command::ModelView => tr("What the model is sent"),
         }
     }
 
@@ -189,11 +190,11 @@ pub enum Section {
 impl Section {
     pub fn title(self) -> &'static str {
         match self {
-            Section::Projects => "Projects",
-            Section::Files => "Files",
-            Section::Conversations => "Conversations",
-            Section::Skills => "Skills",
-            Section::Commands => "Commands",
+            Section::Projects => tr("Projects"),
+            Section::Files => tr("Files"),
+            Section::Conversations => tr("Conversations"),
+            Section::Skills => tr("Skills"),
+            Section::Commands => tr("Commands"),
         }
     }
 }

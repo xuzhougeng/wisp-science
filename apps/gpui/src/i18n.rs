@@ -183,20 +183,26 @@ mod tests {
         }
     }
 
-    /// Every text the views pass to `tr` has a translation, so a new
+    /// Every text the app passes to `tr` has a translation, so a new
     /// string cannot be added in one language only.
     #[test]
-    fn every_text_the_views_translate_is_in_the_table() {
+    fn every_text_the_app_translates_is_in_the_table() {
         let listed: std::collections::HashSet<&str> = ZH.iter().map(|(text, _)| *text).collect();
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut missing = Vec::new();
-        let mut files = vec![root.join("workspace.rs")];
-        files.extend(
-            std::fs::read_dir(root.join("workspace"))
+        let sources = |folder: std::path::PathBuf| {
+            std::fs::read_dir(folder)
                 .unwrap()
                 .flatten()
-                .map(|entry| entry.path()),
-        );
+                .map(|entry| entry.path())
+                .filter(|path| path.extension().is_some_and(|kind| kind == "rs"))
+                // This file's own tests pass made-up text to `tr`.
+                .filter(|path| !path.ends_with("i18n.rs"))
+                .collect::<Vec<_>>()
+        };
+        let mut files = sources(root.clone());
+        files.extend(sources(root.join("workspace")));
+        assert!(files.len() > 40, "the sources were not found");
         for file in files {
             let source = std::fs::read_to_string(&file).unwrap();
             for text in translated(&source) {

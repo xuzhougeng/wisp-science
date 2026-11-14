@@ -1,5 +1,6 @@
 //! Model settings wording and form rules, apart from GPUI so they are covered
 //! without a window. Validation itself belongs to the host.
+use crate::i18n::tr;
 use wisp_dto::NetworkSettings;
 use wisp_server::{
     config::default_api_url,
@@ -43,17 +44,17 @@ impl Section {
 
     pub fn label(self) -> &'static str {
         match self {
-            Section::General => "General",
-            Section::Network => "Network",
-            Section::Models => "Models",
-            Section::Conversation => "Conversation",
-            Section::Skills => "Skills",
-            Section::Connections => "Connections",
-            Section::Credentials => "Credentials",
-            Section::Environments => "Environments",
-            Section::Permissions => "Permissions",
-            Section::Usage => "Usage",
-            Section::Storage => "Storage",
+            Section::General => tr("General"),
+            Section::Network => tr("Network"),
+            Section::Models => tr("Models"),
+            Section::Conversation => tr("Conversation"),
+            Section::Skills => tr("Skills"),
+            Section::Connections => tr("Connections"),
+            Section::Credentials => tr("Credentials"),
+            Section::Environments => tr("Environments"),
+            Section::Permissions => tr("Permissions"),
+            Section::Usage => tr("Usage"),
+            Section::Storage => tr("Storage"),
         }
     }
 
@@ -111,14 +112,14 @@ impl Section {
     /// The heading the section is listed under.
     pub fn group(self) -> &'static str {
         match self {
-            Section::General | Section::Network => "App",
+            Section::General | Section::Network => tr("App"),
             Section::Models | Section::Conversation => "AI",
             Section::Skills
             | Section::Connections
             | Section::Credentials
-            | Section::Environments => "Capabilities",
-            Section::Permissions => "Safety",
-            Section::Usage | Section::Storage => "Data",
+            | Section::Environments => tr("Capabilities"),
+            Section::Permissions => tr("Safety"),
+            Section::Usage | Section::Storage => tr("Data"),
         }
     }
 }
@@ -487,8 +488,8 @@ impl Launch {
 
     pub fn label(self) -> &'static str {
         match self {
-            Launch::Home => "Home page",
-            Launch::Resume => "Where I left off",
+            Launch::Home => tr("Home page"),
+            Launch::Resume => tr("Where I left off"),
         }
     }
 

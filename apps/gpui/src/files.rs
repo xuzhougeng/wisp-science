@@ -3,6 +3,7 @@
 //! so rapid navigation and project switches never show another folder's rows.
 //! Paths are project-relative with `/` separators on every platform, which is
 //! the only form the host accepts.
+use crate::i18n::tr;
 use wisp_dto::{
     DirEntry, FileContent,
     native_files::{Directory, Preview, SCHEMA},
@@ -141,9 +142,9 @@ pub enum Naming {
 impl Naming {
     pub fn title(&self) -> &'static str {
         match self {
-            Naming::Folder => "Name the new folder",
-            Naming::File => "Name the new file",
-            Naming::Rename(_) => "New name",
+            Naming::Folder => tr("Name the new folder"),
+            Naming::File => tr("Name the new file"),
+            Naming::Rename(_) => tr("New name"),
         }
     }
 

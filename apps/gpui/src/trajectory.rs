@@ -1,6 +1,7 @@
 //! The trajectory of a conversation, as the page words it: the totals at
 //! the top, a heading for each turn and one line for each step. It holds no
 //! graphics state; the host folds the conversation and this only reads it.
+use crate::i18n::tr;
 use chrono::{TimeZone, Timelike};
 use wisp_dto::{TrajectoryCellDto, TrajectorySnapshotDto, TrajectoryStatsDto, TrajectoryTurnDto};
 
@@ -30,21 +31,21 @@ fn tokens(count: i64) -> String {
 /// that could not be worked out is left out instead of shown as zero.
 pub fn totals(stats: &TrajectoryStatsDto) -> Vec<(&'static str, String)> {
     let mut totals = vec![
-        ("Turns", stats.turns.to_string()),
-        ("Model calls", stats.steps.to_string()),
+        (tr("Turns"), stats.turns.to_string()),
+        (tr("Model calls"), stats.steps.to_string()),
     ];
     if stats.llm_ms > 0 {
-        totals.push(("Model time", duration(stats.llm_ms)));
+        totals.push((tr("Model time"), duration(stats.llm_ms)));
     }
     if stats.tool_ms > 0 {
-        totals.push(("Tool time", duration(stats.tool_ms)));
+        totals.push((tr("Tool time"), duration(stats.tool_ms)));
     }
-    totals.push(("Input", tokens(stats.input_tokens)));
-    totals.push(("Output", tokens(stats.output_tokens)));
+    totals.push((tr("Input"), tokens(stats.input_tokens)));
+    totals.push((tr("Output"), tokens(stats.output_tokens)));
     if stats.cached_input_tokens > 0 {
         let cached = tokens(stats.cached_input_tokens);
         totals.push((
-            "Cached",
+            tr("Cached"),
             match stats.cache_hit_pct {
                 Some(hit) => format!("{cached} ({hit:.0}%)"),
                 None => cached,
@@ -58,7 +59,7 @@ pub fn totals(stats: &TrajectoryStatsDto) -> Vec<(&'static str, String)> {
         } else {
             format!("{speed:.0}")
         };
-        totals.push(("Speed", format!("{speed} tokens/s")));
+        totals.push((tr("Speed"), format!("{speed} tokens/s")));
     }
     totals
 }
@@ -66,7 +67,7 @@ pub fn totals(stats: &TrajectoryStatsDto) -> Vec<(&'static str, String)> {
 /// The line under the title: which model, or that nothing was asked yet.
 pub fn subtitle(snapshot: &TrajectorySnapshotDto) -> String {
     if snapshot.turns.is_empty() {
-        return "Nothing has been asked in this conversation yet.".into();
+        return tr("Nothing has been asked in this conversation yet.").into();
     }
     let steps = "Every turn's steps in the order they happened. Times are to the second.";
     match &snapshot.model {
@@ -135,7 +136,7 @@ pub fn step(cell: &TrajectoryCellDto) -> Step {
         tone,
     };
     match cell.kind.as_str() {
-        "user" => plain("You", Tone::Plain),
+        "user" => plain(tr("You"), Tone::Plain),
         "assistant" => plain("Wisp", Tone::Plain),
         "tool" => {
             let failed = cell.is_error || cell.ok == Some(false);
@@ -146,7 +147,7 @@ pub fn step(cell: &TrajectoryCellDto) -> Step {
                     (true, None) => Some("failed".into()),
                     (false, took) => took,
                 },
-                ..plain("Tool", if failed { Tone::Failed } else { Tone::Plain })
+                ..plain(tr("Tool"), if failed { Tone::Failed } else { Tone::Plain })
             }
         }
         "usage" => match &cell.usage {
@@ -162,16 +163,16 @@ pub fn step(cell: &TrajectoryCellDto) -> Step {
                     parts.push(format!("{} cached", tokens(usage.cached_input_tokens)));
                 }
                 Step {
-                    label: "Model call",
+                    label: tr("Model call"),
                     text: parts.join(" · "),
                     note: usage.model.clone(),
                     tone: Tone::Quiet,
                 }
             }
-            None => plain("Model call", Tone::Quiet),
+            None => plain(tr("Model call"), Tone::Quiet),
         },
         // A kind this build does not know is still a step that happened.
-        _ => plain("Step", Tone::Quiet),
+        _ => plain(tr("Step"), Tone::Quiet),
     }
 }
 

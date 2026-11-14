@@ -1,6 +1,7 @@
 //! Questions asked aside: what was asked about a conversation and what was
 //! answered, kept beside it and never part of it. One thread per
 //! conversation, in memory; it holds no graphics state.
+use crate::i18n::tr;
 use wisp_server::desktop::AsideExchange;
 
 /// How many exchanges a thread keeps; older ones fall off the top.
@@ -70,10 +71,12 @@ impl Thread {
 /// The line under the tab's title.
 pub fn hint(has_conversation: bool) -> &'static str {
     if has_conversation {
-        "Ask about this conversation. The answer comes from what has been said in it, uses \
-         no tools, and nothing is added to the conversation."
+        tr(
+            "Ask about this conversation. The answer comes from what has been said in it, uses \
+         no tools, and nothing is added to the conversation.",
+        )
     } else {
-        "Open a conversation to ask about it."
+        tr("Open a conversation to ask about it.")
     }
 }
 
