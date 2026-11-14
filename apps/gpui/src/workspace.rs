@@ -19,6 +19,7 @@ mod palette_view;
 mod panel_tabs;
 mod project_settings;
 mod queue_view;
+mod remote_files_view;
 mod review_view;
 mod settings_data;
 mod settings_environments;
@@ -154,6 +155,9 @@ pub struct Workspace {
     known: HashMap<String, SessionSearchInfo>,
     /// The conversations opened in this window, as tabs.
     tabs: crate::tabs::Tabs,
+    /// The SSH host folder the Files tab is looking at, instead of the
+    /// project's own files.
+    remote: Option<crate::files::RemoteBrowse>,
     /// Whole logs that were asked for, by run: the log, or why not.
     run_logs: HashMap<String, Result<wisp_server::desktop::RunLog, String>>,
     /// Where the previewed file came from, once asked: its path, and the
@@ -633,6 +637,7 @@ impl Workspace {
             inbox: vec![],
             known: HashMap::new(),
             tabs: Default::default(),
+            remote: None,
             run_logs: HashMap::new(),
             file_origin: None,
             pinned: vec![],

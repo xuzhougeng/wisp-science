@@ -623,6 +623,10 @@ impl Workspace {
             }
             PanelTab::Files => {}
         }
+        let panel = panel.children(self.render_locations(cx));
+        if let Some(remote) = self.render_remote_files(cx) {
+            return panel.child(remote).into_any_element();
+        }
         let location = if self.files.path.is_empty() {
             tr("Project root").to_string()
         } else {

@@ -244,6 +244,33 @@ pub fn size_label(bytes: u64) -> String {
     format!("{value:.1} {}", UNITS[unit])
 }
 
+/// A folder of an SSH host that the Files tab is looking at.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteBrowse {
+    pub alias: String,
+    /// The folder that was asked for; empty is the home folder.
+    pub path: String,
+    pub listing: Option<wisp_server::desktop::RemoteDirectory>,
+    pub error: Option<String>,
+}
+
+/// The folder above `path` on a host, or none at the top of its disk. The
+/// path is the host's own real one, as a listing reports it.
+pub fn remote_parent(path: &str) -> Option<String> {
+    let path = path.trim_end_matches('/');
+    let (above, _) = path.rsplit_once('/')?;
+    Some(if above.is_empty() {
+        "/".into()
+    } else {
+        above.into()
+    })
+}
+
+/// A folder inside `path` on a host.
+pub fn remote_child(path: &str, name: &str) -> String {
+    format!("{}/{name}", path.trim_end_matches('/'))
+}
+
 /// Where a file came from, in a line: the tool and the conversation, or
 /// that nothing is known.
 pub fn origin_line(origin: Option<&wisp_server::desktop::FileOrigin>) -> String {
@@ -287,6 +314,24 @@ pub fn origin_detail(origin: &wisp_server::desktop::FileOrigin) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hosts_folders_are_walked_by_their_real_paths() {
+        assert_eq!(
+            remote_parent("/home/lab/data").as_deref(),
+            Some("/home/lab")
+        );
+        assert_eq!(remote_parent("/home/").as_deref(), Some("/"));
+        assert_eq!(remote_parent("/home").as_deref(), Some("/"));
+        // The top of the disk has nothing above it, and neither has a
+        // folder that has not been listed yet.
+        assert_eq!(remote_parent("/"), None);
+        assert_eq!(remote_parent(""), None);
+        assert_eq!(remote_child("/home/lab", "data"), "/home/lab/data");
+        assert_eq!(remote_child("/", "scratch"), "/scratch");
+        // A name is taken as it is, whatever is in it.
+        assert_eq!(remote_child("/data/", "run 1; x"), "/data/run 1; x");
+    }
 
     #[test]
     fn a_files_origin_names_the_call_and_shows_what_it_ran() {

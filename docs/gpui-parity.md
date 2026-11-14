@@ -165,7 +165,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Workspace files [工作区文件]: browse, preview, before any conversation exists | Yes | Done | served |
 | Files: name search | In the panel | Partial: through the command palette, across projects | served |
 | Files: upload, new file, new folder, rename, delete, sort, grid view | Yes | Partial: new folder, new file, rename, and delete as a move to the project's own trash; no upload into a folder, sort or grid | tauri |
-| Files: other locations (SSH / WSL contexts) | Yes | Missing | shared |
+| Files: other locations (SSH / WSL contexts) | Yes | Partial: the Files tab lists the folders of a checked SSH host, to look at; no preview, download, upload or change there, and no WSL | shared |
 | Files: image, PDF, Office, notebook, table previews | Yes | Partial: pictures (PNG, JPEG, GIF, WebP, SVG, BMP) up to 32 MB; no PDF, Office, notebook or table preview | ui |
 | Agents [Agents]: sub-agents, parallel exploration, workflows | Yes | Partial: an Agents tab lists the explore helpers of the loaded conversation with their question, status and findings; no delegated tasks, child conversations or workflows, which this host does not run | store |
 | Artifacts [产物]: figures, tables, outputs, star, open | Yes | Partial: files a turn wrote are recorded with a snapshot, listed per conversation or project, and open in Files; no grouping, versions, download, star or provenance | served |

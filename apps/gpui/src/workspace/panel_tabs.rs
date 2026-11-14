@@ -35,7 +35,11 @@ impl Workspace {
         self.layers.open(Layer::FilesPanel);
         self.panel_tab = tab;
         match tab {
-            PanelTab::Files => self.ensure_files(window, cx),
+            PanelTab::Files => {
+                self.ensure_files(window, cx);
+                // The hosts that can be looked at beside the project.
+                self.load_environments(window, cx);
+            }
             PanelTab::Artifacts => self.load_artifacts(window, cx),
             PanelTab::Memos => self.load_memos(window, cx),
             PanelTab::Memory => self.load_memory(window, cx),

@@ -715,4 +715,8 @@ pub const ZH: &[(&str, &str)] = &[
     ("No helper has been sent off in this conversation. The model sends one when a question needs a search of its own.", "这个会话还没有派出过帮手。当某个问题需要单独搜索时，模型会派出一个。"),
     ("A question that could not be read", "无法读取的问题"),
     ("Looking for: {}", "关注：{}"),
+    // Files on an SSH host.
+    ("Look at this host's folders", "查看这台主机上的文件夹"),
+    ("Home folder", "主目录"),
+    ("There is more in this folder than is listed.", "这个文件夹里的内容比列出的更多。"),
 ];

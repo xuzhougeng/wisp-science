@@ -3929,6 +3929,48 @@ async fn checking_an_ssh_host_records_what_it_is_and_tells_the_model() {
         Some("/opt/conda/bin/python3")
     );
     assert_eq!(server.environments().await.unwrap().checks, [passed]);
+
+    // Now that it has passed a check, its folders can be looked at.
+    struct Listing(std::sync::Mutex<Vec<wisp_runs::RunCommand>>);
+    #[async_trait]
+    impl wisp_runs::RunCommandRunner for Listing {
+        async fn run(
+            &self,
+            command: wisp_runs::RunCommand,
+            _: std::time::Duration,
+        ) -> Result<wisp_runs::RunCommandOutput, String> {
+            self.0.lock().unwrap().push(command);
+            Ok(wisp_runs::RunCommandOutput {
+                exit_code: 0,
+                stdout: "motd\nWISP_REMOTE_DIR_V1\0/home/lab/data\0\
+                         f\x0012\x001794636300\x00reads.fq\0d\x000\x000\x00results\0"
+                    .into(),
+                stderr: String::new(),
+            })
+        }
+    }
+    let lister = Listing(Default::default());
+    let listed = server
+        .remote_directory_with("lab-probe", "~/data", &lister)
+        .await
+        .unwrap();
+    assert_eq!(listed.path, "/home/lab/data");
+    let names: Vec<_> = listed.entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, ["results", "reads.fq"]);
+    {
+        let asked = lister.0.lock().unwrap();
+        assert_eq!(asked.len(), 1);
+        assert_eq!(asked[0].program, "ssh");
+        assert!(asked[0].args.join(" ").contains("lab@10.0.0.9"));
+        // The folder goes to the host's shell as quoted data on stdin.
+        let script = asked[0].stdin.as_deref().unwrap();
+        assert!(script.contains("dir=\"$HOME\"/'data'"), "{script}");
+    }
+    assert!(server
+        .remote_directory_with("missing", "", &lister)
+        .await
+        .is_err());
+    assert_eq!(lister.0.lock().unwrap().len(), 1);
     shown.lock().unwrap().clear();
     send(&server, &session, "again").await.unwrap();
     wait_for(&server, &session, |s| !s.running).await;

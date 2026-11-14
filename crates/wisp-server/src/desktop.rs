@@ -2322,6 +2322,38 @@ impl Server {
         EnvironmentCheck::of(alias, &context).context("The check was not recorded")
     }
 
+    /// One folder of a saved SSH host, to look at: `path` empty is the
+    /// home folder. The host has to have passed a check, like for runs.
+    /// Nothing on the host is changed.
+    pub async fn remote_directory(&self, alias: &str, path: &str) -> Result<RemoteDirectory> {
+        self.remote_directory_with(alias, path, self.0.runs.runner_ref())
+            .await
+    }
+
+    pub(crate) async fn remote_directory_with(
+        &self,
+        alias: &str,
+        path: &str,
+        runner: &dyn wisp_runs::RunCommandRunner,
+    ) -> Result<RemoteDirectory> {
+        use wisp_runs::ssh_hosts;
+        let context = self
+            .0
+            .store
+            .get_execution_context(&format!("ssh:{alias}"))
+            .await?
+            .context("That host is no longer saved")?;
+        ssh_hosts::require_managed_ssh_ready(&context).map_err(anyhow::Error::msg)?;
+        let connection = ssh_hosts::SshConnection::from_execution_context(&context)
+            .map_err(anyhow::Error::msg)?;
+        let command = crate::remote_dir::command(&connection, path)?;
+        let output = runner
+            .run(command, crate::remote_dir::TIMEOUT)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        crate::remote_dir::parse(alias, output)
+    }
+
     /// Forgets an SSH host. Runs that were made on it keep their records.
     pub async fn remove_ssh_host(&self, alias: &str) -> Result<()> {
         use wisp_runs::ssh_hosts;
@@ -4087,6 +4119,7 @@ pub use crate::aside::Exchange as AsideExchange;
 pub use crate::experts::{Expert, ExpertInput};
 pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow};
 pub use crate::origin::FileOrigin;
+pub use crate::remote_dir::RemoteDirectory;
 pub use crate::review::{Finding as ReviewFinding, Outcome as ReviewOutcome, Review};
 pub use crate::run_log::RunLog;
 pub use crate::updates::UpdateCheck;

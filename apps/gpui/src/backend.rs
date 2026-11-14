@@ -723,6 +723,15 @@ impl Backend {
         self.local(move |host| async move { host.create_sample_project(&parent).await })
     }
 
+    /// One folder of a saved SSH host, to look at.
+    pub fn remote_directory(
+        &self,
+        alias: String,
+        path: String,
+    ) -> Reply<wisp_server::desktop::RemoteDirectory> {
+        self.local(move |host| async move { host.remote_directory(&alias, &path).await })
+    }
+
     /// The tool call that last wrote a project file, if one is known.
     pub fn file_origin(
         &self,

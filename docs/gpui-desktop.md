@@ -138,6 +138,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Capabilities | A dialog for the open project: how many skills, connectors, MCP servers and SSH hosts are on or usable, the state of memory, and which command-line tools were found on this computer |
 | Follow-up questions | After an answer, up to three questions you could ask next show above the composer; picking one puts it in the composer to send or change, and the list can be put away |
 | Sample project | The home page's flask button makes a small sample project in a folder you choose and opens it: made-up counts for twelve samples, a script, and a README of things to ask |
+| Host folders | With an SSH host saved, the Files tab offers it beside the project: its folders are listed, to walk through and see what is there |
 | File origin | A file's preview has Origin: which tool call last wrote it, with the code it ran, the project files it read and the conversation, which it can open |
 | Terminal | The Files tab's terminal button (or the command palette) opens the system's terminal in the folder being browsed |
 | Updates | Settings, General, has Check for updates: it says whether a newer release has been published and opens the release page |
@@ -339,6 +340,14 @@ Limits of this slice:
   WebView's example it has no prepared conversations and is not read
   only: it is an ordinary project, and asking about it uses your model.
   Removing it is removing a project.
+- A host's folders are only listed: files there cannot be opened,
+  downloaded, uploaded, renamed or removed from the Files tab, and
+  nothing on the host is changed by looking. The host has to have passed
+  a check in Settings, as for runs. Each folder is one SSH request over
+  the run manager's connection with a twenty-second limit; at most 2,000
+  entries are listed, fewer when names are very long, and the folder
+  says when there was more. Hidden files are not listed. WSL is not
+  offered.
 - Origin is known only for files written by tool calls since this was
   added: each call that reports what it ran is kept in the store's
   execution log (the table the WebView fills) when its turn ends, with
@@ -834,6 +843,11 @@ Delete a conversation and confirm what was saved from it is still listed.
 On the home page press the flask button and choose a folder: a "Wisp
 sample project" folder appears there and opens as a project with its
 README, data and script. Cancel the folder dialog: nothing is made.
+With a real SSH host that has passed its check, open the Files tab:
+the host is offered beside This project. Choose it: its home folder is
+listed, folders first; go into one and back Up; Reload. Choose This
+project: the project's files are back as they were. With a host that has
+not been checked, confirm the tab says a check is needed.
 Have a turn write a file, open the file in the Files tab and press
 Origin: the line names the tool and the conversation, the code is shown,
 and Open the conversation goes there. For a file you made yourself it
