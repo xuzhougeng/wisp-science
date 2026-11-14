@@ -167,7 +167,8 @@ folder registers its research root; it does not import existing desktop chats.
 | Tool calls | One folded line each with outcome and elapsed time; click for the verbatim input and output; interrupted calls stop claiming to run |
 | Runs | A Runs tab: runs started by the conversation with kind, status, exit code, command and output tails; a run that has not ended can be cancelled, and is followed until it ends |
 | Artifacts | Files a turn wrote are recorded when it ends; an Artifacts tab lists them for the conversation or the project and opens them |
-| Side panel | Tabs: Files, Runs, Artifacts, Notebook, Highlights, Memos, Memory, Aside; the open tab is named, the others are icons |
+| Side panel | Tabs: Files, Runs, Artifacts, Notebook, Agents, Highlights, Memos, Memory, Aside; the open tab is named, the others are icons |
+| Agents | The Agents tab lists the helpers the conversation sent off to explore: what each was asked, how it went, and what it found |
 | Aside | The Aside tab (or the command palette) asks the conversation's model a question about the open conversation; the answer shows beside it and nothing is added to the conversation |
 | Favorites | A star under any message saves it as it reads now; an image in Artifacts can be saved as a figure. Highlights lists what this conversation saved; the Favorites page lists everything from every project, with search, a kind filter, the item in full, its source conversation and removal after a confirmation |
 | Memory | One switch; habits the model is shown in every project; this project's notes by day, which the model can search; add, edit and delete either, and save any message to one or the other |
@@ -423,6 +424,12 @@ Limits of this slice:
   a new one. There is no list of variables, no restart button and no
   memory limit; interpreters are also stopped when the conversation or
   its project is removed and when the app quits.
+- The Agents tab is a reading of the loaded transcript, like the
+  Notebook: it lists `explore` calls, the only kind of sub-agent this
+  host runs, from the messages that are loaded, and shows a helper's
+  findings once it has reported back, not its steps along the way.
+  Delegated tasks, child conversations and workflows are not run here,
+  so they have nothing to list.
 - The sub-agent model is the model the `explore` helper works on, the
   only sub-agent this host has. The order is the WebView's: a
   conversation's own choice for its sub-agents (its `frames` column,
@@ -905,6 +912,10 @@ Press Save as skill in a conversation: the request is in the composer and
 nothing is sent; with a draft in the composer the request follows it; a
 second press adds nothing. Send it and confirm the model reads the
 `skill-creator` skill.
+Ask something that makes the model call `explore`, then open the Agents
+tab: the helper is listed with its question, reads Running until it
+reports back, then shows its findings; the arrow goes to its row in the
+conversation.
 Open the Aside tab in a conversation with an answer in it, ask what the
 answer was, and confirm the reply is about that conversation while the
 transcript is unchanged. Ask a second question that leans on the first

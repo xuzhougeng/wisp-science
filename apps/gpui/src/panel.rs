@@ -17,14 +17,17 @@ pub enum PanelTab {
     Notebook,
     /// Questions asked beside the conversation.
     Aside,
+    /// The helpers the conversation sent off.
+    Agents,
 }
 
 impl PanelTab {
-    pub const ALL: [PanelTab; 8] = [
+    pub const ALL: [PanelTab; 9] = [
         PanelTab::Files,
         PanelTab::Runs,
         PanelTab::Artifacts,
         PanelTab::Notebook,
+        PanelTab::Agents,
         PanelTab::Highlights,
         PanelTab::Memos,
         PanelTab::Memory,
@@ -41,6 +44,7 @@ impl PanelTab {
             PanelTab::Highlights => tr("Highlights"),
             PanelTab::Notebook => tr("Notebook"),
             PanelTab::Aside => tr("Aside"),
+            PanelTab::Agents => tr("Agents"),
         }
     }
 
@@ -54,6 +58,7 @@ impl PanelTab {
             PanelTab::Highlights => "star",
             PanelTab::Notebook => "notebook",
             PanelTab::Aside => "circle-help",
+            PanelTab::Agents => "swarm",
         }
     }
 }

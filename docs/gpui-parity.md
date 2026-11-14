@@ -142,7 +142,7 @@ to find in the running app.
 | Full record / model view toggles [完整记录 / 模型视角] | Yes | Partial: the transcript is the full record; What the model is sent lists the model's working set in a dialog, with each message's share; no context breakdown by kind and no undo of a compaction | served |
 | Conversation outline [展开对话目录] | Yes | Partial: your messages in the loaded part of the conversation, to jump to | store |
 | Find in conversation | Yes *(source)* | Done: Cmd/Ctrl+F over the loaded transcript, with a count and next and previous; marks rows, not words | ui |
-| Sub-agent and delegation cards | Yes *(source)* | Missing | store |
+| Sub-agent and delegation cards | Yes *(source)* | Partial: an explore call is an ordinary tool row in the transcript and a card in the Agents tab; no delegation cards | store |
 
 ## 5. Top bar
 
@@ -167,7 +167,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Files: upload, new file, new folder, rename, delete, sort, grid view | Yes | Partial: new folder, new file, rename, and delete as a move to the project's own trash; no upload into a folder, sort or grid | tauri |
 | Files: other locations (SSH / WSL contexts) | Yes | Missing | shared |
 | Files: image, PDF, Office, notebook, table previews | Yes | Partial: pictures (PNG, JPEG, GIF, WebP, SVG, BMP) up to 32 MB; no PDF, Office, notebook or table preview | ui |
-| Agents [Agents]: sub-agents, parallel exploration, workflows | Yes | Missing | store |
+| Agents [Agents]: sub-agents, parallel exploration, workflows | Yes | Partial: an Agents tab lists the explore helpers of the loaded conversation with their question, status and findings; no delegated tasks, child conversations or workflows, which this host does not run | store |
 | Artifacts [产物]: figures, tables, outputs, star, open | Yes | Partial: files a turn wrote are recorded with a snapshot, listed per conversation or project, and open in Files; no grouping, versions, download, star or provenance | served |
 | Environments [环境]: conversation environment, attach servers, probe, terminal | Yes | Partial: the conversation's environment is chosen in the composer and hosts are checked in Settings; no panel tab, attaching or terminal | store + shared |
 | Runs [运行]: list, output | Yes | Done: a Runs tab with status and output tails | served |

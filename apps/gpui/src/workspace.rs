@@ -1,3 +1,4 @@
+mod agents_view;
 mod aside_view;
 mod calendar_view;
 mod capabilities_view;

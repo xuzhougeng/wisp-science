@@ -709,4 +709,10 @@ pub const ZH: &[(&str, &str)] = &[
     ("The sample project is ready. Its README says what to try.", "示例项目已就绪。可以试什么，见其中的 README。"),
     ("Sub-agent model", "子智能体模型"),
     ("The model that helpers the main model sends off to explore work on. A cheaper, faster model here keeps long searches off the conversation's model.", "主模型派出去探索的帮手所使用的模型。在这里选一个更便宜、更快的模型，可以让长时间的搜索不占用会话的模型。"),
+    // Agents.
+    ("Agents", "帮手"),
+    ("Open a conversation to see the helpers it sent off.", "打开一个会话以查看它派出的帮手。"),
+    ("No helper has been sent off in this conversation. The model sends one when a question needs a search of its own.", "这个会话还没有派出过帮手。当某个问题需要单独搜索时，模型会派出一个。"),
+    ("A question that could not be read", "无法读取的问题"),
+    ("Looking for: {}", "关注：{}"),
 ];
