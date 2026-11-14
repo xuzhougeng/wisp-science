@@ -475,6 +475,14 @@ impl Backend {
         self.local(|host| async move { host.environments().await })
     }
 
+    /// Connects to the host now; the reply is what was found or why not.
+    pub fn check_environment(
+        &self,
+        alias: String,
+    ) -> Reply<wisp_server::desktop::EnvironmentCheck> {
+        self.local(move |host| async move { host.check_environment(&alias).await })
+    }
+
     pub fn save_ssh_host(&self, row: SshHostRow) -> Reply<()> {
         self.local(move |host| async move { host.save_ssh_host(row).await })
     }

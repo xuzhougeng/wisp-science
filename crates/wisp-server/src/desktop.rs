@@ -1742,7 +1742,15 @@ impl Server {
             .into_iter()
             .filter(|alias| !hosts.iter().any(|host| &host.alias == alias))
             .collect();
+        let mut checks = Vec::new();
+        for host in &hosts {
+            let context = store
+                .get_execution_context(&format!("ssh:{}", host.alias))
+                .await?;
+            checks.extend(context.and_then(|context| EnvironmentCheck::of(&host.alias, &context)));
+        }
         Ok(EnvironmentsView {
+            checks,
             default: ssh_hosts::stored_default_execution_context(store)
                 .await
                 .and_then(|id| id.strip_prefix("ssh:").map(str::to_owned)),
@@ -1783,6 +1791,41 @@ impl Server {
         ssh_hosts::save_and_sync_contexts(&self.0.store, &hosts)
             .await
             .map_err(anyhow::Error::msg)
+    }
+
+    /// Connects to an SSH host now and records what it is: system,
+    /// processors, GPUs, scheduler, interpreters. Work runs on a host only
+    /// after a check has passed. A check that fails is recorded too and is
+    /// returned, not raised; the error is for a host that is not saved.
+    pub async fn check_environment(&self, alias: &str) -> Result<EnvironmentCheck> {
+        self.check_environment_with(alias, &mut wisp_runs::context_probe::ProcessProbeRunner)
+            .await
+    }
+
+    pub(crate) async fn check_environment_with(
+        &self,
+        alias: &str,
+        runner: &mut dyn wisp_runs::context_probe::ProbeRunner,
+    ) -> Result<EnvironmentCheck> {
+        use wisp_runs::{context_probe, ssh_hosts};
+        let hosts = ssh_hosts::load(&self.0.store).await;
+        ensure!(
+            hosts.iter().any(|host| host.alias == alias),
+            "That host is no longer saved"
+        );
+        // A host whose execution context went missing gets it back first;
+        // what earlier checks found is kept.
+        ssh_hosts::save_and_sync_contexts(&self.0.store, &hosts)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        let context = context_probe::probe_and_store_with_runner(
+            &self.0.store,
+            &format!("ssh:{alias}"),
+            runner,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        EnvironmentCheck::of(alias, &context).context("The check was not recorded")
     }
 
     /// Forgets an SSH host. Runs that were made on it keep their records.
@@ -2691,6 +2734,44 @@ pub struct EnvironmentsView {
     pub default: Option<String>,
     /// Hosts named in `~/.ssh/config` that are not added yet.
     pub config_aliases: Vec<String>,
+    /// What the last check of each host found; a host that was never
+    /// checked has none, and work cannot run on it yet.
+    pub checks: Vec<EnvironmentCheck>,
+}
+
+pub use wisp_runs::context_probe::ProbeResult;
+
+/// The last check of an SSH host: what it is, or why it cannot be used.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EnvironmentCheck {
+    pub alias: String,
+    /// When it was checked, in seconds since 1970.
+    pub at: i64,
+    /// Why the host could not be used. Work is refused until a check passes.
+    pub error: Option<String>,
+    /// What answered, when something did.
+    pub found: Option<ProbeResult>,
+}
+
+impl EnvironmentCheck {
+    fn of(alias: &str, context: &wisp_store::ExecutionContext) -> Option<Self> {
+        let at = context.last_probe_at?;
+        let passed = context.last_probe_status.as_deref() == Some("ok");
+        Some(Self {
+            alias: alias.to_owned(),
+            at,
+            error: (!passed).then(|| {
+                context
+                    .last_probe_error
+                    .clone()
+                    .filter(|error| !error.trim().is_empty())
+                    .unwrap_or_else(|| "The check failed".into())
+            }),
+            found: passed
+                .then(|| serde_json::from_str(&context.capabilities_json).ok())
+                .flatten(),
+        })
+    }
 }
 
 pub use crate::mcp::{McpServer, McpTransport};

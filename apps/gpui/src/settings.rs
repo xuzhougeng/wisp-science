@@ -4,7 +4,8 @@ use wisp_dto::NetworkSettings;
 use wisp_server::{
     config::default_api_url,
     desktop::{
-        ConnectorRow, McpTransport, ModelProfile, ModelSettings, ModelSource, SkillRow, SshHostRow,
+        ConnectorRow, EnvironmentCheck, McpTransport, ModelProfile, ModelSettings, ModelSource,
+        ProbeResult, SkillRow, SshHostRow,
     },
 };
 
@@ -269,6 +270,61 @@ pub fn ssh_target(host: &SshHostRow) -> String {
         line.push_str(&format!(" · via {}", host.proxy_jump));
     }
     line
+}
+
+/// What the last check of a host found, as labelled facts in the order
+/// they matter when choosing where to run something.
+pub fn check_facts(found: &ProbeResult) -> Vec<(&'static str, String)> {
+    let known = |value: &Option<String>| value.clone().filter(|text| !text.trim().is_empty());
+    let mut facts = Vec::new();
+    let system: Vec<String> = [&found.hostname, &found.os, &found.arch]
+        .into_iter()
+        .filter_map(known)
+        .collect();
+    if !system.is_empty() {
+        facts.push(("System", system.join(" · ")));
+    }
+    if let Some(count) = found.cpu_count {
+        facts.push(("Processors", count.to_string()));
+    }
+    // The model is told not to plan GPU work without one, so say so here.
+    facts.push((
+        "GPU",
+        known(&found.gpu_summary).unwrap_or_else(|| "None found".into()),
+    ));
+    if let Some(scheduler) = known(&found.scheduler) {
+        facts.push(("Scheduler", scheduler));
+    }
+    let interpreter =
+        |version: &Option<String>, path: &Option<String>| match (known(version), known(path)) {
+            (Some(version), Some(path)) => Some(format!("{version} · {path}")),
+            (version, path) => version.or(path),
+        };
+    if let Some(python) = interpreter(&found.python_version, &found.python_executable) {
+        facts.push(("Python", python));
+    }
+    if let Some(r) = interpreter(&found.r_version, &found.rscript_executable) {
+        facts.push(("R", r));
+    }
+    facts
+}
+
+/// Whether work can run on a host, on one line. `checking` is true while a
+/// check of this host is under way.
+pub fn check_line(check: Option<&EnvironmentCheck>, checking: bool, now: i64) -> String {
+    if checking {
+        return "Checking…".into();
+    }
+    match check {
+        None => "Not checked yet. Work runs here only after a check passes.".into(),
+        Some(check) => {
+            let when = crate::home::age(now, check.at);
+            match &check.error {
+                None => format!("Reachable · checked {when}"),
+                Some(_) => format!("Could not be used · checked {when}"),
+            }
+        }
+    }
 }
 
 /// Reads the port field: empty leaves it to SSH, anything else must be a
@@ -815,6 +871,58 @@ mod tests {
         assert_eq!(
             route_note(" socks5://localhost:1080 "),
             "Through socks5://localhost:1080"
+        );
+    }
+
+    #[test]
+    fn a_check_says_whether_work_can_run_and_what_the_host_is() {
+        let now = 1_800_000_000;
+        assert!(check_line(None, false, now).starts_with("Not checked yet"));
+        assert_eq!(check_line(None, true, now), "Checking…");
+        let check = |error: Option<&str>, found: Option<ProbeResult>| EnvironmentCheck {
+            alias: "gpu".into(),
+            at: now - 120,
+            error: error.map(String::from),
+            found,
+        };
+        assert_eq!(
+            check_line(Some(&check(None, None)), false, now),
+            "Reachable · checked 2 min ago"
+        );
+        assert_eq!(
+            check_line(Some(&check(Some("refused"), None)), false, now),
+            "Could not be used · checked 2 min ago"
+        );
+        // While it is checked again the old verdict is not repeated.
+        assert_eq!(check_line(Some(&check(None, None)), true, now), "Checking…");
+
+        let found = ProbeResult {
+            os: Some("Linux".into()),
+            arch: Some("x86_64".into()),
+            hostname: Some("lab-node-7".into()),
+            cpu_count: Some(64),
+            scheduler: Some("slurm".into()),
+            python_executable: Some("/opt/conda/bin/python3".into()),
+            python_version: Some("3.11.9".into()),
+            rscript_executable: Some("/usr/bin/Rscript".into()),
+            gpu_summary: Some("  ".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            check_facts(&found),
+            [
+                ("System", "lab-node-7 · Linux · x86_64".to_string()),
+                ("Processors", "64".to_string()),
+                // No GPU is said, not left out: it decides where work goes.
+                ("GPU", "None found".to_string()),
+                ("Scheduler", "slurm".to_string()),
+                ("Python", "3.11.9 · /opt/conda/bin/python3".to_string()),
+                ("R", "/usr/bin/Rscript".to_string()),
+            ]
+        );
+        assert_eq!(
+            check_facts(&ProbeResult::default()),
+            [("GPU", "None found".to_string())]
         );
     }
 }

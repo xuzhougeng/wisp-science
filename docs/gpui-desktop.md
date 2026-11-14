@@ -133,7 +133,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Branch | Under a reply: a new conversation holding everything through that turn, opened at once and listed under the one it came from |
 | Search | Titles and message text across the project, archived conversations included |
 | Command palette | One box over everything: projects, files by name in every project, conversations by title or message text, and the window's commands; arrow keys, Return, Escape |
-| Settings | Pages: General (appearance: system, light or dark; what the app opens on), Network (a route for model requests, for connectors and MCP servers, and for the code the model runs; a conda mirror, a Python package index and a CA bundle the model is told to use), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold), Skills (every skill with where it comes from, search, on or off), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Environments (the SSH hosts work can run on: add, change, remove, add from `~/.ssh/config`, and which one new work goes to), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
+| Settings | Pages: General (appearance: system, light or dark; what the app opens on), Network (a route for model requests, for connectors and MCP servers, and for the code the model runs; a conda mirror, a Python package index and a CA bundle the model is told to use), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold), Skills (every skill with where it comes from, search, on or off), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Environments (the SSH hosts work can run on: add, change, remove, add from `~/.ssh/config`, check the connection and see what the host is, and which one new work goes to), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
 | Inbox | Conversations in any project that are waiting for you; opens across projects |
 | Read state | A finished answer is marked read once it is on screen in the active window |
 | Transcript | Virtualized Markdown, selectable text, paginated history |
@@ -273,16 +273,21 @@ Limits of this slice:
   ported; the sign-in route a WebView database carries is kept as it is.
 - Environments keeps SSH hosts in the WebView's list (`ssh_hosts`) and
   registers each as the execution context `ssh:<name>`, which is what the
-  model passes to `run_in_context`; the turn's prompt names them and the one
-  new work goes to. A host is a name plus either an address or nothing at
-  all, in which case OpenSSH resolves the name from `~/.ssh/config`. Wisp
-  keeps the path of a key file, never the key, and signs in with your keys,
-  agent and config; password sign-in is not ported, so a host that needs one
-  cannot be used from here. Nothing on the page connects: there is no test or
-  probe, so a wrong address shows only when a run fails. WSL, interpreter
-  paths, scratch and storage locations, and choosing an environment for one
-  conversation are not ported. Removing a host keeps the records of runs
-  made on it and puts new work back on this computer if it was the default.
+  model passes to `run_in_context`. Every turn's prompt names them and the
+  one new work goes to, in a conversation that was started earlier too. A
+  host is a name plus either an address or nothing at all, in which case
+  OpenSSH resolves the name from `~/.ssh/config`. Wisp keeps the path of a
+  key file, never the key, and signs in with your keys, agent and config;
+  password sign-in is not ported, so a host that needs one cannot be used
+  from here. Work is refused on a host until a check of it has passed: Check
+  connects once, without prompting, and records the system, processors,
+  GPUs, scheduler and the Python and R it found, which is also what the
+  model is told about the host; a check that fails records why, and the
+  model is told not to try the host. The check is the WebView's probe
+  (`wisp_runs::context_probe`). WSL, interpreter paths set by hand, scratch
+  and storage locations, and choosing an environment for one conversation
+  are not ported. Removing a host keeps the records of runs made on it and
+  puts new work back on this computer if it was the default.
 - Conversation settings apply to every turn this host runs from the next one
   on, a paired phone's included. Steps per turn replaces the `WISP_MAX_ITER`
   the host was started with once it is saved; at the limit the model is asked
@@ -537,9 +542,12 @@ Press Remove, then Escape (Settings stays), then remove it.
 Open Environments: add an SSH host with a name and an address and confirm it
 is listed as `user@address`; press Add again, then Escape (the form closes,
 Settings stays). With hosts in `~/.ssh/config`, add one from the list and
-then the rest with Add all; a `Host *` pattern is not offered. Choose a host
-under "New work runs on", ask the model where it would run a job and confirm
-it names that host; with a reachable host, start a run on it. Press Remove,
+then the rest with Add all; a `Host *` pattern is not offered. Press Check on
+a host that cannot be reached and confirm it says so with OpenSSH's reason;
+on a reachable host confirm it lists the system, processors, GPU, scheduler
+and interpreters. Choose a host under "New work runs on", ask the model
+where it would run a job and confirm it names that host; start a run on a
+checked host, and confirm one on an unchecked host is refused. Press Remove,
 then Escape, then remove the host and confirm new work is back on this
 computer.
 Open Network: save a model route that cannot be reached (for example

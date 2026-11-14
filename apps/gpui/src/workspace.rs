@@ -154,6 +154,8 @@ pub struct Workspace {
     /// The host the form changes or the remove question is about; `None`
     /// in the form means a new one.
     env_target: Option<String>,
+    /// The hosts being checked right now.
+    env_checking: std::collections::HashSet<String>,
     /// The host form's fields: name, address, user, port, key file, jump
     /// host, notes.
     env_fields: [Entity<InputState>; 7],
@@ -448,6 +450,7 @@ impl Workspace {
             network_fields,
             network_saved: false,
             env_target: None,
+            env_checking: Default::default(),
             env_fields,
             mcp_servers: None,
             mcp_editing: None,

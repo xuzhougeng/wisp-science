@@ -3,7 +3,7 @@
 //! layers inside Settings.
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Selectable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     input::Input,
 };
@@ -119,6 +119,30 @@ impl Workspace {
         );
     }
 
+    /// Connects to `alias` now. What it found, or why it failed, is part of
+    /// the list that is read again afterwards.
+    fn check_environment(&mut self, alias: String, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.env_checking.insert(alias.clone()) {
+            return;
+        }
+        self.settings_error = None;
+        let reply = self.backend.check_environment(alias.clone());
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.env_checking.remove(&alias);
+                // Only a host that is no longer saved is an error here.
+                if let Err(error) = result {
+                    this.settings_error = Some(error);
+                }
+                this.load_environments(window, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn remove_environment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.layers.contains(Layer::ConfirmRemoveEnvironment) {
             return;
@@ -210,6 +234,10 @@ impl Workspace {
         let Some(view) = &self.environments else {
             return page.child(div().text_sm().text_color(muted).child("Loading…"));
         };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs() as i64)
+            .unwrap_or(0);
         let place = |id: SharedString, label: String, alias: Option<String>| {
             let chosen = view.default == alias;
             Button::new(id)
@@ -267,7 +295,8 @@ impl Workspace {
                             )
                             .child(div().text_xs().text_color(muted).child(
                                 "Servers and clusters the model may start runs on. Wisp signs \
-                                 in with your SSH keys, agent and config.",
+                                 in with your SSH keys, agent and config. Check a host once \
+                                 it is added: work runs on it only after a check passes.",
                             )),
                     )
                     .child(
@@ -312,6 +341,38 @@ impl Workspace {
             if !host.notes.is_empty() {
                 about = about.child(div().text_xs().text_color(muted).child(host.notes.clone()));
             }
+            let check = view.checks.iter().find(|check| check.alias == host.alias);
+            let checking = self.env_checking.contains(&host.alias);
+            let failed = !checking && check.is_some_and(|check| check.error.is_some());
+            about = about.child(
+                div()
+                    .text_xs()
+                    .text_color(if failed { cx.theme().danger } else { muted })
+                    .child(settings::check_line(check, checking, now)),
+            );
+            if let Some(check) = check.filter(|_| !checking) {
+                if let Some(error) = &check.error {
+                    about = about.child(div().text_xs().text_color(muted).child(error.clone()));
+                }
+                for (label, value) in check.found.iter().flat_map(settings::check_facts) {
+                    about = about.child(
+                        div()
+                            .h_flex()
+                            .items_start()
+                            .gap_2()
+                            .text_xs()
+                            .child(
+                                div()
+                                    .w(px(84.))
+                                    .flex_shrink_0()
+                                    .text_color(muted)
+                                    .child(label),
+                            )
+                            .child(div().child(value)),
+                    );
+                }
+            }
+            let checked = host.alias.clone();
             let actions = if asking {
                 div()
                     .h_flex()
@@ -339,6 +400,25 @@ impl Workspace {
                 div()
                     .h_flex()
                     .gap_1()
+                    .child(
+                        Button::new(SharedString::from(format!(
+                            "environment-check-{}",
+                            host.alias
+                        )))
+                        .label(if check.is_some() {
+                            "Check again"
+                        } else {
+                            "Check"
+                        })
+                        .xsmall()
+                        .disabled(checking)
+                        .tooltip("Connect now and see what the host is")
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.check_environment(checked.clone(), window, cx)
+                            },
+                        )),
+                    )
                     .child(
                         Button::new(SharedString::from(format!(
                             "environment-edit-{}",

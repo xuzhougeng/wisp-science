@@ -3741,3 +3741,164 @@ async fn network_routes_reach_the_model_and_mcp_servers_and_mirrors_reach_the_pr
     );
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn checking_an_ssh_host_records_what_it_is_and_tells_the_model() {
+    use desktop::SshHostRow;
+    use wisp_runs::context_probe::{ProbeCommand, ProbeCommandOutput, ProbeRunner};
+
+    // Stands in for OpenSSH: answers the probe's one command with what the
+    // host "is", or fails the way a refused login does.
+    struct Host {
+        answers: Result<Vec<(&'static str, &'static str)>, &'static str>,
+        asked: Vec<ProbeCommand>,
+    }
+    impl ProbeRunner for Host {
+        fn run(&mut self, command: &ProbeCommand) -> Result<ProbeCommandOutput, String> {
+            self.asked.push(command.clone());
+            Ok(match &self.answers {
+                Ok(values) => ProbeCommandOutput {
+                    status: 0,
+                    stdout: values
+                        .iter()
+                        .map(|(key, value)| {
+                            format!(
+                                "__WISP_PROBE_VALUE_BEGIN__:{key}\n{value}\n\
+                                 __WISP_PROBE_VALUE_END__:{key}\n"
+                            )
+                        })
+                        .collect::<String>()
+                        .into_bytes(),
+                    stderr: String::new(),
+                },
+                Err(why) => ProbeCommandOutput {
+                    status: 255,
+                    stdout: vec![],
+                    stderr: (*why).into(),
+                },
+            })
+        }
+    }
+
+    let shown: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let seen = shown.clone();
+    let factory: ModelFactory = Arc::new(move |_| Box::new(Everything(seen.clone())));
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    server
+        .save_ssh_host(SshHostRow {
+            alias: "lab-probe".into(),
+            host_name: "10.0.0.9".into(),
+            user: "lab".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    // Never checked: there is nothing to show, and no host of that name
+    // is checked by mistake.
+    assert!(server.environments().await.unwrap().checks.is_empty());
+    let mut nobody = Host {
+        answers: Ok(vec![]),
+        asked: vec![],
+    };
+    assert!(server
+        .check_environment_with("missing", &mut nobody)
+        .await
+        .is_err());
+    assert!(nobody.asked.is_empty());
+
+    // A refused login is recorded, not raised, and says what to look at.
+    let mut refusing = Host {
+        answers: Err("lab@10.0.0.9: Permission denied (publickey)."),
+        asked: vec![],
+    };
+    let failed = server
+        .check_environment_with("lab-probe", &mut refusing)
+        .await
+        .unwrap();
+    assert!(failed.found.is_none());
+    let why = failed.error.clone().unwrap();
+    assert!(why.contains("key authentication failed"), "{why}");
+    // It asked the saved host, as the saved user, without a prompt.
+    assert_eq!(refusing.asked.len(), 1);
+    assert_eq!(refusing.asked[0].program, "ssh");
+    let args = refusing.asked[0].args.join(" ");
+    assert!(
+        args.contains("BatchMode=yes") && args.contains("lab@10.0.0.9"),
+        "{args}"
+    );
+    assert_eq!(server.environments().await.unwrap().checks, [failed]);
+
+    // The model is told not to use a host whose check failed.
+    let session = create(&server).await;
+    send(&server, &session, "go").await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    let prompt = || shown.lock().unwrap().join("\n");
+    assert!(prompt().contains("ssh:lab-probe"));
+    assert!(prompt().contains("last probe failed"), "{}", prompt());
+
+    // Checked again, it answers: what it is is kept and shown.
+    let mut answering = Host {
+        answers: Ok(vec![
+            ("os", "Linux"),
+            ("arch", "x86_64"),
+            ("hostname", "lab-node-7"),
+            ("cpu_count", "64"),
+            ("gpu_summary", "NVIDIA A100 x4"),
+            ("scheduler", "/usr/bin/sbatch"),
+            ("python_executable", "/opt/conda/bin/python3"),
+            ("python_version", "3.11.9"),
+        ]),
+        asked: vec![],
+    };
+    let passed = server
+        .check_environment_with("lab-probe", &mut answering)
+        .await
+        .unwrap();
+    assert_eq!(passed.error, None);
+    let found = passed.found.clone().unwrap();
+    assert_eq!(found.hostname.as_deref(), Some("lab-node-7"));
+    assert_eq!(found.cpu_count, Some(64));
+    assert_eq!(found.scheduler.as_deref(), Some("slurm"));
+    assert_eq!(
+        found.python_executable.as_deref(),
+        Some("/opt/conda/bin/python3")
+    );
+    assert_eq!(server.environments().await.unwrap().checks, [passed]);
+    shown.lock().unwrap().clear();
+    send(&server, &session, "again").await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    assert!(!prompt().contains("last probe failed"), "{}", prompt());
+
+    // Changing the host's notes does not forget that it was checked.
+    server
+        .save_ssh_host(SshHostRow {
+            alias: "lab-probe".into(),
+            host_name: "10.0.0.9".into(),
+            user: "lab".into(),
+            notes: "four A100".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let after = server.environments().await.unwrap();
+    assert_eq!(after.checks.len(), 1);
+    assert!(after.checks[0].found.is_some());
+
+    // A saved host whose execution context is missing can still be checked.
+    server
+        .0
+        .store
+        .delete_execution_context("ssh:lab-probe")
+        .await
+        .unwrap();
+    assert!(server.environments().await.unwrap().checks.is_empty());
+    let again = server
+        .check_environment_with("lab-probe", &mut answering)
+        .await
+        .unwrap();
+    assert!(again.found.is_some());
+    server.shutdown().await;
+}

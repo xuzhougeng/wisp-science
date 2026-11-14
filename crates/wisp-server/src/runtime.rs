@@ -165,6 +165,42 @@ pub(crate) async fn project_grants(store: &Store, project: &str) -> Vec<String> 
     tools
 }
 
+const RUNS_HEADING: &str = "## Runs\n";
+const CONTEXTS_HEADING: &str = "## Compute contexts\n";
+
+/// Makes a saved system prompt list the compute contexts `compute` lists,
+/// where `compute` is what a new conversation's prompt would be given. Only
+/// the section right after the Runs guidance is touched, so the same
+/// heading inside project instructions is left alone; a prompt without the
+/// Runs guidance is left as it is.
+fn sync_compute_contexts(prompt: &mut String, compute: &str) {
+    let section = compute
+        .find(&format!("\n{CONTEXTS_HEADING}"))
+        .map(|at| compute[at + 1..].trim_end());
+    let Some(runs) = prompt.find(&format!("\n{RUNS_HEADING}")) else {
+        return;
+    };
+    // Where the section that starts at `from` stops: at the next heading.
+    let end_of = |prompt: &str, from: usize| {
+        prompt[from..]
+            .find("\n\n## ")
+            .map_or(prompt.len(), |offset| from + offset)
+    };
+    let runs_end = end_of(prompt, runs + 1);
+    let after = prompt[runs_end..].trim_start();
+    let old_end = if after.starts_with(CONTEXTS_HEADING) {
+        end_of(prompt, prompt.len() - after.len())
+    } else {
+        runs_end
+    };
+    let head = prompt[..runs_end].trim_end();
+    let tail = &prompt[old_end..];
+    *prompt = match section {
+        Some(section) => format!("{head}\n\n{section}{tail}"),
+        None => format!("{head}{tail}"),
+    };
+}
+
 pub async fn build(
     config: &Config,
     model: &ModelConfig,
@@ -239,11 +275,8 @@ pub async fn build(
     agent.ctx.supports_vision = model.supports_vision;
     let repaired = wisp_core::repair_unpaired_tool_calls(&mut agent.ctx.messages);
     // The server configures its own skill paths and does not read ~/.wisp.
-    agent.seed_system_prompt(
-        &skills,
-        Some(wisp_runs::cli_compute_section(store).await),
-        None,
-    );
+    let compute = wisp_runs::cli_compute_section(store).await;
+    agent.seed_system_prompt(&skills, Some(compute.clone()), None);
     // Plan mode is part of the system prompt, so switching it applies from
     // the next turn and the saved prompt always says which mode it was.
     if let Some(wisp_llm::Content::Text(prompt)) = agent
@@ -254,6 +287,9 @@ pub async fn build(
         .map(|message| &mut message.content)
     {
         wisp_tools::plan::sync_plan_prompt(prompt, plan_mode);
+        // A conversation that was started before a host was added, checked
+        // or made the default is told about it from its next turn.
+        sync_compute_contexts(prompt, &compute);
         // Where packages come from is part of the prompt too, for the same
         // reason: it applies from the next turn.
         crate::network::sync_package_guidance(prompt, &network);
@@ -761,6 +797,42 @@ pub fn items(messages: &[Message]) -> Vec<Item> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_compute_contexts_in_a_saved_prompt_follow_what_is_registered_now() {
+        let runs = "## Runs\n\nUse run_in_context.\n";
+        let with = |hosts: &str| format!("{runs}\n## Compute contexts\n\n{hosts}\n");
+        let saved = |middle: &str| {
+            format!(
+                "Intro\n\n{}{middle}\n\n## Project Instructions\n\n\
+                 ## Compute contexts\n\nours, not the host's\n\n## Environment\n\ncwd",
+                runs.trim_end()
+            )
+        };
+        // A host is added to a conversation that had none.
+        let mut prompt = saved("");
+        sync_compute_contexts(&mut prompt, &with("- ssh:gpu"));
+        let one = saved("\n\n## Compute contexts\n\n- ssh:gpu");
+        assert_eq!(prompt, one);
+        // Saying the same again changes nothing.
+        sync_compute_contexts(&mut prompt, &with("- ssh:gpu"));
+        assert_eq!(prompt, one);
+        // What is listed is replaced, not added to.
+        sync_compute_contexts(&mut prompt, &with("- ssh:gpu — checked\n- ssh:lab"));
+        assert_eq!(
+            prompt,
+            saved("\n\n## Compute contexts\n\n- ssh:gpu — checked\n- ssh:lab")
+        );
+        // With no host left the section goes; the project's own heading of
+        // the same name was never touched.
+        sync_compute_contexts(&mut prompt, runs);
+        assert_eq!(prompt, saved(""));
+        // A prompt that never had the Runs guidance is left alone.
+        let mut old = String::from("Intro\n\n## Environment\n\ncwd");
+        sync_compute_contexts(&mut old, &with("- ssh:gpu"));
+        assert_eq!(old, "Intro\n\n## Environment\n\ncwd");
+    }
+
     #[test]
     fn transcript_hides_system_messages_and_preserves_unicode() {
         let rows = items(&[
