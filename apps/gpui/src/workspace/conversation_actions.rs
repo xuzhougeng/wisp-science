@@ -1,5 +1,5 @@
-//! Rename, pin, archive and delete for the open conversation. Rename and the
-//! delete confirmation are layers in the window's Escape stack.
+//! Rename, pin, group, move, archive and delete for the open conversation.
+//! What the bar turns into or opens is a layer in the window's Escape stack.
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
@@ -34,6 +34,7 @@ impl Workspace {
     ) {
         self.pending = true;
         self.error = None;
+        self.notice = None;
         let selection = self.state.selection();
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
@@ -59,8 +60,7 @@ impl Workspace {
         let Some(title) = self.current_row().map(|row| row.title.clone()) else {
             return;
         };
-        self.layers.close(Layer::ConfirmDelete);
-        self.layers.open(Layer::Rename);
+        self.layers.switch(Layer::Rename, &Layer::CONVERSATION_BAR);
         self.rename.update(cx, |input, cx| {
             input.set_value(title, window, cx);
             input.focus(window, cx);
@@ -128,8 +128,8 @@ impl Workspace {
     }
 
     fn confirm_delete(&mut self, cx: &mut Context<Self>) {
-        self.layers.close(Layer::Rename);
-        self.layers.open(Layer::ConfirmDelete);
+        self.layers
+            .switch(Layer::ConfirmDelete, &Layer::CONVERSATION_BAR);
         cx.notify();
     }
 
@@ -155,7 +155,7 @@ impl Workspace {
     }
 
     /// Closes the open conversation; the next list load selects another.
-    fn leave_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn leave_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.choose(self.state.project.clone(), None);
         self.clear_transcript();
         self.composer
@@ -254,6 +254,8 @@ impl Workspace {
                     .disabled(busy || archived)
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_pin(window, cx))),
             )
+            .child(self.group_button(busy || archived, cx))
+            .child(self.transfer_button(busy || running, cx))
             .child(
                 Button::new("conversation-archive")
                     .label(if archived { "Unarchive" } else { "Archive" })

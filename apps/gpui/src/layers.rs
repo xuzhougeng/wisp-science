@@ -27,11 +27,47 @@ pub enum Layer {
     ModelMenu,
     /// Confirmation in Settings before a saved model is removed.
     ConfirmDeleteModel,
+    /// Sort and grouping choices under the conversation list's heading.
+    SortMenu,
+    /// Select mode: sidebar rows are picked instead of opened.
+    SelectMode,
+    /// Groups the picked conversations can be moved to.
+    BatchGroupMenu,
+    /// Confirmation before the picked conversations are deleted.
+    ConfirmBatchDelete,
+    /// Name field for a new group or one being renamed.
+    FolderName,
+    /// Actions for one group, shown under its heading.
+    FolderMenu,
+    /// Confirmation before a group is deleted.
+    ConfirmDeleteFolder,
+    /// Groups the open conversation can be put in.
+    GroupMenu,
+    /// Projects the open conversation can be copied or moved to.
+    TransferMenu,
 }
 
 impl Layer {
     /// Menus that open above the composer; only one shows at a time.
     pub const COMPOSER_MENUS: [Layer; 2] = [Layer::EffortMenu, Layer::ModelMenu];
+    /// What the row under the conversation's title can turn into, one at a
+    /// time.
+    pub const CONVERSATION_BAR: [Layer; 4] = [
+        Layer::Rename,
+        Layer::ConfirmDelete,
+        Layer::GroupMenu,
+        Layer::TransferMenu,
+    ];
+    /// Small surfaces of the sidebar's conversation list, one at a time.
+    /// Select mode is not one of them: it is a mode they can open inside.
+    pub const SIDEBAR: [Layer; 6] = [
+        Layer::SortMenu,
+        Layer::BatchGroupMenu,
+        Layer::ConfirmBatchDelete,
+        Layer::FolderName,
+        Layer::FolderMenu,
+        Layer::ConfirmDeleteFolder,
+    ];
 }
 
 impl Layer {
@@ -40,6 +76,7 @@ impl Layer {
         match self {
             Layer::FilePreview => Some(Layer::FilesPanel),
             Layer::ConfirmDeleteModel => Some(Layer::Settings),
+            Layer::BatchGroupMenu | Layer::ConfirmBatchDelete => Some(Layer::SelectMode),
             _ => None,
         }
     }
@@ -65,6 +102,16 @@ impl EscapeStack {
         let open = self.0.contains(&layer);
         self.0.retain(|other| !other.within(layer));
         open
+    }
+
+    /// Opens `layer` in place of whichever other member of `set` is open.
+    pub fn switch(&mut self, layer: Layer, set: &[Layer]) {
+        for other in set {
+            if *other != layer {
+                self.close(*other);
+            }
+        }
+        self.open(layer);
     }
 
     /// Closes only the topmost surface and reports which one it was.
@@ -200,6 +247,36 @@ mod tests {
         assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmFullAccess));
         assert!(stack.contains(Layer::FilesPanel));
         assert!(!stack.close(Layer::EffortMenu));
+    }
+
+    #[test]
+    fn select_mode_holds_its_menus_and_bar_surfaces_replace_each_other() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::SelectMode);
+        stack.switch(Layer::BatchGroupMenu, &Layer::SIDEBAR);
+        stack.switch(Layer::ConfirmBatchDelete, &Layer::SIDEBAR);
+        assert!(!stack.contains(Layer::BatchGroupMenu));
+        // Escape answers the question first; select mode stays.
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmBatchDelete));
+        assert!(stack.contains(Layer::SelectMode));
+        // Leaving select mode takes whatever it had open with it.
+        stack.open(Layer::BatchGroupMenu);
+        assert!(stack.close(Layer::SelectMode));
+        assert!(!stack.contains(Layer::BatchGroupMenu));
+
+        // A group's menu is not part of select mode and outlives it.
+        stack.open(Layer::SelectMode);
+        stack.switch(Layer::FolderMenu, &Layer::SIDEBAR);
+        assert!(stack.close(Layer::SelectMode));
+        assert_eq!(stack.dismiss_top(), Some(Layer::FolderMenu));
+
+        stack.switch(Layer::Rename, &Layer::CONVERSATION_BAR);
+        stack.switch(Layer::TransferMenu, &Layer::CONVERSATION_BAR);
+        assert!(!stack.contains(Layer::Rename));
+        stack.switch(Layer::SortMenu, &Layer::SIDEBAR);
+        assert_eq!(stack.dismiss_top(), Some(Layer::SortMenu));
+        assert_eq!(stack.dismiss_top(), Some(Layer::TransferMenu));
+        assert_eq!(stack.dismiss_top(), None);
     }
 
     #[test]

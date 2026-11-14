@@ -1,6 +1,7 @@
 mod conversation_actions;
 mod files_panel;
 mod home_view;
+mod organise_view;
 mod palette_view;
 mod panel_tabs;
 mod settings_view;
@@ -23,7 +24,7 @@ use wisp_dto::{
 };
 
 use wisp_dto::native_conversations::SendRequest;
-use wisp_server::desktop::{ArtifactRow, ConversationOptions, ConversationStatus};
+use wisp_server::desktop::{ArtifactRow, ConversationOptions, ConversationStatus, Folder};
 
 use crate::{
     backend::{Backend, receive},
@@ -32,6 +33,7 @@ use crate::{
     files::FilesState,
     home::{self, Screen},
     layers::{EscapeStack, Layer, Shortcut, is_escape, shortcut},
+    organise::{self, Arrangement, Picks},
     palette::{self, PaletteState},
     panel::{self, PanelTab},
     present::{self, Tone},
@@ -72,6 +74,24 @@ pub struct Workspace {
     show_archived: bool,
     /// Only the latest list request may replace the rows on screen.
     list_request: u64,
+    /// How the conversation list is sorted and sectioned.
+    arrangement: Arrangement,
+    /// The project's groups, in the user's order.
+    folders: Vec<Folder>,
+    /// Conversation id to the id of its group.
+    grouped: HashMap<String, String>,
+    /// Keys of the sections that are folded.
+    collapsed: HashSet<String>,
+    /// Conversations picked in select mode.
+    picks: Picks,
+    /// The group whose actions, name field or delete question is showing.
+    /// `None` while the name field is open means a new group.
+    folder_target: Option<String>,
+    folder_name: Entity<InputState>,
+    /// The transfer menu copies instead of moving.
+    transfer_copy: bool,
+    /// Something that went as asked and is worth a line.
+    notice: Option<String>,
     rename: Entity<InputState>,
     settings: settings_view::SettingsForm,
     composer: Entity<InputState>,
@@ -133,6 +153,7 @@ impl Workspace {
         });
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search conversations…"));
         let rename = cx.new(|cx| InputState::new(window, cx).placeholder("Conversation title"));
+        let folder_name = cx.new(|cx| InputState::new(window, cx).placeholder("Group name"));
         let settings = settings_view::SettingsForm::new(window, cx);
         let palette_input = cx.new(|cx| {
             InputState::new(window, cx).placeholder("Search conversations, projects and files…")
@@ -176,6 +197,11 @@ impl Workspace {
             cx.subscribe_in(&rename, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::PressEnter { .. }) {
                     this.save_rename(window, cx);
+                }
+            }),
+            cx.subscribe_in(&folder_name, window, |this, _, event, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    this.save_folder_name(window, cx);
                 }
             }),
             // Window-level and ahead of key dispatch: Escape closes the topmost
@@ -239,6 +265,15 @@ impl Workspace {
             pinned: vec![],
             show_archived: false,
             list_request: 0,
+            arrangement: Arrangement::default(),
+            folders: vec![],
+            grouped: HashMap::new(),
+            collapsed: HashSet::new(),
+            picks: Picks::default(),
+            folder_target: None,
+            folder_name,
+            transfer_copy: false,
+            notice: None,
             rename,
             settings,
             composer,
@@ -289,6 +324,20 @@ impl Workspace {
             ) => self.focus_composer(window, cx),
             // Settings stays open underneath and keeps its focus.
             Some(Layer::ConfirmDeleteModel) => {}
+            Some(Layer::SelectMode) => self.picks.clear(),
+            Some(Layer::FolderName) => {
+                self.folder_target = None;
+                self.focus_composer(window, cx);
+            }
+            Some(Layer::FolderMenu | Layer::ConfirmDeleteFolder) => self.folder_target = None,
+            // Menus and questions that hold no focus of their own.
+            Some(
+                Layer::SortMenu
+                | Layer::BatchGroupMenu
+                | Layer::ConfirmBatchDelete
+                | Layer::GroupMenu
+                | Layer::TransferMenu,
+            ) => {}
             None => return false,
         }
         cx.notify();
@@ -348,11 +397,23 @@ impl Workspace {
     fn choose(&mut self, project: Option<String>, session: Option<String>) {
         if self.state.project != project {
             self.layers.close(Layer::FilePreview);
+            // The list, its groups and the picks belong to the project.
+            self.layers.close(Layer::SelectMode);
+            for layer in Layer::SIDEBAR {
+                self.layers.close(layer);
+            }
+            self.picks.clear();
+            self.folders.clear();
+            self.grouped.clear();
+            self.folder_target = None;
+            self.notice = None;
         }
         // These act on the conversation that is being left.
         for layer in [
             Layer::Rename,
             Layer::ConfirmDelete,
+            Layer::GroupMenu,
+            Layer::TransferMenu,
             Layer::ConfirmFullAccess,
             Layer::EffortMenu,
             Layer::ModelMenu,
@@ -384,6 +445,7 @@ impl Workspace {
                         this.load_recent(window, cx);
                         this.load_inbox(window, cx);
                         this.load_model_settings(true, window, cx);
+                        this.load_arrangement(window, cx);
                     }
                     Err(error) => this.error = Some(error),
                 }
@@ -609,9 +671,14 @@ impl Workspace {
                         }
                         this.sessions = present::pinned_first(list.rows, &list.pinned);
                         this.pinned = list.pinned;
+                        this.folders = list.folders;
+                        this.grouped = list.grouped;
+                        this.picks.keep(&this.sessions);
                         if browsing && this.state.session.is_none() && !this.pending {
-                            if let Some(first) = this.sessions.first() {
-                                this.select_session(first.id.clone(), window, cx);
+                            // The first one on screen, whatever the sections.
+                            let shown = organise::visible(&this.session_rows(cx), &this.sessions);
+                            if let Some(first) = shown.into_iter().next() {
+                                this.select_session(first, window, cx);
                             }
                         }
                         this.mark_seen(window, cx);

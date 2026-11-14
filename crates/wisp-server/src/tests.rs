@@ -598,12 +598,30 @@ async fn a_running_conversation_is_not_archived_or_deleted() {
     send(&server, &session, "write the answer").await.unwrap();
     // The write tool waits for approval, which keeps the turn running.
     wait_for(&server, &session, |s| !s.approvals.is_empty()).await;
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
     for result in [
         server.archive_conversation(PROJECT, &session, true).await,
         server.delete_conversation(PROJECT, &session).await,
+        server
+            .transfer_conversation(PROJECT, &session, &lab, false)
+            .await
+            .map(|_| ()),
+        server
+            .transfer_conversation(PROJECT, &session, &lab, true)
+            .await
+            .map(|_| ()),
     ] {
         assert!(result.unwrap_err().to_string().contains("Stop the running"));
     }
+    // A batch reports the refusal instead of failing as a whole.
+    let report = server
+        .batch(PROJECT, &[session.clone()], desktop::BatchAction::Delete)
+        .await
+        .unwrap();
+    assert!(report.done.is_empty());
+    assert!(report.refused[0].1.contains("Stop the running"));
     server
         .pin_conversation(PROJECT, &session, true)
         .await
@@ -618,6 +636,269 @@ async fn a_running_conversation_is_not_archived_or_deleted() {
     .unwrap();
     wait_for(&server, &session, |s| !s.running).await;
     server.delete_conversation(PROJECT, &session).await.unwrap();
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn desktop_groups_batches_and_moves_conversations_between_projects() {
+    use desktop::{BatchAction, Folder};
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let alpha = create(&server).await;
+    let beta = create(&server).await;
+    let gamma = create(&server).await;
+    send(&server, &alpha, "sequence alignment plan")
+        .await
+        .unwrap();
+    wait_for(&server, &alpha, |s| !s.running).await;
+
+    // Groups: named, unique per project, in the order the user gives them.
+    let screens = server.create_folder(PROJECT, "  Screens ").await.unwrap();
+    assert_eq!(screens.name, "Screens");
+    let later = server.create_folder(PROJECT, "Later").await.unwrap();
+    for name in ["", "  ", "screens", &"x".repeat(61)] {
+        assert!(server.create_folder(PROJECT, name).await.is_err(), "{name}");
+    }
+    assert!(server.create_folder("missing", "Screens").await.is_err());
+    server
+        .reorder_folders(PROJECT, &[later.id.clone(), screens.id.clone()])
+        .await
+        .unwrap();
+    server
+        .rename_folder(PROJECT, &later.id, "Someday")
+        .await
+        .unwrap();
+    // A group may keep its own name, but not take another's.
+    server
+        .rename_folder(PROJECT, &later.id, "someday")
+        .await
+        .unwrap();
+    assert!(server
+        .rename_folder(PROJECT, &later.id, "Screens")
+        .await
+        .is_err());
+    assert!(server
+        .rename_folder(PROJECT, "missing", "Other")
+        .await
+        .is_err());
+
+    server
+        .group_conversation(PROJECT, &alpha, Some(&screens.id))
+        .await
+        .unwrap();
+    assert!(server
+        .group_conversation(PROJECT, &alpha, Some("missing"))
+        .await
+        .is_err());
+    assert!(server
+        .group_conversation("other-project", &alpha, None)
+        .await
+        .is_err());
+    let report = server
+        .batch(
+            PROJECT,
+            &[beta.clone(), gamma.clone(), "missing".into(), beta.clone()],
+            BatchAction::Group(Some(later.id.clone())),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.done, [beta.clone(), gamma.clone()]);
+    assert_eq!(report.refused.len(), 1);
+    assert_eq!(report.refused[0].0, "missing");
+    assert!(server
+        .batch(
+            PROJECT,
+            &[beta.clone()],
+            BatchAction::Group(Some("missing".into()))
+        )
+        .await
+        .is_err());
+
+    let list = server.conversations(PROJECT, "", false).await.unwrap();
+    assert_eq!(
+        list.folders,
+        [
+            Folder {
+                id: later.id.clone(),
+                name: "someday".into()
+            },
+            screens.clone()
+        ]
+    );
+    assert_eq!(list.grouped.get(&alpha), Some(&screens.id));
+    assert_eq!(list.grouped.get(&beta), Some(&later.id));
+    assert_eq!(list.grouped.get(&gamma), Some(&later.id));
+
+    // Taking a conversation out of its group, and deleting a group, keep
+    // the conversations.
+    server
+        .batch(PROJECT, &[gamma.clone()], BatchAction::Group(None))
+        .await
+        .unwrap();
+    server.delete_folder(PROJECT, &later.id).await.unwrap();
+    assert!(server.delete_folder(PROJECT, &later.id).await.is_err());
+    let list = server.conversations(PROJECT, "", false).await.unwrap();
+    assert_eq!(list.folders, [screens.clone()]);
+    assert_eq!(list.rows.len(), 3);
+    assert_eq!(list.grouped.len(), 1);
+
+    // Archive, restore and delete several at once.
+    let both = [beta.clone(), gamma.clone()];
+    let report = server
+        .batch(PROJECT, &both, BatchAction::Archive)
+        .await
+        .unwrap();
+    assert_eq!(report.done, both);
+    let archived = server.conversations(PROJECT, "", true).await.unwrap();
+    assert_eq!(archived.rows.len(), 2);
+    server
+        .batch(PROJECT, &[beta.clone()], BatchAction::Restore)
+        .await
+        .unwrap();
+    let report = server
+        .batch(PROJECT, &[gamma.clone()], BatchAction::Delete)
+        .await
+        .unwrap();
+    assert_eq!(report.done, [gamma.clone()]);
+    let ids = |list: desktop::ConversationList| {
+        let mut ids: Vec<_> = list.rows.into_iter().map(|row| row.id).collect();
+        ids.sort();
+        ids
+    };
+    let mut kept = vec![alpha.clone(), beta.clone()];
+    kept.sort();
+    assert_eq!(
+        ids(server.conversations(PROJECT, "", false).await.unwrap()),
+        kept
+    );
+    assert!(server
+        .conversations(PROJECT, "", true)
+        .await
+        .unwrap()
+        .rows
+        .is_empty());
+
+    // How the sidebar is arranged is remembered, in its own key space.
+    assert_eq!(server.preference("sidebar").await.unwrap(), None);
+    server.set_preference("sidebar", "date,name").await.unwrap();
+    assert_eq!(
+        server.preference("sidebar").await.unwrap().as_deref(),
+        Some("date,name")
+    );
+    for name in ["", "desktop.models", "Side Bar", &"x".repeat(41)] {
+        assert!(server.set_preference(name, "x").await.is_err(), "{name}");
+        assert!(server.preference(name).await.is_err(), "{name}");
+    }
+    assert!(server
+        .set_preference("sidebar", &"x".repeat(2_001))
+        .await
+        .is_err());
+
+    // Copy and move to another project. The transcript goes; the choice to
+    // stop asking for approvals does not.
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    server
+        .set_conversation_options(
+            PROJECT,
+            &alpha,
+            desktop::ConversationOptions {
+                full_access: true,
+                plan_first: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(server
+        .transfer_conversation(PROJECT, &alpha, PROJECT, true)
+        .await
+        .is_err());
+    assert!(server
+        .transfer_conversation(PROJECT, &alpha, "missing", true)
+        .await
+        .is_err());
+    assert!(server
+        .transfer_conversation(&lab, &alpha, PROJECT, true)
+        .await
+        .is_err());
+    let transcript = |project: String, id: String| {
+        let server = &server;
+        async move {
+            let value = call(
+                server,
+                "native_conversation_snapshot",
+                &project,
+                json!({"session_id": id}),
+            )
+            .await
+            .unwrap();
+            serde_json::from_value::<dto::Snapshot>(value)
+                .unwrap()
+                .items
+                .into_iter()
+                .map(|item| item.text)
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+    };
+    let original = transcript(PROJECT.into(), alpha.clone()).await;
+    assert!(original.contains("sequence alignment plan"));
+
+    let copy = server
+        .transfer_conversation(PROJECT, &alpha, &lab, true)
+        .await
+        .unwrap();
+    assert_ne!(copy, alpha);
+    assert_eq!(transcript(lab.clone(), copy.clone()).await, original);
+    assert_eq!(transcript(PROJECT.into(), alpha.clone()).await, original);
+    let options = server
+        .conversation_status(&lab, &copy)
+        .await
+        .unwrap()
+        .options;
+    assert!(options.plan_first);
+    assert!(!options.full_access);
+    // The original still has an unread reply; the copy does not ask for
+    // attention in its new project.
+    let status = |list: desktop::ConversationList, id: &str| {
+        list.rows
+            .into_iter()
+            .find(|row| row.id == id)
+            .map(|row| row.status)
+    };
+    assert_eq!(
+        status(
+            server.conversations(PROJECT, "", false).await.unwrap(),
+            &alpha
+        )
+        .as_deref(),
+        Some("needs_you")
+    );
+    assert_eq!(
+        status(server.conversations(&lab, "", false).await.unwrap(), &copy).as_deref(),
+        Some("complete")
+    );
+
+    let moved = server
+        .transfer_conversation(PROJECT, &alpha, &lab, false)
+        .await
+        .unwrap();
+    assert_eq!(transcript(lab.clone(), moved.clone()).await, original);
+    assert!(server.conversation_status(PROJECT, &alpha).await.is_err());
+    assert_eq!(
+        ids(server.conversations(PROJECT, "", false).await.unwrap()),
+        [beta.clone()]
+    );
+    let mut arrived = vec![copy, moved];
+    arrived.sort();
+    assert_eq!(
+        ids(server.conversations(&lab, "", false).await.unwrap()),
+        arrived
+    );
     server.shutdown().await;
 }
 

@@ -260,96 +260,14 @@ impl Workspace {
                 .child(inbox);
         }
 
-        sidebar =
-            sidebar.child(
-                div()
-                    .h_flex()
-                    .px_2()
-                    .pt_2()
-                    .flex_shrink_0()
-                    .child(div().flex_1().text_xs().text_color(muted).child(
-                        if self.show_archived {
-                            "Archived"
-                        } else {
-                            "Conversations"
-                        },
-                    ))
-                    .child(
-                        icon_button(
-                            "archive-view",
-                            "archive",
-                            if self.show_archived {
-                                "Back to conversations"
-                            } else {
-                                "Archived conversations"
-                            },
-                        )
-                        .xsmall()
-                        .selected(self.show_archived)
-                        .disabled(disabled || !has_project)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.show_archived = !this.show_archived;
-                            this.sessions.clear();
-                            this.load_sessions(window, cx);
-                            cx.notify();
-                        })),
-                    ),
-            );
-
-        let searching = !self.search.read(cx).value().trim().is_empty();
-        let mut sessions = div()
-            .id("sessions")
-            .v_flex()
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll();
-        if self.sessions.is_empty() && has_project {
-            sessions = sessions.child(div().px_2().py_1().text_xs().text_color(muted).child(
-                if searching {
-                    "No conversation matches."
-                } else if self.show_archived {
-                    "Nothing is archived."
-                } else {
-                    "No conversations yet."
-                },
-            ));
-        }
-        for session in &self.sessions {
-            let id = session.id.clone();
-            let selected = Some(&id) == self.state.session.as_ref();
-            let badge = present::session_badge(session, self.pinned.contains(&id));
-            let mut row = div()
-                .id(SharedString::from(format!("session-{id}")))
-                .h_flex()
-                .gap_2()
-                .px_2()
-                .h(px(30.))
-                .flex_shrink_0()
-                .rounded(radius)
-                .text_sm()
-                .when(selected, |row| row.bg(accent))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .child(session.title.clone()),
-                );
-            if let Some((label, tone)) = badge {
-                row = row.child(chip(label, tone, cx));
-            }
-            if !disabled {
-                row = row
-                    .cursor_pointer()
-                    .hover(|style| style.bg(accent.opacity(0.7)))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.select_session(id.clone(), window, cx)
-                    }));
-            }
-            sessions = sessions.child(row);
+        sidebar = sidebar
+            .child(self.render_list_heading(cx))
+            .child(self.render_session_list(cx));
+        if let Some(bar) = self.render_batch_bar(cx) {
+            sidebar = sidebar.child(bar);
         }
 
-        sidebar.child(sessions).child(
+        sidebar.child(
             nav_row("settings", "gear", "Settings", false, true, cx)
                 .on_click(cx.listener(|this, _, window, cx| this.open_settings(window, cx))),
         )
@@ -813,7 +731,7 @@ impl Workspace {
             .shadow_md()
     }
 
-    fn menu_row(
+    pub(super) fn menu_row(
         id: SharedString,
         label: impl Into<SharedString>,
         detail: impl Into<SharedString>,
@@ -1248,6 +1166,9 @@ impl Workspace {
             .or_else(|| self.state.snapshot.as_ref().and_then(|s| s.error.as_ref()))
         {
             content = content.child(div().px_4().pt_2().child(error_banner(error, cx)));
+        }
+        if let Some(notice) = &self.notice {
+            content = content.child(div().px_4().pt_2().child(self.notice_banner(notice, cx)));
         }
         if self.state.session.is_none() {
             let can_start = !self.pending && self.state.project.is_some();

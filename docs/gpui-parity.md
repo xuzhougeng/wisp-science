@@ -81,10 +81,10 @@ to find in the running app.
 | Rename | Yes | Done | store |
 | Archive and restore [已收起的对话] | Yes | Done | store |
 | Delete with confirmation | Yes | Done | store |
-| Folders [新建分组]: create, rename, reorder, move a conversation | Yes | Missing | store |
-| Multi-select and batch actions [选择] | Yes | Missing | store |
-| Sort and group options [排序与分组] | Yes | Missing | ui |
-| Copy or move a conversation to another project | Yes *(source)* | Missing | store |
+| Folders [新建分组]: create, rename, reorder, move a conversation | Yes | Done: reorder is one place at a time, no drag | store |
+| Multi-select and batch actions [选择] | Yes | Done: move to group, archive or restore, delete | store |
+| Sort and group options [排序与分组] | Yes | Done: date sections are elapsed spans, not calendar days | ui |
+| Copy or move a conversation to another project | Yes *(source)* | Partial: transcript only; moving its artifacts along is not ported | store |
 | Files entry [文件] | Opens the Files panel | Done | served |
 | Research journey [研究历程] | Section 7 | Missing | store |
 | Memos [备忘录] | Section 6 | Missing | store |
@@ -313,7 +313,9 @@ before the things that hang in it.
    *(tabs, artifacts and run cancel done; environments and notebook are steps
    6a and 6b)*
 7. **Conversation organisation** — folders, batch actions, sort and group,
-   move between projects, rewind and branch.
+   move between projects. *(done; rewind and branch are step 7a)*
+7a. **Rewind and branch** — edit and resend from an earlier message, branch a
+   conversation, show branches under their parent.
 8. **Memory, memos, highlights, favorites.**
 9. **Settings** — conversation, permissions, hooks, skills, connections,
    credentials, network, environments, storage, usage, general.

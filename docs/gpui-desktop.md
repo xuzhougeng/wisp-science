@@ -125,6 +125,10 @@ folder registers its research root; it does not import existing desktop chats.
 | Look | Wisp's light and dark palettes following the system; the shared icon set |
 | Conversations | Create, select, restore messages, running / needs-you status |
 | Conversation management | Rename, pin (shown first), archive and restore, delete with confirmation |
+| Groups | Named groups per project: create, rename, reorder, delete (conversations stay); put a conversation in one from its bar; fold a section |
+| Sort and group | The list by groups, by last activity or flat, newest first or by name; remembered across launches |
+| Select mode | Pick conversations by click, Shift-click for a range, or all; move them to a group, archive or restore them, or delete them after one confirmation; a line reports what changed and why anything was left |
+| Copy or move | Copy or move the open conversation's transcript to another project |
 | Search | Titles and message text across the project, archived conversations included |
 | Command palette | One box over everything: projects, files by name in every project, conversations by title or message text, and the window's commands; arrow keys, Return, Escape |
 | Settings | Saved models with provider, endpoint, key and limits; presets, a default, a connection test; applied without restart |
@@ -147,7 +151,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Drafts | Survive navigation; preserved on send failure, cleared on durable acceptance |
 | Execution | Shared agent/tools, streamed snapshots while running, stop and errors |
 | Approvals | Exact pending request; allow once, allow that tool for the rest of the conversation, or deny |
-| Escape | One window-level stack: Escape closes only the topmost of command palette, file preview, Files panel, Settings, title editor, delete confirmation, remove-project confirmation, the Full access question, the model and effort menus and the remove-model question |
+| Escape | One window-level stack: Escape closes only the topmost of command palette, file preview, Files panel, Settings, title editor, delete confirmation, remove-project confirmation, the Full access question, the model and effort menus, the remove-model question, the sort menu, select mode and its group menu and delete question, a group's name field, actions and delete question, and the conversation's group and move menus |
 | Shortcuts | Cmd/Ctrl+K opens the command palette; Cmd/Ctrl+N starts a conversation in the open project; Cmd/Ctrl+, opens Settings |
 | Lifecycle | Background IO, stale-result rejection, cancel/clean workers on exit |
 
@@ -157,8 +161,8 @@ text-only. The initial project keeps the embedded host's `Server` name; opened
 folders use their own names.
 
 Runs, status and the inbox use commands the embedded host already serves.
-Conversation management, Settings, the home page, search and project file
-access are host operations in `crates/wisp-server/src/desktop.rs`. They are
+Conversation management and organisation, Settings, the home page, search and
+project file access are host operations in `crates/wisp-server/src/desktop.rs`. They are
 typed methods the desktop calls in-process, not dispatch commands, so the
 remote allowlist is unchanged and a paired mobile client cannot rename,
 delete, reconfigure or read a project's files without a conversation.
@@ -175,8 +179,22 @@ Limits of this slice:
   model and image or video models are not ported. A broken model chosen for a
   conversation is reported when a message is sent, not replaced silently.
 - Deleting removes the conversation and its messages; files it wrote stay in the
-  project. A running conversation must be stopped before it can be archived or
-  deleted. There are no folders, export, import, share or branch views yet.
+  project. A running conversation must be stopped before it can be archived,
+  deleted, copied or moved. There is no export, import, share or branch view
+  yet.
+- A group holds a conversation together with its branches. Group names are
+  unique in a project, ignoring case, and at most 60 characters. Groups are
+  reordered one place at a time; conversations are not dragged. Sections show
+  only while browsing: search results keep the host's order and the archive is
+  a flat list. Date sections are spans of elapsed time (24 hours, 7 days, 30
+  days), not calendar days. Which sections are folded is forgotten on restart.
+- Copying or moving takes the transcript only: files, runs and artifacts stay
+  in the project they were made in, and a moved conversation gets a new id.
+  The conversation keeps its model, effort and Plan first choices and goes
+  back to Ask first, since Full access was given for other files. It arrives
+  read. The WebView's option to move artifacts along is not ported.
+- A batch applies the single-conversation rules one by one and carries on
+  past a refusal, so a running conversation is left while the rest change.
 
 - Files shows the local project root only, one directory at a time (at most
   2000 entries), hides `.wisp`, `.git`, links and special files, and previews
@@ -312,6 +330,18 @@ Relaunch and confirm the model is still configured. Rename with Enter and with
 the button; press Escape in the title editor and in the delete confirmation and
 confirm only that layer closes. Pin, archive, find the archived conversation by
 a word from one of its messages, restore it, then delete it.
+Make two groups; rename one with Enter; move one up and down; put the open
+conversation in a group from its bar and take it out again. Open the sort menu
+and switch between Groups, Date and None and between Newest and Name; restart
+and confirm the choice is kept. Fold a section. Enter select mode, pick one
+conversation, Shift-click another further down and confirm the range is picked;
+move the picks to a group; pick again and archive, then restore them from the
+archive; ask to delete, press Escape (select mode stays), press Escape again
+(select mode ends). Start a turn that waits for approval, include it in a batch
+delete and confirm the line says it was left and why. Delete a group and confirm
+its conversations remain. Copy the open conversation to another project and
+confirm both exist; move it and confirm it left this project, arrived read in
+the other, and asks before changing files there.
 Restart and confirm persisted messages. Close during a running tool and verify
 worker cleanup. Check missing credentials and invalid workspace errors. Validate
 each target OS; a macOS build does not establish Windows/Linux behavior.

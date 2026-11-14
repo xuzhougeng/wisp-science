@@ -6,6 +6,7 @@ pub use crate::output::{tool_question, TokenUsage};
 use crate::{config::ModelConfig, Server};
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 pub use wisp_dto::native_conversations::ReferenceOption;
 use wisp_dto::SessionSearchInfo;
@@ -348,7 +349,39 @@ pub struct ConversationList {
     pub rows: Vec<SessionSearchInfo>,
     /// IDs the user pinned, to be shown first.
     pub pinned: Vec<String>,
+    /// The project's groups, in the order the user gave them.
+    pub folders: Vec<Folder>,
+    /// Conversation id to the id of the group it is in.
+    pub grouped: HashMap<String, String>,
 }
+
+/// A named group of conversations in one project.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Folder {
+    pub id: String,
+    pub name: String,
+}
+
+/// What a batch does to each chosen conversation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BatchAction {
+    Archive,
+    Restore,
+    Delete,
+    /// Into the group with this id, or out of every group.
+    Group(Option<String>),
+}
+
+/// How a batch went. One conversation's refusal does not stop the rest.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BatchReport {
+    pub done: Vec<String>,
+    /// `(conversation id, reason)`.
+    pub refused: Vec<(String, String)>,
+}
+
+/// Conversations one batch may name.
+const BATCH_LIMIT: usize = 500;
 
 impl Server {
     pub async fn model_settings(&self) -> Result<ModelSettings> {
@@ -695,27 +728,49 @@ impl Server {
         archived: bool,
     ) -> Result<ConversationList> {
         let query = query.trim();
-        let rows = if archived {
+        let mut grouped = HashMap::new();
+        let rows: Vec<SessionSearchInfo> = if archived {
             self.0
                 .store
                 .list_sessions_page_with_visibility(project, None, 100, Some(true), query)
                 .await?
                 .into_iter()
-                .map(|(id, title, ts, ..)| SessionSearchInfo {
-                    id,
-                    project_id: project.into(),
-                    project_name: String::new(),
-                    title,
-                    ts,
-                    activity_at: ts,
-                    status: "complete".into(),
-                    shelved: true,
+                .map(|(id, title, ts, folder, _)| {
+                    if let Some(folder) = folder {
+                        grouped.insert(id.clone(), folder);
+                    }
+                    SessionSearchInfo {
+                        id,
+                        project_id: project.into(),
+                        project_name: String::new(),
+                        title,
+                        ts,
+                        activity_at: ts,
+                        status: "complete".into(),
+                        shelved: true,
+                    }
                 })
                 .collect()
         } else {
-            self.session_rows(Some(project), query, !query.is_empty())
-                .await?
+            let rows = self
+                .session_rows(Some(project), query, !query.is_empty())
+                .await?;
+            let listed: HashSet<&str> = rows.iter().map(|row| row.id.as_str()).collect();
+            for (id, _, _, folder, _) in self.0.store.list_sessions(project).await? {
+                if let Some(folder) = folder.filter(|_| listed.contains(id.as_str())) {
+                    grouped.insert(id, folder);
+                }
+            }
+            rows
         };
+        let folders = self
+            .0
+            .store
+            .list_folders(project)
+            .await?
+            .into_iter()
+            .map(|(id, name, _)| Folder { id, name })
+            .collect();
         let pinned = self
             .0
             .store
@@ -724,7 +779,209 @@ impl Server {
             .into_iter()
             .map(|(id, ..)| id)
             .collect();
-        Ok(ConversationList { rows, pinned })
+        Ok(ConversationList {
+            rows,
+            pinned,
+            folders,
+            grouped,
+        })
+    }
+
+    /// A choice about how the desktop looks, such as how the sidebar is
+    /// arranged. `None` until one was saved.
+    pub async fn preference(&self, name: &str) -> Result<Option<String>> {
+        self.0.store.get_setting(&preference_key(name)?).await
+    }
+
+    pub async fn set_preference(&self, name: &str, value: &str) -> Result<()> {
+        ensure!(
+            value.len() <= PREFERENCE_LIMIT,
+            "Preferences are limited to {PREFERENCE_LIMIT} bytes"
+        );
+        self.0
+            .store
+            .set_setting(&preference_key(name)?, value)
+            .await
+    }
+
+    /// A group name that is not empty, not too long and not already taken in
+    /// the project. `except` is the group being renamed.
+    async fn folder_name(&self, project: &str, name: &str, except: Option<&str>) -> Result<String> {
+        let name = name.trim();
+        ensure!(!name.is_empty(), "Enter a group name");
+        ensure!(
+            name.chars().count() <= NAME_LIMIT,
+            "Group names are limited to {NAME_LIMIT} characters"
+        );
+        let taken = self
+            .0
+            .store
+            .list_folders(project)
+            .await?
+            .into_iter()
+            .any(|(id, other, _)| {
+                Some(id.as_str()) != except && other.to_lowercase() == name.to_lowercase()
+            });
+        ensure!(!taken, "This project already has a group with that name");
+        Ok(name.to_owned())
+    }
+
+    /// Adds an empty group after the project's existing ones.
+    pub async fn create_folder(&self, project: &str, name: &str) -> Result<Folder> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        let name = self.folder_name(project, name, None).await?;
+        let id = uuid::Uuid::new_v4().to_string();
+        self.0.store.create_folder(&id, project, &name).await?;
+        Ok(Folder { id, name })
+    }
+
+    pub async fn rename_folder(&self, project: &str, folder: &str, name: &str) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        let name = self.folder_name(project, name, Some(folder)).await?;
+        self.0.store.rename_folder(folder, project, &name).await
+    }
+
+    /// Removes the group. Its conversations stay, outside any group.
+    pub async fn delete_folder(&self, project: &str, folder: &str) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        self.0.store.delete_folder(folder, project).await
+    }
+
+    /// Saves the order of the project's groups, first to last. Groups left
+    /// out keep their place.
+    pub async fn reorder_folders(&self, project: &str, folders: &[String]) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        self.0.store.reorder_folders(project, folders).await
+    }
+
+    /// Puts the conversation, with its branches, into a group, or with
+    /// `None` takes it out of the one it is in.
+    pub async fn group_conversation(
+        &self,
+        project: &str,
+        session: &str,
+        folder: Option<&str>,
+    ) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        self.own_conversation(project, session).await?;
+        self.0
+            .store
+            .move_session_to_folder(session, project, folder)
+            .await
+    }
+
+    /// Applies one action to several conversations of a project. Each is
+    /// held to the same rules as when it is done alone.
+    pub async fn batch(
+        &self,
+        project: &str,
+        sessions: &[String],
+        action: BatchAction,
+    ) -> Result<BatchReport> {
+        self.known_project(project).await?;
+        ensure!(
+            sessions.len() <= BATCH_LIMIT,
+            "Choose at most {BATCH_LIMIT} conversations at a time"
+        );
+        if let BatchAction::Group(Some(folder)) = &action {
+            let known = self.0.store.list_folders(project).await?;
+            ensure!(known.iter().any(|(id, ..)| id == folder), "Group not found");
+        }
+        let mut report = BatchReport::default();
+        let mut seen = HashSet::new();
+        for session in sessions.iter().filter(|id| seen.insert(id.as_str())) {
+            let result = match &action {
+                BatchAction::Archive => self.archive_conversation(project, session, true).await,
+                BatchAction::Restore => self.archive_conversation(project, session, false).await,
+                BatchAction::Delete => self.delete_conversation(project, session).await,
+                BatchAction::Group(folder) => {
+                    self.group_conversation(project, session, folder.as_deref())
+                        .await
+                }
+            };
+            match result {
+                Ok(()) => report.done.push(session.clone()),
+                Err(error) => report.refused.push((session.clone(), error.to_string())),
+            }
+        }
+        Ok(report)
+    }
+
+    /// Copies the conversation's transcript into another project, or with
+    /// `keep` off moves it there. Files, runs and artifacts stay where they
+    /// are. Returns the id the conversation has in the target project.
+    ///
+    /// The conversation keeps its model and plan-first choices; it goes back
+    /// to asking before it changes anything, because the files are not the
+    /// ones full access was given for.
+    pub async fn transfer_conversation(
+        &self,
+        project: &str,
+        session: &str,
+        target: &str,
+        keep: bool,
+    ) -> Result<String> {
+        ensure!(project != target, "Choose a different project");
+        let live = self.session(session);
+        // Acceptance takes the same lock, so no turn can start mid-transfer.
+        let _accept = live.accept.lock().await;
+        let _admission = self.0.admission.read().await;
+        self.own_conversation(project, session).await?;
+        self.known_project(target).await?;
+        self.ensure_idle(session, if keep { "copy" } else { "move" })?;
+        let options = self.stored_options(session).await?;
+        let id = uuid::Uuid::new_v4().to_string();
+        if keep {
+            self.0
+                .store
+                .copy_session_to_project(session, project, target, &id)
+                .await?;
+        } else {
+            self.0
+                .store
+                .move_session_to_project(session, project, target, &id)
+                .await?;
+        }
+        // The user sent it there themselves; it does not arrive unread.
+        self.0.store.mark_frame_seen(&id).await?;
+        if !options.model.is_empty() {
+            self.0
+                .store
+                .set_setting(&model_choice_key(&id), &options.model)
+                .await?;
+        }
+        if options.plan_first {
+            self.0
+                .store
+                .set_setting(&plan_mode_key(&id), "true")
+                .await?;
+        }
+        if !keep {
+            self.forget(session, &live).await?;
+        }
+        Ok(id)
+    }
+
+    /// Drops everything the host holds for a conversation that has left the
+    /// project: its saved choices, its live state and its interpreters.
+    async fn forget(&self, session: &str, live: &crate::output::Session) -> Result<()> {
+        for key in [
+            full_access_key(session),
+            model_choice_key(session),
+            plan_mode_key(session),
+        ] {
+            self.0.store.delete_setting(&key).await?;
+        }
+        self.0.sessions.lock().unwrap().remove(session);
+        let runtime = live.runtime.lock().unwrap().take();
+        if let Some(runtime) = runtime {
+            runtime.shutdown_all().await;
+        }
+        Ok(())
     }
 
     pub async fn rename_conversation(
@@ -1059,19 +1316,7 @@ impl Server {
         self.own_conversation(project, session).await?;
         self.ensure_idle(session, "delete")?;
         self.0.store.delete_session(session, project).await?;
-        for key in [
-            full_access_key(session),
-            model_choice_key(session),
-            plan_mode_key(session),
-        ] {
-            self.0.store.delete_setting(&key).await?;
-        }
-        self.0.sessions.lock().unwrap().remove(session);
-        let runtime = live.runtime.lock().unwrap().take();
-        if let Some(runtime) = runtime {
-            runtime.shutdown_all().await;
-        }
-        Ok(())
+        self.forget(session, &live).await
     }
 }
 
@@ -1121,6 +1366,22 @@ pub struct ConversationStatus {
     pub allowed_tools: Vec<String>,
     /// What the model is thinking right now; empty when it is not.
     pub reasoning: String,
+}
+
+const PREFERENCE_LIMIT: usize = 2_000;
+
+/// Preferences have their own corner of the settings table, so a name can
+/// never reach a model, a key id or another conversation's choices.
+fn preference_key(name: &str) -> Result<String> {
+    ensure!(
+        !name.is_empty()
+            && name.len() <= 40
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'),
+        "Preference names are lowercase letters, digits and underscores"
+    );
+    Ok(format!("desktop.ui.{name}"))
 }
 
 /// The key the WebView desktop uses for the same switch.

@@ -15,8 +15,8 @@ use wisp_server::{
     Server,
     config::Config,
     desktop::{
-        ArtifactRow, ConversationList, ConversationOptions, ConversationStatus, FileMatch,
-        ModelInput, ModelSettings, ReferenceOption,
+        ArtifactRow, BatchAction, BatchReport, ConversationList, ConversationOptions,
+        ConversationStatus, FileMatch, Folder, ModelInput, ModelSettings, ReferenceOption,
     },
 };
 use wisp_sync::DirectRemoteHost;
@@ -205,6 +205,66 @@ impl Backend {
 
     pub fn delete_conversation(&self, project: String, session: String) -> Reply<()> {
         self.local(move |host| async move { host.delete_conversation(&project, &session).await })
+    }
+
+    pub fn create_folder(&self, project: String, name: String) -> Reply<Folder> {
+        self.local(move |host| async move { host.create_folder(&project, &name).await })
+    }
+
+    pub fn rename_folder(&self, project: String, folder: String, name: String) -> Reply<()> {
+        self.local(move |host| async move { host.rename_folder(&project, &folder, &name).await })
+    }
+
+    pub fn delete_folder(&self, project: String, folder: String) -> Reply<()> {
+        self.local(move |host| async move { host.delete_folder(&project, &folder).await })
+    }
+
+    pub fn reorder_folders(&self, project: String, folders: Vec<String>) -> Reply<()> {
+        self.local(move |host| async move { host.reorder_folders(&project, &folders).await })
+    }
+
+    pub fn group_conversation(
+        &self,
+        project: String,
+        session: String,
+        folder: Option<String>,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.group_conversation(&project, &session, folder.as_deref())
+                .await
+        })
+    }
+
+    pub fn batch(
+        &self,
+        project: String,
+        sessions: Vec<String>,
+        action: BatchAction,
+    ) -> Reply<BatchReport> {
+        self.local(move |host| async move { host.batch(&project, &sessions, action).await })
+    }
+
+    /// Copies (`keep`) or moves a conversation to another project and
+    /// returns its id there.
+    pub fn transfer_conversation(
+        &self,
+        project: String,
+        session: String,
+        target: String,
+        keep: bool,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.transfer_conversation(&project, &session, &target, keep)
+                .await
+        })
+    }
+
+    pub fn preference(&self, name: &'static str) -> Reply<Option<String>> {
+        self.local(move |host| async move { host.preference(name).await })
+    }
+
+    pub fn set_preference(&self, name: &'static str, value: String) -> Reply<()> {
+        self.local(move |host| async move { host.set_preference(name, &value).await })
     }
 
     pub fn artifacts(
