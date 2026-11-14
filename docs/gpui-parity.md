@@ -164,7 +164,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | --- | --- | --- | --- |
 | Workspace files [工作区文件]: browse, preview, before any conversation exists | Yes | Done | served |
 | Files: name search | In the panel | Partial: through the command palette, across projects | served |
-| Files: upload, new file, new folder, rename, delete, sort, grid view | Yes | Missing | tauri |
+| Files: upload, new file, new folder, rename, delete, sort, grid view | Yes | Partial: new folder, new file, rename, and delete as a move to the project's own trash; no upload into a folder, sort or grid | tauri |
 | Files: other locations (SSH / WSL contexts) | Yes | Missing | shared |
 | Files: image, PDF, Office, notebook, table previews | Yes | Missing | ui |
 | Agents [Agents]: sub-agents, parallel exploration, workflows | Yes | Missing | store |

@@ -681,6 +681,45 @@ impl Server {
         Ok(serde_json::from_value(value)?)
     }
 
+    /// Makes an empty folder (`folder`) or file named `name` in the project
+    /// folder `parent`; the reply is its project-relative path.
+    pub async fn create_project_entry(
+        &self,
+        project: &str,
+        parent: &str,
+        name: &str,
+        folder: bool,
+    ) -> Result<String> {
+        let _admission = self.0.admission.read().await;
+        let root = self.project_root(project).await?;
+        crate::files::create(std::path::Path::new(&root), parent, name, folder).await
+    }
+
+    /// Renames a project file or folder where it is; the reply is its new
+    /// project-relative path.
+    pub async fn rename_project_entry(
+        &self,
+        project: &str,
+        path: &str,
+        name: &str,
+    ) -> Result<String> {
+        let _admission = self.0.admission.read().await;
+        let root = self.project_root(project).await?;
+        crate::files::rename(std::path::Path::new(&root), path, name).await
+    }
+
+    /// Moves a project file or folder into the project's `.wisp/trash`;
+    /// the reply is where it went. Nothing is erased.
+    pub async fn trash_project_entry(&self, project: &str, path: &str) -> Result<String> {
+        let _admission = self.0.admission.read().await;
+        let root = self.project_root(project).await?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs())
+            .unwrap_or_default();
+        crate::files::trash(std::path::Path::new(&root), path, now).await
+    }
+
     async fn known_project(&self, project: &str) -> Result<()> {
         ensure!(
             !self.0.shutting_down.load(Ordering::Relaxed),

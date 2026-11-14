@@ -127,6 +127,46 @@ impl FilesState {
     }
 }
 
+/// What the name field in the Files panel is for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Naming {
+    /// A new folder in the folder that is listed.
+    Folder,
+    /// A new, empty file in the folder that is listed.
+    File,
+    /// A new name for the entry at this path.
+    Rename(String),
+}
+
+impl Naming {
+    pub fn title(&self) -> &'static str {
+        match self {
+            Naming::Folder => "Name the new folder",
+            Naming::File => "Name the new file",
+            Naming::Rename(_) => "New name",
+        }
+    }
+
+    /// What the field holds when it opens: the name being changed.
+    pub fn start(&self) -> &str {
+        match self {
+            Naming::Rename(path) => file_name(path),
+            Naming::Folder | Naming::File => "",
+        }
+    }
+}
+
+/// What is said after an entry was moved to the project's trash, so the
+/// user knows it is not erased and where to find it. `to` is where it
+/// went, relative to the project.
+pub fn trashed_note(to: &str) -> String {
+    let folder = parent(to).unwrap_or_default();
+    format!(
+        "{} is in {folder} in the project folder. Nothing was erased.",
+        file_name(to)
+    )
+}
+
 pub fn join(directory: &str, name: &str) -> String {
     if directory.is_empty() {
         name.to_owned()
@@ -390,5 +430,23 @@ mod tests {
         assert_eq!(size_label(1536), "1.5 KB");
         assert_eq!(size_label(5 * 1024 * 1024), "5.0 MB");
         assert_eq!(size_label(u64::MAX), "16777216.0 TB");
+    }
+
+    #[test]
+    fn the_name_field_starts_with_what_is_renamed_and_a_deletion_says_where_it_went() {
+        assert_eq!(Naming::Folder.start(), "");
+        assert_eq!(Naming::File.start(), "");
+        assert_eq!(
+            Naming::Rename("data/raw/counts.csv".into()).start(),
+            "counts.csv"
+        );
+        assert_eq!(Naming::Rename("counts.csv".into()).start(), "counts.csv");
+        for naming in [Naming::Folder, Naming::File, Naming::Rename("a".into())] {
+            assert!(!naming.title().is_empty());
+        }
+        assert_eq!(
+            trashed_note(".wisp/trash/1700-0/counts.csv"),
+            "counts.csv is in .wisp/trash/1700-0 in the project folder. Nothing was erased."
+        );
     }
 }

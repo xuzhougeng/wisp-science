@@ -31,6 +31,10 @@ pub enum Layer {
     ProjectSettings,
     /// The find bar over the open conversation.
     Find,
+    /// The name field in the Files panel: a new folder or file, or a rename.
+    FileName,
+    /// Question in the Files panel before an entry goes to the trash.
+    ConfirmTrashFile,
     /// Confirmation in Settings before a saved model is removed.
     ConfirmDeleteModel,
     /// Sort and grouping choices under the conversation list's heading.
@@ -105,6 +109,8 @@ impl Layer {
     fn parent(self) -> Option<Layer> {
         match self {
             Layer::FilePreview
+            | Layer::FileName
+            | Layer::ConfirmTrashFile
             | Layer::MemoEditor
             | Layer::ConfirmDeleteMemo
             | Layer::MemoryEditor
@@ -400,6 +406,15 @@ mod tests {
             stack.open(menu);
             assert_eq!(stack.dismiss_top(), Some(menu));
         }
+        // The Files panel's name field and trash question are inside the
+        // panel: Escape closes them alone, and closing the panel takes them.
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::FileName);
+        assert_eq!(stack.dismiss_top(), Some(Layer::FileName));
+        assert!(stack.contains(Layer::FilesPanel));
+        stack.open(Layer::ConfirmTrashFile);
+        assert!(stack.close(Layer::FilesPanel));
+        assert!(!stack.contains(Layer::ConfirmTrashFile));
         // The project dialog opens over whatever is showing; Escape closes
         // it alone, and what was under it is still there.
         stack.open(Layer::FilesPanel);

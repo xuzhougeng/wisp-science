@@ -146,7 +146,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Favorites | A star under any message saves it as it reads now; an image in Artifacts can be saved as a figure. Highlights lists what this conversation saved; the Favorites page lists everything from every project, with search, a kind filter, the item in full, its source conversation and removal after a confirmation |
 | Memory | One switch; habits the model is shown in every project; this project's notes by day, which the model can search; add, edit and delete either, and save any message to one or the other |
 | Memos | Your own notes per project: add, edit, pin, copy, delete after a confirmation, and put one into the message box. The model is never shown them |
-| Files | Project file browser, available before the first conversation; read-only text and Markdown preview |
+| Files | Project file browser, available before the first conversation; read-only text and Markdown preview; new folder, new file, rename, and move to the project's trash |
 | Composer | Native multiline input; Enter for newline, Cmd/Ctrl+Enter to send. While a turn runs the same key queues the message: it is sent when the turn ends |
 | Plan first | The model investigates and submits a plan as a card; nothing is changed until you approve it, which leaves plan mode and starts the work |
 | Thinking | What the model is thinking, above the composer, while it thinks |
@@ -328,6 +328,16 @@ Limits of this slice:
   still kept in memory only: after a restart they are empty until the next
   turn. Usage has no ranking of skills and MCP tools, no per-conversation
   breakdown and no year calendar.
+- The Files panel changes files only inside the project and never in its
+  `.wisp` or `.git` folders. A new folder or file, and a rename, replace
+  nothing that is already there; a name is a single name, without slashes.
+  Deleting does not erase: the entry is moved into `.wisp/trash/<time>-<n>/`
+  in the project, which the file browser does not show, and the panel says
+  where it went. Nothing empties that folder; remove it yourself when you
+  want the space back, which the Storage page counts as part of `.wisp`.
+  The WebView erases at once instead. A link is renamed or moved as a
+  link; what it points at is left alone. Uploading into a folder, moving
+  between folders, sorting and the grid view are not ported.
 - Find looks through the part of the conversation that is loaded, ignoring
   case, in messages and in what tools printed. It marks whole rows, not the
   words inside them, and does not open a folded tool row. Earlier messages
@@ -603,6 +613,12 @@ connector route and run a PubMed search, and press Test on an HTTP MCP
 server. Set a Python package index, ask the model to install a package and
 confirm it uses the index. Restart and confirm the page still shows what was
 saved.
+In Files make a folder and, inside it, a file; try a name with a slash and
+confirm it is refused and the field keeps what you typed. Rename the folder
+with the pencil. Press the trash on it, then Escape (the question goes, the
+panel stays); press it again and confirm: the folder leaves the list, the
+panel says where it went, and it is there under `.wisp/trash` in the project
+with its file.
 In a conversation press Cmd/Ctrl+F and type a word that appears several
 times: the count is shown, the newest match is marked strongest, Return and
 the up arrow go to earlier ones and around again, and Escape closes the bar,

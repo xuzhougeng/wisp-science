@@ -36,6 +36,132 @@ pub(crate) async fn resolve(root: &Path, path: &str) -> Result<PathBuf> {
     Ok(resolved)
 }
 
+/// Where things the user deletes from the file browser go, inside the
+/// project's own metadata folder.
+const TRASH: &str = ".wisp/trash";
+
+/// A name for one file or folder: a single path component that is not
+/// Wisp's or git's own folder.
+fn entry_name(name: &str) -> Result<&str> {
+    let name = name.trim();
+    ensure!(!name.is_empty(), "Give it a name");
+    ensure!(
+        name.len() <= 255
+            && !name
+                .chars()
+                .any(|c| c.is_control() || c == '/' || c == '\\'),
+        "A name is one line of at most 255 bytes without slashes"
+    );
+    ensure!(name != "." && name != "..", "That name is not allowed");
+    ensure!(
+        name != ".wisp" && name != ".git",
+        "That name is kept for the project's own records"
+    );
+    Ok(name)
+}
+
+/// The entry `path` names, without following a link in its last part: the
+/// folder it is in must be inside the project, and the entry is then
+/// whatever is there, a link included.
+async fn entry(root: &Path, path: &str) -> Result<PathBuf> {
+    let relative = Path::new(path);
+    let name = relative
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| anyhow::anyhow!("Name a file or a folder"))?;
+    let name = entry_name(name)?;
+    let parent = relative
+        .parent()
+        .and_then(|parent| parent.to_str())
+        .unwrap_or_default();
+    Ok(resolve(root, parent).await?.join(name))
+}
+
+async fn relative(root: &Path, path: &Path) -> Result<String> {
+    let root = tokio::fs::canonicalize(root).await?;
+    Ok(path
+        .strip_prefix(&root)?
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/"))
+}
+
+/// Makes an empty folder or file named `name` in the project folder
+/// `parent`, and returns its project-relative path. Nothing that exists is
+/// replaced.
+pub async fn create(root: &Path, parent: &str, name: &str, folder: bool) -> Result<String> {
+    let parent = resolve(root, parent).await?;
+    ensure!(
+        tokio::fs::metadata(&parent).await?.is_dir(),
+        "That is not a folder"
+    );
+    let target = parent.join(entry_name(name)?);
+    ensure!(
+        tokio::fs::symlink_metadata(&target).await.is_err(),
+        "Something with that name is already there"
+    );
+    if folder {
+        tokio::fs::create_dir(&target).await?;
+    } else {
+        tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&target)
+            .await?;
+    }
+    relative(root, &target).await
+}
+
+/// Gives the file or folder at `path` a new name in the same folder, and
+/// returns its new project-relative path. Nothing that exists is replaced.
+pub async fn rename(root: &Path, path: &str, name: &str) -> Result<String> {
+    let source = entry(root, path).await?;
+    ensure!(
+        tokio::fs::symlink_metadata(&source).await.is_ok(),
+        "That file is no longer there"
+    );
+    let target = source
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("The project folder itself cannot be renamed"))?
+        .join(entry_name(name)?);
+    if target != source {
+        ensure!(
+            tokio::fs::symlink_metadata(&target).await.is_err(),
+            "Something with that name is already there"
+        );
+        tokio::fs::rename(&source, &target).await?;
+    }
+    relative(root, &target).await
+}
+
+/// Moves the file or folder at `path` out of the way, into the project's
+/// own `.wisp/trash`, and returns where it went, relative to the project.
+/// Nothing is erased: the user empties that folder themselves.
+pub async fn trash(root: &Path, path: &str, now: u64) -> Result<String> {
+    let source = entry(root, path).await?;
+    ensure!(
+        tokio::fs::symlink_metadata(&source).await.is_ok(),
+        "That file is no longer there"
+    );
+    let root = tokio::fs::canonicalize(root).await?;
+    let name = source.file_name().unwrap_or_default().to_owned();
+    // One folder per deletion, so two files of one name never collide.
+    let mut slot = 0;
+    let folder = loop {
+        let folder = root.join(TRASH).join(format!("{now}-{slot}"));
+        if tokio::fs::symlink_metadata(&folder).await.is_err() {
+            break folder;
+        }
+        slot += 1;
+    };
+    tokio::fs::create_dir_all(&folder).await?;
+    let target = folder.join(name);
+    tokio::fs::rename(&source, &target).await?;
+    Ok(target
+        .strip_prefix(&root)?
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/"))
+}
+
 /// A file a message may carry: project-relative, inside the project, and a
 /// regular file. The same confinement as the file browser.
 pub async fn attachable(root: &Path, path: &str) -> Result<()> {
@@ -303,6 +429,96 @@ mod tests {
         assert!(search(root, "absent", 10, 10_000).await.unwrap().is_empty());
         // A tiny budget ends the walk early instead of scanning everything.
         assert!(search(root, "matrix", 10, 3).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn entries_are_made_renamed_and_trashed_inside_the_project_only() {
+        let project = tempfile::tempdir().unwrap();
+        let root = project.path();
+        assert_eq!(create(root, "", "data", true).await.unwrap(), "data");
+        assert_eq!(
+            create(root, "data", " notes.md ", false).await.unwrap(),
+            "data/notes.md"
+        );
+        assert_eq!(std::fs::read(root.join("data/notes.md")).unwrap(), b"");
+        // Nothing that exists is replaced, and a name is one plain name.
+        std::fs::write(root.join("data/notes.md"), "kept").unwrap();
+        assert!(create(root, "data", "notes.md", false).await.is_err());
+        assert!(create(root, "", "data", true).await.is_err());
+        for name in ["", "  ", "a/b", "a\\b", "..", ".wisp", ".git", "two\nlines"] {
+            assert!(create(root, "", name, true).await.is_err(), "{name:?}");
+        }
+        // Only inside the project, in a folder that is there, and never in
+        // the project's own records.
+        for parent in ["..", "/tmp", ".wisp", "missing", "data/notes.md"] {
+            assert!(create(root, parent, "x", true).await.is_err(), "{parent}");
+        }
+        assert_eq!(std::fs::read(root.join("data/notes.md")).unwrap(), b"kept");
+
+        // Renaming keeps the content and the folder, and replaces nothing.
+        assert_eq!(
+            rename(root, "data/notes.md", "plan.md").await.unwrap(),
+            "data/plan.md"
+        );
+        assert!(!root.join("data/notes.md").exists());
+        assert_eq!(std::fs::read(root.join("data/plan.md")).unwrap(), b"kept");
+        create(root, "data", "other.md", false).await.unwrap();
+        assert!(rename(root, "data/plan.md", "other.md").await.is_err());
+        assert_eq!(std::fs::read(root.join("data/plan.md")).unwrap(), b"kept");
+        // The same name again changes nothing.
+        assert_eq!(
+            rename(root, "data/plan.md", "plan.md").await.unwrap(),
+            "data/plan.md"
+        );
+        for (path, name) in [
+            ("data/missing.md", "x"),
+            ("../outside", "x"),
+            (".wisp", "x"),
+            ("data/plan.md", "a/b"),
+            ("", "x"),
+        ] {
+            assert!(rename(root, path, name).await.is_err(), "{path} -> {name}");
+        }
+
+        // Deleting moves the entry into the project's trash; nothing is erased.
+        assert_eq!(
+            trash(root, "data/plan.md", 1700).await.unwrap(),
+            ".wisp/trash/1700-0/plan.md"
+        );
+        assert!(!root.join("data/plan.md").exists());
+        assert_eq!(
+            std::fs::read(root.join(".wisp/trash/1700-0/plan.md")).unwrap(),
+            b"kept"
+        );
+        // The same name in the same second gets a place of its own.
+        create(root, "data", "plan.md", false).await.unwrap();
+        assert_eq!(
+            trash(root, "data/plan.md", 1700).await.unwrap(),
+            ".wisp/trash/1700-1/plan.md"
+        );
+        // A folder goes whole.
+        assert_eq!(
+            trash(root, "data", 1701).await.unwrap(),
+            ".wisp/trash/1701-0/data"
+        );
+        assert!(root.join(".wisp/trash/1701-0/data/other.md").exists());
+        assert!(!root.join("data").exists());
+        for path in ["missing", "", "..", ".wisp", ".wisp/trash"] {
+            assert!(trash(root, path, 1).await.is_err(), "{path}");
+        }
+
+        // A link is what is renamed or moved, never what it points at.
+        #[cfg(unix)]
+        {
+            let elsewhere = tempfile::tempdir().unwrap();
+            let outside = elsewhere.path().join("raw.fastq");
+            std::fs::write(&outside, "reads").unwrap();
+            std::os::unix::fs::symlink(&outside, root.join("raw")).unwrap();
+            assert_eq!(rename(root, "raw", "reads").await.unwrap(), "reads");
+            assert!(trash(root, "reads", 1702).await.is_ok());
+            assert!(!root.join("reads").exists());
+            assert_eq!(std::fs::read(&outside).unwrap(), b"reads");
+        }
     }
 
     #[tokio::test]

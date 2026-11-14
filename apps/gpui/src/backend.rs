@@ -157,6 +157,37 @@ impl Backend {
         self.local(move |host| async move { host.project_directory(&project, &path).await })
     }
 
+    /// Makes an empty folder or file in a project folder.
+    pub fn create_project_entry(
+        &self,
+        project: String,
+        parent: String,
+        name: String,
+        folder: bool,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.create_project_entry(&project, &parent, &name, folder)
+                .await
+        })
+    }
+
+    pub fn rename_project_entry(
+        &self,
+        project: String,
+        path: String,
+        name: String,
+    ) -> Reply<String> {
+        self.local(
+            move |host| async move { host.rename_project_entry(&project, &path, &name).await },
+        )
+    }
+
+    /// Moves a file or folder to the project's trash; the reply is where
+    /// it went.
+    pub fn trash_project_entry(&self, project: String, path: String) -> Reply<String> {
+        self.local(move |host| async move { host.trash_project_entry(&project, &path).await })
+    }
+
     pub fn project_file(&self, project: String, path: String) -> Reply<Preview> {
         self.local(move |host| async move { host.project_file(&project, &path).await })
     }

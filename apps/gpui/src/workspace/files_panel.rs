@@ -4,13 +4,19 @@ use std::ops::Range;
 
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Sizable, StyledExt, button::Button, input::Input, text::TextView,
+    ActiveTheme, Disableable, Sizable, StyledExt,
+    button::{Button, ButtonVariants},
+    input::Input,
+    text::TextView,
 };
 
-use super::Workspace;
+use super::{
+    Workspace,
+    shell::{error_banner, glyph, icon_button},
+};
 use crate::{
-    backend::receive,
-    files::{self, PreviewMode},
+    backend::{Reply, receive},
+    files::{self, Naming, PreviewMode},
     layers::Layer,
     panel::PanelTab,
 };
@@ -63,6 +69,113 @@ impl Workspace {
         if self.layers.contains(Layer::FilesPanel) && !self.layers.contains(Layer::FilePreview) {
             self.load_directory(self.files.path.clone(), window, cx);
         }
+    }
+
+    /// Opens the name field for a new folder or file, or to rename.
+    fn start_naming(&mut self, naming: Naming, window: &mut Window, cx: &mut Context<Self>) {
+        self.layers.close(Layer::ConfirmTrashFile);
+        self.file_trashing = None;
+        self.file_problem = None;
+        self.file_notice = None;
+        let start = naming.start().to_owned();
+        self.file_naming = Some(naming);
+        self.layers.open(Layer::FileName);
+        self.file_name_input.update(cx, |input, cx| {
+            input.set_value(start, window, cx);
+            input.focus(window, cx);
+        });
+        cx.notify();
+    }
+
+    /// Runs one change to the project's files, then lists the folder again.
+    /// A refusal is shown and leaves whatever was open as it was.
+    fn change_files(
+        &mut self,
+        reply: Reply<String>,
+        then: impl FnOnce(&mut Self, String) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.file_problem = None;
+        let project = self.state.project.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                // The answer is about the project that was open when asked.
+                if this.state.project != project {
+                    return;
+                }
+                match result {
+                    Ok(path) => then(this, path),
+                    Err(error) => this.file_problem = Some(error),
+                }
+                this.reload_files(window, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    pub(super) fn save_file_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.layers.contains(Layer::FileName) {
+            return;
+        }
+        let (Some(project), Some(naming)) = (self.state.project.clone(), self.file_naming.clone())
+        else {
+            return;
+        };
+        let name = self.file_name_input.read(cx).value().to_string();
+        let folder = self.files.path.clone();
+        let reply = match naming {
+            Naming::Folder => self
+                .backend
+                .create_project_entry(project, folder, name, true),
+            Naming::File => self
+                .backend
+                .create_project_entry(project, folder, name, false),
+            Naming::Rename(path) => self.backend.rename_project_entry(project, path, name),
+        };
+        self.change_files(
+            reply,
+            |this, _| {
+                this.layers.close(Layer::FileName);
+                this.file_naming = None;
+            },
+            window,
+            cx,
+        );
+    }
+
+    fn ask_trash_file(&mut self, path: String, cx: &mut Context<Self>) {
+        self.layers.close(Layer::FileName);
+        self.file_naming = None;
+        self.file_problem = None;
+        self.file_notice = None;
+        self.file_trashing = Some(path);
+        self.layers.open(Layer::ConfirmTrashFile);
+        cx.notify();
+    }
+
+    fn trash_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.layers.contains(Layer::ConfirmTrashFile) {
+            return;
+        }
+        let (Some(project), Some(path)) = (self.state.project.clone(), self.file_trashing.clone())
+        else {
+            return;
+        };
+        let reply = self.backend.trash_project_entry(project, path);
+        self.change_files(
+            reply,
+            |this, to| {
+                this.layers.close(Layer::ConfirmTrashFile);
+                this.file_trashing = None;
+                this.file_notice = Some(files::trashed_note(&to));
+            },
+            window,
+            cx,
+        );
     }
 
     fn load_directory(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -138,13 +251,14 @@ impl Workspace {
         } else {
             (entry.name.clone(), files::size_label(entry.size))
         };
+        let (renamed, trashed) = (path.clone(), path.clone());
         div()
             .id(("file-entry", index))
             .h_flex()
             .w_full()
             .h(px(28.))
             .px_3()
-            .gap_3()
+            .gap_2()
             .justify_between()
             .cursor_pointer()
             .hover(move |style| style.bg(hover))
@@ -156,7 +270,35 @@ impl Workspace {
                     .text_color(cx.theme().muted_foreground)
                     .child(detail),
             )
+            .child(
+                div()
+                    .h_flex()
+                    .flex_shrink_0()
+                    .child(
+                        icon_button(("file-rename", index), "edit", "Rename").on_click(
+                            cx.listener(move |this, _, window, cx| {
+                                // The row underneath opens the entry.
+                                cx.stop_propagation();
+                                this.start_naming(Naming::Rename(renamed.clone()), window, cx)
+                            }),
+                        ),
+                    )
+                    .child(
+                        icon_button(
+                            ("file-trash", index),
+                            "trash",
+                            "Move to the project's trash",
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.ask_trash_file(trashed.clone(), cx)
+                        })),
+                    ),
+            )
             .on_click(cx.listener(move |this, _, window, cx| {
+                // What was said about the last change is about another place now.
+                this.file_notice = None;
+                this.file_problem = None;
                 if is_dir {
                     this.load_directory(path.clone(), window, cx);
                 } else {
@@ -326,9 +468,120 @@ impl Workspace {
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.reload_files(window, cx)
                                     })),
+                            )
+                            .child(div().flex_1())
+                            .child(
+                                icon_button("files-new-folder", "folder-plus", "New folder here")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.start_naming(Naming::Folder, window, cx)
+                                    })),
+                            )
+                            .child(
+                                icon_button("files-new-file", "note-plus", "New file here")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.start_naming(Naming::File, window, cx)
+                                    })),
                             ),
                     ),
             );
+        if let Some(problem) = &self.file_problem {
+            panel = panel.child(div().px_3().pt_2().child(error_banner(problem, cx)));
+        }
+        if let Some(naming) = self
+            .file_naming
+            .as_ref()
+            .filter(|_| self.layers.contains(Layer::FileName))
+        {
+            panel = panel.child(
+                div()
+                    .v_flex()
+                    .gap_2()
+                    .p_3()
+                    .border_b_1()
+                    .border_color(border)
+                    .child(div().text_xs().text_color(muted).child(naming.title()))
+                    .child(Input::new(&self.file_name_input).small())
+                    .child(
+                        div()
+                            .h_flex()
+                            .gap_2()
+                            .child(
+                                Button::new("file-name-save")
+                                    .label("Save")
+                                    .small()
+                                    .primary()
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.save_file_name(window, cx)
+                                    })),
+                            )
+                            .child(
+                                Button::new("file-name-cancel")
+                                    .label("Cancel")
+                                    .small()
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.layers.close(Layer::FileName);
+                                        this.file_naming = None;
+                                        this.file_problem = None;
+                                        this.focus_composer(window, cx);
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
+            );
+        }
+        if let Some(path) = self
+            .file_trashing
+            .as_ref()
+            .filter(|_| self.layers.contains(Layer::ConfirmTrashFile))
+        {
+            panel = panel.child(
+                div()
+                    .v_flex()
+                    .gap_2()
+                    .p_3()
+                    .border_b_1()
+                    .border_color(border)
+                    .child(div().text_sm().child(format!(
+                        "Move {} to the project's trash? It is kept in .wisp/trash, not erased.",
+                        files::file_name(path)
+                    )))
+                    .child(
+                        div()
+                            .h_flex()
+                            .gap_2()
+                            .child(
+                                Button::new("file-trash-confirm")
+                                    .icon(glyph("trash"))
+                                    .label("Move to trash")
+                                    .small()
+                                    .danger()
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.trash_file(window, cx)
+                                    })),
+                            )
+                            .child(
+                                Button::new("file-trash-cancel")
+                                    .label("Keep")
+                                    .small()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.layers.close(Layer::ConfirmTrashFile);
+                                        this.file_trashing = None;
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
+            );
+        }
+        if let Some(notice) = &self.file_notice {
+            panel = panel.child(
+                div()
+                    .px_3()
+                    .pt_2()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(notice.clone()),
+            );
+        }
         if let Some(error) = &self.files.error {
             panel = panel.child(
                 div()

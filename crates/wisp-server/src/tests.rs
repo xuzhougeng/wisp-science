@@ -4154,3 +4154,56 @@ async fn project_settings_name_the_project_and_give_the_model_its_rules() {
     );
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn the_desktop_makes_renames_and_trashes_project_files() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let names = |path: &'static str| {
+        let server = server.clone();
+        async move {
+            let mut names: Vec<String> = server
+                .project_directory(PROJECT, path)
+                .await
+                .unwrap()
+                .entries
+                .into_iter()
+                .map(|entry| entry.name)
+                .collect();
+            names.sort();
+            names
+        }
+    };
+    assert_eq!(
+        server
+            .create_project_entry(PROJECT, "", "figures", true)
+            .await
+            .unwrap(),
+        "figures"
+    );
+    let note = server
+        .create_project_entry(PROJECT, "figures", "notes.md", false)
+        .await
+        .unwrap();
+    assert_eq!(note, "figures/notes.md");
+    assert!(server
+        .create_project_entry("missing", "", "x", true)
+        .await
+        .is_err());
+    let plan = server
+        .rename_project_entry(PROJECT, &note, "plan.md")
+        .await
+        .unwrap();
+    assert_eq!(names("figures").await, ["plan.md"]);
+
+    // Trashed, it is gone from the listing and kept on disk; the trash is
+    // part of the project's own records, which the browser does not show.
+    let gone = server.trash_project_entry(PROJECT, &plan).await.unwrap();
+    assert!(gone.starts_with(".wisp/trash/") && gone.ends_with("/plan.md"));
+    assert!(names("figures").await.is_empty());
+    assert!(temp.path().join("workspace").join(&gone).is_file());
+    assert_eq!(names("").await, ["figures"]);
+    server.shutdown().await;
+}

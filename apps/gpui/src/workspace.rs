@@ -79,6 +79,14 @@ pub struct Workspace {
     copied: Option<usize>,
     palette: PaletteState,
     palette_input: Entity<InputState>,
+    /// What the Files panel's name field is for, and the field; the entry
+    /// the trash question is about; why the last change was refused; and
+    /// where the last trashed entry went.
+    file_naming: Option<crate::files::Naming>,
+    file_name_input: Entity<InputState>,
+    file_trashing: Option<String>,
+    file_problem: Option<String>,
+    file_notice: Option<String>,
     /// What is being looked for in the open conversation, and its field.
     find: crate::find::Find,
     find_input: Entity<InputState>,
@@ -309,6 +317,7 @@ impl Workspace {
         ];
         let find_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Find in this conversation…"));
+        let file_name_input = cx.new(|cx| InputState::new(window, cx));
         let mcp_target = cx.new(|cx| InputState::new(window, cx));
         let mcp_token = cx.new(|cx| InputState::new(window, cx).masked(true));
         let skills_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find a skill…"));
@@ -346,6 +355,11 @@ impl Workspace {
                     _ => {}
                 },
             ),
+            cx.subscribe_in(&file_name_input, window, |this, _, event, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    this.save_file_name(window, cx);
+                }
+            }),
             cx.subscribe_in(&find_input, window, |this, _, event, _, cx| match event {
                 InputEvent::Change => this.search_find(cx),
                 // Return goes back through the conversation; with the
@@ -442,6 +456,11 @@ impl Workspace {
             palette_input,
             find: Default::default(),
             find_input,
+            file_naming: None,
+            file_name_input,
+            file_trashing: None,
+            file_problem: None,
+            file_notice: None,
             palette_scroll: ScrollHandle::new(),
             sessions: vec![],
             inbox: vec![],
@@ -601,6 +620,11 @@ impl Workspace {
                 self.find.clear();
                 self.focus_composer(window, cx);
             }
+            Some(Layer::FileName) => {
+                self.file_naming = None;
+                self.focus_composer(window, cx);
+            }
+            Some(Layer::ConfirmTrashFile) => self.file_trashing = None,
             // Menus and questions that hold no focus of their own.
             Some(
                 Layer::SortMenu
