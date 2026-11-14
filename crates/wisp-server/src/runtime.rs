@@ -18,6 +18,15 @@ use wisp_store::{OpenContextEpoch, Store};
 /// project's, each knowing where it came from. The server configures its
 /// paths and does not read ~/.wisp.
 pub fn all_skills(config: &Config, root: Option<&std::path::Path>) -> SkillIndex {
+    SkillIndex::load_scoped(&skill_paths(config, root))
+}
+
+/// Where skills are read from, the later a folder the stronger its claim
+/// to a name.
+fn skill_paths(
+    config: &Config,
+    root: Option<&std::path::Path>,
+) -> Vec<(PathBuf, wisp_skills::SkillSource)> {
     use wisp_skills::SkillSource;
     let bundled = wisp_skills::bundled_dir();
     let mut paths: Vec<_> = config
@@ -36,7 +45,7 @@ pub fn all_skills(config: &Config, root: Option<&std::path::Path>) -> SkillIndex
         paths.push((root.join(".wisp/skills"), SkillSource::Project));
         paths.push((root.join("skills"), SkillSource::Project));
     }
-    SkillIndex::load_scoped(&paths)
+    paths
 }
 
 /// The key the WebView desktop keeps the same list under: a JSON array of
@@ -92,8 +101,21 @@ pub(crate) async fn connector_tools(
 
 /// The skills a project's conversations can use: every one that is found
 /// and not turned off.
-pub async fn skill_index(config: &Config, store: &Store, root: &std::path::Path) -> SkillIndex {
-    all_skills(config, Some(root)).filtered(&disabled_skills(store).await)
+pub async fn skill_index(
+    config: &Config,
+    store: &Store,
+    project: &str,
+    root: &std::path::Path,
+) -> SkillIndex {
+    // The project's skills, with those of the plugins it switched on.
+    let mut paths = skill_paths(config, Some(root));
+    paths.extend(
+        crate::plugins::enabled_skill_folders(store, project)
+            .await
+            .into_iter()
+            .map(|folder| (folder, wisp_skills::SkillSource::Plugin)),
+    );
+    SkillIndex::load_scoped(&paths).filtered(&disabled_skills(store).await)
 }
 
 /// Whether memory is on. The WebView desktop keeps the same switch under
@@ -239,7 +261,7 @@ pub async fn build(
     decision: Option<wisp_llm::systemone::DecisionModel>,
 ) -> Result<Agent> {
     let root = PathBuf::from(root);
-    let skills = Arc::new(skill_index(config, store, &root).await);
+    let skills = Arc::new(skill_index(config, store, project, &root).await);
     let mut cfg = model.provider.clone().with_session_id(frame);
     let network = crate::network::load(store).await;
     if let Some(route) = crate::network::route(&network.model_proxy_url) {

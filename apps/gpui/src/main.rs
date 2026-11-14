@@ -29,6 +29,7 @@ mod palette;
 mod panel;
 mod papers;
 mod pet;
+mod plugins;
 mod present;
 mod queue;
 mod review;

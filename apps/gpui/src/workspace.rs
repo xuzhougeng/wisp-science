@@ -31,6 +31,7 @@ mod settings_environments;
 mod settings_experts;
 mod settings_mcp;
 mod settings_network;
+mod settings_plugins;
 mod settings_quick;
 mod settings_sections;
 mod settings_view;
@@ -320,6 +321,11 @@ pub struct Workspace {
     /// What the last save or test said.
     decision_note: Option<String>,
     decision_testing: bool,
+    /// The installed plugins; `None` until the host answered.
+    plugins: Option<Vec<wisp_server::desktop::PluginRow>>,
+    plugin_installing: bool,
+    /// The plugin the remove question is about.
+    plugin_removing: Option<String>,
     /// The pet as the host keeps it; `None` until it answered.
     pet: Option<wisp_server::desktop::Pet>,
     pet_folder: Entity<InputState>,
@@ -824,6 +830,9 @@ impl Workspace {
             decision_fields,
             decision_note: None,
             decision_testing: false,
+            plugins: None,
+            plugin_installing: false,
+            plugin_removing: None,
             pet: None,
             pet_folder,
             pet_view,
@@ -937,6 +946,7 @@ impl Workspace {
             Some(Layer::ConfirmRemoveFavorite) => {}
             Some(Layer::McpForm | Layer::ConfirmRemoveMcp) => self.mcp_editing = None,
             Some(Layer::ExpertForm | Layer::ConfirmRemoveExpert) => self.expert_editing = None,
+            Some(Layer::ConfirmRemovePlugin) => self.plugin_removing = None,
             Some(Layer::QuickActionForm | Layer::ConfirmRemoveQuickAction) => {
                 self.quick_editing = None
             }

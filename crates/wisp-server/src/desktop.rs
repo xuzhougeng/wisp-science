@@ -3218,6 +3218,42 @@ impl Server {
         crate::papers::unbind(&self.0.store, project, version, binding).await
     }
 
+    /// The installed plugins, and whether `project` has each switched on;
+    /// with no project, none reads as on.
+    pub async fn plugins(&self, project: Option<&str>) -> Result<Vec<PluginRow>> {
+        if let Some(project) = project {
+            self.known_project(project).await?;
+        }
+        crate::plugins::list(&self.0.store, project).await
+    }
+
+    /// Installs the plugin in `folder` into this host's data directory.
+    /// Nothing in the package is run.
+    pub async fn install_plugin(&self, folder: &std::path::Path) -> Result<PluginRow> {
+        let _admission = self.0.admission.read().await;
+        crate::plugins::install(&self.0.store, &self.0.config.data, folder).await
+    }
+
+    /// Switches a plugin on or off for one project. Its skills are there
+    /// from the project's next turn.
+    pub async fn set_plugin_enabled(
+        &self,
+        project: &str,
+        id: &str,
+        version: &str,
+        enabled: bool,
+    ) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        crate::plugins::set_enabled(&self.0.store, project, id, version, enabled).await
+    }
+
+    /// Removes an installed plugin from every project, with its files.
+    pub async fn remove_plugin(&self, id: &str, version: &str) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        crate::plugins::remove(&self.0.store, &self.0.config.data, id, version).await
+    }
+
     /// The key id when one was made; looking never makes one.
     async fn known_key_id(&self) -> Option<String> {
         self.0.store.get_setting(MODEL_KEY_ID).await.ok().flatten()
@@ -4418,6 +4454,7 @@ pub use crate::papers::{
     PaperSourceChoice, PaperSourceKind, PaperVersion, PaperVersionState,
 };
 pub use crate::pet::{Pet, PetLook, SHEET_HEIGHT, SHEET_WIDTH};
+pub use crate::plugins::PluginRow;
 pub use crate::quick_actions::{QuickAction, QuickActionInput};
 pub use crate::remote_dir::RemoteDirectory;
 pub use crate::research_archive::ArchiveDraft;

@@ -112,6 +112,8 @@ pub enum Layer {
     McpForm,
     /// Question before an MCP server is removed.
     ConfirmRemoveMcp,
+    /// Question before a plugin is removed, on its page of Settings.
+    ConfirmRemovePlugin,
     /// The form for a quick action, on its page of Settings.
     QuickActionForm,
     /// Question before a quick action is removed.
@@ -175,6 +177,7 @@ impl Layer {
             | Layer::ExpertForm
             | Layer::ConfirmRemoveExpert
             | Layer::QuickActionForm
+            | Layer::ConfirmRemovePlugin
             | Layer::ConfirmRemoveQuickAction => Some(Layer::Settings),
             Layer::ConfirmRemoveFavorite => Some(Layer::Favorites),
             Layer::JournalForm => Some(Layer::Journey),
@@ -471,6 +474,14 @@ mod tests {
         stack.open(Layer::ConfirmRemoveExpert);
         assert!(stack.close(Layer::Settings));
         assert!(!stack.contains(Layer::ConfirmRemoveExpert));
+        // The question before a plugin is removed is inside Settings too.
+        stack.open(Layer::Settings);
+        stack.open(Layer::ConfirmRemovePlugin);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmRemovePlugin));
+        assert!(stack.contains(Layer::Settings));
+        stack.open(Layer::ConfirmRemovePlugin);
+        assert!(stack.close(Layer::Settings));
+        assert!(!stack.contains(Layer::ConfirmRemovePlugin));
         // So is the quick action form, and the question before removing one.
         stack.open(Layer::Settings);
         stack.open(Layer::QuickActionForm);

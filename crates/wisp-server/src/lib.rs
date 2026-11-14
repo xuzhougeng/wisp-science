@@ -14,6 +14,7 @@ mod origin;
 mod output;
 mod papers;
 mod pet;
+mod plugins;
 mod project_archive;
 mod project_folder;
 mod quick_actions;

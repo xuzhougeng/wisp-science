@@ -23,6 +23,8 @@ pub enum Section {
     /// The fast endpoint that answers typed questions.
     DecisionModel,
     Skills,
+    /// Packages of skills, switched on per project.
+    Plugins,
     Connections,
     Credentials,
     Environments,
@@ -36,7 +38,7 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 15] = [
+    pub const ALL: [Section; 16] = [
         Section::General,
         Section::Network,
         Section::Pet,
@@ -46,6 +48,7 @@ impl Section {
         Section::Experts,
         Section::QuickActions,
         Section::Skills,
+        Section::Plugins,
         Section::Connections,
         Section::Credentials,
         Section::Environments,
@@ -65,6 +68,7 @@ impl Section {
             Section::Pet => tr("Pet"),
             Section::DecisionModel => tr("Decision model"),
             Section::Skills => tr("Skills"),
+            Section::Plugins => tr("Plugins"),
             Section::Connections => tr("Connections"),
             Section::Credentials => tr("Credentials"),
             Section::Environments => tr("Environments"),
@@ -85,6 +89,7 @@ impl Section {
             Section::Pet => "sparkles",
             Section::DecisionModel => "check-square",
             Section::Skills => "skill",
+            Section::Plugins => "grid",
             Section::Connections => "link",
             Section::Credentials => "lock",
             Section::Environments => "server",
@@ -124,6 +129,7 @@ impl Section {
             Section::Pet => "pet companion mascot animation sprite 宠物",
             Section::QuickActions => "quick action prompt template shortcut reuse 快捷动作",
             Section::Skills => "skill workflow bundled folder reload",
+            Section::Plugins => "plugin package install extension claude 插件",
             Section::Connections => {
                 "mcp server connector tool literature biology pubmed uniprot token http"
             }
@@ -148,6 +154,7 @@ impl Section {
             | Section::Experts
             | Section::QuickActions => "AI",
             Section::Skills
+            | Section::Plugins
             | Section::Connections
             | Section::Credentials
             | Section::Environments => tr("Capabilities"),
@@ -815,6 +822,7 @@ mod tests {
                 "AI",
                 "AI",
                 "AI",
+                "Capabilities",
                 "Capabilities",
                 "Capabilities",
                 "Capabilities",

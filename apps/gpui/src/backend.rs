@@ -788,6 +788,32 @@ impl Backend {
         self.local(|host| async move { host.check_for_update().await })
     }
 
+    /// The installed plugins, and whether `project` has each switched on.
+    pub fn plugins(&self, project: Option<String>) -> Reply<Vec<wisp_server::desktop::PluginRow>> {
+        self.local(move |host| async move { host.plugins(project.as_deref()).await })
+    }
+
+    pub fn install_plugin(&self, folder: PathBuf) -> Reply<wisp_server::desktop::PluginRow> {
+        self.local(move |host| async move { host.install_plugin(&folder).await })
+    }
+
+    pub fn set_plugin_enabled(
+        &self,
+        project: String,
+        id: String,
+        version: String,
+        enabled: bool,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.set_plugin_enabled(&project, &id, &version, enabled)
+                .await
+        })
+    }
+
+    pub fn remove_plugin(&self, id: String, version: String) -> Reply<()> {
+        self.local(move |host| async move { host.remove_plugin(&id, &version).await })
+    }
+
     /// Every project's scheduled tasks.
     pub fn schedules(&self) -> Reply<Vec<wisp_server::desktop::ScheduleRow>> {
         self.local(|host| async move { host.schedules().await })

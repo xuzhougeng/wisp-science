@@ -1921,10 +1921,10 @@ async fn a_skill_that_is_turned_off_is_not_offered_to_the_model_or_the_composer(
     };
     // What a turn's agent is given: the index its skill tools are built on.
     let for_turns = || {
-        let (server, folder) = (&server, &folder);
+        let (server, folder, lab) = (&server, &folder, &lab);
         async move {
             let index =
-                crate::runtime::skill_index(&server.0.config, &server.0.store, folder).await;
+                crate::runtime::skill_index(&server.0.config, &server.0.store, lab, folder).await;
             let mut names: Vec<_> = index.all().iter().map(|skill| skill.name.clone()).collect();
             names.sort();
             names
@@ -6298,5 +6298,112 @@ async fn a_scheduled_task_fires_once_per_time_into_a_new_conversation() {
     server.delete_schedule(&due).await.unwrap();
     assert!(server.delete_schedule(&due).await.is_err());
     assert_eq!(server.schedules().await.unwrap().len(), 1);
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_plugin_is_installed_once_and_brings_its_skills_to_the_projects_that_switch_it_on() {
+    let temp = tempfile::tempdir().unwrap();
+    let cfg = config(temp.path());
+    let server = Server::open_with_models(cfg.clone(), models(Arc::default(), false))
+        .await
+        .unwrap();
+    assert!(!server
+        .commands()
+        .iter()
+        .any(|command| command.contains("plugin")));
+    assert!(server.plugins(Some(PROJECT)).await.unwrap().is_empty());
+    assert!(server.plugins(Some("missing")).await.is_err());
+
+    let package = temp.path().join("motif");
+    crate::plugins::tests::write_plugin(&package, "motif-tools", "1.2.0");
+    assert!(server
+        .install_plugin(&temp.path().join("absent"))
+        .await
+        .is_err());
+    let installed = server.install_plugin(&package).await.unwrap();
+    assert_eq!(installed.name, "Motif tools");
+    assert_eq!(installed.skills, ["find-motifs"]);
+    assert_eq!(installed.servers, ["uvx motif-mcp --stdio"]);
+    assert!(!installed.enabled);
+    assert!(cfg
+        .data
+        .join("plugins/motif-tools/1.2.0/skills/find-motifs/SKILL.md")
+        .is_file());
+
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    let names = |project: String, root: std::path::PathBuf| {
+        let server = &server;
+        async move {
+            crate::runtime::skill_index(&server.0.config, &server.0.store, &project, &root)
+                .await
+                .all()
+                .iter()
+                .map(|skill| skill.name.clone())
+                .collect::<Vec<_>>()
+        }
+    };
+    // Installed is not switched on: no project has the skill yet.
+    assert!(!names(lab.clone(), folder.clone())
+        .await
+        .contains(&"find-motifs".to_owned()));
+
+    // Switched on for one project, its skill is that project's only.
+    assert!(server
+        .set_plugin_enabled(&lab, "motif-tools", "9.9.9", true)
+        .await
+        .is_err());
+    server
+        .set_plugin_enabled(&lab, "motif-tools", "1.2.0", true)
+        .await
+        .unwrap();
+    assert!(server.plugins(Some(&lab)).await.unwrap()[0].enabled);
+    assert!(!server.plugins(Some(PROJECT)).await.unwrap()[0].enabled);
+    // Asked about no project, it is listed and reads as off.
+    assert!(!server.plugins(None).await.unwrap()[0].enabled);
+    assert!(names(lab.clone(), folder.clone())
+        .await
+        .contains(&"find-motifs".to_owned()));
+    assert!(!names(PROJECT.into(), cfg.workspace.clone())
+        .await
+        .contains(&"find-motifs".to_owned()));
+
+    // A newer version replaces the files and the record; the project
+    // chose the older one, so it is off until switched on again.
+    crate::plugins::tests::write_plugin(&package, "motif-tools", "1.3.0");
+    let newer = server.install_plugin(&package).await.unwrap();
+    assert_eq!(newer.version, "1.3.0");
+    let listed = server.plugins(Some(&lab)).await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert!(!listed[0].enabled);
+    assert!(!cfg.data.join("plugins/motif-tools/1.2.0").exists());
+    assert!(!names(lab.clone(), folder.clone())
+        .await
+        .contains(&"find-motifs".to_owned()));
+    server
+        .set_plugin_enabled(&lab, "motif-tools", "1.3.0", true)
+        .await
+        .unwrap();
+    server
+        .set_plugin_enabled(&lab, "motif-tools", "1.3.0", false)
+        .await
+        .unwrap();
+    assert!(!server.plugins(Some(&lab)).await.unwrap()[0].enabled);
+    server
+        .set_plugin_enabled(&lab, "motif-tools", "1.3.0", true)
+        .await
+        .unwrap();
+
+    // Removing it takes it from every project, with its files.
+    assert!(server.remove_plugin("motif-tools", "1.2.0").await.is_err());
+    assert!(server.remove_plugin("../outside", "1.3.0").await.is_err());
+    server.remove_plugin("motif-tools", "1.3.0").await.unwrap();
+    assert!(server.plugins(Some(&lab)).await.unwrap().is_empty());
+    assert!(!cfg.data.join("plugins/motif-tools").exists());
+    assert!(!names(lab, folder).await.contains(&"find-motifs".to_owned()));
+    // The package it was installed from is untouched.
+    assert!(package.join("skills/find-motifs/SKILL.md").is_file());
     server.shutdown().await;
 }

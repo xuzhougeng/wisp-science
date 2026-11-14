@@ -856,4 +856,17 @@ pub const ZH: &[(&str, &str)] = &[
     ("Prompts sent on a schedule while the app is open, or any time you need them. Each firing is a conversation of its own in the task's project.", "应用打开时按计划发送的提示词，也可以随时手动运行。每次触发都是任务所在项目中的一个独立对话。"),
     ("No scheduled tasks yet. Start from a template below or write your own prompt.", "还没有定时任务。可以从下面的模板开始，或自己写提示词。"),
     ("Templates", "模板"),
+    // Plugins.
+    ("Plugins", "插件"),
+    ("Version {}", "版本 {}"),
+    ("No skills", "没有技能"),
+    ("Skills: {}", "技能：{}"),
+    ("MCP servers, not started by this desktop: {}", "MCP 服务器（此桌面端不会启动）：{}"),
+    ("For the project {}", "针对项目 {}"),
+    ("Open a project to switch a plugin on for it.", "打开一个项目后才能为它开启插件。"),
+    ("Install", "安装"),
+    ("Installing…", "正在安装…"),
+    ("Install from a folder…", "从文件夹安装…"),
+    ("A plugin is a folder of skills in the Claude plugin layout. Installing copies it into the app's data and runs nothing; a project that switches it on has its skills from the next turn.", "插件是按 Claude 插件布局组织的一个技能文件夹。安装只是把它复制到应用数据中，不会运行任何内容；项目开启它之后，从下一回合起就能使用其中的技能。"),
+    ("No plugin is installed.", "尚未安装插件。"),
 ];

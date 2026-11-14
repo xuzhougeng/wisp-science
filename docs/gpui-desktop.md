@@ -150,6 +150,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Interpreters | The Python and R interpreters a conversation keeps between tool calls show above the composer with their version and state; Stop ends one, Dismiss takes a stopped one off the list |
 | Experts | Settings, Experts, keeps personas (a name and instructions); the composer's Expert menu starts a new conversation as one, and its instructions hold for the whole conversation |
 | Quick actions | Settings, Quick actions, keeps requests you make often under a name; the composer's quick actions menu puts one into the message box, after whatever is already typed, to finish and send |
+| Plugins | Settings, Plugins, installs a plugin from a folder in the Claude plugin layout (`.claude-plugin/plugin.json`, `skills/*/SKILL.md`) into the app's data without running anything in it, lists what each brings, switches one on for the open project, whose conversations then have its skills, and removes it |
 | Decision model | Settings, Decision model, sets up one fast endpoint (TypeSafe Jev, StartLux-Decision hosted or self-hosted, or a custom System One server) with its key, thinking mode and timeout, and tests it; while one is in use the model's `map_items` tool, which runs one step over many items, also offers its `decide` step |
 | Pet | Settings, Pet, turns on an animated companion drawn from a folder you choose (pet.json and a sprite sheet, Codex-compatible version 2); it stands in the transcript's corner and shows whether the conversation is working, being reviewed, waiting for you, done or failed |
 | Research archive | A conversation's Research archive button (or the command palette) has the model draft a report of its findings with the scripts behind them; you change the draft and freeze it, which writes it into the project and makes the conversation read-only |
@@ -471,6 +472,19 @@ Limits of this slice:
   `desktop.quick_actions` and neither reads nor changes the WebView's.
   It starts with four that can be changed or removed; at most 40 are
   kept, a name is at most 60 characters and a request 8,000.
+- A plugin is installed from a folder only: not from a zip archive or
+  an address, and with no published checksum to compare against, so it
+  is recorded as unverified. One version of a plugin is kept; a newer
+  one replaces its files, and a project that had the older one on has
+  to switch the new one on. A package with a symbolic link, more than
+  10,000 files or 512 MB is refused. The MCP servers a plugin declares
+  are listed with the command that would start them, but this desktop
+  does not start them, so only a plugin's skills take effect. Those
+  skills do not show on the Skills page and cannot be turned off one by
+  one there. The records are the store's own (`plugin_installations`,
+  `project_plugins`), shared with the WebView desktop; removing a
+  plugin that desktop installed removes the record and leaves its
+  files where that desktop put them.
 - The decision model is used by `map_items` only; this host has no
   `desktop_autopilot`. `map_items` works on the sub-agent model. The
   form is kept under the WebView's `decision_model` key, but each
@@ -998,6 +1012,14 @@ counts it. Remove the evidence, change the figure's title, remove the
 figure. With a form open press Escape: only the form closes; press it
 again: the page closes. Rename the paper, then remove it: the question
 has to be answered first.
+In Settings, Plugins, press Install from a folder and choose a folder
+that is no plugin: it is refused and nothing is listed. Choose a plugin
+folder: it is listed with its version, skills and any MCP servers, off.
+With a project open switch it on, start a conversation and ask which
+skills there are: the plugin's are among them; another project does not
+have them. Press Remove, then Escape: only the question closes. Remove
+it: it leaves the list, and the folder it was installed from is
+untouched.
 In Settings, Decision model, turn it on with TypeSafe Jev and no key and
 press Save: it is refused. Choose StartLux (self-hosted): the address,
 model and timeout change to that service's. Press Test connection with
