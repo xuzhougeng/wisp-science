@@ -329,6 +329,12 @@ Limits of this slice:
   for a last word without tools. Compaction uses the WebView's keys
   (`auto_compact`, `auto_compact_percent`). Auto-continue, compaction on a
   model switch and after idle hours are not ported.
+- Whole log reads `stdout.log` and `stderr.log` from the run's own
+  folder (`~/.wisp-science/runs/<id>`), the last 512 KB of each, when it
+  is asked for; it does not follow a run that is still writing, so press
+  it again to see more. Only runs on this computer have it: a run on an
+  SSH host keeps its log on that host, and its last lines are what the
+  Output shows. Once a run's folder is gone, so is its whole log.
 - The update check runs only when its button is pressed: nothing is
   checked at start or in the background. It asks GitHub for the latest
   release of the project (the WebView's request, with a generic client
@@ -788,6 +794,10 @@ press Escape (the page stays), press Escape again (the page closes). Open the
 conversation an item came from. Have a turn write an image, save it from
 Artifacts, delete the file and confirm the figure still shows in Favorites.
 Delete a conversation and confirm what was saved from it is still listed.
+Have the model start a run on this computer that prints more than a
+screenful, open the Runs tab, press Output and then Whole log: everything
+the run wrote is shown, stdout and stderr apart. Press it again while a
+long run is still writing and confirm more appears.
 In Settings, General, press Check for updates: it reads Checking… and
 then says this is the latest version or names a newer one, with Open
 releases opening the project's release page. Without a network it says

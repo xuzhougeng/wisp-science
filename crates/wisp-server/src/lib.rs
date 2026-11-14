@@ -13,6 +13,7 @@ mod output;
 mod project_archive;
 mod project_folder;
 mod review;
+mod run_log;
 mod runtime;
 #[cfg(test)]
 mod tests;

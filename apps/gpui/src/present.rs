@@ -165,6 +165,30 @@ pub fn run_output(run: &RunRecord) -> String {
     }
 }
 
+/// Whether a run's whole log can be read: only a run on this computer
+/// keeps it where the app can reach.
+pub fn has_whole_log(run: &RunRecord) -> bool {
+    run.kind == "local_detached"
+}
+
+/// A run's whole log as it is shown: each stream that has something in it,
+/// with a note when the beginning was left out.
+pub fn whole_log(log: &wisp_server::desktop::RunLog) -> String {
+    let mut parts = Vec::new();
+    if log.cut {
+        parts.push(tr("The log is long: this is its end.").to_owned());
+    }
+    for (title, text) in [("stdout", &log.stdout), ("stderr", &log.stderr)] {
+        if !text.trim().is_empty() {
+            parts.push(format!("{title}\n\n{}", fenced(text, "")));
+        }
+    }
+    if log.stdout.trim().is_empty() && log.stderr.trim().is_empty() {
+        parts.push(tr("The run wrote nothing.").to_owned());
+    }
+    parts.join("\n\n")
+}
+
 /// A conversation counts as read once its finished answer is on screen in the
 /// active window. A pending approval still needs the user, so it stays unread.
 pub fn should_mark_seen(status: &str, snapshot: Option<&Snapshot>, window_active: bool) -> bool {
@@ -177,6 +201,29 @@ pub fn should_mark_seen(status: &str, snapshot: Option<&Snapshot>, window_active
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_whole_log_shows_each_stream_and_says_when_it_is_only_the_end() {
+        let log = wisp_server::desktop::RunLog {
+            stdout: "started\ndone\n".into(),
+            stderr: "  ".into(),
+            cut: false,
+        };
+        assert_eq!(whole_log(&log), "stdout\n\n```\nstarted\ndone\n```");
+        let long = wisp_server::desktop::RunLog {
+            stdout: "tail\n".into(),
+            stderr: "warn\n".into(),
+            cut: true,
+        };
+        assert_eq!(
+            whole_log(&long),
+            "The log is long: this is its end.\n\nstdout\n\n```\ntail\n```\n\nstderr\n\n```\nwarn\n```"
+        );
+        assert_eq!(
+            whole_log(&wisp_server::desktop::RunLog::default()),
+            "The run wrote nothing."
+        );
+    }
 
     fn item(value: serde_json::Value) -> Item {
         let mut base = json!({

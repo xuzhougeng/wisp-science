@@ -160,6 +160,22 @@ impl Workspace {
     }
 
     /// Runs this conversation started: status, and their output on demand.
+    /// Reads everything a run wrote, to show in place of its last lines.
+    fn load_run_log(&mut self, run: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        let reply = self.backend.run_log(project, run.clone());
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                this.run_logs.insert(run, result);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     pub(super) fn render_runs_tab(
         &self,
         window: &mut Window,
@@ -243,15 +259,48 @@ impl Workspace {
                         .child(actions),
                 );
             if expanded {
+                let whole = self.run_logs.get(&run.id);
+                let shown = match whole {
+                    Some(Ok(log)) => present::whole_log(log),
+                    _ => present::run_output(run),
+                };
                 card = card.child(
                     TextView::markdown(
                         SharedString::from(format!("run-output-{}", run.id)),
-                        present::run_output(run),
+                        shown,
                         window,
                         cx,
                     )
                     .selectable(true),
                 );
+                if let Some(Err(problem)) = whole {
+                    card = card.child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().danger)
+                            .child(problem.clone()),
+                    );
+                }
+                // The record keeps the last lines; the run's folder has all.
+                if present::has_whole_log(run) {
+                    let wanted = run.id.clone();
+                    card = card.child(
+                        div().h_flex().child(
+                            Button::new(SharedString::from(format!("run-log-{}", run.id)))
+                                .label(if matches!(whole, Some(Ok(_))) {
+                                    tr("Read the log again")
+                                } else {
+                                    tr("Whole log")
+                                })
+                                .xsmall()
+                                .ghost()
+                                .tooltip(tr("Read everything the run wrote, from its folder"))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.load_run_log(wanted.clone(), window, cx)
+                                })),
+                        ),
+                    );
+                }
             }
             list = list.child(card);
         }

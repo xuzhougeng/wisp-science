@@ -172,7 +172,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Environments [环境]: conversation environment, attach servers, probe, terminal | Yes | Partial: the conversation's environment is chosen in the composer and hosts are checked in Settings; no panel tab, attaching or terminal | store + shared |
 | Runs [运行]: list, output | Yes | Done: a Runs tab with status and output tails | served |
 | Runs: cancel | Yes | Done | served |
-| Runs: harvest, transfer, full log, workspace review | Yes | Missing | shared |
+| Runs: harvest, transfer, full log, workspace review | Yes | Partial: the whole log of a run on this computer; no harvest, transfer or workspace review, and no whole log for runs on SSH hosts | shared |
 | Notebook [Notebook]: code cells and outputs | Yes | Done: a panel tab with the loaded conversation's cells and outputs, copy, save to favorites and show in the conversation | store |
 | Highlights [划线] | Yes | Done: lists what the conversation saved, with use, copy and remove | store |
 | Provenance [溯源]: tool evidence behind a claim | Yes | Missing | store |
@@ -201,7 +201,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Workflows [工作流]: library, graph editor, approval policy | Yes | Missing | store |
 | Experts [专家]: built-in and custom, default sub-agent model | Yes | Partial: an Experts page lists the built-in illustrator and your own, with add, change and remove; no model per expert, no skill or connector lists, no sub-agent model | tauri |
 | Memory [记忆]: project notes, global habits, enable switch | Yes | Done, as a side-panel tab rather than a Settings page; no "clear all", automatic proposals or weekly tidy | store |
-| Hooks [钩子]: automatic review, tool-failure analysis, command hooks | Yes | Missing | tauri |
+| Hooks [钩子]: automatic review, tool-failure analysis, command hooks | Yes | Partial: automatic review and follow-up questions, as switches on the Conversation page; no Hooks page, tool-failure analysis or command hooks | tauri |
 | Skills [技能]: list, tags, enable, community, GitHub, reload | Yes | Partial: list with source and tags, search, on or off, reload; no tag editing, community catalog or GitHub install | shared |
 | Plugins [插件] | Yes | Missing | store |
 | Browser [浏览器]: auto-open, auto-close tabs, block and prefer lists | Yes | Missing | tauri |

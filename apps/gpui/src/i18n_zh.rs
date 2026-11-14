@@ -685,4 +685,10 @@ pub const ZH: &[(&str, &str)] = &[
     ("Could not check: {}", "检查失败：{}"),
     ("Version {} is available; this is {}.", "有新版本 {}；当前版本是 {}。"),
     ("This is the latest version, {}.", "当前已是最新版本 {}。"),
+    // Runs.
+    ("The log is long: this is its end.", "日志很长：这里是它的结尾部分。"),
+    ("The run wrote nothing.", "这次运行没有输出。"),
+    ("Read the log again", "重新读取日志"),
+    ("Whole log", "完整日志"),
+    ("Read everything the run wrote, from its folder", "从运行的文件夹中读取它的全部输出"),
 ];

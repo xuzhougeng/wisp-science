@@ -718,6 +718,11 @@ impl Backend {
         self.local(move |host| async move { host.review_conversation(&project, &session).await })
     }
 
+    /// What a run on this computer wrote, in full or its end.
+    pub fn run_log(&self, project: String, run: String) -> Reply<wisp_server::desktop::RunLog> {
+        self.local(move |host| async move { host.run_log(&project, &run).await })
+    }
+
     /// Asks the release page whether a newer version has been published.
     pub fn check_for_update(&self) -> Reply<wisp_server::desktop::UpdateCheck> {
         self.local(|host| async move { host.check_for_update().await })

@@ -2788,6 +2788,29 @@ impl Server {
             .map_err(anyhow::Error::msg)
     }
 
+    /// What a run wrote in full, or the end of it when it is very long.
+    /// Only a run on this computer keeps its log where it can be read; a
+    /// run on another machine has its last lines in the run record.
+    pub async fn run_log(&self, project: &str, run: &str) -> Result<RunLog> {
+        self.project_root(project).await?;
+        let record = self.0.store.get_run(run).await?.context("Run not found")?;
+        ensure!(
+            record.project_id == project,
+            "Run does not belong to the selected project"
+        );
+        ensure!(
+            record.kind == "local_detached",
+            "This run's log is on the machine it ran on; its last lines are in the output"
+        );
+        let home = std::env::home_dir().context("The home folder could not be found")?;
+        let folder = crate::run_log::folder(
+            &home,
+            record.remote_workdir.as_deref().unwrap_or_default(),
+            &record.id,
+        )?;
+        tokio::task::spawn_blocking(move || crate::run_log::read(&folder)).await?
+    }
+
     /// What the next turn of this conversation will run with.
     pub(crate) async fn stored_options(&self, session: &str) -> Result<ConversationOptions> {
         Ok(ConversationOptions {
@@ -3949,6 +3972,7 @@ pub use crate::aside::Exchange as AsideExchange;
 pub use crate::experts::{Expert, ExpertInput};
 pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow};
 pub use crate::review::{Finding as ReviewFinding, Outcome as ReviewOutcome, Review};
+pub use crate::run_log::RunLog;
 pub use crate::updates::UpdateCheck;
 
 /// A project's folder, as the question before it is deleted describes it.
