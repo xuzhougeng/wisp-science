@@ -56,6 +56,10 @@ pub enum Layer {
     MemoryEditor,
     /// Question before a habit or a note is deleted.
     ConfirmDeleteMemory,
+    /// The Favorites page, shown in place of the rest of the window.
+    Favorites,
+    /// Question on the Favorites page before a saved item is removed.
+    ConfirmRemoveFavorite,
 }
 
 impl Layer {
@@ -92,6 +96,7 @@ impl Layer {
             | Layer::MemoryEditor
             | Layer::ConfirmDeleteMemory => Some(Layer::FilesPanel),
             Layer::ConfirmDeleteModel => Some(Layer::Settings),
+            Layer::ConfirmRemoveFavorite => Some(Layer::Favorites),
             Layer::BatchGroupMenu | Layer::ConfirmBatchDelete => Some(Layer::SelectMode),
             _ => None,
         }
@@ -128,6 +133,11 @@ impl EscapeStack {
             }
         }
         self.open(layer);
+    }
+
+    /// The member of `set` that is drawn over the others, if any is open.
+    pub fn top_of(&self, set: &[Layer]) -> Option<Layer> {
+        self.0.iter().rev().copied().find(|open| set.contains(open))
     }
 
     /// Closes only the topmost surface and reports which one it was.
@@ -312,6 +322,27 @@ mod tests {
         assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmDeleteMemory));
         assert!(stack.close(Layer::FilesPanel));
         assert!(!stack.contains(Layer::MemoEditor) && !stack.contains(Layer::MemoryEditor));
+    }
+
+    #[test]
+    fn of_two_pages_the_one_opened_last_is_shown_and_closes_first() {
+        let pages = [Layer::Settings, Layer::Favorites];
+        let mut stack = EscapeStack::default();
+        assert_eq!(stack.top_of(&pages), None);
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::Favorites);
+        stack.open(Layer::ConfirmRemoveFavorite);
+        assert_eq!(stack.top_of(&pages), Some(Layer::Favorites));
+        stack.open(Layer::Settings);
+        assert_eq!(stack.top_of(&pages), Some(Layer::Settings));
+        // Escape leaves Settings and is back on Favorites, question and all.
+        assert_eq!(stack.dismiss_top(), Some(Layer::Settings));
+        assert_eq!(stack.top_of(&pages), Some(Layer::Favorites));
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmRemoveFavorite));
+        stack.open(Layer::ConfirmRemoveFavorite);
+        assert!(stack.close(Layer::Favorites));
+        assert!(!stack.contains(Layer::ConfirmRemoveFavorite));
+        assert!(stack.contains(Layer::FilesPanel));
     }
 
     #[test]

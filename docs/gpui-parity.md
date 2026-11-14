@@ -63,7 +63,7 @@ to find in the running app.
 | Sample project, read-only [示例项目] | Yes | Missing | tauri |
 | Research assistant [科研助理] | Scheduled tasks and plans | Missing | store |
 | Research calendar [研究日历] | Month grid, per-project filter, day detail | Missing | store |
-| Favorites library [收藏库] | Saved code, figures, highlights; search and kind filter | Missing | store |
+| Favorites library [收藏库] | Saved code, figures, highlights; search and kind filter | Done: a page of its own; saved snippets cannot be edited into versions | store |
 | Command palette [搜索, ⌘K] | Projects, files, conversations, commands | Partial: finds projects, files and conversations in every project and runs GPUI's own commands; no open-in-new-window or attach-from-result, and the commands for features not ported yet are absent | served + ui |
 | Documentation [文档] | Opens the docs | Missing | ui |
 | Settings entry | Yes | Done | ui |
@@ -89,7 +89,7 @@ to find in the running app.
 | Research journey [研究历程] | Section 7 | Missing | store |
 | Memos [备忘录] | Section 6 | Done | store |
 | Paper evidence [论文证据] | Section 7 | Missing | store |
-| Favorites [收藏库] | Section 1 | Missing | store |
+| Favorites [收藏库] | Section 1 | Done | store |
 | Capability summary [能力]: skills, MCP, memory counts, local tools found | Dialog | Missing | shared |
 | Feedback [反馈] | Yes | Missing | ui |
 
@@ -138,7 +138,7 @@ to find in the running app.
 | Branch from a message [分支] | Yes | Partial: a copy through that turn, nested under its source; no branch card or merge back | store |
 | Save to memory [记忆] | Yes | Partial: the message is opened for trimming and saved for the project or as a habit; no model-written suggestion | store |
 | Review a turn [审查] | Yes | Missing | tauri |
-| Select text: add to chat, ask aside, highlight | Yes | Missing | store |
+| Select text: add to chat, ask aside, highlight | Yes | Partial: a whole message is saved with its star; a selected passage cannot be, and there is no add-to-chat or ask-aside | store |
 | Full record / model view toggles [完整记录 / 模型视角] | Yes | Missing | served |
 | Conversation outline [展开对话目录] | Yes | Missing | store |
 | Find in conversation | Yes *(source)* | Missing | ui |
@@ -174,7 +174,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Runs: cancel | Yes | Done | served |
 | Runs: harvest, transfer, full log, workspace review | Yes | Missing | shared |
 | Notebook [Notebook]: code cells and outputs | Yes | Missing | store |
-| Highlights [划线] | Yes | Missing | store |
+| Highlights [划线] | Yes | Done: lists what the conversation saved, with use, copy and remove | store |
 | Provenance [溯源]: tool evidence behind a claim | Yes | Missing | store |
 | Side question [侧边问答]: ask without changing the main thread | Yes | Missing | tauri |
 | Memos [备忘录]: private notes the model cannot read | Yes | Done: no search, no `/memo` command | store |
@@ -317,8 +317,8 @@ before the things that hang in it.
 7a. **Rewind and branch** — edit and resend from an earlier message, branch a
    conversation, show branches under their parent. *(done; branch cards and
    merging a branch back remain)*
-8. **Memory, memos, highlights, favorites.** *(memos done as 8a, memory as
-   8b; highlights and favorites are 8c)*
+8. **Memory, memos, highlights, favorites.** *(done as 8a memos, 8b memory,
+   8c highlights and favorites)*
 9. **Settings** — conversation, permissions, hooks, skills, connections,
    credentials, network, environments, storage, usage, general.
 10. **Project pages** — research journey, calendar, paper evidence, research

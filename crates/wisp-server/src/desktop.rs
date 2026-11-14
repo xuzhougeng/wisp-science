@@ -14,6 +14,7 @@ pub use wisp_dto::{ProjectMemo, ProjectMemoPatch};
 use wisp_llm::ProviderKind;
 pub use wisp_store::GlobalMemory;
 use wisp_store::Store;
+pub use wisp_store::{LibraryItem, LibraryItemSummary};
 
 /// The saved model profiles: `{"profiles": [...], "default": "<id>"}`.
 const MODELS_SETTING: &str = "desktop.models";
@@ -1023,6 +1024,166 @@ impl Server {
         self.0.store.delete_global_memory(id).await
     }
 
+    /// The favorites library. It is one database for every project, apart
+    /// from the conversations, so deleting a project or a conversation does
+    /// not take what was saved from it.
+    async fn library(&self) -> Result<&wisp_store::LibraryStore> {
+        self.0
+            .library
+            .get_or_try_init(|| async {
+                wisp_store::LibraryStore::open(&self.0.config.data.join("library.sqlite")).await
+            })
+            .await
+    }
+
+    /// Saved items, newest first: everything, or what matches `query` in
+    /// its title, text, project or conversation, of one `kind` (`code`,
+    /// `figure`, `text`) when given.
+    pub async fn favorites(
+        &self,
+        query: &str,
+        kind: Option<&str>,
+    ) -> Result<Vec<LibraryItemSummary>> {
+        let library = self.library().await?;
+        let query = query.trim();
+        let mut items = if query.is_empty() && kind.is_none() {
+            library.list_summaries().await?
+        } else {
+            library.search_summaries(query, kind).await?
+        };
+        items.truncate(FAVORITES_LIMIT);
+        Ok(items)
+    }
+
+    /// One saved item in full, with the picture when it is a figure.
+    pub async fn favorite(&self, id: &str) -> Result<Favorite> {
+        let detail = self
+            .library()
+            .await?
+            .get(id)
+            .await?
+            .context("That item is no longer in your favorites")?;
+        Ok(Favorite {
+            item: detail.item,
+            image: detail.content,
+        })
+    }
+
+    /// What was saved from one conversation, newest first.
+    pub async fn conversation_favorites(
+        &self,
+        project: &str,
+        session: &str,
+    ) -> Result<Vec<LibraryItem>> {
+        self.own_conversation(project, session).await?;
+        self.library().await?.list_for_session(session).await
+    }
+
+    /// Where a saved item says it came from.
+    async fn favorite_source(
+        &self,
+        project: &str,
+        session: &str,
+    ) -> Result<wisp_store::SessionSearchResult> {
+        self.own_conversation(project, session).await?;
+        self.0
+            .store
+            .get_session_reference(session)
+            .await?
+            .context("Conversation not found")
+    }
+
+    /// Saves a piece of a conversation as it reads now: `kind` is `text`
+    /// for prose or `code` with its `language`. Saving the same thing from
+    /// the same conversation again returns the item that is already there.
+    pub async fn star_text(
+        &self,
+        project: &str,
+        session: &str,
+        kind: &str,
+        language: Option<&str>,
+        text: &str,
+    ) -> Result<LibraryItem> {
+        ensure!(
+            matches!(kind, "text" | "code"),
+            "Only text and code are saved this way"
+        );
+        ensure!(!text.trim().is_empty(), "There is nothing to save");
+        ensure!(
+            text.len() <= FAVORITE_TEXT_LIMIT,
+            "That is too large to save to your favorites"
+        );
+        let source = self.favorite_source(project, session).await?;
+        self.library()
+            .await?
+            .insert(wisp_store::NewLibraryItem {
+                kind: kind.into(),
+                title: favorite_title(text),
+                language: language
+                    .map(str::trim)
+                    .filter(|language| !language.is_empty() && kind == "code")
+                    .map(str::to_owned),
+                code: text.to_owned(),
+                content_type: None,
+                content: None,
+                source_project_id: source.project_id,
+                source_project_name: source.project_name,
+                source_session_id: source.id,
+                source_session_title: source.title,
+                source_path: None,
+            })
+            .await
+    }
+
+    /// Saves a copy of an image file of the project, as it is now.
+    pub async fn star_figure(
+        &self,
+        project: &str,
+        session: &str,
+        path: &str,
+    ) -> Result<LibraryItem> {
+        let source = self.favorite_source(project, session).await?;
+        let root = std::path::PathBuf::from(self.project_root(project).await?);
+        let real = crate::files::resolve(&root, path).await?;
+        let content_type = image_type(&real).context("Only images are saved as figures")?;
+        let meta = tokio::fs::metadata(&real).await?;
+        ensure!(meta.is_file(), "That is not a file");
+        ensure!(
+            meta.len() <= FIGURE_LIMIT,
+            "Figures of more than 32 MB are not saved to your favorites"
+        );
+        let content = tokio::fs::read(&real).await?;
+        let title = real
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Figure".into());
+        self.library()
+            .await?
+            .insert(wisp_store::NewLibraryItem {
+                kind: "figure".into(),
+                title,
+                language: None,
+                code: String::new(),
+                content_type: Some(content_type.into()),
+                content: Some(content),
+                source_project_id: source.project_id,
+                source_project_name: source.project_name,
+                source_session_id: source.id,
+                source_session_title: source.title,
+                source_path: Some(path.trim_start_matches("./").to_owned()),
+            })
+            .await
+    }
+
+    /// Takes an item out of the favorites for good.
+    pub async fn unstar(&self, id: &str) -> Result<()> {
+        ensure!(
+            self.library().await?.delete(id).await?,
+            "That item is no longer in your favorites"
+        );
+        Ok(())
+    }
+
     /// A choice about how the desktop looks, such as how the sidebar is
     /// arranged. `None` until one was saved.
     pub async fn preference(&self, name: &str) -> Result<Option<String>> {
@@ -1795,6 +1956,47 @@ pub struct ConversationStatus {
     pub allowed_tools: Vec<String>,
     /// What the model is thinking right now; empty when it is not.
     pub reasoning: String,
+}
+
+/// A saved item in full.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Favorite {
+    pub item: LibraryItem,
+    /// The picture's bytes when the item is a figure.
+    pub image: Option<Vec<u8>>,
+}
+
+/// Items one listing of the favorites returns.
+const FAVORITES_LIMIT: usize = 500;
+/// The WebView desktop's limits for the same library.
+const FAVORITE_TEXT_LIMIT: usize = 2 * 1024 * 1024;
+const FIGURE_LIMIT: u64 = 32 * 1024 * 1024;
+
+/// A saved item is called by its first line.
+fn favorite_title(text: &str) -> String {
+    let first = text
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("Untitled");
+    let mut title: String = first.chars().take(80).collect();
+    if first.chars().count() > 80 {
+        title.push('…');
+    }
+    title
+}
+
+fn image_type(path: &std::path::Path) -> Option<&'static str> {
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    Some(match extension.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "bmp" => "image/bmp",
+        _ => return None,
+    })
 }
 
 /// One day's notes in a project's memory.

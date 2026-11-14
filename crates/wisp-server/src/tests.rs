@@ -2131,6 +2131,151 @@ async fn memory_reaches_the_model_only_while_it_is_on_and_is_never_saved_with_a_
     server.shutdown().await;
 }
 
+#[tokio::test]
+async fn favorites_are_snapshots_that_outlive_the_conversation_they_came_from() {
+    let temp = tempfile::tempdir().unwrap();
+    let settings = config(temp.path());
+    let library = settings.data.join("library.sqlite");
+    let server = Server::open_with_models(settings, models(Arc::default(), false))
+        .await
+        .unwrap();
+    let folder = temp.path().join("lab");
+    std::fs::create_dir_all(folder.join("figs")).unwrap();
+    std::fs::create_dir_all(folder.join(".wisp")).unwrap();
+    let picture = b"\x89PNG\r\n\x1a\nnot really a picture".to_vec();
+    std::fs::write(folder.join("figs/plot.png"), &picture).unwrap();
+    std::fs::write(folder.join(".wisp/secret.png"), &picture).unwrap();
+    std::fs::write(folder.join("notes.txt"), "plain").unwrap();
+    std::fs::write(temp.path().join("outside.png"), &picture).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    let session = call(&server, "native_conversation_create", &lab, json!({}))
+        .await
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // A host nobody saved anything on has no library file.
+    assert!(!library.exists());
+
+    let finding = "  The knockout halves viability.\nIt holds in both lines.";
+    let text = server
+        .star_text(&lab, &session, "text", None, finding)
+        .await
+        .unwrap();
+    assert_eq!(text.kind, "text");
+    assert_eq!(text.title, "The knockout halves viability.");
+    assert_eq!(text.code, finding);
+    assert_eq!(text.source_project_name, "lab");
+    assert_eq!(text.source_session_id, session);
+    assert!(library.exists());
+    // Saving the same passage again is the same item.
+    let again = server
+        .star_text(&lab, &session, "text", None, finding)
+        .await
+        .unwrap();
+    assert_eq!(again.id, text.id);
+    let code = server
+        .star_text(
+            &lab,
+            &session,
+            "code",
+            Some(" python "),
+            "import scanpy as sc\n",
+        )
+        .await
+        .unwrap();
+    assert_eq!(code.language.as_deref(), Some("python"));
+    for (kind, body) in [
+        ("figure", "x".to_string()),
+        ("text", "  \n".to_string()),
+        ("text", "x".repeat(2 * 1024 * 1024 + 1)),
+    ] {
+        assert!(server
+            .star_text(&lab, &session, kind, None, &body)
+            .await
+            .is_err());
+    }
+    assert!(server
+        .star_text(PROJECT, &session, "text", None, "stolen")
+        .await
+        .is_err());
+
+    // A figure is a copy of an image inside the project.
+    let figure = server
+        .star_figure(&lab, &session, "figs/plot.png")
+        .await
+        .unwrap();
+    assert_eq!(figure.kind, "figure");
+    assert_eq!(figure.title, "plot.png");
+    assert_eq!(figure.content_type.as_deref(), Some("image/png"));
+    assert_eq!(figure.source_path.as_deref(), Some("figs/plot.png"));
+    for path in [
+        "notes.txt",
+        "../outside.png",
+        ".wisp/secret.png",
+        "figs/missing.png",
+    ] {
+        assert!(
+            server.star_figure(&lab, &session, path).await.is_err(),
+            "{path}"
+        );
+    }
+    std::fs::remove_file(folder.join("figs/plot.png")).unwrap();
+    let kept = server.favorite(&figure.id).await.unwrap();
+    assert_eq!(kept.image.as_deref(), Some(picture.as_slice()));
+    assert_eq!(server.favorite(&text.id).await.unwrap().image, None);
+
+    let ids = |items: Vec<desktop::LibraryItemSummary>| {
+        items.into_iter().map(|item| item.id).collect::<Vec<_>>()
+    };
+    let newest_first = vec![figure.id.clone(), code.id.clone(), text.id.clone()];
+    assert_eq!(ids(server.favorites("", None).await.unwrap()), newest_first);
+    assert_eq!(
+        ids(server.favorites(" KNOCKOUT ", None).await.unwrap()),
+        [text.id.clone()]
+    );
+    assert_eq!(
+        ids(server.favorites("", Some("figure")).await.unwrap()),
+        [figure.id.clone()]
+    );
+    // The project's name finds what came from it.
+    assert_eq!(
+        ids(server.favorites("lab", Some("code")).await.unwrap()),
+        [code.id.clone()]
+    );
+    assert!(server
+        .favorites("nothing like it", None)
+        .await
+        .unwrap()
+        .is_empty());
+    let here: Vec<_> = server
+        .conversation_favorites(&lab, &session)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|item| item.id)
+        .collect();
+    assert_eq!(here, newest_first);
+    assert!(server
+        .conversation_favorites(PROJECT, &session)
+        .await
+        .is_err());
+
+    // The conversation goes; what was saved from it stays.
+    server.delete_conversation(&lab, &session).await.unwrap();
+    assert_eq!(ids(server.favorites("", None).await.unwrap()), newest_first);
+    assert_eq!(server.favorite(&text.id).await.unwrap().item.code, finding);
+
+    server.unstar(&text.id).await.unwrap();
+    assert!(server.unstar(&text.id).await.is_err());
+    assert!(server.favorite(&text.id).await.is_err());
+    assert_eq!(
+        ids(server.favorites("", None).await.unwrap()),
+        [figure.id, code.id]
+    );
+    server.shutdown().await;
+}
+
 /// Records what the model was shown, turn by turn.
 struct Recorder(Arc<std::sync::Mutex<Vec<Vec<String>>>>);
 #[async_trait]

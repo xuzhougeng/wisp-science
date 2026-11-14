@@ -57,6 +57,9 @@ struct Inner {
     /// The model new turns use. A desktop can replace it while running.
     model: std::sync::RwLock<desktop::ModelState>,
     secrets: Arc<dyn desktop::SecretStore>,
+    /// The favorites library: a database of its own, opened when a desktop
+    /// first asks for it, so a headless host never creates one.
+    library: tokio::sync::OnceCell<wisp_store::LibraryStore>,
 }
 
 type ModelFactory =
@@ -154,6 +157,7 @@ impl Server {
             models,
             model: std::sync::RwLock::new(model),
             secrets,
+            library: Default::default(),
         })))
     }
 

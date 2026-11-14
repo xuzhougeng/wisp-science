@@ -211,6 +211,10 @@ impl Workspace {
             .child(files)
             .child(memos)
             .child(
+                nav_row("favorites", "star", "Favorites", false, true, cx)
+                    .on_click(cx.listener(|this, _, window, cx| this.open_favorites(window, cx))),
+            )
+            .child(
                 div().py_1().child(
                     Input::new(&self.search)
                         .small()
@@ -369,6 +373,23 @@ impl Workspace {
                         }),
                     ),
             );
+        let starred = self
+            .rows
+            .get(index)
+            .is_some_and(|row| crate::favorites::saved_id(&self.saved, &row.text).is_some());
+        let actions = actions.child(
+            icon_button(
+                ("star-row", index),
+                if starred { "star-filled" } else { "star" },
+                if starred {
+                    "In your favorites. Click to remove"
+                } else {
+                    "Save to favorites"
+                },
+            )
+            .xsmall()
+            .on_click(cx.listener(move |this, _, window, cx| this.star_row(index, window, cx))),
+        );
         // Rewinding and branching work on saved turns of a conversation
         // that is at rest and still part of everyday work.
         let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);

@@ -38,6 +38,7 @@ impl Workspace {
             PanelTab::Artifacts => self.load_artifacts(window, cx),
             PanelTab::Memos => self.load_memos(window, cx),
             PanelTab::Memory => self.load_memory(window, cx),
+            PanelTab::Highlights => self.load_saved(window, cx),
             PanelTab::Runs => {}
         }
         cx.notify();
@@ -302,14 +303,14 @@ impl Workspace {
                 },
             ));
         }
-        for artifact in &self.artifacts {
-            let mut row =
+        for (index, artifact) in self.artifacts.iter().enumerate() {
+            let mut name =
                 div()
                     .id(SharedString::from(format!("artifact-{}", artifact.id)))
                     .h_flex()
+                    .flex_1()
+                    .min_w_0()
                     .gap_2()
-                    .px_3()
-                    .py_2()
                     .child(icon("doc").text_color(muted))
                     .child(
                         div()
@@ -324,13 +325,39 @@ impl Workspace {
                             ),
                     );
             if let Some(path) = artifact.path.clone() {
-                row = row
+                name = name
                     .cursor_pointer()
-                    .hover(|style| style.bg(hover))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.panel_tab = PanelTab::Files;
                         this.reveal_file(path.clone(), window, cx)
                     }));
+            }
+            let mut row = div()
+                .h_flex()
+                .gap_1()
+                .px_3()
+                .py_2()
+                .hover(|style| style.bg(hover))
+                .child(name);
+            // The star is beside the name, not inside it, so pressing it
+            // does not also open the file.
+            if let Some(path) = artifact
+                .path
+                .clone()
+                .filter(|path| crate::favorites::is_image(path))
+            {
+                let session = artifact.session_id.clone();
+                row = row.child(
+                    icon_button(
+                        ("artifact-star", index),
+                        "star",
+                        "Save this figure to favorites",
+                    )
+                    .xsmall()
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.star_artifact(session.clone(), path.clone(), window, cx)
+                    })),
+                );
             }
             list = list.child(row);
         }

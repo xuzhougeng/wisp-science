@@ -33,6 +33,8 @@ pub enum Command {
     Artifacts,
     Memos,
     Memory,
+    Highlights,
+    Favorites,
     Archived,
     Refresh,
     Settings,
@@ -49,6 +51,8 @@ impl Command {
             Command::Artifacts => "Show artifacts",
             Command::Memos => "Show memos",
             Command::Memory => "Show memory",
+            Command::Highlights => "Show highlights",
+            Command::Favorites => "Favorites",
             Command::Archived => "Show or hide archived conversations",
             Command::Refresh => "Refresh",
             Command::Settings => "Settings",
@@ -65,6 +69,7 @@ impl Command {
             Command::Artifacts => "layers",
             Command::Memos => "note-plus",
             Command::Memory => "memory",
+            Command::Highlights | Command::Favorites => "star",
             Command::Archived => "archive",
             Command::Refresh => "refresh",
             Command::Settings => "gear",
@@ -81,12 +86,13 @@ impl Command {
             | Command::Artifacts
             | Command::Memos
             | Command::Memory
+            | Command::Highlights
             | Command::Archived => screen == Screen::Project,
-            Command::OpenFolder | Command::Refresh | Command::Settings => true,
+            Command::OpenFolder | Command::Refresh | Command::Settings | Command::Favorites => true,
         }
     }
 
-    const ALL: [Command; 11] = [
+    const ALL: [Command; 13] = [
         Command::NewConversation,
         Command::OpenFolder,
         Command::Home,
@@ -95,6 +101,8 @@ impl Command {
         Command::Artifacts,
         Command::Memos,
         Command::Memory,
+        Command::Highlights,
+        Command::Favorites,
         Command::Archived,
         Command::Refresh,
         Command::Settings,
@@ -389,6 +397,7 @@ mod tests {
                 Section::Conversations,
                 Section::Commands,
                 Section::Commands,
+                Section::Commands,
                 Section::Commands
             ]
         );
@@ -397,6 +406,11 @@ mod tests {
         assert!(inside.contains(&Entry::Command(Command::NewConversation)));
         assert!(!home.contains(&Entry::Command(Command::NewConversation)));
         assert!(home.contains(&Entry::Command(Command::Settings)));
+        // Favorites span projects, so they are offered from the home page;
+        // one conversation's highlights are not.
+        assert!(home.contains(&Entry::Command(Command::Favorites)));
+        assert!(!home.contains(&Entry::Command(Command::Highlights)));
+        assert!(inside.contains(&Entry::Command(Command::Highlights)));
     }
 
     #[test]

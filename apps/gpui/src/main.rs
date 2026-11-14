@@ -4,6 +4,7 @@ mod assets;
 mod backend;
 mod compose;
 mod controls;
+mod favorites;
 mod files;
 mod home;
 mod layers;

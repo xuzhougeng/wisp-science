@@ -140,7 +140,8 @@ folder registers its research root; it does not import existing desktop chats.
 | Tool calls | One folded line each with outcome and elapsed time; click for the verbatim input and output; interrupted calls stop claiming to run |
 | Runs | A Runs tab: runs started by the conversation with kind, status, exit code, command and output tails; a run that has not ended can be cancelled, and is followed until it ends |
 | Artifacts | Files a turn wrote are recorded when it ends; an Artifacts tab lists them for the conversation or the project and opens them |
-| Side panel | Tabs: Files, Runs, Artifacts, Memos, Memory; the open tab is named, the others are icons |
+| Side panel | Tabs: Files, Runs, Artifacts, Highlights, Memos, Memory; the open tab is named, the others are icons |
+| Favorites | A star under any message saves it as it reads now; an image in Artifacts can be saved as a figure. Highlights lists what this conversation saved; the Favorites page lists everything from every project, with search, a kind filter, the item in full, its source conversation and removal after a confirmation |
 | Memory | One switch; habits the model is shown in every project; this project's notes by day, which the model can search; add, edit and delete either, and save any message to one or the other |
 | Memos | Your own notes per project: add, edit, pin, copy, delete after a confirmation, and put one into the message box. The model is never shown them |
 | Files | Project file browser, available before the first conversation; read-only text and Markdown preview |
@@ -155,7 +156,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Drafts | Survive navigation; preserved on send failure, cleared on durable acceptance |
 | Execution | Shared agent/tools, streamed snapshots while running, stop and errors |
 | Approvals | Exact pending request; allow once, allow that tool for the rest of the conversation, or deny |
-| Escape | One window-level stack: Escape closes only the topmost of command palette, file preview, Files panel, Settings, title editor, delete confirmation, remove-project confirmation, the Full access question, the model and effort menus, the remove-model question, the sort menu, select mode and its group menu and delete question, a group's name field, actions and delete question, the conversation's group and move menus, the go-back question, the memo editor and its delete question, and the memory editor and its delete question |
+| Escape | One window-level stack: Escape closes only the topmost of command palette, file preview, Files panel, Settings, title editor, delete confirmation, remove-project confirmation, the Full access question, the model and effort menus, the remove-model question, the sort menu, select mode and its group menu and delete question, a group's name field, actions and delete question, the conversation's group and move menus, the go-back question, the memo editor and its delete question, the memory editor and its delete question, and the Favorites page and its remove question |
 | Shortcuts | Cmd/Ctrl+K opens the command palette; Cmd/Ctrl+N starts a conversation in the open project; Cmd/Ctrl+, opens Settings |
 | Lifecycle | Background IO, stale-result rejection, cancel/clean workers on exit |
 
@@ -245,6 +246,15 @@ Limits of this slice:
   drag and drop, and typing `@`, `#` or `/` in the composer are not ported.
 - Runs can be cancelled. Harvest, review of a remote workspace, transfers and
   the full log are not ported.
+- Favorites are the WebView's library: a database of their own
+  (`library.sqlite` in the data directory) that holds copies, so they outlive
+  the conversation and the project they came from. A message is saved whole,
+  as text, and is recognised as saved by its exact text, so two identical
+  replies share one star. Saving a selected passage, saving a code cell and
+  editing a saved snippet into versions are not ported; code saved by the
+  WebView is listed and shown. A figure is an image file of the project, up to
+  32 MB, copied when it is saved. The file is created the first time a desktop
+  opens the favorites, never by a headless host.
 - Memory uses the WebView's switch (`memory_enabled`), its habits table and
   the same note files (`.wisp/memory/<day>.md`), and the wording that shows
   habits to the model now lives in `wisp_core::global_memory_block` for any
@@ -395,6 +405,14 @@ too. Add a habit by hand, edit it, ask to delete it and press Escape. Open
 today's note, change it and save. Turn memory off and on. With a real model,
 ask something a habit should shape and confirm it does while memory is on and
 does not while it is off.
+Press the star under a reply: it fills; press it again: it empties. Save two
+messages, open Highlights and use one in the message box. Open Favorites from
+the sidebar, from the home page and from the palette; search for a word in one
+item and for the project's name; filter by kind; open an item, press Remove,
+press Escape (the page stays), press Escape again (the page closes). Open the
+conversation an item came from. Have a turn write an image, save it from
+Artifacts, delete the file and confirm the figure still shows in Favorites.
+Delete a conversation and confirm what was saved from it is still listed.
 Restart and confirm persisted messages. Close during a running tool and verify
 worker cleanup. Check missing credentials and invalid workspace errors. Validate
 each target OS; a macOS build does not establish Windows/Linux behavior.

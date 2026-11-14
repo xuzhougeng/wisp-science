@@ -3,7 +3,7 @@ use std::path::{Component, Path, PathBuf};
 use tokio::io::AsyncReadExt;
 use wisp_dto::{native_files as dto, DirEntry, FileContent};
 
-async fn resolve(root: &Path, path: &str) -> Result<PathBuf> {
+pub(crate) async fn resolve(root: &Path, path: &str) -> Result<PathBuf> {
     ensure!(
         !path.contains('\\') && !Path::new(path).is_absolute(),
         "Use a project-relative path"

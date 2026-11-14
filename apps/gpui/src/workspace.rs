@@ -1,4 +1,5 @@
 mod conversation_actions;
+mod favorites_view;
 mod files_panel;
 mod home_view;
 mod memory_view;
@@ -27,7 +28,8 @@ use wisp_dto::{
 
 use wisp_dto::native_conversations::SendRequest;
 use wisp_server::desktop::{
-    ArtifactRow, ConversationOptions, ConversationStatus, Folder, MemoryView, ProjectMemo, TurnRef,
+    ArtifactRow, ConversationOptions, ConversationStatus, Favorite, Folder, LibraryItem,
+    LibraryItemSummary, MemoryView, ProjectMemo, TurnRef,
 };
 
 use crate::{
@@ -116,6 +118,18 @@ pub struct Workspace {
     /// What the memory editor is writing, or the delete question is about.
     memory_target: Option<crate::memory::Target>,
     memory_text: Entity<InputState>,
+    /// What the open conversation saved to the favorites, newest first.
+    saved: Vec<LibraryItem>,
+    saved_request: u64,
+    /// The Favorites page's list; `None` until it was read.
+    favorites: Option<Vec<LibraryItemSummary>>,
+    favorites_request: u64,
+    favorites_filter: crate::favorites::Filter,
+    favorites_search: Entity<InputState>,
+    /// The item open on the Favorites page, and its picture if it has one.
+    favorite: Option<Favorite>,
+    favorite_image: Option<std::sync::Arc<Image>>,
+    favorite_request: u64,
     rename: Entity<InputState>,
     settings: settings_view::SettingsForm,
     composer: Entity<InputState>,
@@ -195,6 +209,8 @@ impl Workspace {
                 .searchable(false)
         });
         let memory_text = cx.new(|cx| InputState::new(window, cx).multi_line(true));
+        let favorites_search =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search your favorites…"));
         let handle = window.window_handle();
         let weak = cx.weak_entity();
         let subscriptions = vec![
@@ -228,6 +244,11 @@ impl Workspace {
             cx.subscribe_in(&rename, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::PressEnter { .. }) {
                     this.save_rename(window, cx);
+                }
+            }),
+            cx.subscribe_in(&favorites_search, window, |this, _, event, window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.load_favorites(window, cx);
                 }
             }),
             cx.subscribe_in(&folder_name, window, |this, _, event, window, cx| {
@@ -316,6 +337,15 @@ impl Workspace {
             memory_request: 0,
             memory_target: None,
             memory_text,
+            saved: vec![],
+            saved_request: 0,
+            favorites: None,
+            favorites_request: 0,
+            favorites_filter: Default::default(),
+            favorites_search,
+            favorite: None,
+            favorite_image: None,
+            favorite_request: 0,
             rename,
             settings,
             composer,
@@ -383,6 +413,13 @@ impl Workspace {
                 self.focus_composer(window, cx);
             }
             Some(Layer::ConfirmDeleteMemory) => self.memory_target = None,
+            Some(Layer::Favorites) => {
+                self.favorite = None;
+                self.favorite_image = None;
+                self.focus_composer(window, cx);
+            }
+            // The page stays open underneath and keeps its focus.
+            Some(Layer::ConfirmRemoveFavorite) => {}
             // Menus and questions that hold no focus of their own.
             Some(
                 Layer::SortMenu
@@ -423,6 +460,7 @@ impl Workspace {
             Shortcut::NewConversation => {
                 if self.screen != Screen::Project
                     || self.layers.contains(Layer::Settings)
+                    || self.layers.contains(Layer::Favorites)
                     || self.layers.contains(Layer::Palette)
                 {
                     return false;
@@ -485,6 +523,7 @@ impl Workspace {
             self.layers.close(layer);
         }
         if self.state.session != session {
+            self.saved.clear();
             self.rewind_turn = None;
             self.status = None;
             self.copied = None;
@@ -769,6 +808,7 @@ impl Workspace {
         });
         self.start_poll(window, cx);
         self.load_status(window, cx);
+        self.load_saved(window, cx);
         self.ensure_files(window, cx);
         self.reload_artifacts(window, cx);
     }
@@ -1591,8 +1631,12 @@ impl Render for Workspace {
         if !self.ready {
             return root.child(self.render_startup(cx));
         }
-        let root = if self.layers.contains(Layer::Settings) {
+        // A page takes the whole window; of two, the one opened last shows.
+        let page = self.layers.top_of(&[Layer::Settings, Layer::Favorites]);
+        let root = if page == Some(Layer::Settings) {
             root.child(self.render_settings(cx))
+        } else if page == Some(Layer::Favorites) {
+            root.child(self.render_favorites(window, cx))
         } else {
             match self.screen {
                 Screen::Home => root.child(self.render_home(cx)),

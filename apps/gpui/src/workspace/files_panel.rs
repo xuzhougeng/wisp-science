@@ -282,6 +282,11 @@ impl Workspace {
             PanelTab::Memory => {
                 return panel.child(self.render_memory_tab(cx)).into_any_element();
             }
+            PanelTab::Highlights => {
+                return panel
+                    .child(self.render_highlights_tab(cx))
+                    .into_any_element();
+            }
             PanelTab::Files => {}
         }
         let location = if self.files.path.is_empty() {

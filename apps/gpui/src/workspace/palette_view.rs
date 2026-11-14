@@ -216,6 +216,7 @@ impl Workspace {
     fn run_command(&mut self, command: Command, window: &mut Window, cx: &mut Context<Self>) {
         match command {
             Command::Settings => return self.open_settings(window, cx),
+            Command::Favorites => return self.open_favorites(window, cx),
             Command::OpenFolder => return self.open_project(window, cx),
             Command::Refresh => {
                 self.error = None;
@@ -230,6 +231,7 @@ impl Workspace {
             | Command::Artifacts
             | Command::Memos
             | Command::Memory
+            | Command::Highlights
             | Command::Archived => {
                 self.layers.close(Layer::Settings);
                 match command {
@@ -240,6 +242,7 @@ impl Workspace {
                     Command::Artifacts => self.show_panel_tab(PanelTab::Artifacts, window, cx),
                     Command::Memos => self.show_panel_tab(PanelTab::Memos, window, cx),
                     Command::Memory => self.show_panel_tab(PanelTab::Memory, window, cx),
+                    Command::Highlights => self.show_panel_tab(PanelTab::Highlights, window, cx),
                     _ => {
                         self.show_archived = !self.show_archived;
                         self.sessions.clear();

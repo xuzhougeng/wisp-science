@@ -16,8 +16,9 @@ use wisp_server::{
     config::Config,
     desktop::{
         ArtifactRow, BatchAction, BatchReport, ConversationList, ConversationOptions,
-        ConversationStatus, FileMatch, Folder, GlobalMemory, MemoryView, ModelInput, ModelSettings,
-        ProjectMemo, ProjectMemoPatch, ReferenceOption, TurnRef,
+        ConversationStatus, Favorite, FileMatch, Folder, GlobalMemory, LibraryItem,
+        LibraryItemSummary, MemoryView, ModelInput, ModelSettings, ProjectMemo, ProjectMemoPatch,
+        ReferenceOption, TurnRef,
     },
 };
 use wisp_sync::DirectRemoteHost;
@@ -349,6 +350,47 @@ impl Backend {
 
     pub fn delete_habit(&self, id: String) -> Reply<()> {
         self.local(move |host| async move { host.delete_habit(&id).await })
+    }
+
+    pub fn favorites(
+        &self,
+        query: String,
+        kind: Option<&'static str>,
+    ) -> Reply<Vec<LibraryItemSummary>> {
+        self.local(move |host| async move { host.favorites(&query, kind).await })
+    }
+
+    pub fn favorite(&self, id: String) -> Reply<Favorite> {
+        self.local(move |host| async move { host.favorite(&id).await })
+    }
+
+    pub fn conversation_favorites(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<Vec<LibraryItem>> {
+        self.local(move |host| async move { host.conversation_favorites(&project, &session).await })
+    }
+
+    /// Saves a message's text as it reads now.
+    pub fn star_text(&self, project: String, session: String, text: String) -> Reply<LibraryItem> {
+        self.local(move |host| async move {
+            host.star_text(&project, &session, "text", None, &text)
+                .await
+        })
+    }
+
+    pub fn star_figure(
+        &self,
+        project: String,
+        session: String,
+        path: String,
+    ) -> Reply<LibraryItem> {
+        self.local(move |host| async move { host.star_figure(&project, &session, &path).await })
+    }
+
+    pub fn unstar(&self, id: String) -> Reply<()> {
+        self.local(move |host| async move { host.unstar(&id).await })
     }
 
     pub fn preference(&self, name: &'static str) -> Reply<Option<String>> {
