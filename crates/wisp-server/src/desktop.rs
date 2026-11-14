@@ -2903,6 +2903,13 @@ impl Server {
         })
     }
 
+    /// Asks the project's release page whether a newer version has been
+    /// published. Nothing is downloaded; the request says nothing about
+    /// the user or their work.
+    pub async fn check_for_update(&self) -> Result<UpdateCheck> {
+        crate::updates::check().await
+    }
+
     /// The experts a conversation can be started as.
     pub async fn experts(&self) -> Result<Vec<Expert>> {
         Ok(crate::experts::list(&self.0.store).await)
@@ -3942,6 +3949,7 @@ pub use crate::aside::Exchange as AsideExchange;
 pub use crate::experts::{Expert, ExpertInput};
 pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow};
 pub use crate::review::{Finding as ReviewFinding, Outcome as ReviewOutcome, Review};
+pub use crate::updates::UpdateCheck;
 
 /// A project's folder, as the question before it is deleted describes it.
 #[derive(Clone, Debug, PartialEq, Eq)]

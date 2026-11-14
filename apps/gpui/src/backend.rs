@@ -718,6 +718,11 @@ impl Backend {
         self.local(move |host| async move { host.review_conversation(&project, &session).await })
     }
 
+    /// Asks the release page whether a newer version has been published.
+    pub fn check_for_update(&self) -> Reply<wisp_server::desktop::UpdateCheck> {
+        self.local(|host| async move { host.check_for_update().await })
+    }
+
     /// The experts a conversation can be started as.
     pub fn experts(&self) -> Reply<Vec<wisp_server::desktop::Expert>> {
         self.local(|host| async move { host.experts().await })

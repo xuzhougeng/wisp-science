@@ -85,7 +85,8 @@ impl Section {
         match self {
             Section::General => {
                 "appearance theme dark light system start launch open home language \
-                 chinese english 中文 语言 notify notification sound banner alert"
+                 chinese english 中文 语言 notify notification sound banner alert update version \
+                 release upgrade"
             }
             Section::Network => {
                 "proxy route socks http direct mirror conda pip pypi index package \
@@ -127,6 +128,40 @@ impl Section {
             Section::Permissions => tr("Safety"),
             Section::Usage | Section::Storage => tr("Data"),
         }
+    }
+}
+
+/// Where a check for a newer version stands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Update {
+    Checking,
+    Found(wisp_server::desktop::UpdateCheck),
+    Failed(String),
+}
+
+/// What the Updates row says, and whether there is a release to open.
+pub fn update_note(update: Option<&Update>) -> (String, bool) {
+    match update {
+        None => (
+            tr("Wisp looks for a newer version only when you ask.").to_owned(),
+            false,
+        ),
+        Some(Update::Checking) => (tr("Checking…").to_owned(), false),
+        Some(Update::Failed(problem)) => (
+            crate::i18n::fill(tr("Could not check: {}"), &[problem]),
+            false,
+        ),
+        Some(Update::Found(found)) if found.newer => (
+            crate::i18n::fill(
+                tr("Version {} is available; this is {}."),
+                &[&found.latest, &found.current],
+            ),
+            true,
+        ),
+        Some(Update::Found(found)) => (
+            crate::i18n::fill(tr("This is the latest version, {}."), &[&found.current]),
+            false,
+        ),
     }
 }
 
@@ -688,6 +723,42 @@ pub fn model_label(settings: Option<&ModelSettings>, choice: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_updates_row_says_where_the_check_stands() {
+        let found = |newer| {
+            Update::Found(wisp_server::desktop::UpdateCheck {
+                current: "1.24.0".into(),
+                latest: if newer { "1.25.0" } else { "1.24.0" }.into(),
+                newer,
+                url: "https://github.com/xuzhougeng/wisp-science/releases".into(),
+                notes: String::new(),
+            })
+        };
+        assert_eq!(
+            update_note(None),
+            (
+                "Wisp looks for a newer version only when you ask.".into(),
+                false
+            )
+        );
+        assert_eq!(
+            update_note(Some(&Update::Checking)),
+            ("Checking…".into(), false)
+        );
+        assert_eq!(
+            update_note(Some(&found(true))),
+            ("Version 1.25.0 is available; this is 1.24.0.".into(), true)
+        );
+        assert_eq!(
+            update_note(Some(&found(false))),
+            ("This is the latest version, 1.24.0.".into(), false)
+        );
+        assert_eq!(
+            update_note(Some(&Update::Failed("no network".into()))),
+            ("Could not check: no network".into(), false)
+        );
+    }
 
     #[test]
     fn the_expert_button_names_the_expert_or_offers_to_choose_one() {

@@ -656,6 +656,24 @@ impl Workspace {
         .detach();
     }
 
+    /// Asks the release page whether a newer version has been published.
+    fn check_for_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.update = Some(settings::Update::Checking);
+        let reply = self.backend.check_for_update();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                this.update = Some(match result {
+                    Ok(found) => settings::Update::Found(found),
+                    Err(problem) => settings::Update::Failed(problem),
+                });
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     /// Saves one choice of the General page; a failure is shown there.
     fn save_general(
         &mut self,
@@ -782,6 +800,30 @@ impl Workspace {
                     })),
                 cx,
             ))
+            .child({
+                let (note, available) = settings::update_note(self.update.as_ref());
+                let mut actions = div().h_flex().gap_1().child(
+                    Button::new("update-check")
+                        .label(tr("Check for updates"))
+                        .small()
+                        .disabled(self.update == Some(settings::Update::Checking))
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.check_for_update(window, cx)),
+                        ),
+                );
+                if let (true, Some(settings::Update::Found(found))) = (available, &self.update) {
+                    let url = found.url.clone();
+                    actions = actions.child(
+                        Button::new("update-open")
+                            .label(tr("Open releases"))
+                            .small()
+                            .primary()
+                            .tooltip(tr("Open the release page in your browser"))
+                            .on_click(cx.listener(move |_, _, _, cx| cx.open_url(&url))),
+                    );
+                }
+                setting(tr("Updates"), note, actions, cx)
+            })
             .child(setting(
                 tr("When Wisp starts"),
                 tr(

@@ -200,6 +200,8 @@ pub struct Workspace {
     language: crate::i18n::Language,
     /// How the user is told that a conversation needs them.
     notify: crate::notify::Choice,
+    /// The check for a newer version, once one was asked for.
+    update: Option<crate::settings::Update>,
     /// What the app opens on.
     launch: crate::settings::Launch,
     /// The Settings page that is showing.
@@ -646,6 +648,7 @@ impl Workspace {
             appearance: Default::default(),
             language: Default::default(),
             notify: Default::default(),
+            update: None,
             launch: Default::default(),
             settings_section: Default::default(),
             turn_defaults: None,

@@ -676,4 +676,13 @@ pub const ZH: &[(&str, &str)] = &[
     ("Play a sound", "播放提示音"),
     ("Also play a sound then, whether or not a notification is posted.", "此时同时播放提示音，无论是否发出通知。"),
     ("Close this tab; the conversation is kept", "关闭这个标签页；会话会保留"),
+    // Updates.
+    ("Updates", "更新"),
+    ("Check for updates", "检查更新"),
+    ("Open releases", "打开发布页"),
+    ("Open the release page in your browser", "在浏览器中打开发布页"),
+    ("Wisp looks for a newer version only when you ask.", "只有在你要求时，Wisp 才会检查是否有新版本。"),
+    ("Could not check: {}", "检查失败：{}"),
+    ("Version {} is available; this is {}.", "有新版本 {}；当前版本是 {}。"),
+    ("This is the latest version, {}.", "当前已是最新版本 {}。"),
 ];

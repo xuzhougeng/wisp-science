@@ -11,6 +11,7 @@ async-trait = { workspace = true }
 axum = { workspace = true }
 chrono = { workspace = true }
 dunce = { workspace = true }
+reqwest = { workspace = true }
 hex = { workspace = true }
 ignore = { workspace = true }
 serde = { workspace = true }

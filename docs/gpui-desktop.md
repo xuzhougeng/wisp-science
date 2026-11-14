@@ -137,6 +137,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Project archives | Export on a project's card writes the project, its records and its files, as one zip; Import on the home page reads one and puts the project in a folder you choose |
 | Capabilities | A dialog for the open project: how many skills, connectors, MCP servers and SSH hosts are on or usable, the state of memory, and which command-line tools were found on this computer |
 | Follow-up questions | After an answer, up to three questions you could ask next show above the composer; picking one puts it in the composer to send or change, and the list can be put away |
+| Updates | Settings, General, has Check for updates: it says whether a newer release has been published and opens the release page |
 | Tabs | The conversations you open in a window line up as tabs above the conversation, across projects; click one to go back to it, close one to drop it from the strip |
 | Notifications | When a turn ends or a tool waits for approval while Wisp is in the background, a system notification is posted and, if chosen, a sound is played (Settings, General) |
 | Language | Settings, General, chooses the interface language: System (Chinese on a Chinese system, English otherwise), English or 中文 |
@@ -328,6 +329,15 @@ Limits of this slice:
   for a last word without tools. Compaction uses the WebView's keys
   (`auto_compact`, `auto_compact_percent`). Auto-continue, compaction on a
   model switch and after idle hours are not ported.
+- The update check runs only when its button is pressed: nothing is
+  checked at start or in the background. It asks GitHub for the latest
+  release of the project (the WebView's request, with a generic client
+  name and nothing about you or your work), over the system's proxy
+  settings, and gives up after eight seconds. Nothing is downloaded or
+  installed: Open releases opens the project's release page in your
+  browser, and only that page, whatever the answer contained. This
+  desktop has no installer of its own yet, so the release found is the
+  WebView desktop's.
 - Tabs belong to the window and are not saved: a new window, or the app
   after a restart, starts with none, and the strip shows from the second
   conversation on. A window keeps twelve; one more closes the tab that
@@ -778,6 +788,10 @@ press Escape (the page stays), press Escape again (the page closes). Open the
 conversation an item came from. Have a turn write an image, save it from
 Artifacts, delete the file and confirm the figure still shows in Favorites.
 Delete a conversation and confirm what was saved from it is still listed.
+In Settings, General, press Check for updates: it reads Checking… and
+then says this is the latest version or names a newer one, with Open
+releases opening the project's release page. Without a network it says
+it could not check.
 Open three conversations, one of them in another project: tabs appear
 above the conversation from the second on. Click a tab of the other
 project: its project and conversation open. Close the tab in view: its
