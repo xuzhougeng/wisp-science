@@ -62,6 +62,10 @@ pub fn percent(part: u64, whole: u64) -> u8 {
 
 /// A calendar date as it is said: `2026-11-04` is `4 Nov`.
 pub fn day_label(date: &str) -> String {
+    day_label_in(crate::i18n::current(), date)
+}
+
+fn day_label_in(locale: crate::i18n::Locale, date: &str) -> String {
     const MONTHS: [&str; 12] = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
@@ -70,6 +74,9 @@ pub fn day_label(date: &str) -> String {
         .skip(1)
         .map(|part| part.parse::<usize>().ok());
     match (parts.next().flatten(), parts.next().flatten()) {
+        (Some(month @ 1..=12), Some(day)) if locale == crate::i18n::Locale::Zh => {
+            format!("{month}月{day}日")
+        }
         (Some(month @ 1..=12), Some(day)) => format!("{day} {}", MONTHS[month - 1]),
         _ => date.to_owned(),
     }
@@ -139,6 +146,14 @@ mod tests {
         assert_eq!(percent(0, 10), 0);
         assert_eq!(percent(10, 0), 0);
         assert_eq!(percent(10, 10), 100);
+    }
+
+    #[test]
+    fn dates_are_said_the_chinese_way_in_chinese() {
+        let zh = crate::i18n::Locale::Zh;
+        assert_eq!(day_label_in(zh, "2026-11-04"), "11月4日");
+        // What is not a date is shown as it came.
+        assert_eq!(day_label_in(zh, "soon"), "soon");
     }
 
     #[test]

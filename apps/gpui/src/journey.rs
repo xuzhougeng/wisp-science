@@ -2,6 +2,7 @@
 //! shown, how its records are grouped into the researcher's own days, and
 //! what each record is called. Days are local days, so the time zone is a
 //! parameter here and the window's is used when drawing.
+use crate::i18n::{Locale, tr};
 use chrono::{DateTime, Datelike, NaiveDate, TimeZone};
 use wisp_dto::{ResearchJourney, ResearchJourneyEntry};
 
@@ -49,6 +50,13 @@ impl Month {
     }
 
     pub fn label(self) -> String {
+        self.label_in(crate::i18n::current())
+    }
+
+    fn label_in(self, locale: Locale) -> String {
+        if locale == Locale::Zh {
+            return format!("{}年{}月", self.year, self.month);
+        }
         const NAMES: [&str; 12] = [
             "January",
             "February",
@@ -95,17 +103,17 @@ fn local<Tz: TimeZone>(at: i64, zone: &Tz) -> DateTime<Tz> {
 /// What kind of record an entry is, in words.
 pub fn kind_label(kind: &str) -> &'static str {
     match kind {
-        "run" => "Run",
-        "artifact" => "File",
-        "session" => "Asked",
-        "decision" => "Decision",
-        "paper" => "Paper",
-        "data_asset" => "Data",
-        "progress" => "Progress",
-        "finding" => "Finding",
-        "next" => "Next",
-        "archive" => "Archive",
-        _ => "Record",
+        "run" => tr("Run"),
+        "artifact" => tr("File"),
+        "session" => tr("Asked"),
+        "decision" => tr("Decision"),
+        "paper" => tr("Paper"),
+        "data_asset" => tr("Data"),
+        "progress" => tr("Progress"),
+        "finding" => tr("Finding"),
+        "next" => tr("Next"),
+        "archive" => tr("Archive"),
+        _ => tr("Record"),
     }
 }
 
@@ -120,12 +128,12 @@ pub const CATEGORIES: [(&str, &str); 4] = [
 /// What an entry's status adds to its kind, if anything worth saying.
 pub fn status_label(entry: &ResearchJourneyEntry) -> Option<&'static str> {
     match (entry.kind.as_str(), entry.status.as_str()) {
-        ("run", "submitted") => Some("submitted"),
-        ("run", "started") => Some("started"),
-        ("run", "succeeded") => Some("finished"),
-        ("run", "failed") => Some("failed"),
-        ("run", "cancelled") => Some("cancelled"),
-        ("artifact", _) if entry.source_discarded => Some("source discarded"),
+        ("run", "submitted") => Some(tr("submitted")),
+        ("run", "started") => Some(tr("started")),
+        ("run", "succeeded") => Some(tr("finished")),
+        ("run", "failed") => Some(tr("failed")),
+        ("run", "cancelled") => Some(tr("cancelled")),
+        ("artifact", _) if entry.source_discarded => Some(tr("source discarded")),
         _ => None,
     }
 }
@@ -182,6 +190,15 @@ pub fn days<'a, Tz: TimeZone>(
 }
 
 fn day_label(date: NaiveDate) -> String {
+    day_label_in(crate::i18n::current(), date)
+}
+
+fn day_label_in(locale: Locale, date: NaiveDate) -> String {
+    let weekday = date.weekday().num_days_from_monday() as usize;
+    if locale == Locale::Zh {
+        const DAYS: [&str; 7] = ["一", "二", "三", "四", "五", "六", "日"];
+        return format!("{}月{}日 星期{}", date.month(), date.day(), DAYS[weekday]);
+    }
     const DAYS: [&str; 7] = [
         "Monday",
         "Tuesday",
@@ -195,18 +212,25 @@ fn day_label(date: NaiveDate) -> String {
         year: date.year(),
         month: date.month(),
     }
-    .label();
+    .label_in(Locale::En);
     let month = month.split(' ').next().unwrap_or_default();
-    format!(
-        "{} {} {month}",
-        DAYS[date.weekday().num_days_from_monday() as usize],
-        date.day()
-    )
+    format!("{} {} {month}", DAYS[weekday], date.day())
 }
 
 /// One line saying how much the month holds.
 pub fn summary(journey: &ResearchJourney, shown: usize) -> String {
     let total = journey.entries.len();
+    if crate::i18n::current() == Locale::Zh {
+        let mut line = match (total, shown == total) {
+            (0, _) => return tr("Nothing is recorded for this month.").into(),
+            (n, true) => format!("{n} 条记录"),
+            (n, false) => format!("{n} 条记录中的 {shown} 条"),
+        };
+        if journey.truncated {
+            line.push_str(" · 只显示最新的");
+        }
+        return line;
+    }
     let mut line = match (total, shown == total) {
         (0, _) => return "Nothing is recorded for this month.".into(),
         (1, true) => "1 record".to_owned(),
@@ -318,6 +342,21 @@ mod tests {
             ..journey
         };
         assert!(summary(&cut, 3).ends_with("only the newest are shown"));
+    }
+
+    #[test]
+    fn months_and_days_are_said_the_chinese_way_in_chinese() {
+        let month = Month {
+            year: 2026,
+            month: 11,
+        };
+        assert_eq!(month.label_in(Locale::Zh), "2026年11月");
+        assert_eq!(month.label_in(Locale::En), "November 2026");
+        let saturday = NaiveDate::from_ymd_opt(2026, 11, 14).unwrap();
+        assert_eq!(day_label_in(Locale::Zh, saturday), "11月14日 星期六");
+        assert_eq!(day_label_in(Locale::En, saturday), "Saturday 14 November");
+        let sunday = NaiveDate::from_ymd_opt(2026, 11, 15).unwrap();
+        assert_eq!(day_label_in(Locale::Zh, sunday), "11月15日 星期日");
     }
 
     #[test]

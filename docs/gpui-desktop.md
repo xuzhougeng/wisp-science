@@ -329,9 +329,10 @@ Limits of this slice:
   the pages, panels and dialogs, the names of panel tabs, palette commands
   and settings sections, the placeholders of text fields, statuses,
   project counts, ages and most sentences with a value set into them.
-  Still English: dates, month and weekday names, the figures of the
-  trajectory, usage and storage pages, units, and everything the host
-  says (errors, tool questions, run statuses). A text without a
+  Dates read the Chinese way (2026年11月, 11月14日 星期六). Still
+  English: some figures of the trajectory, usage and storage pages,
+  units, and everything the host says (errors, tool questions, run
+  statuses). A text without a
   translation shows in English rather than not at all. In Chinese the
   command palette matches the Chinese names of commands, not the English
   ones. The system's language is read from the macOS locale, or from

@@ -137,7 +137,7 @@ impl Workspace {
         for (category, label) in journey::CATEGORIES {
             kinds = kinds.child(
                 Button::new(SharedString::from(format!("journal-kind-{category}")))
-                    .label(label)
+                    .label(tr(label))
                     .xsmall()
                     .selected(self.journal_category == category)
                     .on_click(cx.listener(move |this, _, _, cx| {

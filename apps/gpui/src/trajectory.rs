@@ -79,7 +79,20 @@ pub fn subtitle(snapshot: &TrajectorySnapshotDto) -> String {
 /// A turn's heading: its number, when it began in local time, and what it
 /// took.
 pub fn turn_heading<Tz: TimeZone>(turn: &TrajectoryTurnDto, zone: &Tz) -> String {
-    let mut parts = vec![format!("Turn {}", turn.index)];
+    turn_heading_in(crate::i18n::current(), turn, zone)
+}
+
+fn turn_heading_in<Tz: TimeZone>(
+    locale: crate::i18n::Locale,
+    turn: &TrajectoryTurnDto,
+    zone: &Tz,
+) -> String {
+    let chinese = locale == crate::i18n::Locale::Zh;
+    let mut parts = vec![if chinese {
+        format!("第 {} 轮", turn.index)
+    } else {
+        format!("Turn {}", turn.index)
+    }];
     if let Some(local) = turn
         .started_at
         .and_then(|ms| zone.timestamp_millis_opt(ms).earliest())
@@ -87,16 +100,17 @@ pub fn turn_heading<Tz: TimeZone>(turn: &TrajectoryTurnDto, zone: &Tz) -> String
         parts.push(format!("{:02}:{:02}", local.hour(), local.minute()));
     }
     let count = |kind: &str| turn.cells.iter().filter(|cell| cell.kind == kind).count();
-    let plural = |count: usize, one: &str| match count {
-        1 => format!("1 {one}"),
-        _ => format!("{count} {one}s"),
+    let plural = |count: usize, one: &str, measured: &str| match (chinese, count) {
+        (true, _) => format!("{count} {measured}"),
+        (false, 1) => format!("1 {one}"),
+        (false, _) => format!("{count} {one}s"),
     };
     let (calls, tools) = (count("usage"), count("tool"));
     if calls > 0 {
-        parts.push(plural(calls, "model call"));
+        parts.push(plural(calls, "model call", "次模型调用"));
     }
     if tools > 0 {
-        parts.push(plural(tools, "tool"));
+        parts.push(plural(tools, "tool", "次工具调用"));
     }
     let used: i64 = turn
         .cells
@@ -105,7 +119,11 @@ pub fn turn_heading<Tz: TimeZone>(turn: &TrajectoryTurnDto, zone: &Tz) -> String
         .map(|usage| usage.input_tokens + usage.output_tokens)
         .sum();
     if used > 0 {
-        parts.push(format!("{} tokens", tokens(used)));
+        parts.push(format!(
+            "{} {}",
+            tokens(used),
+            if chinese { "token" } else { "tokens" }
+        ));
     }
     parts.join(" · ")
 }
@@ -315,6 +333,10 @@ mod tests {
             cells: vec![cell("user", "hello")],
         };
         assert_eq!(turn_heading(&bare, &zone), "Turn 1");
+        assert_eq!(
+            turn_heading_in(crate::i18n::Locale::Zh, &turn, &zone),
+            "第 3 轮 · 14:05 · 2 次模型调用 · 1 次工具调用 · 1.4k token"
+        );
     }
 
     #[test]
