@@ -32,7 +32,43 @@ use gpui::{prelude::*, *};
 use gpui_component::Root;
 use std::sync::Arc;
 
-actions!(wisp, [Quit]);
+actions!(wisp, [Quit, NewWindow]);
+
+/// How far a new window is moved from the centre, so it does not cover the
+/// ones that are open: a step down and right for each, starting over after
+/// eight.
+pub fn cascade(open: usize) -> f32 {
+    (open % 8) as f32 * 28.
+}
+
+/// Opens a window on the same host: its own page, conversation and panels,
+/// the same projects and settings. Returns whether it opened.
+pub fn open_window(backend: backend::Backend, cx: &mut App) -> bool {
+    let shift = cascade(cx.windows().len());
+    let mut bounds = Bounds::centered(None, size(px(1180.), px(780.)), cx);
+    bounds.origin.x += px(shift);
+    bounds.origin.y += px(shift);
+    let opened = cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_min_size: Some(size(px(820.), px(540.))),
+            titlebar: Some(TitlebarOptions {
+                title: Some("Wisp Science".into()),
+                ..Default::default()
+            }),
+            app_id: Some("science.wisp.gpui".into()),
+            ..Default::default()
+        },
+        |window, cx| {
+            let workspace = cx.new(|cx| workspace::Workspace::new(backend, window, cx));
+            cx.new(|cx| Root::new(workspace, window, cx))
+        },
+    );
+    if let Err(error) = &opened {
+        eprintln!("Cannot open GPUI window: {error:#}");
+    }
+    opened.is_ok()
+}
 
 fn main() -> anyhow::Result<()> {
     let runtime = Arc::new(tokio::runtime::Runtime::new()?);
@@ -54,37 +90,28 @@ fn main() -> anyhow::Result<()> {
             })
             .detach();
             cx.on_action(|_: &Quit, cx| cx.quit());
-            cx.bind_keys([KeyBinding::new(
-                if cfg!(target_os = "macos") {
-                    "cmd-q"
-                } else {
-                    "ctrl-q"
-                },
-                Quit,
-                None,
-            )]);
+            let window_backend = ui_backend.clone();
+            cx.on_action(move |_: &NewWindow, cx| {
+                open_window(window_backend.clone(), cx);
+            });
+            let primary = if cfg!(target_os = "macos") {
+                "cmd"
+            } else {
+                "ctrl"
+            };
+            cx.bind_keys([
+                KeyBinding::new(&format!("{primary}-q"), Quit, None),
+                KeyBinding::new(&format!("{primary}-shift-n"), NewWindow, None),
+            ]);
             cx.set_menus(vec![Menu {
                 name: "Wisp Science".into(),
-                items: vec![MenuItem::action("Quit", Quit)],
+                items: vec![
+                    MenuItem::action("New Window", NewWindow),
+                    MenuItem::separator(),
+                    MenuItem::action("Quit", Quit),
+                ],
             }]);
-            let bounds = Bounds::centered(None, size(px(1180.), px(780.)), cx);
-            if let Err(error) = cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    window_min_size: Some(size(px(820.), px(540.))),
-                    titlebar: Some(TitlebarOptions {
-                        title: Some("Wisp Science".into()),
-                        ..Default::default()
-                    }),
-                    app_id: Some("science.wisp.gpui".into()),
-                    ..Default::default()
-                },
-                |window, cx| {
-                    let workspace = cx.new(|cx| workspace::Workspace::new(ui_backend, window, cx));
-                    cx.new(|cx| Root::new(workspace, window, cx))
-                },
-            ) {
-                eprintln!("Cannot open GPUI window: {error:#}");
+            if !open_window(ui_backend, cx) {
                 cx.quit();
             }
             cx.on_window_closed(|cx| {
@@ -98,4 +125,19 @@ fn main() -> anyhow::Result<()> {
     // Cancel turns, deny pending approvals and reclaim managed runtimes before exit.
     runtime.block_on(backend.shutdown());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cascade;
+
+    #[test]
+    fn new_windows_step_away_from_the_ones_that_are_open() {
+        assert_eq!(cascade(0), 0.);
+        assert_eq!(cascade(1), 28.);
+        assert_eq!(cascade(7), 196.);
+        // After eight the steps start over instead of leaving the screen.
+        assert_eq!(cascade(8), 0.);
+        assert_eq!(cascade(9), 28.);
+    }
 }

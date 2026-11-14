@@ -222,6 +222,10 @@ impl Workspace {
             Command::Find => return self.open_find(window, cx),
             Command::Journey => return self.open_journey(window, cx),
             Command::Calendar => return self.open_calendar(window, cx),
+            Command::NewWindow => {
+                crate::open_window(self.backend.clone(), cx);
+                return;
+            }
             Command::ProjectSettings => {
                 if let Some(project) = self.state.project.clone() {
                     self.open_project_settings(project, window, cx);

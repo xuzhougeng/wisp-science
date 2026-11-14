@@ -58,7 +58,7 @@ to find in the running app.
 | Project settings [项目设置] | Name, description, sync | Partial: name, description and the rules for the model (`.wisp/WISP.md`), from the project's card and the command palette; no sync or run retention | store |
 | Remove a project from Wisp, files kept [删除] | With confirmation | Done | store |
 | Delete a project together with its local data | Second choice in the same dialog, with a countdown | Missing | tauri |
-| Open in a new window [在新窗口打开] | Yes | Missing | ui |
+| Open in a new window [在新窗口打开] | Yes | Partial: a new window opens on the home page; a project cannot be sent to it from its card | ui |
 | Recent conversations across projects with status [最近会话] | Yes | Done | store |
 | Sample project, read-only [示例项目] | Yes | Missing | tauri |
 | Research assistant [科研助理] | Scheduled tasks and plans | Missing | store |
@@ -225,7 +225,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Chinese and English | Yes | Missing: English only | ui |
 | Desktop notifications and sound | Yes | Missing | ui |
 | Update check and install | Yes | Missing | tauri |
-| Several windows | Yes | Missing | ui |
+| Several windows | Yes | Partial: any number on the same host, each with its own page and conversation; not restored at the next start | ui |
 | Keyboard shortcuts (⌘N, ⌘K, ⌘B, ⌘F, ⌘⇧F, ⌘P, ⌘,) | Yes | Partial: ⌘K, ⌘N and ⌘, are wired and unit-tested, not yet pressed in the running app | ui |
 | Import existing WebView data | n/a | Missing: GPUI keeps its own database | store |
 
