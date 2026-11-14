@@ -8,6 +8,7 @@ mod favorites;
 mod files;
 mod find;
 mod home;
+mod inline;
 mod layers;
 mod links;
 mod memory;

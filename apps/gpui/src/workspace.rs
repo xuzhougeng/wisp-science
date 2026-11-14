@@ -3,6 +3,7 @@ mod favorites_view;
 mod files_panel;
 mod find_view;
 mod home_view;
+mod inline_view;
 mod memory_view;
 mod memos_view;
 mod organise_view;
@@ -215,6 +216,9 @@ pub struct Workspace {
     /// The item open on the Favorites page, and its picture if it has one.
     favorite: Option<Favorite>,
     favorite_image: Option<std::sync::Arc<Image>>,
+    /// Pictures the open project's answers point at, by path. `None` is a
+    /// picture that is being read or could not be.
+    inline_images: HashMap<String, Option<std::sync::Arc<Image>>>,
     /// The picture being previewed in the Files panel, with its path.
     file_image: Option<(String, std::sync::Arc<Image>)>,
     favorite_request: u64,
@@ -553,6 +557,7 @@ impl Workspace {
             favorite: None,
             favorite_image: None,
             file_image: None,
+            inline_images: HashMap::new(),
             favorite_request: 0,
             rename,
             settings,
@@ -776,6 +781,10 @@ impl Workspace {
             self.copied = None;
             // The list belonged to the conversation, or project, being left.
             self.artifacts.clear();
+        }
+        if self.state.project != project {
+            // Paths are the project's own; another project's mean others.
+            self.inline_images.clear();
         }
         self.files.set_project(project.as_deref());
         self.state.select(project, session);
@@ -1212,6 +1221,7 @@ impl Workspace {
                                 let active_runs = panel::active_runs(&snapshot.run_cards);
                                 if this.state.accept(&selection, snapshot) {
                                     this.update_rows();
+                                    this.load_inline_images(window, cx);
                                     if running {
                                         this.watch_activity(window, cx);
                                         // Usage grows while the turn runs.
@@ -1296,7 +1306,7 @@ impl Workspace {
         );
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
-            let _ = this.update(cx, |this, cx| {
+            let _ = this.update_in(cx, |this, window, cx| {
                 if !this.state.current(&selection) {
                     return;
                 }
@@ -1308,6 +1318,7 @@ impl Workspace {
                         this.history = history;
                         this.before = page.next_before_seq;
                         this.update_rows();
+                        this.load_inline_images(window, cx);
                     }
                     Err(error) => this.error = Some(error),
                 }

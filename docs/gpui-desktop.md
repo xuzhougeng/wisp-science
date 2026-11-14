@@ -133,6 +133,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Branch | Under a reply: a new conversation holding everything through that turn, opened at once and listed under the one it came from |
 | Search | Titles and message text across the project, archived conversations included |
 | Command palette | One box over everything: projects, files by name in every project, conversations by title or message text, and the window's commands; arrow keys, Return, Escape |
+| Pictures in answers | When an answer shows a picture of the project with Markdown image syntax, the picture is drawn under the answer |
 | Find in conversation | Cmd/Ctrl+F, or the command palette: a bar over the transcript marks every message, and every tool call, that contains the words; Return and the arrows move between them |
 | Help | Documentation (home page, Settings, palette) and Report a problem (Settings, palette) open the tutorials and the issue tracker in the system's browser |
 | Settings | A search field narrows the pages to those about what you type. Pages: General (appearance: system, light or dark; what the app opens on), Network (a route for model requests, for connectors and MCP servers, and for the code the model runs; a conda mirror, a Python package index and a CA bundle the model is told to use), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold), Skills (every skill with where it comes from, search, on or off), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Environments (the SSH hosts work can run on: add, change, remove, add from `~/.ssh/config`, check the connection and see what the host is, and which one new work goes to), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
@@ -340,6 +341,15 @@ Limits of this slice:
   between folders, sorting and the grid view are not ported. A picture is
   shown whole, scaled to the panel, when it is at most 32 MB; there is no
   zoom. PDF, Office, notebook and table previews are not ported.
+- A picture is drawn under an answer when the answer names it as a
+  Markdown image (`![plot](figs/plot.png)`) and the target is a picture
+  inside the project: PNG, JPEG, GIF, WebP, SVG or BMP, at most 32 MB. It is
+  drawn after the answer's text, not where the link stands, at most four per
+  answer and forty per project at a time, scaled down to fit. Web
+  addresses, absolute paths and paths that leave the project are never
+  fetched. A picture that only a tool wrote, or that the answer mentions
+  without image syntax, is not shown; it is in the Artifacts tab and the
+  Files panel. There is no zoom and no click to open.
 - Find looks through the part of the conversation that is loaded, ignoring
   case, in messages and in what tools printed. It marks whole rows, not the
   words inside them, and does not open a folded tool row. Earlier messages
@@ -615,6 +625,9 @@ connector route and run a PubMed search, and press Test on an HTTP MCP
 server. Set a Python package index, ask the model to install a package and
 confirm it uses the index. Restart and confirm the page still shows what was
 saved.
+Have the model write a figure into the project and show it with Markdown
+image syntax: the picture appears under the answer, and is still there after
+the conversation is reopened. An image link to a web address shows nothing.
 In Files open a PNG or a JPEG: the picture is shown, with its size above
 it, and Escape returns to the listing.
 In Files make a folder and, inside it, a file; try a name with a slash and
