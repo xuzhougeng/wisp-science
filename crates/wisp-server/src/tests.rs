@@ -4879,6 +4879,143 @@ async fn a_review_reports_what_the_tool_output_does_not_support() {
 }
 
 #[tokio::test]
+async fn a_conversations_interpreters_are_listed_and_can_be_stopped() {
+    // An interpreter that starts at once and does nothing.
+    struct Idle;
+    #[async_trait]
+    impl wisp_runtime::RuntimeKernel for Idle {
+        async fn execute(
+            &mut self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+            _: &[String],
+            _: &wisp_runtime::RuntimeOutput,
+        ) -> anyhow::Result<wisp_runtime::KernelResp> {
+            Ok(Default::default())
+        }
+        async fn inspect(&mut self, _: &str) -> anyhow::Result<wisp_runtime::RuntimeObjectList> {
+            Ok(Default::default())
+        }
+        async fn shutdown(&mut self) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+    struct Launcher;
+    #[async_trait]
+    impl wisp_runtime::RuntimeLauncher for Launcher {
+        async fn launch(
+            &self,
+            key: &wisp_runtime::RuntimeKey,
+            _: &Path,
+        ) -> anyhow::Result<wisp_runtime::LaunchedRuntime> {
+            let python = key.language == wisp_runtime::RuntimeLanguage::Python;
+            Ok(wisp_runtime::LaunchedRuntime::new(
+                Box::new(Idle),
+                wisp_runtime::RuntimeMetadata {
+                    interpreter: Some(
+                        if python {
+                            "/opt/py/bin/python3"
+                        } else {
+                            "/opt/r/bin/Rscript"
+                        }
+                        .into(),
+                    ),
+                    version: Some(if python { "3.12.4" } else { "4.4.1" }.into()),
+                    process_id: None,
+                },
+            ))
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    let runtimes = |id: String| {
+        let server = &server;
+        async move {
+            server
+                .conversation_status(PROJECT, &id)
+                .await
+                .unwrap()
+                .runtimes
+        }
+    };
+    // A conversation that ran no code keeps no interpreter.
+    assert!(runtimes(session.clone()).await.is_empty());
+    assert!(server
+        .stop_runtime(PROJECT, &session, "none")
+        .await
+        .is_err());
+
+    let manager = wisp_runtime::RuntimeManager::new(Arc::new(Launcher));
+    *server.session(&session).runtime.lock().unwrap() = Some(manager.clone());
+    for key in [
+        wisp_runtime::RuntimeKey::local_python(PROJECT),
+        wisp_runtime::RuntimeKey::r(PROJECT, wisp_runtime::LOCAL_CONTEXT_ID),
+    ] {
+        manager
+            .start(key.with_session(session.clone()), temp.path().to_path_buf())
+            .await
+            .unwrap();
+    }
+    let listed = runtimes(session.clone()).await;
+    let seen: Vec<_> = listed
+        .iter()
+        .map(|row| (row.language, row.state, row.version.as_deref()))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            (
+                desktop::RuntimeLanguage::Python,
+                desktop::RuntimeState::Ready,
+                Some("3.12.4")
+            ),
+            (
+                desktop::RuntimeLanguage::R,
+                desktop::RuntimeState::Ready,
+                Some("4.4.1")
+            ),
+        ]
+    );
+    assert_eq!(
+        listed[0].interpreter.as_deref(),
+        Some("/opt/py/bin/python3")
+    );
+
+    // Stopped, it stays listed as stopped; the other is untouched.
+    let python = listed[0].id.clone();
+    server
+        .stop_runtime(PROJECT, &session, &python)
+        .await
+        .unwrap();
+    let listed = runtimes(session.clone()).await;
+    assert_eq!(listed[0].state, desktop::RuntimeState::Stopped);
+    assert_eq!(listed[1].state, desktop::RuntimeState::Ready);
+    // Asked again, the stopped one is taken away.
+    server
+        .stop_runtime(PROJECT, &session, &python)
+        .await
+        .unwrap();
+    let listed = runtimes(session.clone()).await;
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].language, desktop::RuntimeLanguage::R);
+    assert!(server
+        .stop_runtime(PROJECT, &session, &python)
+        .await
+        .is_err());
+    // Only through the conversation's own project.
+    assert!(server
+        .stop_runtime("missing", &session, &listed[0].id)
+        .await
+        .is_err());
+    assert_eq!(runtimes(session.clone()).await.len(), 1);
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_conversation_is_exported_whole_as_markdown() {
     let temp = tempfile::tempdir().unwrap();
     let calls = Arc::new(AtomicUsize::new(0));

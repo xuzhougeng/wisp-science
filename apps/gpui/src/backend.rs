@@ -724,6 +724,12 @@ impl Backend {
         })
     }
 
+    /// Stops one of a conversation's interpreters, or takes a stopped one
+    /// off the list.
+    pub fn stop_runtime(&self, project: String, session: String, id: String) -> Reply<()> {
+        self.local(move |host| async move { host.stop_runtime(&project, &session, &id).await })
+    }
+
     /// Returns once the host is no longer asking the model what could be
     /// asked next in a conversation.
     pub fn follow_ups_settled(&self, project: String, session: String) -> Reply<()> {

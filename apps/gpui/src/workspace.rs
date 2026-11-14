@@ -2053,6 +2053,31 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Stops one of the conversation's interpreters, or dismisses a
+    /// stopped one, and reads the status again.
+    fn stop_runtime(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let selection = self.state.selection();
+        let (Some(project), Some(session)) = (selection.project.clone(), selection.session.clone())
+        else {
+            return;
+        };
+        let reply = self.backend.stop_runtime(project, session, id);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if !this.state.current(&selection) {
+                    return;
+                }
+                if let Err(error) = result {
+                    this.error = Some(error);
+                }
+                this.load_status(window, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn revoke_allowed_tools(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let selection = self.state.selection();
         let (Some(project), Some(session)) = (selection.project.clone(), selection.session.clone())

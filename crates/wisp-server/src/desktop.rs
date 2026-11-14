@@ -2862,6 +2862,16 @@ impl Server {
         self.own_conversation(project, session).await?;
         let options = self.stored_options(session).await?;
         let session = self.session(session);
+        let runtimes = session
+            .runtime
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|manager| manager.list())
+            .unwrap_or_default()
+            .into_iter()
+            .map(RuntimeRow::from)
+            .collect();
         let live = session.live.lock().unwrap();
         let mut allowed_tools: Vec<_> = live.allowed_tools.iter().cloned().collect();
         allowed_tools.sort();
@@ -2870,7 +2880,31 @@ impl Server {
             usage: live.usage.clone(),
             allowed_tools,
             reasoning: live.reasoning.clone(),
+            runtimes,
         })
+    }
+
+    /// Stops one of the conversation's interpreters, losing what it has in
+    /// memory; files it wrote stay. Asked again of one that has stopped, it
+    /// takes the row away, and the model's next call starts a fresh one.
+    pub async fn stop_runtime(&self, project: &str, session: &str, id: &str) -> Result<()> {
+        self.own_conversation(project, session).await?;
+        let manager = self.session(session).runtime.lock().unwrap().clone();
+        let found = manager.as_ref().and_then(|manager| {
+            manager
+                .list()
+                .into_iter()
+                .find(|info| info.runtime_id == id)
+        });
+        let (Some(manager), Some(info)) = (manager, found) else {
+            bail!("That interpreter is no longer there");
+        };
+        if info.status == wisp_runtime::RuntimeStatus::Dead {
+            manager.dismiss_dead(id)?;
+        } else {
+            manager.stop(&info.key).await;
+        }
+        Ok(())
     }
 
     /// Saves the conversation's options. They apply from its next turn; a
@@ -3294,6 +3328,67 @@ pub struct ConversationStatus {
     pub allowed_tools: Vec<String>,
     /// What the model is thinking right now; empty when it is not.
     pub reasoning: String,
+    /// The interpreters the conversation keeps between tool calls.
+    pub runtimes: Vec<RuntimeRow>,
+}
+
+/// An interpreter a conversation started and keeps, with what it has in
+/// memory, until it is stopped or the conversation goes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeRow {
+    /// Names this one interpreter, to stop it.
+    pub id: String,
+    pub language: RuntimeLanguage,
+    pub state: RuntimeState,
+    /// The interpreter's path and version, once it has started.
+    pub interpreter: Option<String>,
+    pub version: Option<String>,
+    /// Memory it holds, when the system could say.
+    pub memory_bytes: Option<u64>,
+    /// Why it stopped, when it did not stop by itself being asked.
+    pub last_error: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuntimeLanguage {
+    Python,
+    R,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuntimeState {
+    Starting,
+    /// Idle, with its variables in memory.
+    Ready,
+    /// Running code.
+    Busy,
+    Stopping,
+    /// Gone; what it had in memory is lost. The row stays until dismissed,
+    /// so the model's next call says so instead of quietly starting anew.
+    Stopped,
+}
+
+impl From<wisp_runtime::RuntimeInfo> for RuntimeRow {
+    fn from(info: wisp_runtime::RuntimeInfo) -> Self {
+        Self {
+            id: info.runtime_id,
+            language: match info.key.language {
+                wisp_runtime::RuntimeLanguage::Python => RuntimeLanguage::Python,
+                wisp_runtime::RuntimeLanguage::R => RuntimeLanguage::R,
+            },
+            state: match info.status {
+                wisp_runtime::RuntimeStatus::Starting => RuntimeState::Starting,
+                wisp_runtime::RuntimeStatus::Ready => RuntimeState::Ready,
+                wisp_runtime::RuntimeStatus::Busy => RuntimeState::Busy,
+                wisp_runtime::RuntimeStatus::Stopping => RuntimeState::Stopping,
+                wisp_runtime::RuntimeStatus::Dead => RuntimeState::Stopped,
+            },
+            interpreter: info.interpreter,
+            version: info.version,
+            memory_bytes: info.resident_memory_bytes,
+            last_error: info.last_error,
+        }
+    }
 }
 
 /// An SSH host as Settings shows and edits it. Signing in is by key or by

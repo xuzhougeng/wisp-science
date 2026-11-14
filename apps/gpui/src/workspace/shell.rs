@@ -1252,8 +1252,52 @@ impl Workspace {
             .as_ref()
             .map(|status| status.allowed_tools.join(", "))
             .unwrap_or_default();
-        if usage.is_some() || !allowed.is_empty() {
-            let mut line = div().h_flex().gap_2().px_1().text_xs().text_color(muted);
+        let runtimes = self
+            .status
+            .as_ref()
+            .map(|status| status.runtimes.as_slice())
+            .unwrap_or_default();
+        if usage.is_some() || !allowed.is_empty() || !runtimes.is_empty() {
+            let mut line = div()
+                .h_flex()
+                .flex_wrap()
+                .gap_2()
+                .px_1()
+                .text_xs()
+                .text_color(muted);
+            // The interpreters this conversation keeps between tool calls.
+            for row in runtimes {
+                let mut chip = div()
+                    .id(SharedString::from(format!("runtime-{}", row.id)))
+                    .h_flex()
+                    .gap_1()
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("runtime-label-{}", row.id)))
+                            .child(controls::runtime_label(row))
+                            .tooltip({
+                                let detail = controls::runtime_detail(row);
+                                move |window, cx| {
+                                    gpui_component::tooltip::Tooltip::new(detail.clone())
+                                        .build(window, cx)
+                                }
+                            }),
+                    );
+                if let Some((label, hint)) = controls::runtime_action(row) {
+                    let id = row.id.clone();
+                    chip = chip.child(
+                        Button::new(SharedString::from(format!("runtime-stop-{}", row.id)))
+                            .label(label)
+                            .xsmall()
+                            .ghost()
+                            .tooltip(hint)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.stop_runtime(id.clone(), window, cx)
+                            })),
+                    );
+                }
+                line = line.child(chip);
+            }
             if !allowed.is_empty() {
                 line = line
                     .child(format!(

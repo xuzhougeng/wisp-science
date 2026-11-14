@@ -1,7 +1,66 @@
 //! Wording and small decisions for the conversation's controls: reasoning
 //! effort, token usage, approvals and the model's questions. No graphics.
 use wisp_dto::{PendingToolApproval, native_conversations::Item};
-use wisp_server::desktop::{TokenUsage, TurnRef, tool_question};
+use wisp_server::desktop::{
+    RuntimeLanguage, RuntimeRow, RuntimeState, TokenUsage, TurnRef, tool_question,
+};
+
+/// An interpreter the conversation keeps, as its chip reads: the language,
+/// its version when known, and what it is doing.
+pub fn runtime_label(row: &RuntimeRow) -> String {
+    let language = match row.language {
+        RuntimeLanguage::Python => "Python",
+        RuntimeLanguage::R => "R",
+    };
+    let state = match row.state {
+        RuntimeState::Starting => "starting",
+        RuntimeState::Ready => "ready",
+        RuntimeState::Busy => "running",
+        RuntimeState::Stopping => "stopping",
+        RuntimeState::Stopped => "stopped",
+    };
+    match &row.version {
+        Some(version) if !version.trim().is_empty() => {
+            format!("{language} {} · {state}", version.trim())
+        }
+        _ => format!("{language} · {state}"),
+    }
+}
+
+/// What the chip says when pointed at: where the interpreter is, how much
+/// it holds, and why it stopped.
+pub fn runtime_detail(row: &RuntimeRow) -> String {
+    let mut parts = Vec::new();
+    if let Some(path) = row.interpreter.as_deref().filter(|path| !path.is_empty()) {
+        parts.push(path.to_owned());
+    }
+    if let Some(bytes) = row.memory_bytes {
+        parts.push(format!("{} in memory", crate::files::size_label(bytes)));
+    }
+    if let Some(error) = row.last_error.as_deref().filter(|text| !text.is_empty()) {
+        parts.push(error.to_owned());
+    }
+    if parts.is_empty() {
+        return "Kept between tool calls, with its variables".into();
+    }
+    parts.join(" · ")
+}
+
+/// What the chip's button does, and its tooltip. A stopped interpreter can
+/// only be taken off the list; one that is going down can only be waited for.
+pub fn runtime_action(row: &RuntimeRow) -> Option<(&'static str, &'static str)> {
+    match row.state {
+        RuntimeState::Stopped => Some((
+            "Dismiss",
+            "Take it off the list; the next call starts a fresh one",
+        )),
+        RuntimeState::Stopping => None,
+        _ => Some((
+            "Stop",
+            "Stop this interpreter; what it has in memory is lost, files stay",
+        )),
+    }
+}
 
 /// Reasoning efforts in the order they are offered. The ids are the host's.
 pub const EFFORTS: [(&str, &str); 8] = [
@@ -193,6 +252,53 @@ pub fn thinking_tail(text: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_interpreter_chip_says_what_it_is_doing_and_what_can_be_done() {
+        let mut row = RuntimeRow {
+            id: "r1".into(),
+            language: RuntimeLanguage::Python,
+            state: RuntimeState::Ready,
+            interpreter: Some("/opt/py/bin/python3".into()),
+            version: Some(" 3.12.4 ".into()),
+            memory_bytes: Some(3 * 1024 * 1024),
+            last_error: None,
+        };
+        assert_eq!(runtime_label(&row), "Python 3.12.4 · ready");
+        assert_eq!(
+            runtime_detail(&row),
+            "/opt/py/bin/python3 · 3.0 MB in memory"
+        );
+        assert_eq!(runtime_action(&row).unwrap().0, "Stop");
+        row.state = RuntimeState::Busy;
+        assert_eq!(runtime_label(&row), "Python 3.12.4 · running");
+        assert_eq!(runtime_action(&row).unwrap().0, "Stop");
+        // Going down: nothing to press.
+        row.state = RuntimeState::Stopping;
+        assert_eq!(runtime_action(&row), None);
+        // Stopped with a reason: it can only be taken off the list.
+        row.state = RuntimeState::Stopped;
+        row.last_error = Some("killed: out of memory".into());
+        assert_eq!(runtime_label(&row), "Python 3.12.4 · stopped");
+        assert!(runtime_detail(&row).ends_with("killed: out of memory"));
+        assert_eq!(runtime_action(&row).unwrap().0, "Dismiss");
+
+        // Before it has said anything about itself.
+        let starting = RuntimeRow {
+            id: "r2".into(),
+            language: RuntimeLanguage::R,
+            state: RuntimeState::Starting,
+            interpreter: None,
+            version: None,
+            memory_bytes: None,
+            last_error: None,
+        };
+        assert_eq!(runtime_label(&starting), "R · starting");
+        assert_eq!(
+            runtime_detail(&starting),
+            "Kept between tool calls, with its variables"
+        );
+    }
     use serde_json::json;
 
     fn item(role: &str, tool: Option<&str>, text: &str, ok: Option<bool>) -> Item {
