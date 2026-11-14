@@ -1401,11 +1401,18 @@ impl Workspace {
     /// Everything to the right of the sidebar.
     pub(super) fn render_conversation(&self, cx: &mut Context<Self>) -> Div {
         let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
+        let drop_tint = cx.theme().primary.opacity(0.06);
         let mut content = div()
             .v_flex()
             .flex_1()
             .min_w(px(300.))
             .h_full()
+            // Files dragged in from outside are attached to the message
+            // being written.
+            .drag_over::<ExternalPaths>(move |style, _, _, _| style.bg(drop_tint))
+            .on_drop(cx.listener(|this, dropped: &ExternalPaths, window, cx| {
+                this.attach_dropped(dropped.paths(), window, cx)
+            }))
             .child(self.render_topbar(cx));
         if let Some(bar) = self.render_conversation_bar(cx) {
             content = content.child(bar);

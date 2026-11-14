@@ -87,6 +87,47 @@ impl Pending {
 
 /// A user message as it should read in the transcript: the files it carried
 /// are shown as chips, so the block that lists them is left out of the text.
+/// How many files one drop may attach.
+pub const DROP_LIMIT: usize = 20;
+
+/// What a drop onto the conversation attaches: the regular files among
+/// `paths`, in order and without repeats, up to [`DROP_LIMIT`], and how
+/// many of the dropped things were left out (folders, and files past the
+/// limit). `is_file` says whether a path is a regular file.
+pub fn dropped_files(
+    paths: &[std::path::PathBuf],
+    is_file: impl Fn(&std::path::Path) -> bool,
+) -> (Vec<std::path::PathBuf>, usize) {
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    let mut left_out = 0;
+    for path in paths {
+        if files.contains(path) {
+            continue;
+        }
+        if is_file(path) && files.len() < DROP_LIMIT {
+            files.push(path.clone());
+        } else {
+            left_out += 1;
+        }
+    }
+    (files, left_out)
+}
+
+/// What is said when part of a drop was not attached.
+pub fn drop_note(left_out: usize) -> Option<String> {
+    match left_out {
+        0 => None,
+        1 => Some(format!(
+            "1 item was not attached: folders are not attached, and a drop takes at most \
+             {DROP_LIMIT} files."
+        )),
+        n => Some(format!(
+            "{n} items were not attached: folders are not attached, and a drop takes at most \
+             {DROP_LIMIT} files."
+        )),
+    }
+}
+
 pub fn user_text(item: &Item) -> String {
     if item.attachments.is_empty() {
         return item.text.clone();
@@ -161,5 +202,31 @@ mod tests {
         // Without attachments the text is left exactly as written.
         let plain = item("Uploaded files: is what I typed", json!([]));
         assert_eq!(user_text(&plain), "Uploaded files: is what I typed");
+    }
+
+    #[test]
+    fn a_drop_attaches_its_files_and_says_what_it_left_out() {
+        use std::path::{Path, PathBuf};
+        let path = |name: &str| PathBuf::from(format!("/data/{name}"));
+        let is_file = |path: &Path| path.extension().is_some();
+        let dropped = [path("a.csv"), path("folder"), path("b.csv"), path("a.csv")];
+        let (files, left_out) = dropped_files(&dropped, is_file);
+        // Files keep their order, a repeat is one file, a folder is left out.
+        assert_eq!(files, [path("a.csv"), path("b.csv")]);
+        assert_eq!(left_out, 1);
+        assert!(drop_note(1).unwrap().starts_with("1 item was not attached"));
+        assert_eq!(drop_note(0), None);
+
+        let many: Vec<PathBuf> = (0..DROP_LIMIT + 3)
+            .map(|n| path(&format!("{n}.csv")))
+            .collect();
+        let (files, left_out) = dropped_files(&many, is_file);
+        assert_eq!((files.len(), left_out), (DROP_LIMIT, 3));
+        assert!(
+            drop_note(3)
+                .unwrap()
+                .starts_with("3 items were not attached")
+        );
+        assert_eq!(dropped_files(&[], is_file), (vec![], 0));
     }
 }

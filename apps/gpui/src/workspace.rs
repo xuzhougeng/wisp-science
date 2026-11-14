@@ -43,7 +43,7 @@ use wisp_server::desktop::{
 
 use crate::{
     backend::{Backend, receive},
-    compose::{Chip, Pending},
+    compose::{self, Chip, Pending},
     controls,
     files::FilesState,
     home::{self, Screen},
@@ -1532,24 +1532,65 @@ impl Workspace {
             }
             .await;
             let _ = this.update_in(cx, |this, window, cx| {
-                // The files belong to the conversation they were picked for.
-                if !this.state.current(&selection) {
-                    return;
-                }
-                match result {
-                    Ok(paths) => {
-                        for path in paths {
-                            this.attach(Chip::File(path), cx);
-                        }
-                        this.reload_files(window, cx);
-                        this.focus_composer(window, cx);
-                    }
-                    Err(error) => this.error = Some(error),
-                }
-                cx.notify();
+                this.attach_imported(&selection, result, window, cx)
             });
         })
         .detach();
+    }
+
+    /// Attaches files dropped onto the conversation, the way the picker
+    /// does: outside files are copied into `uploads`, inside ones are used
+    /// in place. Folders are left out, and it says so.
+    pub(super) fn attach_dropped(
+        &mut self,
+        paths: &[std::path::PathBuf],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selection = self.state.selection();
+        let (Some(project), Some(_)) = (selection.project.clone(), selection.session.clone())
+        else {
+            return;
+        };
+        let (files, left_out) = compose::dropped_files(paths, |path| path.is_file());
+        self.error = compose::drop_note(left_out);
+        if files.is_empty() {
+            return cx.notify();
+        }
+        let reply = self.backend.import_attachments(project, files);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.attach_imported(&selection, result, window, cx)
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Puts imported files on the message being written.
+    fn attach_imported(
+        &mut self,
+        selection: &crate::state::Selection,
+        result: Result<Vec<String>, String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // The files belong to the conversation they were picked for.
+        if !self.state.current(selection) {
+            return;
+        }
+        match result {
+            Ok(paths) => {
+                for path in paths {
+                    self.attach(Chip::File(path), cx);
+                }
+                self.reload_files(window, cx);
+                self.focus_composer(window, cx);
+            }
+            Err(error) => self.error = Some(error),
+        }
+        cx.notify();
     }
 
     fn load_status(&mut self, window: &mut Window, cx: &mut Context<Self>) {

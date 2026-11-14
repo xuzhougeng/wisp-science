@@ -156,7 +156,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Usage | How full the context is, and the tokens the running or latest turn used |
 | Questions | When the model asks, a card with its options: one click answers, or type the answer |
 | Messages | Copy any message as Markdown |
-| Attachments | Attach files with the system dialog, or add a project file, another conversation or a skill from the add-context box; shown as chips until sent |
+| Attachments | Attach files with the system dialog or by dropping them onto the conversation, or add a project file, another conversation or a skill from the add-context box; shown as chips until sent |
 | Drafts | Survive navigation; preserved on send failure, cleared on durable acceptance |
 | Execution | Shared agent/tools, streamed snapshots while running, stop and errors |
 | Approvals | Exact pending request; allow once, allow that tool for the rest of the conversation, always allow it in this project, or deny |
@@ -390,6 +390,10 @@ Limits of this slice:
   prompt section, which now lives in `wisp_tools::plan` for any host to use;
   `src-tauri` still carries its own copy of the same text. Approving sends
   "Approve and execute", or whatever is typed in the composer.
+- Files dropped onto a conversation are attached the way picked ones are.
+  A drop takes at most twenty files; folders are left out, and it says how
+  many items it did not attach. Pasting a file or a picture from the
+  clipboard is not ported.
 - A file attached from outside the project is copied into the project's
   `uploads` folder (up to 100 MB, never overwriting); a file inside it is used
   where it is. The model receives project-relative paths and reads the files
@@ -632,6 +636,10 @@ saved.
 Have the model write a figure into the project and show it with Markdown
 image syntax: the picture appears under the answer, and is still there after
 the conversation is reopened. An image link to a web address shows nothing.
+Drag two files and a folder from the system's file manager onto an open
+conversation: the pane is tinted while they are over it, the two files
+become chips on the message being written, and a line says one item was not
+attached.
 In Files open a PNG or a JPEG: the picture is shown, with its size above
 it, and Escape returns to the listing.
 In Files make a folder and, inside it, a file; try a name with a slash and
