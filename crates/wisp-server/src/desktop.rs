@@ -3113,6 +3113,16 @@ impl Server {
         }
     }
 
+    /// What the model is sent for this conversation: its saved working
+    /// set, which after a compaction is shorter than the transcript and
+    /// always begins with the instructions the transcript does not show.
+    /// While a turn runs it is what had been saved when it was read.
+    pub async fn model_view(&self, project: &str, session: &str) -> Result<ModelView> {
+        self.own_conversation(project, session).await?;
+        let messages = self.0.store.load_messages(session).await?;
+        Ok(crate::model_view::fold(&messages))
+    }
+
     /// Has the conversation's model review the conversation as a
     /// reviewer: where a claim is not borne out by the tool output it came
     /// from. Nothing is added to the conversation and the report is not
@@ -3733,6 +3743,7 @@ pub struct ProjectGrants {
 }
 
 pub use crate::aside::Exchange as AsideExchange;
+pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow};
 pub use crate::review::{Finding as ReviewFinding, Review};
 
 /// A project's folder, as the question before it is deleted describes it.

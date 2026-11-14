@@ -50,6 +50,7 @@ pub enum Command {
     Aside,
     SaveAsSkill,
     Review,
+    ModelView,
 }
 
 impl Command {
@@ -80,6 +81,7 @@ impl Command {
             Command::Aside => "Ask aside about this conversation",
             Command::SaveAsSkill => "Save this conversation as a skill",
             Command::Review => "Review this conversation",
+            Command::ModelView => "What the model is sent",
         }
     }
 
@@ -109,6 +111,7 @@ impl Command {
             Command::Aside => "circle-help",
             Command::SaveAsSkill => "skill",
             Command::Review => "review",
+            Command::ModelView => "eye",
         }
     }
 
@@ -131,7 +134,8 @@ impl Command {
             | Command::Trajectory
             | Command::Aside
             | Command::SaveAsSkill
-            | Command::Review => screen == Screen::Project,
+            | Command::Review
+            | Command::ModelView => screen == Screen::Project,
             Command::OpenFolder
             | Command::Refresh
             | Command::Settings
@@ -143,7 +147,7 @@ impl Command {
         }
     }
 
-    const ALL: [Command; 25] = [
+    const ALL: [Command; 26] = [
         Command::NewConversation,
         Command::OpenFolder,
         Command::Home,
@@ -169,6 +173,7 @@ impl Command {
         Command::Aside,
         Command::SaveAsSkill,
         Command::Review,
+        Command::ModelView,
     ];
 }
 

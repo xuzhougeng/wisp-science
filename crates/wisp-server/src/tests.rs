@@ -5016,6 +5016,44 @@ async fn a_conversations_interpreters_are_listed_and_can_be_stopped() {
 }
 
 #[tokio::test]
+async fn the_model_view_is_what_the_next_turn_would_be_sent() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    // Nothing has been sent, so nothing is saved to send again.
+    let empty = server.model_view(PROJECT, &session).await.unwrap();
+    assert!(empty.rows.is_empty() && !empty.compacted);
+
+    send(&server, &session, "count the reads").await.unwrap();
+    let shown = wait_for(&server, &session, |s| !s.running).await;
+    let view = server.model_view(PROJECT, &session).await.unwrap();
+    let kinds: Vec<_> = view.rows.iter().map(|row| row.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            desktop::ModelRowKind::System,
+            desktop::ModelRowKind::User,
+            desktop::ModelRowKind::Assistant,
+        ]
+    );
+    // The instructions are in it though the transcript never shows them.
+    assert!(view.rows[0].chars > 200, "{:?}", view.rows[0].chars);
+    assert!(shown.items.iter().all(|item| item.role != "system"));
+    assert_eq!(view.rows[1].text, "count the reads");
+    assert_eq!(view.rows[2].text, "Saved result");
+    assert_eq!(
+        view.chars,
+        view.rows.iter().map(|row| row.chars).sum::<usize>()
+    );
+
+    assert!(server.model_view("missing", &session).await.is_err());
+    assert!(server.model_view(PROJECT, "missing").await.is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_conversation_is_exported_whole_as_markdown() {
     let temp = tempfile::tempdir().unwrap();
     let calls = Arc::new(AtomicUsize::new(0));

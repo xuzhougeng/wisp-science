@@ -11,6 +11,7 @@ mod inline_view;
 mod journey_view;
 mod memory_view;
 mod memos_view;
+mod model_view_dialog;
 mod notebook_view;
 mod organise_view;
 mod palette_view;
@@ -96,6 +97,10 @@ pub struct Workspace {
     /// why it could not be.
     capabilities: Option<wisp_server::desktop::Capabilities>,
     capabilities_error: Option<String>,
+    model_view: Option<wisp_server::desktop::ModelView>,
+    model_view_error: Option<String>,
+    /// The rows opened to show their whole text.
+    model_view_open: HashSet<usize>,
     /// The review the dialog is showing or waiting for.
     review: Option<crate::review::Asked>,
     trajectory: Option<wisp_dto::TrajectorySnapshotDto>,
@@ -560,6 +565,9 @@ impl Workspace {
             asides: HashMap::new(),
             capabilities: None,
             capabilities_error: None,
+            model_view: None,
+            model_view_error: None,
+            model_view_open: HashSet::new(),
             review: None,
             trajectory: None,
             trajectory_error: None,
@@ -771,6 +779,10 @@ impl Workspace {
                 self.review = None;
                 self.focus_composer(window, cx);
             }
+            Some(Layer::ModelView) => {
+                self.clear_model_view();
+                self.focus_composer(window, cx);
+            }
             // The page stays open underneath.
             Some(Layer::JournalForm) => {}
             Some(Layer::ConfirmTrashFile) => self.file_trashing = None,
@@ -896,10 +908,12 @@ impl Workspace {
             Layer::Outline,
             Layer::Trajectory,
             Layer::Review,
+            Layer::ModelView,
         ] {
             self.layers.close(layer);
         }
         self.clear_trajectory();
+        self.clear_model_view();
         self.review = None;
         self.find.clear();
         if self.state.session != session {
@@ -2259,6 +2273,11 @@ impl Render for Workspace {
         };
         let root = if self.layers.contains(Layer::Review) {
             root.child(self.render_review(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::ModelView) {
+            root.child(self.render_model_view(cx))
         } else {
             root
         };

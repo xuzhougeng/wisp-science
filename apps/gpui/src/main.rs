@@ -16,6 +16,7 @@ mod layers;
 mod links;
 mod memory;
 mod memos;
+mod model_view;
 mod notebook;
 mod organise;
 mod outline;

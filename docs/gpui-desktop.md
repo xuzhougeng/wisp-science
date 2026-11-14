@@ -138,6 +138,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Capabilities | A dialog for the open project: how many skills, connectors, MCP servers and SSH hosts are on or usable, the state of memory, and which command-line tools were found on this computer |
 | Follow-up questions | After an answer, up to three questions you could ask next show above the composer; picking one puts it in the composer to send or change, and the list can be put away |
 | Delete a project's folder | Removing a project offers Delete folder too: after you type the project's name, the project is removed and its folder is deleted with every file in it |
+| What the model is sent | Clicking the context percentage by the composer (or the command palette) lists the conversation's working set: the instructions, the summary that stands in for compacted turns, and each message with about how many tokens it takes |
 | Interpreters | The Python and R interpreters a conversation keeps between tool calls show above the composer with their version and state; Stop ends one, Dismiss takes a stopped one off the list |
 | Review | A conversation's Review button (or the command palette) has the model read the conversation as a reviewer and lists claims its own tool output does not support, each with the evidence and a fix; Ask Wisp to correct puts the corrections in the composer |
 | Save as skill | A conversation's Save as skill button (or the command palette) puts a request in the composer that asks Wisp to distill the conversation into a reusable skill; you send it, changed or not |
@@ -331,6 +332,14 @@ Limits of this slice:
   and for the built-in workspace. If the folder cannot be deleted the
   project stays listed. The question counts up to 200,000 entries before
   it says "at least". A paired phone cannot ask for it.
+- What the model is sent is read from what is saved, so it is the
+  working set of the last turn: parts of the instructions that are
+  refreshed when a turn starts (compute contexts, project rules, package
+  sources) show as they were then, and a turn that is running shows only
+  what it has saved. Token figures are the length in characters divided
+  by four, not the model's own count; tool definitions are sent too and
+  are not listed. A row's opened text stops at 16,000 characters. A
+  compaction cannot be undone from here.
 - The interpreter line is read when a conversation opens, about once a
   second while a turn runs, when a turn ends and after Stop; an
   interpreter that dies while nothing is running shows as stopped only at
@@ -718,6 +727,13 @@ name, delete: the folder is gone from disk, the project and its
 conversations are gone from the home page, and the neighbouring folders
 are untouched. Register a folder that holds another project's folder and
 confirm deleting it is refused with the reason.
+After a turn, click Context N% by the composer: the dialog lists
+Instructions first, then your messages, the answers and each tool result,
+with about how many tokens each takes and its share. Open the
+Instructions row and read the system prompt; open a tool row. Press
+Escape: only the dialog closes. In a conversation long enough to have
+been compacted, confirm a Summary row stands where the older turns were
+and the line under the title says so.
 Have a turn run Python code (the bundled worker and a Python are
 needed): a "Python … · ready" chip shows above the composer, and reads
 running while code runs. Point at it for its path and memory. Press

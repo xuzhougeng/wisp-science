@@ -45,6 +45,8 @@ pub enum Layer {
     Trajectory,
     /// The review of the open conversation: a dialog over it.
     Review,
+    /// What the model is sent for the open conversation: a dialog over it.
+    ModelView,
     /// The name field in the Files panel: a new folder or file, or a rename.
     FileName,
     /// Question in the Files panel before an entry goes to the trash.
@@ -447,6 +449,11 @@ mod tests {
         stack.open(Layer::Trajectory);
         assert_eq!(stack.dismiss_top(), Some(Layer::Trajectory));
         assert!(stack.contains(Layer::FilesPanel));
+        assert!(stack.close(Layer::FilesPanel));
+        // So is the list of what the model is sent.
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::ModelView);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ModelView));
         assert!(stack.close(Layer::FilesPanel));
         // So is the review.
         stack.open(Layer::FilesPanel);

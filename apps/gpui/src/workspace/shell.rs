@@ -1203,12 +1203,20 @@ impl Workspace {
         if let Some(percent) = usage.and_then(controls::context_percent) {
             actions = actions.child(
                 div()
+                    .id("context-meter")
                     .text_xs()
                     .text_color(if percent >= 90 {
                         cx.theme().danger
                     } else {
                         muted
                     })
+                    .cursor_pointer()
+                    .hover(|meter| meter.text_color(cx.theme().foreground))
+                    .tooltip(|window, cx| {
+                        gpui_component::tooltip::Tooltip::new("See what the model is sent")
+                            .build(window, cx)
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| this.open_model_view(window, cx)))
                     .child(format!("Context {percent}%")),
             );
         }

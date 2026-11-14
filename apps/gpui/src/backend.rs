@@ -700,6 +700,15 @@ impl Backend {
         self.local(move |host| async move { host.revoke_project_grant(&project, &tool).await })
     }
 
+    /// What the model is sent for a conversation: its saved working set.
+    pub fn model_view(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<wisp_server::desktop::ModelView> {
+        self.local(move |host| async move { host.model_view(&project, &session).await })
+    }
+
     /// Has the conversation's model review the conversation.
     pub fn review_conversation(
         &self,

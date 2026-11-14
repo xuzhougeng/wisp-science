@@ -6,6 +6,7 @@ mod export;
 mod files;
 mod follow_ups;
 pub mod mcp;
+mod model_view;
 mod network;
 mod output;
 mod project_archive;

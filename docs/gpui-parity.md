@@ -113,7 +113,7 @@ to find in the running app.
 | Automatic review toggle and review model [自动审查] | Yes | Missing | tauri |
 | Sub-agent model [子智能体模型] | Yes | Missing | store |
 | Compute environment for the conversation [计算环境] | Yes | Partial: the default, this computer or a saved SSH host, for where runs start; Python, R and the shell stay on this computer | store |
-| Context usage meter and manual compaction | Yes | Partial: how full the context is, as a percentage; no breakdown and no manual compaction | served |
+| Context usage meter and manual compaction | Yes | Partial: how full the context is, as a percentage that opens the list of what the model is sent, message by message; no manual compaction | served |
 | Request a review of the conversation [请求审查] | Yes | Partial: a Review dialog lists what the conversation's model finds and puts the corrections in the composer; the report is not kept with the conversation and there is no separate reviewer model | tauri |
 | Share as long image or HTML [分享为长图] | Yes | Partial: Export saves the conversation as a Markdown file; no long image or HTML | ui |
 | Save the conversation as a skill [保存为技能] | Yes | Done: puts the request for the `skill-creator` skill in the composer, after anything already typed | shared |
@@ -139,7 +139,7 @@ to find in the running app.
 | Save to memory [记忆] | Yes | Partial: the message is opened for trimming and saved for the project or as a habit; no model-written suggestion | store |
 | Review a turn [审查] | Yes | Missing | tauri |
 | Select text: add to chat, ask aside, highlight | Yes | Partial: a whole message is saved with its star; a selected passage cannot be, and there is no add-to-chat or ask-aside | store |
-| Full record / model view toggles [完整记录 / 模型视角] | Yes | Missing | served |
+| Full record / model view toggles [完整记录 / 模型视角] | Yes | Partial: the transcript is the full record; What the model is sent lists the model's working set in a dialog, with each message's share; no context breakdown by kind and no undo of a compaction | served |
 | Conversation outline [展开对话目录] | Yes | Partial: your messages in the loaded part of the conversation, to jump to | store |
 | Find in conversation | Yes *(source)* | Done: Cmd/Ctrl+F over the loaded transcript, with a count and next and previous; marks rows, not words | ui |
 | Sub-agent and delegation cards | Yes *(source)* | Missing | store |
