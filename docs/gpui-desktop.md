@@ -150,6 +150,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Interpreters | The Python and R interpreters a conversation keeps between tool calls show above the composer with their version and state; Stop ends one, Dismiss takes a stopped one off the list |
 | Experts | Settings, Experts, keeps personas (a name and instructions); the composer's Expert menu starts a new conversation as one, and its instructions hold for the whole conversation |
 | Quick actions | Settings, Quick actions, keeps requests you make often under a name; the composer's quick actions menu puts one into the message box, after whatever is already typed, to finish and send |
+| File actions | A previewed file's path can be copied, the file attached to the message, shown in the file manager or opened with the system's own application |
 | Slash commands | A message that is only a command does something instead of being sent: `/review`, `/trajectory`, `/context`, `/btw <question>`, `/plan`, `/save-as-skill`, `/skills`, `/files`, `/upload`, `/memo`, `/remember`, `/archive`, `/compact`, `/timer 30m <prompt>`, `/help`; the composer's "/" button lists them |
 | Browser | Settings, Browser, switches on a bridge to the Wisp extension in your own Chrome or Chromium; conversations can then open a tab, read it and run a script in it, only in tabs they opened themselves, and hosts can be blocked or preferred |
 | Workflows | Settings, Workflows, keeps templates of a goal broken into tasks, each saying which earlier tasks it needs; Run starts a conversation in the open project and gives the model the tasks stage by stage |
@@ -1092,6 +1093,9 @@ and the text comes back.
 After a few turns send `/compact`: a note says how many tokens there
 were before and after, a file appears under `.wisp/history/`, and What
 the model is sent is shorter while the transcript is not.
+Preview a file in Files: Copy path puts its full path on the clipboard,
+Attach adds it to the message as a chip, Show in the file manager and
+Open with the system's application do what they say.
 In a conversation type `/trajectory` and send: the trajectory opens and
 nothing is added to the transcript. Send `/btw why did that fail?`: the
 Aside tab opens and the question is asked there. Send `/timer 1h`: a

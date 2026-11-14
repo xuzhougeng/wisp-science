@@ -51,6 +51,58 @@ impl Workspace {
 
     /// Opens a file found outside the panel: shows the panel on the file's
     /// folder with the preview over it.
+    /// What can be done with the previewed file outside the preview: its
+    /// path copied, the file attached to the message, shown in the file
+    /// manager or opened with the system's own application.
+    fn file_actions(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let relative = self.files.preview_path.clone()?;
+        let root = self
+            .state
+            .project
+            .as_ref()
+            .and_then(|id| self.projects.iter().find(|project| &project.id == id))
+            .map(|project| std::path::PathBuf::from(&project.workspace_dir))?;
+        let path = files::on_disk(&root, &relative)?;
+        let (copied, shown, opened) = (path.clone(), path.clone(), path);
+        let mut actions = div().h_flex().flex_shrink_0().child(
+            icon_button("file-copy-path", "copy", "Copy the file's path").on_click(cx.listener(
+                move |this, _, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(
+                        copied.to_string_lossy().into_owned(),
+                    ));
+                    this.file_notice = Some(tr("Path copied.").to_owned());
+                    cx.notify();
+                },
+            )),
+        );
+        // Attaching needs a conversation to attach to.
+        if self.state.session.is_some() {
+            actions = actions.child(
+                icon_button("file-attach", "attach", "Attach to the message").on_click(
+                    cx.listener(move |this, _, _, cx| {
+                        this.attach(crate::compose::Chip::File(relative.clone()), cx);
+                        this.file_notice = Some(tr("Attached to the message.").to_owned());
+                    }),
+                ),
+            );
+        }
+        Some(
+            actions
+                .child(
+                    icon_button("file-reveal", "folder", "Show in the file manager")
+                        .on_click(cx.listener(move |_, _, _, cx| cx.reveal_path(&shown))),
+                )
+                .child(
+                    icon_button(
+                        "file-open-system",
+                        "external-link",
+                        "Open with the system's application",
+                    )
+                    .on_click(cx.listener(move |_, _, _, cx| cx.open_with_system(&opened))),
+                ),
+        )
+    }
+
     pub(super) fn reveal_file(
         &mut self,
         path: String,
@@ -557,6 +609,7 @@ impl Workspace {
                                 .child(div().truncate().text_sm().child(name))
                                 .child(div().text_xs().text_color(muted).child(note)),
                         )
+                        .children(self.file_actions(cx))
                         .child(
                             Button::new("file-preview-origin")
                                 .label(tr("Origin"))
@@ -579,6 +632,15 @@ impl Workspace {
                         ),
                 )
                 .children(self.render_file_origin(window, cx))
+                // What an action on the file just did.
+                .children(self.file_notice.as_ref().map(|notice| {
+                    div()
+                        .px_3()
+                        .py_1()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(notice.clone())
+                }))
                 .child(self.render_preview(window, cx))
                 .into_any_element();
         }

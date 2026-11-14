@@ -941,4 +941,10 @@ pub const ZH: &[(&str, &str)] = &[
     ("Timers cancelled here: {}", "此处已取消的定时器：{}"),
     ("Timer set: {} in this conversation, while the app is open. /timer off cancels it.", "定时器已设置：{}，在此对话中，应用打开期间有效。/timer off 可取消。"),
     ("A conversation's timer", "对话的定时器"),
+    ("Copy the file's path", "复制文件路径"),
+    ("Path copied.", "路径已复制。"),
+    ("Attach to the message", "附加到消息"),
+    ("Attached to the message.", "已附加到消息。"),
+    ("Show in the file manager", "在文件管理器中显示"),
+    ("Open with the system's application", "用系统应用打开"),
 ];

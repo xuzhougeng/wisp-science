@@ -262,7 +262,7 @@ row says what is there.
 | Top bar | Find in conversation (⌘F) — **Done**; search the project's chat history (⌘⇧F) — Missing | store |
 | Top bar | Import Codex and Claude Code conversations; import a conversation archive | tauri |
 | Centre | Open a file as a centre tab, split chat beside a document, snapshot, open in an external editor | ui |
-| Files | Copy path, attach to chat, register as an artifact, reveal in the file manager, open with the default app | tauri |
+| Files | Copy path, attach to chat, register as an artifact, reveal in the file manager, open with the default app — all **Done** from a file's preview except registering as an artifact, which is Missing | tauri |
 | Previews | PDF, images with zoom and region pins, CSV/TSV, DOCX/XLSX/PPTX, LaTeX, HTML, notebooks, structures, molecules, alignments, FASTA, trees | ui |
 | Previews | Code editor: save, run the selection or the script in a runtime | shared |
 | Previews | DOCX review: accept or reject tracked changes | tauri |

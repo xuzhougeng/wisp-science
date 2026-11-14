@@ -311,6 +311,19 @@ pub fn origin_detail(origin: &wisp_server::desktop::FileOrigin) -> String {
     parts.join("\n\n")
 }
 
+/// Where a project file is on disk: the project's folder joined with a
+/// path of the project's own listing. A path that would leave the folder
+/// is not one of those and gives nothing.
+pub fn on_disk(root: &std::path::Path, relative: &str) -> Option<std::path::PathBuf> {
+    use std::path::Component;
+    let path = std::path::Path::new(relative);
+    let inside = !relative.trim().is_empty()
+        && path
+            .components()
+            .all(|part| matches!(part, Component::Normal(_) | Component::CurDir));
+    inside.then(|| root.join(path))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,6 +462,22 @@ mod tests {
         assert!(files.accept_directory(&ticket, directory("p", "", &["a"])));
         files.set_project(Some("p"));
         assert!(files.loaded);
+    }
+
+    #[test]
+    fn a_project_file_is_found_on_disk_and_nothing_outside_the_project() {
+        let root = std::path::Path::new("/data/lab");
+        assert_eq!(
+            on_disk(root, "results/fit.csv"),
+            Some(std::path::PathBuf::from("/data/lab/results/fit.csv"))
+        );
+        assert_eq!(
+            on_disk(root, "./notes.md"),
+            Some(std::path::PathBuf::from("/data/lab/./notes.md"))
+        );
+        for outside in ["", " ", "../secret", "results/../../secret", "/etc/passwd"] {
+            assert_eq!(on_disk(root, outside), None, "{outside}");
+        }
     }
 
     #[test]
