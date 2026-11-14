@@ -8,6 +8,7 @@ mod inline_view;
 mod journey_view;
 mod memory_view;
 mod memos_view;
+mod notebook_view;
 mod organise_view;
 mod palette_view;
 mod panel_tabs;

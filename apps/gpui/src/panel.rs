@@ -13,13 +13,15 @@ pub enum PanelTab {
     Memos,
     Memory,
     Highlights,
+    Notebook,
 }
 
 impl PanelTab {
-    pub const ALL: [PanelTab; 6] = [
+    pub const ALL: [PanelTab; 7] = [
         PanelTab::Files,
         PanelTab::Runs,
         PanelTab::Artifacts,
+        PanelTab::Notebook,
         PanelTab::Highlights,
         PanelTab::Memos,
         PanelTab::Memory,
@@ -33,6 +35,7 @@ impl PanelTab {
             PanelTab::Memos => "Memos",
             PanelTab::Memory => "Memory",
             PanelTab::Highlights => "Highlights",
+            PanelTab::Notebook => "Notebook",
         }
     }
 
@@ -44,6 +47,7 @@ impl PanelTab {
             PanelTab::Memos => "note-plus",
             PanelTab::Memory => "memory",
             PanelTab::Highlights => "star",
+            PanelTab::Notebook => "notebook",
         }
     }
 }

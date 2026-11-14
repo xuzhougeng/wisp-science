@@ -15,6 +15,7 @@ mod layers;
 mod links;
 mod memory;
 mod memos;
+mod notebook;
 mod organise;
 mod outline;
 mod palette;

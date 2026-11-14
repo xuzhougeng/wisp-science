@@ -38,7 +38,8 @@ impl Workspace {
             PanelTab::Artifacts => self.load_artifacts(window, cx),
             PanelTab::Memos => self.load_memos(window, cx),
             PanelTab::Memory => self.load_memory(window, cx),
-            PanelTab::Highlights => self.load_saved(window, cx),
+            // Cells show whether their code is saved.
+            PanelTab::Highlights | PanelTab::Notebook => self.load_saved(window, cx),
             PanelTab::Runs => {}
         }
         cx.notify();

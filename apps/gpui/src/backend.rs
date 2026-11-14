@@ -456,6 +456,20 @@ impl Backend {
         })
     }
 
+    /// Saves a piece of code with the language it is in.
+    pub fn star_code(
+        &self,
+        project: String,
+        session: String,
+        language: String,
+        code: String,
+    ) -> Reply<LibraryItem> {
+        self.local(move |host| async move {
+            host.star_text(&project, &session, "code", Some(&language), &code)
+                .await
+        })
+    }
+
     pub fn star_figure(
         &self,
         project: String,

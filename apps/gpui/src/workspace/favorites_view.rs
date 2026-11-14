@@ -71,7 +71,7 @@ impl Workspace {
 
     /// Runs one change to the favorites, then reads again whatever shows
     /// them.
-    fn change_favorites<T: 'static>(
+    pub(super) fn change_favorites<T: 'static>(
         &mut self,
         reply: Reply<T>,
         then: impl FnOnce(&mut Self, T, &mut Window, &mut Context<Self>) + 'static,
@@ -120,7 +120,7 @@ impl Workspace {
         );
     }
 
-    fn unstar(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn unstar(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         let reply = self.backend.unstar(id.clone());
         self.change_favorites(
             reply,

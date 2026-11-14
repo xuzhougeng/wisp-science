@@ -499,6 +499,11 @@ impl Workspace {
                     .child(self.render_highlights_tab(cx))
                     .into_any_element();
             }
+            PanelTab::Notebook => {
+                return panel
+                    .child(self.render_notebook_tab(window, cx))
+                    .into_any_element();
+            }
             PanelTab::Files => {}
         }
         let location = if self.files.path.is_empty() {
