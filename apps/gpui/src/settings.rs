@@ -33,14 +33,17 @@ pub enum Section {
     Storage,
     General,
     Network,
+    /// Opening this desktop in a browser through a relay.
+    Remote,
     /// The animated companion.
     Pet,
 }
 
 impl Section {
-    pub const ALL: [Section; 16] = [
+    pub const ALL: [Section; 17] = [
         Section::General,
         Section::Network,
+        Section::Remote,
         Section::Pet,
         Section::Models,
         Section::DecisionModel,
@@ -66,6 +69,7 @@ impl Section {
             Section::Experts => tr("Experts"),
             Section::QuickActions => tr("Quick actions"),
             Section::Pet => tr("Pet"),
+            Section::Remote => tr("Remote access"),
             Section::DecisionModel => tr("Decision model"),
             Section::Skills => tr("Skills"),
             Section::Plugins => tr("Plugins"),
@@ -87,6 +91,7 @@ impl Section {
             Section::Experts => "user",
             Section::QuickActions => "bolt",
             Section::Pet => "sparkles",
+            Section::Remote => "monitor",
             Section::DecisionModel => "check-square",
             Section::Skills => "skill",
             Section::Plugins => "grid",
@@ -126,6 +131,7 @@ impl Section {
                 "decision model decide map_items typesafe jev startlux bamboo systemone yes no \
                  score choice 决策模型"
             }
+            Section::Remote => "remote access web browser phone relay tunnel code link 远程接入",
             Section::Pet => "pet companion mascot animation sprite 宠物",
             Section::QuickActions => "quick action prompt template shortcut reuse 快捷动作",
             Section::Skills => "skill workflow bundled folder reload",
@@ -147,7 +153,7 @@ impl Section {
     /// The heading the section is listed under.
     pub fn group(self) -> &'static str {
         match self {
-            Section::General | Section::Network | Section::Pet => tr("App"),
+            Section::General | Section::Network | Section::Remote | Section::Pet => tr("App"),
             Section::Models
             | Section::DecisionModel
             | Section::Conversation
@@ -814,6 +820,7 @@ mod tests {
         assert_eq!(
             groups,
             [
+                "App",
                 "App",
                 "App",
                 "App",

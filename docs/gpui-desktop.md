@@ -150,6 +150,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Interpreters | The Python and R interpreters a conversation keeps between tool calls show above the composer with their version and state; Stop ends one, Dismiss takes a stopped one off the list |
 | Experts | Settings, Experts, keeps personas (a name and instructions); the composer's Expert menu starts a new conversation as one, and its instructions hold for the whole conversation |
 | Quick actions | Settings, Quick actions, keeps requests you make often under a name; the composer's quick actions menu puts one into the message box, after whatever is already typed, to finish and send |
+| Remote web access | Settings, Remote access, opens this desktop's projects in a phone or a browser through a wisp-relay of your own: it dials out (no inbound port), shows whether the tunnel is up and how many browsers are connected, and gives a link and a code that can be copied or replaced |
 | Plugins | Settings, Plugins, installs a plugin from a folder in the Claude plugin layout (`.claude-plugin/plugin.json`, `skills/*/SKILL.md`) into the app's data without running anything in it, lists what each brings, switches one on for the open project, whose conversations then have its skills, and removes it |
 | Decision model | Settings, Decision model, sets up one fast endpoint (TypeSafe Jev, StartLux-Decision hosted or self-hosted, or a custom System One server) with its key, thinking mode and timeout, and tests it; while one is in use the model's `map_items` tool, which runs one step over many items, also offers its `decide` step |
 | Pet | Settings, Pet, turns on an animated companion drawn from a folder you choose (pet.json and a sprite sheet, Codex-compatible version 2); it stands in the transcript's corner and shows whether the conversation is working, being reviewed, waiting for you, done or failed |
@@ -472,6 +473,22 @@ Limits of this slice:
   `desktop.quick_actions` and neither reads nor changes the WebView's.
   It starts with four that can be changed or removed; at most 40 are
   kept, a name is at most 60 characters and a request 8,000.
+- Remote web access is the only channel ported: there is no project
+  sync through the relay, Feishu, WeChat, StickS3 or Wisp-Lab. A browser
+  gets the commands a headless `wisp-server` offers (projects,
+  conversations, messages, stopping a turn, answering an approval
+  once), which is fewer than the WebView desktop's tunnel: no research
+  calendar or journey, checklist, queue, file browser or picture
+  upload. There is no QR code; the link and the code are copied
+  instead. The tunnel dials the relay directly and does not use the
+  proxy set under Network. Whether it is on and the relay's address are
+  kept under the WebView's keys (`remote_access_enabled`,
+  `remote_relay_url`); the relay token and the code are kept in the
+  keyring under this data directory's own names
+  (`desktop.remote.<id>.token`, `.code`), so they are typed here once
+  and the code differs from the WebView's. The page looks at the
+  tunnel for a few seconds after a change, not continuously: open it
+  again to see the present state.
 - A plugin is installed from a folder only: not from a zip archive or
   an address, and with no published checksum to compare against, so it
   is recorded as unverified. One version of a plugin is kept; a newer
@@ -1012,6 +1029,16 @@ counts it. Remove the evidence, change the figure's title, remove the
 figure. With a form open press Escape: only the form closes; press it
 again: the page closes. Rename the paper, then remove it: the question
 has to be answered first.
+In Settings, Remote access, switch it on with nothing filled in: it is
+refused. Give a relay address that is plain http on another machine: it
+is refused. With a relay of your own running, give its https address
+and token and switch it on: the line reads Connecting, then Connected,
+and a code shows. Copy the link and open it in a browser: the projects
+are listed and the line counts one browser. Press Reset code, then
+Escape: only the question closes. Reset it: the browser is dropped and
+the old link no longer works. Give a wrong token: the line says why it
+is not connected. Switch it off: the line reads Off. Confirm with
+`sqlite3` that neither the token nor the code is in the settings table.
 In Settings, Plugins, press Install from a folder and choose a folder
 that is no plugin: it is refused and nothing is listed. Choose a plugin
 folder: it is listed with its version, skills and any MCP servers, off.

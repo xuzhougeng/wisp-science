@@ -420,7 +420,7 @@ impl Server {
         Ok(())
     }
 
-    async fn key_id(&self) -> Result<String> {
+    pub(crate) async fn key_id(&self) -> Result<String> {
         Ok(match self.0.store.get_setting(MODEL_KEY_ID).await? {
             Some(id) => id,
             None => {
@@ -3255,7 +3255,7 @@ impl Server {
     }
 
     /// The key id when one was made; looking never makes one.
-    async fn known_key_id(&self) -> Option<String> {
+    pub(crate) async fn known_key_id(&self) -> Option<String> {
         self.0.store.get_setting(MODEL_KEY_ID).await.ok().flatten()
     }
 
@@ -4456,6 +4456,7 @@ pub use crate::papers::{
 pub use crate::pet::{Pet, PetLook, SHEET_HEIGHT, SHEET_WIDTH};
 pub use crate::plugins::PluginRow;
 pub use crate::quick_actions::{QuickAction, QuickActionInput};
+pub use crate::remote_access::{RemoteAccess, RemoteState};
 pub use crate::remote_dir::RemoteDirectory;
 pub use crate::research_archive::ArchiveDraft;
 pub use crate::review::{Finding as ReviewFinding, Outcome as ReviewOutcome, Review};

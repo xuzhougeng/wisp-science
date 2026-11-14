@@ -32,6 +32,7 @@ mod pet;
 mod plugins;
 mod present;
 mod queue;
+mod remote;
 mod review;
 mod schedules;
 mod settings;

@@ -67,6 +67,8 @@ impl Backend {
                 let server = Server::open(config).await.map_err(|e| format!("{e:#}"))?;
                 // Scheduled tasks fire while the app is open.
                 server.start_scheduler();
+                // The tunnel for remote web access, when it was left on.
+                server.start_remote_access().await;
                 Ok::<_, String>(server)
             })
             .await?;
@@ -786,6 +788,26 @@ impl Backend {
     /// Asks the release page whether a newer version has been published.
     pub fn check_for_update(&self) -> Reply<wisp_server::desktop::UpdateCheck> {
         self.local(|host| async move { host.check_for_update().await })
+    }
+
+    /// Remote web access as it stands.
+    pub fn remote_access(&self) -> Reply<wisp_server::desktop::RemoteAccess> {
+        self.local(|host| async move { host.remote_access().await })
+    }
+
+    pub fn set_remote_access(
+        &self,
+        enabled: bool,
+        relay_url: String,
+        token: Option<String>,
+    ) -> Reply<wisp_server::desktop::RemoteAccess> {
+        self.local(
+            move |host| async move { host.set_remote_access(enabled, &relay_url, token).await },
+        )
+    }
+
+    pub fn reset_remote_access_code(&self) -> Reply<wisp_server::desktop::RemoteAccess> {
+        self.local(|host| async move { host.reset_remote_access_code().await })
     }
 
     /// The installed plugins, and whether `project` has each switched on.

@@ -18,6 +18,7 @@ mod plugins;
 mod project_archive;
 mod project_folder;
 mod quick_actions;
+mod remote_access;
 mod remote_dir;
 mod research_archive;
 mod review;
@@ -76,6 +77,8 @@ struct Inner {
     sequence: AtomicU64,
     turns: Arc<Semaphore>,
     shutting_down: AtomicBool,
+    /// The tunnel to a relay for remote web access, when it is on.
+    remote: remote_access::Tunnel,
     /// The loop that fires scheduled tasks was started.
     scheduling: AtomicBool,
     admission: RwLock<()>,
@@ -195,6 +198,7 @@ impl Server {
             sequence: AtomicU64::new(0),
             turns: Arc::new(Semaphore::new(4)),
             shutting_down: AtomicBool::new(false),
+            remote: Default::default(),
             scheduling: AtomicBool::new(false),
             admission: RwLock::new(()),
             _lock: lock,
@@ -838,6 +842,7 @@ impl Server {
     }
 
     pub async fn shutdown(&self) {
+        self.0.remote.stop();
         {
             let _admission = self.0.admission.write().await;
             self.0.shutting_down.store(true, Ordering::Relaxed);

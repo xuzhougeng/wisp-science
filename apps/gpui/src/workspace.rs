@@ -33,6 +33,7 @@ mod settings_mcp;
 mod settings_network;
 mod settings_plugins;
 mod settings_quick;
+mod settings_remote;
 mod settings_sections;
 mod settings_view;
 mod shell;
@@ -321,6 +322,12 @@ pub struct Workspace {
     /// What the last save or test said.
     decision_note: Option<String>,
     decision_testing: bool,
+    /// Remote web access as the host has it; `None` until it answered.
+    remote_access: Option<wisp_server::desktop::RemoteAccess>,
+    /// Relay address, relay token.
+    remote_fields: [Entity<InputState>; 2],
+    /// Names the latest round of looks at the tunnel.
+    remote_watch: u64,
     /// The installed plugins; `None` until the host answered.
     plugins: Option<Vec<wisp_server::desktop::PluginRow>>,
     plugin_installing: bool,
@@ -508,6 +515,10 @@ impl Workspace {
         let paper_source_fields = [
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx)),
+        ];
+        let remote_fields = [
+            cx.new(|cx| InputState::new(window, cx).placeholder("https://relay.example")),
+            cx.new(|cx| InputState::new(window, cx).masked(true)),
         ];
         let decision_fields = [
             cx.new(|cx| InputState::new(window, cx)),
@@ -830,6 +841,9 @@ impl Workspace {
             decision_fields,
             decision_note: None,
             decision_testing: false,
+            remote_access: None,
+            remote_fields,
+            remote_watch: 0,
             plugins: None,
             plugin_installing: false,
             plugin_removing: None,
@@ -947,6 +961,7 @@ impl Workspace {
             Some(Layer::McpForm | Layer::ConfirmRemoveMcp) => self.mcp_editing = None,
             Some(Layer::ExpertForm | Layer::ConfirmRemoveExpert) => self.expert_editing = None,
             Some(Layer::ConfirmRemovePlugin) => self.plugin_removing = None,
+            Some(Layer::ConfirmResetRemoteCode) => {}
             Some(Layer::QuickActionForm | Layer::ConfirmRemoveQuickAction) => {
                 self.quick_editing = None
             }

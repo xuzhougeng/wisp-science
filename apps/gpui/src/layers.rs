@@ -112,6 +112,8 @@ pub enum Layer {
     McpForm,
     /// Question before an MCP server is removed.
     ConfirmRemoveMcp,
+    /// Question before the remote access code is replaced, in Settings.
+    ConfirmResetRemoteCode,
     /// Question before a plugin is removed, on its page of Settings.
     ConfirmRemovePlugin,
     /// The form for a quick action, on its page of Settings.
@@ -178,6 +180,7 @@ impl Layer {
             | Layer::ConfirmRemoveExpert
             | Layer::QuickActionForm
             | Layer::ConfirmRemovePlugin
+            | Layer::ConfirmResetRemoteCode
             | Layer::ConfirmRemoveQuickAction => Some(Layer::Settings),
             Layer::ConfirmRemoveFavorite => Some(Layer::Favorites),
             Layer::JournalForm => Some(Layer::Journey),
@@ -474,6 +477,11 @@ mod tests {
         stack.open(Layer::ConfirmRemoveExpert);
         assert!(stack.close(Layer::Settings));
         assert!(!stack.contains(Layer::ConfirmRemoveExpert));
+        // And the question before the remote access code is replaced.
+        stack.open(Layer::Settings);
+        stack.open(Layer::ConfirmResetRemoteCode);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmResetRemoteCode));
+        assert!(stack.contains(Layer::Settings));
         // The question before a plugin is removed is inside Settings too.
         stack.open(Layer::Settings);
         stack.open(Layer::ConfirmRemovePlugin);

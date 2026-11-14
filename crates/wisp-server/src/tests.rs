@@ -6407,3 +6407,189 @@ async fn a_plugin_is_installed_once_and_brings_its_skills_to_the_projects_that_s
     assert!(package.join("skills/find-motifs/SKILL.md").is_file());
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn remote_access_dials_a_relay_and_answers_a_browser_that_holds_the_code() {
+    use desktop::RemoteState;
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+    use wisp_sync::{open_frame, seal_frame, RemoteCode, CLIENT_TO_HOST, HOST_TO_CLIENT};
+
+    let temp = tempfile::tempdir().unwrap();
+    // A relay of our own on this machine: nothing leaves it.
+    let relay = wisp_sync::FileRelay::open(&temp.path().join("relay"))
+        .await
+        .unwrap();
+    let app = wisp_sync::relay_router(wisp_sync::RelayHttpState::new(relay, "made-up").unwrap());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let url = format!("http://{addr}");
+
+    let secrets = Arc::new(desktop::MemorySecrets::default());
+    let server = Server::open_with(
+        config(temp.path()),
+        models(Arc::default(), false),
+        secrets.clone(),
+    )
+    .await
+    .unwrap();
+    // Setting it up is the desktop's own, not something a browser can ask.
+    assert!(!server
+        .commands()
+        .iter()
+        .any(|command| command.contains("remote_access")));
+    assert_eq!(
+        server.remote_access().await.unwrap(),
+        desktop::RemoteAccess::default()
+    );
+
+    // It is not turned on without a relay and a token, and a relay that
+    // a browser could not use is refused.
+    assert!(server.set_remote_access(true, "", None).await.is_err());
+    assert!(server.set_remote_access(true, &url, None).await.is_err());
+    assert!(server
+        .set_remote_access(false, "http://relay.example", None)
+        .await
+        .is_err());
+    assert!(server
+        .set_remote_access(false, &url, Some("two words".into()))
+        .await
+        .is_err());
+    assert!(!server.remote_access().await.unwrap().enabled);
+
+    let state_is = |wanted: RemoteState| {
+        let server = &server;
+        async move {
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                loop {
+                    let now = server.remote_access().await.unwrap();
+                    if now.state == wanted {
+                        return now;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .expect("the tunnel reaches the state")
+        }
+    };
+
+    // A token the relay does not know: the tunnel says why it is not up.
+    server
+        .set_remote_access(true, &url, Some("wrong".into()))
+        .await
+        .unwrap();
+    let refused = state_is(RemoteState::Failed).await;
+    assert!(!refused.detail.is_empty());
+
+    let on = server
+        .set_remote_access(true, &format!(" {url} "), Some("made-up".into()))
+        .await
+        .unwrap();
+    assert!(on.enabled && on.has_token);
+    assert_eq!(on.relay_url, url);
+    let shown = on.code.clone().unwrap();
+    assert_eq!(
+        on.link.as_deref(),
+        Some(format!("{url}/remote#{shown}").as_str())
+    );
+    state_is(RemoteState::Connected).await;
+    // The token and the code are in the secret store only.
+    for key in ["remote_relay_token", "remote_access_code"] {
+        assert_eq!(server.0.store.get_setting(key).await.unwrap(), None);
+    }
+
+    // A browser that holds the code is greeted and answered.
+    let code = RemoteCode::parse(&shown).unwrap();
+    let key = code.key();
+    let client = format!("ws://{addr}/v1/remote/client/{}", code.sid());
+    let (mut browser, _) = tokio_tungstenite::connect_async(&client).await.unwrap();
+    async fn frame<S>(socket: &mut S, key: &[u8; 32]) -> Value
+    where
+        S: futures_util::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>>
+            + Unpin,
+    {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                // The relay's keep-alive pings are not frames of the host.
+                match socket.next().await.unwrap().unwrap() {
+                    Message::Text(text) => {
+                        let plain = open_frame(key, HOST_TO_CLIENT, &text).unwrap();
+                        return serde_json::from_slice(&plain).unwrap();
+                    }
+                    Message::Ping(_) | Message::Pong(_) => {}
+                    other => panic!("expected a sealed frame, got {other:?}"),
+                }
+            }
+        })
+        .await
+        .expect("the host answers")
+    }
+    let hello = frame(&mut browser, &key).await;
+    assert_eq!(hello["type"], "hello");
+    assert!(hello["commands"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("list_projects")));
+    let nonce = hello["nonce"].as_str().unwrap().to_owned();
+    assert_eq!(server.remote_access().await.unwrap().clients, 1);
+
+    let ask = |seq: u64, id: &str, command: &str| {
+        let request = json!({
+            "nonce": nonce, "seq": seq, "id": id, "command": command, "args": {}
+        });
+        Message::Text(
+            seal_frame(&key, CLIENT_TO_HOST, request.to_string().as_bytes())
+                .unwrap()
+                .into(),
+        )
+    };
+    browser
+        .send(ask(1, "first", "list_projects"))
+        .await
+        .unwrap();
+    let answer = frame(&mut browser, &key).await;
+    assert_eq!(answer["type"], "response");
+    assert_eq!(answer["response"]["id"], "first");
+    assert!(answer["response"]["error"].is_null(), "{answer}");
+    assert!(answer["response"]["result"].to_string().contains(PROJECT));
+
+    // A frame sent again is dropped; a command the host does not offer
+    // remotely is refused by name.
+    browser
+        .send(ask(1, "replayed", "list_projects"))
+        .await
+        .unwrap();
+    browser
+        .send(ask(2, "second", "set_remote_access"))
+        .await
+        .unwrap();
+    let answer = frame(&mut browser, &key).await;
+    assert_eq!(answer["response"]["id"], "second");
+    assert_eq!(
+        answer["response"]["error"],
+        "This command is not available on this host"
+    );
+
+    // A new code: the old link is dead and the tunnel comes back on the new one.
+    let reset = server.reset_remote_access_code().await.unwrap();
+    assert_ne!(reset.code, Some(shown));
+    state_is(RemoteState::Connected).await;
+    let closed = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            match browser.next().await {
+                Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                Some(Ok(_)) => {}
+            }
+        }
+    })
+    .await;
+    assert!(closed.is_ok(), "the old browser is dropped");
+
+    // Off: the tunnel goes, the token stays for the next time.
+    let off = server.set_remote_access(false, &url, None).await.unwrap();
+    assert!(!off.enabled && off.has_token);
+    assert_eq!((off.state, off.clients), (RemoteState::Off, 0));
+    server.shutdown().await;
+}
