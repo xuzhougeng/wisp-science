@@ -204,6 +204,7 @@ impl Workspace {
             Layer::ConfirmFullAccess,
             Layer::EffortMenu,
             Layer::ModelMenu,
+            Layer::RunsOnMenu,
         ] {
             self.layers.close(layer);
         }

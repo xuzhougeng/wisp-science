@@ -1369,6 +1369,8 @@ impl Server {
                 .set_setting(&plan_mode_key(&id), "true")
                 .await?;
         }
+        // Hosts belong to the app, not to a project, so the choice holds.
+        self.store_runs_on(&id, &options.runs_on).await?;
         if !keep {
             self.forget(session, &live).await?;
         }
@@ -1541,6 +1543,7 @@ impl Server {
                     store.set_setting(&key, value).await?;
                 }
             }
+            self.store_runs_on(&id, &options.runs_on).await?;
             // Its messages were read where they were written.
             store.mark_frame_seen(&id).await
         }
@@ -2342,7 +2345,45 @@ impl Server {
                 .await?
                 .as_deref()
                 == Some("true"),
+            runs_on: runs_on(
+                &wisp_runs::ssh_hosts::stored_session_default_execution_context(
+                    &self.0.store,
+                    session,
+                )
+                .await,
+            ),
         })
+    }
+
+    /// Saves where a conversation's work runs. Nothing is written when it
+    /// is already so, which also leaves alone a choice this desktop cannot
+    /// offer but another one made.
+    async fn store_runs_on(&self, session: &str, wanted: &str) -> Result<()> {
+        use wisp_runs::ssh_hosts::{self, SessionDefaultExecutionContext as Choice};
+        let store = &self.0.store;
+        let wanted = wanted.trim();
+        let current = ssh_hosts::stored_session_default_execution_context(store, session).await;
+        if runs_on(&current) == wanted {
+            return Ok(());
+        }
+        let choice = match wanted {
+            "" => Choice::Unset,
+            RUNS_LOCALLY => Choice::Local,
+            alias => {
+                ensure!(
+                    ssh_hosts::load(store)
+                        .await
+                        .iter()
+                        .any(|host| host.alias == alias),
+                    "That host is no longer saved; choose another"
+                );
+                Choice::Remote(format!("ssh:{alias}"))
+            }
+        };
+        ssh_hosts::persist_session_default_execution_context(store, session, choice)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        Ok(())
     }
 
     /// The conversation's options, what its latest turn used, and the tools
@@ -2414,6 +2455,7 @@ impl Server {
             );
             self.0.store.set_setting(&key, &options.model).await?;
         }
+        self.store_runs_on(session, &options.runs_on).await?;
         self.stored_options(session).await
     }
 
@@ -2655,6 +2697,25 @@ pub struct ConversationOptions {
     /// Investigate and propose a plan instead of carrying the task out.
     /// Tools that change things refuse to run until this is turned off.
     pub plan_first: bool,
+    /// Where this conversation's work runs unless the model is told
+    /// otherwise: empty follows the default in Settings, [`RUNS_LOCALLY`]
+    /// is this computer, anything else is the name of an SSH host.
+    pub runs_on: String,
+}
+
+/// The [`ConversationOptions::runs_on`] value for this computer.
+pub const RUNS_LOCALLY: &str = "local";
+
+/// A stored choice as [`ConversationOptions::runs_on`] spells it.
+fn runs_on(choice: &wisp_runs::ssh_hosts::SessionDefaultExecutionContext) -> String {
+    use wisp_runs::ssh_hosts::SessionDefaultExecutionContext as Choice;
+    match choice {
+        Choice::Unset => String::new(),
+        Choice::Local => RUNS_LOCALLY.into(),
+        // A context that is not an SSH host keeps its whole id, so a choice
+        // made in the WebView desktop is carried, not lost.
+        Choice::Remote(id) => id.strip_prefix("ssh:").unwrap_or(id).to_owned(),
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

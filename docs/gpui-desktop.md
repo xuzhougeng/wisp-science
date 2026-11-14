@@ -148,7 +148,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Composer | Native multiline input; Enter for newline, Cmd/Ctrl+Enter to send |
 | Plan first | The model investigates and submits a plan as a card; nothing is changed until you approve it, which leaves plan mode and starts the work |
 | Thinking | What the model is thinking, above the composer, while it thinks |
-| Conversation options | Ask first or Full access, the model, and reasoning effort, per conversation; both are kept across restarts and apply from the next message |
+| Conversation options | Ask first or Full access, the model, reasoning effort, and where its work runs (the default, this computer or a saved SSH host), per conversation; all are kept across restarts and apply from the next message |
 | Usage | How full the context is, and the tokens the running or latest turn used |
 | Questions | When the model asks, a card with its options: one click answers, or type the answer |
 | Messages | Copy any message as Markdown |
@@ -284,10 +284,20 @@ Limits of this slice:
   GPUs, scheduler and the Python and R it found, which is also what the
   model is told about the host; a check that fails records why, and the
   model is told not to try the host. The check is the WebView's probe
-  (`wisp_runs::context_probe`). WSL, interpreter paths set by hand, scratch
-  and storage locations, and choosing an environment for one conversation
-  are not ported. Removing a host keeps the records of runs made on it and
-  puts new work back on this computer if it was the default.
+  (`wisp_runs::context_probe`). WSL, interpreter paths set by hand, and
+  scratch and storage locations are not ported. Removing a host keeps the
+  records of runs made on it and puts new work back on this computer if it
+  was the default.
+- A conversation may run its work somewhere other than the default: the
+  composer shows where once a host is saved. The choice is kept the way the
+  WebView keeps it (`frame_default_execution_context:<conversation>`), is
+  carried into a branch and a copy, and is dropped when the host is removed.
+  It decides which host the prompt names as the one work goes to, and so
+  where the model starts runs; it is not a restriction, and the model may
+  still name another saved host. The Python and R sessions and the shell
+  stay on this computer whatever is chosen, because this host has no remote
+  interpreter. Attaching hosts to one conversation only, the terminal, and
+  the right panel's Environments tab are not ported.
 - Conversation settings apply to every turn this host runs from the next one
   on, a paired phone's included. Steps per turn replaces the `WISP_MAX_ITER`
   the host was started with once it is saved; at the limit the model is asked
@@ -547,7 +557,11 @@ a host that cannot be reached and confirm it says so with OpenSSH's reason;
 on a reachable host confirm it lists the system, processors, GPU, scheduler
 and interpreters. Choose a host under "New work runs on", ask the model
 where it would run a job and confirm it names that host; start a run on a
-checked host, and confirm one on an unchecked host is refused. Press Remove,
+checked host, and confirm one on an unchecked host is refused. In a
+conversation open the menu beside Effort that names where it runs: choose a
+host and confirm the next message's runs start there while another
+conversation still follows the default; press Escape with the menu open and
+confirm only the menu closes. Press Remove,
 then Escape, then remove the host and confirm new work is back on this
 computer.
 Open Network: save a model route that cannot be reached (for example

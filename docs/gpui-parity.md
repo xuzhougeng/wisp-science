@@ -112,7 +112,7 @@ to find in the running app.
 | Expert (persona) for the conversation [专家] | Yes | Missing | tauri |
 | Automatic review toggle and review model [自动审查] | Yes | Missing | tauri |
 | Sub-agent model [子智能体模型] | Yes | Missing | store |
-| Compute environment for the conversation [计算环境] | Yes | Missing | store |
+| Compute environment for the conversation [计算环境] | Yes | Partial: the default, this computer or a saved SSH host, for where runs start; Python, R and the shell stay on this computer | store |
 | Context usage meter and manual compaction | Yes | Partial: how full the context is, as a percentage; no breakdown and no manual compaction | served |
 | Request a review of the conversation [请求审查] | Yes | Missing | tauri |
 | Share as long image or HTML [分享为长图] | Yes | Missing | ui |
@@ -169,7 +169,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Files: image, PDF, Office, notebook, table previews | Yes | Missing | ui |
 | Agents [Agents]: sub-agents, parallel exploration, workflows | Yes | Missing | store |
 | Artifacts [产物]: figures, tables, outputs, star, open | Yes | Partial: files a turn wrote are recorded with a snapshot, listed per conversation or project, and open in Files; no grouping, versions, download, star or provenance | served |
-| Environments [环境]: conversation environment, attach servers, probe, terminal | Yes | Missing | store + shared |
+| Environments [环境]: conversation environment, attach servers, probe, terminal | Yes | Partial: the conversation's environment is chosen in the composer and hosts are checked in Settings; no panel tab, attaching or terminal | store + shared |
 | Runs [运行]: list, output | Yes | Done: a Runs tab with status and output tails | served |
 | Runs: cancel | Yes | Done | served |
 | Runs: harvest, transfer, full log, workspace review | Yes | Missing | shared |
@@ -310,8 +310,8 @@ before the things that hang in it.
    files, conversations and skills; paste, drop, images as model input and
    inline triggers remain)*
 6. **Right panel as tabs** — artifacts, run control, environments, notebook.
-   *(tabs, artifacts and run cancel done; environments and notebook are steps
-   6a and 6b)*
+   *(tabs, artifacts and run cancel done; 6a done in the composer: where a
+   conversation's work runs; the notebook is step 6b)*
 7. **Conversation organisation** — folders, batch actions, sort and group,
    move between projects. *(done; rewind and branch are step 7a)*
 7a. **Rewind and branch** — edit and resend from an earlier message, branch a

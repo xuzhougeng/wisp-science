@@ -3902,3 +3902,139 @@ async fn checking_an_ssh_host_records_what_it_is_and_tells_the_model() {
     assert!(again.found.is_some());
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_conversation_chooses_where_its_work_runs() {
+    use desktop::{ConversationOptions, SshHostRow, RUNS_LOCALLY};
+
+    let shown: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let seen = shown.clone();
+    let factory: ModelFactory = Arc::new(move |_| Box::new(Everything(seen.clone())));
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    for alias in ["run-a", "run-b"] {
+        server
+            .save_ssh_host(SshHostRow {
+                alias: alias.into(),
+                host_name: "10.0.0.8".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+    }
+    server.set_default_environment(Some("run-a")).await.unwrap();
+
+    // What the model is told its work goes to, after one more turn.
+    let told = |session: String, message: &'static str| {
+        let (server, shown) = (server.clone(), shown.clone());
+        async move {
+            shown.lock().unwrap().clear();
+            send(&server, &session, message).await.unwrap();
+            wait_for(&server, &session, |s| !s.running).await;
+            let prompt = shown.lock().unwrap().join("\n");
+            ["run-a", "run-b"]
+                .into_iter()
+                .filter(|alias| {
+                    prompt.contains(&format!("Default analysis environment: `ssh:{alias}`"))
+                })
+                .collect::<Vec<_>>()
+        }
+    };
+    let runs_on = |session: String| {
+        let server = server.clone();
+        async move {
+            server
+                .conversation_status(PROJECT, &session)
+                .await
+                .unwrap()
+                .options
+                .runs_on
+        }
+    };
+    let choose = |session: String, runs_on: &'static str| {
+        let server = server.clone();
+        async move {
+            let options = server
+                .conversation_status(PROJECT, &session)
+                .await
+                .unwrap()
+                .options;
+            server
+                .set_conversation_options(
+                    PROJECT,
+                    &session,
+                    ConversationOptions {
+                        runs_on: runs_on.into(),
+                        ..options
+                    },
+                )
+                .await
+        }
+    };
+
+    // With no choice of its own a conversation follows Settings.
+    let session = create(&server).await;
+    assert_eq!(runs_on(session.clone()).await, "");
+    assert_eq!(told(session.clone(), "go").await, ["run-a"]);
+
+    // Its own choice applies from its next turn, and only to it.
+    let saved = choose(session.clone(), "run-b").await.unwrap();
+    assert_eq!(saved.runs_on, "run-b");
+    assert_eq!(told(session.clone(), "again").await, ["run-b"]);
+    let other = create(&server).await;
+    assert_eq!(told(other.clone(), "go").await, ["run-a"]);
+
+    // This computer is a choice too: no host is named as where work goes.
+    choose(session.clone(), RUNS_LOCALLY).await.unwrap();
+    assert!(told(session.clone(), "once more").await.is_empty());
+
+    // A host that is not saved is refused and nothing changes.
+    assert!(choose(session.clone(), "nowhere").await.is_err());
+    assert_eq!(runs_on(session.clone()).await, RUNS_LOCALLY);
+
+    // Changing another option keeps the choice, and a branch carries it.
+    let options = server
+        .conversation_status(PROJECT, &session)
+        .await
+        .unwrap()
+        .options;
+    server
+        .set_conversation_options(
+            PROJECT,
+            &session,
+            ConversationOptions {
+                plan_first: true,
+                ..options
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(runs_on(session.clone()).await, RUNS_LOCALLY);
+    let branch = server
+        .branch_conversation(PROJECT, &session, None)
+        .await
+        .unwrap();
+    assert_eq!(runs_on(branch).await, RUNS_LOCALLY);
+    // So does a copy in another project: hosts belong to the app.
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    let copy = server
+        .transfer_conversation(PROJECT, &session, &lab, true)
+        .await
+        .unwrap();
+    let copied = server.conversation_status(&lab, &copy).await.unwrap();
+    assert_eq!(copied.options.runs_on, RUNS_LOCALLY);
+
+    // Back to following Settings; and a host that is removed is no longer
+    // any conversation's choice.
+    choose(session.clone(), "").await.unwrap();
+    assert_eq!(runs_on(session.clone()).await, "");
+    choose(other.clone(), "run-b").await.unwrap();
+    server.remove_ssh_host("run-b").await.unwrap();
+    assert_eq!(runs_on(other.clone()).await, "");
+    assert_eq!(told(other, "after").await, ["run-a"]);
+    server.shutdown().await;
+}

@@ -5,7 +5,7 @@ use wisp_server::{
     config::default_api_url,
     desktop::{
         ConnectorRow, EnvironmentCheck, McpTransport, ModelProfile, ModelSettings, ModelSource,
-        ProbeResult, SkillRow, SshHostRow,
+        ProbeResult, RUNS_LOCALLY, SkillRow, SshHostRow,
     },
 };
 
@@ -270,6 +270,27 @@ pub fn ssh_target(host: &SshHostRow) -> String {
         line.push_str(&format!(" · via {}", host.proxy_jump));
     }
     line
+}
+
+/// What the composer says about where a conversation's work runs.
+/// `choice` is the conversation's own (empty follows `default`, the host
+/// Settings names, if any).
+pub fn runs_on_label(choice: &str, default: Option<&str>) -> String {
+    match (choice, default) {
+        ("", None) | (RUNS_LOCALLY, _) => "This computer".into(),
+        ("", Some(host)) => host.to_owned(),
+        (host, _) => host.to_owned(),
+    }
+}
+
+/// Why work cannot run on a host yet, if it cannot: a host has to pass a
+/// check first.
+pub fn host_caution(check: Option<&EnvironmentCheck>) -> Option<&'static str> {
+    match check {
+        None => Some("Not checked yet; check it in Settings"),
+        Some(check) if check.error.is_some() => Some("Last check failed; see Settings"),
+        Some(_) => None,
+    }
 }
 
 /// What the last check of a host found, as labelled facts in the order
@@ -924,5 +945,30 @@ mod tests {
             check_facts(&ProbeResult::default()),
             [("GPU", "None found".to_string())]
         );
+    }
+
+    #[test]
+    fn the_composer_names_where_a_conversation_runs_and_warns_about_unchecked_hosts() {
+        // With no choice of its own a conversation follows Settings.
+        assert_eq!(runs_on_label("", None), "This computer");
+        assert_eq!(runs_on_label("", Some("gpu")), "gpu");
+        // Its own choice wins over the default, this computer included.
+        assert_eq!(runs_on_label(RUNS_LOCALLY, Some("gpu")), "This computer");
+        assert_eq!(runs_on_label("lab", Some("gpu")), "lab");
+        assert_eq!(runs_on_label("lab", None), "lab");
+
+        let check = |error: Option<&str>| EnvironmentCheck {
+            alias: "gpu".into(),
+            at: 1,
+            error: error.map(String::from),
+            found: None,
+        };
+        assert!(host_caution(None).unwrap().starts_with("Not checked yet"));
+        assert!(
+            host_caution(Some(&check(Some("refused"))))
+                .unwrap()
+                .starts_with("Last check failed")
+        );
+        assert_eq!(host_caution(Some(&check(None))), None);
     }
 }

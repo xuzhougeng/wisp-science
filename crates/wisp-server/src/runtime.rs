@@ -165,6 +165,25 @@ pub(crate) async fn project_grants(store: &Store, project: &str) -> Vec<String> 
     tools
 }
 
+/// What a conversation is told about running work: the Runs guidance, the
+/// hosts that are registered, and the one its work goes to. That is the
+/// conversation's own choice, or the default in Settings when it has none.
+async fn compute_section(store: &Store, frame: &str) -> String {
+    use wisp_runs::ssh_hosts;
+    let mut section = wisp_runs::runs_guidance();
+    let default = match ssh_hosts::resolved_session_execution_context_id(store, frame).await {
+        Some(id) => store.get_execution_context(&id).await.ok().flatten(),
+        None => None,
+    };
+    if let Ok(contexts) = store.list_execution_contexts().await {
+        if let Some(contexts) = ssh_hosts::render_contexts_section(&contexts, default.as_ref()) {
+            section.push('\n');
+            section.push_str(&contexts);
+        }
+    }
+    section
+}
+
 const RUNS_HEADING: &str = "## Runs\n";
 const CONTEXTS_HEADING: &str = "## Compute contexts\n";
 
@@ -275,7 +294,7 @@ pub async fn build(
     agent.ctx.supports_vision = model.supports_vision;
     let repaired = wisp_core::repair_unpaired_tool_calls(&mut agent.ctx.messages);
     // The server configures its own skill paths and does not read ~/.wisp.
-    let compute = wisp_runs::cli_compute_section(store).await;
+    let compute = compute_section(store, frame).await;
     agent.seed_system_prompt(&skills, Some(compute.clone()), None);
     // Plan mode is part of the system prompt, so switching it applies from
     // the next turn and the saved prompt always says which mode it was.

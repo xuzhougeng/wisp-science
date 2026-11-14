@@ -25,6 +25,8 @@ pub enum Layer {
     EffortMenu,
     /// Model choices above the composer.
     ModelMenu,
+    /// Where the conversation's work runs, above the composer.
+    RunsOnMenu,
     /// Confirmation in Settings before a saved model is removed.
     ConfirmDeleteModel,
     /// Sort and grouping choices under the conversation list's heading.
@@ -72,7 +74,7 @@ pub enum Layer {
 
 impl Layer {
     /// Menus that open above the composer; only one shows at a time.
-    pub const COMPOSER_MENUS: [Layer; 2] = [Layer::EffortMenu, Layer::ModelMenu];
+    pub const COMPOSER_MENUS: [Layer; 3] = [Layer::EffortMenu, Layer::ModelMenu, Layer::RunsOnMenu];
     /// What the row under the conversation's title can turn into, one at a
     /// time.
     pub const CONVERSATION_BAR: [Layer; 5] = [

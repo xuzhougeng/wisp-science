@@ -517,7 +517,11 @@ impl Workspace {
             }
             Some(Layer::ConfirmRemoveProject) => self.removing = None,
             Some(
-                Layer::Palette | Layer::ConfirmFullAccess | Layer::EffortMenu | Layer::ModelMenu,
+                Layer::Palette
+                | Layer::ConfirmFullAccess
+                | Layer::EffortMenu
+                | Layer::ModelMenu
+                | Layer::RunsOnMenu,
             ) => self.focus_composer(window, cx),
             // Settings stays open underneath and keeps its focus.
             Some(Layer::ConfirmDeleteModel) => {}
@@ -648,6 +652,7 @@ impl Workspace {
             Layer::ConfirmFullAccess,
             Layer::EffortMenu,
             Layer::ModelMenu,
+            Layer::RunsOnMenu,
         ] {
             self.layers.close(layer);
         }
@@ -680,6 +685,8 @@ impl Workspace {
                         this.load_model_settings(true, window, cx);
                         this.load_arrangement(window, cx);
                         this.load_general(window, cx);
+                        // The composer offers the saved hosts.
+                        this.load_environments(window, cx);
                     }
                     Err(error) => this.error = Some(error),
                 }
@@ -1574,6 +1581,18 @@ impl Workspace {
             });
         })
         .detach();
+        cx.notify();
+    }
+
+    /// Where this conversation's work runs: empty follows Settings.
+    fn choose_runs_on(&mut self, runs_on: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.layers.close(Layer::RunsOnMenu);
+        let options = ConversationOptions {
+            runs_on,
+            ..self.options()
+        };
+        self.set_options(options, window, cx);
+        self.focus_composer(window, cx);
         cx.notify();
     }
 

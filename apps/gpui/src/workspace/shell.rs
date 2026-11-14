@@ -8,7 +8,7 @@ use gpui_component::{
     text::TextView,
 };
 use serde_json::json;
-use wisp_server::desktop::Remember;
+use wisp_server::desktop::{RUNS_LOCALLY, Remember};
 
 use super::{Workspace, chip, tone_color};
 use crate::{
@@ -895,6 +895,61 @@ impl Workspace {
         menu
     }
 
+    /// Where the conversation's work runs: the default, this computer, or
+    /// one of the saved hosts.
+    fn runs_on_menu(&self, current: &str, cx: &mut Context<Self>) -> Div {
+        let mut menu = Self::composer_menu(320., cx);
+        let Some(view) = &self.environments else {
+            return menu;
+        };
+        let choose = |runs_on: String| {
+            cx.listener(move |this: &mut Self, _: &ClickEvent, window, cx| {
+                this.choose_runs_on(runs_on.clone(), window, cx)
+            })
+        };
+        menu = menu
+            .child(
+                Self::menu_row(
+                    "runs-on-default".into(),
+                    "Default",
+                    format!(
+                        "{}, as Settings says",
+                        settings::runs_on_label("", view.default.as_deref())
+                    ),
+                    current.is_empty(),
+                    cx,
+                )
+                .on_click(choose(String::new())),
+            )
+            .child(
+                Self::menu_row(
+                    "runs-on-local".into(),
+                    "This computer",
+                    "Runs start here",
+                    current == RUNS_LOCALLY,
+                    cx,
+                )
+                .on_click(choose(RUNS_LOCALLY.into())),
+            );
+        for host in &view.hosts {
+            let check = view.checks.iter().find(|check| check.alias == host.alias);
+            menu = menu.child(
+                Self::menu_row(
+                    SharedString::from(format!("runs-on-{}", host.alias)),
+                    host.alias.clone(),
+                    match settings::host_caution(check) {
+                        Some(caution) => caution.to_owned(),
+                        None => settings::ssh_target(host),
+                    },
+                    current == host.alias,
+                    cx,
+                )
+                .on_click(choose(host.alias.clone())),
+            );
+        }
+        menu
+    }
+
     /// The small rounded box a file or reference is shown in.
     fn chip_box(cx: &App) -> Div {
         div()
@@ -992,6 +1047,36 @@ impl Workspace {
         if model_open {
             model = model.child(deferred(self.model_menu(&options.model, cx)));
         }
+
+        // Offered once there is a host to choose, or a choice to undo.
+        let hosts = self.environments.as_ref();
+        let runs_on = (hosts.is_some_and(|view| !view.hosts.is_empty())
+            || !options.runs_on.is_empty())
+        .then(|| {
+            let open = self.layers.contains(Layer::RunsOnMenu);
+            let place = div().relative().child(
+                Button::new("runs-on")
+                    .icon(glyph("server"))
+                    .label(settings::runs_on_label(
+                        &options.runs_on,
+                        hosts.and_then(|view| view.default.as_deref()),
+                    ))
+                    .small()
+                    .ghost()
+                    .selected(open)
+                    .tooltip("Where this conversation's runs start, from the next message")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        // A host may have been added or checked since.
+                        this.load_environments(window, cx);
+                        this.toggle_composer_menu(Layer::RunsOnMenu, window, cx)
+                    })),
+            );
+            if open {
+                place.child(deferred(self.runs_on_menu(&options.runs_on, cx)))
+            } else {
+                place
+            }
+        });
 
         let mut actions = div().h_flex().gap_2();
         let usage = self
@@ -1189,7 +1274,8 @@ impl Workspace {
                                 .child(plan)
                                 .child(access)
                                 .child(model)
-                                .child(effort),
+                                .child(effort)
+                                .children(runs_on),
                         )
                         .child(actions),
                 ),
