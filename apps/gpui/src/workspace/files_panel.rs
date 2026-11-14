@@ -504,6 +504,11 @@ impl Workspace {
                     .child(self.render_notebook_tab(window, cx))
                     .into_any_element();
             }
+            PanelTab::Aside => {
+                return panel
+                    .child(self.render_aside_tab(window, cx))
+                    .into_any_element();
+            }
             PanelTab::Files => {}
         }
         let location = if self.files.path.is_empty() {

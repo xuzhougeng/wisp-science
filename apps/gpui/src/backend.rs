@@ -687,6 +687,21 @@ impl Backend {
         self.local(move |host| async move { host.revoke_project_grant(&project, &tool).await })
     }
 
+    /// Asks the conversation's model a question about the conversation,
+    /// without adding anything to it.
+    pub fn ask_aside(
+        &self,
+        project: String,
+        session: String,
+        earlier: Vec<wisp_server::desktop::AsideExchange>,
+        question: String,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.ask_aside(&project, &session, &earlier, &question)
+                .await
+        })
+    }
+
     /// Returns once the host is no longer asking the model what could be
     /// asked next in a conversation.
     pub fn follow_ups_settled(&self, project: String, session: String) -> Reply<()> {

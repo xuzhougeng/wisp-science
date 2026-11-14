@@ -153,7 +153,8 @@ folder registers its research root; it does not import existing desktop chats.
 | Tool calls | One folded line each with outcome and elapsed time; click for the verbatim input and output; interrupted calls stop claiming to run |
 | Runs | A Runs tab: runs started by the conversation with kind, status, exit code, command and output tails; a run that has not ended can be cancelled, and is followed until it ends |
 | Artifacts | Files a turn wrote are recorded when it ends; an Artifacts tab lists them for the conversation or the project and opens them |
-| Side panel | Tabs: Files, Runs, Artifacts, Highlights, Memos, Memory; the open tab is named, the others are icons |
+| Side panel | Tabs: Files, Runs, Artifacts, Notebook, Highlights, Memos, Memory, Aside; the open tab is named, the others are icons |
+| Aside | The Aside tab (or the command palette) asks the conversation's model a question about the open conversation; the answer shows beside it and nothing is added to the conversation |
 | Favorites | A star under any message saves it as it reads now; an image in Artifacts can be saved as a figure. Highlights lists what this conversation saved; the Favorites page lists everything from every project, with search, a kind filter, the item in full, its source conversation and removal after a confirmation |
 | Memory | One switch; habits the model is shown in every project; this project's notes by day, which the model can search; add, edit and delete either, and save any message to one or the other |
 | Memos | Your own notes per project: add, edit, pin, copy, delete after a confirmation, and put one into the message box. The model is never shown them |
@@ -317,6 +318,16 @@ Limits of this slice:
   for a last word without tools. Compaction uses the WebView's keys
   (`auto_compact`, `auto_compact_percent`). Auto-continue, compaction on a
   model switch and after idle hours are not ported.
+- A question asked aside is one model request without tools: the
+  conversation's model reads the last twelve turns, with long messages and
+  tool results cut short, the latest eight side exchanges, and the
+  question (at most 4,000 characters). It can be asked while a turn runs
+  and then reads what has been saved so far. The answer is the model's
+  reading of the conversation, not a search of the project: there is no
+  list of the evidence it used, and a question cannot be tied to one run
+  or to selected text. The thread is kept per conversation in the window
+  that asked, until the app closes; nothing is written to the database,
+  and the tokens are not in the usage statistics or the trajectory.
 - Follow-up questions cost one more, short model request after every turn
   that ends on an answer: the conversation's model reads the last four
   turns, with long messages and tool results cut short, and may write up to
@@ -660,6 +671,13 @@ press Escape (the page stays), press Escape again (the page closes). Open the
 conversation an item came from. Have a turn write an image, save it from
 Artifacts, delete the file and confirm the figure still shows in Favorites.
 Delete a conversation and confirm what was saved from it is still listed.
+Open the Aside tab in a conversation with an answer in it, ask what the
+answer was, and confirm the reply is about that conversation while the
+transcript is unchanged. Ask a second question that leans on the first
+("and why?"). Switch to another conversation: its thread is its own; switch
+back and the first thread is still there. Clear empties it. Ask while a
+turn runs and confirm the turn is undisturbed. Press Escape with the caret
+in the question field: the panel closes.
 After an answer, wait a moment: up to three questions show above the
 composer. Click one: it is in the composer, not sent. Send it and confirm
 the list is gone while the turn runs and a new one follows the answer. Put

@@ -176,7 +176,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Notebook [Notebook]: code cells and outputs | Yes | Done: a panel tab with the loaded conversation's cells and outputs, copy, save to favorites and show in the conversation | store |
 | Highlights [划线] | Yes | Done: lists what the conversation saved, with use, copy and remove | store |
 | Provenance [溯源]: tool evidence behind a claim | Yes | Missing | store |
-| Side question [侧边问答]: ask without changing the main thread | Yes | Missing | tauri |
+| Side question [侧边问答]: ask without changing the main thread | Yes | Partial: an Aside tab where the conversation's model answers from its latest turns; no evidence list, no question scoped to a run or to selected text | tauri |
 | Memos [备忘录]: private notes the model cannot read | Yes | Done: no search, no `/memo` command | store |
 
 ## 7. Project pages
@@ -313,7 +313,8 @@ before the things that hang in it.
    inline triggers remain)*
 6. **Right panel as tabs** — artifacts, run control, environments, notebook.
    *(tabs, artifacts and run cancel done; 6a done in the composer: where a
-   conversation's work runs; 6b done: the notebook)*
+   conversation's work runs; 6b done: the notebook; 6c done: questions
+   asked aside)*
 7. **Conversation organisation** — folders, batch actions, sort and group,
    move between projects. *(done; rewind and branch are step 7a)*
 7a. **Rewind and branch** — edit and resend from an earlier message, branch a

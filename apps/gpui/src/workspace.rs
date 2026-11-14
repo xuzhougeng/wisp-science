@@ -1,3 +1,4 @@
+mod aside_view;
 mod calendar_view;
 mod capabilities_view;
 mod conversation_actions;
@@ -124,6 +125,9 @@ pub struct Workspace {
     /// What is being looked for in the open conversation, and its field.
     find: crate::find::Find,
     find_input: Entity<InputState>,
+    aside_input: Entity<InputState>,
+    /// What was asked aside, by conversation. Kept until the app closes.
+    asides: HashMap<String, crate::aside::Thread>,
     palette_scroll: ScrollHandle,
     sessions: Vec<SessionSearchInfo>,
     /// Conversations in any project that are waiting for the user.
@@ -359,6 +363,8 @@ impl Workspace {
         let find_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Find in this conversation…"));
         let file_name_input = cx.new(|cx| InputState::new(window, cx));
+        let aside_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Ask about this conversation…"));
         let journey_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Filter this month…"));
         let journal_fields = [
@@ -408,6 +414,11 @@ impl Workspace {
             cx.subscribe_in(&journey_search, window, |_, _, event, _, cx| {
                 if matches!(event, InputEvent::Change) {
                     cx.notify();
+                }
+            }),
+            cx.subscribe_in(&aside_input, window, |this, _, event, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    this.ask_aside(window, cx);
                 }
             }),
             cx.subscribe_in(&file_name_input, window, |this, _, event, window, cx| {
@@ -527,6 +538,8 @@ impl Workspace {
             palette_input,
             find: Default::default(),
             find_input,
+            aside_input,
+            asides: HashMap::new(),
             capabilities: None,
             capabilities_error: None,
             trajectory: None,

@@ -47,6 +47,7 @@ pub enum Command {
     NewWindow,
     Capabilities,
     Trajectory,
+    Aside,
 }
 
 impl Command {
@@ -74,6 +75,7 @@ impl Command {
             Command::NewWindow => "New window",
             Command::Capabilities => "Capabilities of this project",
             Command::Trajectory => "Trajectory of this conversation",
+            Command::Aside => "Ask aside about this conversation",
         }
     }
 
@@ -100,6 +102,7 @@ impl Command {
             Command::NewWindow => "dock",
             Command::Capabilities => "sparkles",
             Command::Trajectory => "gauge",
+            Command::Aside => "circle-help",
         }
     }
 
@@ -119,7 +122,8 @@ impl Command {
             | Command::Find
             | Command::Journey
             | Command::Capabilities
-            | Command::Trajectory => screen == Screen::Project,
+            | Command::Trajectory
+            | Command::Aside => screen == Screen::Project,
             Command::OpenFolder
             | Command::Refresh
             | Command::Settings
@@ -131,7 +135,7 @@ impl Command {
         }
     }
 
-    const ALL: [Command; 22] = [
+    const ALL: [Command; 23] = [
         Command::NewConversation,
         Command::OpenFolder,
         Command::Home,
@@ -154,6 +158,7 @@ impl Command {
         Command::NewWindow,
         Command::Capabilities,
         Command::Trajectory,
+        Command::Aside,
     ];
 }
 

@@ -2941,6 +2941,39 @@ impl Server {
         })
     }
 
+    /// Answers a question about a conversation without adding anything to
+    /// it: the conversation's model reads its latest turns and `earlier`,
+    /// the side exchanges so far, and has no tools. It can be asked while a
+    /// turn runs, and reads what has been saved by then.
+    pub async fn ask_aside(
+        &self,
+        project: &str,
+        session: &str,
+        earlier: &[AsideExchange],
+        question: &str,
+    ) -> Result<String> {
+        self.own_conversation(project, session).await?;
+        let store = &self.0.store;
+        let options = self.stored_options(session).await?;
+        let mut model = self.0.model.read().unwrap().pick(&options.model)?.provider;
+        // The request goes the way a turn would.
+        let routes = crate::network::load(store).await;
+        if let Some(route) = crate::network::route(&routes.model_proxy_url) {
+            model.proxy = Some(route);
+        }
+        let messages = store
+            .load_recent_turn_preview_messages(session, crate::aside::TURNS)
+            .await?;
+        let provider = (self.0.models)(model);
+        match crate::aside::ask(provider.as_ref(), &messages, earlier, question).await {
+            Ok(answer) => Ok(answer),
+            Err(error) => bail!(
+                "{}",
+                crate::network::explain(store, &format!("{error:#}")).await
+            ),
+        }
+    }
+
     /// Returns once the model is no longer being asked what could come
     /// next in a conversation: at once when it is not, and after a minute
     /// at the latest. The questions, if any, are then in the snapshot.
@@ -3468,6 +3501,8 @@ pub struct ProjectGrants {
     /// Sorted.
     pub tools: Vec<String>,
 }
+
+pub use crate::aside::Exchange as AsideExchange;
 
 /// How turns run and how new conversations start.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

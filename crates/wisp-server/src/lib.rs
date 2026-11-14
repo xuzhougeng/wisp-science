@@ -1,5 +1,7 @@
+mod aside;
 pub mod config;
 pub mod desktop;
+mod excerpt;
 mod export;
 mod files;
 mod follow_ups;

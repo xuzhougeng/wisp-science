@@ -4516,6 +4516,123 @@ async fn an_answer_is_followed_by_questions_to_ask_next() {
 }
 
 #[tokio::test]
+async fn a_question_asked_aside_is_answered_without_touching_the_conversation() {
+    // A model that answers a turn, and records what it is asked aside.
+    struct Recording {
+        asked: Arc<Mutex<Vec<Vec<Message>>>>,
+    }
+    #[async_trait]
+    impl Provider for Recording {
+        fn name(&self) -> &str {
+            "offline"
+        }
+        fn model(&self) -> &str {
+            "offline"
+        }
+        async fn complete(
+            &self,
+            messages: &[Message],
+            tools: &[ToolSchema],
+        ) -> wisp_llm::Result<Completion> {
+            assert!(tools.is_empty(), "a side question has no tools");
+            self.asked.lock().unwrap().push(messages.to_vec());
+            Ok(Completion {
+                content: " Because the file has 400 lines. ".into(),
+                finish_reason: Some("stop".into()),
+                ..Default::default()
+            })
+        }
+        async fn stream(
+            &self,
+            _: &[Message],
+            _: &[ToolSchema],
+            sink: &mut dyn StreamSink,
+        ) -> wisp_llm::Result<Completion> {
+            sink.on_text("There are 100 reads.");
+            Ok(Completion {
+                content: "There are 100 reads.".into(),
+                finish_reason: Some("stop".into()),
+                ..Default::default()
+            })
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let factory: ModelFactory = {
+        let asked = asked.clone();
+        Arc::new(move |_| {
+            Box::new(Recording {
+                asked: asked.clone(),
+            })
+        })
+    };
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    // Asking aside is all this test's model is asked on the side.
+    let defaults = server.turn_defaults().await.unwrap();
+    server
+        .set_turn_defaults(desktop::TurnDefaults {
+            follow_ups: false,
+            ..defaults
+        })
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    send(&server, &session, "count the reads").await.unwrap();
+    let before = wait_for(&server, &session, |s| !s.running).await;
+
+    let earlier = [desktop::AsideExchange {
+        question: "which file?".into(),
+        answer: "reads.fq".into(),
+    }];
+    let answer = server
+        .ask_aside(PROJECT, &session, &earlier, "  why 100?  ")
+        .await
+        .unwrap();
+    assert_eq!(answer, "Because the file has 400 lines.");
+    {
+        let asked = asked.lock().unwrap();
+        assert_eq!(asked.len(), 1);
+        let sent: Vec<_> = asked[0]
+            .iter()
+            .map(|message| message.content.as_text())
+            .collect();
+        // The conversation as quoted data, the earlier exchange, the question.
+        assert!(sent[1].contains("[USER]\ncount the reads"), "{sent:?}");
+        assert!(
+            sent[1].contains("[ASSISTANT]\nThere are 100 reads."),
+            "{sent:?}"
+        );
+        assert_eq!(sent[3..], ["which file?", "reads.fq", "why 100?"]);
+    }
+    // Nothing was added to the conversation.
+    let after = snapshot(&server, &session).await;
+    assert_eq!(after.items.len(), before.items.len());
+    assert!(!after.running);
+
+    // A question is needed, of a sensible length, in the conversation's own project.
+    for (project, question) in [
+        (PROJECT, "   ".to_owned()),
+        (PROJECT, "x".repeat(4_001)),
+        ("missing", "why?".to_owned()),
+    ] {
+        assert!(server
+            .ask_aside(project, &session, &[], &question)
+            .await
+            .is_err());
+    }
+    assert!(server
+        .ask_aside(PROJECT, "missing", &[], "why?")
+        .await
+        .is_err());
+    assert_eq!(asked.lock().unwrap().len(), 1);
+    // It is the desktop's own: a paired device cannot ask it.
+    assert!(!server.commands().iter().any(|name| name.contains("aside")));
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_conversation_is_exported_whole_as_markdown() {
     let temp = tempfile::tempdir().unwrap();
     let calls = Arc::new(AtomicUsize::new(0));

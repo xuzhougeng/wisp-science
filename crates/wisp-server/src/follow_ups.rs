@@ -10,6 +10,8 @@ use anyhow::{bail, Context, Result};
 use wisp_llm::{Message, Provider, Role};
 use wisp_store::Store;
 
+use crate::excerpt::{self, Limits};
+
 pub(crate) const SETTING: &str = "follow_up_questions";
 /// How many of the latest turns the model is shown.
 pub(crate) const TURNS: usize = 4;
@@ -18,10 +20,12 @@ pub(crate) const MAX_TOKENS: u64 = 1_024;
 const QUESTIONS: usize = 3;
 /// A suggestion is a question to click, not a paragraph.
 const QUESTION_LIMIT: usize = 240;
-/// What is shown of one message, of one tool result, and in all.
-const MESSAGE_LIMIT: usize = 2_000;
-const TOOL_LIMIT: usize = 600;
-const TRANSCRIPT_LIMIT: usize = 24_000;
+/// What the model is shown of one message, of one tool result, and in all.
+const SHOWN: Limits = Limits {
+    message: 2_000,
+    tool: 600,
+    total: 24_000,
+};
 const WAIT: std::time::Duration = std::time::Duration::from_secs(45);
 const ASK: &str = "Suggest exactly three concise, useful questions the user could ask next. \
                    Return only a JSON array of three strings. Do not answer them.";
@@ -43,7 +47,10 @@ pub(crate) async fn suggest(model: &dyn Provider, messages: &[Message]) -> Resul
     if !ended_on_an_answer(messages) {
         return Ok(vec![]);
     }
-    let ask = [Message::system(ASK), Message::user(transcript(messages))];
+    let ask = [
+        Message::system(ASK),
+        Message::user(excerpt::transcript(messages, &SHOWN)),
+    ];
     let reply = tokio::time::timeout(WAIT, model.complete(&ask, &[]))
         .await
         .context("The model did not answer in time")??;
@@ -66,45 +73,6 @@ fn ended_on_an_answer(messages: &[Message]) -> bool {
             };
             answer && !message.content.as_text().trim().is_empty()
         })
-}
-
-/// The conversation as the suggestion call reads it: who said what, with
-/// long messages and tool results cut short. When it is still too long the
-/// oldest part goes, because the questions follow from where it ended.
-fn transcript(messages: &[Message]) -> String {
-    let mut blocks = Vec::new();
-    for message in messages {
-        let text = message.content.as_text();
-        let (label, limit) = match message.role {
-            Role::System => continue,
-            Role::User => ("USER".to_owned(), MESSAGE_LIMIT),
-            Role::Assistant => ("ASSISTANT".to_owned(), MESSAGE_LIMIT),
-            Role::Tool => match message.tool_name.as_deref() {
-                Some("attempt_completion") => ("ASSISTANT".to_owned(), MESSAGE_LIMIT),
-                name => (format!("TOOL {}", name.unwrap_or("tool")), TOOL_LIMIT),
-            },
-        };
-        if !text.trim().is_empty() {
-            blocks.push(format!("[{label}]\n{}", clipped(text.trim(), limit)));
-        }
-    }
-    let whole = blocks.join("\n\n");
-    let extra = whole.chars().count().saturating_sub(TRANSCRIPT_LIMIT);
-    if extra == 0 {
-        return whole;
-    }
-    let tail: String = whole.chars().skip(extra).collect();
-    format!("[Earlier part left out]\n…{tail}")
-}
-
-fn clipped(text: &str, limit: usize) -> String {
-    let mut chars = text.chars();
-    let kept: String = chars.by_ref().take(limit).collect();
-    if chars.next().is_some() {
-        format!("{kept}…")
-    } else {
-        kept
-    }
 }
 
 /// Reads the model's reply: the first JSON array in it, as up to three
@@ -214,32 +182,6 @@ mod tests {
             Message::tool("c1", "shell", "100 reads.fq"),
         ]));
         assert!(!ended_on_an_answer(&[asked, calling("ask_user")]));
-    }
-
-    #[test]
-    fn the_model_reads_a_short_transcript_that_keeps_the_end() {
-        let messages = [
-            Message::system("You are Wisp."),
-            Message::user("count the reads"),
-            calling("shell"),
-            Message::tool("c1", "shell", "y".repeat(TOOL_LIMIT + 50)),
-            Message::assistant("There are 100."),
-        ];
-        let text = transcript(&messages);
-        assert!(!text.contains("You are Wisp."));
-        assert!(text.starts_with("[USER]\ncount the reads\n\n[TOOL shell]\n"));
-        assert!(text.contains(&format!("{}…\n\n", "y".repeat(TOOL_LIMIT))));
-        assert!(text.ends_with("[ASSISTANT]\nThere are 100."));
-
-        // Too long in all: the oldest part goes and the end is whole.
-        let long: Vec<_> = (0..20)
-            .map(|turn| Message::user(format!("{turn} {}", "z".repeat(MESSAGE_LIMIT))))
-            .chain([Message::assistant("The last answer.")])
-            .collect();
-        let text = transcript(&long);
-        assert!(text.starts_with("[Earlier part left out]\n…"));
-        assert!(text.ends_with("[ASSISTANT]\nThe last answer."));
-        assert!(text.chars().count() < TRANSCRIPT_LIMIT + 40);
     }
 
     struct Scripted {

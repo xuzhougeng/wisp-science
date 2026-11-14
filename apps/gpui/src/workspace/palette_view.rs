@@ -224,6 +224,10 @@ impl Workspace {
             Command::Calendar => return self.open_calendar(window, cx),
             Command::Capabilities => return self.open_capabilities(window, cx),
             Command::Trajectory => return self.open_trajectory(window, cx),
+            Command::Aside => {
+                self.layers.close(Layer::Palette);
+                return self.open_aside(window, cx);
+            }
             Command::NewWindow => {
                 crate::open_window(self.backend.clone(), cx);
                 return;

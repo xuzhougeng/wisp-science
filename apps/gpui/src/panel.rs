@@ -14,10 +14,12 @@ pub enum PanelTab {
     Memory,
     Highlights,
     Notebook,
+    /// Questions asked beside the conversation.
+    Aside,
 }
 
 impl PanelTab {
-    pub const ALL: [PanelTab; 7] = [
+    pub const ALL: [PanelTab; 8] = [
         PanelTab::Files,
         PanelTab::Runs,
         PanelTab::Artifacts,
@@ -25,6 +27,7 @@ impl PanelTab {
         PanelTab::Highlights,
         PanelTab::Memos,
         PanelTab::Memory,
+        PanelTab::Aside,
     ];
 
     pub fn label(self) -> &'static str {
@@ -36,6 +39,7 @@ impl PanelTab {
             PanelTab::Memory => "Memory",
             PanelTab::Highlights => "Highlights",
             PanelTab::Notebook => "Notebook",
+            PanelTab::Aside => "Aside",
         }
     }
 
@@ -48,6 +52,7 @@ impl PanelTab {
             PanelTab::Memory => "memory",
             PanelTab::Highlights => "star",
             PanelTab::Notebook => "notebook",
+            PanelTab::Aside => "circle-help",
         }
     }
 }
