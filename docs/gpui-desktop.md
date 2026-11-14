@@ -137,6 +137,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Project archives | Export on a project's card writes the project, its records and its files, as one zip; Import on the home page reads one and puts the project in a folder you choose |
 | Capabilities | A dialog for the open project: how many skills, connectors, MCP servers and SSH hosts are on or usable, the state of memory, and which command-line tools were found on this computer |
 | Follow-up questions | After an answer, up to three questions you could ask next show above the composer; picking one puts it in the composer to send or change, and the list can be put away |
+| Save as skill | A conversation's Save as skill button (or the command palette) puts a request in the composer that asks Wisp to distill the conversation into a reusable skill; you send it, changed or not |
 | Trajectory | A conversation's Trajectory button (or the command palette) shows every turn's steps in the order they happened: what you asked, what the model said, each tool with how it went and how long it took, and each model call with its tokens; the totals are at the top |
 | Windows | New Window (the app menu, Cmd/Ctrl+Shift+N, or the command palette) opens another window on the same projects, each with its own page and conversation |
 | Export | A conversation's Export button saves the whole of it as a Markdown file where you choose |
@@ -318,6 +319,10 @@ Limits of this slice:
   for a last word without tools. Compaction uses the WebView's keys
   (`auto_compact`, `auto_compact_percent`). Auto-continue, compaction on a
   model switch and after idle hours are not ported.
+- Save as skill writes nothing by itself: it only puts the request in the
+  composer, after whatever you had typed. The work is done by the bundled
+  `skill-creator` skill in an ordinary turn, so it needs that skill turned
+  on in Settings and asks for approval like any turn that writes files.
 - A question asked aside is one model request without tools: the
   conversation's model reads the last twelve turns, with long messages and
   tool results cut short, the latest eight side exchanges, and the
@@ -673,6 +678,10 @@ press Escape (the page stays), press Escape again (the page closes). Open the
 conversation an item came from. Have a turn write an image, save it from
 Artifacts, delete the file and confirm the figure still shows in Favorites.
 Delete a conversation and confirm what was saved from it is still listed.
+Press Save as skill in a conversation: the request is in the composer and
+nothing is sent; with a draft in the composer the request follows it; a
+second press adds nothing. Send it and confirm the model reads the
+`skill-creator` skill.
 Open the Aside tab in a conversation with an answer in it, ask what the
 answer was, and confirm the reply is about that conversation while the
 transcript is unchanged. Ask a second question that leans on the first

@@ -48,6 +48,7 @@ pub enum Command {
     Capabilities,
     Trajectory,
     Aside,
+    SaveAsSkill,
 }
 
 impl Command {
@@ -76,6 +77,7 @@ impl Command {
             Command::Capabilities => "Capabilities of this project",
             Command::Trajectory => "Trajectory of this conversation",
             Command::Aside => "Ask aside about this conversation",
+            Command::SaveAsSkill => "Save this conversation as a skill",
         }
     }
 
@@ -103,6 +105,7 @@ impl Command {
             Command::Capabilities => "sparkles",
             Command::Trajectory => "gauge",
             Command::Aside => "circle-help",
+            Command::SaveAsSkill => "skill",
         }
     }
 
@@ -123,7 +126,8 @@ impl Command {
             | Command::Journey
             | Command::Capabilities
             | Command::Trajectory
-            | Command::Aside => screen == Screen::Project,
+            | Command::Aside
+            | Command::SaveAsSkill => screen == Screen::Project,
             Command::OpenFolder
             | Command::Refresh
             | Command::Settings
@@ -135,7 +139,7 @@ impl Command {
         }
     }
 
-    const ALL: [Command; 23] = [
+    const ALL: [Command; 24] = [
         Command::NewConversation,
         Command::OpenFolder,
         Command::Home,
@@ -159,6 +163,7 @@ impl Command {
         Command::Capabilities,
         Command::Trajectory,
         Command::Aside,
+        Command::SaveAsSkill,
     ];
 }
 

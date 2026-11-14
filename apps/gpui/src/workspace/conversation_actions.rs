@@ -57,6 +57,21 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Puts the request to turn this conversation into a skill in the
+    /// composer. It is sent like any message, so it can be changed first.
+    pub(super) fn ask_for_skill(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.state.session.is_none() {
+            return;
+        }
+        let text = crate::compose::with_skill_prompt(&self.composer.read(cx).value());
+        self.state.save_draft(text.clone());
+        self.composer.update(cx, |input, cx| {
+            input.set_value(text, window, cx);
+            input.focus(window, cx);
+        });
+        cx.notify();
+    }
+
     /// Asks where to save the conversation and writes it there as
     /// Markdown. The file is the user's: it is put only where they say.
     fn export_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -456,6 +471,15 @@ impl Workspace {
                     .ghost()
                     .tooltip("Every step of this conversation, with what it took")
                     .on_click(cx.listener(|this, _, window, cx| this.open_trajectory(window, cx))),
+            )
+            .child(
+                Button::new("conversation-skill")
+                    .label("Save as skill")
+                    .small()
+                    .ghost()
+                    .tooltip("Ask Wisp to distill this conversation into a reusable skill")
+                    .disabled(archived)
+                    .on_click(cx.listener(|this, _, window, cx| this.ask_for_skill(window, cx))),
             )
             .child(
                 Button::new("conversation-archive")

@@ -6,6 +6,26 @@ use wisp_dto::{
     native_conversations::{Item, Snapshot},
 };
 
+/// What asks the model to turn the conversation into a skill. The wording
+/// is the WebView desktop's; the bundled `skill-creator` skill does the work.
+pub const SKILL_PROMPT: &str = "Use the skill-creator skill to create a new, reusable skill \
+    from scratch that distills the workflow and know-how from this session.";
+
+/// The composer's text once the skill request is put in it: the request
+/// alone, or after whatever was already being written, which is kept.
+pub fn with_skill_prompt(typed: &str) -> String {
+    let typed = typed.trim();
+    if typed.is_empty() || typed == SKILL_PROMPT || typed.ends_with(SKILL_PROMPT) {
+        // Asking twice does not write it twice.
+        return if typed.is_empty() {
+            SKILL_PROMPT.to_owned()
+        } else {
+            typed.to_owned()
+        };
+    }
+    format!("{typed}\n\n{SKILL_PROMPT}")
+}
+
 /// The questions to offer above the composer: the ones suggested after the
 /// latest answer. They are kept back while a turn runs, while a tool waits
 /// for approval and in a conversation that cannot be written to, because a
@@ -157,6 +177,20 @@ pub fn user_text(item: &Item) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn the_skill_request_is_added_once_and_keeps_what_was_typed() {
+        assert_eq!(with_skill_prompt("  "), SKILL_PROMPT);
+        let after_draft = with_skill_prompt(" Focus on the QC steps. ");
+        assert_eq!(
+            after_draft,
+            format!("Focus on the QC steps.\n\n{SKILL_PROMPT}")
+        );
+        // Pressed again, nothing is doubled.
+        assert_eq!(with_skill_prompt(&after_draft), after_draft);
+        assert_eq!(with_skill_prompt(SKILL_PROMPT), SKILL_PROMPT);
+        assert!(SKILL_PROMPT.contains("skill-creator"));
+    }
 
     #[test]
     fn suggestions_are_offered_only_when_a_question_could_be_asked() {
