@@ -908,7 +908,7 @@ impl Server {
     }
 
     /// Every saved message of a conversation, oldest first.
-    async fn whole_transcript(&self, session: &str) -> Result<Vec<wisp_llm::Message>> {
+    pub(crate) async fn whole_transcript(&self, session: &str) -> Result<Vec<wisp_llm::Message>> {
         // Pages come newest first.
         let mut pages = Vec::new();
         let mut before = None;
@@ -2811,6 +2811,7 @@ impl Server {
                 .await?
                 .as_deref()
                 == Some("true"),
+            auto_review: crate::review::automatic(&self.0.store, session).await,
             runs_on: runs_on(
                 &wisp_runs::ssh_hosts::stored_session_default_execution_context(
                     &self.0.store,
@@ -2875,13 +2876,96 @@ impl Server {
         let live = session.live.lock().unwrap();
         let mut allowed_tools: Vec<_> = live.allowed_tools.iter().cloned().collect();
         allowed_tools.sort();
+        let review = match (&live.review, live.reviewing) {
+            (_, true) => Some(ReviewOutcome::Reading),
+            (Some(Ok(found)), false) => Some(ReviewOutcome::Done(found.clone())),
+            (Some(Err(problem)), false) => Some(ReviewOutcome::Failed(problem.clone())),
+            (None, false) => None,
+        };
         Ok(ConversationStatus {
             options,
             usage: live.usage.clone(),
             allowed_tools,
             reasoning: live.reasoning.clone(),
             runtimes,
+            review,
         })
+    }
+
+    /// Puts away the review that followed the latest turn.
+    pub async fn dismiss_review(&self, project: &str, session: &str) -> Result<()> {
+        self.own_conversation(project, session).await?;
+        self.session(session).live.lock().unwrap().review = None;
+        Ok(())
+    }
+
+    /// The model profile reviews are made with; empty is whichever model
+    /// the conversation runs on.
+    pub async fn review_model(&self) -> Result<String> {
+        Ok(self
+            .0
+            .store
+            .get_setting(crate::review::MODEL_SETTING)
+            .await?
+            .unwrap_or_default())
+    }
+
+    /// Chooses the model profile reviews are made with, or with an empty
+    /// id goes back to the conversation's own model.
+    pub async fn set_review_model(&self, profile: &str) -> Result<String> {
+        let store = &self.0.store;
+        if profile.is_empty() {
+            store.delete_setting(crate::review::MODEL_SETTING).await?;
+        } else {
+            ensure!(
+                self.0
+                    .model
+                    .read()
+                    .unwrap()
+                    .settings()
+                    .profiles
+                    .iter()
+                    .any(|saved| saved.id == profile),
+                "That model was removed; choose another"
+            );
+            store
+                .set_setting(crate::review::MODEL_SETTING, profile)
+                .await?;
+        }
+        self.review_model().await
+    }
+
+    /// The model a review is made with: the chosen profile when it is
+    /// still there and usable, otherwise `own`, the conversation's model.
+    pub(crate) async fn reviewer(
+        &self,
+        own: wisp_llm::ProviderConfig,
+    ) -> Box<dyn wisp_llm::Provider> {
+        let store = &self.0.store;
+        let chosen = self.review_model().await.unwrap_or_default();
+        let mut model = match chosen.as_str() {
+            "" => own,
+            id => {
+                let models = self.0.model.read().unwrap();
+                // A profile removed since is not quietly replaced by the
+                // default one: the conversation's own model reviews.
+                match models
+                    .settings()
+                    .profiles
+                    .iter()
+                    .any(|saved| saved.id == id)
+                {
+                    true => models.pick(id).map(|model| model.provider).unwrap_or(own),
+                    false => own,
+                }
+            }
+        };
+        // The request goes the way a turn would.
+        let routes = crate::network::load(store).await;
+        if let Some(route) = crate::network::route(&routes.model_proxy_url) {
+            model.proxy = Some(route);
+        }
+        (self.0.models)(model)
     }
 
     /// Stops one of the conversation's interpreters, losing what it has in
@@ -2954,6 +3038,17 @@ impl Server {
                 "That model was removed; choose another"
             );
             self.0.store.set_setting(&key, &options.model).await?;
+        }
+        // Written only when it is the conversation's own choice, so one
+        // that never chose keeps following the default.
+        if options.auto_review != crate::review::automatic(&self.0.store, session).await {
+            self.0
+                .store
+                .set_setting(
+                    &crate::review::setting(session),
+                    &options.auto_review.to_string(),
+                )
+                .await?;
         }
         self.store_runs_on(session, &options.runs_on).await?;
         self.stored_options(session).await
@@ -3077,6 +3172,7 @@ impl Server {
                 .as_deref()
                 == Some("1"),
             follow_ups: crate::follow_ups::enabled(&self.0.store).await,
+            auto_review: crate::review::automatic_by_default(&self.0.store).await,
         })
     }
 
@@ -3136,14 +3232,9 @@ impl Server {
         );
         let store = &self.0.store;
         let options = self.stored_options(session).await?;
-        let mut model = self.0.model.read().unwrap().pick(&options.model)?.provider;
-        // The request goes the way a turn would.
-        let routes = crate::network::load(store).await;
-        if let Some(route) = crate::network::route(&routes.model_proxy_url) {
-            model.proxy = Some(route);
-        }
+        let own = self.0.model.read().unwrap().pick(&options.model)?.provider;
         let messages = self.whole_transcript(session).await?;
-        let provider = (self.0.models)(model);
+        let provider = self.reviewer(own).await;
         match crate::review::ask(provider.as_ref(), &messages).await {
             Ok(review) => Ok(review),
             Err(error) => bail!(
@@ -3153,10 +3244,12 @@ impl Server {
         }
     }
 
-    /// Returns once the model is no longer being asked what could come
-    /// next in a conversation: at once when it is not, and after a minute
-    /// at the latest. The questions, if any, are then in the snapshot.
-    pub async fn follow_ups_settled(&self, project: &str, session: &str) -> Result<()> {
+    /// Returns once nothing is being asked of a model about the turn that
+    /// just ended in a conversation, neither what could come next nor a
+    /// review: at once when nothing is, and after a few minutes at the
+    /// latest. The questions are then in the snapshot and the review in
+    /// the status.
+    pub async fn after_turn_settled(&self, project: &str, session: &str) -> Result<()> {
         self.own_conversation(project, session).await?;
         let session = self.session(session);
         let settled = async {
@@ -3165,13 +3258,16 @@ impl Server {
                 tokio::pin!(woken);
                 // Listening before looking, so a wake in between is kept.
                 woken.as_mut().enable();
-                if !session.live.lock().unwrap().suggesting {
-                    return;
+                {
+                    let live = session.live.lock().unwrap();
+                    if !live.suggesting && !live.reviewing {
+                        return;
+                    }
                 }
                 woken.await;
             }
         };
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(60), settled).await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(240), settled).await;
         Ok(())
     }
 
@@ -3219,6 +3315,12 @@ impl Server {
             .await?;
         store
             .set_setting(crate::follow_ups::SETTING, &defaults.follow_ups.to_string())
+            .await?;
+        store
+            .set_setting(
+                crate::review::DEFAULT_SETTING,
+                &defaults.auto_review.to_string(),
+            )
             .await?;
         if defaults.full_access {
             store.set_setting(DEFAULT_FULL_ACCESS, "1").await?;
@@ -3308,6 +3410,9 @@ pub struct ConversationOptions {
     /// Investigate and propose a plan instead of carrying the task out.
     /// Tools that change things refuse to run until this is turned off.
     pub plan_first: bool,
+    /// Have each turn that used a tool or said a good deal reviewed when it
+    /// ends. A conversation that never chose follows the default.
+    pub auto_review: bool,
     /// Where this conversation's work runs unless the model is told
     /// otherwise: empty follows the default in Settings, [`RUNS_LOCALLY`]
     /// is this computer, anything else is the name of an SSH host.
@@ -3340,6 +3445,9 @@ pub struct ConversationStatus {
     pub reasoning: String,
     /// The interpreters the conversation keeps between tool calls.
     pub runtimes: Vec<RuntimeRow>,
+    /// The review that followed the latest turn, when the conversation
+    /// has turns reviewed; gone when the next turn starts.
+    pub review: Option<ReviewOutcome>,
 }
 
 /// An interpreter a conversation started and keeps, with what it has in
@@ -3744,7 +3852,7 @@ pub struct ProjectGrants {
 
 pub use crate::aside::Exchange as AsideExchange;
 pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow};
-pub use crate::review::{Finding as ReviewFinding, Review};
+pub use crate::review::{Finding as ReviewFinding, Outcome as ReviewOutcome, Review};
 
 /// A project's folder, as the question before it is deleted describes it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3784,6 +3892,8 @@ pub struct TurnDefaults {
     pub full_access: bool,
     /// After an answer, ask the model for questions that could come next.
     pub follow_ups: bool,
+    /// Conversations that have not chosen have their turns reviewed.
+    pub auto_review: bool,
 }
 
 const DEFAULT_FULL_ACCESS: &str = "desktop.conversation.default_full_access";

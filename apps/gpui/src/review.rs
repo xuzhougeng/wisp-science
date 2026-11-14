@@ -1,6 +1,6 @@
 //! A review of the open conversation, as its dialog words it. The host
 //! asks the model and reads the report; this only says what it found.
-use wisp_server::desktop::{Review, ReviewFinding};
+use wisp_server::desktop::{Review, ReviewFinding, ReviewOutcome};
 
 use crate::present::Tone;
 
@@ -14,8 +14,29 @@ pub enum Asked {
     Done(Review),
 }
 
+/// The line above the composer about the review that followed the latest
+/// turn, and whether there is a report to open.
+pub fn banner(outcome: &ReviewOutcome) -> (String, Tone, bool) {
+    match outcome {
+        ReviewOutcome::Reading => ("Reviewing the answer…".into(), Tone::Neutral, false),
+        ReviewOutcome::Failed(problem) => (
+            format!("The answer was not reviewed: {problem}"),
+            Tone::Attention,
+            false,
+        ),
+        ReviewOutcome::Done(found) => {
+            let (said, tone) = outcome_of(found);
+            (format!("Review: {said}"), tone, !found.findings.is_empty())
+        }
+    }
+}
+
 /// The line under the title once the report is in.
 pub fn outcome(review: &Review) -> (String, Tone) {
+    outcome_of(review)
+}
+
+fn outcome_of(review: &Review) -> (String, Tone) {
     let failed = review
         .findings
         .iter()
@@ -134,6 +155,35 @@ mod tests {
                 "1 problem to correct, 2 things to look at.".into(),
                 Tone::Danger
             )
+        );
+    }
+
+    #[test]
+    fn the_banner_says_where_the_review_of_the_latest_turn_stands() {
+        assert_eq!(
+            banner(&ReviewOutcome::Reading),
+            ("Reviewing the answer…".into(), Tone::Neutral, false)
+        );
+        assert_eq!(
+            banner(&ReviewOutcome::Failed("no report".into())),
+            (
+                "The answer was not reviewed: no report".into(),
+                Tone::Attention,
+                false
+            )
+        );
+        // Nothing found: said, with nothing to open.
+        assert_eq!(
+            banner(&ReviewOutcome::Done(review(vec![]))),
+            (
+                "Review: No problems found in what was checked.".into(),
+                Tone::Success,
+                false
+            )
+        );
+        assert_eq!(
+            banner(&ReviewOutcome::Done(review(vec![finding("fail", "high")]))),
+            ("Review: 1 problem to correct.".into(), Tone::Danger, true)
         );
     }
 

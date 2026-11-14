@@ -739,10 +739,24 @@ impl Backend {
         self.local(move |host| async move { host.stop_runtime(&project, &session, &id).await })
     }
 
-    /// Returns once the host is no longer asking the model what could be
-    /// asked next in a conversation.
-    pub fn follow_ups_settled(&self, project: String, session: String) -> Reply<()> {
-        self.local(move |host| async move { host.follow_ups_settled(&project, &session).await })
+    /// Returns once the host is no longer asking a model about the turn
+    /// that just ended: what could be asked next, and a review of it.
+    pub fn after_turn_settled(&self, project: String, session: String) -> Reply<()> {
+        self.local(move |host| async move { host.after_turn_settled(&project, &session).await })
+    }
+
+    /// Puts away the review that followed the latest turn.
+    pub fn dismiss_review(&self, project: String, session: String) -> Reply<()> {
+        self.local(move |host| async move { host.dismiss_review(&project, &session).await })
+    }
+
+    /// The model profile reviews are made with; empty is the conversation's.
+    pub fn review_model(&self) -> Reply<String> {
+        self.local(|host| async move { host.review_model().await })
+    }
+
+    pub fn set_review_model(&self, profile: String) -> Reply<String> {
+        self.local(move |host| async move { host.set_review_model(&profile).await })
     }
 
     /// Puts away the questions suggested after the latest answer.

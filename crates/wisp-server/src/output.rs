@@ -109,6 +109,10 @@ pub struct Live {
     pub follow_ups: Vec<String>,
     /// The model is being asked for them right now.
     pub suggesting: bool,
+    /// The review that followed the latest turn, until the next turn.
+    pub review: Option<Result<crate::review::Review, String>>,
+    /// The reviewer is reading the latest turn right now.
+    pub reviewing: bool,
 }
 
 pub struct Session {
@@ -116,7 +120,7 @@ pub struct Session {
     pub cancel: Arc<AtomicBool>,
     /// Serializes acceptance, including the durable request-id check.
     pub accept: tokio::sync::Mutex<()>,
-    /// Woken whenever `suggesting` is cleared.
+    /// Woken whenever `suggesting` or `reviewing` is cleared.
     pub suggested: tokio::sync::Notify,
     pub runtime: Mutex<Option<wisp_runtime::RuntimeManager>>,
     #[cfg(test)]

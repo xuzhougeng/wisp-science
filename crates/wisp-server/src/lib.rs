@@ -459,6 +459,7 @@ impl Server {
             .try_acquire_owned()
             .context("Server is busy; at most four turns can run concurrently")?;
         let full_access = options.full_access;
+        let auto_review = options.auto_review;
         let plan_mode = options.plan_first;
         let agent = runtime::build(
             &self.0.config,
@@ -511,6 +512,8 @@ impl Server {
             // They were about the answer before this turn.
             live.follow_ups.clear();
             live.suggesting = false;
+            live.review = None;
+            live.reviewing = false;
             session.suggested.notify_waiters();
             live.calls.clear();
             live.reasoning.clear();
@@ -568,17 +571,64 @@ impl Server {
                 // Set with the turn's end, so whoever sees the turn over
                 // can wait for the questions without missing them.
                 live.suggesting = answered;
+                live.reviewing = answered && auto_review;
                 live.generation
             };
             // The turn is over: what follows is not one of the four.
             drop(permit);
             if answered {
-                server
-                    .suggest_follow_ups(&request.session_id, &session, side_model, ended)
-                    .await;
+                let frame = &request.session_id;
+                tokio::join!(
+                    server.suggest_follow_ups(frame, &session, side_model.clone(), ended),
+                    server.review_after_turn(frame, &session, side_model, ended, auto_review),
+                );
             }
         });
         Ok(reply)
+    }
+
+    /// Has the turn that just ended reviewed, when its conversation asks
+    /// for that and the turn has something to check, and keeps the report
+    /// for the conversation's status unless a newer turn began meanwhile.
+    async fn review_after_turn(
+        &self,
+        frame: &str,
+        session: &Session,
+        model: wisp_llm::ProviderConfig,
+        ended: u64,
+        wanted: bool,
+    ) {
+        if !wanted {
+            return;
+        }
+        let found = async {
+            anyhow::ensure!(
+                !self.0.shutting_down.load(Ordering::Relaxed),
+                "The app is closing"
+            );
+            let messages = self.whole_transcript(frame).await?;
+            if !review::worth_reviewing(&messages) {
+                return Ok(None);
+            }
+            let reviewer = self.reviewer(model).await;
+            review::ask(reviewer.as_ref(), &messages).await.map(Some)
+        }
+        .await;
+        let found = match found {
+            Ok(found) => found.map(Ok),
+            Err(error) => {
+                let said = network::explain(&self.0.store, &format!("{error:#}")).await;
+                Some(Err(said))
+            }
+        };
+        {
+            let mut live = session.live.lock().unwrap();
+            if live.generation == ended {
+                live.review = found;
+                live.reviewing = false;
+            }
+        }
+        session.suggested.notify_waiters();
     }
 
     /// Asks the conversation's model what could be asked next and keeps

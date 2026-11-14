@@ -1275,6 +1275,21 @@ async fn desktop_model_profiles_are_validated_saved_and_chosen_per_conversation(
     wait_for(&server, &session, |s| !s.running).await;
     assert_eq!(last_used(&used), ("deep-model".into(), "second-key".into()));
 
+    // A review is made with the conversation's model until another is
+    // chosen for reviews. (This model writes no report, so the review
+    // fails; which model was asked is what is checked.)
+    server.after_turn_settled(PROJECT, &session).await.unwrap();
+    assert_eq!(server.review_model().await.unwrap(), "");
+    assert!(server.set_review_model("ghost").await.is_err());
+    assert!(server.review_conversation(PROJECT, &session).await.is_err());
+    assert_eq!(last_used(&used), ("deep-model".into(), "second-key".into()));
+    assert_eq!(server.set_review_model(&first.id).await.unwrap(), first.id);
+    assert!(server.review_conversation(PROJECT, &session).await.is_err());
+    assert_eq!(last_used(&used), ("lab-model-2".into(), "first-key".into()));
+    assert_eq!(server.set_review_model("").await.unwrap(), "");
+    assert!(server.review_conversation(PROJECT, &session).await.is_err());
+    assert_eq!(last_used(&used), ("deep-model".into(), "second-key".into()));
+
     let switched = server.set_default_model(&deep.id).await.unwrap();
     assert!(switched
         .profiles
@@ -4456,15 +4471,15 @@ async fn an_answer_is_followed_by_questions_to_ask_next() {
     let session = create(&server).await;
     assert!(snapshot(&server, &session).await.follow_ups.is_empty());
     // Nothing to wait for before anything was asked.
-    server.follow_ups_settled(PROJECT, &session).await.unwrap();
+    server.after_turn_settled(PROJECT, &session).await.unwrap();
     assert!(server
-        .follow_ups_settled("missing", &session)
+        .after_turn_settled("missing", &session)
         .await
         .is_err());
     send(&server, &session, "one").await.unwrap();
     // Whoever sees the turn over can wait for the questions.
     wait_for(&server, &session, |s| !s.running).await;
-    server.follow_ups_settled(PROJECT, &session).await.unwrap();
+    server.after_turn_settled(PROJECT, &session).await.unwrap();
     let after = snapshot(&server, &session).await;
     assert!(!after.running);
     assert_eq!(after.follow_ups, ["Why?", "How many?", "What next?"]);
@@ -4509,7 +4524,7 @@ async fn an_answer_is_followed_by_questions_to_ask_next() {
     let before = suggested.load(Ordering::Relaxed);
     send(&server, &session, "three").await.unwrap();
     wait_for(&server, &session, |s| !s.running).await;
-    server.follow_ups_settled(PROJECT, &session).await.unwrap();
+    server.after_turn_settled(PROJECT, &session).await.unwrap();
     assert!(snapshot(&server, &session).await.follow_ups.is_empty());
     assert_eq!(suggested.load(Ordering::Relaxed), before);
     server.shutdown().await;
@@ -5050,6 +5065,214 @@ async fn the_model_view_is_what_the_next_turn_would_be_sent() {
 
     assert!(server.model_view("missing", &session).await.is_err());
     assert!(server.model_view(PROJECT, "missing").await.is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_conversation_that_asks_for_it_is_reviewed_after_each_turn_worth_it() {
+    // A model that runs one tool per conversation and answers briefly, and
+    // reports one finding whenever it is asked to review.
+    struct Checked {
+        reviews: Arc<AtomicUsize>,
+    }
+    #[async_trait]
+    impl Provider for Checked {
+        fn name(&self) -> &str {
+            "offline"
+        }
+        fn model(&self) -> &str {
+            "offline"
+        }
+        async fn complete(
+            &self,
+            messages: &[Message],
+            _: &[ToolSchema],
+        ) -> wisp_llm::Result<Completion> {
+            let content = if messages[0]
+                .content
+                .as_text()
+                .starts_with("You are a REVIEWER")
+            {
+                self.reviews.fetch_add(1, Ordering::Relaxed);
+                r#"{"summary":"Checked.","findings":[{"claim":"Saved result",
+                    "evidence":"the file is answer.txt","fix":"Name it","verdict":"fail"}]}"#
+            } else {
+                "[]"
+            };
+            Ok(Completion {
+                content: content.into(),
+                finish_reason: Some("stop".into()),
+                ..Default::default()
+            })
+        }
+        async fn stream(
+            &self,
+            messages: &[Message],
+            _: &[ToolSchema],
+            sink: &mut dyn StreamSink,
+        ) -> wisp_llm::Result<Completion> {
+            if !messages
+                .iter()
+                .any(|message| message.role == wisp_llm::Role::Tool)
+            {
+                return Ok(Completion {
+                    tool_calls: vec![ToolCall {
+                        id: "call-1".into(),
+                        kind: "function".into(),
+                        function: wisp_llm::FunctionCall {
+                            name: "write".into(),
+                            arguments: json!({"path":"answer.txt", "content":"offline result"})
+                                .to_string(),
+                        },
+                    }],
+                    finish_reason: Some("tool_calls".into()),
+                    ..Default::default()
+                });
+            }
+            sink.on_text("Saved result");
+            Ok(Completion {
+                content: "Saved result".into(),
+                finish_reason: Some("stop".into()),
+                ..Default::default()
+            })
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let reviews = Arc::new(AtomicUsize::new(0));
+    let factory: ModelFactory = {
+        let reviews = reviews.clone();
+        Arc::new(move |_| {
+            Box::new(Checked {
+                reviews: reviews.clone(),
+            })
+        })
+    };
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    // One turn with a tool, approved, and everything after it settled.
+    let turn = |session: String, message: &'static str| {
+        let server = &server;
+        async move {
+            send(server, &session, message).await.unwrap();
+            let asked = wait_for(server, &session, |s| !s.approvals.is_empty() || !s.running).await;
+            for approval in &asked.approvals {
+                server
+                    .answer_approval(
+                        PROJECT,
+                        &session,
+                        &approval.approval_id,
+                        true,
+                        desktop::Remember::No,
+                    )
+                    .await
+                    .unwrap();
+            }
+            wait_for(server, &session, |s| !s.running).await;
+            server.after_turn_settled(PROJECT, &session).await.unwrap();
+            server.conversation_status(PROJECT, &session).await.unwrap()
+        }
+    };
+    let choose = |session: String, auto_review: bool| {
+        let server = &server;
+        async move {
+            let options = server
+                .conversation_status(PROJECT, &session)
+                .await
+                .unwrap()
+                .options;
+            server
+                .set_conversation_options(
+                    PROJECT,
+                    &session,
+                    desktop::ConversationOptions {
+                        auto_review,
+                        ..options
+                    },
+                )
+                .await
+                .unwrap()
+                .auto_review
+        }
+    };
+
+    // Off until it is asked for: a turn with a tool is not reviewed.
+    let defaults = server.turn_defaults().await.unwrap();
+    assert!(!defaults.auto_review);
+    let quiet = create(&server).await;
+    let status = turn(quiet.clone(), "write the file").await;
+    assert!(!status.options.auto_review);
+    assert_eq!(status.review, None);
+    assert_eq!(reviews.load(Ordering::Relaxed), 0);
+
+    // Asked for in one conversation: its tool turn is reviewed.
+    let checked = create(&server).await;
+    assert!(choose(checked.clone(), true).await);
+    let status = turn(checked.clone(), "write the file").await;
+    let Some(desktop::ReviewOutcome::Done(review)) = status.review else {
+        panic!("no review: {:?}", status.review);
+    };
+    assert_eq!(review.findings.len(), 1);
+    assert_eq!(review.findings[0].verdict, "fail");
+    assert_eq!(reviews.load(Ordering::Relaxed), 1);
+    // A short answer without tools is not worth a review, and the last
+    // turn's review does not linger over it.
+    let status = turn(checked.clone(), "thanks").await;
+    assert_eq!(status.review, None);
+    assert_eq!(reviews.load(Ordering::Relaxed), 1);
+    // The other conversation was not switched on by this one.
+    assert!(
+        !server
+            .conversation_status(PROJECT, &quiet)
+            .await
+            .unwrap()
+            .options
+            .auto_review
+    );
+
+    // On by default from now on: conversations that never chose follow,
+    // one that chose keeps its choice.
+    // (Saying what it already is writes nothing; turning it on and off
+    // again is a choice.)
+    assert!(!choose(quiet.clone(), false).await);
+    assert!(choose(quiet.clone(), true).await);
+    assert!(!choose(quiet.clone(), false).await);
+    let saved = server
+        .set_turn_defaults(desktop::TurnDefaults {
+            auto_review: true,
+            ..defaults
+        })
+        .await
+        .unwrap();
+    assert!(saved.auto_review);
+    let fresh = create(&server).await;
+    let status = turn(fresh.clone(), "write the file").await;
+    assert!(status.options.auto_review);
+    assert!(matches!(
+        status.review,
+        Some(desktop::ReviewOutcome::Done(_))
+    ));
+    assert_eq!(reviews.load(Ordering::Relaxed), 2);
+    assert!(
+        !server
+            .conversation_status(PROJECT, &quiet)
+            .await
+            .unwrap()
+            .options
+            .auto_review
+    );
+
+    // Put away, it is gone; only through the conversation's own project.
+    assert!(server.dismiss_review("missing", &fresh).await.is_err());
+    server.dismiss_review(PROJECT, &fresh).await.unwrap();
+    assert_eq!(
+        server
+            .conversation_status(PROJECT, &fresh)
+            .await
+            .unwrap()
+            .review,
+        None
+    );
     server.shutdown().await;
 }
 

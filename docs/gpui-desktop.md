@@ -140,6 +140,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Delete a project's folder | Removing a project offers Delete folder too: after you type the project's name, the project is removed and its folder is deleted with every file in it |
 | What the model is sent | Clicking the context percentage by the composer (or the command palette) lists the conversation's working set: the instructions, the summary that stands in for compacted turns, and each message with about how many tokens it takes |
 | Interpreters | The Python and R interpreters a conversation keeps between tool calls show above the composer with their version and state; Stop ends one, Dismiss takes a stopped one off the list |
+| Review turns | The composer's Review turns switch has each turn that used a tool, or said a good deal, reviewed when it ends; the result shows above the composer, and See opens the findings |
 | Review | A conversation's Review button (or the command palette) has the model read the conversation as a reviewer and lists claims its own tool output does not support, each with the evidence and a fix; Ask Wisp to correct puts the corrections in the composer |
 | Save as skill | A conversation's Save as skill button (or the command palette) puts a request in the composer that asks Wisp to distill the conversation into a reusable skill; you send it, changed or not |
 | Trajectory | A conversation's Trajectory button (or the command palette) shows every turn's steps in the order they happened: what you asked, what the model said, each tool with how it went and how long it took, and each model call with its tokens; the totals are at the top |
@@ -151,7 +152,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Outline | A button in the conversation's header lists what you asked, in order; choosing one scrolls to it |
 | Find in conversation | Cmd/Ctrl+F, or the command palette: a bar over the transcript marks every message, and every tool call, that contains the words; Return and the arrows move between them |
 | Help | Documentation (home page, Settings, palette) and Report a problem (Settings, palette) open the tutorials and the issue tracker in the system's browser |
-| Settings | A search field narrows the pages to those about what you type. Pages: General (appearance: system, light or dark; what the app opens on), Network (a route for model requests, for connectors and MCP servers, and for the code the model runs; a conda mirror, a Python package index and a CA bundle the model is told to use), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold, suggesting what to ask next), Skills (every skill with where it comes from, search, on or off), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Environments (the SSH hosts work can run on: add, change, remove, add from `~/.ssh/config`, check the connection and see what the host is, and which one new work goes to), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
+| Settings | A search field narrows the pages to those about what you type. Pages: General (appearance: system, light or dark; what the app opens on), Network (a route for model requests, for connectors and MCP servers, and for the code the model runs; a conda mirror, a Python package index and a CA bundle the model is told to use), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold, suggesting what to ask next, reviewing turns and the reviewer model), Skills (every skill with where it comes from, search, on or off), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Environments (the SSH hosts work can run on: add, change, remove, add from `~/.ssh/config`, check the connection and see what the host is, and which one new work goes to), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
 | Inbox | Conversations in any project that are waiting for you; opens across projects |
 | Read state | A finished answer is marked read once it is on screen in the active window |
 | Transcript | Virtualized Markdown, selectable text, paginated history |
@@ -350,9 +351,21 @@ Limits of this slice:
   a new one. There is no list of variables, no restart button and no
   memory limit; interpreters are also stopped when the conversation or
   its project is removed and when the app quits.
-- A review is one model request without tools, made by the conversation's
-  own model: there is no separate reviewer model to choose, no automatic
-  review after a turn, and no review of a single turn. It reads the
+- Review turns is off until switched on, per conversation; Settings,
+  Conversation, sets what conversations start with (the WebView's keys,
+  `frame_auto_review:<id>` and `auto_review_default_enabled`). A
+  conversation that was never switched follows the default; one that was
+  keeps its choice. Unlike the WebView, a review that finds problems does
+  not hold the turn open or correct it: the turn is over, the result is
+  shown, and corrections are asked for with Ask Wisp to correct. A turn
+  that failed, was stopped, ended on a question to you, or only said a
+  little without tools is not reviewed. The result is kept in memory
+  until the next turn starts. It applies to every turn this host runs,
+  a paired phone's included, though a phone is not shown the result.
+- A review is one model request without tools, made by the reviewer model
+  chosen in Settings, Conversation, or by the conversation's own model
+  when none is chosen or the chosen one was removed. There is no review
+  of a single turn. It reads the
   conversation's latest messages up to 80,000 characters, with each
   tool's arguments and output cut at 4,000, so a claim that rests on
   something older or longer cannot be traced and is not reported. The
@@ -740,6 +753,14 @@ running while code runs. Point at it for its path and memory. Press
 Stop: it reads stopped; ask the model to use the variable it had set and
 confirm the reply says the interpreter was stopped. Press Dismiss: the
 chip goes, and the next code call starts a fresh interpreter.
+Switch Review turns on in the composer and have a turn run a tool: when
+it ends the line above the composer reads Reviewing the answer…, then the
+result. Press See: the findings open; Ask Wisp to correct puts them in the
+composer. Send a short message: no review follows and the old result is
+gone. Put a result away with its close button. In Settings, Conversation,
+turn Review turns on and confirm a new conversation starts with the
+switch on while one you switched off stays off; choose a Reviewer model
+and confirm the Review dialog names it.
 In a conversation where a tool ran, press Review: the dialog says it is
 reading, then lists what was found, each with its claim, evidence and
 fix, or says nothing was found. Press Ask Wisp to correct: the dialog

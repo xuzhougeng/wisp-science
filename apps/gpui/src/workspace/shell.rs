@@ -1458,7 +1458,27 @@ impl Workspace {
                                 .child(access)
                                 .child(model)
                                 .child(effort)
-                                .children(runs_on),
+                                .children(runs_on)
+                                .child(
+                                    Button::new("auto-review")
+                                        .icon(glyph("review"))
+                                        .label(if options.auto_review {
+                                            "Reviewing"
+                                        } else {
+                                            "Review turns"
+                                        })
+                                        .small()
+                                        .ghost()
+                                        .selected(options.auto_review)
+                                        .tooltip(if options.auto_review {
+                                            "Each turn that used a tool is reviewed when it ends"
+                                        } else {
+                                            "Have each turn that used a tool reviewed when it ends"
+                                        })
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.toggle_auto_review(window, cx)
+                                        })),
+                                ),
                         )
                         .child(actions),
                 ),
@@ -1581,6 +1601,9 @@ impl Workspace {
         );
         if let Some(approvals) = self.render_approvals(cx) {
             content = content.child(approvals);
+        }
+        if let Some(review) = self.render_review_banner(cx) {
+            content = content.child(review);
         }
         if let Some(follow_ups) = self.render_follow_ups(cx) {
             content = content.child(follow_ups);

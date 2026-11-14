@@ -11,16 +11,17 @@ use super::{
 use crate::{backend::receive, compose};
 
 impl Workspace {
-    /// Once a turn has ended the model may still be asked what could come
-    /// next. When that is settled the conversation is read once more, so
-    /// the questions show without anything being polled for.
-    pub(super) fn await_follow_ups(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Once a turn has ended a model may still be asked about it: what
+    /// could come next, and a review. When that is settled the conversation
+    /// and its status are read once more, so both show without anything
+    /// being polled for.
+    pub(super) fn await_after_turn(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let selection = self.state.selection();
         let (Some(project), Some(session)) = (selection.project.clone(), selection.session.clone())
         else {
             return;
         };
-        let reply = self.backend.follow_ups_settled(project, session);
+        let reply = self.backend.after_turn_settled(project, session);
         cx.spawn_in(window, async move |this, cx| {
             // A failure only means no questions are shown.
             let _ = receive(reply).await;
@@ -30,6 +31,7 @@ impl Workspace {
                 // being read already.
                 if this.state.current(&selection) && idle && !this.pending {
                     this.start_poll(window, cx);
+                    this.load_status(window, cx);
                 }
             });
         })

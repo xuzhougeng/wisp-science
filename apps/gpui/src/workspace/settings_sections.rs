@@ -96,7 +96,34 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Chooses the model reviews are made with and shows what was kept.
+    fn save_review_model(&mut self, profile: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings_error = None;
+        let reply = self.backend.set_review_model(profile);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(kept) => this.review_model = kept,
+                    Err(error) => this.settings_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn load_turn_defaults(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let chosen = self.backend.review_model();
+        cx.spawn_in(window, async move |this, cx| {
+            if let Ok(chosen) = receive(chosen).await {
+                let _ = this.update(cx, |this, cx| {
+                    this.review_model = chosen;
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
         let reply = self.backend.turn_defaults();
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
@@ -939,6 +966,68 @@ impl Workspace {
                 })),
             cx,
         ))
+        .child(setting(
+            "Review turns",
+            "When a turn that used a tool, or said a good deal, ends, a reviewer checks its \
+             claims against the tool output and the result shows above the composer. This \
+             is what conversations start with; each can be switched in its composer.",
+            Button::new("auto-review-default")
+                .label(if defaults.auto_review { "On" } else { "Off" })
+                .small()
+                .selected(defaults.auto_review)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.save_turn_defaults(
+                        TurnDefaults {
+                            auto_review: !defaults.auto_review,
+                            ..defaults
+                        },
+                        window,
+                        cx,
+                    )
+                })),
+            cx,
+        ))
+        .child(setting(
+            "Reviewer model",
+            "The model that reviews, for automatic reviews and those you ask for. A second \
+             model catches more than a model checking itself.",
+            self.review_model_choices(cx),
+            cx,
+        ))
+    }
+
+    /// The conversation's own model, or one of the saved ones.
+    fn review_model_choices(&self, cx: &mut Context<Self>) -> Div {
+        let current = self.review_model.as_str();
+        let profiles = self
+            .settings
+            .current()
+            .map(|models| models.profiles.as_slice())
+            .unwrap_or_default();
+        // A profile removed since reads as the conversation's own.
+        let own = !profiles.iter().any(|profile| profile.id == current);
+        let mut choices = div().h_flex().flex_wrap().gap_1().justify_end().child(
+            Button::new("review-model-own")
+                .label("The conversation's")
+                .small()
+                .selected(own)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.save_review_model(String::new(), window, cx)
+                })),
+        );
+        for profile in profiles {
+            let id = profile.id.clone();
+            choices = choices.child(
+                Button::new(SharedString::from(format!("review-model-{}", profile.id)))
+                    .label(profile.name.clone())
+                    .small()
+                    .selected(profile.id == current)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.save_review_model(id.clone(), window, cx)
+                    })),
+            );
+        }
+        choices
     }
 
     pub(super) fn render_permission_settings(&self, cx: &mut Context<Self>) -> Div {

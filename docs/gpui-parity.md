@@ -110,11 +110,11 @@ to find in the running app.
 | Permission mode [默认 / 完全权限] | Yes | Done: Ask first or Full access per conversation, with a question before it turns on; dangerous shell commands still ask | served |
 | Plan first [先计划] | Yes | Done: the model investigates and submits a plan; tools that change things refuse until the plan is approved or plan mode is left | served |
 | Expert (persona) for the conversation [专家] | Yes | Missing | tauri |
-| Automatic review toggle and review model [自动审查] | Yes | Missing | tauri |
+| Automatic review toggle and review model [自动审查] | Yes | Partial: per conversation, with a default and a reviewer model in Settings; the result shows above the composer and corrections are asked for by hand, not made automatically | tauri |
 | Sub-agent model [子智能体模型] | Yes | Missing | store |
 | Compute environment for the conversation [计算环境] | Yes | Partial: the default, this computer or a saved SSH host, for where runs start; Python, R and the shell stay on this computer | store |
 | Context usage meter and manual compaction | Yes | Partial: how full the context is, as a percentage that opens the list of what the model is sent, message by message; no manual compaction | served |
-| Request a review of the conversation [请求审查] | Yes | Partial: a Review dialog lists what the conversation's model finds and puts the corrections in the composer; the report is not kept with the conversation and there is no separate reviewer model | tauri |
+| Request a review of the conversation [请求审查] | Yes | Partial: a Review dialog lists what the reviewer model finds and puts the corrections in the composer; the report is not kept with the conversation | tauri |
 | Share as long image or HTML [分享为长图] | Yes | Partial: Export saves the conversation as a Markdown file; no long image or HTML | ui |
 | Save the conversation as a skill [保存为技能] | Yes | Done: puts the request for the `skill-creator` skill in the composer, after anything already typed | shared |
 | Interactive runtime status (Python / R) [Local · Python · R] | Yes | Partial: the conversation's Python and R interpreters above the composer with their state, and Stop; no variable list, restart or memory limit | shared |
@@ -192,7 +192,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | --- | --- | --- | --- |
 | General [常规]: language, workspace directory, per-project storage, resume last conversation, send key, selection quick actions, notifications, sound, update check, local tool paths | Yes | Partial: resume the last conversation at launch; the rest is not ported | tauri |
 | Network [网络]: proxy per channel (model API, account login, MCP, code requests), package mirrors | Yes | Partial: routes for model requests, connectors and MCP, and code; conda mirror, Python index and CA bundle; no sign-in route, and no route of its own for one model or one MCP server | tauri |
-| Conversation [对话]: iteration limit, auto-continue, auto-compaction and threshold, follow-up questions | Yes | Partial: steps per turn, automatic compaction and its threshold, follow-up questions; no auto-continue | tauri |
+| Conversation [对话]: iteration limit, auto-continue, auto-compaction and threshold, follow-up questions | Yes | Partial: steps per turn, automatic compaction and its threshold, follow-up questions, review of turns and the reviewer model; no auto-continue | tauri |
 | Appearance [外观]: system/light/dark, theme, accent, fonts and sizes, live preview | Yes | Partial: system, light or dark with the Wisp palettes, applied at once; no other themes, accent, fonts or sizes | ui |
 | Pet [宠物] | Yes | Missing | ui |
 | Models [模型]: API models with provider, URL, key, limits, effort | Several profiles, presets, default | Done: any number of models, the six presets, a default, a connection test | served |

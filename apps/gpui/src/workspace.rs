@@ -196,6 +196,8 @@ pub struct Workspace {
     settings_section: crate::settings::Section,
     /// How turns run and new conversations start; `None` until read.
     turn_defaults: Option<wisp_server::desktop::TurnDefaults>,
+    /// The model profile reviews are made with; empty is the conversation's.
+    review_model: String,
     steps_input: Entity<InputState>,
     /// Tools that are always allowed, project by project.
     grants: Vec<wisp_server::desktop::ProjectGrants>,
@@ -619,6 +621,7 @@ impl Workspace {
             launch: Default::default(),
             settings_section: Default::default(),
             turn_defaults: None,
+            review_model: String::new(),
             steps_input,
             grants: vec![],
             settings_error: None,
@@ -1455,7 +1458,7 @@ impl Workspace {
                                         this.reload_artifacts(window, cx);
                                         // What could be asked next arrives
                                         // a little after the answer.
-                                        this.await_follow_ups(window, cx);
+                                        this.await_after_turn(window, cx);
                                     }
                                     this.mark_seen(window, cx);
                                     // The turn is over: what was written
@@ -1931,6 +1934,19 @@ impl Workspace {
         self.set_options(options, window, cx);
         // The header names the model this conversation runs on.
         self.start_poll(window, cx);
+        self.focus_composer(window, cx);
+        cx.notify();
+    }
+
+    /// Has each turn of this conversation that is worth it reviewed when
+    /// it ends, or stops doing so.
+    fn toggle_auto_review(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let options = self.options();
+        let options = ConversationOptions {
+            auto_review: !options.auto_review,
+            ..options
+        };
+        self.set_options(options, window, cx);
         self.focus_composer(window, cx);
         cx.notify();
     }

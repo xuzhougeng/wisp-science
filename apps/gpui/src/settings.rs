@@ -88,7 +88,7 @@ impl Section {
             }
             Section::Conversation => {
                 "steps iterations turn limit compact compaction context follow-up questions \
-                 suggestions suggest next"
+                 suggestions suggest next review reviewer automatic check"
             }
             Section::Skills => "skill workflow bundled folder reload",
             Section::Connections => {

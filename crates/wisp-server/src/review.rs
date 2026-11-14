@@ -55,6 +55,91 @@ Output one JSON object and nothing else:
 Use the zero-based N from `[msg:N ...]` as message_index. If there are no \
 problems, return an empty findings array. Order findings most severe first.";
 
+/// The WebView desktop's keys: whether a conversation is reviewed after
+/// each turn, and what a conversation that never chose starts with.
+pub(crate) const DEFAULT_SETTING: &str = "auto_review_default_enabled";
+pub(crate) fn setting(session: &str) -> String {
+    format!("frame_auto_review:{session}")
+}
+/// The model profile reviews are made with; unset is the conversation's.
+pub(crate) const MODEL_SETTING: &str = "desktop.review.model";
+
+/// Whether a conversation is reviewed after each turn: its own choice, or
+/// the default when it has made none.
+pub(crate) async fn automatic(store: &wisp_store::Store, session: &str) -> bool {
+    let saved = |key: String| async move { store.get_setting(&key).await.ok().flatten() };
+    match saved(setting(session))
+        .await
+        .and_then(|value| value.parse::<bool>().ok())
+    {
+        Some(chosen) => chosen,
+        None => automatic_by_default(store).await,
+    }
+}
+
+pub(crate) async fn automatic_by_default(store: &wisp_store::Store) -> bool {
+    store
+        .get_setting(DEFAULT_SETTING)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|value| value.parse::<bool>().ok())
+        .unwrap_or(false)
+}
+
+/// Whether the latest turn is worth a review by itself: it used a tool, or
+/// said a good deal. A greeting is not, and neither is a turn that stopped
+/// to ask the user something, because that is not an answer yet.
+pub(crate) fn worth_reviewing(messages: &[Message]) -> bool {
+    let start = messages
+        .iter()
+        .rposition(|message| {
+            message.role == Role::User
+                && !wisp_store::is_compaction_checkpoint(&message.content.as_text())
+        })
+        .map_or(0, |at| at + 1);
+    let turn = &messages[start..];
+    let waits_for_user = turn
+        .iter()
+        .rev()
+        .find(|message| message.role == Role::Assistant)
+        .is_some_and(|message| {
+            message.tool_calls.iter().any(|call| {
+                matches!(
+                    call.function.name.as_str(),
+                    wisp_tools::ask_user::ASK_USER | wisp_tools::plan::PROPOSE_PLAN
+                )
+            })
+        });
+    if waits_for_user {
+        return false;
+    }
+    let said = |message: &&Message| {
+        message.role == Role::Assistant
+            || (message.role == Role::Tool
+                && message.tool_name.as_deref() == Some("attempt_completion"))
+    };
+    let used_a_tool = turn
+        .iter()
+        .any(|message| message.role == Role::Tool && !said(&message));
+    let prose: usize = turn
+        .iter()
+        .filter(said)
+        .map(|message| message.content.as_text().chars().count())
+        .sum();
+    used_a_tool || prose >= 600
+}
+
+/// Where the review that follows a turn stands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    /// The reviewer is reading.
+    Reading,
+    Done(Review),
+    /// There is no report, and why.
+    Failed(String),
+}
+
 /// What a reviewer found in a conversation.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 pub struct Review {
@@ -378,6 +463,50 @@ Hope {that} helps."#;
         for raw in ["All good!", "{not json}", r#"{"verdict":"pass"}"#, "{"] {
             assert!(parse(raw).is_err(), "{raw}");
         }
+    }
+
+    #[test]
+    fn only_a_turn_with_something_to_check_is_reviewed_by_itself() {
+        let asked = Message::user("count the reads");
+        // A tool ran.
+        assert!(worth_reviewing(&[
+            asked.clone(),
+            calling("c1", "shell", "{}"),
+            Message::tool("c1", "shell", "400"),
+            Message::assistant("There are 100."),
+        ]));
+        // A long answer without tools.
+        assert!(worth_reviewing(&[
+            asked.clone(),
+            Message::assistant("x".repeat(600)),
+        ]));
+        // A short one, a completion that only says so, or nothing at all.
+        assert!(!worth_reviewing(&[
+            asked.clone(),
+            Message::assistant("Hello!")
+        ]));
+        assert!(!worth_reviewing(&[
+            asked.clone(),
+            Message::tool("c9", "attempt_completion", "Done."),
+        ]));
+        assert!(!worth_reviewing(&[]));
+        // Stopped to ask: not an answer yet, whatever ran before.
+        assert!(!worth_reviewing(&[
+            asked.clone(),
+            calling("c1", "shell", "{}"),
+            Message::tool("c1", "shell", "400"),
+            calling("c2", "ask_user", "{}"),
+            Message::tool("c2", "ask_user", "waiting"),
+        ]));
+        // Only the latest turn counts: an earlier one's tools do not.
+        assert!(!worth_reviewing(&[
+            asked.clone(),
+            calling("c1", "shell", "{}"),
+            Message::tool("c1", "shell", "400"),
+            Message::assistant("There are 100."),
+            Message::user("thanks"),
+            Message::assistant("Any time."),
+        ]));
     }
 
     #[test]

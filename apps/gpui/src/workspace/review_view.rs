@@ -48,6 +48,84 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Opens the dialog on the review that followed the latest turn.
+    fn see_review(&mut self, found: wisp_server::desktop::Review, cx: &mut Context<Self>) {
+        self.review = Some(Asked::Done(found));
+        self.layers.open(Layer::Review);
+        cx.notify();
+    }
+
+    /// Puts away the line about the review that followed the latest turn.
+    fn dismiss_review(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let selection = self.state.selection();
+        let (Some(project), Some(session)) = (selection.project.clone(), selection.session.clone())
+        else {
+            return;
+        };
+        // Gone at once here; the host forgets it for every window.
+        if let Some(status) = &mut self.status {
+            status.review = None;
+        }
+        let reply = self.backend.dismiss_review(project, session);
+        cx.spawn_in(window, async move |this, cx| {
+            if let Err(error) = receive(reply).await {
+                let _ = this.update(cx, |this, cx| {
+                    if this.state.current(&selection) {
+                        this.error = Some(error);
+                        cx.notify();
+                    }
+                });
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// The line above the composer about the review of the latest turn.
+    pub(super) fn render_review_banner(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let outcome = self.status.as_ref()?.review.as_ref()?;
+        let (said, tone, opens) = review::banner(outcome);
+        let mut line = div()
+            .h_flex()
+            .flex_shrink_0()
+            .gap_2()
+            .mx_4()
+            .mb_2()
+            .px_3()
+            .py_1p5()
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(cx.theme().border)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_sm()
+                    .text_color(tone_color(tone, cx))
+                    .child(said),
+            );
+        if let (true, wisp_server::desktop::ReviewOutcome::Done(found)) = (opens, outcome) {
+            let found = found.clone();
+            line = line.child(
+                Button::new("review-banner-see")
+                    .label("See")
+                    .small()
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.see_review(found.clone(), cx)),
+                    ),
+            );
+        }
+        if *outcome != wisp_server::desktop::ReviewOutcome::Reading {
+            line = line.child(
+                super::shell::icon_button("review-banner-dismiss", "close", "Put this away")
+                    .xsmall()
+                    .on_click(cx.listener(|this, _, window, cx| this.dismiss_review(window, cx))),
+            );
+        }
+        Some(line)
+    }
+
     fn close_review(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.layers.close(Layer::Review) {
             self.review = None;
