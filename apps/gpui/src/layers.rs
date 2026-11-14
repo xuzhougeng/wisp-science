@@ -43,6 +43,8 @@ pub enum Layer {
     Capabilities,
     /// The trajectory of the open conversation: a dialog over it.
     Trajectory,
+    /// The review of the open conversation: a dialog over it.
+    Review,
     /// The name field in the Files panel: a new folder or file, or a rename.
     FileName,
     /// Question in the Files panel before an entry goes to the trash.
@@ -445,6 +447,11 @@ mod tests {
         stack.open(Layer::Trajectory);
         assert_eq!(stack.dismiss_top(), Some(Layer::Trajectory));
         assert!(stack.contains(Layer::FilesPanel));
+        assert!(stack.close(Layer::FilesPanel));
+        // So is the review.
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::Review);
+        assert_eq!(stack.dismiss_top(), Some(Layer::Review));
         assert!(stack.close(Layer::FilesPanel));
         // The project dialog opens over whatever is showing; Escape closes
         // it alone, and what was under it is still there.

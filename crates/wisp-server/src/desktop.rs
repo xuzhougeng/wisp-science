@@ -3079,6 +3079,36 @@ impl Server {
         }
     }
 
+    /// Has the conversation's model review the conversation as a
+    /// reviewer: where a claim is not borne out by the tool output it came
+    /// from. Nothing is added to the conversation and the report is not
+    /// kept. It waits for a running turn to end, because half a turn
+    /// cannot be judged.
+    pub async fn review_conversation(&self, project: &str, session: &str) -> Result<Review> {
+        self.own_conversation(project, session).await?;
+        ensure!(
+            !self.session(session).live.lock().unwrap().running,
+            "Wait for the turn to end before you ask for a review"
+        );
+        let store = &self.0.store;
+        let options = self.stored_options(session).await?;
+        let mut model = self.0.model.read().unwrap().pick(&options.model)?.provider;
+        // The request goes the way a turn would.
+        let routes = crate::network::load(store).await;
+        if let Some(route) = crate::network::route(&routes.model_proxy_url) {
+            model.proxy = Some(route);
+        }
+        let messages = self.whole_transcript(session).await?;
+        let provider = (self.0.models)(model);
+        match crate::review::ask(provider.as_ref(), &messages).await {
+            Ok(review) => Ok(review),
+            Err(error) => bail!(
+                "{}",
+                crate::network::explain(store, &format!("{error:#}")).await
+            ),
+        }
+    }
+
     /// Returns once the model is no longer being asked what could come
     /// next in a conversation: at once when it is not, and after a minute
     /// at the latest. The questions, if any, are then in the snapshot.
@@ -3608,6 +3638,7 @@ pub struct ProjectGrants {
 }
 
 pub use crate::aside::Exchange as AsideExchange;
+pub use crate::review::{Finding as ReviewFinding, Review};
 
 /// A project's folder, as the question before it is deleted describes it.
 #[derive(Clone, Debug, PartialEq, Eq)]

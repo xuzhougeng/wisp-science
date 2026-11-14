@@ -224,6 +224,7 @@ impl Workspace {
             Command::Calendar => return self.open_calendar(window, cx),
             Command::Capabilities => return self.open_capabilities(window, cx),
             Command::Trajectory => return self.open_trajectory(window, cx),
+            Command::Review => return self.open_review(window, cx),
             Command::SaveAsSkill => {
                 self.layers.close(Layer::Palette);
                 return self.ask_for_skill(window, cx);

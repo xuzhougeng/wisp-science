@@ -700,6 +700,15 @@ impl Backend {
         self.local(move |host| async move { host.revoke_project_grant(&project, &tool).await })
     }
 
+    /// Has the conversation's model review the conversation.
+    pub fn review_conversation(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<wisp_server::desktop::Review> {
+        self.local(move |host| async move { host.review_conversation(&project, &session).await })
+    }
+
     /// Asks the conversation's model a question about the conversation,
     /// without adding anything to it.
     pub fn ask_aside(

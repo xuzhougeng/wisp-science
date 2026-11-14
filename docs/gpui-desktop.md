@@ -138,6 +138,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Capabilities | A dialog for the open project: how many skills, connectors, MCP servers and SSH hosts are on or usable, the state of memory, and which command-line tools were found on this computer |
 | Follow-up questions | After an answer, up to three questions you could ask next show above the composer; picking one puts it in the composer to send or change, and the list can be put away |
 | Delete a project's folder | Removing a project offers Delete folder too: after you type the project's name, the project is removed and its folder is deleted with every file in it |
+| Review | A conversation's Review button (or the command palette) has the model read the conversation as a reviewer and lists claims its own tool output does not support, each with the evidence and a fix; Ask Wisp to correct puts the corrections in the composer |
 | Save as skill | A conversation's Save as skill button (or the command palette) puts a request in the composer that asks Wisp to distill the conversation into a reusable skill; you send it, changed or not |
 | Trajectory | A conversation's Trajectory button (or the command palette) shows every turn's steps in the order they happened: what you asked, what the model said, each tool with how it went and how long it took, and each model call with its tokens; the totals are at the top |
 | Windows | New Window (the app menu, Cmd/Ctrl+Shift+N, or the command palette) opens another window on the same projects, each with its own page and conversation |
@@ -329,6 +330,16 @@ Limits of this slice:
   and for the built-in workspace. If the folder cannot be deleted the
   project stays listed. The question counts up to 200,000 entries before
   it says "at least". A paired phone cannot ask for it.
+- A review is one model request without tools, made by the conversation's
+  own model: there is no separate reviewer model to choose, no automatic
+  review after a turn, and no review of a single turn. It reads the
+  conversation's latest messages up to 80,000 characters, with each
+  tool's arguments and output cut at 4,000, so a claim that rests on
+  something older or longer cannot be traced and is not reported. The
+  report is shown once and not kept: closing the dialog, switching
+  conversations or restarting loses it. It is refused while a turn runs.
+  Its tokens are not in the usage statistics or the trajectory. A model
+  that does not reply with a report gives an error, not an empty review.
 - Save as skill writes nothing by itself: it only puts the request in the
   composer, after whatever you had typed. The work is done by the bundled
   `skill-creator` skill in an ordinary turn, so it needs that skill turned
@@ -696,6 +707,13 @@ name, delete: the folder is gone from disk, the project and its
 conversations are gone from the home page, and the neighbouring folders
 are untouched. Register a folder that holds another project's folder and
 confirm deleting it is refused with the reason.
+In a conversation where a tool ran, press Review: the dialog says it is
+reading, then lists what was found, each with its claim, evidence and
+fix, or says nothing was found. Press Ask Wisp to correct: the dialog
+closes and the corrections are in the composer, after anything already
+typed, unsent. Press Review while a turn runs: the button is off. Open it
+and press Escape at once: only the dialog closes. Confirm the transcript
+is unchanged by a review.
 Press Save as skill in a conversation: the request is in the composer and
 nothing is sent; with a draft in the composer the request follows it; a
 second press adds nothing. Send it and confirm the model reads the

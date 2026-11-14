@@ -114,7 +114,7 @@ to find in the running app.
 | Sub-agent model [子智能体模型] | Yes | Missing | store |
 | Compute environment for the conversation [计算环境] | Yes | Partial: the default, this computer or a saved SSH host, for where runs start; Python, R and the shell stay on this computer | store |
 | Context usage meter and manual compaction | Yes | Partial: how full the context is, as a percentage; no breakdown and no manual compaction | served |
-| Request a review of the conversation [请求审查] | Yes | Missing | tauri |
+| Request a review of the conversation [请求审查] | Yes | Partial: a Review dialog lists what the conversation's model finds and puts the corrections in the composer; the report is not kept with the conversation and there is no separate reviewer model | tauri |
 | Share as long image or HTML [分享为长图] | Yes | Partial: Export saves the conversation as a Markdown file; no long image or HTML | ui |
 | Save the conversation as a skill [保存为技能] | Yes | Done: puts the request for the `skill-creator` skill in the composer, after anything already typed | shared |
 | Interactive runtime status (Python / R) [Local · Python · R] | Yes | Missing | shared |

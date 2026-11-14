@@ -17,6 +17,7 @@ mod palette_view;
 mod panel_tabs;
 mod project_settings;
 mod queue_view;
+mod review_view;
 mod settings_data;
 mod settings_environments;
 mod settings_mcp;
@@ -95,6 +96,8 @@ pub struct Workspace {
     /// why it could not be.
     capabilities: Option<wisp_server::desktop::Capabilities>,
     capabilities_error: Option<String>,
+    /// The review the dialog is showing or waiting for.
+    review: Option<crate::review::Asked>,
     trajectory: Option<wisp_dto::TrajectorySnapshotDto>,
     trajectory_error: Option<String>,
     /// The steps opened to show their whole text: (turn, step).
@@ -557,6 +560,7 @@ impl Workspace {
             asides: HashMap::new(),
             capabilities: None,
             capabilities_error: None,
+            review: None,
             trajectory: None,
             trajectory_error: None,
             trajectory_open: HashSet::new(),
@@ -763,6 +767,10 @@ impl Workspace {
                 self.clear_trajectory();
                 self.focus_composer(window, cx);
             }
+            Some(Layer::Review) => {
+                self.review = None;
+                self.focus_composer(window, cx);
+            }
             // The page stays open underneath.
             Some(Layer::JournalForm) => {}
             Some(Layer::ConfirmTrashFile) => self.file_trashing = None,
@@ -887,10 +895,12 @@ impl Workspace {
             Layer::Find,
             Layer::Outline,
             Layer::Trajectory,
+            Layer::Review,
         ] {
             self.layers.close(layer);
         }
         self.clear_trajectory();
+        self.review = None;
         self.find.clear();
         if self.state.session != session {
             self.saved.clear();
@@ -2219,6 +2229,11 @@ impl Render for Workspace {
         };
         let root = if self.layers.contains(Layer::Trajectory) {
             root.child(self.render_trajectory(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::Review) {
+            root.child(self.render_review(cx))
         } else {
             root
         };

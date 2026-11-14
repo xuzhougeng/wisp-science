@@ -4721,6 +4721,164 @@ async fn a_project_and_its_folder_are_deleted_only_when_its_name_is_typed() {
 }
 
 #[tokio::test]
+async fn a_review_reports_what_the_tool_output_does_not_support() {
+    // A model that runs a tool and answers, and reviews when asked to.
+    struct Reviewing {
+        read: Arc<Mutex<Vec<String>>>,
+    }
+    #[async_trait]
+    impl Provider for Reviewing {
+        fn name(&self) -> &str {
+            "offline"
+        }
+        fn model(&self) -> &str {
+            "reviewer-1"
+        }
+        async fn complete(
+            &self,
+            messages: &[Message],
+            tools: &[ToolSchema],
+        ) -> wisp_llm::Result<Completion> {
+            assert!(tools.is_empty(), "a reviewer has no tools");
+            assert!(messages[0]
+                .content
+                .as_text()
+                .starts_with("You are a REVIEWER"));
+            self.read
+                .lock()
+                .unwrap()
+                .push(messages[1].content.as_text());
+            Ok(Completion {
+                content: r#"{"summary":"Checked the write.","findings":[{"message_index":3,
+                    "claim":"Saved result","evidence":"the tool wrote answer.txt",
+                    "fix":"Name the file","verdict":"warn","severity":"low"}]}"#
+                    .into(),
+                finish_reason: Some("stop".into()),
+                ..Default::default()
+            })
+        }
+        async fn stream(
+            &self,
+            messages: &[Message],
+            _: &[ToolSchema],
+            sink: &mut dyn StreamSink,
+        ) -> wisp_llm::Result<Completion> {
+            if !messages
+                .iter()
+                .any(|message| message.role == wisp_llm::Role::Tool)
+            {
+                return Ok(Completion {
+                    tool_calls: vec![ToolCall {
+                        id: "call-1".into(),
+                        kind: "function".into(),
+                        function: wisp_llm::FunctionCall {
+                            name: "write".into(),
+                            arguments: json!({"path":"answer.txt", "content":"offline result"})
+                                .to_string(),
+                        },
+                    }],
+                    finish_reason: Some("tool_calls".into()),
+                    ..Default::default()
+                });
+            }
+            sink.on_text("Saved result");
+            Ok(Completion {
+                content: "Saved result".into(),
+                finish_reason: Some("stop".into()),
+                ..Default::default()
+            })
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let read = Arc::new(Mutex::new(Vec::new()));
+    let factory: ModelFactory = {
+        let read = read.clone();
+        Arc::new(move |_| Box::new(Reviewing { read: read.clone() }))
+    };
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let defaults = server.turn_defaults().await.unwrap();
+    server
+        .set_turn_defaults(desktop::TurnDefaults {
+            follow_ups: false,
+            ..defaults
+        })
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    // Before anything was said there is nothing to review, and the model
+    // is not asked.
+    let empty = server
+        .review_conversation(PROJECT, &session)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(empty.contains("nothing to review"), "{empty}");
+    assert!(read.lock().unwrap().is_empty());
+
+    send(&server, &session, "write the file").await.unwrap();
+    let asked = wait_for(&server, &session, |s| !s.approvals.is_empty() || !s.running).await;
+    // Half a turn cannot be judged.
+    if asked.running {
+        let early = server
+            .review_conversation(PROJECT, &session)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(early.contains("Wait for the turn"), "{early}");
+    }
+    for approval in &asked.approvals {
+        server
+            .answer_approval(
+                PROJECT,
+                &session,
+                &approval.approval_id,
+                true,
+                desktop::Remember::No,
+            )
+            .await
+            .unwrap();
+    }
+    let before = wait_for(&server, &session, |s| !s.running).await;
+
+    let review = server.review_conversation(PROJECT, &session).await.unwrap();
+    assert_eq!(review.summary, "Checked the write.");
+    assert_eq!(review.model, "reviewer-1");
+    assert_eq!(review.findings.len(), 1);
+    assert_eq!(review.findings[0].claim, "Saved result");
+    assert_eq!(review.findings[0].verdict, "warn");
+    assert!(review.correction().contains("1. Claim: Saved result"));
+    // The reviewer read the question, what the tool was given and what it
+    // answered, and the reply.
+    let transcript = read.lock().unwrap()[0].clone();
+    assert!(
+        transcript.starts_with("[msg:0 USER]\nwrite the file"),
+        "{transcript}"
+    );
+    assert!(transcript.contains("TOOL:write]\nargs:\n"), "{transcript}");
+    assert!(transcript.contains("answer.txt"), "{transcript}");
+    assert!(
+        transcript.contains("ASSISTANT]\nSaved result"),
+        "{transcript}"
+    );
+    // Nothing was added to the conversation.
+    let after = snapshot(&server, &session).await;
+    assert_eq!(after.items.len(), before.items.len());
+
+    assert!(server
+        .review_conversation("missing", &session)
+        .await
+        .is_err());
+    assert!(server
+        .review_conversation(PROJECT, "missing")
+        .await
+        .is_err());
+    assert!(!server.commands().iter().any(|name| name.contains("review")));
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_conversation_is_exported_whole_as_markdown() {
     let temp = tempfile::tempdir().unwrap();
     let calls = Arc::new(AtomicUsize::new(0));

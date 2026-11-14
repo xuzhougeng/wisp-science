@@ -347,6 +347,9 @@ impl Workspace {
         let busy = self.pending;
         let bar = div()
             .h_flex()
+            // With the side panel open the actions take a second line
+            // rather than run off the edge.
+            .flex_wrap()
             .gap_2()
             .px_4()
             .py_2()
@@ -471,6 +474,17 @@ impl Workspace {
                     .ghost()
                     .tooltip("Every step of this conversation, with what it took")
                     .on_click(cx.listener(|this, _, window, cx| this.open_trajectory(window, cx))),
+            )
+            .child(
+                Button::new("conversation-review")
+                    .label("Review")
+                    .small()
+                    .ghost()
+                    .tooltip(
+                        "Have the model check this conversation's claims against its tool output",
+                    )
+                    .disabled(running)
+                    .on_click(cx.listener(|this, _, window, cx| this.open_review(window, cx))),
             )
             .child(
                 Button::new("conversation-skill")

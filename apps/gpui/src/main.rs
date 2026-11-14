@@ -23,6 +23,7 @@ mod palette;
 mod panel;
 mod present;
 mod queue;
+mod review;
 mod settings;
 mod state;
 mod theme;
