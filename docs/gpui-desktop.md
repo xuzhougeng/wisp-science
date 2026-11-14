@@ -137,6 +137,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Project archives | Export on a project's card writes the project, its records and its files, as one zip; Import on the home page reads one and puts the project in a folder you choose |
 | Capabilities | A dialog for the open project: how many skills, connectors, MCP servers and SSH hosts are on or usable, the state of memory, and which command-line tools were found on this computer |
 | Follow-up questions | After an answer, up to three questions you could ask next show above the composer; picking one puts it in the composer to send or change, and the list can be put away |
+| Sample project | The home page's flask button makes a small sample project in a folder you choose and opens it: made-up counts for twelve samples, a script, and a README of things to ask |
 | File origin | A file's preview has Origin: which tool call last wrote it, with the code it ran, the project files it read and the conversation, which it can open |
 | Terminal | The Files tab's terminal button (or the command palette) opens the system's terminal in the folder being browsed |
 | Updates | Settings, General, has Check for updates: it says whether a newer release has been published and opens the release page |
@@ -331,6 +332,12 @@ Limits of this slice:
   for a last word without tools. Compaction uses the WebView's keys
   (`auto_compact`, `auto_compact_percent`). Auto-continue, compaction on a
   model switch and after idle hours are not ported.
+- The sample project is four small text files with made-up numbers,
+  written into a new folder ("Wisp sample project", numbered if that
+  exists) under the folder you choose, never over anything. Unlike the
+  WebView's example it has no prepared conversations and is not read
+  only: it is an ordinary project, and asking about it uses your model.
+  Removing it is removing a project.
 - Origin is known only for files written by tool calls since this was
   added: each call that reports what it ran is kept in the store's
   execution log (the table the WebView fills) when its turn ends, with
@@ -810,6 +817,9 @@ press Escape (the page stays), press Escape again (the page closes). Open the
 conversation an item came from. Have a turn write an image, save it from
 Artifacts, delete the file and confirm the figure still shows in Favorites.
 Delete a conversation and confirm what was saved from it is still listed.
+On the home page press the flask button and choose a folder: a "Wisp
+sample project" folder appears there and opens as a project with its
+README, data and script. Cancel the folder dialog: nothing is made.
 Have a turn write a file, open the file in the Files tab and press
 Origin: the line names the tool and the conversation, the code is shown,
 and Open the conversation goes there. For a file you made yourself it

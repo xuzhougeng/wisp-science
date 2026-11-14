@@ -60,7 +60,7 @@ to find in the running app.
 | Delete a project together with its local data | Second choice in the same dialog, with a countdown | Done: second choice in the same question; the project's name is typed instead of a countdown, and a folder that holds more than the project is refused | tauri |
 | Open in a new window [在新窗口打开] | Yes | Partial: a new window opens on the home page; a project cannot be sent to it from its card | ui |
 | Recent conversations across projects with status [最近会话] | Yes | Done | store |
-| Sample project, read-only [示例项目] | Yes | Missing | tauri |
+| Sample project, read-only [示例项目] | Yes | Partial: the home page makes a sample project (made-up data, a script, a README of things to ask) in a folder you choose; it is an ordinary project to work in, not a read-only tour with prepared conversations | tauri |
 | Research assistant [科研助理] | Scheduled tasks and plans | Missing | store |
 | Research calendar [研究日历] | Month grid, per-project filter, day detail | Done: month grid with counts, projects can be left out, and the chosen day's records | store |
 | Favorites library [收藏库] | Saved code, figures, highlights; search and kind filter | Done: a page of its own; saved snippets cannot be edited into versions | store |

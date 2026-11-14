@@ -718,6 +718,11 @@ impl Backend {
         self.local(move |host| async move { host.review_conversation(&project, &session).await })
     }
 
+    /// Makes a sample project in a new folder under `parent`.
+    pub fn create_sample_project(&self, parent: PathBuf) -> Reply<String> {
+        self.local(move |host| async move { host.create_sample_project(&parent).await })
+    }
+
     /// The tool call that last wrote a project file, if one is known.
     pub fn file_origin(
         &self,

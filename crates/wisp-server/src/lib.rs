@@ -16,6 +16,7 @@ mod project_folder;
 mod review;
 mod run_log;
 mod runtime;
+mod sample;
 #[cfg(test)]
 mod tests;
 mod tools_found;

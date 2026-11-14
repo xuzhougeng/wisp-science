@@ -816,6 +816,25 @@ impl Server {
         .map_err(anyhow::Error::msg)
     }
 
+    /// Makes a sample project in a new folder under `parent`: made-up
+    /// data, a script and a note on what to ask. Returns the project. It
+    /// is an ordinary project afterwards, the user's to change or remove.
+    pub async fn create_sample_project(&self, parent: &std::path::Path) -> Result<String> {
+        let parent = tokio::fs::canonicalize(parent)
+            .await
+            .context("Choose a folder to put the sample project in")?;
+        ensure!(
+            parent.is_dir(),
+            "Choose a folder to put the sample project in"
+        );
+        ensure!(
+            !parent.starts_with(&self.0.config.data),
+            "Keep project files separate from the host data directory"
+        );
+        let folder = tokio::task::spawn_blocking(move || crate::sample::write(&parent)).await??;
+        self.register_local_project(&folder).await
+    }
+
     /// What Wisp can draw on in `project`, counted: skills, connectors, MCP
     /// servers, SSH hosts, memory, and the command-line tools found on
     /// this computer.

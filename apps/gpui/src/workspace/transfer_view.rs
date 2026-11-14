@@ -123,4 +123,50 @@ impl Workspace {
         .detach();
         cx.notify();
     }
+
+    /// Asks where to put a sample project, makes it there and opens it.
+    /// Nothing is written until a folder is chosen.
+    pub(super) fn create_sample_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending || !self.ready {
+            return;
+        }
+        self.error = None;
+        self.notice = None;
+        let parent = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some(tr("Put the sample here").into()),
+        });
+        let backend = self.backend.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(parents))) = parent.await else {
+                return;
+            };
+            let Some(parent) = parents.into_iter().next() else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.pending = true;
+                cx.notify();
+            });
+            let result = receive(backend.create_sample_project(parent)).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.pending = false;
+                match result {
+                    Ok(project) => {
+                        this.notice = Some(
+                            tr("The sample project is ready. Its README says what to try.").into(),
+                        );
+                        this.load_projects(window, cx);
+                        this.enter_project(project, window, cx);
+                    }
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
 }

@@ -5474,6 +5474,38 @@ async fn a_file_is_traced_back_to_the_call_that_wrote_it() {
 }
 
 #[tokio::test]
+async fn a_sample_project_is_made_where_the_user_says() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let parent = temp.path().join("somewhere");
+    std::fs::create_dir(&parent).unwrap();
+    let project = server.create_sample_project(&parent).await.unwrap();
+    let folder = parent.join("Wisp sample project");
+    assert!(folder.join("data/counts.csv").is_file());
+    assert!(folder.join("scripts/summary.py").is_file());
+    // It is an ordinary project: listed, with its files, and conversable.
+    let listed = server.project_directory(&project, "").await.unwrap();
+    assert!(listed.entries.iter().any(|entry| entry.name == "README.md"));
+    server.create_conversation(&project).await.unwrap();
+    // A second one goes beside the first.
+    let second = server.create_sample_project(&parent).await.unwrap();
+    assert_ne!(second, project);
+    assert!(parent.join("Wisp sample project 2").is_dir());
+    // Not in Wisp's own data, and not in a folder that is not there.
+    assert!(server
+        .create_sample_project(&temp.path().join("data"))
+        .await
+        .is_err());
+    assert!(server
+        .create_sample_project(&temp.path().join("missing"))
+        .await
+        .is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_conversation_is_exported_whole_as_markdown() {
     let temp = tempfile::tempdir().unwrap();
     let calls = Arc::new(AtomicUsize::new(0));

@@ -335,6 +335,19 @@ impl Workspace {
                         ),
                     )
                     .child(
+                        icon_button(
+                            "home-sample",
+                            "flask",
+                            "Make a sample project to try Wisp on",
+                        )
+                        .disabled(self.pending)
+                        .on_click(
+                            cx.listener(|this, _, window, cx| {
+                                this.create_sample_project(window, cx)
+                            }),
+                        ),
+                    )
+                    .child(
                         icon_button("home-calendar", "calendar", tr("Research calendar")).on_click(
                             cx.listener(|this, _, window, cx| this.open_calendar(window, cx)),
                         ),

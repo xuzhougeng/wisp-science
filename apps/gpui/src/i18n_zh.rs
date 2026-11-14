@@ -703,4 +703,8 @@ pub const ZH: &[(&str, &str)] = &[
     ("a conversation", "某个会话"),
     ("Written by {} in “{}”.", "由 {} 在“{}”中写入。"),
     ("It read:", "它读取了："),
+    // Sample project.
+    ("Make a sample project to try Wisp on", "创建一个示例项目来试用 Wisp"),
+    ("Put the sample here", "把示例放在这里"),
+    ("The sample project is ready. Its README says what to try.", "示例项目已就绪。可以试什么，见其中的 README。"),
 ];
