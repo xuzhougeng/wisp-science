@@ -135,6 +135,8 @@ folder registers its research root; it does not import existing desktop chats.
 | Runs | Runs started by the conversation: kind, status, exit code, command and output tails on demand |
 | Files | Project file browser beside the transcript, available before the first conversation; read-only text and Markdown preview |
 | Composer | Native multiline input; Enter for newline, Cmd/Ctrl+Enter to send |
+| Plan first | The model investigates and submits a plan as a card; nothing is changed until you approve it, which leaves plan mode and starts the work |
+| Thinking | What the model is thinking, above the composer, while it thinks |
 | Conversation options | Ask first or Full access, the model, and reasoning effort, per conversation; both are kept across restarts and apply from the next message |
 | Usage | How full the context is, and the tokens the running or latest turn used |
 | Questions | When the model asks, a card with its options: one click answers, or type the answer |
@@ -190,8 +192,12 @@ Limits of this slice:
   for the standard tool question, is kept in memory, and is forgotten when the
   app restarts; "Ask again" under the transcript revokes it sooner.
 - Options changed while a turn runs apply to the next one. Token usage is not
-  stored: after a restart it is empty until the next turn. Plan first, thinking
-  blocks and fast mode are not ported.
+  stored: after a restart it is empty until the next turn. Thinking is shown
+  while it streams and is not kept in the transcript. Fast mode is not ported.
+- Plan mode uses the WebView's switch (`frame_plan_mode:<conversation>`) and its
+  prompt section, which now lives in `wisp_tools::plan` for any host to use;
+  `src-tauri` still carries its own copy of the same text. Approving sends
+  "Approve and execute", or whatever is typed in the composer.
 - A file attached from outside the project is copied into the project's
   `uploads` folder (up to 100 MB, never overwriting); a file inside it is used
   where it is. The model receives project-relative paths and reads the files
@@ -267,6 +273,9 @@ the conversation; have it run again and confirm no question appears; press Ask
 again and confirm the next run asks. Click Ask first, press Escape, then turn
 Full access on, restart, and confirm it and the chosen effort are still set.
 Open the effort menu and press Escape. Copy a message and paste it elsewhere.
+Turn Plan first on and ask for a change: a plan card appears and no file is
+written; approve it and confirm the work then runs and Plan first is off. With a
+model that reports reasoning, confirm the Thinking box appears and goes away.
 In Settings add two models, test the connection of one, make the second the
 default, choose the first for one conversation and confirm the header names it;
 ask to remove a model, press Escape (Settings stays), then remove it and confirm

@@ -220,6 +220,29 @@ impl Tool for UpdatePlanTool {
 /// Plan mode's output channel: the agent submits its finished plan here.
 pub const PROPOSE_PLAN: &str = "propose_plan";
 
+const PLAN_PROMPT_START: &str = "\n\n<plan_mode>";
+const PLAN_PROMPT_END: &str = "</plan_mode>";
+/// What a conversation in plan mode is told, as a section of its system
+/// prompt. Hosts add it with [`sync_plan_prompt`] and gate tools with
+/// `ToolEnv::plan_mode`.
+pub const PLAN_MODE_PROMPT: &str = "\n\n<plan_mode>\nThe user turned on plan mode for this conversation. Investigate the task and produce a plan; do not carry it out.\nResearch first — read files, search the project, and look things up until you actually understand the task. Then submit the plan with the `propose_plan` tool: ordered, concrete steps, each naming what would change and how it would be verified. Call out the open questions and the risks you found in your reply, not as plan steps. The tool call is how the plan reaches the user — a plan written only as prose is not submitted.\nDo not execute the plan. Tools that write files, run shell/Python/R code, or otherwise change state are blocked in this mode and will refuse the call; that refusal is expected, not an error to work around. End your turn right after `propose_plan` and wait for the user to approve it.\n</plan_mode>";
+
+/// Adds the plan-mode section to a system prompt, or removes it. Safe to
+/// call on a prompt that already has the section, or never had it.
+pub fn sync_plan_prompt(prompt: &mut String, enabled: bool) {
+    while let Some(at) = prompt.find(PLAN_PROMPT_START) {
+        let body = at + PLAN_PROMPT_START.len();
+        let Some(end) = prompt[body..].find(PLAN_PROMPT_END) else {
+            prompt.truncate(at);
+            break;
+        };
+        prompt.replace_range(at..body + end + PLAN_PROMPT_END.len(), "");
+    }
+    if enabled {
+        prompt.push_str(PLAN_MODE_PROMPT);
+    }
+}
+
 const PROPOSE_PLAN_NOTE: &str = "Plan submitted; it is now waiting for the user to approve it. \
      End your turn here — do not start carrying the plan out.";
 

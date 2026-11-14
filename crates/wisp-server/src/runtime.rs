@@ -35,6 +35,7 @@ pub async fn build(
     models: &crate::ModelFactory,
     reasoning_effort: Option<String>,
     references: &[wisp_dto::ComposerReferenceArg],
+    plan_mode: bool,
 ) -> Result<Agent> {
     let root = PathBuf::from(root);
     let skills = Arc::new(skill_index(config, &root));
@@ -47,6 +48,8 @@ pub async fn build(
         wisp_core::build_registry(skills.clone(), Arc::new(MemoryManager::new(&root)), true);
     // The model's way to stop and ask; the answer is the next user message.
     tools.add(Box::new(wisp_tools::ask_user::AskUserTool));
+    // How a plan reaches the user while the conversation is in plan mode.
+    tools.add(Box::new(wisp_tools::plan::ProposePlanTool));
     tools.add(Box::new(wisp_core::ExploreTool::from_config(
         cfg.clone(),
         model.max_context,
@@ -70,6 +73,17 @@ pub async fn build(
         Some(wisp_runs::cli_compute_section(store).await),
         None,
     );
+    // Plan mode is part of the system prompt, so switching it applies from
+    // the next turn and the saved prompt always says which mode it was.
+    if let Some(wisp_llm::Content::Text(prompt)) = agent
+        .ctx
+        .messages
+        .first_mut()
+        .filter(|message| message.role == Role::System)
+        .map(|message| &mut message.content)
+    {
+        wisp_tools::plan::sync_plan_prompt(prompt, plan_mode);
+    }
     if repaired > 0 {
         store
             .open_context_epoch(
@@ -259,6 +273,7 @@ pub async fn run(
     project: String,
     request: SendRequest,
     full_access: bool,
+    plan_mode: bool,
 ) -> Result<()> {
     let start_seq = store.max_message_seq(&request.session_id).await?;
     let mut next_event = store.next_session_ui_event_seq(&request.session_id).await?;
@@ -301,6 +316,7 @@ pub async fn run(
         turn: request.request_id,
         persist: tx,
         full_access,
+        plan_mode,
     };
     let result = agent
         .run(&request.message, &out, Some(&session.cancel))
@@ -417,6 +433,11 @@ pub fn items(messages: &[Message]) -> Vec<Item> {
                 };
                 row.text = bounded(&message.content.as_text());
                 row.status = Some("complete".into());
+                // A submitted plan is read here once, for every client.
+                if row.tool_name.as_deref() == Some(wisp_tools::plan::PROPOSE_PLAN) {
+                    row.proposal =
+                        wisp_dto::native_conversations::PlanProposal::from_text(&row.text);
+                }
             }
         }
     }
@@ -436,5 +457,37 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].text, "你好");
         assert!(bounded(&"中".repeat(50000)).ends_with("server]"));
+    }
+
+    #[test]
+    fn a_submitted_plan_is_parsed_and_a_refused_one_is_not() {
+        let plan = serde_json::json!({
+            "v": 1, "source": "native", "note": "…",
+            "entries": [
+                {"content": "Align the reads", "status": "pending", "priority": "high"},
+                {"content": "Count per gene", "status": "pending", "priority": "medium"}
+            ]
+        });
+        let rows = items(&[
+            Message::user("plan it"),
+            Message::tool("call-1", wisp_tools::plan::PROPOSE_PLAN, plan.to_string()),
+            Message::tool(
+                "call-2",
+                wisp_tools::plan::PROPOSE_PLAN,
+                "propose_plan error: 'entries' must not be empty",
+            ),
+            Message::tool("call-3", "shell", plan.to_string()),
+        ]);
+        let steps: Vec<_> = rows[1]
+            .proposal
+            .as_ref()
+            .unwrap()
+            .entries
+            .iter()
+            .map(|entry| entry.content.as_str())
+            .collect();
+        assert_eq!(steps, ["Align the reads", "Count per gene"]);
+        assert!(rows[2].proposal.is_none());
+        assert!(rows[3].proposal.is_none());
     }
 }

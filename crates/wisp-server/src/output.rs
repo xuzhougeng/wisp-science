@@ -63,6 +63,8 @@ pub struct Live {
     pub outcomes: HashMap<String, ToolOutcome>,
     pub approvals: HashMap<String, (PendingToolApproval, oneshot::Sender<ConfirmDecision>)>,
     pub usage: Option<TokenUsage>,
+    /// What the model is thinking in the request that is in flight.
+    pub reasoning: String,
     /// Tools the user allowed for the rest of this conversation. Kept in
     /// memory only: a restart asks again.
     pub allowed_tools: HashSet<String>,
@@ -111,6 +113,8 @@ pub struct ServerOutput {
     pub persist: mpsc::UnboundedSender<PersistedMessage>,
     /// The conversation runs tools that change things without asking.
     pub full_access: bool,
+    /// The conversation plans: tools that change things refuse to run.
+    pub plan_mode: bool,
 }
 
 impl Output for ServerOutput {
@@ -128,6 +132,12 @@ impl Output for ServerOutput {
     }
     fn assistant_text(&self, delta: &str) {
         self.session.live.lock().unwrap().draft.push_str(delta);
+    }
+    fn reasoning(&self, delta: &str) {
+        self.session.live.lock().unwrap().reasoning.push_str(delta);
+    }
+    fn plan_mode(&self) -> bool {
+        self.plan_mode
     }
     fn tool_result(&self, _: &str, ok: bool, _: &str, duration_ms: u64) {
         self.session.live.lock().unwrap().last_result = Some((ok, duration_ms));
@@ -156,6 +166,8 @@ impl Output for ServerOutput {
         let mut live = self.session.live.lock().unwrap();
         if msg.role == wisp_llm::Role::Assistant {
             live.draft.clear();
+            // The thought belonged to the request this message answers.
+            live.reasoning.clear();
         }
         live.messages.push(msg.clone());
         let outcome = if msg.role == wisp_llm::Role::Tool {
@@ -266,6 +278,7 @@ mod tests {
             turn: "t".into(),
             persist: tx,
             full_access: false,
+            plan_mode: false,
         };
         assert!(out.force_ask_mutations());
         assert!(!out.approval_bypass());
@@ -289,6 +302,7 @@ mod tests {
             turn: "t".into(),
             persist: mpsc::unbounded_channel().0,
             full_access,
+            plan_mode: false,
         }
     }
 

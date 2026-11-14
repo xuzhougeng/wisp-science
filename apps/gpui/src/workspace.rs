@@ -29,6 +29,7 @@ use wisp_server::desktop::{ConversationOptions, ConversationStatus};
 use crate::{
     backend::{Backend, receive},
     compose::{Chip, Pending},
+    controls,
     files::FilesState,
     home::{self, Screen},
     layers::{EscapeStack, Layer, Shortcut, is_escape, shortcut},
@@ -1180,6 +1181,72 @@ impl Workspace {
         // The header names the model this conversation runs on.
         self.start_poll(window, cx);
         self.focus_composer(window, cx);
+        cx.notify();
+    }
+
+    /// Plan first: the model investigates and proposes; nothing is changed.
+    fn toggle_plan_first(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let options = self.options();
+        let options = ConversationOptions {
+            plan_first: !options.plan_first,
+            ..options
+        };
+        self.set_options(options, window, cx);
+        self.focus_composer(window, cx);
+        cx.notify();
+    }
+
+    /// Leaves plan mode and, when `execute`, tells the model to go ahead:
+    /// with what is typed in the composer, or the standard words. Leaving
+    /// first matters: a message sent while still planning would be refused
+    /// the tools it needs.
+    fn decide_plan(&mut self, execute: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let selection = self.state.selection();
+        let (Some(project), Some(session)) = (selection.project.clone(), selection.session.clone())
+        else {
+            return;
+        };
+        if self.pending {
+            return;
+        }
+        self.pending = true;
+        self.error = None;
+        let options = ConversationOptions {
+            plan_first: false,
+            ..self.options()
+        };
+        let reply = self
+            .backend
+            .set_conversation_options(project, session, options);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.pending = false;
+                if !this.state.current(&selection) {
+                    return;
+                }
+                match result {
+                    Ok(options) => {
+                        if let Some(status) = &mut this.status {
+                            status.options = options;
+                        }
+                        if execute {
+                            let typed = this.composer.read(cx).value().to_string();
+                            if typed.trim().is_empty() {
+                                this.send_text(controls::APPROVE_PLAN.into(), false, window, cx);
+                            } else {
+                                this.send(window, cx);
+                            }
+                        } else {
+                            this.start_poll(window, cx);
+                        }
+                    }
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
         cx.notify();
     }
 

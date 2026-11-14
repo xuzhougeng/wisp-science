@@ -503,6 +503,95 @@ impl Workspace {
         div().w_full().px_6().py_2().child(card).into_any_element()
     }
 
+    /// A plan the model submitted. While it is the one waiting, it can be
+    /// approved here; approving leaves plan mode and starts the work.
+    fn plan_card(
+        &self,
+        index: usize,
+        steps: Vec<(String, wisp_dto::PlanStatus)>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
+        let planning = self.options().plan_first;
+        let waiting = controls::awaiting_approval(&self.rows, index, running, planning);
+        let accent = cx.theme().primary;
+        let muted = cx.theme().muted_foreground;
+        let mut card = div()
+            .v_flex()
+            .gap_2()
+            .p_3()
+            .rounded(cx.theme().radius_lg)
+            .border_1()
+            .border_color(accent.opacity(0.4))
+            .bg(accent.opacity(0.04))
+            .child(
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .child(icon("plan").text_color(accent))
+                    .child(div().font_weight(FontWeight::MEDIUM).child(if waiting {
+                        "Proposed plan — waiting for you"
+                    } else {
+                        "Proposed plan"
+                    })),
+            );
+        for (number, (step, status)) in steps.into_iter().enumerate() {
+            let (glyph_name, color) = match status {
+                wisp_dto::PlanStatus::Completed => ("circle-check", cx.theme().success),
+                wisp_dto::PlanStatus::InProgress => ("activity-orbit", cx.theme().info),
+                wisp_dto::PlanStatus::Pending => ("circle", muted),
+            };
+            card = card.child(
+                div()
+                    .h_flex()
+                    .items_start()
+                    .gap_2()
+                    .child(icon(glyph_name).mt(px(3.)).text_color(color))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_sm()
+                            .child(format!("{}. {step}", number + 1)),
+                    ),
+            );
+        }
+        if waiting {
+            card = card
+                .child(
+                    div()
+                        .h_flex()
+                        .gap_2()
+                        .pt_1()
+                        .child(
+                            Button::new(("plan-approve", index))
+                                .icon(glyph("play"))
+                                .label(controls::APPROVE_PLAN)
+                                .small()
+                                .primary()
+                                .disabled(self.pending)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.decide_plan(true, window, cx)
+                                })),
+                        )
+                        .child(
+                            Button::new(("plan-exit", index))
+                                .label("Leave plan mode")
+                                .small()
+                                .disabled(self.pending)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.decide_plan(false, window, cx)
+                                })),
+                        ),
+                )
+                .child(div().text_xs().text_color(muted).child(
+                    "To change the plan, say what to change below and send. \
+                     Anything typed there is sent with the approval.",
+                ));
+        }
+        div().w_full().px_6().py_2().child(card).into_any_element()
+    }
+
     /// One transcript row. Your messages sit in a bubble on the right, Wisp's
     /// answers are plain text, and tool calls fold into one line each.
     pub(super) fn row(
@@ -553,6 +642,9 @@ impl Workspace {
             "tool" => {
                 if let Some(question) = controls::question(item) {
                     return self.question_card(index, question, id, window, cx);
+                }
+                if let Some(steps) = controls::plan_steps(item) {
+                    return self.plan_card(index, steps, cx);
                 }
                 let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
                 let key = present::tool_key(item, index);
@@ -833,6 +925,20 @@ impl Workspace {
         let attention = tone_color(Tone::Attention, cx);
         let full = options.full_access;
 
+        let planning = options.plan_first;
+        let plan = Button::new("plan-first")
+            .icon(glyph("plan"))
+            .label(if planning { "Planning" } else { "Plan first" })
+            .small()
+            .ghost()
+            .selected(planning)
+            .tooltip(if planning {
+                "Wisp investigates and proposes a plan; it changes nothing until you approve"
+            } else {
+                "Have Wisp propose a plan before it changes anything"
+            })
+            .on_click(cx.listener(|this, _, window, cx| this.toggle_plan_first(window, cx)));
+
         let access = Button::new("access")
             .icon(glyph(if full { "bolt" } else { "shield" }))
             .label(if full { "Full access" } else { "Ask first" })
@@ -956,6 +1062,38 @@ impl Workspace {
             }
             area = area.child(line);
         }
+        // What the model is thinking, while it thinks.
+        let thinking = self
+            .status
+            .as_ref()
+            .map(|status| status.reasoning.as_str())
+            .filter(|text| running && !text.trim().is_empty());
+        if let Some(thinking) = thinking {
+            area = area.child(
+                div()
+                    .v_flex()
+                    .gap_1()
+                    .px_3()
+                    .py_2()
+                    .rounded(cx.theme().radius)
+                    .bg(cx.theme().muted)
+                    .child(
+                        div()
+                            .h_flex()
+                            .gap_2()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(icon("brain").text_color(muted))
+                            .child("Thinking"),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(controls::thinking_tail(thinking, 600)),
+                    ),
+            );
+        }
         if self.layers.contains(Layer::ConfirmFullAccess) {
             area = area.child(
                 div()
@@ -1048,6 +1186,7 @@ impl Workspace {
                                 .h_flex()
                                 .gap_1()
                                 .child(attach)
+                                .child(plan)
                                 .child(access)
                                 .child(model)
                                 .child(effort),

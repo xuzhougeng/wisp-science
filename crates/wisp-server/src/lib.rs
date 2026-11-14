@@ -426,6 +426,7 @@ impl Server {
             .try_acquire_owned()
             .context("Server is busy; at most four turns can run concurrently")?;
         let full_access = options.full_access;
+        let plan_mode = options.plan_first;
         let agent = runtime::build(
             &self.0.config,
             &model,
@@ -438,6 +439,7 @@ impl Server {
             &self.0.models,
             (!options.reasoning_effort.is_empty()).then_some(options.reasoning_effort),
             &request.references,
+            options.plan_first,
         )
         .await?;
         let page = self
@@ -471,6 +473,7 @@ impl Server {
             live.generation = live.generation.wrapping_add(1);
             live.error = None;
             live.usage = None;
+            live.reasoning.clear();
             live.draft.clear();
             live.messages = page.messages.into_iter().map(|(_, msg)| msg).collect();
             live.next_before_seq = page.next_before_seq;
@@ -492,6 +495,7 @@ impl Server {
                     project,
                     input,
                     full_access,
+                    plan_mode,
                 )
                 .await
             });
@@ -514,6 +518,7 @@ impl Server {
             live.approvals.clear();
             live.messages.clear();
             live.draft.clear();
+            live.reasoning.clear();
             live.error = error;
         });
         Ok(reply)
@@ -539,7 +544,8 @@ impl Server {
         session: &Session,
         generation: u64,
     ) -> Result<Option<Value>> {
-        let profile = self.stored_options(&request.session_id).await?.model;
+        let options = self.stored_options(&request.session_id).await?;
+        let profile = options.model;
         let page = self
             .0
             .store
@@ -616,7 +622,7 @@ impl Server {
             file_browser: Some(true),
             file_transfers: Some(false),
             follow_ups: vec![],
-            plan_mode: None,
+            plan_mode: Some(options.plan_first),
             fast_mode: None,
             acp_agent_id: None,
             acp: None,

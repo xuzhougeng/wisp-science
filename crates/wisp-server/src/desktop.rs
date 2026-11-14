@@ -872,6 +872,13 @@ impl Server {
                 .get_setting(&model_choice_key(session))
                 .await?
                 .unwrap_or_default(),
+            plan_first: self
+                .0
+                .store
+                .get_setting(&plan_mode_key(session))
+                .await?
+                .as_deref()
+                == Some("true"),
         })
     }
 
@@ -892,6 +899,7 @@ impl Server {
             options,
             usage: live.usage.clone(),
             allowed_tools,
+            reasoning: live.reasoning.clone(),
         })
     }
 
@@ -917,6 +925,12 @@ impl Server {
         let key = full_access_key(session);
         if options.full_access {
             self.0.store.set_setting(&key, "1").await?;
+        } else {
+            self.0.store.delete_setting(&key).await?;
+        }
+        let key = plan_mode_key(session);
+        if options.plan_first {
+            self.0.store.set_setting(&key, "true").await?;
         } else {
             self.0.store.delete_setting(&key).await?;
         }
@@ -996,7 +1010,11 @@ impl Server {
         self.own_conversation(project, session).await?;
         self.ensure_idle(session, "delete")?;
         self.0.store.delete_session(session, project).await?;
-        for key in [full_access_key(session), model_choice_key(session)] {
+        for key in [
+            full_access_key(session),
+            model_choice_key(session),
+            plan_mode_key(session),
+        ] {
             self.0.store.delete_setting(&key).await?;
         }
         self.0.sessions.lock().unwrap().remove(session);
@@ -1024,6 +1042,9 @@ pub struct ConversationOptions {
     /// Id of the model profile this conversation runs on. Empty follows the
     /// default profile, whichever that is at the time.
     pub model: String,
+    /// Investigate and propose a plan instead of carrying the task out.
+    /// Tools that change things refuse to run until this is turned off.
+    pub plan_first: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1033,6 +1054,13 @@ pub struct ConversationStatus {
     pub usage: Option<TokenUsage>,
     /// Tools allowed for the rest of this conversation, sorted.
     pub allowed_tools: Vec<String>,
+    /// What the model is thinking right now; empty when it is not.
+    pub reasoning: String,
+}
+
+/// The key the WebView desktop uses for the same switch.
+fn plan_mode_key(session: &str) -> String {
+    format!("frame_plan_mode:{session}")
 }
 
 fn model_choice_key(session: &str) -> String {

@@ -108,7 +108,7 @@ to find in the running app.
 | Model picker per conversation | Yes | Done: saved API models, or follow the default | served |
 | Reasoning effort / fast mode | Yes | Partial: effort per conversation, kept across restarts; no fast mode | store |
 | Permission mode [默认 / 完全权限] | Yes | Done: Ask first or Full access per conversation, with a question before it turns on; dangerous shell commands still ask | served |
-| Plan first [先计划] | Yes | Missing | tauri |
+| Plan first [先计划] | Yes | Done: the model investigates and submits a plan; tools that change things refuse until the plan is approved or plan mode is left | served |
 | Expert (persona) for the conversation [专家] | Yes | Missing | tauri |
 | Automatic review toggle and review model [自动审查] | Yes | Missing | tauri |
 | Sub-agent model [子智能体模型] | Yes | Missing | store |
@@ -129,7 +129,7 @@ to find in the running app.
 | Approvals: allow once / deny | Plus allow for session / always | Partial: once, or for the rest of the conversation (forgotten on restart, can be revoked); no project-wide or permanent rules | served |
 | Agent question card with free-text answer [Agent 需要你的决定] | Yes | Done: options answer with one click, or type the answer | served |
 | Follow-up suggestions | Yes | Missing | tauri |
-| Thinking blocks | Yes | Missing | served |
+| Thinking blocks | Yes | Partial: shown above the composer while the model thinks; not kept in the transcript afterwards | served |
 | Images and figures inline | Yes | Missing | served |
 | Token usage per turn | Yes | Partial: the running or latest turn only, and not after a restart | served |
 | Skill and attachment chips on the user message | Yes | Partial: file chips; references are context for that turn only and are not shown afterwards | served |
@@ -253,7 +253,7 @@ Found in the sources rather than on screen; all `Missing` in GPUI.
 | Transcript | Quote a range of turns into another conversation; distill an experience | tauri |
 | Transcript | Explorations: start, diff, promote to mainline, discard, abandon | store |
 | Transcript | Branch cards and merge a branch back with a summary | store |
-| Transcript | Plan card (approve and run / not now) and plan review | served |
+| Transcript | Plan card: approve and run, or leave plan mode — **Done**. Plan review with per-step feedback, and the execution-plan progress strip — Missing | served |
 | Transcript | Reviewer findings panel and the automatic correction pass | tauri |
 | Transcript | MCP App previews; Motif DNA selection | tauri |
 | Context | Usage breakdown panel, compact dialog (regular / semantic), handoff note to a new conversation, too-long recovery | tauri |
@@ -304,7 +304,7 @@ before the things that hang in it.
 4. **Model profiles** — several saved models, presets, default, connection
    test, and the model per conversation. *(done)*
 4a. **Plan first and thinking** — plan mode with its plan card; reasoning
-   shown while it streams.
+   shown while it streams. *(done; thinking is not kept after the turn)*
 5. **Attachments and mentions** — files, images, `@`, `#`, `/`. *(done for
    files, conversations and skills; paste, drop, images as model input and
    inline triggers remain)*

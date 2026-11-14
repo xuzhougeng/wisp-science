@@ -1185,7 +1185,7 @@ async fn desktop_conversation_options_shape_the_next_turn() {
     let options = |full_access, effort: &str| desktop::ConversationOptions {
         full_access,
         reasoning_effort: effort.into(),
-        model: String::new(),
+        ..Default::default()
     };
     let asking = create(&server).await;
     assert_eq!(
@@ -1518,5 +1518,78 @@ async fn desktop_messages_carry_project_files_and_turn_scoped_references() {
     .await
     .unwrap_err();
     assert!(refused.contains("text messages"), "{refused}");
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_conversation_in_plan_mode_is_told_so_and_cannot_change_anything() {
+    let temp = tempfile::tempdir().unwrap();
+    let cfg = config(temp.path());
+    let server = Server::open_with_models(cfg.clone(), models(Arc::default(), true))
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    let instructions = || async {
+        server
+            .0
+            .store
+            .load_system_messages(std::slice::from_ref(&session))
+            .await
+            .unwrap()
+            .remove(&session)
+            .unwrap()
+    };
+    let plan = |plan_first| desktop::ConversationOptions {
+        plan_first,
+        ..Default::default()
+    };
+    assert_eq!(snapshot(&server, &session).await.plan_mode, Some(false));
+    assert!(
+        server
+            .set_conversation_options(PROJECT, &session, plan(true))
+            .await
+            .unwrap()
+            .plan_first
+    );
+    assert_eq!(snapshot(&server, &session).await.plan_mode, Some(true));
+
+    // The model tries to write. Plan mode refuses before any question is
+    // asked, and nothing is written.
+    send(&server, &session, "write the answer").await.unwrap();
+    let done = wait_for(&server, &session, |s| !s.running).await;
+    assert!(done.approvals.is_empty() && done.error.is_none());
+    assert!(!cfg.workspace.join("answer.txt").exists());
+    let refused = done
+        .items
+        .iter()
+        .find(|item| item.tool_name.as_deref() == Some("write"))
+        .unwrap();
+    assert_eq!(refused.ok, Some(false));
+    assert!(refused.text.contains("plan"), "{}", refused.text);
+    assert!(instructions().await.contains("<plan_mode>"));
+
+    // Leaving plan mode takes the section out again from the next turn, and
+    // the switch goes away with the conversation.
+    server
+        .set_conversation_options(PROJECT, &session, plan(false))
+        .await
+        .unwrap();
+    send(&server, &session, "carry on").await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    assert!(!instructions().await.contains("<plan_mode>"));
+    server
+        .set_conversation_options(PROJECT, &session, plan(true))
+        .await
+        .unwrap();
+    server.delete_conversation(PROJECT, &session).await.unwrap();
+    assert_eq!(
+        server
+            .0
+            .store
+            .get_setting(&format!("frame_plan_mode:{session}"))
+            .await
+            .unwrap(),
+        None
+    );
     server.shutdown().await;
 }

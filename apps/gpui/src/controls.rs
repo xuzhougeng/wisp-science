@@ -127,6 +127,51 @@ pub fn awaiting_answer(rows: &[Item], index: usize, running: bool) -> bool {
             .all(|row| row.role == "assistant" && row.text.trim().is_empty())
 }
 
+/// What approving a plan sends when nothing else is typed. The WebView's.
+pub const APPROVE_PLAN: &str = "Approve and execute";
+
+/// The steps of a plan the model submitted, with whether each is done.
+pub fn plan_steps(item: &Item) -> Option<Vec<(String, wisp_dto::PlanStatus)>> {
+    let proposal = item.proposal.as_ref()?;
+    let steps: Vec<_> = proposal
+        .entries
+        .iter()
+        .filter(|entry| !entry.content.trim().is_empty())
+        .map(|entry| (entry.content.trim().to_owned(), entry.status))
+        .collect();
+    (!steps.is_empty()).then_some(steps)
+}
+
+/// Whether the plan in row `index` is the one waiting for a decision: the
+/// conversation is still planning, the turn has ended, and nothing has been
+/// asked or proposed since.
+pub fn awaiting_approval(rows: &[Item], index: usize, running: bool, planning: bool) -> bool {
+    planning
+        && !running
+        && rows.get(index).and_then(plan_steps).is_some()
+        && rows[index + 1..]
+            .iter()
+            .all(|row| row.role != "user" && plan_steps(row).is_none())
+}
+
+/// The end of what the model is thinking, short enough to sit above the
+/// composer. Whole lines only, so it does not start mid-sentence.
+pub fn thinking_tail(text: &str, limit: usize) -> String {
+    let text = text.trim();
+    if text.len() <= limit {
+        return text.to_owned();
+    }
+    let mut start = text.len() - limit;
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    let tail = &text[start..];
+    match tail.split_once('\n') {
+        Some((_, rest)) if !rest.trim().is_empty() => format!("…\n{}", rest.trim_start()),
+        _ => format!("…{tail}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,5 +316,59 @@ mod tests {
         // An empty trailing assistant row is not an answer.
         let trailing = [asked, item("assistant", None, " ", None)];
         assert!(awaiting_answer(&trailing, 0, false));
+    }
+
+    fn proposal(entries: serde_json::Value) -> Item {
+        serde_json::from_value(json!({
+            "role": "tool", "text": "", "tool_name": "propose_plan", "input": null,
+            "ok": true, "status": "complete",
+            "proposal": {"entries": entries, "source": "native"}
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_plan_waits_for_a_decision_only_while_it_is_the_latest_word() {
+        let plan = proposal(json!([
+            {"content": " Align the reads ", "status": "pending", "priority": "high"},
+            {"content": "", "status": "pending", "priority": "low"},
+            {"content": "Count per gene", "status": "completed", "priority": "medium"}
+        ]));
+        assert_eq!(
+            plan_steps(&plan).unwrap(),
+            [
+                ("Align the reads".to_string(), wisp_dto::PlanStatus::Pending),
+                (
+                    "Count per gene".to_string(),
+                    wisp_dto::PlanStatus::Completed
+                )
+            ]
+        );
+        assert!(plan_steps(&proposal(json!([]))).is_none());
+        assert!(plan_steps(&item("tool", Some("shell"), "x", Some(true))).is_none());
+
+        let closing = item("assistant", None, "That is the plan.", None);
+        let rows = [plan.clone(), closing];
+        assert!(awaiting_approval(&rows, 0, false, true));
+        // Not while the turn runs, and not once plan mode is off.
+        assert!(!awaiting_approval(&rows, 0, true, true));
+        assert!(!awaiting_approval(&rows, 0, false, false));
+        assert!(!awaiting_approval(&rows, 1, false, true));
+        // Answered, or replaced by a newer plan.
+        let answered = [plan.clone(), item("user", None, "Change step 2", None)];
+        assert!(!awaiting_approval(&answered, 0, false, true));
+        let revised = [plan.clone(), plan];
+        assert!(!awaiting_approval(&revised, 0, false, true));
+        assert!(awaiting_approval(&revised, 1, false, true));
+    }
+
+    #[test]
+    fn the_thinking_preview_keeps_the_end_and_starts_on_a_line() {
+        assert_eq!(thinking_tail("  short thought  ", 80), "short thought");
+        let long = "first line that is long\nsecond line\nthird line";
+        assert_eq!(thinking_tail(long, 26), "…\nsecond line\nthird line");
+        // One long line is cut where it must be, on a character boundary.
+        assert_eq!(thinking_tail("推理推理推理推理", 7), "…推理");
+        assert_eq!(thinking_tail("", 10), "");
     }
 }
