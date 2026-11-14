@@ -44,6 +44,7 @@ pub enum Command {
     ProjectSettings,
     Find,
     Journey,
+    Papers,
     Calendar,
     NewWindow,
     Capabilities,
@@ -77,6 +78,7 @@ impl Command {
             Command::ProjectSettings => tr("Project settings"),
             Command::Find => tr("Find in this conversation"),
             Command::Journey => tr("Research journey"),
+            Command::Papers => tr("Paper evidence"),
             Command::Calendar => tr("Research calendar"),
             Command::NewWindow => tr("New window"),
             Command::Capabilities => tr("Capabilities of this project"),
@@ -109,6 +111,7 @@ impl Command {
             Command::ProjectSettings => "adjustments",
             Command::Find => "search",
             Command::Journey => "timeline",
+            Command::Papers => "doc",
             Command::Calendar => "calendar",
             Command::NewWindow => "dock",
             Command::Capabilities => "sparkles",
@@ -137,6 +140,7 @@ impl Command {
             | Command::ProjectSettings
             | Command::Find
             | Command::Journey
+            | Command::Papers
             | Command::Capabilities
             | Command::Trajectory
             | Command::Aside
@@ -156,7 +160,7 @@ impl Command {
         }
     }
 
-    const ALL: [Command; 28] = [
+    const ALL: [Command; 29] = [
         Command::NewConversation,
         Command::OpenFolder,
         Command::Home,
@@ -175,6 +179,7 @@ impl Command {
         Command::ProjectSettings,
         Command::Find,
         Command::Journey,
+        Command::Papers,
         Command::Calendar,
         Command::NewWindow,
         Command::Capabilities,

@@ -236,6 +236,10 @@ impl Workspace {
                     .on_click(cx.listener(|this, _, window, cx| this.open_journey(window, cx))),
             )
             .child(
+                nav_row("papers", "doc", tr("Papers"), false, has_project, cx)
+                    .on_click(cx.listener(|this, _, window, cx| this.open_papers(window, cx))),
+            )
+            .child(
                 nav_row("favorites", "star", tr("Favorites"), false, true, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.open_favorites(window, cx))),
             )

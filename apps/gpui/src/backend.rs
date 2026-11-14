@@ -785,6 +785,103 @@ impl Backend {
         self.local(|host| async move { host.check_for_update().await })
     }
 
+    /// The papers the project is writing.
+    pub fn papers(&self, project: String) -> Reply<Vec<wisp_server::desktop::PaperRow>> {
+        self.local(move |host| async move { host.papers(&project).await })
+    }
+
+    /// One paper at a version, or at its newest.
+    pub fn paper(
+        &self,
+        project: String,
+        paper: String,
+        version: Option<String>,
+    ) -> Reply<wisp_server::desktop::Paper> {
+        self.local(
+            move |host| async move { host.paper(&project, &paper, version.as_deref()).await },
+        )
+    }
+
+    pub fn create_paper(
+        &self,
+        project: String,
+        input: wisp_server::desktop::PaperInput,
+    ) -> Reply<wisp_server::desktop::Paper> {
+        self.local(move |host| async move { host.create_paper(&project, input).await })
+    }
+
+    pub fn rename_paper(
+        &self,
+        project: String,
+        paper: String,
+        title: String,
+        description: String,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.rename_paper(&project, &paper, &title, &description)
+                .await
+        })
+    }
+
+    pub fn delete_paper(&self, project: String, paper: String) -> Reply<()> {
+        self.local(move |host| async move { host.delete_paper(&project, &paper).await })
+    }
+
+    pub fn save_paper_item(
+        &self,
+        project: String,
+        version: String,
+        input: wisp_server::desktop::PaperItemInput,
+    ) -> Reply<()> {
+        self.local(move |host| async move { host.save_paper_item(&project, &version, input).await })
+    }
+
+    pub fn delete_paper_item(&self, project: String, version: String, item: String) -> Reply<()> {
+        self.local(
+            move |host| async move { host.delete_paper_item(&project, &version, &item).await },
+        )
+    }
+
+    /// Results or runs to choose evidence from, and whether more follow.
+    pub fn paper_source_choices(
+        &self,
+        project: String,
+        kind: wisp_server::desktop::PaperSourceKind,
+        query: String,
+        offset: u32,
+    ) -> Reply<(Vec<wisp_server::desktop::PaperSourceChoice>, bool)> {
+        self.local(move |host| async move {
+            host.paper_source_choices(&project, kind, &query, offset)
+                .await
+        })
+    }
+
+    pub fn bind_paper_source(
+        &self,
+        project: String,
+        version: String,
+        item: String,
+        kind: wisp_server::desktop::PaperSourceKind,
+        source: String,
+        purpose: String,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.bind_paper_source(&project, &version, &item, kind, &source, &purpose)
+                .await
+        })
+    }
+
+    pub fn unbind_paper_source(
+        &self,
+        project: String,
+        version: String,
+        binding: String,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.unbind_paper_source(&project, &version, &binding).await
+        })
+    }
+
     /// The decision model as the form shows it; never its key.
     pub fn decision_model(&self) -> Reply<wisp_dto::DecisionModelSettings> {
         self.local(|host| async move { host.decision_model().await })

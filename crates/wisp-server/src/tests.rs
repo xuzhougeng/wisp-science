@@ -5964,3 +5964,218 @@ async fn conversations_map_over_items_and_decide_only_with_a_decision_model() {
     let after = server.clear_decision_model_key("typesafe").await.unwrap();
     assert_eq!(after, saved);
 }
+
+#[tokio::test]
+async fn a_paper_keeps_its_figures_with_the_results_and_runs_they_rest_on() {
+    use desktop::{PaperInput, PaperItemInput, PaperItemKind, PaperSourceKind};
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), true))
+        .await
+        .unwrap();
+    assert!(!server
+        .commands()
+        .iter()
+        .any(|command| command.contains("paper") || command.contains("publication")));
+    assert!(server.papers(PROJECT).await.unwrap().is_empty());
+    assert!(server.papers("missing").await.is_err());
+
+    // A paper needs a title; its first version has the usual name.
+    let blank = PaperInput::default();
+    assert!(server.create_paper(PROJECT, blank).await.is_err());
+    let paper = server
+        .create_paper(
+            PROJECT,
+            PaperInput {
+                title: "  Plasmid copy number ".into(),
+                description: " draft for the lab meeting ".into(),
+                version: String::new(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(paper.title, "Plasmid copy number");
+    assert_eq!(paper.description, "draft for the lab meeting");
+    assert_eq!(paper.versions.len(), 1);
+    assert_eq!(paper.versions[0].label, "Initial submission");
+    assert_eq!(paper.versions[0].state, desktop::PaperVersionState::Draft);
+    assert!(paper.editable && paper.items.is_empty());
+    let version = paper.shown.clone();
+    assert_eq!(server.papers(PROJECT).await.unwrap()[0].id, paper.id);
+
+    // Figures and tables are added in order and can be changed.
+    let item = |kind, title: &str| PaperItemInput {
+        id: String::new(),
+        kind,
+        title: title.into(),
+        note: String::new(),
+    };
+    server
+        .save_paper_item(PROJECT, &version, item(PaperItemKind::Figure, "Figure 1"))
+        .await
+        .unwrap();
+    server
+        .save_paper_item(PROJECT, &version, item(PaperItemKind::Table, "Table 1"))
+        .await
+        .unwrap();
+    assert!(server
+        .save_paper_item(PROJECT, &version, item(PaperItemKind::Figure, " "))
+        .await
+        .is_err());
+    assert!(server
+        .save_paper_item(PROJECT, "missing", item(PaperItemKind::Figure, "Figure 2"))
+        .await
+        .is_err());
+    let shown = server.paper(PROJECT, &paper.id, None).await.unwrap();
+    let titles: Vec<_> = shown.items.iter().map(|item| item.title.as_str()).collect();
+    assert_eq!(titles, ["Figure 1", "Table 1"]);
+    let figure = shown.items[0].id.clone();
+    server
+        .save_paper_item(
+            PROJECT,
+            &version,
+            PaperItemInput {
+                id: figure.clone(),
+                kind: PaperItemKind::Figure,
+                title: "Figure 1: copy number by strain".into(),
+                note: "qPCR, three replicates".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+    // A run of the project is offered as evidence and bound with a reason.
+    let run = wisp_store::RunRecord::new("run-qpcr", PROJECT, "local", "qpcr_fit.py", "script");
+    server.0.store.create_run(&run).await.unwrap();
+    let (runs, more) = server
+        .paper_source_choices(PROJECT, PaperSourceKind::Run, "QPCR", 0)
+        .await
+        .unwrap();
+    assert!(!more);
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].name, "qpcr_fit.py");
+    assert!(server
+        .paper_source_choices(PROJECT, PaperSourceKind::Other, "", 0)
+        .await
+        .is_err());
+    server
+        .bind_paper_source(
+            PROJECT,
+            &version,
+            &figure,
+            PaperSourceKind::Run,
+            &runs[0].id,
+            " the fit behind panel B ",
+        )
+        .await
+        .unwrap();
+    // A source that is not there, or an item of no version, is refused.
+    for (item, source) in [(figure.as_str(), "run-absent"), ("item-absent", "run-qpcr")] {
+        assert!(server
+            .bind_paper_source(PROJECT, &version, item, PaperSourceKind::Run, source, "")
+            .await
+            .is_err());
+    }
+
+    // A file a turn wrote is a result of the project, bound at the
+    // version it has now.
+    let session = create(&server).await;
+    server
+        .set_conversation_options(
+            PROJECT,
+            &session,
+            desktop::ConversationOptions {
+                full_access: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    send(&server, &session, "write the answer").await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    let (results, _) = server
+        .paper_source_choices(PROJECT, PaperSourceKind::Result, "", 0)
+        .await
+        .unwrap();
+    assert_eq!(results.len(), 1, "{results:?}");
+    server
+        .bind_paper_source(
+            PROJECT,
+            &version,
+            &figure,
+            PaperSourceKind::Result,
+            &results[0].id,
+            "",
+        )
+        .await
+        .unwrap();
+
+    let shown = server
+        .paper(PROJECT, &paper.id, Some(&version))
+        .await
+        .unwrap();
+    assert_eq!(shown.items[0].title, "Figure 1: copy number by strain");
+    assert_eq!(shown.items[0].note, "qPCR, three replicates");
+    let sources = &shown.items[0].sources;
+    assert_eq!(sources.len(), 2);
+    let of_run = sources
+        .iter()
+        .find(|source| source.kind == PaperSourceKind::Run)
+        .unwrap();
+    assert_eq!(of_run.name, "qpcr_fit.py");
+    assert_eq!(of_run.purpose, "the fit behind panel B");
+    let of_result = sources
+        .iter()
+        .find(|source| source.kind == PaperSourceKind::Result)
+        .unwrap();
+    assert_eq!(of_result.name, results[0].name);
+    assert!(shown.items[1].sources.is_empty() && shown.loose.is_empty());
+
+    // Evidence and items are removed one at a time.
+    server
+        .unbind_paper_source(PROJECT, &version, &of_run.id)
+        .await
+        .unwrap();
+    assert!(server
+        .unbind_paper_source(PROJECT, &version, &of_run.id)
+        .await
+        .is_err());
+    let table = shown.items[1].id.clone();
+    server
+        .delete_paper_item(PROJECT, &version, &table)
+        .await
+        .unwrap();
+    assert!(server
+        .delete_paper_item(PROJECT, &version, &table)
+        .await
+        .is_err());
+    let shown = server.paper(PROJECT, &paper.id, None).await.unwrap();
+    assert_eq!(shown.items.len(), 1);
+    assert_eq!(shown.items[0].sources.len(), 1);
+
+    // A paper belongs to its project.
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    assert!(server.paper(&lab, &paper.id, None).await.is_err());
+    assert!(server.delete_paper(&lab, &paper.id).await.is_err());
+    assert!(server
+        .save_paper_item(&lab, &version, item(PaperItemKind::Claim, "Claim"))
+        .await
+        .is_err());
+
+    server
+        .rename_paper(PROJECT, &paper.id, "Copy number control", "")
+        .await
+        .unwrap();
+    assert!(server
+        .rename_paper(PROJECT, &paper.id, "", "")
+        .await
+        .is_err());
+    assert_eq!(
+        server.papers(PROJECT).await.unwrap()[0].title,
+        "Copy number control"
+    );
+    server.delete_paper(PROJECT, &paper.id).await.unwrap();
+    assert!(server.papers(PROJECT).await.unwrap().is_empty());
+    server.shutdown().await;
+}

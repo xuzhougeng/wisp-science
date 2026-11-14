@@ -88,7 +88,7 @@ to find in the running app.
 | Files entry [文件] | Opens the Files panel | Done | served |
 | Research journey [研究历程] | Section 7 | Partial: see section 7 | store |
 | Memos [备忘录] | Section 6 | Done | store |
-| Paper evidence [论文证据] | Section 7 | Missing | store |
+| Paper evidence [论文证据] | Section 7 | Partial: see section 7 | store |
 | Favorites [收藏库] | Section 1 | Done | store |
 | Capability summary [能力]: skills, MCP, memory counts, local tools found | Dialog | Done: counts of skills, connectors, MCP servers, SSH hosts and memory, and the tools found on the search path | shared |
 | Feedback [反馈] | Yes | Partial: "Report a problem" in Settings and the command palette opens the issue tracker; the report the model drafts with the app's version and system is not ported | ui |
@@ -184,7 +184,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Feature | WebView | GPUI | Host |
 | --- | --- | --- | --- |
 | Research journey [研究历程]: by day, relation graph, search, add record, recap, artifact sources | Yes | Partial: a month at a time by day, a filter, and adding a record of your own; no relation graph, recap or artifact sources | store |
-| Paper evidence [论文证据]: papers, versions, figures and tables with their sources | Yes | Missing | store |
+| Paper evidence [论文证据]: papers, versions, figures and tables with their sources | Yes | Partial: a page of papers with their versions, and figures, tables and claims bound to project results and runs with a reason; no finalizing, new versions, readiness check, capsules or reproduction, and no conversation passages as evidence | store |
 
 ## 8. Settings
 

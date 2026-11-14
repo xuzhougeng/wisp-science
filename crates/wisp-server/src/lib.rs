@@ -12,6 +12,7 @@ mod model_view;
 mod network;
 mod origin;
 mod output;
+mod papers;
 mod pet;
 mod project_archive;
 mod project_folder;

@@ -18,6 +18,7 @@ mod notebook_view;
 mod organise_view;
 mod palette_view;
 mod panel_tabs;
+mod papers_view;
 mod pet_view;
 mod project_settings;
 mod queue_view;
@@ -139,6 +140,26 @@ pub struct Workspace {
     journey: Option<wisp_dto::ResearchJourney>,
     journey_request: u64,
     journey_search: Entity<InputState>,
+    /// The open project's papers, and the one the page shows.
+    papers: Vec<wisp_server::desktop::PaperRow>,
+    paper: Option<wisp_server::desktop::Paper>,
+    paper_request: u64,
+    /// The paper form renames the shown paper instead of adding one.
+    paper_renaming: bool,
+    /// Title, description, first version.
+    paper_fields: [Entity<InputState>; 3],
+    /// Title, note.
+    paper_item_fields: [Entity<InputState>; 2],
+    paper_item_kind: wisp_server::desktop::PaperItemKind,
+    /// The item in the form; empty is a new one.
+    paper_item_editing: Option<String>,
+    /// The item evidence is being chosen for.
+    paper_source_item: Option<String>,
+    paper_source_kind: wisp_server::desktop::PaperSourceKind,
+    /// Search, why it was chosen.
+    paper_source_fields: [Entity<InputState>; 2],
+    paper_choices: Vec<wisp_server::desktop::PaperSourceChoice>,
+    paper_choices_more: bool,
     journal_fields: [Entity<InputState>; 2],
     journal_category: &'static str,
     /// What the Files panel's name field is for, and the field; the entry
@@ -451,6 +472,19 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
         ];
         let mcp_target = cx.new(|cx| InputState::new(window, cx));
+        let paper_fields = [
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx)),
+        ];
+        let paper_item_fields = [
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx).multi_line(true)),
+        ];
+        let paper_source_fields = [
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx)),
+        ];
         let decision_fields = [
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx)),
@@ -677,6 +711,19 @@ impl Workspace {
             journey: None,
             journey_request: 0,
             journey_search,
+            papers: Vec::new(),
+            paper: None,
+            paper_request: 0,
+            paper_renaming: false,
+            paper_fields,
+            paper_item_fields,
+            paper_item_kind: wisp_server::desktop::PaperItemKind::Figure,
+            paper_item_editing: None,
+            paper_source_item: None,
+            paper_source_kind: wisp_server::desktop::PaperSourceKind::Result,
+            paper_source_fields,
+            paper_choices: Vec::new(),
+            paper_choices_more: false,
             journal_fields,
             journal_category: "progress",
             file_naming: None,
@@ -915,6 +962,16 @@ impl Workspace {
             }
             // The page stays open underneath.
             Some(Layer::JournalForm) => {}
+            Some(Layer::Papers) => {
+                self.paper = None;
+                self.focus_composer(window, cx);
+            }
+            Some(
+                Layer::PaperForm
+                | Layer::PaperItemForm
+                | Layer::PaperSources
+                | Layer::ConfirmRemovePaper,
+            ) => {}
             Some(Layer::ConfirmTrashFile) => self.file_trashing = None,
             // Menus and questions that hold no focus of their own.
             Some(
@@ -960,6 +1017,7 @@ impl Workspace {
                     || self.layers.contains(Layer::Settings)
                     || self.layers.contains(Layer::Calendar)
                     || self.layers.contains(Layer::Journey)
+                    || self.layers.contains(Layer::Papers)
                     || self.layers.contains(Layer::Favorites)
                     || self.layers.contains(Layer::Palette)
                     || self.layers.contains(Layer::ProjectSettings)
@@ -974,6 +1032,7 @@ impl Workspace {
                     || self.layers.contains(Layer::Settings)
                     || self.layers.contains(Layer::Calendar)
                     || self.layers.contains(Layer::Journey)
+                    || self.layers.contains(Layer::Papers)
                     || self.layers.contains(Layer::Favorites)
                     || self.layers.contains(Layer::Palette)
                 {
@@ -2509,6 +2568,7 @@ impl Render for Workspace {
             Layer::Settings,
             Layer::Favorites,
             Layer::Journey,
+            Layer::Papers,
             Layer::Calendar,
         ]);
         let root = if page == Some(Layer::Settings) {
@@ -2517,6 +2577,8 @@ impl Render for Workspace {
             root.child(self.render_calendar(cx))
         } else if page == Some(Layer::Journey) {
             root.child(self.render_journey(cx))
+        } else if page == Some(Layer::Papers) {
+            root.child(self.render_papers(cx))
         } else if page == Some(Layer::Favorites) {
             root.child(self.render_favorites(window, cx))
         } else {

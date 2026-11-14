@@ -3123,6 +3123,101 @@ impl Server {
         Ok(())
     }
 
+    /// The papers the project is writing, the one changed last first.
+    pub async fn papers(&self, project: &str) -> Result<Vec<PaperRow>> {
+        self.known_project(project).await?;
+        crate::papers::list(&self.0.store, project).await
+    }
+
+    /// One paper at `version`, or at its newest version.
+    pub async fn paper(&self, project: &str, paper: &str, version: Option<&str>) -> Result<Paper> {
+        self.known_project(project).await?;
+        crate::papers::open(&self.0.store, project, paper, version).await
+    }
+
+    /// Starts a paper with its first version.
+    pub async fn create_paper(&self, project: &str, input: PaperInput) -> Result<Paper> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        crate::papers::create(&self.0.store, project, input).await
+    }
+
+    pub async fn rename_paper(
+        &self,
+        project: &str,
+        paper: &str,
+        title: &str,
+        description: &str,
+    ) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        crate::papers::rename(&self.0.store, project, paper, title, description).await
+    }
+
+    /// Removes a paper that has only drafts.
+    pub async fn delete_paper(&self, project: &str, paper: &str) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        crate::papers::remove(&self.0.store, project, paper).await
+    }
+
+    /// Adds a figure, table or claim to a draft version, or changes one.
+    pub async fn save_paper_item(
+        &self,
+        project: &str,
+        version: &str,
+        input: PaperItemInput,
+    ) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        crate::papers::save_item(&self.0.store, project, version, input).await
+    }
+
+    pub async fn delete_paper_item(&self, project: &str, version: &str, item: &str) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        crate::papers::remove_item(&self.0.store, project, version, item).await
+    }
+
+    /// The project's results or runs to choose evidence from, and whether
+    /// there are more after these.
+    pub async fn paper_source_choices(
+        &self,
+        project: &str,
+        kind: PaperSourceKind,
+        query: &str,
+        offset: u32,
+    ) -> Result<(Vec<PaperSourceChoice>, bool)> {
+        self.known_project(project).await?;
+        crate::papers::choices(&self.0.store, project, kind, query, offset).await
+    }
+
+    /// Binds a result or a run to an item of a draft version.
+    pub async fn bind_paper_source(
+        &self,
+        project: &str,
+        version: &str,
+        item: &str,
+        kind: PaperSourceKind,
+        source: &str,
+        purpose: &str,
+    ) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        crate::papers::bind(&self.0.store, project, version, item, kind, source, purpose).await
+    }
+
+    pub async fn unbind_paper_source(
+        &self,
+        project: &str,
+        version: &str,
+        binding: &str,
+    ) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        crate::papers::unbind(&self.0.store, project, version, binding).await
+    }
+
     /// The key id when one was made; looking never makes one.
     async fn known_key_id(&self) -> Option<String> {
         self.0.store.get_setting(MODEL_KEY_ID).await.ok().flatten()
@@ -4318,6 +4413,10 @@ pub use crate::aside::Exchange as AsideExchange;
 pub use crate::experts::{Expert, ExpertInput};
 pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow};
 pub use crate::origin::FileOrigin;
+pub use crate::papers::{
+    Paper, PaperInput, PaperItem, PaperItemInput, PaperItemKind, PaperRow, PaperSource,
+    PaperSourceChoice, PaperSourceKind, PaperVersion, PaperVersionState,
+};
 pub use crate::pet::{Pet, PetLook, SHEET_HEIGHT, SHEET_WIDTH};
 pub use crate::quick_actions::{QuickAction, QuickActionInput};
 pub use crate::remote_dir::RemoteDirectory;

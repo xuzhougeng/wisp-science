@@ -41,6 +41,16 @@ pub enum Layer {
     Journey,
     /// The form on the journey page for a record of the researcher's own.
     JournalForm,
+    /// The papers of the open project: a page of its own.
+    Papers,
+    /// The form on the papers page for a new paper or a new name.
+    PaperForm,
+    /// The form for a figure, table or claim of a paper.
+    PaperItemForm,
+    /// The results and runs to choose evidence from.
+    PaperSources,
+    /// Question before a paper is removed.
+    ConfirmRemovePaper,
     /// The research calendar across projects: a page of its own.
     Calendar,
     /// The overview of what Wisp can draw on in the open project.
@@ -162,6 +172,10 @@ impl Layer {
             | Layer::ConfirmRemoveQuickAction => Some(Layer::Settings),
             Layer::ConfirmRemoveFavorite => Some(Layer::Favorites),
             Layer::JournalForm => Some(Layer::Journey),
+            Layer::PaperForm
+            | Layer::PaperItemForm
+            | Layer::PaperSources
+            | Layer::ConfirmRemovePaper => Some(Layer::Papers),
             Layer::BatchGroupMenu | Layer::ConfirmBatchDelete => Some(Layer::SelectMode),
             _ => None,
         }
@@ -485,6 +499,22 @@ mod tests {
         stack.open(Layer::JournalForm);
         assert!(stack.close(Layer::Journey));
         assert!(!stack.contains(Layer::JournalForm));
+        // The papers page is the same: a form or a question inside it
+        // goes first, and closing the page takes them along.
+        stack.open(Layer::Papers);
+        for inside in [
+            Layer::PaperForm,
+            Layer::PaperItemForm,
+            Layer::PaperSources,
+            Layer::ConfirmRemovePaper,
+        ] {
+            stack.open(inside);
+            assert_eq!(stack.dismiss_top(), Some(inside));
+            assert!(stack.contains(Layer::Papers));
+        }
+        stack.open(Layer::PaperSources);
+        assert!(stack.close(Layer::Papers));
+        assert!(!stack.contains(Layer::PaperSources));
         // The trajectory is a dialog over the conversation: Escape closes
         // it alone, and a panel that was open beside it stays.
         stack.open(Layer::FilesPanel);

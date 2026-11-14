@@ -161,6 +161,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Export | A conversation's Export button saves the whole of it as a Markdown file where you choose |
 | Notebook | A tab of the side panel: the conversation's code as cells, with what each run returned; copy, save to favorites, or show it in the conversation |
 | Research calendar | A page across every project: a month as a grid with how many records each day holds, and the chosen day's records; projects can be left out |
+| Paper evidence | A page for the open project (Papers in the sidebar, or the command palette): the papers it is writing, each with its versions and, in a draft version, figures, tables and claims with the project results and runs they rest on and why each was chosen |
 | Research journey | A page for the open project: one month of what happened, by day (what you asked, runs, files, decisions, your own records), a filter, and a form to add a record of your own |
 | Outline | A button in the conversation's header lists what you asked, in order; choosing one scrolls to it |
 | Find in conversation | Cmd/Ctrl+F, or the command palette: a bar over the transcript marks every message, and every tool call, that contains the words; Return and the arrows move between them |
@@ -586,6 +587,19 @@ Limits of this slice:
   fetched. A picture that only a tool wrote, or that the answer mentions
   without image syntax, is not shown; it is in the Artifacts tab and the
   Files panel. There is no zoom and no click to open.
+- Paper evidence keeps papers, versions, items and evidence in the same
+  tables the WebView desktop uses, so a paper made in one shows in the
+  other. From here a paper has the one version it starts with: a version
+  cannot be finalized, published, copied into a new one, packed as a
+  capsule or reproduced, and there is no readiness check. A version the
+  WebView finalized is shown with its evidence and cannot be changed, and
+  a paper with such a version cannot be removed. Evidence is a registered
+  result of the project (bound at the version it has when chosen) or a
+  run; passages of a conversation, tool calls and outside resources
+  bound in the WebView are listed by kind but cannot be added here.
+  Evidence is not reviewed or marked from here, and items are flat:
+  they are shown in the order they were added and cannot be nested or
+  reordered.
 - The research journey reads the project's history from the same tables the
   WebView does, a month at a time, grouped into your computer's local days.
   A record of your own is progress, a finding, a decision or what comes
@@ -951,6 +965,15 @@ it: the request follows what was typed, the caret is at its end, and
 nothing is sent. Choose it again: it is not written twice. Press Escape
 with the menu open, then with the form open in Settings: each press
 closes only that. Remove the action: it leaves the menu.
+In a project press Papers: the page says there is no paper yet. Press
+New paper, give a title and save: it shows with the version "v1 ·
+Initial submission". Add a figure: it is listed with "No source yet".
+Press Add evidence, choose Runs or Project results, type why and click
+one: it appears under the figure with the reason, and the summary line
+counts it. Remove the evidence, change the figure's title, remove the
+figure. With a form open press Escape: only the form closes; press it
+again: the page closes. Rename the paper, then remove it: the question
+has to be answered first.
 In Settings, Decision model, turn it on with TypeSafe Jev and no key and
 press Save: it is refused. Choose StartLux (self-hosted): the address,
 model and timeout change to that service's. Press Test connection with
