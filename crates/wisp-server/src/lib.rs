@@ -135,8 +135,16 @@ impl Server {
         lock.try_lock()
             .context("Another wisp-server already owns this data directory")?;
         let store = Store::open(&config.data.join("wisp.sqlite")).await?;
+        // The built-in project follows the configured workspace; its name is
+        // the user's once they have changed it.
+        let name = store
+            .get_project(PROJECT)
+            .await?
+            .map(|(name, _)| name)
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| "Server".into());
         store
-            .create_project(PROJECT, "Server", &config.workspace.to_string_lossy())
+            .create_project(PROJECT, &name, &config.workspace.to_string_lossy())
             .await?;
         for (id, ..) in store.list_projects().await? {
             store.interrupt_server_turns(&id).await?;

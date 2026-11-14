@@ -133,6 +133,18 @@ impl Workspace {
                 this.toggle_star(star_id.clone(), !starred, window, cx)
             })),
         );
+        let settings_id = id.clone();
+        actions = actions.child(
+            icon_button(
+                SharedString::from(format!("project-settings-{id}")),
+                "adjustments",
+                "Project settings",
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.open_project_settings(settings_id.clone(), window, cx)
+            })),
+        );
         if wisp_server::desktop::removable(&id) {
             let remove_id = id.clone();
             actions = actions.child(

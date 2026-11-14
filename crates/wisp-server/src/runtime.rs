@@ -309,6 +309,12 @@ pub async fn build(
         // A conversation that was started before a host was added, checked
         // or made the default is told about it from its next turn.
         sync_compute_contexts(prompt, &compute);
+        // The same for the project's rules: what Project settings saved, or
+        // an edit of the files themselves, is read again every turn.
+        let rules = wisp_core::SystemPrompt::new(&root, &skills, None).rules_section();
+        if let Some(current) = wisp_core::SystemPrompt::replace_rules_section(prompt, &rules) {
+            *prompt = current;
+        }
         // Where packages come from is part of the prompt too, for the same
         // reason: it applies from the next turn.
         crate::network::sync_package_guidance(prompt, &network);

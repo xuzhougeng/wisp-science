@@ -27,6 +27,8 @@ pub enum Layer {
     ModelMenu,
     /// Where the conversation's work runs, above the composer.
     RunsOnMenu,
+    /// The dialog for a project's name, description and rules.
+    ProjectSettings,
     /// Confirmation in Settings before a saved model is removed.
     ConfirmDeleteModel,
     /// Sort and grouping choices under the conversation list's heading.
@@ -391,5 +393,11 @@ mod tests {
             stack.open(menu);
             assert_eq!(stack.dismiss_top(), Some(menu));
         }
+        // The project dialog opens over whatever is showing; Escape closes
+        // it alone, and what was under it is still there.
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::ProjectSettings);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ProjectSettings));
+        assert!(stack.contains(Layer::FilesPanel));
     }
 }

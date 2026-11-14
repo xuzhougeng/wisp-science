@@ -55,7 +55,7 @@ to find in the running app.
 | New project [新建项目] | Name, folder | Partial: opens an existing folder; no name or description form | served |
 | Import project [导入项目] | Archive import | Missing | tauri |
 | Export project [导出项目] | Archive export | Missing | tauri |
-| Project settings [项目设置] | Name, description, sync | Missing | store |
+| Project settings [项目设置] | Name, description, sync | Partial: name, description and the rules for the model (`.wisp/WISP.md`), from the project's card and the command palette; no sync or run retention | store |
 | Remove a project from Wisp, files kept [删除] | With confirmation | Done | store |
 | Delete a project together with its local data | Second choice in the same dialog, with a countdown | Missing | tauri |
 | Open in a new window [在新窗口打开] | Yes | Missing | ui |

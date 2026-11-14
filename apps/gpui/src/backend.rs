@@ -19,8 +19,8 @@ use wisp_server::{
         ConversationStatus, CredentialRow, EnvironmentsView, Favorite, FileMatch, Folder,
         GlobalMemory, LibraryItem, LibraryItemSummary, McpServer, McpServerInput, McpServerRow,
         MemoryView, ModelInput, ModelSettings, ProjectGrants, ProjectMemo, ProjectMemoPatch,
-        ReferenceOption, Remember, SkillRow, SshHostRow, StorageView, TurnDefaults, TurnRef,
-        UsageView,
+        ProjectSettings, ReferenceOption, Remember, SkillRow, SshHostRow, StorageView,
+        TurnDefaults, TurnRef, UsageView,
     },
 };
 use wisp_sync::DirectRemoteHost;
@@ -159,6 +159,20 @@ impl Backend {
 
     pub fn project_file(&self, project: String, path: String) -> Reply<Preview> {
         self.local(move |host| async move { host.project_file(&project, &path).await })
+    }
+
+    pub fn project_settings(&self, project: String) -> Reply<ProjectSettings> {
+        self.local(move |host| async move { host.project_settings(&project).await })
+    }
+
+    /// Saves a project's name, description and rules; the reply is what
+    /// was kept.
+    pub fn set_project_settings(
+        &self,
+        project: String,
+        settings: ProjectSettings,
+    ) -> Reply<ProjectSettings> {
+        self.local(move |host| async move { host.set_project_settings(&project, settings).await })
     }
 
     pub fn star_project(&self, project: String, starred: bool) -> Reply<()> {

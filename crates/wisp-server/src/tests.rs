@@ -4038,3 +4038,119 @@ async fn a_conversation_chooses_where_its_work_runs() {
     assert_eq!(told(other, "after").await, ["run-a"]);
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn project_settings_name_the_project_and_give_the_model_its_rules() {
+    use desktop::{ProjectSettings, PROJECT_NAME_LIMIT, PROJECT_RULES_LIMIT};
+
+    let shown: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let models = |shown: &Arc<std::sync::Mutex<Vec<String>>>| -> ModelFactory {
+        let shown = shown.clone();
+        Arc::new(move |_| Box::new(Everything(shown.clone())))
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(&shown))
+        .await
+        .unwrap();
+    let rules_file = temp.path().join("workspace/.wisp/WISP.md");
+    let start = server.project_settings(PROJECT).await.unwrap();
+    assert_eq!((start.name.as_str(), start.rules.as_str()), ("Server", ""));
+    assert!(server.project_settings("missing").await.is_err());
+
+    // What the model is shown after one more turn of `session`.
+    let told = |session: String, message: &'static str| {
+        let (server, shown) = (server.clone(), shown.clone());
+        async move {
+            shown.lock().unwrap().clear();
+            send(&server, &session, message).await.unwrap();
+            wait_for(&server, &session, |s| !s.running).await;
+            shown.lock().unwrap().join("\n")
+        }
+    };
+    // A conversation that starts before the project has rules.
+    let session = create(&server).await;
+    assert!(told(session.clone(), "go")
+        .await
+        .contains("No user-defined rules."));
+
+    // What cannot be saved changes nothing, the rules file included.
+    let with = |change: fn(&mut ProjectSettings)| {
+        let mut settings = ProjectSettings {
+            rules: "Never saved.".into(),
+            ..start.clone()
+        };
+        change(&mut settings);
+        settings
+    };
+    for refused in [
+        with(|s| s.name = "  ".into()),
+        with(|s| s.name = "two\nlines".into()),
+        with(|s| s.name = "n".repeat(PROJECT_NAME_LIMIT + 1)),
+        with(|s| s.rules = "r".repeat(PROJECT_RULES_LIMIT + 1)),
+    ] {
+        assert!(server.set_project_settings(PROJECT, refused).await.is_err());
+    }
+    assert_eq!(server.project_settings(PROJECT).await.unwrap(), start);
+    assert!(!rules_file.exists());
+
+    // Saved, they are trimmed; the rules are a file in the project.
+    let saved = server
+        .set_project_settings(
+            PROJECT,
+            ProjectSettings {
+                name: " Screens 2026 ".into(),
+                description: " CRISPR screens ".into(),
+                rules: "Always report effect sizes.\n".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(saved.name, "Screens 2026");
+    assert_eq!(saved.description, "CRISPR screens");
+    assert_eq!(
+        std::fs::read_to_string(&rules_file).unwrap(),
+        "Always report effect sizes."
+    );
+
+    // The conversation that was already open is told from its next turn.
+    let prompt = told(session.clone(), "again").await;
+    assert!(prompt.contains("Always report effect sizes."), "{prompt}");
+    assert!(!prompt.contains("No user-defined rules."));
+    // The file is the truth: an edit made outside the app is read as well.
+    std::fs::write(&rules_file, "Use SI units.").unwrap();
+    assert_eq!(
+        server.project_settings(PROJECT).await.unwrap().rules,
+        "Use SI units."
+    );
+    let prompt = told(session.clone(), "third").await;
+    assert!(prompt.contains("Use SI units.") && !prompt.contains("effect sizes"));
+
+    // Emptying the rules removes the file, and the model is told there are none.
+    server
+        .set_project_settings(
+            PROJECT,
+            ProjectSettings {
+                rules: "  ".into(),
+                ..saved.clone()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(!rules_file.exists());
+    assert!(told(session.clone(), "fourth")
+        .await
+        .contains("No user-defined rules."));
+
+    // The name is the user's: opening the host again does not put it back.
+    server.shutdown().await;
+    drop(server);
+    let server = Server::open_with_models(config(temp.path()), models(&shown))
+        .await
+        .unwrap();
+    let after = server.project_settings(PROJECT).await.unwrap();
+    assert_eq!(
+        (after.name.as_str(), after.description.as_str()),
+        ("Screens 2026", "CRISPR screens")
+    );
+    server.shutdown().await;
+}

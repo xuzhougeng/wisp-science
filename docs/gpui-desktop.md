@@ -121,7 +121,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Surface | Behavior |
 | --- | --- |
 | Home | Opens first: every project and the newest conversations across them, with status |
-| Projects | Persisted list, native folder picker, reopen registered roots, running and waiting counts, star to keep first, remove from Wisp (files stay) |
+| Projects | Persisted list, native folder picker, reopen registered roots, running and waiting counts, star to keep first, remove from Wisp (files stay); Project settings for the name, a description, and the rules the model follows in the project |
 | Look | Wisp's light and dark palettes, following the system or fixed to one in Settings; the shared icon set |
 | Conversations | Create, select, restore messages, running / needs-you status |
 | Conversation management | Rename, pin (shown first), archive and restore, delete with confirmation |
@@ -327,6 +327,17 @@ Limits of this slice:
   still kept in memory only: after a restart they are empty until the next
   turn. Usage has no ranking of skills and MCP tools, no per-conversation
   breakdown and no year calendar.
+- Project settings saves the name and description in the database and the
+  rules in the project's own `.wisp/WISP.md`, the file the WebView calls
+  Agent Context. The file is the truth: it is read again at the start of
+  every turn, so rules saved here, or edited in the file, reach
+  conversations that are already open, and so does a change to the
+  project's `AGENTS.md`. A name is one line of at most 120 characters, a
+  description at most 2,000, the rules at most 20,000; the WebView has no
+  such limits, so longer rules written there can be read here but not saved
+  again unshortened. The description is for you and is not shown to the
+  model. The built-in workspace can be renamed like any other. Sync, run
+  retention and deleting a project together with its data are not ported.
 - Storage measures Wisp's own files: the database, the favorites, and each
   project's `.wisp` and `uploads` folders (up to 50,000 entries each). It
   does not measure your data, and nothing can be moved or cleaned from the
@@ -575,6 +586,14 @@ connector route and run a PubMed search, and press Test on an HTTP MCP
 server. Set a Python package index, ask the model to install a package and
 confirm it uses the index. Restart and confirm the page still shows what was
 saved.
+On a project's card press Project settings: clear the name and Save (it is
+refused and the dialog stays), then give a name, a description and a rule
+and Save: the card and the recent conversations show the new name, and
+`.wisp/WISP.md` in the project holds the rule. Send a message in a
+conversation that was already open and confirm the model follows the rule;
+empty the rules, save, and confirm the file is gone. Press Escape with the
+dialog open and confirm only the dialog closes. Inside a project, find
+Project settings in the command palette.
 Press the book on the home page, and Documentation and Report a problem in
 Settings and in the command palette: each opens in the system's browser, the
 first two the tutorials, the last the issue tracker, and the app stays where

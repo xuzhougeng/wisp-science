@@ -693,6 +693,76 @@ impl Server {
         Ok(())
     }
 
+    /// A project's name, description, and the rules the model is given in
+    /// it. The rules are the project's own `.wisp/WISP.md`.
+    pub async fn project_settings(&self, project: &str) -> Result<ProjectSettings> {
+        let (name, description, root) = self
+            .0
+            .store
+            .get_project_meta(project)
+            .await?
+            .context("Project not found")?;
+        let rules = tokio::fs::read_to_string(rules_file(&root))
+            .await
+            .unwrap_or_default();
+        Ok(ProjectSettings {
+            name,
+            description,
+            rules,
+        })
+    }
+
+    /// Saves them, or changes nothing and says what is wrong. Empty rules
+    /// remove the file. The model reads the rules from the next turn on, in
+    /// conversations that are already open too.
+    pub async fn set_project_settings(
+        &self,
+        project: &str,
+        settings: ProjectSettings,
+    ) -> Result<ProjectSettings> {
+        let _admission = self.0.admission.read().await;
+        let root = self.project_root(project).await?;
+        let name = settings.name.trim();
+        let description = settings.description.trim();
+        let rules = settings.rules.trim();
+        ensure!(!name.is_empty(), "Give the project a name");
+        ensure!(
+            name.chars().count() <= PROJECT_NAME_LIMIT && !name.chars().any(char::is_control),
+            "A project name is one line of at most {PROJECT_NAME_LIMIT} characters"
+        );
+        ensure!(
+            description.chars().count() <= PROJECT_DESCRIPTION_LIMIT,
+            "Keep the description under {PROJECT_DESCRIPTION_LIMIT} characters"
+        );
+        // The rules are sent with every turn; a book of them leaves no room
+        // for the work.
+        ensure!(
+            rules.chars().count() <= PROJECT_RULES_LIMIT,
+            "Keep the rules under {PROJECT_RULES_LIMIT} characters"
+        );
+        let file = rules_file(&root);
+        if rules.is_empty() {
+            match tokio::fs::remove_file(&file).await {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                    return Err(error).context("Could not remove the project's rules")
+                }
+                _ => {}
+            }
+        } else {
+            if let Some(folder) = file.parent() {
+                tokio::fs::create_dir_all(folder).await?;
+            }
+            tokio::fs::write(&file, rules)
+                .await
+                .context("Could not save the project's rules")?;
+        }
+        self.0
+            .store
+            .update_project(project, name, description)
+            .await?;
+        self.project_settings(project).await
+    }
+
     /// A starred project stays first in the project list.
     pub async fn star_project(&self, project: &str, starred: bool) -> Result<()> {
         let _admission = self.0.admission.read().await;
@@ -2786,6 +2856,24 @@ impl SshHostRow {
         wisp_runs::ssh_hosts::SshConnection::from_host(&host).map_err(anyhow::Error::msg)?;
         Ok(host)
     }
+}
+
+/// What Project settings shows and saves.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProjectSettings {
+    pub name: String,
+    pub description: String,
+    /// What the model is told to follow in this project, in the user's own
+    /// words. Kept in the project folder as `.wisp/WISP.md`.
+    pub rules: String,
+}
+
+pub const PROJECT_NAME_LIMIT: usize = 120;
+pub const PROJECT_DESCRIPTION_LIMIT: usize = 2_000;
+pub const PROJECT_RULES_LIMIT: usize = 20_000;
+
+fn rules_file(root: &str) -> std::path::PathBuf {
+    std::path::Path::new(root).join(".wisp").join("WISP.md")
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

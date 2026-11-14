@@ -40,6 +40,7 @@ pub enum Command {
     Settings,
     Docs,
     Feedback,
+    ProjectSettings,
 }
 
 impl Command {
@@ -60,6 +61,7 @@ impl Command {
             Command::Settings => "Settings",
             Command::Docs => "Documentation",
             Command::Feedback => "Report a problem",
+            Command::ProjectSettings => "Project settings",
         }
     }
 
@@ -79,6 +81,7 @@ impl Command {
             Command::Settings => "gear",
             Command::Docs => "book",
             Command::Feedback => "bubble",
+            Command::ProjectSettings => "adjustments",
         }
     }
 
@@ -93,7 +96,8 @@ impl Command {
             | Command::Memos
             | Command::Memory
             | Command::Highlights
-            | Command::Archived => screen == Screen::Project,
+            | Command::Archived
+            | Command::ProjectSettings => screen == Screen::Project,
             Command::OpenFolder
             | Command::Refresh
             | Command::Settings
@@ -103,7 +107,7 @@ impl Command {
         }
     }
 
-    const ALL: [Command; 15] = [
+    const ALL: [Command; 16] = [
         Command::NewConversation,
         Command::OpenFolder,
         Command::Home,
@@ -119,6 +123,7 @@ impl Command {
         Command::Settings,
         Command::Docs,
         Command::Feedback,
+        Command::ProjectSettings,
     ];
 }
 
@@ -420,6 +425,10 @@ mod tests {
         let inside = state.entries(&projects, &recent, Screen::Project);
         assert!(inside.contains(&Entry::Command(Command::NewConversation)));
         assert!(!home.contains(&Entry::Command(Command::NewConversation)));
+        // A project's settings are offered inside it; from the home page
+        // each card has its own button.
+        assert!(inside.contains(&Entry::Command(Command::ProjectSettings)));
+        assert!(!home.contains(&Entry::Command(Command::ProjectSettings)));
         assert!(home.contains(&Entry::Command(Command::Settings)));
         // Help is offered wherever you are, and is found by what it is for.
         for help in [Command::Docs, Command::Feedback] {

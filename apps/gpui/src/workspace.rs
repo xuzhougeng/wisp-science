@@ -7,6 +7,7 @@ mod memos_view;
 mod organise_view;
 mod palette_view;
 mod panel_tabs;
+mod project_settings;
 mod settings_data;
 mod settings_environments;
 mod settings_mcp;
@@ -156,6 +157,13 @@ pub struct Workspace {
     env_target: Option<String>,
     /// The hosts being checked right now.
     env_checking: std::collections::HashSet<String>,
+    /// The project whose settings dialog is open; its fields (name,
+    /// description, rules); whether they hold what is saved yet; and why
+    /// the last Save was refused.
+    project_form: Option<String>,
+    project_fields: [Entity<InputState>; 3],
+    project_form_ready: bool,
+    project_form_error: Option<String>,
     /// The host form's fields: name, address, user, port, key file, jump
     /// host, notes.
     env_fields: [Entity<InputState>; 7],
@@ -283,6 +291,15 @@ impl Workspace {
             "/etc/ssl/certs/lab-ca.pem",
         ]
         .map(|hint| cx.new(|cx| InputState::new(window, cx).placeholder(hint)));
+        let project_fields = [
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| {
+                InputState::new(window, cx)
+                    .multi_line(true)
+                    .placeholder("Always report effect sizes with confidence intervals.")
+            }),
+        ];
         let mcp_target = cx.new(|cx| InputState::new(window, cx));
         let mcp_token = cx.new(|cx| InputState::new(window, cx).masked(true));
         let skills_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find a skill…"));
@@ -451,6 +468,10 @@ impl Workspace {
             network_saved: false,
             env_target: None,
             env_checking: Default::default(),
+            project_form: None,
+            project_fields,
+            project_form_ready: false,
+            project_form_error: None,
             env_fields,
             mcp_servers: None,
             mcp_editing: None,
@@ -552,6 +573,10 @@ impl Workspace {
             Some(Layer::McpForm | Layer::ConfirmRemoveMcp) => self.mcp_editing = None,
             Some(Layer::EnvironmentForm | Layer::ConfirmRemoveEnvironment) => {
                 self.env_target = None
+            }
+            Some(Layer::ProjectSettings) => {
+                self.project_form = None;
+                self.project_form_error = None;
             }
             // Menus and questions that hold no focus of their own.
             Some(
@@ -1804,7 +1829,12 @@ impl Render for Workspace {
                 }
             }
         };
-        // Last, so it is drawn over whichever screen or layer is showing.
+        // Last, so they are drawn over whichever screen or layer is showing.
+        let root = if self.layers.contains(Layer::ProjectSettings) {
+            root.child(self.render_project_settings(cx))
+        } else {
+            root
+        };
         if self.layers.contains(Layer::Palette) {
             root.child(self.render_palette(cx))
         } else {
