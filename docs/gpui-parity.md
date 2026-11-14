@@ -154,7 +154,7 @@ to find in the running app.
 | Research archive [研究归档] | Yes | Missing | store |
 | Pending decisions [N 个待处理] | Yes | Done (sidebar inbox) | served |
 | Terminal [打开终端] | Yes | Missing | tauri |
-| Toggle right panel [切换面板] | Yes | Partial: Files only | ui |
+| Toggle right panel [切换面板] | Yes | Partial: Files, Runs and Artifacts tabs; the other tools are not ported | ui |
 
 ## 6. Right panel
 
@@ -168,10 +168,11 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Files: other locations (SSH / WSL contexts) | Yes | Missing | shared |
 | Files: image, PDF, Office, notebook, table previews | Yes | Missing | ui |
 | Agents [Agents]: sub-agents, parallel exploration, workflows | Yes | Missing | store |
-| Artifacts [产物]: figures, tables, outputs, star, open | Yes | Missing | store |
+| Artifacts [产物]: figures, tables, outputs, star, open | Yes | Partial: files a turn wrote are recorded with a snapshot, listed per conversation or project, and open in Files; no grouping, versions, download, star or provenance | served |
 | Environments [环境]: conversation environment, attach servers, probe, terminal | Yes | Missing | store + shared |
-| Runs [运行]: list, output | Yes | Partial: read-only cards under the transcript | served |
-| Runs: cancel, harvest, transfer, full log | Yes | Missing | shared |
+| Runs [运行]: list, output | Yes | Done: a Runs tab with status and output tails | served |
+| Runs: cancel | Yes | Done | served |
+| Runs: harvest, transfer, full log, workspace review | Yes | Missing | shared |
 | Notebook [Notebook]: code cells and outputs | Yes | Missing | store |
 | Highlights [划线] | Yes | Missing | store |
 | Provenance [溯源]: tool evidence behind a claim | Yes | Missing | store |
@@ -246,7 +247,7 @@ Found in the sources rather than on screen; all `Missing` in GPUI.
 | Composer | Plan progress strip; read-only states (sample, archived notebook, sub-agent, frozen branch) | served |
 | Composer | ACP agent conversations and their mode / config options | tauri |
 | Transcript | Equations, table copy, internal file links, confirm before opening an external link | ui |
-| Transcript | Generated-artifact strip; image and video generation cards | store |
+| Transcript | Generated-artifact strip (the files are in the Artifacts tab, not yet under the message); image and video generation cards | store |
 | Transcript | Run cards: send to background, cancel, harvest outputs, details | shared |
 | Transcript | Compaction markers, undo compaction, stream-recovery and reviewer banners | tauri |
 | Transcript | Undo a turn (restore or remove the files it wrote) | store |
@@ -309,6 +310,8 @@ before the things that hang in it.
    files, conversations and skills; paste, drop, images as model input and
    inline triggers remain)*
 6. **Right panel as tabs** — artifacts, run control, environments, notebook.
+   *(tabs, artifacts and run cancel done; environments and notebook are steps
+   6a and 6b)*
 7. **Conversation organisation** — folders, batch actions, sort and group,
    move between projects, rewind and branch.
 8. **Memory, memos, highlights, favorites.**

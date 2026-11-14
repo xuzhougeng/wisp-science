@@ -15,6 +15,7 @@ use crate::{
     compose::{self, Chip},
     controls::{self, Question},
     layers::Layer,
+    panel::PanelTab,
     present::{self, Tone},
     settings,
 };
@@ -149,13 +150,19 @@ impl Workspace {
             "files",
             "folder",
             "Files",
-            self.layers.contains(Layer::FilesPanel),
+            self.layers.contains(Layer::FilesPanel) && self.panel_tab == PanelTab::Files,
             has_project,
             cx,
         );
         if has_project {
-            files =
-                files.on_click(cx.listener(|this, _, window, cx| this.toggle_files(window, cx)));
+            files = files.on_click(cx.listener(|this, _, window, cx| {
+                // With the panel on another tab, this is a way to Files.
+                if this.layers.contains(Layer::FilesPanel) && this.panel_tab != PanelTab::Files {
+                    this.show_panel_tab(PanelTab::Files, window, cx)
+                } else {
+                    this.toggle_files(window, cx)
+                }
+            }));
         }
 
         let mut sidebar = div()
@@ -1197,7 +1204,7 @@ impl Workspace {
     }
 
     /// Everything to the right of the sidebar.
-    pub(super) fn render_conversation(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    pub(super) fn render_conversation(&self, cx: &mut Context<Self>) -> Div {
         let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
         let mut content = div()
             .v_flex()
@@ -1297,11 +1304,6 @@ impl Workspace {
             .flex_1()
             .min_h_0(),
         );
-        if let Some(snapshot) = &self.state.snapshot {
-            if !snapshot.run_cards.is_empty() {
-                content = content.child(self.render_runs(snapshot, window, cx));
-            }
-        }
         if let Some(approvals) = self.render_approvals(cx) {
             content = content.child(approvals);
         }

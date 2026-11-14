@@ -29,6 +29,8 @@ pub enum Command {
     OpenFolder,
     Home,
     Files,
+    Runs,
+    Artifacts,
     Archived,
     Refresh,
     Settings,
@@ -41,6 +43,8 @@ impl Command {
             Command::OpenFolder => "Open folder…",
             Command::Home => "All projects",
             Command::Files => "Show or hide Files",
+            Command::Runs => "Show runs",
+            Command::Artifacts => "Show artifacts",
             Command::Archived => "Show or hide archived conversations",
             Command::Refresh => "Refresh",
             Command::Settings => "Settings",
@@ -53,6 +57,8 @@ impl Command {
             Command::OpenFolder => "folder-plus",
             Command::Home => "arrow-left",
             Command::Files => "folder",
+            Command::Runs => "activity-orbit",
+            Command::Artifacts => "layers",
             Command::Archived => "archive",
             Command::Refresh => "refresh",
             Command::Settings => "gear",
@@ -62,18 +68,23 @@ impl Command {
     /// Commands that act on a project are offered only inside one.
     fn available(self, screen: Screen) -> bool {
         match self {
-            Command::NewConversation | Command::Home | Command::Files | Command::Archived => {
-                screen == Screen::Project
-            }
+            Command::NewConversation
+            | Command::Home
+            | Command::Files
+            | Command::Runs
+            | Command::Artifacts
+            | Command::Archived => screen == Screen::Project,
             Command::OpenFolder | Command::Refresh | Command::Settings => true,
         }
     }
 
-    const ALL: [Command; 7] = [
+    const ALL: [Command; 9] = [
         Command::NewConversation,
         Command::OpenFolder,
         Command::Home,
         Command::Files,
+        Command::Runs,
+        Command::Artifacts,
         Command::Archived,
         Command::Refresh,
         Command::Settings,

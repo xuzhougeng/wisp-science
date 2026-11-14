@@ -1593,3 +1593,86 @@ async fn a_conversation_in_plan_mode_is_told_so_and_cannot_change_anything() {
     );
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn files_a_turn_writes_become_artifacts_of_its_conversation() {
+    let temp = tempfile::tempdir().unwrap();
+    let cfg = config(temp.path());
+    let server = Server::open_with_models(cfg.clone(), models(Arc::default(), true))
+        .await
+        .unwrap();
+    let writer = create(&server).await;
+    let idle = create(&server).await;
+    assert!(server
+        .artifacts(PROJECT, None, "", 10)
+        .await
+        .unwrap()
+        .is_empty());
+
+    // The turn writes answer.txt through the write tool.
+    server
+        .set_conversation_options(
+            PROJECT,
+            &writer,
+            desktop::ConversationOptions {
+                full_access: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    send(&server, &writer, "write the answer").await.unwrap();
+    wait_for(&server, &writer, |s| !s.running).await;
+    assert!(cfg.workspace.join("answer.txt").exists());
+
+    let all = server.artifacts(PROJECT, None, "", 10).await.unwrap();
+    assert_eq!(all.len(), 1, "{all:?}");
+    let artifact = &all[0];
+    assert_eq!(artifact.name, "answer.txt");
+    assert_eq!(artifact.path.as_deref(), Some("answer.txt"));
+    assert_eq!(artifact.session_id, writer);
+    assert_eq!(artifact.size_bytes, Some("offline result".len() as u64));
+    assert!(!artifact.kind.is_empty());
+
+    // Listed for its own conversation only, and found by name.
+    assert_eq!(
+        server
+            .artifacts(PROJECT, Some(&writer), "", 10)
+            .await
+            .unwrap(),
+        all
+    );
+    assert!(server
+        .artifacts(PROJECT, Some(&idle), "", 10)
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        server
+            .artifacts(PROJECT, None, " ANSWER ", 10)
+            .await
+            .unwrap(),
+        all
+    );
+    assert!(server
+        .artifacts(PROJECT, None, "absent", 10)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(server
+        .artifacts(PROJECT, None, "", 0)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(server.artifacts("missing", None, "", 10).await.is_err());
+
+    // A run that does not exist, or is not this project's, is not cancelled.
+    assert!(server.cancel_run(PROJECT, "ghost").await.is_err());
+    assert!(server.cancel_run("missing", "ghost").await.is_err());
+
+    for command in ["list_artifacts", "cancel_run"] {
+        assert!(!server.commands().contains(&command));
+        assert!(call(&server, command, PROJECT, json!({})).await.is_err());
+    }
+    server.shutdown().await;
+}

@@ -8,6 +8,7 @@ mod files;
 mod home;
 mod layers;
 mod palette;
+mod panel;
 mod present;
 mod settings;
 mod state;

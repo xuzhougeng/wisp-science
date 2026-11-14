@@ -180,6 +180,96 @@ pub async fn build(
     Ok(agent)
 }
 
+/// Records the files a turn wrote as artifacts of its conversation: one
+/// artifact per project path, with a new version each time it is rewritten.
+/// The same identity and snapshot rules as the WebView desktop. A file that
+/// cannot be recorded is skipped; it never fails the turn.
+async fn record_artifacts(
+    store: &Store,
+    project: &str,
+    root: &std::path::Path,
+    frame: &str,
+    written: Vec<String>,
+) {
+    let Ok(root) = tokio::fs::canonicalize(root).await else {
+        return;
+    };
+    let mut seen = std::collections::HashSet::new();
+    for path in written {
+        let source = PathBuf::from(&path);
+        let source = if source.is_absolute() {
+            source
+        } else {
+            root.join(source)
+        };
+        let Ok(real) = tokio::fs::canonicalize(&source).await else {
+            continue;
+        };
+        // Only project files, and never Wisp's or git's own.
+        let Ok(inside) = real.strip_prefix(&root) else {
+            continue;
+        };
+        let relative = inside
+            .components()
+            .map(|part| part.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        if relative.is_empty()
+            || relative
+                .split('/')
+                .any(|part| part == ".wisp" || part == ".git")
+            || !real.is_file()
+            || !seen.insert(relative.clone())
+        {
+            continue;
+        }
+        let capture_root = root.clone();
+        let capture_source = real.clone();
+        let captured = tokio::task::spawn_blocking(move || {
+            wisp_runs::snapshot_store::capture_file(
+                &capture_root,
+                &capture_source,
+                wisp_runs::snapshot_store::SnapshotPolicy::UpTo(
+                    wisp_runs::snapshot_store::DEFAULT_SNAPSHOT_LIMIT,
+                ),
+            )
+        })
+        .await;
+        let captured = match captured {
+            Ok(Ok(captured)) => captured,
+            Ok(Err(error)) => {
+                tracing::warn!(%error, path = %relative, "Could not snapshot an artifact");
+                continue;
+            }
+            Err(_) => continue,
+        };
+        let logical_key = format!("path:{relative}");
+        let draft = wisp_store::ArtifactVersionDraft {
+            version_id: None,
+            artifact_id: wisp_store::logical_artifact_id(project, &logical_key),
+            project_id: project.into(),
+            root_frame_id: frame.into(),
+            filename: real
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("file")
+                .into(),
+            content_type: wisp_runs::mime::mime_for_path(&real).into(),
+            storage_path: captured.storage_path,
+            logical_key: Some(logical_key),
+            size_bytes: i64::try_from(captured.size_bytes).ok(),
+            checksum: Some(captured.checksum),
+            producing_run_id: None,
+            env_snapshot_hash: None,
+            materialization: captured.materialization,
+            capture_timing: wisp_store::ArtifactCaptureTiming::AtCreation,
+        };
+        if let Err(error) = store.save_artifact_version(&draft).await {
+            tracing::warn!(%error, path = %relative, "Could not record an artifact");
+        }
+    }
+}
+
 /// Most of a referenced conversation that is passed along, newest kept.
 const EXCERPT_BYTES: usize = 12_000;
 
@@ -274,6 +364,7 @@ pub async fn run(
     request: SendRequest,
     full_access: bool,
     plan_mode: bool,
+    root: PathBuf,
 ) -> Result<()> {
     let start_seq = store.max_message_seq(&request.session_id).await?;
     let mut next_event = store.next_session_ui_event_seq(&request.session_id).await?;
@@ -309,6 +400,7 @@ pub async fn run(
         }
         result
     });
+    let artifact_project = project.clone();
     let out = ServerOutput {
         session: session.clone(),
         frame: request.session_id.clone(),
@@ -323,6 +415,16 @@ pub async fn run(
         .await;
     drop(out);
     wisp_store::join_or_abort_persist(persist, std::time::Duration::from_secs(10)).await??;
+    // Whatever the turn's outcome, the files it wrote exist and are its work.
+    let written = std::mem::take(&mut session.live.lock().unwrap().written);
+    record_artifacts(
+        &store,
+        &artifact_project,
+        &root,
+        &request.session_id,
+        written,
+    )
+    .await;
     if let Some(compacted) = agent.ctx.last_compaction() {
         store
             .open_context_epoch(

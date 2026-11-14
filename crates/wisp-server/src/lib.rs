@@ -474,6 +474,7 @@ impl Server {
             live.error = None;
             live.usage = None;
             live.reasoning.clear();
+            live.written.clear();
             live.draft.clear();
             live.messages = page.messages.into_iter().map(|(_, msg)| msg).collect();
             live.next_before_seq = page.next_before_seq;
@@ -482,6 +483,7 @@ impl Server {
         let server = self.clone();
         let session = session.clone();
         let project = project.to_string();
+        let root = std::path::PathBuf::from(root);
         tokio::spawn(async move {
             let _permit = permit;
             let inner = server.clone();
@@ -496,6 +498,7 @@ impl Server {
                     input,
                     full_access,
                     plan_mode,
+                    root,
                 )
                 .await
             });

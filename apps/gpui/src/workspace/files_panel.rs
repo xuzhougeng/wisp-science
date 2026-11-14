@@ -4,10 +4,7 @@ use std::ops::Range;
 
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Sizable, StyledExt,
-    button::{Button, ButtonVariants},
-    input::Input,
-    text::TextView,
+    ActiveTheme, Disableable, Sizable, StyledExt, button::Button, input::Input, text::TextView,
 };
 
 use super::Workspace;
@@ -15,6 +12,7 @@ use crate::{
     backend::receive,
     files::{self, PreviewMode},
     layers::Layer,
+    panel::PanelTab,
 };
 
 impl Workspace {
@@ -25,6 +23,7 @@ impl Workspace {
         } else {
             self.layers.open(Layer::FilesPanel);
             self.ensure_files(window, cx);
+            self.reload_artifacts(window, cx);
         }
         cx.notify();
     }
@@ -33,6 +32,7 @@ impl Workspace {
     /// once the panel is open and showing the listing.
     pub(super) fn ensure_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.layers.contains(Layer::FilesPanel)
+            && self.panel_tab == PanelTab::Files
             && !self.layers.contains(Layer::FilePreview)
             && !self.files.loaded
             && !self.files.loading
@@ -54,6 +54,7 @@ impl Workspace {
         self.files
             .look_in(&files::parent(&path).unwrap_or_default());
         self.layers.open(Layer::FilesPanel);
+        self.panel_tab = PanelTab::Files;
         self.open_file(path, window, cx);
     }
 
@@ -263,6 +264,20 @@ impl Workspace {
                 .into_any_element();
         }
 
+        let panel = panel.child(self.panel_tabs(cx));
+        match self.panel_tab {
+            PanelTab::Runs => {
+                return panel
+                    .child(self.render_runs_tab(window, cx))
+                    .into_any_element();
+            }
+            PanelTab::Artifacts => {
+                return panel
+                    .child(self.render_artifacts_tab(cx))
+                    .into_any_element();
+            }
+            PanelTab::Files => {}
+        }
         let location = if self.files.path.is_empty() {
             "Project root".to_string()
         } else {
@@ -277,21 +292,6 @@ impl Workspace {
                     .p_3()
                     .border_b_1()
                     .border_color(border)
-                    .child(
-                        div()
-                            .h_flex()
-                            .justify_between()
-                            .child(div().text_sm().child("Files"))
-                            .child(
-                                Button::new("files-close")
-                                    .label("Close")
-                                    .small()
-                                    .ghost()
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.toggle_files(window, cx)
-                                    })),
-                            ),
-                    )
                     .child(div().truncate().text_xs().text_color(muted).child(location))
                     .child(
                         div()

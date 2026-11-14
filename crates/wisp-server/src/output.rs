@@ -65,6 +65,9 @@ pub struct Live {
     pub usage: Option<TokenUsage>,
     /// What the model is thinking in the request that is in flight.
     pub reasoning: String,
+    /// Files the running turn's tools wrote, to be recorded as artifacts
+    /// when it ends.
+    pub written: Vec<String>,
     /// Tools the user allowed for the rest of this conversation. Kept in
     /// memory only: a restart asks again.
     pub allowed_tools: HashSet<String>,
@@ -138,6 +141,19 @@ impl Output for ServerOutput {
     }
     fn plan_mode(&self) -> bool {
         self.plan_mode
+    }
+    fn file_changed(&self, path: &str) {
+        self.session.live.lock().unwrap().written.push(path.into());
+    }
+    fn provenance(&self, record: &wisp_core::provenance::ProvenanceRecord) {
+        if record.success {
+            self.session
+                .live
+                .lock()
+                .unwrap()
+                .written
+                .extend(record.files_written.iter().cloned());
+        }
     }
     fn tool_result(&self, _: &str, ok: bool, _: &str, duration_ms: u64) {
         self.session.live.lock().unwrap().last_result = Some((ok, duration_ms));

@@ -15,6 +15,7 @@ use crate::{
     home::{self, Screen},
     layers::Layer,
     palette::{self, Command, Entry, Mode},
+    panel::PanelTab,
 };
 
 impl Workspace {
@@ -222,12 +223,19 @@ impl Workspace {
                 self.start_poll(window, cx);
                 self.reload_files(window, cx);
             }
-            Command::NewConversation | Command::Home | Command::Files | Command::Archived => {
+            Command::NewConversation
+            | Command::Home
+            | Command::Files
+            | Command::Runs
+            | Command::Artifacts
+            | Command::Archived => {
                 self.layers.close(Layer::Settings);
                 match command {
                     Command::NewConversation => self.create_session(window, cx),
                     Command::Home => self.go_home(window, cx),
                     Command::Files => self.toggle_files(window, cx),
+                    Command::Runs => self.show_panel_tab(PanelTab::Runs, window, cx),
+                    Command::Artifacts => self.show_panel_tab(PanelTab::Artifacts, window, cx),
                     _ => {
                         self.show_archived = !self.show_archived;
                         self.sessions.clear();

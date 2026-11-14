@@ -15,8 +15,8 @@ use wisp_server::{
     Server,
     config::Config,
     desktop::{
-        ConversationList, ConversationOptions, ConversationStatus, FileMatch, ModelInput,
-        ModelSettings, ReferenceOption,
+        ArtifactRow, ConversationList, ConversationOptions, ConversationStatus, FileMatch,
+        ModelInput, ModelSettings, ReferenceOption,
     },
 };
 use wisp_sync::DirectRemoteHost;
@@ -205,6 +205,23 @@ impl Backend {
 
     pub fn delete_conversation(&self, project: String, session: String) -> Reply<()> {
         self.local(move |host| async move { host.delete_conversation(&project, &session).await })
+    }
+
+    pub fn artifacts(
+        &self,
+        project: String,
+        session: Option<String>,
+        query: String,
+        limit: usize,
+    ) -> Reply<Vec<ArtifactRow>> {
+        self.local(move |host| async move {
+            host.artifacts(&project, session.as_deref(), &query, limit)
+                .await
+        })
+    }
+
+    pub fn cancel_run(&self, project: String, run: String) -> Reply<()> {
+        self.local(move |host| async move { host.cancel_run(&project, &run).await })
     }
 
     pub fn conversation_status(

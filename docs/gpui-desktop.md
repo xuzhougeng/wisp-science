@@ -132,8 +132,10 @@ folder registers its research root; it does not import existing desktop chats.
 | Read state | A finished answer is marked read once it is on screen in the active window |
 | Transcript | Virtualized Markdown, selectable text, paginated history |
 | Tool calls | One folded line each with outcome and elapsed time; click for the verbatim input and output; interrupted calls stop claiming to run |
-| Runs | Runs started by the conversation: kind, status, exit code, command and output tails on demand |
-| Files | Project file browser beside the transcript, available before the first conversation; read-only text and Markdown preview |
+| Runs | A Runs tab: runs started by the conversation with kind, status, exit code, command and output tails; a run that has not ended can be cancelled, and is followed until it ends |
+| Artifacts | Files a turn wrote are recorded when it ends; an Artifacts tab lists them for the conversation or the project and opens them |
+| Side panel | Tabs: Files, Runs, Artifacts |
+| Files | Project file browser, available before the first conversation; read-only text and Markdown preview |
 | Composer | Native multiline input; Enter for newline, Cmd/Ctrl+Enter to send |
 | Plan first | The model investigates and submits a plan as a card; nothing is changed until you approve it, which leaves plan mode and starts the work |
 | Thinking | What the model is thinking, above the composer, while it thinks |
@@ -205,8 +207,13 @@ Limits of this slice:
   passed as its most recent exchange (about 12,000 bytes), and a skill as its
   instructions, for that turn only: neither is saved with the message. Paste,
   drag and drop, and typing `@`, `#` or `/` in the composer are not ported.
-- Runs are read-only. Cancel, harvest, review and the full log need host
-  commands this build does not serve.
+- Runs can be cancelled. Harvest, review of a remote workspace, transfers and
+  the full log are not ported.
+- An artifact is a project file a tool wrote during a turn, recorded with the
+  WebView's identity (`path:<relative path>`) and snapshot rules, so the two
+  desktops would agree on the same database. Files outside the project, and
+  under `.wisp` or `.git`, are not recorded. Versions, download, starring and
+  provenance are not ported.
 - Status refreshes every two seconds while any turn is running and once more
   when the last one stops; it is not pushed by the host.
 - The interface is English only; localization is still open (below).
@@ -293,6 +300,10 @@ With the preview open press Escape once: only the preview closes. Press it again
 the panel closes. Repeat right after opening, without clicking inside, and with
 focus in the composer; cancelling an IME composition must not close a layer.
 Run a tool that fails and one that succeeds and check status and elapsed time.
+Start a long run that is not waited for, open the Runs tab, confirm its status
+moves on by itself after the turn ends, cancel it and confirm it ends. Have a
+turn write a file, confirm it appears in Artifacts for the conversation and for
+the project, and open it from there.
 Start a turn, switch to another conversation and confirm its status and the
 inbox update without pressing Refresh; open it and confirm it becomes read.
 Start with an empty data directory and no `WISP_*` variables: Settings opens;

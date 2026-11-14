@@ -850,6 +850,55 @@ impl Server {
         .await?)
     }
 
+    /// Files the project's conversations produced, newest first; those of
+    /// one conversation when `session` is given. `query` filters by name.
+    pub async fn artifacts(
+        &self,
+        project: &str,
+        session: Option<&str>,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ArtifactRow>> {
+        self.project_root(project).await?;
+        let found = self
+            .0
+            .store
+            .search_artifacts(Some(project), query.trim(), 500, None)
+            .await?;
+        Ok(found
+            .into_iter()
+            .filter(|artifact| session.is_none_or(|session| artifact.session_id == session))
+            .take(limit)
+            .map(|artifact| ArtifactRow {
+                id: artifact.id,
+                name: artifact.name,
+                kind: artifact.kind,
+                path: artifact.logical_path,
+                created_at: artifact.ts,
+                size_bytes: artifact
+                    .size_bytes
+                    .and_then(|size| u64::try_from(size).ok()),
+                session_id: artifact.session_id,
+                session_title: artifact.session_title,
+            })
+            .collect())
+    }
+
+    /// Asks a run that has not finished to stop.
+    pub async fn cancel_run(&self, project: &str, run: &str) -> Result<()> {
+        self.project_root(project).await?;
+        let record = self.0.store.get_run(run).await?.context("Run not found")?;
+        ensure!(
+            record.project_id == project,
+            "Run does not belong to the selected project"
+        );
+        self.0
+            .runs
+            .cancel(&self.0.store, run)
+            .await
+            .map_err(anyhow::Error::msg)
+    }
+
     /// What the next turn of this conversation will run with.
     pub(crate) async fn stored_options(&self, session: &str) -> Result<ConversationOptions> {
         Ok(ConversationOptions {
@@ -1024,6 +1073,22 @@ impl Server {
         }
         Ok(())
     }
+}
+
+/// A file a conversation produced, as the Artifacts list shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArtifactRow {
+    pub id: String,
+    pub name: String,
+    /// MIME type.
+    pub kind: String,
+    /// Where the file is in the project, when it is a project file.
+    pub path: Option<String>,
+    /// Unix seconds.
+    pub created_at: i64,
+    pub size_bytes: Option<u64>,
+    pub session_id: String,
+    pub session_title: String,
 }
 
 /// Reasoning efforts a conversation may ask for. Empty is the model's default.

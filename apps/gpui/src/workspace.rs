@@ -2,6 +2,7 @@ mod conversation_actions;
 mod files_panel;
 mod home_view;
 mod palette_view;
+mod panel_tabs;
 mod settings_view;
 mod shell;
 
@@ -12,10 +13,8 @@ use std::{
 
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Sizable, StyledExt,
-    button::{Button, ButtonVariants},
+    ActiveTheme, StyledExt,
     input::{InputEvent, InputState},
-    text::TextView,
 };
 use serde_json::{Value, json};
 use wisp_dto::{
@@ -24,7 +23,7 @@ use wisp_dto::{
 };
 
 use wisp_dto::native_conversations::SendRequest;
-use wisp_server::desktop::{ConversationOptions, ConversationStatus};
+use wisp_server::desktop::{ArtifactRow, ConversationOptions, ConversationStatus};
 
 use crate::{
     backend::{Backend, receive},
@@ -34,6 +33,7 @@ use crate::{
     home::{self, Screen},
     layers::{EscapeStack, Layer, Shortcut, is_escape, shortcut},
     palette::{self, PaletteState},
+    panel::{self, PanelTab},
     present::{self, Tone},
     state::WorkspaceState,
 };
@@ -85,6 +85,13 @@ pub struct Workspace {
     files: FilesState,
     file_view: Entity<InputState>,
     expanded_run: Option<String>,
+    /// Which tab the side panel shows.
+    panel_tab: PanelTab,
+    artifacts: Vec<ArtifactRow>,
+    /// The Artifacts tab lists the whole project instead of the conversation.
+    artifacts_all: bool,
+    /// Only the latest artifact request may fill the list.
+    artifacts_request: u64,
     ready: bool,
     pending: bool,
     loading_history: bool,
@@ -244,6 +251,10 @@ impl Workspace {
             files: FilesState::default(),
             file_view,
             expanded_run: None,
+            panel_tab: PanelTab::default(),
+            artifacts: vec![],
+            artifacts_all: false,
+            artifacts_request: 0,
             ready: false,
             pending: false,
             loading_history: false,
@@ -351,6 +362,8 @@ impl Workspace {
         if self.state.session != session {
             self.status = None;
             self.copied = None;
+            // The list belonged to the conversation, or project, being left.
+            self.artifacts.clear();
         }
         self.files.set_project(project.as_deref());
         self.state.select(project, session);
@@ -624,6 +637,14 @@ impl Workspace {
         self.start_poll(window, cx);
         self.load_status(window, cx);
         self.ensure_files(window, cx);
+        self.reload_artifacts(window, cx);
+    }
+
+    /// Refreshes the Artifacts tab if that is what the panel is showing.
+    fn reload_artifacts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.layers.contains(Layer::FilesPanel) && self.panel_tab == PanelTab::Artifacts {
+            self.load_artifacts(window, cx);
+        }
     }
 
     /// Opens a conversation from any project, as the inbox needs.
@@ -754,16 +775,17 @@ impl Workspace {
                     json!({"session_id": selection.session}),
                 ))
                 .await;
-                let keep_polling = this
+                let next = this
                     .update_in(cx, |this, window, cx| {
                         if !this.state.current(&selection) {
-                            return false;
+                            return None;
                         }
                         match result {
                             Ok(snapshot) => {
                                 let was_running =
                                     this.state.snapshot.as_ref().is_some_and(|s| s.running);
                                 let running = snapshot.running;
+                                let active_runs = panel::active_runs(&snapshot.run_cards);
                                 if this.state.accept(&selection, snapshot) {
                                     this.update_rows();
                                     if running {
@@ -779,26 +801,26 @@ impl Workspace {
                                         // changed what needs attention.
                                         this.refresh_lists(window, cx);
                                         this.reload_files(window, cx);
+                                        this.reload_artifacts(window, cx);
                                     }
                                     this.mark_seen(window, cx);
                                     cx.notify();
                                 }
-                                running
+                                panel::poll_delay(running, active_runs)
                             }
                             Err(error) => {
                                 this.error = Some(error);
                                 cx.notify();
-                                false
+                                None
                             }
                         }
                     })
-                    .unwrap_or(false);
-                if !keep_polling {
+                    .ok()
+                    .flatten();
+                let Some(delay) = next else {
                     break;
-                }
-                cx.background_executor()
-                    .timer(Duration::from_millis(150))
-                    .await;
+                };
+                cx.background_executor().timer(delay).await;
             }
         }));
     }
@@ -1424,70 +1446,6 @@ impl Workspace {
         .detach();
         cx.notify();
     }
-
-    /// Runs this conversation started, with their captured output on demand.
-    fn render_runs(
-        &self,
-        snapshot: &Snapshot,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let mut runs = div()
-            .id("runs")
-            .v_flex()
-            .max_h(px(260.))
-            .overflow_y_scroll()
-            .border_t_1()
-            .border_color(cx.theme().border);
-        for run in &snapshot.run_cards {
-            let id = run.id.clone();
-            let expanded = self.expanded_run.as_ref() == Some(&id);
-            let (status, tone) = present::run_status(run);
-            let mut card = div().v_flex().gap_2().px_4().py_2().child(
-                div()
-                    .h_flex()
-                    .gap_3()
-                    .justify_between()
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap_2()
-                            .flex_1()
-                            .min_w_0()
-                            .child(div().truncate().text_sm().child(run.title.clone()))
-                            .child(chip(run.kind.clone(), Tone::Neutral, cx))
-                            .child(chip(status, tone, cx)),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!("run-{id}")))
-                            .label(if expanded { "Hide output" } else { "Output" })
-                            .small()
-                            .ghost()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.expanded_run = if this.expanded_run.as_ref() == Some(&id) {
-                                    None
-                                } else {
-                                    Some(id.clone())
-                                };
-                                cx.notify();
-                            })),
-                    ),
-            );
-            if expanded {
-                card = card.child(
-                    TextView::markdown(
-                        SharedString::from(format!("run-output-{}", run.id)),
-                        present::run_output(run),
-                        window,
-                        cx,
-                    )
-                    .selectable(true),
-                );
-            }
-            runs = runs.child(card);
-        }
-        runs
-    }
 }
 
 impl Render for Workspace {
@@ -1510,7 +1468,7 @@ impl Render for Workspace {
                         .h_flex()
                         .size_full()
                         .child(self.render_sidebar(cx))
-                        .child(self.render_conversation(window, cx));
+                        .child(self.render_conversation(cx));
                     if self.layers.contains(Layer::FilesPanel) {
                         row = row.child(self.render_files(window, cx));
                     }
