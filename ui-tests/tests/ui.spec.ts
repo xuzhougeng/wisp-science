@@ -9627,6 +9627,42 @@ test("PDF artifacts switch pages with toolbar buttons, arrow keys, and Page Up/D
   await expect(modal.locator('.rp-pdf-page[data-page="1"][data-rendered="true"]')).toBeVisible();
 });
 
+test("PDF preview returns to the page and zoom last used for that file", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("open paper.pdf");
+  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
+  const tile = page.locator('.rp-tile[data-artifact-name="paper.pdf"]');
+  await expect(tile).toBeVisible();
+  await tile.click({ button: "right" });
+  await page.locator(".ctx-menu").getByRole("button", { name: "Open in center" }).click();
+
+  const viewer = page.locator(".center-file-preview .rp-pdf");
+  await expect(viewer.locator('.rp-pdf-page[data-page="1"][data-rendered="true"]')).toBeVisible();
+  await page.getByRole("button", { name: "Next page" }).click();
+  await expect(viewer.locator('.rp-pdf-page[data-page="2"][data-rendered="true"]')).toBeVisible();
+  await page.getByRole("button", { name: "Zoom in" }).click();
+  await expect(page.getByRole("button", { name: "Reset zoom" })).toHaveText("125%");
+
+  // Leaving for the conversation tab unmounts the viewer, so coming back
+  // renders the file from scratch: it must not restart at page 1 (#1721).
+  await page.locator(".center-tabs > .center-tab").click();
+  await expect(viewer).toHaveCount(0);
+  await page.locator(".center-tab-wrap .center-tab").click();
+  await expect(page.locator('.center-file-preview .rp-pdf[data-page-count="2"][data-current-page="2"]')).toBeVisible();
+  await expect(viewer.locator('.rp-pdf-page[data-page="2"][data-rendered="true"]')).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reset zoom" })).toHaveText("125%");
+
+  // Back on page 1 nothing is remembered, so the next open starts there again.
+  await page.getByRole("button", { name: "Previous page" }).click();
+  await expect(viewer.locator('.rp-pdf-page[data-page="1"][data-rendered="true"]')).toBeVisible();
+  await page.locator(".center-tabs > .center-tab").click();
+  await expect(viewer).toHaveCount(0);
+  await page.locator(".center-tab-wrap .center-tab").click();
+  await expect(page.locator('.center-file-preview .rp-pdf[data-current-page="1"]')).toBeVisible();
+});
+
 test("PDF text can be selected and added to chat", async ({ page }) => {
   await enterApp(page);
   await composer(page).fill("open paper.pdf");
