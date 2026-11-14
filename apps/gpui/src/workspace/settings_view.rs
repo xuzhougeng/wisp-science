@@ -808,6 +808,7 @@ impl Workspace {
             Section::Experts => self.render_expert_settings(cx),
             Section::QuickActions => self.render_quick_settings(cx),
             Section::Pet => self.render_pet_settings(cx),
+            Section::Browser => self.render_browser_settings(cx),
             Section::Workflows => self.render_workflow_settings(cx),
             Section::Remote => self.render_remote_settings(cx),
             Section::Plugins => self.render_plugin_settings(cx),

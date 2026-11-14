@@ -1,4 +1,6 @@
 mod aside;
+mod browser;
+mod browser_filters;
 pub mod config;
 mod decision_model;
 pub mod desktop;
@@ -78,6 +80,8 @@ struct Inner {
     sequence: AtomicU64,
     turns: Arc<Semaphore>,
     shutting_down: AtomicBool,
+    /// The bridge to the browser extension, when it is on.
+    browser: browser::Slot,
     /// The tunnel to a relay for remote web access, when it is on.
     remote: remote_access::Tunnel,
     /// The loop that fires scheduled tasks was started.
@@ -199,6 +203,7 @@ impl Server {
             sequence: AtomicU64::new(0),
             turns: Arc::new(Semaphore::new(4)),
             shutting_down: AtomicBool::new(false),
+            browser: Default::default(),
             remote: Default::default(),
             scheduling: AtomicBool::new(false),
             admission: RwLock::new(()),
@@ -506,6 +511,7 @@ impl Server {
             self.mcp_tools().await,
             &subagent,
             self.decision_model_in_use().await,
+            self.0.browser.bridge(),
         )
         .await?;
         let page = self
@@ -844,6 +850,7 @@ impl Server {
 
     pub async fn shutdown(&self) {
         self.0.remote.stop();
+        self.0.browser.stop();
         {
             let _admission = self.0.admission.write().await;
             self.0.shutting_down.store(true, Ordering::Relaxed);

@@ -25,6 +25,7 @@ mod queue_view;
 mod remote_files_view;
 mod review_view;
 mod schedules_view;
+mod settings_browser;
 mod settings_data;
 mod settings_decision;
 mod settings_environments;
@@ -323,6 +324,10 @@ pub struct Workspace {
     /// What the last save or test said.
     decision_note: Option<String>,
     decision_testing: bool,
+    /// The browser tools as the host has them; `None` until it answered.
+    browser: Option<wisp_server::desktop::BrowserSettings>,
+    /// Blocked host and why, preferred host and why.
+    browser_fields: [Entity<InputState>; 4],
     /// The workflow templates.
     workflows: Vec<wisp_server::desktop::Workflow>,
     /// The workflow in the form or the remove question; empty is a new one.
@@ -524,6 +529,12 @@ impl Workspace {
         let paper_source_fields = [
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx)),
+        ];
+        let browser_fields = [
+            cx.new(|cx| InputState::new(window, cx).placeholder("example.com")),
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Reason (optional)"))),
+            cx.new(|cx| InputState::new(window, cx).placeholder("example.org")),
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Reason (optional)"))),
         ];
         let workflow_fields = [
             cx.new(|cx| InputState::new(window, cx)),
@@ -854,6 +865,8 @@ impl Workspace {
             decision_fields,
             decision_note: None,
             decision_testing: false,
+            browser: None,
+            browser_fields,
             workflows: Vec::new(),
             workflow_editing: None,
             workflow_fields,

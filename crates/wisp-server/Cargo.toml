@@ -12,6 +12,7 @@ axum = { workspace = true }
 futures-util = { workspace = true }
 chrono = { workspace = true }
 dunce = { workspace = true }
+regex = { workspace = true }
 reqwest = { workspace = true }
 hex = { workspace = true }
 ignore = { workspace = true }
@@ -35,6 +36,7 @@ wisp-llm = { workspace = true }
 wisp-mcp = { workspace = true }
 wisp-runs = { workspace = true }
 wisp-runtime = { workspace = true }
+wisp-paths = { workspace = true }
 wisp-skills = { workspace = true }
 wisp-store = { workspace = true }
 wisp-sync = { workspace = true }

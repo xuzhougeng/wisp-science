@@ -67,6 +67,8 @@ impl Backend {
                 let server = Server::open(config).await.map_err(|e| format!("{e:#}"))?;
                 // Scheduled tasks fire while the app is open.
                 server.start_scheduler();
+                // The bridge to the browser extension, when it was left on.
+                server.start_browser().await;
                 // The tunnel for remote web access, when it was left on.
                 server.start_remote_access().await;
                 Ok::<_, String>(server)
@@ -788,6 +790,25 @@ impl Backend {
     /// Asks the release page whether a newer version has been published.
     pub fn check_for_update(&self) -> Reply<wisp_server::desktop::UpdateCheck> {
         self.local(|host| async move { host.check_for_update().await })
+    }
+
+    /// The browser tools as they stand.
+    pub fn browser_settings(&self) -> Reply<wisp_server::desktop::BrowserSettings> {
+        self.local(|host| async move { host.browser_settings().await })
+    }
+
+    pub fn set_browser_enabled(
+        &self,
+        enabled: bool,
+    ) -> Reply<wisp_server::desktop::BrowserSettings> {
+        self.local(move |host| async move { host.set_browser_enabled(enabled).await })
+    }
+
+    pub fn save_browser_filters(
+        &self,
+        filters: wisp_server::desktop::BrowserFilters,
+    ) -> Reply<wisp_server::desktop::BrowserSettings> {
+        self.local(move |host| async move { host.save_browser_filters(filters).await })
     }
 
     /// The workflow templates.

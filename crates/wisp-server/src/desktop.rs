@@ -4446,6 +4446,8 @@ pub struct ProjectGrants {
 }
 
 pub use crate::aside::Exchange as AsideExchange;
+pub use crate::browser::{BrowserSettings, BrowserStatus};
+pub use crate::browser_filters::{BrowserFilters, BrowserHostRule};
 pub use crate::experts::{Expert, ExpertInput};
 pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow};
 pub use crate::origin::FileOrigin;

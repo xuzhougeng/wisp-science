@@ -259,6 +259,7 @@ pub async fn build(
     extra_tools: Vec<Box<dyn wisp_tools::Tool>>,
     subagent: &ModelConfig,
     decision: Option<wisp_llm::systemone::DecisionModel>,
+    browser: Option<Arc<crate::browser::Bridge>>,
 ) -> Result<Agent> {
     let root = PathBuf::from(root);
     let skills = Arc::new(skill_index(config, store, project, &root).await);
@@ -292,6 +293,14 @@ pub async fn build(
     for tool in extra_tools {
         if tools.get(tool.name()).is_none() {
             tools.add(tool);
+        }
+    }
+    // The user's own browser, while its bridge is switched on.
+    if let Some(bridge) = &browser {
+        for tool in crate::browser::tools(bridge, store) {
+            if tools.get(tool.name()).is_none() {
+                tools.add(tool);
+            }
         }
     }
     // The model's way to stop and ask; the answer is the next user message.

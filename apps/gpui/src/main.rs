@@ -4,6 +4,7 @@ mod agents;
 mod aside;
 mod assets;
 mod backend;
+mod browser;
 mod calendar;
 mod compose;
 mod controls;

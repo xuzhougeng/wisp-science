@@ -6631,3 +6631,93 @@ async fn a_workflow_runs_as_one_conversation_given_its_staged_tasks() {
     assert!(server.run_workflow(PROJECT, &review.id).await.is_err());
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn the_browser_tools_are_offered_only_while_the_bridge_is_switched_on() {
+    let temp = tempfile::tempdir().unwrap();
+    let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let record = seen.clone();
+    let factory: ModelFactory = Arc::new(move |_| Box::new(Everything(record.clone())));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    assert!(!server
+        .commands()
+        .iter()
+        .any(|command| command.contains("browser")));
+    // Off until someone switches it on, and nothing is listening.
+    let start = server.browser_settings().await.unwrap();
+    assert!(!start.enabled && !start.listening && start.problem.is_none());
+    assert_eq!(start.status, desktop::BrowserStatus::default());
+
+    let offered = |seen: &Arc<std::sync::Mutex<Vec<String>>>| {
+        let mut seen = seen.lock().unwrap();
+        let names: Vec<&str> = [
+            "browser_setup",
+            "web_open_tab",
+            "web_scan",
+            "web_execute_js",
+        ]
+        .into_iter()
+        .filter(|name| {
+            seen.iter()
+                .any(|entry| entry.contains(&format!("name: \"{name}\"")))
+        })
+        .collect();
+        seen.clear();
+        names.len()
+    };
+    let session = create(&server).await;
+    send(&server, &session, "what is new on the preprint server?")
+        .await
+        .unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    assert_eq!(offered(&seen), 0);
+
+    // On, the bridge listens on this computer and the next turn has the tools.
+    server.0.browser.listen_on("127.0.0.1:0");
+    let on = server.set_browser_enabled(true).await.unwrap();
+    assert!(on.enabled && on.listening && on.problem.is_none());
+    assert!(!on.status.connected);
+    send(&server, &session, "and today?").await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    assert_eq!(offered(&seen), 4);
+
+    // The lists are kept with it.
+    let rule = |host: &str| desktop::BrowserHostRule {
+        host: host.into(),
+        reason: String::new(),
+    };
+    let kept = server
+        .save_browser_filters(desktop::BrowserFilters {
+            block: vec![rule("Example.com")],
+            prefer: vec![rule("https://pubmed.ncbi.nlm.nih.gov/")],
+        })
+        .await
+        .unwrap();
+    assert_eq!(kept.filters.block, [rule("example.com")]);
+    assert_eq!(kept.filters.prefer, [rule("pubmed.ncbi.nlm.nih.gov")]);
+    let bad = desktop::BrowserFilters {
+        block: vec![rule("not a host")],
+        prefer: vec![],
+    };
+    assert!(server.save_browser_filters(bad).await.is_err());
+
+    // Off again: nothing listens and the tools are gone from the next turn.
+    let off = server.set_browser_enabled(false).await.unwrap();
+    assert!(!off.enabled && !off.listening);
+    send(&server, &session, "never mind").await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    assert_eq!(offered(&seen), 0);
+
+    // A port another program holds is reported, not fought over.
+    let taken = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    server
+        .0
+        .browser
+        .listen_on(&taken.local_addr().unwrap().to_string());
+    let blocked = server.set_browser_enabled(true).await.unwrap();
+    assert!(blocked.enabled && !blocked.listening);
+    assert!(blocked.problem.unwrap().contains("cannot listen"));
+    server.shutdown().await;
+}

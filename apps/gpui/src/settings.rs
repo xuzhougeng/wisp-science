@@ -27,6 +27,8 @@ pub enum Section {
     Skills,
     /// Packages of skills, switched on per project.
     Plugins,
+    /// The bridge to the user's own browser.
+    Browser,
     Connections,
     Credentials,
     Environments,
@@ -42,7 +44,7 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 18] = [
+    pub const ALL: [Section; 19] = [
         Section::General,
         Section::Network,
         Section::Remote,
@@ -55,6 +57,7 @@ impl Section {
         Section::Workflows,
         Section::Skills,
         Section::Plugins,
+        Section::Browser,
         Section::Connections,
         Section::Credentials,
         Section::Environments,
@@ -77,6 +80,7 @@ impl Section {
             Section::DecisionModel => tr("Decision model"),
             Section::Skills => tr("Skills"),
             Section::Plugins => tr("Plugins"),
+            Section::Browser => tr("Browser"),
             Section::Connections => tr("Connections"),
             Section::Credentials => tr("Credentials"),
             Section::Environments => tr("Environments"),
@@ -100,6 +104,7 @@ impl Section {
             Section::DecisionModel => "check-square",
             Section::Skills => "skill",
             Section::Plugins => "grid",
+            Section::Browser => "compass",
             Section::Connections => "link",
             Section::Credentials => "lock",
             Section::Environments => "server",
@@ -141,6 +146,9 @@ impl Section {
             Section::Workflows => "workflow template task stage dependency run 工作流",
             Section::QuickActions => "quick action prompt template shortcut reuse 快捷动作",
             Section::Skills => "skill workflow bundled folder reload",
+            Section::Browser => {
+                "browser chrome chromium extension web tab block prefer host 浏览器"
+            }
             Section::Plugins => "plugin package install extension claude 插件",
             Section::Connections => {
                 "mcp server connector tool literature biology pubmed uniprot token http"
@@ -168,6 +176,7 @@ impl Section {
             | Section::Workflows => "AI",
             Section::Skills
             | Section::Plugins
+            | Section::Browser
             | Section::Connections
             | Section::Credentials
             | Section::Environments => tr("Capabilities"),
@@ -837,6 +846,7 @@ mod tests {
                 "AI",
                 "AI",
                 "AI",
+                "Capabilities",
                 "Capabilities",
                 "Capabilities",
                 "Capabilities",

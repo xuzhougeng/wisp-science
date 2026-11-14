@@ -150,6 +150,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Interpreters | The Python and R interpreters a conversation keeps between tool calls show above the composer with their version and state; Stop ends one, Dismiss takes a stopped one off the list |
 | Experts | Settings, Experts, keeps personas (a name and instructions); the composer's Expert menu starts a new conversation as one, and its instructions hold for the whole conversation |
 | Quick actions | Settings, Quick actions, keeps requests you make often under a name; the composer's quick actions menu puts one into the message box, after whatever is already typed, to finish and send |
+| Browser | Settings, Browser, switches on a bridge to the Wisp extension in your own Chrome or Chromium; conversations can then open a tab, read it and run a script in it, only in tabs they opened themselves, and hosts can be blocked or preferred |
 | Workflows | Settings, Workflows, keeps templates of a goal broken into tasks, each saying which earlier tasks it needs; Run starts a conversation in the open project and gives the model the tasks stage by stage |
 | Remote web access | Settings, Remote access, opens this desktop's projects in a phone or a browser through a wisp-relay of your own: it dials out (no inbound port), shows whether the tunnel is up and how many browsers are connected, and gives a link and a code that can be copied or replaced |
 | Plugins | Settings, Plugins, installs a plugin from a folder in the Claude plugin layout (`.claude-plugin/plugin.json`, `skills/*/SKILL.md`) into the app's data without running anything in it, lists what each brings, switches one on for the open project, whose conversations then have its skills, and removes it |
@@ -474,6 +475,26 @@ Limits of this slice:
   `desktop.quick_actions` and neither reads nor changes the WebView's.
   It starts with four that can be changed or removed; at most 40 are
   kept, a name is at most 60 characters and a request 8,000.
+- The browser bridge is off until it is switched on, and then listens
+  on this computer only, on the port the extension dials
+  (127.0.0.1:18765), so it and the WebView desktop cannot both hold it.
+  Only the Wisp extension's origin is let in. It is a smaller bridge
+  than the WebView's: four tools (`browser_setup`, `web_open_tab`,
+  `web_scan`, `web_execute_js`), one session, and a conversation may
+  read and drive only the tabs it opened (and tabs those open), never a
+  tab the user has open. A script may be page JavaScript or the command
+  that closes the conversation's own tabs; the extension's other
+  commands (DevTools protocol, switching or creating tabs by command,
+  downloads, screenshots, chat-site turns) are refused. Not ported:
+  starting the browser, closing a turn's tabs when it ends, the
+  human-verification prompt, the side panel, the isolated workspace
+  session, updating the extension, screenshots and saving assets. The
+  extension is loaded by hand from the folder the page names; a packaged
+  app has to ship that folder for the page to find it. Every tool asks
+  first unless it was allowed. The host lists are kept under the
+  WebView's key (`browser_url_filters`); the switch is this desktop's
+  own (`desktop.browser.enabled`). The bridge was tested against a
+  stand-in for the extension, not against a real browser.
 - A workflow here runs as one conversation: the host lays the tasks out
   in the stages their dependencies allow and the conversation's model
   carries them out in that order, with the usual approvals. There are
@@ -1044,6 +1065,17 @@ counts it. Remove the evidence, change the figure's title, remove the
 figure. With a form open press Escape: only the form closes; press it
 again: the page closes. Rename the paper, then remove it: the question
 has to be answered first.
+In Settings, Browser, the line reads Off. Switch it on: it reads
+"Waiting for the extension to connect" (or says the port is taken while
+another Wisp runs). Load the extension from the folder the page names:
+after Refresh the line shows its version and the pages open. Add
+example.com to the blocked hosts with a reason, and "not a host": the
+second is refused and stays in the field. In a conversation ask for a
+page to be opened and read: each tool asks first; the tab opens in your
+browser, and the answer quotes the page. Ask it to read a tab you
+opened yourself: it is refused. Ask it to open the blocked host: it is
+refused with the reason. Switch the tools off: the next turn no longer
+has them.
 In Settings, Workflows, two are listed with their tasks and stages. Press
 New workflow, give a name and a goal, add a second and a third task and
 mark the third as after tasks 1 and 2: saved, it reads "3 tasks · 2

@@ -204,7 +204,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Hooks [钩子]: automatic review, tool-failure analysis, command hooks | Yes | Partial: automatic review and follow-up questions, as switches on the Conversation page; no Hooks page, tool-failure analysis or command hooks | tauri |
 | Skills [技能]: list, tags, enable, community, GitHub, reload | Yes | Partial: list with source and tags, search, on or off, reload; no tag editing, community catalog or GitHub install | shared |
 | Plugins [插件] | Yes | Partial: a Plugins page installs from a folder, lists skills and MCP servers, switches a plugin on per project (its skills join that project's conversations) and removes it; no install from a zip or an address, no checksum, and a plugin's MCP servers are not started | store |
-| Browser [浏览器]: auto-open, auto-close tabs, block and prefer lists | Yes | Missing | tauri |
+| Browser [浏览器]: auto-open, auto-close tabs, block and prefer lists | Yes | Partial: a Browser page switches on the bridge to the extension, shows whether it is connected and keeps the block and prefer lists; conversations get four tools limited to tabs they opened; no auto-open, no auto-close, no human-verification prompt, screenshots or side panel | tauri |
 | Connections [连接]: built-in bio tools and user MCP servers, enable, add | Yes | Partial: the bundled connectors, and your own MCP servers over HTTP (with a token) or as a local program, with test and on/off; no OAuth, extra headers, environment variables or MCP Apps | shared |
 | Remote access [远程接入]: project sync relay, Feishu, WeChat, StickS3, web access, Wisp-Lab | Yes | Partial: remote web access through your own relay (on or off, address, token, state, link and code, reset) with the headless server's command list; no project sync, Feishu, WeChat, StickS3 or Wisp-Lab, and no QR code | shared |
 | Credentials [凭据]: service keys in the keyring, custom env keys | Yes | Partial: the NCBI and OpenAlex keys the bundled connectors use; no other service keys, no custom environment keys | store |
@@ -276,7 +276,7 @@ row says what is there.
 | Assistant | Assistant chat, saved plans, scheduled tasks, daily recap, weekly memory tidy, research mandates, WeChat binding — scheduled tasks are there (section 1); the rest is Missing | store |
 | App | Onboarding wizard, toolchain installer (uv, Python, R, Node, pixi), local tool detection | tauri |
 | App | Action palette (⌘P), privacy mode (⌘⇧H), application and native menus | ui |
-| App | Browser automation prompts (tab cleanup, needs a human), browser-extension update banner | tauri |
+| App | Browser automation prompts (tab cleanup, needs a human), browser-extension update banner — Missing; the Browser page says when the extension has to be reloaded | tauri |
 | App | SSH connectivity check — **Done** in Settings, Environments; generic confirmation dialogs | shared |
 
 `src-tauri` also carries a second, already-split command contract: the
@@ -338,9 +338,8 @@ before the things that hang in it.
     relay; relay sync and the messaging channels remain)*
 12. **Experts, workflows, quick actions, ACP, accounts, plugins, browser.**
     *(done in a first phase: experts, quick actions, the decision model,
-    plugins and workflows; ACP agents, subscription accounts and the browser
-    bridge remain — the last needs the loopback bridge to the Chrome
-    extension, which this host does not have)*
+    plugins, workflows and the browser bridge; ACP agents and subscription
+    accounts remain)*
 13. **Finish** — localization, notifications, several windows, updates,
     data import from the WebView desktop, installers. *(done: the Chinese
     interface, notifications, several windows, the update check and the pet;
