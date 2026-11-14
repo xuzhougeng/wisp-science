@@ -562,6 +562,26 @@ thread_local! {
     // ponytail: pins live in this session-scoped map only and are never
     // persisted — add real storage when annotations must survive a restart.
     static IMAGE_PINS: RefCell<HashMap<String, Vec<ImagePin>>> = RefCell::new(HashMap::new());
+    // Zoom per PDF path, so switching tabs and coming back keeps the reading
+    // scale next to the page api.js remembers (#1721). Window-lifetime only,
+    // and only non-default values are kept.
+    static PDF_ZOOM: RefCell<HashMap<String, u16>> = RefCell::new(HashMap::new());
+}
+
+/// Zoom to open a PDF preview at: the value last used for this path, else 100%.
+pub(crate) fn remembered_pdf_zoom(path: &str) -> u16 {
+    PDF_ZOOM.with(|m| m.borrow().get(path).copied().unwrap_or(100))
+}
+
+pub(crate) fn remember_pdf_zoom(path: &str, zoom: u16) {
+    PDF_ZOOM.with(|m| {
+        let mut map = m.borrow_mut();
+        if zoom == 100 {
+            map.remove(path);
+        } else {
+            map.insert(path.to_string(), zoom);
+        }
+    });
 }
 
 /// Percent-positioned marker style at the region's center: fractions of the
@@ -666,6 +686,25 @@ mod image_pin_tests {
 }
 
 #[cfg(test)]
+mod pdf_zoom_tests {
+    use super::*;
+
+    #[test]
+    fn pdf_zoom_is_kept_per_path_and_dropped_at_the_default() {
+        assert_eq!(remembered_pdf_zoom("zoom/umap.pdf"), 100);
+        remember_pdf_zoom("zoom/umap.pdf", 150);
+        remember_pdf_zoom("zoom/dotplot.pdf", 75);
+        assert_eq!(remembered_pdf_zoom("zoom/umap.pdf"), 150);
+        assert_eq!(remembered_pdf_zoom("zoom/dotplot.pdf"), 75);
+        // Resetting to 100% forgets the entry instead of storing the default.
+        remember_pdf_zoom("zoom/umap.pdf", 100);
+        assert_eq!(remembered_pdf_zoom("zoom/umap.pdf"), 100);
+        assert!(PDF_ZOOM.with(|m| !m.borrow().contains_key("zoom/umap.pdf")));
+        assert_eq!(remembered_pdf_zoom("zoom/dotplot.pdf"), 75);
+    }
+}
+
+#[cfg(test)]
 mod preview_open_error_tests {
     use super::{preview_open_error, Locale};
 
@@ -694,7 +733,15 @@ mod preview_open_error_tests {
 #[component]
 fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoView {
     let locale = use_locale();
-    let zoom = create_rw_signal(100u16);
+    let zoom = create_rw_signal(if kind == "pdf" {
+        remembered_pdf_zoom(&path)
+    } else {
+        100u16
+    });
+    if kind == "pdf" {
+        let store_path = path.clone();
+        create_effect(move |_| remember_pdf_zoom(&store_path, zoom.get()));
+    }
     let is_dragging = create_rw_signal(false);
     let drag_start = Rc::new(Cell::new(None::<(i32, i32, i32, i32)>));
     let viewport_id = unique_dom_id("preview-viewport");
