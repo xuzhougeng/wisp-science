@@ -18,6 +18,8 @@ pub enum Section {
     Conversation,
     /// Personas a conversation can be started as.
     Experts,
+    /// Requests kept under a name.
+    QuickActions,
     Skills,
     Connections,
     Credentials,
@@ -30,12 +32,13 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 12] = [
+    pub const ALL: [Section; 13] = [
         Section::General,
         Section::Network,
         Section::Models,
         Section::Conversation,
         Section::Experts,
+        Section::QuickActions,
         Section::Skills,
         Section::Connections,
         Section::Credentials,
@@ -52,6 +55,7 @@ impl Section {
             Section::Models => tr("Models"),
             Section::Conversation => tr("Conversation"),
             Section::Experts => tr("Experts"),
+            Section::QuickActions => tr("Quick actions"),
             Section::Skills => tr("Skills"),
             Section::Connections => tr("Connections"),
             Section::Credentials => tr("Credentials"),
@@ -69,6 +73,7 @@ impl Section {
             Section::Models => "bot",
             Section::Conversation => "chat",
             Section::Experts => "user",
+            Section::QuickActions => "bolt",
             Section::Skills => "skill",
             Section::Connections => "link",
             Section::Credentials => "lock",
@@ -102,6 +107,7 @@ impl Section {
                  helper explore worker"
             }
             Section::Experts => "expert persona specialist role instructions illustrator 专家",
+            Section::QuickActions => "quick action prompt template shortcut reuse 快捷动作",
             Section::Skills => "skill workflow bundled folder reload",
             Section::Connections => {
                 "mcp server connector tool literature biology pubmed uniprot token http"
@@ -121,7 +127,9 @@ impl Section {
     pub fn group(self) -> &'static str {
         match self {
             Section::General | Section::Network => tr("App"),
-            Section::Models | Section::Conversation | Section::Experts => "AI",
+            Section::Models | Section::Conversation | Section::Experts | Section::QuickActions => {
+                "AI"
+            }
             Section::Skills
             | Section::Connections
             | Section::Credentials
@@ -784,6 +792,7 @@ mod tests {
             [
                 "App",
                 "App",
+                "AI",
                 "AI",
                 "AI",
                 "AI",

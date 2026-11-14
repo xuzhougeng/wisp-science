@@ -1227,6 +1227,47 @@ impl Workspace {
             model = model.child(deferred(self.model_menu(&options.model, cx)));
         }
 
+        // Requests kept under a name, to put into the message box.
+        let quick = (!self.quick_actions.is_empty()).then(|| {
+            let open = self.layers.contains(Layer::QuickMenu);
+            let button = div().relative().child(
+                Button::new("quick-actions")
+                    .icon(glyph("bolt"))
+                    .small()
+                    .ghost()
+                    .selected(open)
+                    .tooltip(tr("Quick actions: put a saved request into the message"))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        // One may have been added or removed since.
+                        this.load_quick_actions(window, cx);
+                        this.toggle_composer_menu(Layer::QuickMenu, window, cx)
+                    })),
+            );
+            if open {
+                let mut menu = Self::composer_menu(320., cx);
+                for action in &self.quick_actions {
+                    let prompt = action.prompt.clone();
+                    menu = menu.child(
+                        Self::menu_row(
+                            SharedString::from(format!("quick-choice-{}", action.id)),
+                            action.name.clone(),
+                            "",
+                            false,
+                            cx,
+                        )
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.use_quick_action(prompt.clone(), window, cx)
+                            },
+                        )),
+                    );
+                }
+                button.child(deferred(menu))
+            } else {
+                button
+            }
+        });
+
         // Who the conversation is started as. It is chosen before the
         // first message and only named afterwards.
         let started = !self.rows.is_empty() || running;
@@ -1551,6 +1592,7 @@ impl Workspace {
                                 .h_flex()
                                 .gap_1()
                                 .child(attach)
+                                .children(quick)
                                 .child(plan)
                                 .child(access)
                                 .child(model)

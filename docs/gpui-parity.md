@@ -197,7 +197,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Pet [宠物] | Yes | Missing | ui |
 | Models [模型]: API models with provider, URL, key, limits, effort | Several profiles, presets, default | Done: any number of models, the six presets, a default, a connection test | served |
 | Models: ACP agents, subscription accounts, decision model | Yes | Missing | tauri |
-| Quick actions [快捷动作] | Yes | Missing | store |
+| Quick actions [快捷动作] | Yes | Partial: named requests kept in Settings and put into the composer from its quick actions menu; they start no workflow, and the WebView's own list is not read | store |
 | Workflows [工作流]: library, graph editor, approval policy | Yes | Missing | store |
 | Experts [专家]: built-in and custom, default sub-agent model | Yes | Partial: an Experts page lists the built-in illustrator and your own, with add, change and remove; no model per expert, no skill or connector lists, no sub-agent model | tauri |
 | Memory [记忆]: project notes, global habits, enable switch | Yes | Done, as a side-panel tab rather than a Settings page; no "clear all", automatic proposals or weekly tidy | store |

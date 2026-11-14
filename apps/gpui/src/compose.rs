@@ -26,6 +26,21 @@ pub fn with_skill_prompt(typed: &str) -> String {
     format!("{typed}\n\n{SKILL_PROMPT}")
 }
 
+/// The composer's text once a quick action is picked: its request, after
+/// whatever was already being written. The request's end is kept as it
+/// is, because that is where the user goes on typing.
+pub fn with_quick_action(typed: &str, prompt: &str) -> String {
+    let typed = typed.trim();
+    if typed.is_empty() || typed.ends_with(prompt.trim_end()) {
+        return if typed.is_empty() {
+            prompt.to_owned()
+        } else {
+            typed.to_owned()
+        };
+    }
+    format!("{typed}\n\n{prompt}")
+}
+
 /// The questions to offer above the composer: the ones suggested after the
 /// latest answer. They are kept back while a turn runs, while a tool waits
 /// for approval and in a conversation that cannot be written to, because a
@@ -190,6 +205,23 @@ mod tests {
         assert_eq!(with_skill_prompt(&after_draft), after_draft);
         assert_eq!(with_skill_prompt(SKILL_PROMPT), SKILL_PROMPT);
         assert!(SKILL_PROMPT.contains("skill-creator"));
+    }
+
+    #[test]
+    fn a_quick_action_goes_after_what_was_typed_and_keeps_its_open_end() {
+        assert_eq!(
+            with_quick_action("  ", "Check the QC of: "),
+            "Check the QC of: "
+        );
+        assert_eq!(
+            with_quick_action("sample S04 ", "Check the QC of: "),
+            "sample S04\n\nCheck the QC of: "
+        );
+        // Picked twice, it is there once.
+        assert_eq!(
+            with_quick_action("Check the QC of: ", "Check the QC of: "),
+            "Check the QC of:"
+        );
     }
 
     #[test]

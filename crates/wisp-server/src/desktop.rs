@@ -3123,6 +3123,20 @@ impl Server {
         Ok(())
     }
 
+    /// The requests kept as quick actions, in the order they were added.
+    pub async fn quick_actions(&self) -> Result<Vec<QuickAction>> {
+        Ok(crate::quick_actions::list(&self.0.store).await)
+    }
+
+    /// Adds a quick action, or changes the one `input.id` names.
+    pub async fn save_quick_action(&self, input: QuickActionInput) -> Result<Vec<QuickAction>> {
+        crate::quick_actions::upsert(&self.0.store, input).await
+    }
+
+    pub async fn delete_quick_action(&self, id: &str) -> Result<Vec<QuickAction>> {
+        crate::quick_actions::remove(&self.0.store, id).await
+    }
+
     /// The experts a conversation can be started as.
     pub async fn experts(&self) -> Result<Vec<Expert>> {
         Ok(crate::experts::list(&self.0.store).await)
@@ -4226,6 +4240,7 @@ pub use crate::aside::Exchange as AsideExchange;
 pub use crate::experts::{Expert, ExpertInput};
 pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow};
 pub use crate::origin::FileOrigin;
+pub use crate::quick_actions::{QuickAction, QuickActionInput};
 pub use crate::remote_dir::RemoteDirectory;
 pub use crate::research_archive::ArchiveDraft;
 pub use crate::review::{Finding as ReviewFinding, Outcome as ReviewOutcome, Review};

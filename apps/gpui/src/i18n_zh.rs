@@ -732,4 +732,10 @@ pub const ZH: &[(&str, &str)] = &[
     ("Draft again", "重新起草"),
     ("Freeze", "冻结"),
     ("Frozen. The report is in the project at {}. This conversation is read-only.", "已冻结。报告位于项目的 {}。本会话为只读。"),
+    // Quick actions.
+    ("Quick actions", "快捷动作"),
+    ("Quick actions: put a saved request into the message", "快捷动作：把保存的请求放入消息"),
+    ("The request. End it where you will go on typing, for example \"Question: \".", "请求内容。在你要接着输入的地方结尾，例如“问题：”。"),
+    ("Requests you make often, kept under a name. The composer's quick actions menu puts one into the message box, to finish and send.", "你常用的请求，起个名字保存下来。输入栏的快捷动作菜单会把它放入消息框，补充完整后发送。"),
+    ("Add a quick action", "添加快捷动作"),
 ];

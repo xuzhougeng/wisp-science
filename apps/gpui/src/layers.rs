@@ -29,6 +29,8 @@ pub enum Layer {
     RunsOnMenu,
     /// The expert a new conversation is started as, above the composer.
     ExpertMenu,
+    /// The quick actions, above the composer.
+    QuickMenu,
     /// The dialog for a project's name, description and rules.
     ProjectSettings,
     /// The find bar over the open conversation.
@@ -94,6 +96,10 @@ pub enum Layer {
     McpForm,
     /// Question before an MCP server is removed.
     ConfirmRemoveMcp,
+    /// The form for a quick action, on its page of Settings.
+    QuickActionForm,
+    /// Question before a quick action is removed.
+    ConfirmRemoveQuickAction,
     /// The form for an expert, on the Experts page of Settings.
     ExpertForm,
     /// Question before an expert is removed.
@@ -106,11 +112,12 @@ pub enum Layer {
 
 impl Layer {
     /// Menus that open above the composer; only one shows at a time.
-    pub const COMPOSER_MENUS: [Layer; 4] = [
+    pub const COMPOSER_MENUS: [Layer; 5] = [
         Layer::EffortMenu,
         Layer::ModelMenu,
         Layer::RunsOnMenu,
         Layer::ExpertMenu,
+        Layer::QuickMenu,
     ];
     /// What the row under the conversation's title can turn into, one at a
     /// time.
@@ -150,7 +157,9 @@ impl Layer {
             | Layer::EnvironmentForm
             | Layer::ConfirmRemoveEnvironment
             | Layer::ExpertForm
-            | Layer::ConfirmRemoveExpert => Some(Layer::Settings),
+            | Layer::ConfirmRemoveExpert
+            | Layer::QuickActionForm
+            | Layer::ConfirmRemoveQuickAction => Some(Layer::Settings),
             Layer::ConfirmRemoveFavorite => Some(Layer::Favorites),
             Layer::JournalForm => Some(Layer::Journey),
             Layer::BatchGroupMenu | Layer::ConfirmBatchDelete => Some(Layer::SelectMode),
@@ -441,6 +450,16 @@ mod tests {
         stack.open(Layer::ConfirmRemoveExpert);
         assert!(stack.close(Layer::Settings));
         assert!(!stack.contains(Layer::ConfirmRemoveExpert));
+        // So is the quick action form, and the question before removing one.
+        stack.open(Layer::Settings);
+        stack.open(Layer::QuickActionForm);
+        assert_eq!(stack.dismiss_top(), Some(Layer::QuickActionForm));
+        assert!(stack.contains(Layer::Settings));
+        stack.open(Layer::ConfirmRemoveQuickAction);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmRemoveQuickAction));
+        stack.open(Layer::QuickActionForm);
+        assert!(stack.close(Layer::Settings));
+        assert!(!stack.contains(Layer::QuickActionForm));
         // The composer menus are ordinary layers of their own.
         for menu in Layer::COMPOSER_MENUS {
             stack.open(menu);

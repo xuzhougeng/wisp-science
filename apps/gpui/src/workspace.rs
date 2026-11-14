@@ -27,6 +27,7 @@ mod settings_environments;
 mod settings_experts;
 mod settings_mcp;
 mod settings_network;
+mod settings_quick;
 mod settings_sections;
 mod settings_view;
 mod shell;
@@ -269,6 +270,12 @@ pub struct Workspace {
     /// host, notes.
     env_fields: [Entity<InputState>; 7],
     /// The user's MCP servers; `None` until read.
+    /// Requests kept under a name, for the composer's menu.
+    quick_actions: Vec<wisp_server::desktop::QuickAction>,
+    /// The action in the form or the remove question; empty is a new one.
+    quick_editing: Option<String>,
+    /// Name, request.
+    quick_fields: [Entity<InputState>; 2],
     /// The personas a conversation can be started as.
     experts: Vec<wisp_server::desktop::Expert>,
     /// The expert in the form or the remove question; empty is a new one.
@@ -428,6 +435,10 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
         ];
         let mcp_target = cx.new(|cx| InputState::new(window, cx));
+        let quick_fields = [
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx).multi_line(true)),
+        ];
         let archive_fields = [
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
@@ -705,6 +716,9 @@ impl Workspace {
             project_form_ready: false,
             project_form_error: None,
             env_fields,
+            quick_actions: Vec::new(),
+            quick_editing: None,
+            quick_fields,
             experts: Vec::new(),
             expert_editing: None,
             expert_fields,
@@ -784,7 +798,8 @@ impl Workspace {
                 | Layer::EffortMenu
                 | Layer::ModelMenu
                 | Layer::RunsOnMenu
-                | Layer::ExpertMenu,
+                | Layer::ExpertMenu
+                | Layer::QuickMenu,
             ) => self.focus_composer(window, cx),
             // Settings stays open underneath and keeps its focus.
             Some(Layer::ConfirmDeleteModel) => {}
@@ -814,6 +829,9 @@ impl Workspace {
             Some(Layer::ConfirmRemoveFavorite) => {}
             Some(Layer::McpForm | Layer::ConfirmRemoveMcp) => self.mcp_editing = None,
             Some(Layer::ExpertForm | Layer::ConfirmRemoveExpert) => self.expert_editing = None,
+            Some(Layer::QuickActionForm | Layer::ConfirmRemoveQuickAction) => {
+                self.quick_editing = None
+            }
             Some(Layer::EnvironmentForm | Layer::ConfirmRemoveEnvironment) => {
                 self.env_target = None
             }
@@ -1055,6 +1073,7 @@ impl Workspace {
             Layer::ModelMenu,
             Layer::RunsOnMenu,
             Layer::ExpertMenu,
+            Layer::QuickMenu,
             Layer::Find,
             Layer::Outline,
             Layer::Trajectory,
@@ -2119,6 +2138,19 @@ impl Workspace {
         // The header names the model this conversation runs on.
         self.start_poll(window, cx);
         self.focus_composer(window, cx);
+        cx.notify();
+    }
+
+    /// Puts a quick action's request into the composer, after whatever is
+    /// being written, with the caret at its end.
+    fn use_quick_action(&mut self, prompt: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.layers.close(Layer::QuickMenu);
+        let text = crate::compose::with_quick_action(&self.composer.read(cx).value(), &prompt);
+        self.state.save_draft(text.clone());
+        self.composer.update(cx, |input, cx| {
+            input.set_value(text, window, cx);
+            input.focus(window, cx);
+        });
         cx.notify();
     }
 

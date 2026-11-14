@@ -13,6 +13,7 @@ mod origin;
 mod output;
 mod project_archive;
 mod project_folder;
+mod quick_actions;
 mod remote_dir;
 mod research_archive;
 mod review;

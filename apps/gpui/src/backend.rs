@@ -785,6 +785,22 @@ impl Backend {
         self.local(|host| async move { host.check_for_update().await })
     }
 
+    /// The requests kept as quick actions.
+    pub fn quick_actions(&self) -> Reply<Vec<wisp_server::desktop::QuickAction>> {
+        self.local(|host| async move { host.quick_actions().await })
+    }
+
+    pub fn save_quick_action(
+        &self,
+        input: wisp_server::desktop::QuickActionInput,
+    ) -> Reply<Vec<wisp_server::desktop::QuickAction>> {
+        self.local(move |host| async move { host.save_quick_action(input).await })
+    }
+
+    pub fn delete_quick_action(&self, id: String) -> Reply<Vec<wisp_server::desktop::QuickAction>> {
+        self.local(move |host| async move { host.delete_quick_action(&id).await })
+    }
+
     /// The experts a conversation can be started as.
     pub fn experts(&self) -> Reply<Vec<wisp_server::desktop::Expert>> {
         self.local(|host| async move { host.experts().await })

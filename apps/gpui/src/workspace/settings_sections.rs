@@ -94,6 +94,7 @@ impl Workspace {
             Section::Credentials => self.load_credentials(window, cx),
             Section::Environments => self.load_environments(window, cx),
             Section::Experts => self.load_experts(window, cx),
+            Section::QuickActions => self.load_quick_actions(window, cx),
             Section::Network => self.load_network(window, cx),
             Section::Usage => self.load_usage(window, cx),
             Section::Storage => self.load_storage(window, cx),
@@ -645,6 +646,7 @@ impl Workspace {
         .detach();
         // The composer offers them from the start.
         self.load_experts(window, cx);
+        self.load_quick_actions(window, cx);
         let language = self.backend.preference(LANGUAGE);
         cx.spawn_in(window, async move |this, cx| {
             let saved = receive(language).await.ok().flatten();
