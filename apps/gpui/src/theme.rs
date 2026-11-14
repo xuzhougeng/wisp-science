@@ -4,7 +4,55 @@
 use std::rc::Rc;
 
 use gpui::{App, Window};
-use gpui_component::{Theme, ThemeSet};
+use gpui_component::{Theme, ThemeMode, ThemeSet};
+
+/// Which palette the window wears.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Appearance {
+    /// Whatever the system is set to, changing with it.
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl Appearance {
+    pub const ALL: [Appearance; 3] = [Appearance::System, Appearance::Light, Appearance::Dark];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Appearance::System => "System",
+            Appearance::Light => "Light",
+            Appearance::Dark => "Dark",
+        }
+    }
+
+    /// The word it is saved as.
+    pub fn key(self) -> &'static str {
+        match self {
+            Appearance::System => "system",
+            Appearance::Light => "light",
+            Appearance::Dark => "dark",
+        }
+    }
+
+    /// Reads a saved choice; anything else follows the system.
+    pub fn from_key(key: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|choice| choice.key() == key.trim())
+            .unwrap_or_default()
+    }
+}
+
+/// Wears the chosen palette: the system's, or one of the two for good.
+pub fn apply(appearance: Appearance, window: &mut Window, cx: &mut App) {
+    match appearance {
+        Appearance::System => Theme::sync_system_appearance(Some(window), cx),
+        Appearance::Light => Theme::change(ThemeMode::Light, Some(window), cx),
+        Appearance::Dark => Theme::change(ThemeMode::Dark, Some(window), cx),
+    }
+}
 
 const THEMES: &str = include_str!("../assets/wisp-theme.json");
 
@@ -25,14 +73,19 @@ pub fn install(cx: &mut App) {
     Theme::sync_system_appearance(None, cx);
 }
 
-/// Re-applies the palette when the system switches between light and dark.
-pub fn follow_system(window: &mut Window, cx: &mut App) {
-    Theme::sync_system_appearance(Some(window), cx);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_saved_appearance_is_read_back_and_anything_else_follows_the_system() {
+        for choice in Appearance::ALL {
+            assert_eq!(Appearance::from_key(choice.key()), choice);
+        }
+        assert_eq!(Appearance::from_key(" dark "), Appearance::Dark);
+        assert_eq!(Appearance::from_key("sepia"), Appearance::System);
+        assert_eq!(Appearance::from_key(""), Appearance::System);
+    }
 
     #[test]
     fn the_bundled_theme_has_one_light_and_one_dark_palette() {

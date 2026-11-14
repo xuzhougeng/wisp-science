@@ -120,6 +120,10 @@ pub struct Workspace {
     /// What the memory editor is writing, or the delete question is about.
     memory_target: Option<crate::memory::Target>,
     memory_text: Entity<InputState>,
+    /// Which palette the window wears.
+    appearance: crate::theme::Appearance,
+    /// What the app opens on.
+    launch: crate::settings::Launch,
     /// The Settings page that is showing.
     settings_section: crate::settings::Section,
     /// How turns run and new conversations start; `None` until read.
@@ -337,8 +341,9 @@ impl Workspace {
                     cx.stop_propagation();
                 }
             }),
-            cx.observe_window_appearance(window, |_, window, cx| {
-                crate::theme::follow_system(window, cx)
+            // A system change only matters while the system is followed.
+            cx.observe_window_appearance(window, |this, window, cx| {
+                crate::theme::apply(this.appearance, window, cx)
             }),
             cx.observe_window_activation(window, |this, window, cx| this.mark_seen(window, cx)),
         ];
@@ -383,6 +388,8 @@ impl Workspace {
             memory_request: 0,
             memory_target: None,
             memory_text,
+            appearance: Default::default(),
+            launch: Default::default(),
             settings_section: Default::default(),
             turn_defaults: None,
             steps_input,
@@ -609,6 +616,7 @@ impl Workspace {
                         this.load_inbox(window, cx);
                         this.load_model_settings(true, window, cx);
                         this.load_arrangement(window, cx);
+                        this.load_general(window, cx);
                     }
                     Err(error) => this.error = Some(error),
                 }
@@ -870,6 +878,7 @@ impl Workspace {
         self.load_saved(window, cx);
         self.ensure_files(window, cx);
         self.reload_artifacts(window, cx);
+        self.remember_place(window, cx);
     }
 
     /// Refreshes the Artifacts tab if that is what the panel is showing.

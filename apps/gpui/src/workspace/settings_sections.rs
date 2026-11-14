@@ -19,6 +19,11 @@ use crate::{
     settings::{self, Section},
 };
 
+/// Names the General page's choices are saved under.
+const APPEARANCE: &str = "appearance";
+const LAUNCH: &str = "launch";
+const LAST_OPEN: &str = "last_open";
+
 /// How wide a setting's name and note are, and the page that holds them.
 const NOTE_WIDTH: f32 = 460.;
 const PAGE_WIDTH: f32 = 720.;
@@ -71,7 +76,7 @@ impl Workspace {
         self.settings_section = section;
         self.settings_error = None;
         match section {
-            Section::Models => {}
+            Section::Models | Section::General => {}
             Section::Skills => self.load_skills(window, cx),
             Section::Connections => self.load_connectors(window, cx),
             Section::Credentials => self.load_credentials(window, cx),
@@ -545,6 +550,117 @@ impl Workspace {
                 .text_color(muted)
                 .child("Your own MCP servers cannot be added here yet."),
         )
+    }
+
+    /// Reads the choices of the General page and acts on them: wears the
+    /// chosen palette and, if asked to, reopens the conversation that was
+    /// open last time.
+    pub(super) fn load_general(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (appearance, launch, place) = (
+            self.backend.preference(APPEARANCE),
+            self.backend.preference(LAUNCH),
+            self.backend.preference(LAST_OPEN),
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            let saved = |reply| async move { receive(reply).await.ok().flatten() };
+            let (appearance, launch, place) = (
+                saved(appearance).await,
+                saved(launch).await,
+                saved(place).await,
+            );
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.appearance =
+                    crate::theme::Appearance::from_key(appearance.as_deref().unwrap_or_default());
+                this.launch = settings::Launch::from_key(launch.as_deref().unwrap_or_default());
+                crate::theme::apply(this.appearance, window, cx);
+                let place = place.as_deref().and_then(settings::decode_place);
+                if let (settings::Launch::Resume, Some((project, session))) = (this.launch, place) {
+                    // Only on a fresh start: the user may already be somewhere.
+                    if this.state.project.is_none() {
+                        this.open_session(project, session, window, cx);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Saves one choice of the General page; a failure is shown there.
+    fn save_general(
+        &mut self,
+        name: &'static str,
+        value: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let reply = self.backend.set_preference(name, value);
+        cx.spawn_in(window, async move |this, cx| {
+            if let Err(error) = receive(reply).await {
+                let _ = this.update(cx, |this, cx| {
+                    this.settings_error = Some(error);
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Notes which conversation is open, for the next start.
+    pub(super) fn remember_place(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(project), Some(session)) = (&self.state.project, &self.state.session) else {
+            return;
+        };
+        let place = settings::encode_place(project, session);
+        let reply = self.backend.set_preference(LAST_OPEN, place);
+        // Nothing to say if this fails: the app simply opens on Home.
+        cx.spawn_in(window, async move |_, _| drop(receive(reply).await))
+            .detach();
+    }
+
+    pub(super) fn render_general_settings(&self, cx: &mut Context<Self>) -> Div {
+        let mut looks = div().h_flex().gap_1();
+        for choice in crate::theme::Appearance::ALL {
+            looks = looks.child(
+                Button::new(SharedString::from(format!("appearance-{}", choice.key())))
+                    .label(choice.label())
+                    .small()
+                    .selected(self.appearance == choice)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.appearance = choice;
+                        crate::theme::apply(choice, window, cx);
+                        this.save_general(APPEARANCE, choice.key().into(), window, cx);
+                    })),
+            );
+        }
+        let mut starts = div().h_flex().gap_1();
+        for choice in settings::Launch::ALL {
+            starts = starts.child(
+                Button::new(SharedString::from(format!("launch-{}", choice.key())))
+                    .label(choice.label())
+                    .small()
+                    .selected(self.launch == choice)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.launch = choice;
+                        this.save_general(LAUNCH, choice.key().into(), window, cx);
+                    })),
+            );
+        }
+        self.settings_page(cx)
+            .child(setting(
+                "Appearance",
+                "System follows your computer's light or dark setting and changes with it.",
+                looks,
+                cx,
+            ))
+            .child(setting(
+                "When Wisp starts",
+                "Open on the home page with every project, or on the conversation that \
+                 was open when you last used it.",
+                starts,
+                cx,
+            ))
     }
 
     /// Reads which service keys are saved. Each keeps its field across

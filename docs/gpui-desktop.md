@@ -122,7 +122,7 @@ folder registers its research root; it does not import existing desktop chats.
 | --- | --- |
 | Home | Opens first: every project and the newest conversations across them, with status |
 | Projects | Persisted list, native folder picker, reopen registered roots, running and waiting counts, star to keep first, remove from Wisp (files stay) |
-| Look | Wisp's light and dark palettes following the system; the shared icon set |
+| Look | Wisp's light and dark palettes, following the system or fixed to one in Settings; the shared icon set |
 | Conversations | Create, select, restore messages, running / needs-you status |
 | Conversation management | Rename, pin (shown first), archive and restore, delete with confirmation |
 | Groups | Named groups per project: create, rename, reorder, delete (conversations stay); put a conversation in one from its bar; fold a section |
@@ -133,7 +133,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Branch | Under a reply: a new conversation holding everything through that turn, opened at once and listed under the one it came from |
 | Search | Titles and message text across the project, archived conversations included |
 | Command palette | One box over everything: projects, files by name in every project, conversations by title or message text, and the window's commands; arrow keys, Return, Escape |
-| Settings | Pages: Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold), Skills (every skill with where it comes from, search, on or off), Connections (the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
+| Settings | Pages: General (appearance: system, light or dark; what the app opens on), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold), Skills (every skill with where it comes from, search, on or off), Connections (the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
 | Inbox | Conversations in any project that are waiting for you; opens across projects |
 | Read state | A finished answer is marked read once it is on screen in the active window |
 | Transcript | Virtualized Markdown, selectable text, paginated history |
@@ -325,6 +325,13 @@ Limits of this slice:
 - Status refreshes every two seconds while any turn is running and once more
   when the last one stops; it is not pushed by the host.
 - The interface is English only; localization is still open (below).
+- General has two choices. The rest of the WebView's page (language, send
+  key, workspace directory, notifications, sound, update check, tool paths) is
+  not ported: in particular the composer always sends with Cmd/Ctrl+Enter,
+  because the multiline input inserts its newline before the app hears the
+  key. Accent colour, fonts and sizes are not ported either. "Where I left
+  off" reopens the last conversation that was opened, in its project; if that
+  project or conversation is gone the app says so and stays where it is.
 - Removing a project deletes its conversations from the preview database and
   leaves the folder alone. The workspace the app starts on cannot be removed,
   and a project with a running turn must be stopped first.
@@ -485,6 +492,11 @@ Open Credentials: save a contact email and confirm the field empties and says
 Saved; restart and confirm it is still Saved; press Forget. With a real NCBI
 key saved, run several PubMed searches in a row and confirm none is refused
 for rate.
+Open General: choose Dark, Light and System and confirm the whole window
+changes at once; with System chosen, switch the system's appearance and
+confirm the window follows, and with Dark chosen that it does not. Choose
+Where I left off, open a conversation, quit and start again: the conversation
+is open. Choose Home page and confirm the next start opens on Home.
 Restart and confirm persisted messages. Close during a running tool and verify
 worker cleanup. Check missing credentials and invalid workspace errors. Validate
 each target OS; a macOS build does not establish Windows/Linux behavior.

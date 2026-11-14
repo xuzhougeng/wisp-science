@@ -17,10 +17,12 @@ pub enum Section {
     Permissions,
     Usage,
     Storage,
+    General,
 }
 
 impl Section {
-    pub const ALL: [Section; 8] = [
+    pub const ALL: [Section; 9] = [
+        Section::General,
         Section::Models,
         Section::Conversation,
         Section::Skills,
@@ -33,6 +35,7 @@ impl Section {
 
     pub fn label(self) -> &'static str {
         match self {
+            Section::General => "General",
             Section::Models => "Models",
             Section::Conversation => "Conversation",
             Section::Skills => "Skills",
@@ -46,6 +49,7 @@ impl Section {
 
     pub fn icon(self) -> &'static str {
         match self {
+            Section::General => "controls",
             Section::Models => "bot",
             Section::Conversation => "chat",
             Section::Skills => "skill",
@@ -60,6 +64,7 @@ impl Section {
     /// The heading the section is listed under.
     pub fn group(self) -> &'static str {
         match self {
+            Section::General => "App",
             Section::Models | Section::Conversation => "AI",
             Section::Skills | Section::Connections | Section::Credentials => "Capabilities",
             Section::Permissions => "Safety",
@@ -134,6 +139,55 @@ pub fn tool_count(count: usize) -> String {
         1 => "1 tool".into(),
         n => format!("{n} tools"),
     }
+}
+
+/// What the app opens on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Launch {
+    /// The home page with every project.
+    #[default]
+    Home,
+    /// The conversation that was open when the app was last used.
+    Resume,
+}
+
+impl Launch {
+    pub const ALL: [Launch; 2] = [Launch::Home, Launch::Resume];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Launch::Home => "Home page",
+            Launch::Resume => "Where I left off",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Launch::Home => "home",
+            Launch::Resume => "resume",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|choice| choice.key() == key.trim())
+            .unwrap_or_default()
+    }
+}
+
+/// The conversation that was open, as it is saved: project, then
+/// conversation, on two lines.
+pub fn encode_place(project: &str, session: &str) -> String {
+    format!("{project}\n{session}")
+}
+
+/// Reads a saved place back. Half a place is no place.
+pub fn decode_place(saved: &str) -> Option<(String, String)> {
+    let (project, session) = saved.split_once('\n')?;
+    let (project, session) = (project.trim(), session.trim());
+    (!project.is_empty() && !session.is_empty() && !session.contains('\n'))
+        .then(|| (project.to_owned(), session.to_owned()))
 }
 
 /// What a credential's field says before anything is typed.
@@ -293,6 +347,7 @@ mod tests {
         assert_eq!(
             groups,
             [
+                "App",
                 "AI",
                 "AI",
                 "Capabilities",
@@ -365,6 +420,19 @@ mod tests {
         assert!(!connector_matches(&rows[0], "uniprot"));
         assert_eq!(tool_count(1), "1 tool");
         assert_eq!(tool_count(4), "4 tools");
+    }
+
+    #[test]
+    fn the_place_to_resume_survives_a_round_trip_or_is_no_place() {
+        let saved = encode_place("lab", "c-1");
+        assert_eq!(decode_place(&saved), Some(("lab".into(), "c-1".into())));
+        for wrong in ["", "lab", "lab\n", "\nc-1", "lab\nc-1\nextra"] {
+            assert_eq!(decode_place(wrong), None, "{wrong:?}");
+        }
+        for choice in Launch::ALL {
+            assert_eq!(Launch::from_key(choice.key()), choice);
+        }
+        assert_eq!(Launch::from_key("somewhere"), Launch::Home);
     }
 
     #[test]

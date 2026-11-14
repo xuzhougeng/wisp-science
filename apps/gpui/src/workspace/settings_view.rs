@@ -737,6 +737,7 @@ impl Workspace {
                 .p_6()
                 .child(self.render_model_list(cx))
                 .child(self.render_model_form(cx)),
+            Section::General => self.render_general_settings(cx),
             Section::Conversation => self.render_conversation_settings(cx),
             Section::Skills => self.render_skill_settings(cx),
             Section::Connections => self.render_connection_settings(cx),
