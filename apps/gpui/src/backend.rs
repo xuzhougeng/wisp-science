@@ -197,6 +197,11 @@ impl Backend {
         self.local(move |host| async move { host.project_file(&project, &path).await })
     }
 
+    /// A conversation, whole, as a Markdown document.
+    pub fn export_conversation(&self, project: String, session: String) -> Reply<String> {
+        self.local(move |host| async move { host.export_conversation(&project, &session).await })
+    }
+
     /// What happened in a project between two moments, newest first.
     pub fn journey(
         &self,

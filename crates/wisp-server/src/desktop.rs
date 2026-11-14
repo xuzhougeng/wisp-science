@@ -748,6 +748,55 @@ impl Server {
         Ok(())
     }
 
+    /// The whole of a conversation as a Markdown document: what was said,
+    /// and each tool call with what it was given and what it returned. It
+    /// is read from what is saved, so a turn that is still running is in
+    /// it only as far as it has been saved.
+    pub async fn export_conversation(&self, project: &str, session: &str) -> Result<String> {
+        self.own_conversation(project, session).await?;
+        let store = &self.0.store;
+        // Pages come newest first; the document reads oldest first.
+        let mut pages = Vec::new();
+        let mut before = None;
+        loop {
+            let page = store
+                .load_session_transcript_page(session, before, 200)
+                .await?;
+            before = page.next_before_seq;
+            pages.push(page.messages);
+            if before.is_none() {
+                break;
+            }
+        }
+        let messages: Vec<_> = pages
+            .into_iter()
+            .rev()
+            .flatten()
+            .map(|(_, message)| message)
+            .collect();
+        let mut rows = crate::runtime::items(&messages);
+        let outcomes: HashMap<_, _> = store
+            .load_session_ui_events(session)
+            .await?
+            .into_iter()
+            .filter_map(|raw| serde_json::from_str::<crate::output::OutcomeEvent>(&raw).ok())
+            .filter(|event| event.kind == "ServerToolResult")
+            .map(|event| (event.outcome.call_id.clone(), event.outcome.ok))
+            .collect();
+        for row in &mut rows {
+            if let Some(ok) = row.call_id.as_ref().and_then(|id| outcomes.get(id)) {
+                row.ok = Some(*ok);
+            }
+        }
+        let title = store.session_title(session).await?.unwrap_or_default();
+        let name = store
+            .get_project(project)
+            .await?
+            .map(|(name, _)| name)
+            .unwrap_or_default();
+        Ok(crate::export::markdown(&title, &name, &rows))
+    }
+
     /// What happened in a project from `from` up to `until` (seconds since
     /// 1970, at most 32 days apart): runs, files, what was asked in its
     /// conversations, decisions, and the researcher's own records, newest

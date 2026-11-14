@@ -115,7 +115,7 @@ to find in the running app.
 | Compute environment for the conversation [计算环境] | Yes | Partial: the default, this computer or a saved SSH host, for where runs start; Python, R and the shell stay on this computer | store |
 | Context usage meter and manual compaction | Yes | Partial: how full the context is, as a percentage; no breakdown and no manual compaction | served |
 | Request a review of the conversation [请求审查] | Yes | Missing | tauri |
-| Share as long image or HTML [分享为长图] | Yes | Missing | ui |
+| Share as long image or HTML [分享为长图] | Yes | Partial: Export saves the conversation as a Markdown file; no long image or HTML | ui |
 | Save the conversation as a skill [保存为技能] | Yes | Missing | shared |
 | Interactive runtime status (Python / R) [Local · Python · R] | Yes | Missing | shared |
 
@@ -149,7 +149,7 @@ to find in the running app.
 | Feature | WebView | GPUI | Host |
 | --- | --- | --- | --- |
 | Conversation tabs | Yes | Missing | ui |
-| Share conversation [分享对话] | Yes | Missing | tauri |
+| Share conversation [分享对话] | Yes | Partial: as an exported Markdown file; no share link | tauri |
 | Trajectory [轨迹] | Yes | Missing | store |
 | Research archive [研究归档] | Yes | Missing | store |
 | Pending decisions [N 个待处理] | Yes | Done (sidebar inbox) | served |

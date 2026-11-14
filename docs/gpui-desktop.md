@@ -134,6 +134,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Search | Titles and message text across the project, archived conversations included |
 | Command palette | One box over everything: projects, files by name in every project, conversations by title or message text, and the window's commands; arrow keys, Return, Escape |
 | Pictures in answers | When an answer shows a picture of the project with Markdown image syntax, the picture is drawn under the answer |
+| Export | A conversation's Export button saves the whole of it as a Markdown file where you choose |
 | Notebook | A tab of the side panel: the conversation's code as cells, with what each run returned; copy, save to favorites, or show it in the conversation |
 | Research calendar | A page across every project: a month as a grid with how many records each day holds, and the chosen day's records; projects can be left out |
 | Research journey | A page for the open project: one month of what happened, by day (what you asked, runs, files, decisions, your own records), a filter, and a form to add a record of your own |
@@ -369,6 +370,13 @@ Limits of this slice:
   being shown as empty. Which projects are left out is kept only while the
   app runs. A row that came from a conversation opens it. Records cannot be
   added from the calendar.
+- Export writes one Markdown file: the title, the project, what you and
+  the model said in full, and each tool call with what it was given and
+  what it returned, each cut to about four thousand bytes. It is read from
+  what is saved, the whole conversation and not only the loaded part; a
+  turn that is still running is in it only as far as it has been saved.
+  Pictures are not embedded, and there is no HTML, long image or share
+  link.
 - The notebook is a reading of the transcript, as in the WebView, not
   something saved: every `python`, `r` and `shell` call with its output,
   and every code block an answer shows; code that was shown and then run
@@ -688,6 +696,9 @@ choose Finding, give it a line and save: it is the newest record of today.
 Save one without a title and confirm it is refused and the form stays.
 Press a row that came from a conversation and confirm that conversation
 opens. Open Journey again and press Escape: the page closes.
+Press Export on a conversation, choose a place, and open the file: it has
+the title, every message in order and each tool call; cancel the dialog and
+confirm nothing is written.
 In a conversation where the model ran commands open the Notebook tab of the
 side panel: each run is a cell with its output, and a code block that was
 only shown is marked so. Press the arrow on a cell and confirm the

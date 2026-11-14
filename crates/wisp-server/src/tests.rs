@@ -4332,3 +4332,68 @@ async fn a_projects_journey_lists_what_happened_and_what_the_researcher_recorded
     assert!(server.calendar(now - 40 * 86_400, now).await.is_err());
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_conversation_is_exported_whole_as_markdown() {
+    let temp = tempfile::tempdir().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    // A model that runs one tool, then answers.
+    let server = Server::open_with_models(config(temp.path()), models(calls, true))
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    send(&server, &session, "write the file").await.unwrap();
+    let asked = wait_for(&server, &session, |s| !s.approvals.is_empty() || !s.running).await;
+    for approval in &asked.approvals {
+        server
+            .answer_approval(
+                PROJECT,
+                &session,
+                &approval.approval_id,
+                true,
+                desktop::Remember::No,
+            )
+            .await
+            .unwrap();
+    }
+    wait_for(&server, &session, |s| !s.running).await;
+    send(&server, &session, "and again").await.unwrap();
+    let asked = wait_for(&server, &session, |s| !s.approvals.is_empty() || !s.running).await;
+    for approval in &asked.approvals {
+        server
+            .answer_approval(
+                PROJECT,
+                &session,
+                &approval.approval_id,
+                true,
+                desktop::Remember::No,
+            )
+            .await
+            .unwrap();
+    }
+    wait_for(&server, &session, |s| !s.running).await;
+
+    let text = server.export_conversation(PROJECT, &session).await.unwrap();
+    // The title, the project, and both questions in the order they were asked.
+    assert!(
+        text.starts_with("# write the file\n\nProject: Server\n"),
+        "{text}"
+    );
+    let first = text.find("## You\n\nwrite the file").unwrap();
+    let second = text.find("## You\n\nand again").unwrap();
+    assert!(first < second, "{text}");
+    // What the model did and said is between them.
+    let between = &text[first..second];
+    assert!(between.contains("**Tool `"), "{text}");
+    assert!(between.contains("## Wisp"), "{text}");
+    // Only the conversation's own project may export it.
+    assert!(server
+        .export_conversation("missing", &session)
+        .await
+        .is_err());
+    assert!(server
+        .export_conversation(PROJECT, "missing")
+        .await
+        .is_err());
+    server.shutdown().await;
+}

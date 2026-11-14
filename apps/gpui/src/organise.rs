@@ -387,6 +387,28 @@ impl Picks {
     }
 }
 
+/// A file name for a conversation saved as a document: its title with
+/// what a file name cannot hold replaced, not too long, ending in `.md`.
+pub fn export_name(title: &str) -> String {
+    let cleaned: String = title
+        .trim()
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
+            c if c.is_control() => ' ',
+            c => c,
+        })
+        .collect();
+    let words: Vec<&str> = cleaned.split_whitespace().collect();
+    let name: String = words.join(" ").chars().take(80).collect();
+    let name = name.trim().trim_matches('.').trim();
+    if name.is_empty() {
+        "conversation.md".into()
+    } else {
+        format!("{name}.md")
+    }
+}
+
 /// One line saying how a batch went: `done` conversations were `verb`
 /// ("Archived", "Deleted"), and the first refusal says why the rest were not.
 pub fn report(verb: &str, done: usize, refused: &[(String, String)]) -> String {
@@ -746,5 +768,19 @@ mod tests {
             report("Deleted", 0, &[busy]),
             "Nothing changed: Stop the running turn first."
         );
+    }
+
+    #[test]
+    fn an_exported_conversation_gets_a_name_a_file_can_have() {
+        assert_eq!(export_name("  Align the reads  "), "Align the reads.md");
+        // What a path or a shell would trip over is replaced, not dropped.
+        assert_eq!(export_name("a/b\\c: d? \"e\""), "a-b-c- d- -e-.md");
+        assert_eq!(export_name("two\nlines\there"), "two lines here.md");
+        // A long title is cut; a title with nothing usable still has a name.
+        let long = export_name(&"word ".repeat(40));
+        assert!(long.chars().count() <= 83 && long.ends_with(".md"));
+        assert_eq!(export_name("   "), "conversation.md");
+        assert_eq!(export_name("..."), "conversation.md");
+        assert_eq!(export_name("请总结 CRISPR 筛选"), "请总结 CRISPR 筛选.md");
     }
 }

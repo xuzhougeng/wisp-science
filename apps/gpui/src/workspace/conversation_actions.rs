@@ -57,6 +57,53 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Asks where to save the conversation and writes it there as
+    /// Markdown. The file is the user's: it is put only where they say.
+    fn export_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some((project, session)), Some(title)) = (
+            self.current_ids(),
+            self.current_row().map(|row| row.title.clone()),
+        ) else {
+            return;
+        };
+        self.error = None;
+        self.notice = None;
+        let folder = dirs::document_dir()
+            .or_else(dirs::home_dir)
+            .unwrap_or_default();
+        let place = cx.prompt_for_new_path(&folder, Some(&crate::organise::export_name(&title)));
+        let backend = self.backend.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = async {
+                let Some(path) = place
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .map_err(|error| error.to_string())?
+                else {
+                    // The dialog was dismissed: nothing is written.
+                    return Ok(None);
+                };
+                let text = receive(backend.export_conversation(project, session)).await?;
+                std::fs::write(&path, text)
+                    .map_err(|error| format!("Could not save {}: {error}", path.display()))?;
+                Ok::<_, String>(Some(path))
+            }
+            .await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(Some(path)) => {
+                        this.notice = Some(format!("Saved to {}", path.display()));
+                    }
+                    Ok(None) => {}
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn begin_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(title) = self.current_row().map(|row| row.title.clone()) else {
             return;
@@ -391,6 +438,17 @@ impl Workspace {
             )
             .child(self.group_button(busy || archived, cx))
             .child(self.transfer_button(busy || running, cx))
+            .child(
+                Button::new("conversation-export")
+                    .label("Export")
+                    .small()
+                    .ghost()
+                    .tooltip("Save the whole conversation as a Markdown file")
+                    .disabled(busy)
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.export_conversation(window, cx)),
+                    ),
+            )
             .child(
                 Button::new("conversation-archive")
                     .label(if archived { "Unarchive" } else { "Archive" })
