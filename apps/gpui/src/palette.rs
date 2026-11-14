@@ -3,7 +3,7 @@
 //! arrive from the host out of order, so every search carries a ticket and
 //! only the latest one may fill the list.
 use wisp_dto::{ProjectSummary, SessionSearchInfo};
-use wisp_server::desktop::FileMatch;
+use wisp_server::desktop::{FileMatch, ReferenceOption};
 
 use crate::home::Screen;
 
@@ -11,6 +11,17 @@ use crate::home::Screen;
 const PROJECTS: usize = 5;
 const FILES: usize = 6;
 const CONVERSATIONS: usize = 8;
+const SKILLS: usize = 8;
+
+/// What picking a row does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Mode {
+    /// Go there, or run the command.
+    #[default]
+    Open,
+    /// Add the row to the message being written.
+    Attach,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
@@ -74,6 +85,7 @@ pub enum Section {
     Projects,
     Files,
     Conversations,
+    Skills,
     Commands,
 }
 
@@ -83,6 +95,7 @@ impl Section {
             Section::Projects => "Projects",
             Section::Files => "Files",
             Section::Conversations => "Conversations",
+            Section::Skills => "Skills",
             Section::Commands => "Commands",
         }
     }
@@ -102,6 +115,10 @@ pub enum Entry {
         title: String,
         place: String,
     },
+    Skill {
+        name: String,
+        description: String,
+    },
     Command(Command),
 }
 
@@ -110,6 +127,7 @@ impl Entry {
         match self {
             Entry::Project { .. } => Section::Projects,
             Entry::File(_) => Section::Files,
+            Entry::Skill { .. } => Section::Skills,
             Entry::Conversation { .. } => Section::Conversations,
             Entry::Command(_) => Section::Commands,
         }
@@ -140,7 +158,9 @@ pub struct PaletteState {
     pub query: String,
     conversations: Vec<SessionSearchInfo>,
     files: Vec<FileMatch>,
+    skills: Vec<ReferenceOption>,
     pub selected: usize,
+    pub mode: Mode,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -148,9 +168,10 @@ pub struct Ticket(u64);
 
 impl PaletteState {
     /// Starts over for a newly opened palette.
-    pub fn reset(&mut self) {
+    pub fn reset(&mut self, mode: Mode) {
         *self = Self {
             generation: self.generation + 1,
+            mode,
             ..Self::default()
         };
     }
@@ -171,6 +192,10 @@ impl PaletteState {
             self.files.retain(|file| matches(&file.path, &query));
             self.conversations.retain(|row| matches(&row.title, &query));
         }
+        // Skills are listed even with nothing typed, so they are filtered
+        // rather than cleared.
+        self.skills
+            .retain(|skill| matches(&format!("{} {}", skill.label, skill.detail), &query));
         Ticket(self.generation)
     }
 
@@ -194,8 +219,17 @@ impl PaletteState {
         current
     }
 
-    /// The rows on screen, grouped as projects, files, conversations and
-    /// commands. With nothing typed the conversations are the `recent` ones.
+    pub fn accept_skills(&mut self, ticket: Ticket, skills: Vec<ReferenceOption>) -> bool {
+        let current = self.current(ticket);
+        if current {
+            self.skills = skills;
+        }
+        current
+    }
+
+    /// The rows on screen. To open: projects, files, conversations and
+    /// commands. To attach: files, conversations and skills. With nothing
+    /// typed the conversations are the `recent` ones.
     pub fn entries(
         &self,
         projects: &[ProjectSummary],
@@ -203,11 +237,13 @@ impl PaletteState {
         screen: Screen,
     ) -> Vec<Entry> {
         let query = self.query.as_str();
+        let attach = self.mode == Mode::Attach;
         let mut entries: Vec<Entry> = projects
             .iter()
             .filter(|project| {
-                matches(&project.name, query)
-                    || (!query.is_empty() && matches(&project.workspace_dir, query))
+                !attach
+                    && (matches(&project.name, query)
+                        || (!query.is_empty() && matches(&project.workspace_dir, query)))
             })
             .take(PROJECTS)
             .map(|project| Entry::Project {
@@ -237,6 +273,18 @@ impl PaletteState {
                     },
                 }),
         );
+        if attach {
+            entries.extend(self.skills.iter().take(SKILLS).filter_map(
+                |skill| match &skill.reference {
+                    wisp_dto::ComposerReferenceArg::Skill { name } => Some(Entry::Skill {
+                        name: name.clone(),
+                        description: skill.detail.clone(),
+                    }),
+                    _ => None,
+                },
+            ));
+            return entries;
+        }
         entries.extend(
             Command::ALL
                 .into_iter()
@@ -381,7 +429,7 @@ mod tests {
         );
         assert!(!state.current(new) && state.current(cleared));
         // Reopening the palette also invalidates what was in flight.
-        state.reset();
+        state.reset(Mode::Open);
         assert!(!state.current(cleared));
     }
 
@@ -460,6 +508,52 @@ mod tests {
         assert_eq!(
             (0..5).map(|i| child_index(&entries, i)).collect::<Vec<_>>(),
             [1, 2, 4, 6, 7]
+        );
+    }
+
+    #[test]
+    fn attaching_offers_files_conversations_and_skills_only() {
+        let skill = |name: &str, detail: &str| ReferenceOption {
+            reference: wisp_dto::ComposerReferenceArg::Skill { name: name.into() },
+            label: name.into(),
+            detail: detail.into(),
+        };
+        let mut state = PaletteState::default();
+        state.reset(Mode::Attach);
+        let projects = [project("Lab", "/data/lab")];
+        let recent = [conversation("r", "Earlier alignment", false)];
+        let ticket = state.begin("");
+        state.accept_skills(
+            ticket,
+            vec![skill("align", "Align reads"), skill("plot", "Draw figures")],
+        );
+        // Nothing typed: recent conversations and every skill; no projects,
+        // no commands.
+        assert_eq!(
+            sections(&state.entries(&projects, &recent, Screen::Project)),
+            [Section::Conversations, Section::Skills, Section::Skills]
+        );
+        // Typing narrows the skills at once, before the host answers.
+        let ticket = state.begin("figure");
+        assert_eq!(
+            state.entries(&projects, &recent, Screen::Project),
+            [Entry::Skill {
+                name: "plot".into(),
+                description: "Draw figures".into()
+            }]
+        );
+        assert!(state.accept_files(ticket, vec![file("figures/fig1.png")]));
+        assert_eq!(
+            sections(&state.entries(&projects, &recent, Screen::Project)),
+            [Section::Files, Section::Skills]
+        );
+        // Opening again to navigate starts clean.
+        state.reset(Mode::Open);
+        assert!(
+            state
+                .entries(&projects, &recent, Screen::Project)
+                .iter()
+                .all(|entry| entry.section() != Section::Skills)
         );
     }
 }

@@ -23,10 +23,12 @@ use wisp_dto::{
     native_conversations::{Item, Snapshot},
 };
 
+use wisp_dto::native_conversations::SendRequest;
 use wisp_server::desktop::{ConversationOptions, ConversationStatus};
 
 use crate::{
     backend::{Backend, receive},
+    compose::{Chip, Pending},
     files::FilesState,
     home::{self, Screen},
     layers::{EscapeStack, Layer, Shortcut, is_escape, shortcut},
@@ -47,6 +49,9 @@ pub struct Workspace {
     removing: Option<String>,
     /// Tool rows whose input and output are unfolded.
     open_tools: HashSet<String>,
+    /// Files and references attached to the message being written, per
+    /// conversation, like the drafts.
+    chips: HashMap<String, Pending>,
     /// Options, usage and remembered approvals of the open conversation.
     status: Option<ConversationStatus>,
     /// Counts snapshot polls, so the status is refreshed about once a second.
@@ -213,6 +218,7 @@ impl Workspace {
             recent: vec![],
             removing: None,
             open_tools: HashSet::new(),
+            chips: HashMap::new(),
             status: None,
             status_tick: 0,
             copied: None,
@@ -902,23 +908,43 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.state.can_send(&text, self.pending) || self.loading_history {
+        let selection = self.state.selection();
+        let (Some(project), Some(session)) = (selection.project.clone(), selection.session.clone())
+        else {
+            return;
+        };
+        // What the composer has attached goes with what it has typed.
+        let carried = if from_composer {
+            self.chips.get(&session).cloned().unwrap_or_default()
+        } else {
+            Pending::default()
+        };
+        let attachments = carried.attachments();
+        // Files alone are a message; the host names it after the first one.
+        let sendable = if text.trim().is_empty() && !attachments.is_empty() {
+            "files"
+        } else {
+            text.as_str()
+        };
+        if !self.state.can_send(sendable, self.pending) || self.loading_history {
             return;
         }
         self.pending = true;
         self.error = None;
         self.poll = None;
-        let selection = self.state.selection();
-        let reply = self
-            .backend
-            .request::<wisp_dto::native_conversations::SendAccepted>(
-                "native_conversation_send",
-                selection.project.clone(),
-                json!({
-                    "session_id": selection.session, "request_id": uuid::Uuid::new_v4().to_string(),
-                    "message": text.trim(),
-                }),
-            );
+        let reply = self.backend.send_message(
+            project,
+            SendRequest {
+                session_id: session.clone(),
+                request_id: uuid::Uuid::new_v4().to_string(),
+                message: text.trim().to_owned(),
+                resume: false,
+                resume_after: None,
+                attachments,
+                references: carried.references(),
+                acp_agent_id: None,
+            },
+        );
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -937,6 +963,7 @@ impl Workspace {
                             this.composer
                                 .update(cx, |input, cx| input.set_value("", window, cx));
                             this.state.save_draft(String::new());
+                            this.chips.remove(&session);
                         }
                         this.history.clear();
                         if let Some(snapshot) = &mut this.state.snapshot {
@@ -952,6 +979,84 @@ impl Workspace {
         })
         .detach();
         cx.notify();
+    }
+
+    /// What is attached to the message being written in this conversation.
+    fn attached(&self) -> &[Chip] {
+        self.state
+            .session
+            .as_ref()
+            .and_then(|session| self.chips.get(session))
+            .map_or(&[], Pending::chips)
+    }
+
+    fn attach(&mut self, chip: Chip, cx: &mut Context<Self>) {
+        if let Some(session) = self.state.session.clone() {
+            self.chips.entry(session).or_default().add(chip);
+            cx.notify();
+        }
+    }
+
+    fn detach(&mut self, index: usize, cx: &mut Context<Self>) {
+        if let Some(pending) = self
+            .state
+            .session
+            .as_ref()
+            .and_then(|session| self.chips.get_mut(session))
+        {
+            pending.remove(index);
+            cx.notify();
+        }
+    }
+
+    /// Picks files with the system dialog. Files outside the project are
+    /// copied into its `uploads` folder; files inside it are used in place.
+    fn attach_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let selection = self.state.selection();
+        let (Some(project), Some(_)) = (selection.project.clone(), selection.session.clone())
+        else {
+            return;
+        };
+        let picker = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some("Attach".into()),
+        });
+        let backend = self.backend.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = async {
+                let picked = picker
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .map_err(|e| e.to_string())?;
+                match picked {
+                    Some(files) if !files.is_empty() => {
+                        receive(backend.import_attachments(project, files)).await
+                    }
+                    _ => Ok(vec![]),
+                }
+            }
+            .await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                // The files belong to the conversation they were picked for.
+                if !this.state.current(&selection) {
+                    return;
+                }
+                match result {
+                    Ok(paths) => {
+                        for path in paths {
+                            this.attach(Chip::File(path), cx);
+                        }
+                        this.reload_files(window, cx);
+                        this.focus_composer(window, cx);
+                    }
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn load_status(&mut self, window: &mut Window, cx: &mut Context<Self>) {

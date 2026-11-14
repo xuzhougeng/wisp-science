@@ -146,6 +146,7 @@ impl Workspace {
             move |this, window, cx| {
                 this.known.remove(&session);
                 this.state.forget_draft(&session);
+                this.chips.remove(&session);
                 this.leave_conversation(window, cx);
             },
             window,

@@ -2,6 +2,7 @@
 
 mod assets;
 mod backend;
+mod compose;
 mod controls;
 mod files;
 mod home;

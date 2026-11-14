@@ -7,6 +7,7 @@ use crate::{config::ModelConfig, Server};
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::Ordering;
+pub use wisp_dto::native_conversations::ReferenceOption;
 use wisp_dto::SessionSearchInfo;
 use wisp_llm::ProviderKind;
 use wisp_store::Store;
@@ -775,6 +776,78 @@ impl Server {
             .store
             .set_session_shelved(session, project, archived)
             .await
+    }
+
+    async fn project_root(&self, project: &str) -> Result<String> {
+        ensure!(
+            !self.0.shutting_down.load(Ordering::Relaxed),
+            "Host is shutting down"
+        );
+        Ok(self
+            .0
+            .store
+            .get_project(project)
+            .await?
+            .context("Project not found")?
+            .1)
+    }
+
+    /// Sends a message that may carry project files and references. The
+    /// remote send command stays text-only.
+    pub async fn send(
+        &self,
+        project: &str,
+        request: wisp_dto::native_conversations::SendRequest,
+    ) -> Result<wisp_dto::native_conversations::SendAccepted> {
+        let root = self.project_root(project).await?;
+        self.own_conversation(project, &request.session_id).await?;
+        Ok(serde_json::from_value(
+            self.start(project, &root, request).await?,
+        )?)
+    }
+
+    /// Makes files chosen in the file picker attachable: copies those from
+    /// outside the project into its `uploads` folder and returns every
+    /// file's project-relative path.
+    pub async fn import_attachments(
+        &self,
+        project: &str,
+        sources: &[std::path::PathBuf],
+    ) -> Result<Vec<String>> {
+        let root = self.project_root(project).await?;
+        crate::files::import(std::path::Path::new(&root), sources).await
+    }
+
+    /// Skills a conversation in this project can be pointed at, filtered by
+    /// the words of `query`.
+    pub async fn skill_options(
+        &self,
+        project: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ReferenceOption>> {
+        let root = std::path::PathBuf::from(self.project_root(project).await?);
+        let config = self.0.config.clone();
+        let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+        Ok(tokio::task::spawn_blocking(move || {
+            crate::runtime::skill_index(&config, &root)
+                .all()
+                .iter()
+                .filter(|skill| {
+                    let text = format!("{} {}", skill.name, skill.description).to_lowercase();
+                    words.iter().all(|word| text.contains(word))
+                })
+                .take(limit)
+                .map(|skill| ReferenceOption {
+                    reference: wisp_dto::ComposerReferenceArg::Skill {
+                        name: skill.name.clone(),
+                    },
+                    label: skill.name.clone(),
+                    detail: skill.description.clone(),
+                })
+                .collect()
+        })
+        .await?)
     }
 
     /// What the next turn of this conversation will run with.

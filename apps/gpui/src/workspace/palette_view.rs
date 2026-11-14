@@ -10,32 +10,60 @@ use super::Workspace;
 use crate::{
     assets::icon,
     backend::receive,
+    compose::Chip,
     files,
     home::{self, Screen},
     layers::Layer,
-    palette::{self, Command, Entry},
+    palette::{self, Command, Entry, Mode},
 };
 
 impl Workspace {
     pub(super) fn toggle_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_palette(Mode::Open, window, cx);
+    }
+
+    /// The same box, but picking a row adds it to the message being written.
+    pub(super) fn toggle_attach_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.state.session.is_some() {
+            self.show_palette(Mode::Attach, window, cx);
+        }
+    }
+
+    fn show_palette(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {
         if self.layers.close(Layer::Palette) {
             self.focus_composer(window, cx);
         } else {
-            self.palette.reset();
+            self.palette.reset(mode);
             self.layers.open(Layer::Palette);
+            let placeholder = match mode {
+                Mode::Open => "Search conversations, projects and files…",
+                Mode::Attach => "Add a file, a conversation or a skill to this message…",
+            };
             self.palette_input.update(cx, |input, cx| {
+                input.set_placeholder(placeholder, window, cx);
                 input.set_value("", window, cx);
                 input.focus(window, cx);
             });
             // The list with nothing typed is the recent conversations.
             self.load_recent(window, cx);
+            // Clearing the box does not report a change when it was empty.
+            self.search_palette(window, cx);
         }
         cx.notify();
     }
 
     fn palette_entries(&self) -> Vec<Entry> {
-        self.palette
-            .entries(&self.projects, &self.recent, self.screen)
+        let mut entries = self
+            .palette
+            .entries(&self.projects, &self.recent, self.screen);
+        if self.palette.mode == Mode::Attach {
+            // A conversation is not context for itself.
+            entries.retain(|entry| {
+                !matches!(entry, Entry::Conversation { id, .. }
+                    if Some(id) == self.state.session.as_ref())
+            });
+        }
+        entries
     }
 
     /// Searches the host for what is typed, after a pause so fast typing
@@ -49,7 +77,11 @@ impl Workspace {
         self.palette_scroll.scroll_to_item(0);
         cx.notify();
         let query = self.palette.query.clone();
-        if query.is_empty() {
+        let attach = self.palette.mode == Mode::Attach;
+        // To attach, files and skills are this project's; skills are listed
+        // even before anything is typed.
+        let project = self.state.project.clone().filter(|_| attach);
+        if query.is_empty() && project.is_none() {
             return;
         }
         let backend = self.backend.clone();
@@ -63,8 +95,24 @@ impl Workspace {
             {
                 return;
             }
+            if let Some(project) = project.clone() {
+                let skills = receive(backend.skill_options(project, query.clone(), 8)).await;
+                let _ = this.update(cx, |this, cx| {
+                    match skills {
+                        Ok(skills) => {
+                            this.palette.accept_skills(ticket, skills);
+                        }
+                        Err(error) if this.palette.current(ticket) => this.error = Some(error),
+                        Err(_) => {}
+                    }
+                    cx.notify();
+                });
+            }
+            if query.is_empty() {
+                return;
+            }
             let conversations = backend.find_conversations(query.clone(), 12);
-            let found = backend.find_files(query, 6);
+            let found = backend.find_files(project, query, 6);
             let conversations = receive(conversations).await;
             let _ = this.update(cx, |this, cx| {
                 match conversations {
@@ -125,7 +173,20 @@ impl Workspace {
             return;
         };
         self.layers.close(Layer::Palette);
+        if self.palette.mode == Mode::Attach {
+            let chip = match entry {
+                Entry::File(file) => Chip::File(file.path),
+                Entry::Conversation { id, title, .. } => Chip::Conversation { id, title },
+                Entry::Skill { name, .. } => Chip::Skill(name),
+                Entry::Project { .. } | Entry::Command(_) => return,
+            };
+            self.attach(chip, cx);
+            self.focus_composer(window, cx);
+            return;
+        }
         match entry {
+            // Skills are only listed for attaching.
+            Entry::Skill { .. } => {}
             Entry::Command(command) => self.run_command(command, window, cx),
             // Everything else goes somewhere that Settings would cover.
             Entry::Project { id, .. } => {
@@ -223,6 +284,7 @@ impl Workspace {
                     format!("{} · {}", file.project_name, file.path),
                 ),
                 Entry::Conversation { title, place, .. } => ("chat", title.clone(), place.clone()),
+                Entry::Skill { name, description } => ("skill", name.clone(), description.clone()),
                 Entry::Command(command) => {
                     (command.icon(), command.label().to_owned(), String::new())
                 }
@@ -262,13 +324,13 @@ impl Workspace {
             );
         }
         if entries.is_empty() {
-            list = list.child(
-                div()
-                    .p_4()
-                    .text_sm()
-                    .text_color(muted)
-                    .child(format!("Nothing matches “{}”.", self.palette.query)),
-            );
+            list = list.child(div().p_4().text_sm().text_color(muted).child(
+                if self.palette.query.is_empty() {
+                    "Type a file name, a word from a conversation, or a skill.".to_owned()
+                } else {
+                    format!("Nothing matches “{}”.", self.palette.query)
+                },
+            ));
         }
 
         let card = div()
@@ -309,7 +371,10 @@ impl Workspace {
                     .border_color(border)
                     .text_xs()
                     .text_color(muted)
-                    .child("↑ ↓ to move · Return to open · Esc to close"),
+                    .child(match self.palette.mode {
+                        Mode::Open => "↑ ↓ to move · Return to open · Esc to close",
+                        Mode::Attach => "↑ ↓ to move · Return to add · Esc to close",
+                    }),
             );
 
         div()

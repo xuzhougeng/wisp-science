@@ -309,6 +309,11 @@ impl Server {
             }
             "native_conversation_send" => {
                 let args: dto::SendRequest = serde_json::from_value(request.args)?;
+                // Files and references are a desktop-only way to send.
+                ensure!(
+                    args.attachments.is_empty() && args.references.is_empty(),
+                    "This server currently accepts text messages"
+                );
                 self.start(project, &root, args).await
             }
             "native_conversation_stop" => {
@@ -353,7 +358,27 @@ impl Server {
         }
     }
 
-    async fn start(&self, project: &str, root: &str, request: dto::SendRequest) -> Result<Value> {
+    async fn start(
+        &self,
+        project: &str,
+        root: &str,
+        mut request: dto::SendRequest,
+    ) -> Result<Value> {
+        ensure!(
+            request.attachments.len() <= 20 && request.references.len() <= 20,
+            "Attach at most 20 files and 20 references to one message"
+        );
+        for path in &request.attachments {
+            files::attachable(std::path::Path::new(root), path).await?;
+        }
+        // What the turn is named after, before the file list is folded in.
+        let subject = match request.message.trim() {
+            "" => request.attachments.first().cloned().unwrap_or_default(),
+            text => text.to_owned(),
+        };
+        // The same block the WebView saves, so a reloaded transcript shows
+        // the files and the model sees their project-relative paths.
+        request.message = dto::message_with_attachments(&request.message, &request.attachments);
         ensure!(
             !request.message.trim().is_empty() && request.message.len() <= 128 * 1024,
             "Message must contain 1–131072 bytes"
@@ -361,10 +386,6 @@ impl Server {
         ensure!(
             !request.request_id.trim().is_empty() && request.request_id.len() <= 128,
             "Invalid request ID"
-        );
-        ensure!(
-            request.attachments.is_empty() && request.references.is_empty(),
-            "This server currently accepts text messages"
         );
         let session = self.session(&request.session_id);
         let _accept = session.accept.lock().await;
@@ -416,6 +437,7 @@ impl Server {
             &session,
             &self.0.models,
             (!options.reasoning_effort.is_empty()).then_some(options.reasoning_effort),
+            &request.references,
         )
         .await?;
         let page = self
@@ -433,7 +455,7 @@ impl Server {
             .iter()
             .any(|msg| msg.role == wisp_llm::Role::User)
         {
-            let title: String = request.message.trim().chars().take(80).collect();
+            let title: String = subject.chars().take(80).collect();
             if let Err(error) = self
                 .0
                 .store

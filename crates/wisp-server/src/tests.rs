@@ -1289,3 +1289,234 @@ async fn desktop_conversation_options_shape_the_next_turn() {
     }
     server.shutdown().await;
 }
+
+/// Records what the model was shown, turn by turn.
+struct Recorder(Arc<std::sync::Mutex<Vec<Vec<String>>>>);
+#[async_trait]
+impl Provider for Recorder {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+        Ok(Completion {
+            content: "noted".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        self.0.lock().unwrap().push(
+            messages
+                .iter()
+                .filter(|message| message.role == wisp_llm::Role::User)
+                .map(|message| message.content.as_text())
+                .collect(),
+        );
+        sink.on_text("noted");
+        self.complete(messages, tools).await
+    }
+}
+
+#[tokio::test]
+async fn desktop_messages_carry_project_files_and_turn_scoped_references() {
+    use wisp_dto::ComposerReferenceArg as Reference;
+    let temp = tempfile::tempdir().unwrap();
+    let shown: Arc<std::sync::Mutex<Vec<Vec<String>>>> = Arc::default();
+    let record = shown.clone();
+    let factory: ModelFactory = Arc::new(move |_| Box::new(Recorder(record.clone())));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let folder = temp.path().join("lab");
+    std::fs::create_dir_all(folder.join("data")).unwrap();
+    std::fs::create_dir_all(folder.join("skills/demo")).unwrap();
+    std::fs::write(folder.join("data/counts.csv"), "gene,count\n").unwrap();
+    std::fs::write(
+        folder.join("skills/demo/SKILL.md"),
+        "---\nname: demo\ndescription: Count reads the lab way\n---\nAlways report medians.\n",
+    )
+    .unwrap();
+    let outside = temp.path().join("notes.txt");
+    std::fs::write(&outside, "field notes").unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    let new_conversation = || async {
+        call(&server, "native_conversation_create", &lab, json!({}))
+            .await
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let request = |session: &str, id: &str, message: &str| dto::SendRequest {
+        session_id: session.into(),
+        request_id: id.into(),
+        message: message.into(),
+        resume: false,
+        resume_after: None,
+        attachments: vec![],
+        references: vec![],
+        acp_agent_id: None,
+    };
+    let finished = |session: String| {
+        let (server, lab) = (&server, &lab);
+        async move {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let value = call(
+                        server,
+                        "native_conversation_snapshot",
+                        lab,
+                        json!({"session_id": session}),
+                    )
+                    .await
+                    .unwrap();
+                    let snapshot: dto::Snapshot = serde_json::from_value(value).unwrap();
+                    if !snapshot.running {
+                        return snapshot;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap()
+        }
+    };
+
+    // Picking files: one outside the project is copied in, one inside is not.
+    let files = server
+        .import_attachments(&lab, &[folder.join("data/counts.csv"), outside])
+        .await
+        .unwrap();
+    assert_eq!(files, ["data/counts.csv", "uploads/notes.txt"]);
+    let skills = server.skill_options(&lab, "lab COUNT", 5).await.unwrap();
+    assert_eq!(skills.len(), 1);
+    assert_eq!(skills[0].label, "demo");
+    assert!(server
+        .skill_options(&lab, "absent", 5)
+        .await
+        .unwrap()
+        .is_empty());
+
+    let earlier = new_conversation().await;
+    server
+        .send(&lab, request(&earlier, "r1", "alpha finding about TP53"))
+        .await
+        .unwrap();
+    finished(earlier.clone()).await;
+
+    let session = new_conversation().await;
+    // Nothing that cannot be honoured is sent, and nothing is saved for it.
+    for (attachments, references) in [
+        (vec!["../notes.txt".to_string()], vec![]),
+        (vec!["data".to_string()], vec![]),
+        (
+            vec![],
+            vec![Reference::Skill {
+                name: "ghost".into(),
+            }],
+        ),
+        (vec![], vec![Reference::Session { id: "ghost".into() }]),
+        (vec![], vec![Reference::Artifact { id: "a".into() }]),
+    ] {
+        let mut bad = request(&session, "bad", "use these");
+        bad.attachments = attachments;
+        bad.references = references;
+        assert!(server.send(&lab, bad).await.is_err());
+    }
+    assert!(finished(session.clone()).await.items.is_empty());
+    assert!(server
+        .send("other", request(&session, "bad", "hello"))
+        .await
+        .is_err());
+
+    let mut full = request(&session, "r2", "use these");
+    full.attachments = files.clone();
+    full.references = vec![
+        Reference::Skill {
+            name: "demo".into(),
+        },
+        Reference::Session {
+            id: earlier.clone(),
+        },
+        Reference::Skill {
+            name: "demo".into(),
+        },
+    ];
+    server.send(&lab, full).await.unwrap();
+    let done = finished(session.clone()).await;
+    // The files are part of the saved message and listed on it.
+    let asked = &done.items[0];
+    assert_eq!(
+        asked.text,
+        "use these\n\nUploaded files: data/counts.csv, uploads/notes.txt"
+    );
+    assert_eq!(asked.attachments, files);
+    // The model saw the references ahead of the request, each once.
+    let turn = shown.lock().unwrap().last().unwrap().clone();
+    let position = |needle: &str| turn.iter().position(|text| text.contains(needle));
+    let request_at = position("use these").unwrap();
+    assert!(position("alpha finding about TP53").unwrap() < request_at);
+    assert!(position("Always report medians.").unwrap() < request_at);
+    assert_eq!(
+        turn.iter()
+            .filter(|text| text.contains("# Skill: demo"))
+            .count(),
+        1
+    );
+    // They belong to that turn only: not saved, and not shown to the next.
+    let saved = server.0.store.load_messages(&session).await.unwrap();
+    assert!(saved
+        .iter()
+        .all(|message| !message.content.as_text().contains("Always report medians.")));
+    server
+        .send(&lab, request(&session, "r3", "and now?"))
+        .await
+        .unwrap();
+    finished(session.clone()).await;
+    let next = shown.lock().unwrap().last().unwrap().clone();
+    assert!(next.iter().any(|text| text.contains("and now?")));
+    assert!(next
+        .iter()
+        .all(|text| !text.contains("Always report medians.")));
+
+    // A message can be files alone; it is named after the first one.
+    let files_only = new_conversation().await;
+    let mut bare = request(&files_only, "r4", "  ");
+    bare.attachments = vec!["data/counts.csv".into()];
+    server.send(&lab, bare).await.unwrap();
+    let bare = finished(files_only.clone()).await;
+    assert_eq!(bare.items[0].text, "Uploaded files: data/counts.csv");
+    assert_eq!(
+        server
+            .conversations(&lab, "", false)
+            .await
+            .unwrap()
+            .rows
+            .iter()
+            .find(|row| row.id == files_only)
+            .unwrap()
+            .title,
+        "data/counts.csv"
+    );
+
+    // The remote send command still takes text only.
+    let refused = call(
+        &server,
+        "native_conversation_send",
+        &lab,
+        json!({"session_id": session, "request_id": "r5", "message": "x",
+               "attachments": ["data/counts.csv"]}),
+    )
+    .await
+    .unwrap_err();
+    assert!(refused.contains("text messages"), "{refused}");
+    server.shutdown().await;
+}

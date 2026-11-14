@@ -36,6 +36,68 @@ async fn resolve(root: &Path, path: &str) -> Result<PathBuf> {
     Ok(resolved)
 }
 
+/// A file a message may carry: project-relative, inside the project, and a
+/// regular file. The same confinement as the file browser.
+pub async fn attachable(root: &Path, path: &str) -> Result<()> {
+    let resolved = resolve(root, path)
+        .await
+        .map_err(|_| anyhow::anyhow!("Attached file '{path}' is not in this project"))?;
+    ensure!(
+        tokio::fs::metadata(&resolved).await?.is_file(),
+        "Attached file '{path}' is not a regular file"
+    );
+    Ok(())
+}
+
+/// Copies files chosen outside the project into its `uploads` folder and
+/// returns their project-relative paths. A file that is already inside the
+/// project is referenced where it is. Existing uploads are never overwritten.
+pub async fn import(root: &Path, sources: &[PathBuf]) -> Result<Vec<String>> {
+    const LIMIT: u64 = 100 * 1024 * 1024;
+    let root = tokio::fs::canonicalize(root).await?;
+    let mut imported = Vec::new();
+    for source in sources {
+        let source = tokio::fs::canonicalize(source).await?;
+        let metadata = tokio::fs::metadata(&source).await?;
+        let name = source
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| anyhow::anyhow!("File names must be UTF-8"))?
+            .to_owned();
+        ensure!(metadata.is_file(), "'{name}' is not a regular file");
+        ensure!(
+            metadata.len() <= LIMIT,
+            "'{name}' is larger than 100 MB; reference it from the project folder instead"
+        );
+        if let Ok(inside) = source.strip_prefix(&root) {
+            let relative = inside
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            if attachable(&root, &relative).await.is_ok() {
+                imported.push(relative);
+                continue;
+            }
+        }
+        let uploads = root.join("uploads");
+        tokio::fs::create_dir_all(&uploads).await?;
+        let (stem, extension) = match name.rsplit_once('.') {
+            Some((stem, extension)) if !stem.is_empty() => (stem, format!(".{extension}")),
+            _ => (name.as_str(), String::new()),
+        };
+        let mut target = name.clone();
+        let mut copy = 1;
+        while tokio::fs::try_exists(uploads.join(&target)).await? {
+            copy += 1;
+            target = format!("{stem}-{copy}{extension}");
+        }
+        tokio::fs::copy(&source, uploads.join(&target)).await?;
+        imported.push(format!("uploads/{target}"));
+    }
+    Ok(imported)
+}
+
 /// Folders that hold tooling rather than research files. They stay
 /// browsable; a name search just does not descend into them.
 fn searchable(name: &str) -> bool {
@@ -241,5 +303,46 @@ mod tests {
         assert!(search(root, "absent", 10, 10_000).await.unwrap().is_empty());
         // A tiny budget ends the walk early instead of scanning everything.
         assert!(search(root, "matrix", 10, 3).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn imports_copy_outside_files_and_reference_inside_ones() {
+        let project = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let root = project.path();
+        std::fs::create_dir_all(root.join("data")).unwrap();
+        std::fs::write(root.join("data/counts.csv"), "inside").unwrap();
+        let outside = elsewhere.path().join("reads.fastq");
+        std::fs::write(&outside, "first").unwrap();
+
+        let paths = import(root, &[root.join("data/counts.csv"), outside.clone()])
+            .await
+            .unwrap();
+        assert_eq!(paths, ["data/counts.csv", "uploads/reads.fastq"]);
+        assert_eq!(
+            std::fs::read_to_string(root.join("uploads/reads.fastq")).unwrap(),
+            "first"
+        );
+        // A second upload of the same name never replaces the first.
+        std::fs::write(&outside, "second").unwrap();
+        assert_eq!(
+            import(root, &[outside.clone()]).await.unwrap(),
+            ["uploads/reads-2.fastq"]
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("uploads/reads.fastq")).unwrap(),
+            "first"
+        );
+        assert!(import(root, &[elsewhere.path().to_owned()]).await.is_err());
+        assert!(import(root, &[elsewhere.path().join("missing")])
+            .await
+            .is_err());
+
+        for path in ["data/counts.csv", "uploads/reads-2.fastq"] {
+            attachable(root, path).await.unwrap();
+        }
+        for path in ["data", "../reads.fastq", "missing.txt", ".git/config"] {
+            assert!(attachable(root, path).await.is_err(), "{path}");
+        }
     }
 }

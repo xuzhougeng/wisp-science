@@ -12,6 +12,7 @@ use serde_json::json;
 use super::{Workspace, chip, tone_color};
 use crate::{
     assets::{icon, icon_path},
+    compose::{self, Chip},
     controls::{self, Question},
     layers::Layer,
     present::{self, Tone},
@@ -518,26 +519,37 @@ impl Workspace {
             self.state.selection().generation
         ));
         match item.role.as_str() {
-            "user" => div()
-                .w_full()
-                .v_flex()
-                .items_end()
-                .gap_1()
-                .px_6()
-                .py_2()
-                .child(
-                    div()
-                        .max_w(px(680.))
-                        .px_4()
-                        .py_2()
-                        .rounded(cx.theme().radius_lg)
-                        .bg(cx.theme().muted)
-                        .child(
-                            TextView::markdown(id, item.text.clone(), window, cx).selectable(true),
-                        ),
-                )
-                .child(self.message_actions(index, cx))
-                .into_any_element(),
+            "user" => {
+                let text = compose::user_text(item);
+                let mut message = div().w_full().v_flex().items_end().gap_1().px_6().py_2();
+                if !text.is_empty() {
+                    message = message.child(
+                        div()
+                            .max_w(px(680.))
+                            .px_4()
+                            .py_2()
+                            .rounded(cx.theme().radius_lg)
+                            .bg(cx.theme().muted)
+                            .child(TextView::markdown(id, text, window, cx).selectable(true)),
+                    );
+                }
+                if !item.attachments.is_empty() {
+                    // The files the message carried, by name; the full path
+                    // is in the copied text.
+                    let mut files = div().h_flex().flex_wrap().justify_end().gap_1();
+                    for path in &item.attachments {
+                        files = files.child(
+                            Self::chip_box(cx)
+                                .child(icon("doc").text_color(cx.theme().muted_foreground))
+                                .child(crate::files::file_name(path).to_owned()),
+                        );
+                    }
+                    message = message.child(files);
+                }
+                message
+                    .child(self.message_actions(index, cx))
+                    .into_any_element()
+            }
             "tool" => {
                 if let Some(question) = controls::question(item) {
                     return self.question_card(index, question, id, window, cx);
@@ -791,11 +803,31 @@ impl Workspace {
         menu
     }
 
+    /// The small rounded box a file or reference is shown in.
+    fn chip_box(cx: &App) -> Div {
+        div()
+            .h_flex()
+            .gap_1()
+            .px_2()
+            .h(px(24.))
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().popover)
+            .text_xs()
+    }
+
     fn render_composer(&self, running: bool, cx: &mut Context<Self>) -> Div {
-        let can_send = self
-            .state
-            .can_send(&self.composer.read(cx).value(), self.pending)
-            && !self.loading_history;
+        let attached = self.attached();
+        let typed = self.composer.read(cx).value();
+        // Files alone are a message.
+        let has_files = attached.iter().any(|chip| matches!(chip, Chip::File(_)));
+        let sendable = if typed.trim().is_empty() && has_files {
+            "files"
+        } else {
+            typed.as_ref()
+        };
+        let can_send = self.state.can_send(sendable, self.pending) && !self.loading_history;
         let options = self.options();
         let muted = cx.theme().muted_foreground;
         let attention = tone_color(Tone::Attention, cx);
@@ -957,15 +989,51 @@ impl Workspace {
                     ),
             );
         }
+        let mut editor = div()
+            .v_flex()
+            .gap_1()
+            .p_2()
+            .rounded(cx.theme().radius_lg)
+            .border_1()
+            .border_color(cx.theme().input)
+            .bg(cx.theme().popover);
+        if !attached.is_empty() {
+            let mut chips = div().h_flex().flex_wrap().gap_1();
+            for (index, chip) in attached.iter().enumerate() {
+                chips = chips.child(
+                    Self::chip_box(cx)
+                        .child(icon(chip.icon()).text_color(muted))
+                        .child(div().max_w(px(220.)).truncate().child(chip.label()))
+                        .child(
+                            icon_button(("detach", index), "close", "Remove")
+                                .xsmall()
+                                .on_click(
+                                    cx.listener(move |this, _, _, cx| this.detach(index, cx)),
+                                ),
+                        ),
+                );
+            }
+            editor = editor.child(chips);
+        }
+        let attach = div()
+            .h_flex()
+            .child(
+                icon_button("attach-files", "attach", "Attach files")
+                    .disabled(self.pending)
+                    .on_click(cx.listener(|this, _, window, cx| this.attach_files(window, cx))),
+            )
+            .child(
+                icon_button(
+                    "attach-context",
+                    "link",
+                    "Add a project file, a conversation or a skill",
+                )
+                .on_click(
+                    cx.listener(|this, _, window, cx| this.toggle_attach_palette(window, cx)),
+                ),
+            );
         area.child(
-            div()
-                .v_flex()
-                .gap_1()
-                .p_2()
-                .rounded(cx.theme().radius_lg)
-                .border_1()
-                .border_color(cx.theme().input)
-                .bg(cx.theme().popover)
+            editor
                 .child(
                     Input::new(&self.composer)
                         .appearance(false)
@@ -979,6 +1047,7 @@ impl Workspace {
                             div()
                                 .h_flex()
                                 .gap_1()
+                                .child(attach)
                                 .child(access)
                                 .child(model)
                                 .child(effort),

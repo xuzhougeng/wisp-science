@@ -139,6 +139,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Usage | How full the context is, and the tokens the running or latest turn used |
 | Questions | When the model asks, a card with its options: one click answers, or type the answer |
 | Messages | Copy any message as Markdown |
+| Attachments | Attach files with the system dialog, or add a project file, another conversation or a skill from the add-context box; shown as chips until sent |
 | Drafts | Survive navigation; preserved on send failure, cleared on durable acceptance |
 | Execution | Shared agent/tools, streamed snapshots while running, stop and errors |
 | Approvals | Exact pending request; allow once, allow that tool for the rest of the conversation, or deny |
@@ -191,6 +192,13 @@ Limits of this slice:
 - Options changed while a turn runs apply to the next one. Token usage is not
   stored: after a restart it is empty until the next turn. Plan first, thinking
   blocks and fast mode are not ported.
+- A file attached from outside the project is copied into the project's
+  `uploads` folder (up to 100 MB, never overwriting); a file inside it is used
+  where it is. The model receives project-relative paths and reads the files
+  with its tools; image pixels are not sent. A referenced conversation is
+  passed as its most recent exchange (about 12,000 bytes), and a skill as its
+  instructions, for that turn only: neither is saved with the message. Paste,
+  drag and drop, and typing `@`, `#` or `/` in the composer are not ported.
 - Runs are read-only. Cancel, harvest, review and the full log need host
   commands this build does not serve.
 - Status refreshes every two seconds while any turn is running and once more
@@ -263,6 +271,10 @@ In Settings add two models, test the connection of one, make the second the
 default, choose the first for one conversation and confirm the header names it;
 ask to remove a model, press Escape (Settings stays), then remove it and confirm
 the conversation falls back to the default.
+Attach a file from outside the project and one inside it; add another
+conversation and a skill from the add-context box; remove a chip; send, and
+confirm the file chips stay on the message and `uploads/` holds the copy. Send
+files with no text.
 Type a word that occurs only in a message, and one that matches nothing. Press
 Escape with the palette over Settings and over the Files panel: only the
 palette closes. Click outside it: it closes.

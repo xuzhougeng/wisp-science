@@ -7,6 +7,7 @@ use serde_json::Value;
 use tokio::{runtime::Runtime, sync::OnceCell, task::JoinHandle};
 use wisp_dto::{
     SessionSearchInfo,
+    native_conversations::{SendAccepted, SendRequest},
     native_files::{Directory, Preview},
     remote_access::RemoteRequest,
 };
@@ -15,7 +16,7 @@ use wisp_server::{
     config::Config,
     desktop::{
         ConversationList, ConversationOptions, ConversationStatus, FileMatch, ModelInput,
-        ModelSettings,
+        ModelSettings, ReferenceOption,
     },
 };
 use wisp_sync::DirectRemoteHost;
@@ -116,8 +117,36 @@ impl Backend {
     }
 
     /// Files by name across every project.
-    pub fn find_files(&self, query: String, limit: usize) -> Reply<Vec<FileMatch>> {
-        self.local(move |host| async move { host.find_files(None, &query, limit).await })
+    /// Files by name in one project, or in every project.
+    pub fn find_files(
+        &self,
+        project: Option<String>,
+        query: String,
+        limit: usize,
+    ) -> Reply<Vec<FileMatch>> {
+        self.local(
+            move |host| async move { host.find_files(project.as_deref(), &query, limit).await },
+        )
+    }
+
+    pub fn skill_options(
+        &self,
+        project: String,
+        query: String,
+        limit: usize,
+    ) -> Reply<Vec<ReferenceOption>> {
+        self.local(move |host| async move { host.skill_options(&project, &query, limit).await })
+    }
+
+    /// Copies files picked outside the project into it and returns the
+    /// project-relative path of each.
+    pub fn import_attachments(&self, project: String, files: Vec<PathBuf>) -> Reply<Vec<String>> {
+        self.local(move |host| async move { host.import_attachments(&project, &files).await })
+    }
+
+    /// Sends a message with its files and references.
+    pub fn send_message(&self, project: String, request: SendRequest) -> Reply<SendAccepted> {
+        self.local(move |host| async move { host.send(&project, request).await })
     }
 
     pub fn project_directory(&self, project: String, path: String) -> Reply<Directory> {

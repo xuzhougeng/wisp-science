@@ -101,10 +101,10 @@ to find in the running app.
 | Send and stop | Yes | Done | served |
 | Send key choice (Enter or modifier+Enter) | Setting | Partial: modifier+Enter only | ui |
 | Queue a message while a turn runs | Yes *(source)* | Missing | tauri |
-| Attach files, images, PDF [附加文件] | Yes | Missing | tauri |
-| Browse project files to attach [你的文件] | Yes | Missing | served |
+| Attach files, images, PDF [附加文件] | Yes | Partial: any file through the system dialog, copied into `uploads/` when it is outside the project; the model gets the paths, not the image pixels | served |
+| Browse project files to attach [你的文件] | Yes | Done: found by name in the add-context box | served |
 | Paste or drop files | Yes | Missing | tauri |
-| `@` artifact, `#` conversation, `/` skill mentions | Yes | Missing | store + shared |
+| `@` artifact, `#` conversation, `/` skill mentions | Yes | Partial: conversations and skills, picked from the add-context box rather than typed inline; a conversation is passed as a recent excerpt, not through the reader agent; no artifacts, environments, runtimes, workflows or memos | served |
 | Model picker per conversation | Yes | Done: saved API models, or follow the default | served |
 | Reasoning effort / fast mode | Yes | Partial: effort per conversation, kept across restarts; no fast mode | store |
 | Permission mode [默认 / 完全权限] | Yes | Done: Ask first or Full access per conversation, with a question before it turns on; dangerous shell commands still ask | served |
@@ -132,7 +132,7 @@ to find in the running app.
 | Thinking blocks | Yes | Missing | served |
 | Images and figures inline | Yes | Missing | served |
 | Token usage per turn | Yes | Partial: the running or latest turn only, and not after a restart | served |
-| Skill and attachment chips on the user message | Yes | Missing | served |
+| Skill and attachment chips on the user message | Yes | Partial: file chips; references are context for that turn only and are not shown afterwards | served |
 | Copy message [复制] | Yes | Done: copies the message as Markdown | ui |
 | Rewind to a message [回溯 / 撤销] | Yes | Missing | store |
 | Branch from a message [分支] | Yes | Missing | store |
@@ -305,7 +305,9 @@ before the things that hang in it.
    test, and the model per conversation. *(done)*
 4a. **Plan first and thinking** — plan mode with its plan card; reasoning
    shown while it streams.
-5. **Attachments and mentions** — files, images, `@`, `#`, `/`.
+5. **Attachments and mentions** — files, images, `@`, `#`, `/`. *(done for
+   files, conversations and skills; paste, drop, images as model input and
+   inline triggers remain)*
 6. **Right panel as tabs** — artifacts, run control, environments, notebook.
 7. **Conversation organisation** — folders, batch actions, sort and group,
    move between projects, rewind and branch.
