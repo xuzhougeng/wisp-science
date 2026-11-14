@@ -25,12 +25,20 @@ pub enum Slash {
     Compact,
     /// Repeats a prompt in this conversation on an interval.
     Timer,
+    /// Branches the conversation as it stands.
+    Fork,
+    /// Goes back to the latest message.
+    Rewind,
+    /// Switches full access on or off.
+    Permission,
+    /// Exports the conversation as a document.
+    Share,
     /// Lists the commands.
     Help,
 }
 
 /// The commands with what each does, in the order they are listed.
-pub const COMMANDS: [(&str, Slash, &str); 15] = [
+pub const COMMANDS: [(&str, Slash, &str); 19] = [
     ("/review", Slash::Review, "Review this conversation"),
     (
         "/trajectory",
@@ -61,36 +69,34 @@ pub const COMMANDS: [(&str, Slash, &str); 15] = [
         Slash::Timer,
         "Repeat a prompt here: /timer 30m <prompt>, /timer off",
     ),
+    ("/fork", Slash::Fork, "Branch this conversation"),
+    ("/rewind", Slash::Rewind, "Go back to the latest message"),
+    (
+        "/permission",
+        Slash::Permission,
+        "Switch full access on or off",
+    ),
+    (
+        "/share",
+        Slash::Share,
+        "Export this conversation as Markdown",
+    ),
     ("/help", Slash::Help, "List these commands"),
 ];
 
-/// Commands the WebView desktop has that this one does not yet.
-const NOT_HERE: [&str; 4] = ["/fork", "/rewind", "/permission", "/share"];
-
-/// What a typed message is, when it starts with a command.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Typed {
-    /// A command of this desktop, with what was typed after it.
-    Run(Slash, String),
-    /// A command the WebView desktop has and this one does not.
-    NotHere(String),
-}
-
 /// Reads a command from the start of `text`. `None` is an ordinary
 /// message, a path included.
-pub fn parse(text: &str) -> Option<Typed> {
+pub fn parse(text: &str) -> Option<(Slash, String)> {
     let text = text.trim();
     let (word, rest) = match text.split_once(char::is_whitespace) {
         Some((word, rest)) => (word, rest.trim()),
         None => (text, ""),
     };
     let word = word.to_ascii_lowercase();
-    if let Some((_, slash, _)) = COMMANDS.iter().find(|(name, ..)| *name == word) {
-        return Some(Typed::Run(*slash, rest.to_owned()));
-    }
-    NOT_HERE
-        .contains(&word.as_str())
-        .then(|| Typed::NotHere(word))
+    COMMANDS
+        .iter()
+        .find(|(name, ..)| *name == word)
+        .map(|(_, slash, _)| (*slash, rest.to_owned()))
 }
 
 #[cfg(test)]
@@ -99,22 +105,12 @@ mod tests {
 
     #[test]
     fn only_a_known_command_at_the_start_is_a_command() {
-        assert_eq!(
-            parse(" /review "),
-            Some(Typed::Run(Slash::Review, String::new()))
-        );
-        assert_eq!(
-            parse("/REVIEW"),
-            Some(Typed::Run(Slash::Review, String::new()))
-        );
+        assert_eq!(parse(" /review "), Some((Slash::Review, String::new())));
+        assert_eq!(parse("/REVIEW"), Some((Slash::Review, String::new())));
         assert_eq!(
             parse("/btw  why did the fit fail?\nand when"),
-            Some(Typed::Run(
-                Slash::Btw,
-                "why did the fit fail?\nand when".into()
-            ))
+            Some((Slash::Btw, "why did the fit fail?\nand when".into()))
         );
-        assert_eq!(parse("/fork now"), Some(Typed::NotHere("/fork".into())));
         // Paths, unknown words and a slash later in the text are messages.
         for message in [
             "/data/reads.fq looks odd",
@@ -132,13 +128,12 @@ mod tests {
     fn every_command_is_listed_once_and_starts_with_a_slash() {
         for (index, (name, slash, about)) in COMMANDS.iter().enumerate() {
             assert!(name.starts_with('/') && !about.is_empty());
-            assert_eq!(parse(name), Some(Typed::Run(*slash, String::new())));
+            assert_eq!(parse(name), Some((*slash, String::new())));
             assert!(
                 COMMANDS[index + 1..]
                     .iter()
                     .all(|(other, ..)| other != name)
             );
-            assert!(!NOT_HERE.contains(name));
         }
     }
 }

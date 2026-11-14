@@ -12,7 +12,7 @@ use crate::{
     layers::Layer,
     panel::PanelTab,
     settings::Section,
-    slash::{self, Slash, Typed},
+    slash::{self, Slash},
 };
 
 impl Workspace {
@@ -24,26 +24,15 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        match slash::parse(text) {
-            None => false,
-            Some(Typed::NotHere(name)) => {
-                // What was typed stays, to be changed into a message.
-                self.error = Some(crate::i18n::fill(
-                    tr("{} is not available in this desktop yet. Type /help for what is."),
-                    &[&name],
-                ));
-                cx.notify();
-                true
-            }
-            Some(Typed::Run(command, rest)) => {
-                self.error = None;
-                self.state.save_draft(String::new());
-                self.composer
-                    .update(cx, |input, cx| input.set_value("", window, cx));
-                self.run_slash(command, rest, window, cx);
-                true
-            }
-        }
+        let Some((command, rest)) = slash::parse(text) else {
+            return false;
+        };
+        self.error = None;
+        self.state.save_draft(String::new());
+        self.composer
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.run_slash(command, rest, window, cx);
+        true
     }
 
     pub(super) fn run_slash(
@@ -79,6 +68,19 @@ impl Workspace {
             Slash::Archive => self.open_research_archive(window, cx),
             Slash::Compact => self.compact_now(window, cx),
             Slash::Timer => self.set_timer(rest, window, cx),
+            // These act on the conversation as it stands: its latest row.
+            Slash::Fork => {
+                if let Some(last) = self.rows.len().checked_sub(1) {
+                    self.branch_from(last, window, cx);
+                }
+            }
+            Slash::Rewind => {
+                if let Some(last) = self.rows.len().checked_sub(1) {
+                    self.ask_rewind(last, cx);
+                }
+            }
+            Slash::Permission => self.toggle_full_access(window, cx),
+            Slash::Share => self.export_conversation(window, cx),
             Slash::Help => {
                 self.layers.open(Layer::SlashMenu);
                 self.focus_composer(window, cx);

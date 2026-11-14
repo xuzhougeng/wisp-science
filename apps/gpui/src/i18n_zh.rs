@@ -952,4 +952,8 @@ pub const ZH: &[(&str, &str)] = &[
     ("Left as they are: {}.", "保持原样：{}。"),
     ("Go back and undo its files", "返回并撤销它的文件"),
     ("Also puts back the files this turn edited and moves the ones it created to the project's trash", "同时恢复这一回合修改过的文件，并把它新建的文件移入项目回收站"),
+    ("Branch this conversation", "为此对话创建分支"),
+    ("Go back to the latest message", "回到最近一条消息"),
+    ("Switch full access on or off", "开启或关闭完全访问"),
+    ("Export this conversation as Markdown", "将此对话导出为 Markdown"),
 ];

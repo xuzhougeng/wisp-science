@@ -75,7 +75,7 @@ impl Workspace {
 
     /// Asks where to save the conversation and writes it there as
     /// Markdown. The file is the user's: it is put only where they say.
-    fn export_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn export_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some((project, session)), Some(title)) = (
             self.current_ids(),
             self.current_row().map(|row| row.title.clone()),
