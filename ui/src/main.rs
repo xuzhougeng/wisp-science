@@ -1414,6 +1414,14 @@ fn App() -> impl IntoView {
             .get()
             .and_then(|id| stream_recovery_sessions.with(|all| all.get(&id).cloned()))
     });
+    // The running turn has rendered nothing yet (#1720). Compaction and stream
+    // recovery already explain a quiet turn with their own live notices.
+    let turn_pending = create_memo(move |_| {
+        busy.get()
+            && !compaction_active.get()
+            && stream_recovery_active.with(Option::is_none)
+            && items.with(|list| turn_awaits_first_output(list))
+    });
     let semantic_compact_after_model = create_rw_signal::<Option<String>>(None);
     let switch_http_model = Callback::new(move |(id, dont_ask_again): (String, bool)| {
         provisional_acp_selection.set(None);
@@ -15187,6 +15195,12 @@ fn App() -> impl IntoView {
                             }
                         }
                     />
+                    {move || turn_pending.get().then(|| view! {
+                        <div class="turn-pending" role="status" aria-live="polite" data-testid="turn-pending">
+                            <span class="steps-indicator running" aria-hidden="true">{compose_icon("activity-orbit")}</span>
+                            <span class="turn-pending-label">{move || t(locale.get(), "chat.turn_pending")}</span>
+                        </div>
+                    })}
                     {move || compaction_active.get().then(|| view! {
                         <div class="context-compaction-live context-compaction-status" role="status" aria-live="polite" data-testid="context-compaction-live">
                             <span class="context-compaction-mark" aria-hidden="true">{compose_icon("context-compact")}</span>

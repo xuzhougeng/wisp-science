@@ -7004,6 +7004,17 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
                 emit("agent", { kind: "ToolCall", frame_id: fid, name: "pdf-explore", preview: "Read the paper and extract its findings" });
               });
             }
+            // A turn that has started but produced no output yet (#1720); the
+            // test emits whatever comes next and then finishes the turn.
+            if (String(arg("message") ?? "").includes("PENDINGDEMO")) {
+              return await new Promise<string>((resolve) => {
+                (window as any).__finishPendingTurn = () => {
+                  emit("agent", { kind: "Done", frame_id: fid });
+                  resolve(fid);
+                };
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+              });
+            }
             if (String(arg("message") ?? "").includes("STEPSLIVE")) {
               return await new Promise<string>((resolve) => {
                 setTimeout(() => {

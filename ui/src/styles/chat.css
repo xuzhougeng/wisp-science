@@ -2296,6 +2296,8 @@ button.stop:disabled { opacity: .45; cursor: default; }
    manual accordion (open state via `.open`, not <details>) because the UA
    disclosure marker can't be portably removed from <summary>. */
 .steps-wrap { align-self: stretch; }
+/* Shown from send until the turn's first token, reasoning, or tool call (#1720). */
+.turn-pending { display: flex; align-items: center; gap: 8px; align-self: flex-start; padding: 2px 0; color: var(--text-muted); font-size: calc(13px * var(--ui-font-scale, 1)); }
 .steps { background: var(--bg-sunken); border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
 .steps.activity-summary { background: transparent; border-width: 0 0 1px; border-radius: 0; }
 .steps.activity-summary > .steps-head { padding: 8px 0 11px; }
