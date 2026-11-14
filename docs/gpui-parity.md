@@ -202,7 +202,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Experts [专家]: built-in and custom, default sub-agent model | Yes | Missing | tauri |
 | Memory [记忆]: project notes, global habits, enable switch | Yes | Done, as a side-panel tab rather than a Settings page; no "clear all", automatic proposals or weekly tidy | store |
 | Hooks [钩子]: automatic review, tool-failure analysis, command hooks | Yes | Missing | tauri |
-| Skills [技能]: list, tags, enable, community, GitHub, reload | Yes | Missing | shared |
+| Skills [技能]: list, tags, enable, community, GitHub, reload | Yes | Partial: list with source and tags, search, on or off, reload; no tag editing, community catalog or GitHub install | shared |
 | Plugins [插件] | Yes | Missing | store |
 | Browser [浏览器]: auto-open, auto-close tabs, block and prefer lists | Yes | Missing | tauri |
 | Connections [连接]: built-in bio tools and user MCP servers, enable, add | Yes | Missing | shared |
@@ -321,7 +321,7 @@ before the things that hang in it.
    8c highlights and favorites)*
 9. **Settings** — conversation, permissions, hooks, skills, connections,
    credentials, network, environments, storage, usage, general. *(9a done:
-   the pages frame, Conversation and Permissions)*
+   the pages frame, Conversation and Permissions; 9b done: Skills)*
 10. **Project pages** — research journey, calendar, paper evidence, research
     assistant, trajectory, archive.
 11. **Project transfer and sync** — import, export, relay sync, remote access.

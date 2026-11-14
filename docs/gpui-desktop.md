@@ -133,7 +133,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Branch | Under a reply: a new conversation holding everything through that turn, opened at once and listed under the one it came from |
 | Search | Titles and message text across the project, archived conversations included |
 | Command palette | One box over everything: projects, files by name in every project, conversations by title or message text, and the window's commands; arrow keys, Return, Escape |
-| Settings | Pages: Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold) and Permissions (how new conversations start, tools that are always allowed); applied without restart |
+| Settings | Pages: Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold), Skills (every skill with where it comes from, search, on or off) and Permissions (how new conversations start, tools that are always allowed); applied without restart |
 | Inbox | Conversations in any project that are waiting for you; opens across projects |
 | Read state | A finished answer is marked read once it is on screen in the active window |
 | Transcript | Virtualized Markdown, selectable text, paginated history |
@@ -225,6 +225,15 @@ Limits of this slice:
   `node_modules` and `__pycache__`, so a file deep in a very large tree can be
   missed. Results cannot yet be opened in a new window or attached to a
   message.
+- The desktop now loads the skills that ship with Wisp (`skills/` in a
+  checkout; an installed build has to name its resource directory) after any
+  directory in `WISP_SKILLS_PATH`, then the project's own `skills/` and
+  `.wisp/skills/`. Before, only the last two and the variable were read, so a
+  desktop without the variable had no bundled skills. A headless host is
+  unchanged. Turning a skill off uses the WebView's list (`disabled_skills`)
+  and applies to every project from the next turn: the model's skill tools
+  and the add-context box no longer offer it. Editing tags, per-project
+  enabling, the community catalog and installing from GitHub are not ported.
 - Conversation settings apply to every turn this host runs from the next one
   on, a paired phone's included. Steps per turn replaces the `WISP_MAX_ITER`
   the host was started with once it is saved; at the limit the model is asked
@@ -437,6 +446,11 @@ existing one keeps Ask first. Let a tool ask, answer Always in this project,
 and confirm a second conversation of the project is not asked, another
 project's is, and the tool is listed in Settings; take it back and confirm
 the next conversation is asked again.
+Open Skills from the home page and from inside a project: the bundled skills
+are listed, and the project's own only in the second case. Search by a word
+from a description and by a tag. Turn one off, confirm the count says so and
+that the add-context box no longer offers it; turn it on again. Add a skill
+folder to the project, press Reload and confirm it appears.
 Restart and confirm persisted messages. Close during a running tool and verify
 worker cleanup. Check missing credentials and invalid workspace errors. Validate
 each target OS; a macOS build does not establish Windows/Linux behavior.

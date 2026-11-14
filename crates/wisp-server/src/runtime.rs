@@ -14,13 +14,50 @@ use wisp_runs::{CancelRunTool, GetRunTool, HarvestRunTool, MonitorRunTool, RunIn
 use wisp_skills::SkillIndex;
 use wisp_store::{OpenContextEpoch, Store};
 
-/// The skills a project's conversations can use: the host's own and the
-/// project's. The server configures its paths and does not read ~/.wisp.
-pub fn skill_index(config: &Config, root: &std::path::Path) -> SkillIndex {
-    let mut paths = config.skills.clone();
-    paths.push(root.join(".wisp/skills"));
-    paths.push(root.join("skills"));
-    SkillIndex::load(&paths)
+/// Every skill found for a project: the host's own and, with a project, the
+/// project's, each knowing where it came from. The server configures its
+/// paths and does not read ~/.wisp.
+pub fn all_skills(config: &Config, root: Option<&std::path::Path>) -> SkillIndex {
+    use wisp_skills::SkillSource;
+    let bundled = wisp_skills::bundled_dir();
+    let mut paths: Vec<_> = config
+        .skills
+        .iter()
+        .map(|path| {
+            let source = if Some(path) == bundled.as_ref() {
+                SkillSource::Bundled
+            } else {
+                SkillSource::Extra
+            };
+            (path.clone(), source)
+        })
+        .collect();
+    if let Some(root) = root {
+        paths.push((root.join(".wisp/skills"), SkillSource::Project));
+        paths.push((root.join("skills"), SkillSource::Project));
+    }
+    SkillIndex::load_scoped(&paths)
+}
+
+/// The key the WebView desktop keeps the same list under: a JSON array of
+/// the names of skills that are turned off.
+pub(crate) const DISABLED_SKILLS: &str = "disabled_skills";
+
+pub(crate) async fn disabled_skills(store: &Store) -> std::collections::HashSet<String> {
+    store
+        .get_setting(DISABLED_SKILLS)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|value| serde_json::from_str::<Vec<String>>(&value).ok())
+        .map(|names| names.into_iter().collect())
+        .unwrap_or_default()
+}
+
+/// The skills a project's conversations can use: every one that is found
+/// and not turned off.
+pub async fn skill_index(config: &Config, store: &Store, root: &std::path::Path) -> SkillIndex {
+    all_skills(config, Some(root)).filtered(&disabled_skills(store).await)
 }
 
 /// Whether memory is on. The WebView desktop keeps the same switch under
@@ -107,7 +144,7 @@ pub async fn build(
     plan_mode: bool,
 ) -> Result<Agent> {
     let root = PathBuf::from(root);
-    let skills = Arc::new(skill_index(config, &root));
+    let skills = Arc::new(skill_index(config, store, &root).await);
     let mut cfg = model.provider.clone().with_session_id(frame);
     // The conversation's own choice outranks the model's default.
     if reasoning_effort.is_some() {

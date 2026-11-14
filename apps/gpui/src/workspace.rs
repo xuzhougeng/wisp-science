@@ -128,6 +128,9 @@ pub struct Workspace {
     grants: Vec<wisp_server::desktop::ProjectGrants>,
     /// What went wrong on a Settings page other than Models.
     settings_error: Option<String>,
+    /// Every skill there is, as the Skills page lists them; `None` until read.
+    skills: Option<Vec<wisp_server::desktop::SkillRow>>,
+    skills_search: Entity<InputState>,
     /// What the open conversation saved to the favorites, newest first.
     saved: Vec<LibraryItem>,
     saved_request: u64,
@@ -220,6 +223,7 @@ impl Workspace {
         });
         let memory_text = cx.new(|cx| InputState::new(window, cx).multi_line(true));
         let steps_input = cx.new(|cx| InputState::new(window, cx));
+        let skills_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find a skill…"));
         let favorites_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search your favorites…"));
         let handle = window.window_handle();
@@ -255,6 +259,12 @@ impl Workspace {
             cx.subscribe_in(&rename, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::PressEnter { .. }) {
                     this.save_rename(window, cx);
+                }
+            }),
+            // Filtering is done here, over the list already read.
+            cx.subscribe_in(&skills_search, window, |_, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
                 }
             }),
             cx.subscribe_in(&steps_input, window, |this, _, event, window, cx| {
@@ -358,6 +368,8 @@ impl Workspace {
             steps_input,
             grants: vec![],
             settings_error: None,
+            skills: None,
+            skills_search,
             saved: vec![],
             saved_request: 0,
             favorites: None,

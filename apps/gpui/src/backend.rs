@@ -18,7 +18,7 @@ use wisp_server::{
         ArtifactRow, BatchAction, BatchReport, ConversationList, ConversationOptions,
         ConversationStatus, Favorite, FileMatch, Folder, GlobalMemory, LibraryItem,
         LibraryItemSummary, MemoryView, ModelInput, ModelSettings, ProjectGrants, ProjectMemo,
-        ProjectMemoPatch, ReferenceOption, Remember, TurnDefaults, TurnRef,
+        ProjectMemoPatch, ReferenceOption, Remember, SkillRow, TurnDefaults, TurnRef,
     },
 };
 use wisp_sync::DirectRemoteHost;
@@ -455,6 +455,14 @@ impl Backend {
     /// Starts an empty conversation the way the desktop's defaults say.
     pub fn create_conversation(&self, project: String) -> Reply<String> {
         self.local(move |host| async move { host.create_conversation(&project).await })
+    }
+
+    pub fn skills(&self, project: Option<String>) -> Reply<Vec<SkillRow>> {
+        self.local(move |host| async move { host.skills(project.as_deref()).await })
+    }
+
+    pub fn set_skill_enabled(&self, name: String, enabled: bool) -> Reply<()> {
+        self.local(move |host| async move { host.set_skill_enabled(&name, enabled).await })
     }
 
     pub fn turn_defaults(&self) -> Reply<TurnDefaults> {

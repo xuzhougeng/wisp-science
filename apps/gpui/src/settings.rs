@@ -2,7 +2,7 @@
 //! without a window. Validation itself belongs to the host.
 use wisp_server::{
     config::default_api_url,
-    desktop::{ModelProfile, ModelSettings, ModelSource},
+    desktop::{ModelProfile, ModelSettings, ModelSource, SkillRow},
 };
 
 /// The pages of Settings, in the order they are listed.
@@ -11,16 +11,23 @@ pub enum Section {
     #[default]
     Models,
     Conversation,
+    Skills,
     Permissions,
 }
 
 impl Section {
-    pub const ALL: [Section; 3] = [Section::Models, Section::Conversation, Section::Permissions];
+    pub const ALL: [Section; 4] = [
+        Section::Models,
+        Section::Conversation,
+        Section::Skills,
+        Section::Permissions,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             Section::Models => "Models",
             Section::Conversation => "Conversation",
+            Section::Skills => "Skills",
             Section::Permissions => "Permissions",
         }
     }
@@ -29,6 +36,7 @@ impl Section {
         match self {
             Section::Models => "bot",
             Section::Conversation => "chat",
+            Section::Skills => "skill",
             Section::Permissions => "shield",
         }
     }
@@ -37,9 +45,42 @@ impl Section {
     pub fn group(self) -> &'static str {
         match self {
             Section::Models | Section::Conversation => "AI",
+            Section::Skills => "Capabilities",
             Section::Permissions => "Safety",
         }
     }
+}
+
+/// Where a skill comes from, in words.
+pub fn skill_source(source: &str) -> &'static str {
+    match source {
+        "bundled" => "Ships with Wisp",
+        "project" => "This project",
+        _ => "Added folder",
+    }
+}
+
+/// One line saying how many skills there are and how many are off.
+pub fn skills_summary(rows: &[SkillRow]) -> String {
+    let off = rows.iter().filter(|row| !row.enabled).count();
+    let total = match rows.len() {
+        0 => return "No skills were found.".into(),
+        1 => "1 skill".to_string(),
+        n => format!("{n} skills"),
+    };
+    match off {
+        0 => format!("{total}, all on."),
+        n => format!("{total}, {n} off."),
+    }
+}
+
+/// Whether a skill matches what was typed: every word, in its name, its
+/// description or one of its tags.
+pub fn skill_matches(row: &SkillRow, query: &str) -> bool {
+    let text = format!("{} {} {}", row.name, row.description, row.tags.join(" ")).to_lowercase();
+    query
+        .split_whitespace()
+        .all(|word| text.contains(&word.to_lowercase()))
 }
 
 /// Reads the steps-per-turn field. The host has the last word; this keeps
@@ -187,7 +228,7 @@ mod tests {
     #[test]
     fn sections_are_listed_under_their_groups_in_order() {
         let groups: Vec<_> = Section::ALL.iter().map(|section| section.group()).collect();
-        assert_eq!(groups, ["AI", "AI", "Safety"]);
+        assert_eq!(groups, ["AI", "AI", "Capabilities", "Safety"]);
         assert_eq!(Section::default(), Section::Models);
         // No two sections share a name or a drawing.
         for (index, section) in Section::ALL.iter().enumerate() {
@@ -196,6 +237,31 @@ mod tests {
                 assert_ne!(section.icon(), other.icon());
             }
         }
+    }
+
+    #[test]
+    fn skills_are_counted_described_and_found_by_any_of_their_words() {
+        let skill = |name: &str, enabled: bool| SkillRow {
+            name: name.into(),
+            description: "Quality control for single-cell data".into(),
+            tags: vec!["scRNA".into(), "QC".into()],
+            source: "bundled",
+            enabled,
+        };
+        assert_eq!(skills_summary(&[]), "No skills were found.");
+        assert_eq!(skills_summary(&[skill("a", true)]), "1 skill, all on.");
+        assert_eq!(
+            skills_summary(&[skill("a", true), skill("b", false), skill("c", false)]),
+            "3 skills, 2 off."
+        );
+        let row = skill("singlecell-qc", true);
+        assert!(skill_matches(&row, ""));
+        assert!(skill_matches(&row, "QUALITY scrna"));
+        assert!(skill_matches(&row, "singlecell"));
+        assert!(!skill_matches(&row, "quality proteomics"));
+        assert_eq!(skill_source("bundled"), "Ships with Wisp");
+        assert_eq!(skill_source("project"), "This project");
+        assert_eq!(skill_source("extra"), "Added folder");
     }
 
     #[test]

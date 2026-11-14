@@ -1794,6 +1794,112 @@ async fn desktop_conversation_options_shape_the_next_turn() {
 }
 
 #[tokio::test]
+async fn a_skill_that_is_turned_off_is_not_offered_to_the_model_or_the_composer() {
+    let temp = tempfile::tempdir().unwrap();
+    // The host is told about one directory of skills; the project has its own.
+    let shared = temp.path().join("shared-skills");
+    let skill = |dir: &Path, name: &str, about: &str| {
+        std::fs::create_dir_all(dir.join(name)).unwrap();
+        std::fs::write(
+            dir.join(name).join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: {about}\ntags: [lab]\n---\nDo it.\n"),
+        )
+        .unwrap();
+    };
+    skill(&shared, "zebra-count", "Count stripes the lab way");
+    let mut settings = config(temp.path());
+    settings.skills = vec![shared];
+    let server = Server::open_with_models(settings, models(Arc::default(), false))
+        .await
+        .unwrap();
+    let folder = temp.path().join("lab");
+    skill(
+        &folder.join("skills"),
+        "Alpha-fold-check",
+        "Check a predicted fold",
+    );
+    let lab = server.register_local_project(&folder).await.unwrap();
+
+    // Listed by name whatever the case, each with where it came from.
+    let listed = |project: Option<String>| {
+        let server = &server;
+        async move {
+            server
+                .skills(project.as_deref())
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|row| format!("{} {} {}", row.name, row.source, row.enabled))
+                .collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(
+        listed(Some(lab.clone())).await,
+        ["Alpha-fold-check project true", "zebra-count extra true"]
+    );
+    // Without a project, only what the host has for every project.
+    assert_eq!(listed(None).await, ["zebra-count extra true"]);
+    assert!(server.skills(Some("missing")).await.is_err());
+    assert_eq!(
+        server.skills(Some(&lab)).await.unwrap()[1].tags,
+        ["lab".to_string()]
+    );
+
+    let offered = |query: &'static str| {
+        let (server, lab) = (&server, &lab);
+        async move {
+            server
+                .skill_options(lab, query, 10)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|option| option.label)
+                .collect::<Vec<_>>()
+        }
+    };
+    // What a turn's agent is given: the index its skill tools are built on.
+    let for_turns = || {
+        let (server, folder) = (&server, &folder);
+        async move {
+            let index =
+                crate::runtime::skill_index(&server.0.config, &server.0.store, folder).await;
+            let mut names: Vec<_> = index.all().iter().map(|skill| skill.name.clone()).collect();
+            names.sort();
+            names
+        }
+    };
+    assert_eq!(offered("").await, ["Alpha-fold-check", "zebra-count"]);
+    assert_eq!(for_turns().await, ["Alpha-fold-check", "zebra-count"]);
+
+    // Off: gone from the model's view and from the composer, still listed.
+    server
+        .set_skill_enabled("zebra-count", false)
+        .await
+        .unwrap();
+    assert!(server.set_skill_enabled(" ", false).await.is_err());
+    assert_eq!(offered("").await, ["Alpha-fold-check"]);
+    assert_eq!(for_turns().await, ["Alpha-fold-check"]);
+    assert_eq!(
+        listed(Some(lab.clone())).await,
+        ["Alpha-fold-check project true", "zebra-count extra false"]
+    );
+    // Turning off twice, or a skill that is not installed, is harmless.
+    server
+        .set_skill_enabled("zebra-count", false)
+        .await
+        .unwrap();
+    server
+        .set_skill_enabled("not-installed", false)
+        .await
+        .unwrap();
+
+    server.set_skill_enabled("zebra-count", true).await.unwrap();
+    assert_eq!(offered("zebra").await, ["zebra-count"]);
+    assert_eq!(for_turns().await, ["Alpha-fold-check", "zebra-count"]);
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn turn_defaults_and_project_grants_apply_from_the_next_turn() {
     use desktop::Remember;
     let temp = tempfile::tempdir().unwrap();

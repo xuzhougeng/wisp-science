@@ -1674,9 +1674,11 @@ impl Server {
     ) -> Result<Vec<ReferenceOption>> {
         let root = std::path::PathBuf::from(self.project_root(project).await?);
         let config = self.0.config.clone();
+        let disabled = crate::runtime::disabled_skills(&self.0.store).await;
         let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
         Ok(tokio::task::spawn_blocking(move || {
-            crate::runtime::skill_index(&config, &root)
+            crate::runtime::all_skills(&config, Some(&root))
+                .filtered(&disabled)
                 .all()
                 .iter()
                 .filter(|skill| {
@@ -1694,6 +1696,58 @@ impl Server {
                 .collect()
         })
         .await?)
+    }
+
+    /// Every skill there is for `project` (or, without one, those the host
+    /// has for all projects), by name, with whether it is turned on.
+    pub async fn skills(&self, project: Option<&str>) -> Result<Vec<SkillRow>> {
+        let root = match project {
+            Some(project) => Some(std::path::PathBuf::from(self.project_root(project).await?)),
+            None => None,
+        };
+        let config = self.0.config.clone();
+        let disabled = crate::runtime::disabled_skills(&self.0.store).await;
+        Ok(tokio::task::spawn_blocking(move || {
+            let index = crate::runtime::all_skills(&config, root.as_deref());
+            let mut rows: Vec<SkillRow> = index
+                .all()
+                .iter()
+                .map(|skill| SkillRow {
+                    name: skill.name.clone(),
+                    description: skill.description.clone(),
+                    tags: skill.tags.clone(),
+                    source: index
+                        .source(&skill.name)
+                        .map_or("extra", wisp_skills::SkillSource::as_str),
+                    enabled: !disabled.contains(&skill.name),
+                })
+                .collect();
+            rows.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            rows
+        })
+        .await?)
+    }
+
+    /// Turns a skill off or on for every project, from the next turn. Off,
+    /// it is not offered to the model and cannot be attached to a message.
+    pub async fn set_skill_enabled(&self, name: &str, enabled: bool) -> Result<()> {
+        let name = name.trim();
+        ensure!(!name.is_empty(), "Name the skill");
+        let mut disabled = crate::runtime::disabled_skills(&self.0.store).await;
+        if enabled {
+            disabled.remove(name);
+        } else {
+            disabled.insert(name.to_owned());
+        }
+        let mut names: Vec<_> = disabled.into_iter().collect();
+        names.sort();
+        self.0
+            .store
+            .set_setting(
+                crate::runtime::DISABLED_SKILLS,
+                &serde_json::to_string(&names)?,
+            )
+            .await
     }
 
     /// Files the project's conversations produced, newest first; those of
@@ -2098,6 +2152,18 @@ pub struct ConversationStatus {
     pub allowed_tools: Vec<String>,
     /// What the model is thinking right now; empty when it is not.
     pub reasoning: String,
+}
+
+/// A skill as Settings lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkillRow {
+    pub name: String,
+    pub description: String,
+    pub tags: Vec<String>,
+    /// Where it was found: `bundled` with the app, `project` in the open
+    /// project, `extra` in a directory the host was told about.
+    pub source: &'static str,
+    pub enabled: bool,
 }
 
 /// Whether an approval is remembered, and for how long.

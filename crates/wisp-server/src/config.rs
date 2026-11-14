@@ -120,7 +120,16 @@ impl Config {
     /// Embed the host in a local desktop without a listener or pairing setup.
     /// Provider configuration and exact model limits are shared with the server.
     pub fn local(data: PathBuf, workspace: PathBuf) -> Result<Self> {
-        Self::parse_local(data, workspace, |name| std::env::var(name).ok())
+        let mut config = Self::parse_local(data, workspace, |name| std::env::var(name).ok())?;
+        // A desktop ships its skills with the app. Directories named in
+        // WISP_SKILLS_PATH come first, so they win a clash of names. A
+        // headless host uses only the ones it names.
+        if let Some(bundled) = wisp_skills::bundled_dir() {
+            if !config.skills.contains(&bundled) {
+                config.skills.push(bundled);
+            }
+        }
+        Ok(config)
     }
 
     fn parse_local(

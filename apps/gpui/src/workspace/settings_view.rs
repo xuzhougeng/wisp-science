@@ -738,6 +738,7 @@ impl Workspace {
                 .child(self.render_model_list(cx))
                 .child(self.render_model_form(cx)),
             Section::Conversation => self.render_conversation_settings(cx),
+            Section::Skills => self.render_skill_settings(cx),
             Section::Permissions => self.render_permission_settings(cx),
         };
         div().h_flex().size_full().child(nav).child(

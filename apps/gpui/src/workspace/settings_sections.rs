@@ -70,6 +70,7 @@ impl Workspace {
         self.settings_error = None;
         match section {
             Section::Models => {}
+            Section::Skills => self.load_skills(window, cx),
             Section::Conversation => self.load_turn_defaults(window, cx),
             Section::Permissions => {
                 self.load_turn_defaults(window, cx);
@@ -183,6 +184,159 @@ impl Workspace {
             });
         })
         .detach();
+    }
+
+    /// Lists every skill: the open project's and the ones for all projects.
+    fn load_skills(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let reply = self.backend.skills(self.state.project.clone());
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(skills) => this.skills = Some(skills),
+                    Err(error) => this.settings_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn set_skill_enabled(
+        &mut self,
+        name: String,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings_error = None;
+        // Shown at once; the list read afterwards confirms it.
+        if let Some(row) = self
+            .skills
+            .iter_mut()
+            .flatten()
+            .find(|row| row.name == name)
+        {
+            row.enabled = enabled;
+        }
+        let reply = self.backend.set_skill_enabled(name, enabled);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if let Err(error) = result {
+                    this.settings_error = Some(error);
+                }
+                this.load_skills(window, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    pub(super) fn render_skill_settings(&self, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let page = self.settings_page(cx);
+        let Some(skills) = &self.skills else {
+            return page.child(div().text_sm().text_color(muted).child("Loading…"));
+        };
+        let query = self.skills_search.read(cx).value().to_string();
+        let mut page = page
+            .child(
+                div()
+                    .h_flex()
+                    .gap_3()
+                    .child(
+                        div()
+                            .v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .child(div().text_sm().child(settings::skills_summary(skills)))
+                            .child(div().text_xs().text_color(muted).child(
+                                if self.state.project.is_some() {
+                                    "The open project's skills and the ones for every project. \
+                                     A skill that is off is not offered to the model."
+                                } else {
+                                    "Skills for every project. Open a project to see its own \
+                                     as well. A skill that is off is not offered to the model."
+                                },
+                            )),
+                    )
+                    .child(
+                        Button::new("skills-reload")
+                            .icon(glyph("refresh"))
+                            .label("Reload")
+                            .small()
+                            .flex_shrink_0()
+                            .tooltip("Read the skill folders again")
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.load_skills(window, cx)),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .py_3()
+                    .w(px(320.))
+                    .child(Input::new(&self.skills_search).small()),
+            );
+        let shown: Vec<_> = skills
+            .iter()
+            .filter(|row| settings::skill_matches(row, &query))
+            .collect();
+        if shown.is_empty() && !skills.is_empty() {
+            page = page.child(div().text_sm().text_color(muted).child("No skill matches."));
+        }
+        for row in shown {
+            let name = row.name.clone();
+            let enabled = row.enabled;
+            let mut about = settings::skill_source(row.source).to_owned();
+            if !row.tags.is_empty() {
+                about = format!("{about} · {}", row.tags.join(", "));
+            }
+            page = page.child(
+                div()
+                    .h_flex()
+                    .items_start()
+                    .justify_between()
+                    .gap_6()
+                    .py_3()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .child(
+                        div()
+                            .v_flex()
+                            .w(px(NOTE_WIDTH + 80.))
+                            .flex_shrink_0()
+                            .gap_1()
+                            .when(!enabled, |text| text.opacity(0.6))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(row.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child(row.description.clone()),
+                            )
+                            .child(div().text_xs().text_color(muted).child(about)),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("skill-{}", row.name)))
+                            .label(if enabled { "On" } else { "Off" })
+                            .small()
+                            .selected(enabled)
+                            .flex_shrink_0()
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.set_skill_enabled(name.clone(), !enabled, window, cx)
+                            })),
+                    ),
+            );
+        }
+        page
     }
 
     fn settings_page(&self, cx: &App) -> Div {
