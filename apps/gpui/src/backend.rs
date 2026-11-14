@@ -64,7 +64,10 @@ impl Backend {
                 .unwrap_or_else(|| base.join("wisp-science-gpui-workspace"));
             host.get_or_try_init(|| async {
                 let config = Config::local(data, workspace).map_err(|e| format!("{e:#}"))?;
-                Server::open(config).await.map_err(|e| format!("{e:#}"))
+                let server = Server::open(config).await.map_err(|e| format!("{e:#}"))?;
+                // Scheduled tasks fire while the app is open.
+                server.start_scheduler();
+                Ok::<_, String>(server)
             })
             .await?;
             Ok(())
@@ -783,6 +786,28 @@ impl Backend {
     /// Asks the release page whether a newer version has been published.
     pub fn check_for_update(&self) -> Reply<wisp_server::desktop::UpdateCheck> {
         self.local(|host| async move { host.check_for_update().await })
+    }
+
+    /// Every project's scheduled tasks.
+    pub fn schedules(&self) -> Reply<Vec<wisp_server::desktop::ScheduleRow>> {
+        self.local(|host| async move { host.schedules().await })
+    }
+
+    pub fn create_schedule(&self, input: wisp_server::desktop::ScheduleInput) -> Reply<()> {
+        self.local(move |host| async move { host.create_schedule(input).await })
+    }
+
+    pub fn set_schedule_enabled(&self, id: String, enabled: bool) -> Reply<()> {
+        self.local(move |host| async move { host.set_schedule_enabled(&id, enabled).await })
+    }
+
+    pub fn delete_schedule(&self, id: String) -> Reply<()> {
+        self.local(move |host| async move { host.delete_schedule(&id).await })
+    }
+
+    /// Fires a task at once; the conversation it was sent into.
+    pub fn run_schedule_now(&self, id: String) -> Reply<String> {
+        self.local(move |host| async move { host.run_schedule_now(&id).await })
     }
 
     /// The papers the project is writing.

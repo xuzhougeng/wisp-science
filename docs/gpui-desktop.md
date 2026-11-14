@@ -161,6 +161,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Export | A conversation's Export button saves the whole of it as a Markdown file where you choose |
 | Notebook | A tab of the side panel: the conversation's code as cells, with what each run returned; copy, save to favorites, or show it in the conversation |
 | Research calendar | A page across every project: a month as a grid with how many records each day holds, and the chosen day's records; projects can be left out |
+| Scheduled tasks | A page across projects (the clock on the home page, or the command palette): a prompt is sent into a new conversation of its project every few hours, daily or weekly at a time, while the app is open; each task can be run now, switched off or deleted, and its latest firing opens the conversation it made |
 | Paper evidence | A page for the open project (Papers in the sidebar, or the command palette): the papers it is writing, each with its versions and, in a draft version, figures, tables and claims with the project results and runs they rest on and why each was chosen |
 | Research journey | A page for the open project: one month of what happened, by day (what you asked, runs, files, decisions, your own records), a filter, and a form to add a record of your own |
 | Outline | A button in the conversation's header lists what you asked, in order; choosing one scrolls to it |
@@ -587,6 +588,19 @@ Limits of this slice:
   fetched. A picture that only a tool wrote, or that the answer mentions
   without image syntax, is not shown; it is in the Artifacts tab and the
   Files panel. There is no zoom and no click to open.
+- Scheduled tasks are the only part of the WebView's research assistant
+  that is ported: there is no plan for the day, daily recap, memory
+  tidy or mandate. Tasks fire only while the app is open, looked for
+  every 30 seconds; a time that was missed fires once at the next look
+  and the cadence keeps its place on the clock. A fired task is an
+  ordinary turn in a new conversation named after the task: it uses
+  the default model and waits for approvals like any other, and the
+  sidebar shows the conversation the next time the project list is
+  refreshed. A task cannot be bound to an existing conversation or to
+  a skill, and cannot be edited, only deleted and made again. The rows
+  are the store's own (`schedules`), shared with the WebView desktop;
+  a conversation's own timer made there is neither listed nor fired
+  here.
 - Paper evidence keeps papers, versions, items and evidence in the same
   tables the WebView desktop uses, so a paper made in one shows in the
   other. From here a paper has the one version it starts with: a version
@@ -965,6 +979,16 @@ it: the request follows what was typed, the caret is at its end, and
 nothing is sent. Choose it again: it is not written twice. Press Escape
 with the menu open, then with the form open in Settings: each press
 closes only that. Remove the action: it leaves the menu.
+On the home page press the clock: Scheduled tasks says there are none.
+Press the Weekly report template: the form opens with its prompt; choose
+a project, Daily and a time a minute ahead, and save. The task is
+listed with "Next:" at that time; within half a minute of it a
+conversation named after the task appears in the project (refresh the
+list) and the task's line says when it last ran; clicking that line
+opens the conversation. Press Run now: another conversation is made and
+"Next:" does not move. Switch it off: it reads Off. Give "25:00" as the
+time in a new form: it is refused. Press Escape with the form open:
+only the form closes. Delete the task: the question has to be answered.
 In a project press Papers: the page says there is no paper yet. Press
 New paper, give a title and save: it shows with the version "v1 ·
 Initial submission". Add a figure: it is listed with "No source yet".

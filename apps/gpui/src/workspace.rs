@@ -24,6 +24,7 @@ mod project_settings;
 mod queue_view;
 mod remote_files_view;
 mod review_view;
+mod schedules_view;
 mod settings_data;
 mod settings_decision;
 mod settings_environments;
@@ -140,6 +141,17 @@ pub struct Workspace {
     journey: Option<wisp_dto::ResearchJourney>,
     journey_request: u64,
     journey_search: Entity<InputState>,
+    /// Every project's scheduled tasks; `None` until the host answered.
+    schedules: Option<Vec<wisp_server::desktop::ScheduleRow>>,
+    /// Name, prompt, hours, time of day.
+    schedule_fields: [Entity<InputState>; 4],
+    schedule_project: Option<String>,
+    schedule_repeat: crate::schedules::Repeat,
+    /// Monday is 0.
+    schedule_weekday: u32,
+    schedule_deleting: Option<String>,
+    /// What the last change said.
+    schedule_note: Option<String>,
     /// The open project's papers, and the one the page shows.
     papers: Vec<wisp_server::desktop::PaperRow>,
     paper: Option<wisp_server::desktop::Paper>,
@@ -472,6 +484,12 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
         ];
         let mcp_target = cx.new(|cx| InputState::new(window, cx));
+        let schedule_fields = [
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx).multi_line(true)),
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx)),
+        ];
         let paper_fields = [
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx)),
@@ -711,6 +729,13 @@ impl Workspace {
             journey: None,
             journey_request: 0,
             journey_search,
+            schedules: None,
+            schedule_fields,
+            schedule_project: None,
+            schedule_repeat: crate::schedules::Repeat::Daily,
+            schedule_weekday: 0,
+            schedule_deleting: None,
+            schedule_note: None,
             papers: Vec::new(),
             paper: None,
             paper_request: 0,
@@ -962,6 +987,9 @@ impl Workspace {
             }
             // The page stays open underneath.
             Some(Layer::JournalForm) => {}
+            Some(Layer::Schedules) => self.focus_composer(window, cx),
+            Some(Layer::ScheduleForm) => {}
+            Some(Layer::ConfirmDeleteSchedule) => self.schedule_deleting = None,
             Some(Layer::Papers) => {
                 self.paper = None;
                 self.focus_composer(window, cx);
@@ -1018,6 +1046,7 @@ impl Workspace {
                     || self.layers.contains(Layer::Calendar)
                     || self.layers.contains(Layer::Journey)
                     || self.layers.contains(Layer::Papers)
+                    || self.layers.contains(Layer::Schedules)
                     || self.layers.contains(Layer::Favorites)
                     || self.layers.contains(Layer::Palette)
                     || self.layers.contains(Layer::ProjectSettings)
@@ -1033,6 +1062,7 @@ impl Workspace {
                     || self.layers.contains(Layer::Calendar)
                     || self.layers.contains(Layer::Journey)
                     || self.layers.contains(Layer::Papers)
+                    || self.layers.contains(Layer::Schedules)
                     || self.layers.contains(Layer::Favorites)
                     || self.layers.contains(Layer::Palette)
                 {
@@ -2569,6 +2599,7 @@ impl Render for Workspace {
             Layer::Favorites,
             Layer::Journey,
             Layer::Papers,
+            Layer::Schedules,
             Layer::Calendar,
         ]);
         let root = if page == Some(Layer::Settings) {
@@ -2579,6 +2610,8 @@ impl Render for Workspace {
             root.child(self.render_journey(cx))
         } else if page == Some(Layer::Papers) {
             root.child(self.render_papers(cx))
+        } else if page == Some(Layer::Schedules) {
+            root.child(self.render_schedules(cx))
         } else if page == Some(Layer::Favorites) {
             root.child(self.render_favorites(window, cx))
         } else {

@@ -45,6 +45,7 @@ pub enum Command {
     Find,
     Journey,
     Papers,
+    Schedules,
     Calendar,
     NewWindow,
     Capabilities,
@@ -79,6 +80,7 @@ impl Command {
             Command::Find => tr("Find in this conversation"),
             Command::Journey => tr("Research journey"),
             Command::Papers => tr("Paper evidence"),
+            Command::Schedules => tr("Scheduled tasks"),
             Command::Calendar => tr("Research calendar"),
             Command::NewWindow => tr("New window"),
             Command::Capabilities => tr("Capabilities of this project"),
@@ -112,6 +114,7 @@ impl Command {
             Command::Find => "search",
             Command::Journey => "timeline",
             Command::Papers => "doc",
+            Command::Schedules => "clock",
             Command::Calendar => "calendar",
             Command::NewWindow => "dock",
             Command::Capabilities => "sparkles",
@@ -156,11 +159,12 @@ impl Command {
             | Command::Docs
             | Command::Feedback
             | Command::Calendar
+            | Command::Schedules
             | Command::NewWindow => true,
         }
     }
 
-    const ALL: [Command; 29] = [
+    const ALL: [Command; 30] = [
         Command::NewConversation,
         Command::OpenFolder,
         Command::Home,
@@ -180,6 +184,7 @@ impl Command {
         Command::Find,
         Command::Journey,
         Command::Papers,
+        Command::Schedules,
         Command::Calendar,
         Command::NewWindow,
         Command::Capabilities,
@@ -486,9 +491,12 @@ mod tests {
                 Section::Commands,
                 Section::Commands,
                 Section::Commands,
+                Section::Commands,
                 Section::Commands
             ]
         );
+        // Scheduled tasks span projects, so they are offered at home too.
+        assert!(home.contains(&Entry::Command(Command::Schedules)));
         // Project-only commands appear once a project is open.
         let inside = state.entries(&projects, &recent, Screen::Project);
         assert!(inside.contains(&Entry::Command(Command::NewConversation)));

@@ -4423,6 +4423,7 @@ pub use crate::remote_dir::RemoteDirectory;
 pub use crate::research_archive::ArchiveDraft;
 pub use crate::review::{Finding as ReviewFinding, Outcome as ReviewOutcome, Review};
 pub use crate::run_log::RunLog;
+pub use crate::schedules::{ScheduleInput, ScheduleRow, ScheduleRun, MIN_INTERVAL_SECS};
 pub use crate::updates::UpdateCheck;
 pub use wisp_dto::{ArchiveScript, ResearchArchive};
 

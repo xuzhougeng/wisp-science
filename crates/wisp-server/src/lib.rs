@@ -23,6 +23,7 @@ mod review;
 mod run_log;
 mod runtime;
 mod sample;
+mod schedules;
 #[cfg(test)]
 mod tests;
 mod tools_found;
@@ -74,6 +75,8 @@ struct Inner {
     sequence: AtomicU64,
     turns: Arc<Semaphore>,
     shutting_down: AtomicBool,
+    /// The loop that fires scheduled tasks was started.
+    scheduling: AtomicBool,
     admission: RwLock<()>,
     _lock: File,
     models: ModelFactory,
@@ -191,6 +194,7 @@ impl Server {
             sequence: AtomicU64::new(0),
             turns: Arc::new(Semaphore::new(4)),
             shutting_down: AtomicBool::new(false),
+            scheduling: AtomicBool::new(false),
             admission: RwLock::new(()),
             _lock: lock,
             models,

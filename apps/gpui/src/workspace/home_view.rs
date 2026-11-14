@@ -353,6 +353,11 @@ impl Workspace {
                         ),
                     )
                     .child(
+                        icon_button("home-schedules", "clock", tr("Scheduled tasks")).on_click(
+                            cx.listener(|this, _, window, cx| this.open_schedules(window, cx)),
+                        ),
+                    )
+                    .child(
                         icon_button("home-favorites", "star", tr("Favorites")).on_click(
                             cx.listener(|this, _, window, cx| this.open_favorites(window, cx)),
                         ),

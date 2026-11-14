@@ -32,6 +32,7 @@ mod pet;
 mod present;
 mod queue;
 mod review;
+mod schedules;
 mod settings;
 mod state;
 mod tabs;

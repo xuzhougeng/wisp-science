@@ -6179,3 +6179,124 @@ async fn a_paper_keeps_its_figures_with_the_results_and_runs_they_rest_on() {
     assert!(server.papers(PROJECT).await.unwrap().is_empty());
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_scheduled_task_fires_once_per_time_into_a_new_conversation() {
+    use desktop::ScheduleInput;
+    let temp = tempfile::tempdir().unwrap();
+    let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let record = seen.clone();
+    let factory: ModelFactory = Arc::new(move |_| Box::new(Everything(record.clone())));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    assert!(!server
+        .commands()
+        .iter()
+        .any(|command| command.contains("schedule")));
+    assert!(server.schedules().await.unwrap().is_empty());
+
+    let task = |prompt: &str, start_at| ScheduleInput {
+        project: PROJECT.into(),
+        name: String::new(),
+        prompt: prompt.into(),
+        interval_secs: 3_600,
+        start_at,
+    };
+    // A project that is not there, and a form that is not filled in.
+    let elsewhere = ScheduleInput {
+        project: "missing".into(),
+        ..task("anything", None)
+    };
+    assert!(server.create_schedule(elsewhere).await.is_err());
+    assert!(server.create_schedule(task(" ", None)).await.is_err());
+
+    let now = chrono::Utc::now().timestamp();
+    // One whose time passed three hours ago, one that is not due yet.
+    server
+        .create_schedule(task("summarise the queue", Some(now - 3 * 3_600 - 10)))
+        .await
+        .unwrap();
+    server
+        .create_schedule(task("weekly report", None))
+        .await
+        .unwrap();
+    let listed = server.schedules().await.unwrap();
+    assert_eq!(listed.len(), 2);
+    assert_eq!(listed[0].name, "summarise the queue");
+    assert!(listed.iter().all(|row| row.enabled && row.runs.is_empty()));
+    let due = listed[0].id.clone();
+    let later = listed[1].id.clone();
+
+    // However long it was due, it fires once and keeps its place on the clock.
+    assert_eq!(server.fire_due_schedules(now).await.unwrap(), 1);
+    assert_eq!(server.fire_due_schedules(now).await.unwrap(), 0);
+    let listed = server.schedules().await.unwrap();
+    let fired = listed.iter().find(|row| row.id == due).unwrap();
+    assert_eq!(fired.runs.len(), 1);
+    assert!(fired.runs[0].error.is_none());
+    assert_eq!(fired.next_run_at, now - 10 + 3_600);
+    let session = fired.runs[0].session.clone().unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    let sent = seen.lock().unwrap().join("\n");
+    assert!(sent.contains("[Scheduled task: summarise the queue]\n\nsummarise the queue"));
+    // The conversation is named after the task.
+    let sessions = server.0.store.list_sessions(PROJECT).await.unwrap();
+    assert!(sessions
+        .iter()
+        .any(|row| format!("{row:?}").contains("summarise the queue")));
+
+    // Off, a task whose time comes does not fire; on again, it does once.
+    server.set_schedule_enabled(&later, false).await.unwrap();
+    let far = now + 10 * 3_600;
+    assert_eq!(
+        server.fire_due_schedules(far).await.unwrap(),
+        1,
+        "the first"
+    );
+    server.set_schedule_enabled(&later, true).await.unwrap();
+    assert_eq!(server.fire_due_schedules(far).await.unwrap(), 1);
+    assert_eq!(server.fire_due_schedules(far).await.unwrap(), 0);
+
+    // Run now sends it at once and leaves the cadence where it was.
+    let before = server.schedules().await.unwrap();
+    let cadence = before
+        .iter()
+        .find(|row| row.id == later)
+        .unwrap()
+        .next_run_at;
+    let ran = server.run_schedule_now(&later).await.unwrap();
+    wait_for(&server, &ran, |s| !s.running).await;
+    let after = server.schedules().await.unwrap();
+    let row = after.iter().find(|row| row.id == later).unwrap();
+    assert_eq!(row.next_run_at, cadence);
+    assert_eq!(row.runs.len(), 2);
+
+    // A conversation's own timer is the WebView's: not listed, not fired,
+    // and not this page's to change.
+    let timer = wisp_store::ScheduleRecord {
+        id: "timer".into(),
+        project_id: PROJECT.into(),
+        frame_id: Some(session.clone()),
+        replace_previous_turn: true,
+        name: "timer".into(),
+        prompt: "check".into(),
+        skill: None,
+        interval_secs: 3_600,
+        enabled: true,
+        next_run_at: now - 60,
+        last_run_at: None,
+        created_at: now,
+        updated_at: now,
+    };
+    server.0.store.create_schedule(&timer).await.unwrap();
+    assert_eq!(server.schedules().await.unwrap().len(), 2);
+    assert_eq!(server.fire_due_schedules(now).await.unwrap(), 0);
+    assert!(server.delete_schedule("timer").await.is_err());
+    assert!(server.run_schedule_now("timer").await.is_err());
+
+    server.delete_schedule(&due).await.unwrap();
+    assert!(server.delete_schedule(&due).await.is_err());
+    assert_eq!(server.schedules().await.unwrap().len(), 1);
+    server.shutdown().await;
+}

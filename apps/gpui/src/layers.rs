@@ -41,6 +41,12 @@ pub enum Layer {
     Journey,
     /// The form on the journey page for a record of the researcher's own.
     JournalForm,
+    /// The scheduled tasks of every project: a page of its own.
+    Schedules,
+    /// The form on that page for a new task.
+    ScheduleForm,
+    /// Question before a scheduled task is deleted.
+    ConfirmDeleteSchedule,
     /// The papers of the open project: a page of its own.
     Papers,
     /// The form on the papers page for a new paper or a new name.
@@ -172,6 +178,7 @@ impl Layer {
             | Layer::ConfirmRemoveQuickAction => Some(Layer::Settings),
             Layer::ConfirmRemoveFavorite => Some(Layer::Favorites),
             Layer::JournalForm => Some(Layer::Journey),
+            Layer::ScheduleForm | Layer::ConfirmDeleteSchedule => Some(Layer::Schedules),
             Layer::PaperForm
             | Layer::PaperItemForm
             | Layer::PaperSources
@@ -499,6 +506,16 @@ mod tests {
         stack.open(Layer::JournalForm);
         assert!(stack.close(Layer::Journey));
         assert!(!stack.contains(Layer::JournalForm));
+        // The scheduled tasks page has a form and a question inside it.
+        stack.open(Layer::Schedules);
+        stack.open(Layer::ScheduleForm);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ScheduleForm));
+        stack.open(Layer::ConfirmDeleteSchedule);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmDeleteSchedule));
+        assert!(stack.contains(Layer::Schedules));
+        stack.open(Layer::ScheduleForm);
+        assert!(stack.close(Layer::Schedules));
+        assert!(!stack.contains(Layer::ScheduleForm));
         // The papers page is the same: a form or a question inside it
         // goes first, and closing the page takes them along.
         stack.open(Layer::Papers);
