@@ -1900,6 +1900,66 @@ async fn a_skill_that_is_turned_off_is_not_offered_to_the_model_or_the_composer(
 }
 
 #[tokio::test]
+async fn a_bundled_connector_that_is_turned_off_gives_the_model_no_tools() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+
+    // One row per connector, by name, each with the tools it brings.
+    let rows = server.connectors().await.unwrap();
+    let domains: Vec<_> = rows.iter().map(|row| row.domain.as_str()).collect();
+    let mut sorted = domains.clone();
+    sorted.sort();
+    sorted.dedup();
+    assert_eq!(domains, sorted);
+    assert!(rows.len() > 10);
+    let pubmed = rows.iter().find(|row| row.domain == "pubmed").unwrap();
+    assert!(pubmed.enabled && !pubmed.tools.is_empty());
+    assert!(!pubmed.description.is_empty() && !pubmed.links.is_empty());
+    let total: usize = rows.iter().map(|row| row.tools.len()).sum();
+    assert_eq!(total, wisp_bio::catalog().len());
+
+    // What a turn's agent is given.
+    let given = || {
+        let server = &server;
+        async move {
+            crate::runtime::connector_tools(&server.0.store)
+                .await
+                .iter()
+                .map(|tool| tool.name().to_owned())
+                .collect::<std::collections::HashSet<_>>()
+        }
+    };
+    let all = given().await;
+    assert_eq!(all.len(), total);
+    assert!(pubmed.tools.iter().all(|tool| all.contains(tool)));
+
+    server.set_connector_enabled("pubmed", false).await.unwrap();
+    assert!(server
+        .set_connector_enabled("not-a-connector", false)
+        .await
+        .is_err());
+    let without = given().await;
+    assert!(pubmed.tools.iter().all(|tool| !without.contains(tool)));
+    assert_eq!(without.len(), total - pubmed.tools.len());
+    let rows = server.connectors().await.unwrap();
+    assert!(rows
+        .iter()
+        .all(|row| row.enabled == (row.domain != "pubmed")));
+
+    // A turn still runs with the rest in place.
+    let session = create(&server).await;
+    send(&server, &session, "hello").await.unwrap();
+    let done = wait_for(&server, &session, |s| !s.running).await;
+    assert!(done.error.is_none());
+
+    server.set_connector_enabled("pubmed", true).await.unwrap();
+    assert_eq!(given().await, all);
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn turn_defaults_and_project_grants_apply_from_the_next_turn() {
     use desktop::Remember;
     let temp = tempfile::tempdir().unwrap();

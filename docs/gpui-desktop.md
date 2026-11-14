@@ -133,7 +133,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Branch | Under a reply: a new conversation holding everything through that turn, opened at once and listed under the one it came from |
 | Search | Titles and message text across the project, archived conversations included |
 | Command palette | One box over everything: projects, files by name in every project, conversations by title or message text, and the window's commands; arrow keys, Return, Escape |
-| Settings | Pages: Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold), Skills (every skill with where it comes from, search, on or off) and Permissions (how new conversations start, tools that are always allowed); applied without restart |
+| Settings | Pages: Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold), Skills (every skill with where it comes from, search, on or off), Connections (the bundled literature and biology connectors with their tools and links, search, on or off) and Permissions (how new conversations start, tools that are always allowed); applied without restart |
 | Inbox | Conversations in any project that are waiting for you; opens across projects |
 | Read state | A finished answer is marked read once it is on screen in the active window |
 | Transcript | Virtualized Markdown, selectable text, paginated history |
@@ -234,6 +234,14 @@ Limits of this slice:
   and applies to every project from the next turn: the model's skill tools
   and the add-context box no longer offer it. Editing tags, per-project
   enabling, the community catalog and installing from GitHub are not ported.
+- The host now gives every turn the bundled literature and biology
+  connectors (`wisp-bio`: PubMed, bioRxiv, UniProt and the rest), which the
+  WebView has always had. They only read, so they never ask for approval, and
+  their schemas are deferred, so they do not fill the prompt. Turning one off
+  uses the WebView's list (`disabled_connectors`). They run without service
+  keys for now, so sources that need one answer as an anonymous caller would
+  get; the network proxy setting is not applied. Your own MCP servers, the
+  Credentials page and per-conversation connector grants are not ported.
 - Conversation settings apply to every turn this host runs from the next one
   on, a paired phone's included. Steps per turn replaces the `WISP_MAX_ITER`
   the host was started with once it is saved; at the limit the model is asked
@@ -451,6 +459,11 @@ are listed, and the project's own only in the second case. Search by a word
 from a description and by a tag. Turn one off, confirm the count says so and
 that the add-context box no longer offers it; turn it on again. Add a skill
 folder to the project, press Reload and confirm it appears.
+Open Connections: unfold a connector and confirm its tools and links are
+shown; search by a tool's name; turn one off and confirm the count of tools
+drops. With a real model, ask for a PubMed search and confirm a connector tool
+runs without an approval; turn PubMed off and confirm the model no longer has
+it.
 Restart and confirm persisted messages. Close during a running tool and verify
 worker cleanup. Check missing credentials and invalid workspace errors. Validate
 each target OS; a macOS build does not establish Windows/Linux behavior.

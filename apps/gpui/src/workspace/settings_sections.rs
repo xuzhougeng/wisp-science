@@ -3,7 +3,9 @@
 //! applies from the next turn.
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Selectable, Sizable, StyledExt, button::Button, input::Input,
+    ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
+    button::{Button, ButtonVariants},
+    input::Input,
 };
 use wisp_server::desktop::TurnDefaults;
 
@@ -71,6 +73,7 @@ impl Workspace {
         match section {
             Section::Models => {}
             Section::Skills => self.load_skills(window, cx),
+            Section::Connections => self.load_connectors(window, cx),
             Section::Conversation => self.load_turn_defaults(window, cx),
             Section::Permissions => {
                 self.load_turn_defaults(window, cx);
@@ -337,6 +340,208 @@ impl Workspace {
             );
         }
         page
+    }
+
+    fn load_connectors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let reply = self.backend.connectors();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(connectors) => this.connectors = Some(connectors),
+                    Err(error) => this.settings_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn set_connector_enabled(
+        &mut self,
+        domain: String,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings_error = None;
+        // Shown at once; the list read afterwards confirms it.
+        if let Some(row) = self
+            .connectors
+            .iter_mut()
+            .flatten()
+            .find(|row| row.domain == domain)
+        {
+            row.enabled = enabled;
+        }
+        let reply = self.backend.set_connector_enabled(domain, enabled);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if let Err(error) = result {
+                    this.settings_error = Some(error);
+                }
+                this.load_connectors(window, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    pub(super) fn render_connection_settings(&self, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let page = self.settings_page(cx);
+        let Some(connectors) = &self.connectors else {
+            return page.child(div().text_sm().text_color(muted).child("Loading…"));
+        };
+        let query = self.connectors_search.read(cx).value().to_string();
+        let mut page = page
+            .child(
+                div()
+                    .v_flex()
+                    .w(px(NOTE_WIDTH + 80.))
+                    .child(
+                        div()
+                            .text_sm()
+                            .child(settings::connectors_summary(connectors)),
+                    )
+                    .child(div().text_xs().text_color(muted).child(
+                        "Literature and biology sources that ship with Wisp. The model can \
+                         only read through them. A connector that is off gives it no tools.",
+                    )),
+            )
+            .child(
+                div()
+                    .py_3()
+                    .w(px(320.))
+                    .child(Input::new(&self.connectors_search).small()),
+            );
+        let shown: Vec<_> = connectors
+            .iter()
+            .filter(|row| settings::connector_matches(row, &query))
+            .collect();
+        if shown.is_empty() {
+            page = page.child(
+                div()
+                    .text_sm()
+                    .text_color(muted)
+                    .child("No connector matches."),
+            );
+        }
+        for row in shown {
+            let enabled = row.enabled;
+            let open = self.open_connector.as_deref() == Some(row.domain.as_str());
+            let (toggling, unfolding) = (row.domain.clone(), row.domain.clone());
+            let mut about = div()
+                .v_flex()
+                .w(px(NOTE_WIDTH + 80.))
+                .flex_shrink_0()
+                .gap_1()
+                .when(!enabled, |text| text.opacity(0.6))
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(row.domain.clone()),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(row.description.clone()),
+                )
+                // In a row of its own, so it keeps its width and its place
+                // at the left instead of stretching across the column.
+                .child(
+                    div().h_flex().child(
+                        Button::new(SharedString::from(format!(
+                            "connector-tools-{}",
+                            row.domain
+                        )))
+                        .icon(glyph(if open {
+                            "chevron-down"
+                        } else {
+                            "chevron-right"
+                        }))
+                        .label(settings::tool_count(row.tools.len()))
+                        .xsmall()
+                        .ghost()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.open_connector = (this.open_connector.as_deref()
+                                != Some(unfolding.as_str()))
+                            .then(|| unfolding.clone());
+                            cx.notify();
+                        })),
+                    ),
+                );
+            if open {
+                about = about.child(
+                    div()
+                        .text_xs()
+                        .font_family(cx.theme().mono_font_family.clone())
+                        .child(row.tools.join("  ")),
+                );
+                for (index, (label, url)) in row.links.iter().enumerate() {
+                    let target = url.clone();
+                    about = about.child(
+                        div()
+                            .h_flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child(format!("{label}: {url}")),
+                            )
+                            .child(
+                                icon_button(
+                                    SharedString::from(format!(
+                                        "connector-link-{}-{index}",
+                                        row.domain
+                                    )),
+                                    "external-link",
+                                    "Open in your browser",
+                                )
+                                .xsmall()
+                                .on_click(cx.listener(move |_, _, _, cx| cx.open_url(&target))),
+                            ),
+                    );
+                }
+            }
+            page = page.child(
+                div()
+                    .h_flex()
+                    .items_start()
+                    .justify_between()
+                    .gap_6()
+                    .py_3()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .child(about)
+                    .child(
+                        Button::new(SharedString::from(format!("connector-{}", row.domain)))
+                            .label(if enabled { "On" } else { "Off" })
+                            .small()
+                            .selected(enabled)
+                            .flex_shrink_0()
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.set_connector_enabled(toggling.clone(), !enabled, window, cx)
+                            })),
+                    ),
+            );
+        }
+        page.child(
+            div()
+                .pt_4()
+                .w(px(NOTE_WIDTH + 80.))
+                .text_xs()
+                .text_color(muted)
+                .child("Your own MCP servers cannot be added here yet."),
+        )
     }
 
     fn settings_page(&self, cx: &App) -> Div {

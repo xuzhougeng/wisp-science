@@ -1698,6 +1698,67 @@ impl Server {
         .await?)
     }
 
+    /// The literature and biology connectors that ship with Wisp, by name,
+    /// with the tools each gives the model and whether it is turned on.
+    pub async fn connectors(&self) -> Result<Vec<ConnectorRow>> {
+        let off = crate::runtime::disabled_connectors(&self.0.store).await;
+        let mut rows: Vec<ConnectorRow> = Vec::new();
+        for (domain, schema) in wisp_bio::catalog() {
+            let tool = schema.function.name;
+            match rows.iter_mut().find(|row| row.domain == domain) {
+                Some(row) => row.tools.push(tool),
+                None => {
+                    let about = wisp_bio::domain_metadata(domain);
+                    rows.push(ConnectorRow {
+                        domain: domain.to_owned(),
+                        description: about
+                            .map(|about| about.description.clone())
+                            .unwrap_or_default(),
+                        links: about
+                            .map(|about| {
+                                about
+                                    .links
+                                    .iter()
+                                    .map(|link| (link.label.clone(), link.url.clone()))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                        tools: vec![tool],
+                        enabled: !off.contains(domain),
+                    });
+                }
+            }
+        }
+        rows.sort_by(|a, b| a.domain.cmp(&b.domain));
+        Ok(rows)
+    }
+
+    /// Turns a bundled connector off or on, from the next turn. Off, its
+    /// tools are not given to the model.
+    pub async fn set_connector_enabled(&self, domain: &str, enabled: bool) -> Result<()> {
+        ensure!(
+            wisp_bio::catalog()
+                .iter()
+                .any(|(known, _)| *known == domain),
+            "There is no such connector"
+        );
+        let mut off = crate::runtime::disabled_connectors(&self.0.store).await;
+        if enabled {
+            off.remove(domain);
+        } else {
+            off.insert(domain.to_owned());
+        }
+        let mut domains: Vec<_> = off.into_iter().collect();
+        domains.sort();
+        self.0
+            .store
+            .set_setting(
+                crate::runtime::DISABLED_CONNECTORS,
+                &serde_json::to_string(&domains)?,
+            )
+            .await
+    }
+
     /// Every skill there is for `project` (or, without one, those the host
     /// has for all projects), by name, with whether it is turned on.
     pub async fn skills(&self, project: Option<&str>) -> Result<Vec<SkillRow>> {
@@ -2152,6 +2213,19 @@ pub struct ConversationStatus {
     pub allowed_tools: Vec<String>,
     /// What the model is thinking right now; empty when it is not.
     pub reasoning: String,
+}
+
+/// A bundled connector as Settings lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConnectorRow {
+    /// Its name and the id its switch is saved under, such as `pubmed`.
+    pub domain: String,
+    pub description: String,
+    /// Where it is documented: `(label, URL)`.
+    pub links: Vec<(String, String)>,
+    /// Names of the tools it gives the model.
+    pub tools: Vec<String>,
+    pub enabled: bool,
 }
 
 /// A skill as Settings lists it.

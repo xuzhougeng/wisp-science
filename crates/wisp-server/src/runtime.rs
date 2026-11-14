@@ -54,6 +54,36 @@ pub(crate) async fn disabled_skills(store: &Store) -> std::collections::HashSet<
         .unwrap_or_default()
 }
 
+/// The key the WebView desktop keeps the same list under: a JSON array of
+/// the bundled connectors (by domain) that are turned off.
+pub(crate) const DISABLED_CONNECTORS: &str = "disabled_connectors";
+
+pub(crate) async fn disabled_connectors(store: &Store) -> std::collections::HashSet<String> {
+    store
+        .get_setting(DISABLED_CONNECTORS)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|value| serde_json::from_str::<Vec<String>>(&value).ok())
+        .map(|domains| domains.into_iter().collect())
+        .unwrap_or_default()
+}
+
+/// The tools of the bundled connectors that are switched on.
+pub(crate) async fn connector_tools(store: &Store) -> Vec<Box<dyn wisp_tools::Tool>> {
+    let off = disabled_connectors(store).await;
+    let Ok(client) = wisp_bio::NativeBio::new(&[]) else {
+        return vec![];
+    };
+    wisp_bio::tools(Arc::new(client))
+        .into_iter()
+        .filter(|tool| {
+            let domain = wisp_bio::domain_for_tool(tool.name()).unwrap_or_default();
+            !off.contains(domain)
+        })
+        .collect()
+}
+
 /// The skills a project's conversations can use: every one that is found
 /// and not turned off.
 pub async fn skill_index(config: &Config, store: &Store, root: &std::path::Path) -> SkillIndex {
@@ -158,6 +188,14 @@ pub async fn build(
         Arc::new(MemoryManager::new(&root)),
         remembering,
     );
+    // The bundled literature and biology connectors that are switched on.
+    // They only read, and a name a built-in tool already has stays the
+    // built-in's.
+    for tool in connector_tools(store).await {
+        if tools.get(tool.name()).is_none() {
+            tools.add(tool);
+        }
+    }
     // The model's way to stop and ask; the answer is the next user message.
     tools.add(Box::new(wisp_tools::ask_user::AskUserTool));
     // How a plan reaches the user while the conversation is in plan mode.

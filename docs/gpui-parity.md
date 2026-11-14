@@ -205,7 +205,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Skills [技能]: list, tags, enable, community, GitHub, reload | Yes | Partial: list with source and tags, search, on or off, reload; no tag editing, community catalog or GitHub install | shared |
 | Plugins [插件] | Yes | Missing | store |
 | Browser [浏览器]: auto-open, auto-close tabs, block and prefer lists | Yes | Missing | tauri |
-| Connections [连接]: built-in bio tools and user MCP servers, enable, add | Yes | Missing | shared |
+| Connections [连接]: built-in bio tools and user MCP servers, enable, add | Yes | Partial: the bundled connectors are given to every turn and can be switched off one by one; user MCP servers cannot be added | shared |
 | Remote access [远程接入]: project sync relay, Feishu, WeChat, StickS3, web access, Wisp-Lab | Yes | Missing | shared |
 | Credentials [凭据]: service keys in the keyring, custom env keys | Yes | Missing | store |
 | Permissions [权限]: approval mode, remembered approvals | Yes | Partial: how new conversations start, and tools always allowed per project with revoke; no per-tool allow/ask/deny rules or global grants | tauri |
@@ -321,7 +321,7 @@ before the things that hang in it.
    8c highlights and favorites)*
 9. **Settings** — conversation, permissions, hooks, skills, connections,
    credentials, network, environments, storage, usage, general. *(9a done:
-   the pages frame, Conversation and Permissions; 9b done: Skills)*
+   the pages frame, Conversation and Permissions; 9b done: Skills; 9c done: bundled connectors)*
 10. **Project pages** — research journey, calendar, paper evidence, research
     assistant, trajectory, archive.
 11. **Project transfer and sync** — import, export, relay sync, remote access.

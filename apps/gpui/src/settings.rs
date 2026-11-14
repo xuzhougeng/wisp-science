@@ -2,7 +2,7 @@
 //! without a window. Validation itself belongs to the host.
 use wisp_server::{
     config::default_api_url,
-    desktop::{ModelProfile, ModelSettings, ModelSource, SkillRow},
+    desktop::{ConnectorRow, ModelProfile, ModelSettings, ModelSource, SkillRow},
 };
 
 /// The pages of Settings, in the order they are listed.
@@ -12,14 +12,16 @@ pub enum Section {
     Models,
     Conversation,
     Skills,
+    Connections,
     Permissions,
 }
 
 impl Section {
-    pub const ALL: [Section; 4] = [
+    pub const ALL: [Section; 5] = [
         Section::Models,
         Section::Conversation,
         Section::Skills,
+        Section::Connections,
         Section::Permissions,
     ];
 
@@ -28,6 +30,7 @@ impl Section {
             Section::Models => "Models",
             Section::Conversation => "Conversation",
             Section::Skills => "Skills",
+            Section::Connections => "Connections",
             Section::Permissions => "Permissions",
         }
     }
@@ -37,6 +40,7 @@ impl Section {
             Section::Models => "bot",
             Section::Conversation => "chat",
             Section::Skills => "skill",
+            Section::Connections => "link",
             Section::Permissions => "shield",
         }
     }
@@ -45,7 +49,7 @@ impl Section {
     pub fn group(self) -> &'static str {
         match self {
             Section::Models | Section::Conversation => "AI",
-            Section::Skills => "Capabilities",
+            Section::Skills | Section::Connections => "Capabilities",
             Section::Permissions => "Safety",
         }
     }
@@ -81,6 +85,42 @@ pub fn skill_matches(row: &SkillRow, query: &str) -> bool {
     query
         .split_whitespace()
         .all(|word| text.contains(&word.to_lowercase()))
+}
+
+/// One line saying how many connectors there are and how many are off.
+pub fn connectors_summary(rows: &[ConnectorRow]) -> String {
+    let tools: usize = rows
+        .iter()
+        .filter(|row| row.enabled)
+        .map(|row| row.tools.len())
+        .sum();
+    let off = rows.iter().filter(|row| !row.enabled).count();
+    let state = match off {
+        0 => "all on".to_string(),
+        n => format!("{n} off"),
+    };
+    let count = match rows.len() {
+        1 => "1 connector".to_string(),
+        n => format!("{n} connectors"),
+    };
+    format!("{count}, {state}; {} for the model.", tool_count(tools))
+}
+
+/// Whether a connector matches what was typed: every word, in its name,
+/// its description or the name of one of its tools.
+pub fn connector_matches(row: &ConnectorRow, query: &str) -> bool {
+    let text = format!("{} {} {}", row.domain, row.description, row.tools.join(" ")).to_lowercase();
+    query
+        .split_whitespace()
+        .all(|word| text.contains(&word.to_lowercase()))
+}
+
+/// How many tools a connector brings, in words.
+pub fn tool_count(count: usize) -> String {
+    match count {
+        1 => "1 tool".into(),
+        n => format!("{n} tools"),
+    }
 }
 
 /// Reads the steps-per-turn field. The host has the last word; this keeps
@@ -228,7 +268,10 @@ mod tests {
     #[test]
     fn sections_are_listed_under_their_groups_in_order() {
         let groups: Vec<_> = Section::ALL.iter().map(|section| section.group()).collect();
-        assert_eq!(groups, ["AI", "AI", "Capabilities", "Safety"]);
+        assert_eq!(
+            groups,
+            ["AI", "AI", "Capabilities", "Capabilities", "Safety"]
+        );
         assert_eq!(Section::default(), Section::Models);
         // No two sections share a name or a drawing.
         for (index, section) in Section::ALL.iter().enumerate() {
@@ -262,6 +305,35 @@ mod tests {
         assert_eq!(skill_source("bundled"), "Ships with Wisp");
         assert_eq!(skill_source("project"), "This project");
         assert_eq!(skill_source("extra"), "Added folder");
+    }
+
+    #[test]
+    fn connectors_are_counted_with_the_tools_that_are_on() {
+        let connector = |domain: &str, tools: &[&str], enabled: bool| ConnectorRow {
+            domain: domain.into(),
+            description: "Search biomedical literature".into(),
+            links: vec![],
+            tools: tools.iter().map(|tool| tool.to_string()).collect(),
+            enabled,
+        };
+        let rows = [
+            connector("pubmed", &["pubmed_search", "pubmed_fetch"], true),
+            connector("uniprot", &["uniprot_lookup"], false),
+        ];
+        assert_eq!(
+            connectors_summary(&rows),
+            "2 connectors, 1 off; 2 tools for the model."
+        );
+        assert_eq!(
+            connectors_summary(&rows[..1]),
+            "1 connector, all on; 2 tools for the model."
+        );
+        assert!(connector_matches(&rows[0], "LITERATURE pubmed"));
+        // The name of a tool finds the connector that brings it.
+        assert!(connector_matches(&rows[1], "uniprot_lookup"));
+        assert!(!connector_matches(&rows[0], "uniprot"));
+        assert_eq!(tool_count(1), "1 tool");
+        assert_eq!(tool_count(4), "4 tools");
     }
 
     #[test]

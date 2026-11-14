@@ -15,7 +15,7 @@ use wisp_server::{
     Server,
     config::Config,
     desktop::{
-        ArtifactRow, BatchAction, BatchReport, ConversationList, ConversationOptions,
+        ArtifactRow, BatchAction, BatchReport, ConnectorRow, ConversationList, ConversationOptions,
         ConversationStatus, Favorite, FileMatch, Folder, GlobalMemory, LibraryItem,
         LibraryItemSummary, MemoryView, ModelInput, ModelSettings, ProjectGrants, ProjectMemo,
         ProjectMemoPatch, ReferenceOption, Remember, SkillRow, TurnDefaults, TurnRef,
@@ -455,6 +455,14 @@ impl Backend {
     /// Starts an empty conversation the way the desktop's defaults say.
     pub fn create_conversation(&self, project: String) -> Reply<String> {
         self.local(move |host| async move { host.create_conversation(&project).await })
+    }
+
+    pub fn connectors(&self) -> Reply<Vec<ConnectorRow>> {
+        self.local(|host| async move { host.connectors().await })
+    }
+
+    pub fn set_connector_enabled(&self, domain: String, enabled: bool) -> Reply<()> {
+        self.local(move |host| async move { host.set_connector_enabled(&domain, enabled).await })
     }
 
     pub fn skills(&self, project: Option<String>) -> Reply<Vec<SkillRow>> {

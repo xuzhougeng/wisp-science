@@ -131,6 +131,11 @@ pub struct Workspace {
     /// Every skill there is, as the Skills page lists them; `None` until read.
     skills: Option<Vec<wisp_server::desktop::SkillRow>>,
     skills_search: Entity<InputState>,
+    /// The bundled connectors, as the Connections page lists them.
+    connectors: Option<Vec<wisp_server::desktop::ConnectorRow>>,
+    connectors_search: Entity<InputState>,
+    /// The connector whose tools and links are unfolded.
+    open_connector: Option<String>,
     /// What the open conversation saved to the favorites, newest first.
     saved: Vec<LibraryItem>,
     saved_request: u64,
@@ -224,6 +229,8 @@ impl Workspace {
         let memory_text = cx.new(|cx| InputState::new(window, cx).multi_line(true));
         let steps_input = cx.new(|cx| InputState::new(window, cx));
         let skills_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find a skill…"));
+        let connectors_search =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Find a connector or a tool…"));
         let favorites_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search your favorites…"));
         let handle = window.window_handle();
@@ -263,6 +270,11 @@ impl Workspace {
             }),
             // Filtering is done here, over the list already read.
             cx.subscribe_in(&skills_search, window, |_, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            }),
+            cx.subscribe_in(&connectors_search, window, |_, _, event, _, cx| {
                 if matches!(event, InputEvent::Change) {
                     cx.notify();
                 }
@@ -370,6 +382,9 @@ impl Workspace {
             settings_error: None,
             skills: None,
             skills_search,
+            connectors: None,
+            connectors_search,
+            open_connector: None,
             saved: vec![],
             saved_request: 0,
             favorites: None,
