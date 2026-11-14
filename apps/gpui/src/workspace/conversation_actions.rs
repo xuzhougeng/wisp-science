@@ -148,6 +148,7 @@ impl Workspace {
                 this.known.remove(&session);
                 this.state.forget_draft(&session);
                 this.chips.remove(&session);
+                this.queue.forget(&session);
                 this.leave_conversation(window, cx);
             },
             window,

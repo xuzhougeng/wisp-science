@@ -146,7 +146,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Memory | One switch; habits the model is shown in every project; this project's notes by day, which the model can search; add, edit and delete either, and save any message to one or the other |
 | Memos | Your own notes per project: add, edit, pin, copy, delete after a confirmation, and put one into the message box. The model is never shown them |
 | Files | Project file browser, available before the first conversation; read-only text and Markdown preview |
-| Composer | Native multiline input; Enter for newline, Cmd/Ctrl+Enter to send |
+| Composer | Native multiline input; Enter for newline, Cmd/Ctrl+Enter to send. While a turn runs the same key queues the message: it is sent when the turn ends |
 | Plan first | The model investigates and submits a plan as a card; nothing is changed until you approve it, which leaves plan mode and starts the work |
 | Thinking | What the model is thinking, above the composer, while it thinks |
 | Conversation options | Ask first or Full access, the model, reasoning effort, and where its work runs (the default, this computer or a saved SSH host), per conversation; all are kept across restarts and apply from the next message |
@@ -327,6 +327,16 @@ Limits of this slice:
   still kept in memory only: after a restart they are empty until the next
   turn. Usage has no ranking of skills and MCP tools, no per-conversation
   breakdown and no year calendar.
+- A message written while a turn runs waits in a queue above the composer
+  with what was attached to it, up to ten per conversation, and is sent when
+  the turn ends; several go one turn at a time, in order. A waiting message
+  can be taken back into the composer or dropped. The queue holds, and says
+  why, when the turn ended with a question or a plan that waits for your
+  own answer, or with an error; "Send the next one" overrides that. The
+  queue belongs to the window: it is not saved, so quitting drops it; it
+  moves only while its conversation is the one that is open; and a paired
+  phone neither sees nor feeds it. Steering a running turn with a message
+  (the WebView's cut-in) is not ported.
 - Project settings saves the name and description in the database and the
   rules in the project's own `.wisp/WISP.md`, the file the WebView calls
   Agent Context. The file is the truth: it is read again at the start of
@@ -586,6 +596,13 @@ connector route and run a PubMed search, and press Test on an HTTP MCP
 server. Set a Python package index, ask the model to install a package and
 confirm it uses the index. Restart and confirm the page still shows what was
 saved.
+Start a turn that takes a while and, before it ends, write two messages and
+press Queue for each: both are listed above the composer and the composer is
+empty again. When the turn ends the first is sent by itself, and the second
+after that. Queue one more, take it back with the pencil and confirm it is in
+the composer again; queue it and drop it with the cross. Queue a message
+during a turn that ends with a question card and confirm it waits until you
+answer or press "Send the next one".
 On a project's card press Project settings: clear the name and Save (it is
 refused and the dialog stays), then give a name, a description and a rule
 and Save: the card and the recent conversations show the new name, and

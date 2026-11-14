@@ -237,6 +237,7 @@ impl Workspace {
                             this.known.remove(id);
                             this.state.forget_draft(id);
                             this.chips.remove(id);
+                            this.queue.forget(id);
                         }
                         BatchAction::Archive | BatchAction::Restore => {
                             if let Some(row) = this.known.get_mut(id) {
@@ -445,6 +446,7 @@ impl Workspace {
                 this.known.remove(&session);
                 this.state.forget_draft(&session);
                 this.chips.remove(&session);
+                this.queue.forget(&session);
                 if this.state.current(&selection) {
                     this.leave_conversation(window, cx);
                 }

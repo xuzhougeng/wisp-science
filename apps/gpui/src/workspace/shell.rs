@@ -1107,13 +1107,24 @@ impl Workspace {
                     })),
             );
         }
+        // While a turn runs, what is written waits for it to end.
+        let can_queue = running
+            && !self.pending
+            && !self.loading_history
+            && !sendable.trim().is_empty()
+            && self.state.snapshot.as_ref().is_some_and(|s| !s.read_only);
         actions = actions.child(
             Button::new("send")
-                .icon(glyph("arrow-up"))
-                .label("Send")
+                .icon(glyph(if running { "clock" } else { "arrow-up" }))
+                .label(if running { "Queue" } else { "Send" })
                 .small()
                 .primary()
-                .disabled(!can_send)
+                .disabled(!(can_send || can_queue))
+                .tooltip(if running {
+                    "Send it when this turn ends"
+                } else {
+                    "Send"
+                })
                 .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
         );
 
@@ -1178,6 +1189,9 @@ impl Workspace {
                             .child(controls::thinking_tail(thinking, 600)),
                     ),
             );
+        }
+        if let Some(strip) = self.queue_strip(running, cx) {
+            area = area.child(strip);
         }
         if self.layers.contains(Layer::ConfirmFullAccess) {
             area = area.child(

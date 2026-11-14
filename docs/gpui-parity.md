@@ -100,7 +100,7 @@ to find in the running app.
 | Multiline text, IME, drafts kept per conversation | Yes | Done | ui |
 | Send and stop | Yes | Done | served |
 | Send key choice (Enter or modifier+Enter) | Setting | Partial: modifier+Enter only | ui |
-| Queue a message while a turn runs | Yes *(source)* | Missing | tauri |
+| Queue a message while a turn runs | Yes *(source)* | Partial: up to ten per conversation, sent in order as turns end, with take back and drop; kept in the window only, and no cut-in that steers the running turn | tauri |
 | Attach files, images, PDF [附加文件] | Yes | Partial: any file through the system dialog, copied into `uploads/` when it is outside the project; the model gets the paths, not the image pixels | served |
 | Browse project files to attach [你的文件] | Yes | Done: found by name in the add-context box | served |
 | Paste or drop files | Yes | Missing | tauri |

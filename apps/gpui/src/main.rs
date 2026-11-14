@@ -15,6 +15,7 @@ mod organise;
 mod palette;
 mod panel;
 mod present;
+mod queue;
 mod settings;
 mod state;
 mod theme;

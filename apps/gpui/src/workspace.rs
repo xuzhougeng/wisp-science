@@ -8,6 +8,7 @@ mod organise_view;
 mod palette_view;
 mod panel_tabs;
 mod project_settings;
+mod queue_view;
 mod settings_data;
 mod settings_environments;
 mod settings_mcp;
@@ -67,6 +68,8 @@ pub struct Workspace {
     /// Files and references attached to the message being written, per
     /// conversation, like the drafts.
     chips: HashMap<String, Pending>,
+    /// Messages written while a turn runs, waiting for it to end.
+    queue: crate::queue::Queue,
     /// Options, usage and remembered approvals of the open conversation.
     status: Option<ConversationStatus>,
     /// Counts snapshot polls, so the status is refreshed about once a second.
@@ -418,6 +421,7 @@ impl Workspace {
             removing: None,
             open_tools: HashSet::new(),
             chips: HashMap::new(),
+            queue: Default::default(),
             status: None,
             status_tick: 0,
             copied: None,
@@ -1140,6 +1144,11 @@ impl Workspace {
                                         this.reload_artifacts(window, cx);
                                     }
                                     this.mark_seen(window, cx);
+                                    // The turn is over: what was written
+                                    // meanwhile goes next.
+                                    if !running {
+                                        this.drain_queue(window, cx);
+                                    }
                                     cx.notify();
                                 }
                                 panel::poll_delay(running, active_runs)
@@ -1256,6 +1265,10 @@ impl Workspace {
 
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.composer.read(cx).value().to_string();
+        // While a turn runs the message waits for it to end.
+        if self.state.snapshot.as_ref().is_some_and(|s| s.running) {
+            return self.enqueue(text, window, cx);
+        }
         self.send_text(text, true, window, cx);
     }
 
@@ -1268,16 +1281,29 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // What the composer has attached goes with what it has typed.
+        let carried = match (&self.state.session, from_composer) {
+            (Some(session), true) => self.chips.get(session).cloned().unwrap_or_default(),
+            _ => Pending::default(),
+        };
+        self.deliver(text, carried, from_composer, None, window, cx);
+    }
+
+    /// Hands a message to the host. `queued` is the queue entry it was
+    /// taken from, which goes back to the front if the host refuses it.
+    fn deliver(
+        &mut self,
+        text: String,
+        carried: Pending,
+        from_composer: bool,
+        queued: Option<crate::queue::Queued>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let selection = self.state.selection();
         let (Some(project), Some(session)) = (selection.project.clone(), selection.session.clone())
         else {
             return;
-        };
-        // What the composer has attached goes with what it has typed.
-        let carried = if from_composer {
-            self.chips.get(&session).cloned().unwrap_or_default()
-        } else {
-            Pending::default()
         };
         let attachments = carried.attachments();
         // Files alone are a message; the host names it after the first one.
@@ -1287,6 +1313,9 @@ impl Workspace {
             text.as_str()
         };
         if !self.state.can_send(sendable, self.pending) || self.loading_history {
+            if let Some(queued) = queued {
+                self.queue.put_back(&session, queued);
+            }
             return;
         }
         self.pending = true;
@@ -1312,6 +1341,9 @@ impl Workspace {
                 // The turn runs whether or not its conversation is still open.
                 if result.is_ok() {
                     this.watch_activity(window, cx);
+                } else if let Some(queued) = queued {
+                    // Refused: it keeps its place at the front of the queue.
+                    this.queue.put_back(&session, queued);
                 }
                 if !this.state.current(&selection) {
                     return;
