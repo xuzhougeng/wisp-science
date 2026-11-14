@@ -20,6 +20,8 @@ pub enum Section {
     Experts,
     /// Requests kept under a name.
     QuickActions,
+    /// The fast endpoint that answers typed questions.
+    DecisionModel,
     Skills,
     Connections,
     Credentials,
@@ -34,11 +36,12 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 14] = [
+    pub const ALL: [Section; 15] = [
         Section::General,
         Section::Network,
         Section::Pet,
         Section::Models,
+        Section::DecisionModel,
         Section::Conversation,
         Section::Experts,
         Section::QuickActions,
@@ -60,6 +63,7 @@ impl Section {
             Section::Experts => tr("Experts"),
             Section::QuickActions => tr("Quick actions"),
             Section::Pet => tr("Pet"),
+            Section::DecisionModel => tr("Decision model"),
             Section::Skills => tr("Skills"),
             Section::Connections => tr("Connections"),
             Section::Credentials => tr("Credentials"),
@@ -79,6 +83,7 @@ impl Section {
             Section::Experts => "user",
             Section::QuickActions => "bolt",
             Section::Pet => "sparkles",
+            Section::DecisionModel => "check-square",
             Section::Skills => "skill",
             Section::Connections => "link",
             Section::Credentials => "lock",
@@ -112,6 +117,10 @@ impl Section {
                  helper explore worker"
             }
             Section::Experts => "expert persona specialist role instructions illustrator 专家",
+            Section::DecisionModel => {
+                "decision model decide map_items typesafe jev startlux bamboo systemone yes no \
+                 score choice 决策模型"
+            }
             Section::Pet => "pet companion mascot animation sprite 宠物",
             Section::QuickActions => "quick action prompt template shortcut reuse 快捷动作",
             Section::Skills => "skill workflow bundled folder reload",
@@ -133,9 +142,11 @@ impl Section {
     pub fn group(self) -> &'static str {
         match self {
             Section::General | Section::Network | Section::Pet => tr("App"),
-            Section::Models | Section::Conversation | Section::Experts | Section::QuickActions => {
-                "AI"
-            }
+            Section::Models
+            | Section::DecisionModel
+            | Section::Conversation
+            | Section::Experts
+            | Section::QuickActions => "AI",
             Section::Skills
             | Section::Connections
             | Section::Credentials
@@ -799,6 +810,7 @@ mod tests {
                 "App",
                 "App",
                 "App",
+                "AI",
                 "AI",
                 "AI",
                 "AI",

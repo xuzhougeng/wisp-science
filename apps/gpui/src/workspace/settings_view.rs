@@ -808,6 +808,7 @@ impl Workspace {
             Section::Experts => self.render_expert_settings(cx),
             Section::QuickActions => self.render_quick_settings(cx),
             Section::Pet => self.render_pet_settings(cx),
+            Section::DecisionModel => self.render_decision_settings(cx),
             Section::Network => self.render_network_settings(cx),
             Section::Usage => self.render_usage_settings(cx),
             Section::Storage => self.render_storage_settings(cx),

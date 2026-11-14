@@ -3123,6 +3123,73 @@ impl Server {
         Ok(())
     }
 
+    /// The key id when one was made; looking never makes one.
+    async fn known_key_id(&self) -> Option<String> {
+        self.0.store.get_setting(MODEL_KEY_ID).await.ok().flatten()
+    }
+
+    /// The decision model as the form shows it. The key is never part of it.
+    pub async fn decision_model(&self) -> Result<wisp_dto::DecisionModelSettings> {
+        let key_id = self.known_key_id().await;
+        Ok(
+            crate::decision_model::load(&self.0.store, self.0.secrets.as_ref(), key_id.as_deref())
+                .await,
+        )
+    }
+
+    /// Keeps the decision model form; a typed key replaces the service's
+    /// stored one. It applies from each conversation's next turn.
+    pub async fn save_decision_model(
+        &self,
+        settings: wisp_dto::DecisionModelSettings,
+        api_key: Option<String>,
+    ) -> Result<wisp_dto::DecisionModelSettings> {
+        let key_id = self.key_id().await?;
+        crate::decision_model::save(
+            &self.0.store,
+            self.0.secrets.as_ref(),
+            &key_id,
+            settings,
+            api_key.as_deref(),
+        )
+        .await
+    }
+
+    /// Forgets the key kept for one decision model service.
+    pub async fn clear_decision_model_key(
+        &self,
+        preset: &str,
+    ) -> Result<wisp_dto::DecisionModelSettings> {
+        if let Some(key_id) = self.known_key_id().await {
+            crate::decision_model::forget_key(self.0.secrets.as_ref(), &key_id, preset)?;
+        }
+        self.decision_model().await
+    }
+
+    /// Asks the form's endpoint one fixed question. Nothing is saved.
+    pub async fn test_decision_model(
+        &self,
+        settings: wisp_dto::DecisionModelSettings,
+        api_key: Option<String>,
+    ) -> Result<wisp_dto::DecisionModelProbe> {
+        let key_id = self.known_key_id().await;
+        crate::decision_model::test(
+            &self.0.store,
+            self.0.secrets.as_ref(),
+            key_id.as_deref(),
+            settings,
+            api_key.as_deref(),
+        )
+        .await
+    }
+
+    /// The decision model a turn's tools are built with.
+    pub(crate) async fn decision_model_in_use(&self) -> Option<wisp_llm::systemone::DecisionModel> {
+        let key_id = self.known_key_id().await;
+        crate::decision_model::configured(&self.0.store, self.0.secrets.as_ref(), key_id.as_deref())
+            .await
+    }
+
     /// The pet the user chose, checked again each time it is asked for.
     pub async fn pet(&self) -> Result<Pet> {
         Ok(crate::pet::read(&self.0.store).await)

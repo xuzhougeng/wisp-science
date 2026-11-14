@@ -96,6 +96,7 @@ impl Workspace {
             Section::Experts => self.load_experts(window, cx),
             Section::QuickActions => self.load_quick_actions(window, cx),
             Section::Pet => self.load_pet(window, cx),
+            Section::DecisionModel => self.load_decision_model(window, cx),
             Section::Network => self.load_network(window, cx),
             Section::Usage => self.load_usage(window, cx),
             Section::Storage => self.load_storage(window, cx),

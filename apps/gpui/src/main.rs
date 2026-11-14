@@ -7,6 +7,7 @@ mod backend;
 mod calendar;
 mod compose;
 mod controls;
+mod decision;
 mod favorites;
 mod files;
 mod find;

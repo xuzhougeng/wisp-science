@@ -24,6 +24,7 @@ mod queue_view;
 mod remote_files_view;
 mod review_view;
 mod settings_data;
+mod settings_decision;
 mod settings_environments;
 mod settings_experts;
 mod settings_mcp;
@@ -277,6 +278,15 @@ pub struct Workspace {
     quick_editing: Option<String>,
     /// Name, request.
     quick_fields: [Entity<InputState>; 2],
+    /// The decision model as the host keeps it; `None` until it answered.
+    decision: Option<wisp_dto::DecisionModelSettings>,
+    /// The form's switches: on or off, the service, how it thinks.
+    decision_draft: wisp_dto::DecisionModelSettings,
+    /// Base URL, model, timeout, API key.
+    decision_fields: [Entity<InputState>; 4],
+    /// What the last save or test said.
+    decision_note: Option<String>,
+    decision_testing: bool,
     /// The pet as the host keeps it; `None` until it answered.
     pet: Option<wisp_server::desktop::Pet>,
     pet_folder: Entity<InputState>,
@@ -441,6 +451,12 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
         ];
         let mcp_target = cx.new(|cx| InputState::new(window, cx));
+        let decision_fields = [
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx).masked(true)),
+        ];
         let pet_folder =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("A folder holding pet.json")));
         let pet_view = {
@@ -731,6 +747,11 @@ impl Workspace {
             quick_actions: Vec::new(),
             quick_editing: None,
             quick_fields,
+            decision: None,
+            decision_draft: Default::default(),
+            decision_fields,
+            decision_note: None,
+            decision_testing: false,
             pet: None,
             pet_folder,
             pet_view,

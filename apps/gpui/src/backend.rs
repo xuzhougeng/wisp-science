@@ -785,6 +785,35 @@ impl Backend {
         self.local(|host| async move { host.check_for_update().await })
     }
 
+    /// The decision model as the form shows it; never its key.
+    pub fn decision_model(&self) -> Reply<wisp_dto::DecisionModelSettings> {
+        self.local(|host| async move { host.decision_model().await })
+    }
+
+    pub fn save_decision_model(
+        &self,
+        settings: wisp_dto::DecisionModelSettings,
+        api_key: Option<String>,
+    ) -> Reply<wisp_dto::DecisionModelSettings> {
+        self.local(move |host| async move { host.save_decision_model(settings, api_key).await })
+    }
+
+    pub fn clear_decision_model_key(
+        &self,
+        preset: String,
+    ) -> Reply<wisp_dto::DecisionModelSettings> {
+        self.local(move |host| async move { host.clear_decision_model_key(&preset).await })
+    }
+
+    /// Asks the form's endpoint one question; saves nothing.
+    pub fn test_decision_model(
+        &self,
+        settings: wisp_dto::DecisionModelSettings,
+        api_key: Option<String>,
+    ) -> Reply<wisp_dto::DecisionModelProbe> {
+        self.local(move |host| async move { host.test_decision_model(settings, api_key).await })
+    }
+
     /// The pet the user chose, with what to draw when it is on.
     pub fn pet(&self) -> Reply<wisp_server::desktop::Pet> {
         self.local(|host| async move { host.pet().await })

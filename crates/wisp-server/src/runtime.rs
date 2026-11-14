@@ -236,6 +236,7 @@ pub async fn build(
     service_keys: &[(String, String)],
     extra_tools: Vec<Box<dyn wisp_tools::Tool>>,
     subagent: &ModelConfig,
+    decision: Option<wisp_llm::systemone::DecisionModel>,
 ) -> Result<Agent> {
     let root = PathBuf::from(root);
     let skills = Arc::new(skill_index(config, store, &root).await);
@@ -280,9 +281,14 @@ pub async fn build(
     let mut worker = subagent.provider.clone().with_session_id(frame);
     worker.proxy = cfg.proxy.clone();
     tools.add(Box::new(wisp_core::ExploreTool::from_config(
-        worker,
+        worker.clone(),
         subagent.max_context,
     )));
+    // The same step over many items at once; its `decide` step is offered
+    // only while a decision model is in use.
+    tools.add(Box::new(
+        wisp_core::MapItemsTool::from_config(worker, subagent.max_context).with_decision(decision),
+    ));
     let mut agent = Agent::from_parts(
         models(cfg),
         None,

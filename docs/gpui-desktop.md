@@ -150,6 +150,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Interpreters | The Python and R interpreters a conversation keeps between tool calls show above the composer with their version and state; Stop ends one, Dismiss takes a stopped one off the list |
 | Experts | Settings, Experts, keeps personas (a name and instructions); the composer's Expert menu starts a new conversation as one, and its instructions hold for the whole conversation |
 | Quick actions | Settings, Quick actions, keeps requests you make often under a name; the composer's quick actions menu puts one into the message box, after whatever is already typed, to finish and send |
+| Decision model | Settings, Decision model, sets up one fast endpoint (TypeSafe Jev, StartLux-Decision hosted or self-hosted, or a custom System One server) with its key, thinking mode and timeout, and tests it; while one is in use the model's `map_items` tool, which runs one step over many items, also offers its `decide` step |
 | Pet | Settings, Pet, turns on an animated companion drawn from a folder you choose (pet.json and a sprite sheet, Codex-compatible version 2); it stands in the transcript's corner and shows whether the conversation is working, being reviewed, waiting for you, done or failed |
 | Research archive | A conversation's Research archive button (or the command palette) has the model draft a report of its findings with the scripts behind them; you change the draft and freeze it, which writes it into the project and makes the conversation read-only |
 | Review turns | The composer's Review turns switch has each turn that used a tool, or said a good deal, reviewed when it ends; the result shows above the composer, and See opens the findings |
@@ -468,6 +469,13 @@ Limits of this slice:
   `desktop.quick_actions` and neither reads nor changes the WebView's.
   It starts with four that can be changed or removed; at most 40 are
   kept, a name is at most 60 characters and a request 8,000.
+- The decision model is used by `map_items` only; this host has no
+  `desktop_autopilot`. `map_items` works on the sub-agent model. The
+  form is kept under the WebView's `decision_model` key, but each
+  service's key is kept in the keyring under this data directory's own
+  name (`desktop.decision.<id>.<service>`), so a key saved in the
+  WebView, including an older TypeSafe key, is not picked up and has to
+  be typed here once. A change applies from a conversation's next turn.
 - The pet follows the conversation on screen only, inside the window:
   there is no separate desktop pet window, it does not walk about or
   look at the pointer, and it does not follow runs or other
@@ -943,6 +951,15 @@ it: the request follows what was typed, the caret is at its end, and
 nothing is sent. Choose it again: it is not written twice. Press Escape
 with the menu open, then with the form open in Settings: each press
 closes only that. Remove the action: it leaves the menu.
+In Settings, Decision model, turn it on with TypeSafe Jev and no key and
+press Save: it is refused. Choose StartLux (self-hosted): the address,
+model and timeout change to that service's. Press Test connection with
+nothing listening: the error names the address; with a server running
+it names the model that answered and how long it took. Save: the page
+says it is in use, and What the model is sent lists `map_items` with a
+`decide` step from the next turn. Type a key for a hosted service and
+save: the field empties, the page says a key is saved, and Forget key
+removes it.
 In Settings, Pet, turn the pet on without a folder: it is refused. Choose
 a folder that holds a version 2 pet and turn it on: its name shows on
 the page and the pet idles in the transcript's lower right corner. Click

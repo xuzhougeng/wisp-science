@@ -1,5 +1,6 @@
 mod aside;
 pub mod config;
+mod decision_model;
 pub mod desktop;
 mod excerpt;
 mod experts;
@@ -493,6 +494,7 @@ impl Server {
             &self.service_keys().await,
             self.mcp_tools().await,
             &subagent,
+            self.decision_model_in_use().await,
         )
         .await?;
         let page = self

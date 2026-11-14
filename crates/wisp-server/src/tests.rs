@@ -5908,3 +5908,59 @@ async fn a_project_is_exported_as_an_archive_and_imported_elsewhere() {
     );
     target.shutdown().await;
 }
+
+#[tokio::test]
+async fn conversations_map_over_items_and_decide_only_with_a_decision_model() {
+    let temp = tempfile::tempdir().unwrap();
+    let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let record = seen.clone();
+    let factory: ModelFactory = Arc::new(move |_| Box::new(Everything(record.clone())));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    // The settings are the desktop's own, not commands a remote client has.
+    assert!(!server
+        .commands()
+        .iter()
+        .any(|command| command.contains("decision")));
+    let map_items = |seen: &Arc<std::sync::Mutex<Vec<String>>>| {
+        let mut seen = seen.lock().unwrap();
+        let tool = seen
+            .iter()
+            .rev()
+            .find(|entry| entry.contains("name: \"map_items\""))
+            .cloned()
+            .expect("map_items is offered");
+        seen.clear();
+        tool
+    };
+
+    let session = create(&server).await;
+    send(&server, &session, "screen the abstracts")
+        .await
+        .unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    assert!(!map_items(&seen).contains("\"decide\": Object"));
+
+    // A self-hosted decision model needs no key; from the next turn the
+    // tool offers its decide step.
+    let start = server.decision_model().await.unwrap();
+    assert!(!start.enabled);
+    let local = wisp_dto::DecisionModelSettings {
+        enabled: true,
+        ..wisp_dto::DecisionModelSettings::from_preset(
+            wisp_dto::DecisionPreset::find("startlux_local").unwrap(),
+        )
+    };
+    let saved = server.save_decision_model(local, None).await.unwrap();
+    assert!(saved.enabled && saved.stored_keys.is_empty());
+    send(&server, &session, "and decide which to keep")
+        .await
+        .unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    assert!(map_items(&seen).contains("\"decide\": Object"));
+
+    // Forgetting a key that was never kept is no error and changes nothing.
+    let after = server.clear_decision_model_key("typesafe").await.unwrap();
+    assert_eq!(after, saved);
+}
