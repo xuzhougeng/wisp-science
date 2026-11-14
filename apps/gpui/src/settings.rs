@@ -13,17 +13,19 @@ pub enum Section {
     Conversation,
     Skills,
     Connections,
+    Credentials,
     Permissions,
     Usage,
     Storage,
 }
 
 impl Section {
-    pub const ALL: [Section; 7] = [
+    pub const ALL: [Section; 8] = [
         Section::Models,
         Section::Conversation,
         Section::Skills,
         Section::Connections,
+        Section::Credentials,
         Section::Permissions,
         Section::Usage,
         Section::Storage,
@@ -35,6 +37,7 @@ impl Section {
             Section::Conversation => "Conversation",
             Section::Skills => "Skills",
             Section::Connections => "Connections",
+            Section::Credentials => "Credentials",
             Section::Permissions => "Permissions",
             Section::Usage => "Usage",
             Section::Storage => "Storage",
@@ -47,6 +50,7 @@ impl Section {
             Section::Conversation => "chat",
             Section::Skills => "skill",
             Section::Connections => "link",
+            Section::Credentials => "lock",
             Section::Permissions => "shield",
             Section::Usage => "gauge",
             Section::Storage => "database",
@@ -57,7 +61,7 @@ impl Section {
     pub fn group(self) -> &'static str {
         match self {
             Section::Models | Section::Conversation => "AI",
-            Section::Skills | Section::Connections => "Capabilities",
+            Section::Skills | Section::Connections | Section::Credentials => "Capabilities",
             Section::Permissions => "Safety",
             Section::Usage | Section::Storage => "Data",
         }
@@ -129,6 +133,15 @@ pub fn tool_count(count: usize) -> String {
     match count {
         1 => "1 tool".into(),
         n => format!("{n} tools"),
+    }
+}
+
+/// What a credential's field says before anything is typed.
+pub fn credential_placeholder(saved: bool, secret: bool) -> &'static str {
+    match (saved, secret) {
+        (true, _) => "Saved. Type a new value to replace it",
+        (false, true) => "Paste the key",
+        (false, false) => "Not set",
     }
 }
 
@@ -284,6 +297,7 @@ mod tests {
                 "AI",
                 "Capabilities",
                 "Capabilities",
+                "Capabilities",
                 "Safety",
                 "Data",
                 "Data"
@@ -351,6 +365,14 @@ mod tests {
         assert!(!connector_matches(&rows[0], "uniprot"));
         assert_eq!(tool_count(1), "1 tool");
         assert_eq!(tool_count(4), "4 tools");
+    }
+
+    #[test]
+    fn a_saved_credential_is_never_shown_only_said_to_be_saved() {
+        assert!(credential_placeholder(true, true).starts_with("Saved"));
+        assert!(credential_placeholder(true, false).starts_with("Saved"));
+        assert_eq!(credential_placeholder(false, true), "Paste the key");
+        assert_eq!(credential_placeholder(false, false), "Not set");
     }
 
     #[test]

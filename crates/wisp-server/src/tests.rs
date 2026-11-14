@@ -1924,7 +1924,7 @@ async fn a_bundled_connector_that_is_turned_off_gives_the_model_no_tools() {
     let given = || {
         let server = &server;
         async move {
-            crate::runtime::connector_tools(&server.0.store)
+            crate::runtime::connector_tools(&server.0.store, &[])
                 .await
                 .iter()
                 .map(|tool| tool.name().to_owned())
@@ -2113,6 +2113,105 @@ async fn usage_is_counted_from_each_model_call_and_storage_is_measured() {
         .await
         .unwrap();
     assert!(server.storage().await.unwrap().favorites_bytes > 0);
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn service_keys_live_in_the_secret_store_and_are_never_read_back() {
+    let temp = tempfile::tempdir().unwrap();
+    let secrets = Arc::new(desktop::MemorySecrets::default());
+    let server = Server::open_with(
+        config(temp.path()),
+        models(Arc::default(), false),
+        secrets.clone(),
+    )
+    .await
+    .unwrap();
+
+    // Listed, none saved, and nothing is created just by looking.
+    let rows = server.credentials().await.unwrap();
+    let ids: Vec<_> = rows.iter().map(|row| row.id).collect();
+    assert_eq!(ids, ["ncbi_api_key", "ncbi_email", "openalex_api_key"]);
+    assert!(rows.iter().all(|row| !row.saved));
+    assert!(server.service_keys().await.is_empty());
+    assert_eq!(
+        server
+            .0
+            .store
+            .get_setting("desktop.model.key_id")
+            .await
+            .unwrap(),
+        None
+    );
+
+    server
+        .set_credential("ncbi_api_key", "  abc123  ")
+        .await
+        .unwrap();
+    server
+        .set_credential("ncbi_email", "lab@example.org")
+        .await
+        .unwrap();
+    for (id, value) in [
+        ("not-a-key", "x".to_string()),
+        ("ncbi_api_key", "two words".to_string()),
+        ("ncbi_api_key", "x".repeat(513)),
+    ] {
+        assert!(server.set_credential(id, &value).await.is_err(), "{id}");
+    }
+    let saved: Vec<_> = server
+        .credentials()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.saved)
+        .collect();
+    assert_eq!(saved, [true, true, false]);
+    // A turn is given them under the names the services use.
+    assert_eq!(
+        server.service_keys().await,
+        [
+            ("NCBI_API_KEY".to_string(), "abc123".to_string()),
+            ("NCBI_EMAIL".to_string(), "lab@example.org".to_string()),
+        ]
+    );
+
+    // The value is in the secret store and nowhere in the database.
+    let key_id = server
+        .0
+        .store
+        .get_setting("desktop.model.key_id")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        desktop::SecretStore::get(
+            secrets.as_ref(),
+            &format!("desktop.service.{key_id}.ncbi_api_key")
+        )
+        .as_deref(),
+        Some("abc123")
+    );
+    server.shutdown().await;
+    drop(server);
+    for entry in std::fs::read_dir(temp.path().join("data")).unwrap() {
+        let bytes = std::fs::read(entry.unwrap().path()).unwrap_or_default();
+        assert!(!bytes.windows(6).any(|window| window == b"abc123"));
+    }
+
+    // Forgetting one leaves the other.
+    let server = Server::open_with(
+        config(temp.path()),
+        models(Arc::default(), false),
+        secrets.clone(),
+    )
+    .await
+    .unwrap();
+    server.set_credential("ncbi_api_key", "").await.unwrap();
+    assert_eq!(
+        server.service_keys().await,
+        [("NCBI_EMAIL".to_string(), "lab@example.org".to_string())]
+    );
     server.shutdown().await;
 }
 

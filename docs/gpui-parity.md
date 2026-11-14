@@ -207,7 +207,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Browser [浏览器]: auto-open, auto-close tabs, block and prefer lists | Yes | Missing | tauri |
 | Connections [连接]: built-in bio tools and user MCP servers, enable, add | Yes | Partial: the bundled connectors are given to every turn and can be switched off one by one; user MCP servers cannot be added | shared |
 | Remote access [远程接入]: project sync relay, Feishu, WeChat, StickS3, web access, Wisp-Lab | Yes | Missing | shared |
-| Credentials [凭据]: service keys in the keyring, custom env keys | Yes | Missing | store |
+| Credentials [凭据]: service keys in the keyring, custom env keys | Yes | Partial: the NCBI and OpenAlex keys the bundled connectors use; no other service keys, no custom environment keys | store |
 | Permissions [权限]: approval mode, remembered approvals | Yes | Partial: how new conversations start, and tools always allowed per project with revoke; no per-tool allow/ask/deny rules or global grants | tauri |
 | Environments [环境]: default, add SSH host, import `~/.ssh/config`, paths, probe | Yes | Missing | store + shared |
 | Storage [存储]: data directory, per-project usage breakdown | Yes | Partial: the data folder with a button to show it, database and favorites sizes, and what Wisp keeps in each project; nothing can be moved or cleaned | store |
@@ -321,7 +321,7 @@ before the things that hang in it.
    8c highlights and favorites)*
 9. **Settings** — conversation, permissions, hooks, skills, connections,
    credentials, network, environments, storage, usage, general. *(9a done:
-   the pages frame, Conversation and Permissions; 9b done: Skills; 9c done: bundled connectors; 9d done: Usage and Storage)*
+   the pages frame, Conversation and Permissions; 9b done: Skills; 9c done: bundled connectors; 9d done: Usage and Storage; 9e done: Credentials)*
 10. **Project pages** — research journey, calendar, paper evidence, research
     assistant, trajectory, archive.
 11. **Project transfer and sync** — import, export, relay sync, remote access.

@@ -5,7 +5,7 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
+    input::{Input, InputState},
 };
 use wisp_server::desktop::TurnDefaults;
 
@@ -74,6 +74,7 @@ impl Workspace {
             Section::Models => {}
             Section::Skills => self.load_skills(window, cx),
             Section::Connections => self.load_connectors(window, cx),
+            Section::Credentials => self.load_credentials(window, cx),
             Section::Usage => self.load_usage(window, cx),
             Section::Storage => self.load_storage(window, cx),
             Section::Conversation => self.load_turn_defaults(window, cx),
@@ -544,6 +545,163 @@ impl Workspace {
                 .text_color(muted)
                 .child("Your own MCP servers cannot be added here yet."),
         )
+    }
+
+    /// Reads which service keys are saved. Each keeps its field across
+    /// reloads; what is in a field is only what was just typed.
+    fn load_credentials(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let reply = self.backend.credentials();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(rows) => {
+                        let mut fields: Vec<_> = std::mem::take(&mut this.credentials);
+                        this.credentials = rows
+                            .into_iter()
+                            .map(|row| {
+                                let kept = fields.iter().position(|(old, _)| old.id == row.id);
+                                let field = match kept {
+                                    Some(index) => fields.swap_remove(index).1,
+                                    None => {
+                                        cx.new(|cx| InputState::new(window, cx).masked(row.secret))
+                                    }
+                                };
+                                let placeholder =
+                                    settings::credential_placeholder(row.saved, row.secret);
+                                field.update(cx, |input, cx| {
+                                    input.set_placeholder(placeholder, window, cx)
+                                });
+                                (row, field)
+                            })
+                            .collect();
+                    }
+                    Err(error) => this.settings_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Saves what is typed for one credential, or with `forget` removes it.
+    fn save_credential(
+        &mut self,
+        id: &'static str,
+        forget: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((_, field)) = self.credentials.iter().find(|(row, _)| row.id == id) else {
+            return;
+        };
+        let field = field.clone();
+        let value = if forget {
+            String::new()
+        } else {
+            field.read(cx).value().trim().to_string()
+        };
+        if !forget && value.is_empty() {
+            return;
+        }
+        self.settings_error = None;
+        let reply = self.backend.set_credential(id, value);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    // The typed value has done its work; it is not kept on screen.
+                    Ok(()) => field.update(cx, |input, cx| input.set_value("", window, cx)),
+                    Err(error) => this.settings_error = Some(error),
+                }
+                this.load_credentials(window, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn render_credential_settings(&self, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let mut page = self.settings_page(cx).child(
+            div()
+                .w(px(NOTE_WIDTH + 80.))
+                .pb_2()
+                .text_xs()
+                .text_color(muted)
+                .child(
+                    "Keys for the services the connectors read from. They are kept in the \
+                     system keychain, never in the project database, and are not shown again \
+                     once saved. They are used from the next turn.",
+                ),
+        );
+        if self.credentials.is_empty() {
+            page = page.child(div().text_sm().text_color(muted).child("Loading…"));
+        }
+        for (row, field) in &self.credentials {
+            let id = row.id;
+            // Save does nothing while the field is empty; an empty value is
+            // what Forget is for.
+            let mut buttons = div().h_flex().gap_2().child(
+                Button::new(SharedString::from(format!("credential-save-{id}")))
+                    .label("Save")
+                    .small()
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.save_credential(id, false, window, cx)
+                    })),
+            );
+            if row.saved {
+                buttons = buttons.child(
+                    Button::new(SharedString::from(format!("credential-forget-{id}")))
+                        .label("Forget")
+                        .small()
+                        .ghost()
+                        .tooltip("Remove it from the keychain")
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.save_credential(id, true, window, cx)
+                        })),
+                );
+            }
+            page = page.child(
+                div()
+                    .v_flex()
+                    .gap_2()
+                    .py_3()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .child(
+                        div()
+                            .h_flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(row.label),
+                            )
+                            .child(div().text_xs().text_color(muted).child(if row.saved {
+                                "Saved"
+                            } else {
+                                "Not set"
+                            })),
+                    )
+                    .child(
+                        div()
+                            .w(px(NOTE_WIDTH + 80.))
+                            .text_xs()
+                            .text_color(muted)
+                            .child(row.note),
+                    )
+                    .child(
+                        div()
+                            .h_flex()
+                            .gap_2()
+                            .child(div().w(px(360.)).child(Input::new(field).small()))
+                            .child(buttons),
+                    ),
+            );
+        }
+        page
     }
 
     pub(super) fn settings_page(&self, cx: &App) -> Div {

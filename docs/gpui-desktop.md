@@ -133,7 +133,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Branch | Under a reply: a new conversation holding everything through that turn, opened at once and listed under the one it came from |
 | Search | Titles and message text across the project, archived conversations included |
 | Command palette | One box over everything: projects, files by name in every project, conversations by title or message text, and the window's commands; arrow keys, Return, Escape |
-| Settings | Pages: Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold), Skills (every skill with where it comes from, search, on or off), Connections (the bundled literature and biology connectors with their tools and links, search, on or off), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
+| Settings | Pages: Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold), Skills (every skill with where it comes from, search, on or off), Connections (the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
 | Inbox | Conversations in any project that are waiting for you; opens across projects |
 | Read state | A finished answer is marked read once it is on screen in the active window |
 | Transcript | Virtualized Markdown, selectable text, paginated history |
@@ -238,10 +238,15 @@ Limits of this slice:
   connectors (`wisp-bio`: PubMed, bioRxiv, UniProt and the rest), which the
   WebView has always had. They only read, so they never ask for approval, and
   their schemas are deferred, so they do not fill the prompt. Turning one off
-  uses the WebView's list (`disabled_connectors`). They run without service
-  keys for now, so sources that need one answer as an anonymous caller would
-  get; the network proxy setting is not applied. Your own MCP servers, the
-  Credentials page and per-conversation connector grants are not ported.
+  uses the WebView's list (`disabled_connectors`). The network proxy setting
+  is not applied. Your own MCP servers and per-conversation connector grants
+  are not ported.
+- Credentials holds the three keys the connectors read: the NCBI key and
+  contact email, and the OpenAlex key. They go to the keychain under this
+  data directory's own names (`desktop.service.<id>.<name>`), never into
+  SQLite, are read at the start of each turn, and are not handed back to the
+  window once saved. The WebView's keys are a separate set and are not read.
+  Its other service keys and custom environment keys are not ported.
 - Conversation settings apply to every turn this host runs from the next one
   on, a paired phone's included. Steps per turn replaces the `WISP_MAX_ITER`
   the host was started with once it is saved; at the limit the model is asked
@@ -476,6 +481,10 @@ it.
 Send a message, open Usage and confirm today's bar, the model's share and the
 project's totals moved; hover a bar for its day and count. Open Storage, press
 Show, and confirm the folder that opens is the one named.
+Open Credentials: save a contact email and confirm the field empties and says
+Saved; restart and confirm it is still Saved; press Forget. With a real NCBI
+key saved, run several PubMed searches in a row and confirm none is refused
+for rate.
 Restart and confirm persisted messages. Close during a running tool and verify
 worker cleanup. Check missing credentials and invalid workspace errors. Validate
 each target OS; a macOS build does not establish Windows/Linux behavior.

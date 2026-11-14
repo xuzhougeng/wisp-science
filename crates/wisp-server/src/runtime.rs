@@ -69,10 +69,14 @@ pub(crate) async fn disabled_connectors(store: &Store) -> std::collections::Hash
         .unwrap_or_default()
 }
 
-/// The tools of the bundled connectors that are switched on.
-pub(crate) async fn connector_tools(store: &Store) -> Vec<Box<dyn wisp_tools::Tool>> {
+/// The tools of the bundled connectors that are switched on. `keys` are the
+/// service keys the user saved, by the name each service knows them under.
+pub(crate) async fn connector_tools(
+    store: &Store,
+    keys: &[(String, String)],
+) -> Vec<Box<dyn wisp_tools::Tool>> {
     let off = disabled_connectors(store).await;
-    let Ok(client) = wisp_bio::NativeBio::new(&[]) else {
+    let Ok(client) = wisp_bio::NativeBio::new(keys) else {
         return vec![];
     };
     wisp_bio::tools(Arc::new(client))
@@ -172,6 +176,7 @@ pub async fn build(
     reasoning_effort: Option<String>,
     references: &[wisp_dto::ComposerReferenceArg],
     plan_mode: bool,
+    service_keys: &[(String, String)],
 ) -> Result<Agent> {
     let root = PathBuf::from(root);
     let skills = Arc::new(skill_index(config, store, &root).await);
@@ -191,7 +196,7 @@ pub async fn build(
     // The bundled literature and biology connectors that are switched on.
     // They only read, and a name a built-in tool already has stays the
     // built-in's.
-    for tool in connector_tools(store).await {
+    for tool in connector_tools(store, service_keys).await {
         if tools.get(tool.name()).is_none() {
             tools.add(tool);
         }

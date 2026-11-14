@@ -1698,6 +1698,67 @@ impl Server {
         .await?)
     }
 
+    fn service_secret(key_id: &str, id: &str) -> String {
+        format!("desktop.service.{key_id}.{id}")
+    }
+
+    /// The service keys that are saved, as `(NAME, value)` the way the
+    /// services' own documentation names them. Read at the start of a turn.
+    pub(crate) async fn service_keys(&self) -> Vec<(String, String)> {
+        // No id yet means nothing was ever saved; do not make one to look.
+        let Ok(Some(key_id)) = self.0.store.get_setting(MODEL_KEY_ID).await else {
+            return vec![];
+        };
+        SERVICE_KEYS
+            .iter()
+            .filter_map(|key| {
+                let value = self.0.secrets.get(&Self::service_secret(&key_id, key.id))?;
+                // A forgotten key is stored empty.
+                (!value.is_empty()).then(|| (key.env.to_owned(), value))
+            })
+            .collect()
+    }
+
+    /// The service keys Wisp can use, with whether each is saved. The
+    /// values themselves are never handed back.
+    pub async fn credentials(&self) -> Result<Vec<CredentialRow>> {
+        let key_id = self.0.store.get_setting(MODEL_KEY_ID).await?;
+        Ok(SERVICE_KEYS
+            .iter()
+            .map(|key| CredentialRow {
+                id: key.id,
+                label: key.label,
+                note: key.note,
+                secret: key.secret,
+                saved: key_id.as_deref().is_some_and(|key_id| {
+                    self.0
+                        .secrets
+                        .get(&Self::service_secret(key_id, key.id))
+                        .is_some_and(|value| !value.is_empty())
+                }),
+            })
+            .collect())
+    }
+
+    /// Saves a service key in the system keychain, or with an empty value
+    /// forgets it. It is used from the next turn.
+    pub async fn set_credential(&self, id: &str, value: &str) -> Result<()> {
+        let key = SERVICE_KEYS
+            .iter()
+            .find(|key| key.id == id)
+            .context("There is no such credential")?;
+        let value = value.trim();
+        ensure!(
+            value.len() <= 512 && !value.contains(char::is_whitespace),
+            "{} is one word of at most 512 characters",
+            key.label
+        );
+        let key_id = self.key_id().await?;
+        self.0
+            .secrets
+            .set(&Self::service_secret(&key_id, key.id), value)
+    }
+
     /// Tokens used so far: by project, by model, and by day over the last
     /// year. Counted from what each model call reported when it was made.
     pub async fn usage(&self) -> Result<UsageView> {
@@ -2288,6 +2349,51 @@ pub struct ConversationStatus {
     pub allowed_tools: Vec<String>,
     /// What the model is thinking right now; empty when it is not.
     pub reasoning: String,
+}
+
+/// A service key the bundled connectors can use.
+struct ServiceKey {
+    id: &'static str,
+    /// The name the service's documentation gives it.
+    env: &'static str,
+    label: &'static str,
+    note: &'static str,
+    /// Shown masked while it is typed.
+    secret: bool,
+}
+
+const SERVICE_KEYS: &[ServiceKey] = &[
+    ServiceKey {
+        id: "ncbi_api_key",
+        env: "NCBI_API_KEY",
+        label: "NCBI API key",
+        note: "PubMed and the other NCBI sources allow more requests per second with a key.",
+        secret: true,
+    },
+    ServiceKey {
+        id: "ncbi_email",
+        env: "NCBI_EMAIL",
+        label: "NCBI contact email",
+        note: "NCBI asks automated clients to say who they are. It is sent with each request.",
+        secret: false,
+    },
+    ServiceKey {
+        id: "openalex_api_key",
+        env: "OPENALEX_API_KEY",
+        label: "OpenAlex API key",
+        note: "Literature search through OpenAlex; without a key its shared limits apply.",
+        secret: true,
+    },
+];
+
+/// A service key as Settings lists it. Its value is never part of it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CredentialRow {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub note: &'static str,
+    pub secret: bool,
+    pub saved: bool,
 }
 
 /// Tokens one project's conversations used.

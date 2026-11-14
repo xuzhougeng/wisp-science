@@ -137,6 +137,9 @@ pub struct Workspace {
     connectors_search: Entity<InputState>,
     /// The connector whose tools and links are unfolded.
     open_connector: Option<String>,
+    /// The service keys, as the Credentials page lists them, each with the
+    /// field a new value is typed into.
+    credentials: Vec<(wisp_server::desktop::CredentialRow, Entity<InputState>)>,
     /// Tokens used, as the Usage page shows them; `None` until read.
     usage: Option<wisp_server::desktop::UsageView>,
     /// What Wisp keeps and where; `None` until read.
@@ -390,6 +393,7 @@ impl Workspace {
             connectors: None,
             connectors_search,
             open_connector: None,
+            credentials: vec![],
             usage: None,
             storage: None,
             saved: vec![],

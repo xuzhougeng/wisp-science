@@ -444,6 +444,7 @@ impl Server {
             (!options.reasoning_effort.is_empty()).then_some(options.reasoning_effort),
             &request.references,
             options.plan_first,
+            &self.service_keys().await,
         )
         .await?;
         let page = self

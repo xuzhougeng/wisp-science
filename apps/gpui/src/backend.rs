@@ -16,7 +16,7 @@ use wisp_server::{
     config::Config,
     desktop::{
         ArtifactRow, BatchAction, BatchReport, ConnectorRow, ConversationList, ConversationOptions,
-        ConversationStatus, Favorite, FileMatch, Folder, GlobalMemory, LibraryItem,
+        ConversationStatus, CredentialRow, Favorite, FileMatch, Folder, GlobalMemory, LibraryItem,
         LibraryItemSummary, MemoryView, ModelInput, ModelSettings, ProjectGrants, ProjectMemo,
         ProjectMemoPatch, ReferenceOption, Remember, SkillRow, StorageView, TurnDefaults, TurnRef,
         UsageView,
@@ -456,6 +456,15 @@ impl Backend {
     /// Starts an empty conversation the way the desktop's defaults say.
     pub fn create_conversation(&self, project: String) -> Reply<String> {
         self.local(move |host| async move { host.create_conversation(&project).await })
+    }
+
+    pub fn credentials(&self) -> Reply<Vec<CredentialRow>> {
+        self.local(|host| async move { host.credentials().await })
+    }
+
+    /// Saves a service key, or with an empty value forgets it.
+    pub fn set_credential(&self, id: &'static str, value: String) -> Reply<()> {
+        self.local(move |host| async move { host.set_credential(id, &value).await })
     }
 
     pub fn usage(&self) -> Reply<UsageView> {

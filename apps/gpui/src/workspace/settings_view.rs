@@ -740,6 +740,7 @@ impl Workspace {
             Section::Conversation => self.render_conversation_settings(cx),
             Section::Skills => self.render_skill_settings(cx),
             Section::Connections => self.render_connection_settings(cx),
+            Section::Credentials => self.render_credential_settings(cx),
             Section::Usage => self.render_usage_settings(cx),
             Section::Storage => self.render_storage_settings(cx),
             Section::Permissions => self.render_permission_settings(cx),
