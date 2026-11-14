@@ -244,7 +244,7 @@ row says what is there.
 | Sidebar | Update-available card; "done / failed in another project" notices (an update check is in Settings, General, and a turn that ends raises a system notification; there is no card in the sidebar) | tauri |
 | Composer | Slash commands: `/timer` `/archive` `/compact` `/fork` `/btw` `/rewind` `/review` `/remember` `/context` `/plan` `/permission` `/save-as-skill` `/skills` `/files` `/upload` `/share` `/trajectory` `/memo` — all eighteen run here and are listed under the composer's "/" button — **Done**; `/share` exports Markdown, and there is no list that narrows as you type | tauri |
 | Composer | Conversation timer: repeat a prompt on an interval, pause, resume, cancel — `/timer 30m <prompt>` and `/timer off` are there, each firing a new turn; no pause or resume, and the turn before is not replaced | store |
-| Composer | Queue panel: edit, remove, reorder, "guide now" | tauri |
+| Composer | Queue panel: edit, remove, reorder, "guide now" — a waiting message can be taken back to change, removed and moved earlier; guiding the running turn with it is Missing | tauri |
 | Composer | Plan progress strip; read-only states (sample, archived notebook, sub-agent, frozen branch) | served |
 | Composer | ACP agent conversations and their mode / config options | tauri |
 | Transcript | Equations, table copy, internal file links, confirm before opening an external link | ui |

@@ -66,6 +66,21 @@ impl Queue {
         removed
     }
 
+    /// Moves a message one place earlier. Returns whether it moved: the
+    /// first one has nowhere to go.
+    pub fn move_up(&mut self, session: &str, id: u64) -> bool {
+        let Some(waiting) = self.waiting.get_mut(session) else {
+            return false;
+        };
+        match waiting.iter().position(|queued| queued.id == id) {
+            Some(index) if index > 0 => {
+                waiting.swap(index - 1, index);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Takes the message that goes next.
     pub fn next(&mut self, session: &str) -> Option<Queued> {
         let first = self.waiting.get(session)?.front()?.id;
@@ -117,6 +132,32 @@ pub fn label(queued: &Queued) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_waiting_message_can_be_moved_ahead_of_the_one_before_it() {
+        let mut queue = Queue::default();
+        let ids: Vec<u64> = ["one", "two", "three"]
+            .iter()
+            .map(|text| queue.push("a", text, Pending::default()).unwrap())
+            .collect();
+        let order = |queue: &Queue| {
+            queue
+                .list("a")
+                .iter()
+                .map(|queued| queued.text.clone())
+                .collect::<Vec<_>>()
+        };
+        assert!(queue.move_up("a", ids[2]));
+        assert_eq!(order(&queue), ["one", "three", "two"]);
+        assert!(queue.move_up("a", ids[2]));
+        assert_eq!(order(&queue), ["three", "one", "two"]);
+        // The first has nowhere to go; a stranger and another queue change nothing.
+        assert!(!queue.move_up("a", ids[2]));
+        assert!(!queue.move_up("a", 999));
+        assert!(!queue.move_up("b", ids[0]));
+        assert_eq!(order(&queue), ["three", "one", "two"]);
+        assert_eq!(queue.next("a").unwrap().text, "three");
+    }
 
     #[test]
     fn messages_wait_in_order_per_conversation_and_can_be_taken_out() {

@@ -956,4 +956,5 @@ pub const ZH: &[(&str, &str)] = &[
     ("Go back to the latest message", "回到最近一条消息"),
     ("Switch full access on or off", "开启或关闭完全访问"),
     ("Export this conversation as Markdown", "将此对话导出为 Markdown"),
+    ("Send it earlier", "提前发送"),
 ];

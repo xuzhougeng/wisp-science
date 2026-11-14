@@ -182,6 +182,19 @@ impl Workspace {
                             .child(queue::label(queued)),
                     )
                     .child(
+                        Button::new(SharedString::from(format!("queue-up-{id}")))
+                            .icon(glyph("arrow-up"))
+                            .xsmall()
+                            .ghost()
+                            .tooltip(tr("Send it earlier"))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if let Some(session) = this.state.session.clone() {
+                                    this.queue.move_up(&session, id);
+                                    cx.notify();
+                                }
+                            })),
+                    )
+                    .child(
                         Button::new(SharedString::from(format!("queue-edit-{id}")))
                             .icon(glyph("edit"))
                             .xsmall()
