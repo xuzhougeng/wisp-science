@@ -53,8 +53,8 @@ to find in the running app.
 | Open a project | Yes | Done | served |
 | Star a project so it stays first [星标项目并置顶] | Yes | Done | store |
 | New project [新建项目] | Name, folder | Partial: opens an existing folder; no name or description form | served |
-| Import project [导入项目] | Archive import | Missing | tauri |
-| Export project [导出项目] | Archive export | Missing | tauri |
+| Import project [导入项目] | Archive import | Partial: a zip archive, placed in a folder you choose; no folder packages and no progress display | tauri |
+| Export project [导出项目] | Archive export | Partial: as a zip archive in the WebView's format; no folder packages and no progress display | tauri |
 | Project settings [项目设置] | Name, description, sync | Partial: name, description and the rules for the model (`.wisp/WISP.md`), from the project's card and the command palette; no sync or run retention | store |
 | Remove a project from Wisp, files kept [删除] | With confirmation | Done | store |
 | Delete a project together with its local data | Second choice in the same dialog, with a countdown | Missing | tauri |
@@ -327,7 +327,8 @@ before the things that hang in it.
 10. **Project pages** — research journey, calendar, paper evidence, research
     assistant, trajectory, archive. *(10a done: the research journey; 10b done: the
     research calendar)*
-11. **Project transfer and sync** — import, export, relay sync, remote access.
+11. **Project transfer and sync** — import, export, relay sync, remote access. *(11a done:
+    export and import as an archive)*
 12. **Experts, workflows, quick actions, ACP, accounts, plugins, browser.**
 13. **Finish** — localization, notifications, several windows, updates,
     data import from the WebView desktop, installers.

@@ -748,6 +748,74 @@ impl Server {
         Ok(())
     }
 
+    /// Writes `project`, its records and its workspace files, as one zip
+    /// at `destination`, in the format the WebView desktop reads. It is
+    /// refused while a turn or a run of the project is going, and no turn
+    /// starts while it is written.
+    pub async fn export_project(&self, project: &str, destination: &std::path::Path) -> Result<()> {
+        // Exclusive: nothing is admitted while the records are copied.
+        let _admission = self.0.admission.write().await;
+        self.known_project(project).await?;
+        ensure!(
+            destination.is_absolute(),
+            "Choose where to save the archive"
+        );
+        let running: HashSet<String> = self
+            .0
+            .sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, session)| session.live.lock().unwrap().running)
+            .map(|(id, _)| id.clone())
+            .collect();
+        crate::project_archive::ensure_project_export_idle(&self.0.store, project, &running)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        crate::project_archive::export_project_contents(
+            &self.0.store,
+            &self.0.config.data,
+            project,
+            destination,
+            false,
+            None,
+        )
+        .await
+        .map_err(anyhow::Error::msg)
+    }
+
+    /// Reads a project archive, puts the project in a new folder under
+    /// `parent`, and registers it. The reply is the project's id, which is
+    /// the one it had where it was exported; a project that is already
+    /// here is refused, not merged.
+    pub async fn import_project(
+        &self,
+        archive: &std::path::Path,
+        parent: &std::path::Path,
+    ) -> Result<String> {
+        let _admission = self.0.admission.write().await;
+        ensure!(
+            !self.0.shutting_down.load(Ordering::Relaxed),
+            "Host is shutting down"
+        );
+        let parent = tokio::fs::canonicalize(parent)
+            .await
+            .context("Choose a folder to put the project in")?;
+        ensure!(parent.is_dir(), "Choose a folder to put the project in");
+        ensure!(
+            !parent.starts_with(&self.0.config.data),
+            "Keep project files separate from the host data directory"
+        );
+        crate::project_archive::import_archived_project(
+            &self.0.store,
+            &self.0.config.data,
+            archive,
+            &parent,
+        )
+        .await
+        .map_err(anyhow::Error::msg)
+    }
+
     /// What Wisp can draw on in `project`, counted: skills, connectors, MCP
     /// servers, SSH hosts, memory, and the command-line tools found on
     /// this computer.

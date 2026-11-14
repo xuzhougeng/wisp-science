@@ -7327,8 +7327,13 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "chrono",
+ "dunce",
+ "hex",
+ "ignore",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
  "tracing",
@@ -7347,6 +7352,7 @@ dependencies = [
  "wisp-store",
  "wisp-sync",
  "wisp-tools",
+ "zip 2.4.2",
 ]
 
 [[package]]

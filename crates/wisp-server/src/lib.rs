@@ -5,6 +5,7 @@ mod files;
 pub mod mcp;
 mod network;
 mod output;
+mod project_archive;
 mod runtime;
 #[cfg(test)]
 mod tests;

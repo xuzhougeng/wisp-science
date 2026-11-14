@@ -22,6 +22,7 @@ mod settings_network;
 mod settings_sections;
 mod settings_view;
 mod shell;
+mod transfer_view;
 
 use std::{
     collections::{HashMap, HashSet},

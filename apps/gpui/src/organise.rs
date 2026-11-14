@@ -409,6 +409,15 @@ pub fn export_name(title: &str) -> String {
     }
 }
 
+/// A file name for a project saved as an archive.
+pub fn archive_name(project: &str) -> String {
+    if project.trim().trim_matches('.').trim().is_empty() {
+        return "project.zip".into();
+    }
+    let name = export_name(project);
+    format!("{}.zip", name.trim_end_matches(".md"))
+}
+
 /// One line saying how a batch went: `done` conversations were `verb`
 /// ("Archived", "Deleted"), and the first refusal says why the rest were not.
 pub fn report(verb: &str, done: usize, refused: &[(String, String)]) -> String {
@@ -782,5 +791,9 @@ mod tests {
         assert_eq!(export_name("   "), "conversation.md");
         assert_eq!(export_name("..."), "conversation.md");
         assert_eq!(export_name("请总结 CRISPR 筛选"), "请总结 CRISPR 筛选.md");
+        // A project's archive is named the same way, as a zip.
+        assert_eq!(archive_name("Screens 2026"), "Screens 2026.zip");
+        assert_eq!(archive_name("a/b"), "a-b.zip");
+        assert_eq!(archive_name("  "), "project.zip");
     }
 }

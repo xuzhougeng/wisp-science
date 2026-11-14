@@ -4448,3 +4448,77 @@ async fn capabilities_count_what_a_project_can_draw_on() {
     assert!(server.capabilities("missing").await.is_err());
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_project_is_exported_as_an_archive_and_imported_elsewhere() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    // A project with a conversation and a file of its own.
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::write(folder.join("counts.csv"), "gene,count\nA,1\n").unwrap();
+    let lab = source.register_local_project(&folder).await.unwrap();
+    let session = source.create_conversation(&lab).await.unwrap();
+    source
+        .0
+        .store
+        .rename_session(&session, &lab, "Alignment")
+        .await
+        .unwrap();
+
+    let archive = temp.path().join("lab.zip");
+    // Where to write must be said in full.
+    assert!(source
+        .export_project(&lab, std::path::Path::new("lab.zip"))
+        .await
+        .is_err());
+    assert!(source.export_project("missing", &archive).await.is_err());
+    source.export_project(&lab, &archive).await.unwrap();
+    assert!(archive.is_file());
+    // The project is already here: its own archive is not imported twice.
+    let parent = temp.path().join("imports");
+    std::fs::create_dir(&parent).unwrap();
+    let again = source.import_project(&archive, &parent).await.unwrap_err();
+    assert!(again.to_string().contains("already present"), "{again}");
+    source.shutdown().await;
+    drop(source);
+
+    // Another host, with a database of its own, reads it back whole.
+    let other = tempfile::tempdir().unwrap();
+    let target = Server::open_with_models(config(other.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let parent = other.path().join("imports");
+    std::fs::create_dir(&parent).unwrap();
+    // Not inside the host's own data, and only from a real archive.
+    assert!(target
+        .import_project(&archive, &other.path().join("data"))
+        .await
+        .is_err());
+    assert!(target
+        .import_project(&other.path().join("missing.zip"), &parent)
+        .await
+        .is_err());
+    let imported = target.import_project(&archive, &parent).await.unwrap();
+    assert_eq!(imported, lab);
+    let settings = target.project_settings(&imported).await.unwrap();
+    assert_eq!(settings.name, "lab");
+    let sessions = target.0.store.list_sessions(&imported).await.unwrap();
+    assert_eq!(sessions.len(), 1);
+    // Its files came along, under the folder that was chosen.
+    let (_, _, root) = target
+        .0
+        .store
+        .get_project_meta(&imported)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(std::path::Path::new(&root).starts_with(std::fs::canonicalize(&parent).unwrap()));
+    assert_eq!(
+        std::fs::read_to_string(std::path::Path::new(&root).join("counts.csv")).unwrap(),
+        "gene,count\nA,1\n"
+    );
+    target.shutdown().await;
+}

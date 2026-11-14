@@ -134,6 +134,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Search | Titles and message text across the project, archived conversations included |
 | Command palette | One box over everything: projects, files by name in every project, conversations by title or message text, and the window's commands; arrow keys, Return, Escape |
 | Pictures in answers | When an answer shows a picture of the project with Markdown image syntax, the picture is drawn under the answer |
+| Project archives | Export on a project's card writes the project, its records and its files, as one zip; Import on the home page reads one and puts the project in a folder you choose |
 | Capabilities | A dialog for the open project: how many skills, connectors, MCP servers and SSH hosts are on or usable, the state of memory, and which command-line tools were found on this computer |
 | Windows | New Window (the app menu, Cmd/Ctrl+Shift+N, or the command palette) opens another window on the same projects, each with its own page and conversation |
 | Export | A conversation's Export button saves the whole of it as a Markdown file where you choose |
@@ -381,6 +382,17 @@ Limits of this slice:
   the others; the app quits with the last. Windows are not restored at the
   next start, and a project or conversation cannot be sent to a new window
   from its row.
+- A project archive is the WebView desktop's format (`wisp-project`,
+  version 1: a manifest, a snapshot of the project's records, and the
+  workspace files), written and checked by the same code, copied into the
+  host (`wisp_server::project_archive`), so an archive made by either
+  desktop opens in the other. Export is refused while a turn or a run of
+  the project is going, and no turn starts while it is written. Import
+  keeps the project's id, so a project that is already here is refused
+  rather than merged, and the project is placed in a new folder under the
+  one you choose, never inside the app's data. There is no progress
+  display, a large project simply takes a while; the folder form of a
+  package, relay sync and remote access are not ported.
 - Capabilities counts what the Settings pages and the Memory tab already
   hold, in one place, and looks along the search path the app was started
   with for `python3`, `Rscript`, `uv`, `pixi`, `conda`, `git`, `ssh` and
@@ -714,6 +726,13 @@ choose Finding, give it a line and save: it is the newest record of today.
 Save one without a title and confirm it is refused and the form stays.
 Press a row that came from a conversation and confirm that conversation
 opens. Open Journey again and press Escape: the page closes.
+On a project's card press Export, choose a place, and confirm a zip is
+written and the home page says where. On another data directory (or after
+removing the project from Wisp) press Import on the home page, choose the
+zip and then a folder: the project appears with its conversations, and its
+files are in a new folder there. Import the same zip again and confirm it
+is refused as already present. Open the zip in the WebView desktop's
+import, and one of its exports here.
 In a project press Capabilities: the counts match the Settings pages, the
 tools on this computer are listed with where they were found, Settings on a
 line opens that page, and Escape closes the dialog.

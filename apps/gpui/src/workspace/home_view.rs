@@ -145,6 +145,19 @@ impl Workspace {
                 this.open_project_settings(settings_id.clone(), window, cx)
             })),
         );
+        let export_id = id.clone();
+        actions = actions.child(
+            icon_button(
+                SharedString::from(format!("project-export-{id}")),
+                "archive-export",
+                "Export the project as an archive",
+            )
+            .disabled(self.pending)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.export_project(export_id.clone(), window, cx)
+            })),
+        );
         if wisp_server::desktop::removable(&id) {
             let remove_id = id.clone();
             actions = actions.child(
@@ -220,6 +233,13 @@ impl Workspace {
                         icon_button("home-search", "search", "Search everything").on_click(
                             cx.listener(|this, _, window, cx| this.toggle_palette(window, cx)),
                         ),
+                    )
+                    .child(
+                        icon_button("home-import", "archive-import", "Import a project archive")
+                            .disabled(self.pending)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.import_project(window, cx)),
+                            ),
                     )
                     .child(
                         icon_button("home-calendar", "calendar", "Research calendar").on_click(
@@ -341,6 +361,9 @@ impl Workspace {
         }
         if let Some(error) = &self.error {
             page = page.child(error_banner(error, cx));
+        }
+        if let Some(notice) = &self.notice {
+            page = page.child(self.notice_banner(notice, cx));
         }
         div().id("home").size_full().overflow_y_scroll().child(
             page.child(

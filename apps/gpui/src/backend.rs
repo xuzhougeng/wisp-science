@@ -197,6 +197,16 @@ impl Backend {
         self.local(move |host| async move { host.project_file(&project, &path).await })
     }
 
+    /// Writes a project as one archive at `destination`.
+    pub fn export_project(&self, project: String, destination: PathBuf) -> Reply<()> {
+        self.local(move |host| async move { host.export_project(&project, &destination).await })
+    }
+
+    /// Reads an archive and puts its project in a new folder under `parent`.
+    pub fn import_project(&self, archive: PathBuf, parent: PathBuf) -> Reply<String> {
+        self.local(move |host| async move { host.import_project(&archive, &parent).await })
+    }
+
     /// What Wisp can draw on in a project, counted.
     pub fn capabilities(&self, project: String) -> Reply<wisp_server::desktop::Capabilities> {
         self.local(move |host| async move { host.capabilities(&project).await })
