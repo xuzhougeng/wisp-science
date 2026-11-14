@@ -73,6 +73,35 @@ impl Section {
         }
     }
 
+    /// What the page is about, in the words someone would look for it by.
+    /// The page's own name is searched as well.
+    fn keywords(self) -> &'static str {
+        match self {
+            Section::General => "appearance theme dark light system start launch open home",
+            Section::Network => {
+                "proxy route socks http direct mirror conda pip pypi index package \
+                 certificate ca bundle"
+            }
+            Section::Models => {
+                "model api key provider endpoint url context tokens reasoning effort default \
+                 openai anthropic test connection"
+            }
+            Section::Conversation => "steps iterations turn limit compact compaction context",
+            Section::Skills => "skill workflow bundled folder reload",
+            Section::Connections => {
+                "mcp server connector tool literature biology pubmed uniprot token http"
+            }
+            Section::Credentials => "key keychain secret password ncbi openalex email service",
+            Section::Environments => {
+                "ssh host server cluster gpu remote compute run check probe scheduler slurm \
+                 config default"
+            }
+            Section::Permissions => "approval ask full access allow always tool grant safety",
+            Section::Usage => "tokens cost spend usage chart day model project",
+            Section::Storage => "disk space data folder database size files location",
+        }
+    }
+
     /// The heading the section is listed under.
     pub fn group(self) -> &'static str {
         match self {
@@ -86,6 +115,26 @@ impl Section {
             Section::Usage | Section::Storage => "Data",
         }
     }
+}
+
+/// The pages that have to do with what was typed, in the order they are
+/// listed. Every word has to be found, in the page's name or in what it is
+/// about; a word may be the beginning of one. Nothing typed lists them all.
+pub fn search_sections(query: &str) -> Vec<Section> {
+    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    Section::ALL
+        .into_iter()
+        .filter(|section| {
+            let label = section.label().to_lowercase();
+            words.iter().all(|word| {
+                label.contains(word)
+                    || section
+                        .keywords()
+                        .split_whitespace()
+                        .any(|keyword| keyword.starts_with(word))
+            })
+        })
+        .collect()
 }
 
 /// How many of the Network page's fields are routes; the rest are about
@@ -970,5 +1019,34 @@ mod tests {
                 .starts_with("Last check failed")
         );
         assert_eq!(host_caution(Some(&check(None))), None);
+    }
+
+    #[test]
+    fn settings_are_found_by_what_they_are_about() {
+        // Nothing typed, or only spaces, lists every page in order.
+        assert_eq!(search_sections(""), Section::ALL);
+        assert_eq!(search_sections("   "), Section::ALL);
+        // By name, in any case, and by the beginning of a word about it.
+        assert_eq!(search_sections("NETW"), [Section::Network]);
+        assert_eq!(search_sections("prox"), [Section::Network]);
+        assert_eq!(search_sections("ssh"), [Section::Environments]);
+        assert_eq!(search_sections("dark"), [Section::General]);
+        // A word several pages are about finds them all, in listed order.
+        assert_eq!(
+            search_sections("key"),
+            [Section::Models, Section::Credentials]
+        );
+        assert_eq!(search_sections("tokens"), [Section::Models, Section::Usage]);
+        // Every word has to fit: more words narrow it.
+        assert_eq!(search_sections("api key"), [Section::Models]);
+        assert_eq!(search_sections("key ncbi"), [Section::Credentials]);
+        // The middle of a word is not the word.
+        assert!(search_sections("roxy").is_empty());
+        assert!(search_sections("nothing like this").is_empty());
+        // Every page can be found by at least one word about it.
+        for section in Section::ALL {
+            let word = section.keywords().split_whitespace().next().unwrap();
+            assert!(search_sections(word).contains(&section), "{word}");
+        }
     }
 }

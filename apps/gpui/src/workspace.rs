@@ -155,6 +155,8 @@ pub struct Workspace {
     /// Every skill there is, as the Skills page lists them; `None` until read.
     skills: Option<Vec<wisp_server::desktop::SkillRow>>,
     skills_search: Entity<InputState>,
+    /// The field that narrows the list of Settings pages.
+    settings_search: Entity<InputState>,
     /// The bundled connectors, as the Connections page lists them.
     connectors: Option<Vec<wisp_server::desktop::ConnectorRow>>,
     connectors_search: Entity<InputState>,
@@ -321,6 +323,8 @@ impl Workspace {
         let mcp_target = cx.new(|cx| InputState::new(window, cx));
         let mcp_token = cx.new(|cx| InputState::new(window, cx).masked(true));
         let skills_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find a skill…"));
+        let settings_search =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search settings…"));
         let connectors_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Find a connector or a tool…"));
         let favorites_search =
@@ -373,6 +377,22 @@ impl Workspace {
                 }
             }),
             // Filtering is done here, over the list already read.
+            cx.subscribe_in(
+                &settings_search,
+                window,
+                |this, _, event, window, cx| match event {
+                    // The list is filtered as it is drawn.
+                    InputEvent::Change => cx.notify(),
+                    // Return opens the first page that is left.
+                    InputEvent::PressEnter { .. } => {
+                        let query = this.settings_search.read(cx).value().to_string();
+                        if let Some(first) = crate::settings::search_sections(&query).first() {
+                            this.show_settings_section(*first, window, cx);
+                        }
+                    }
+                    _ => {}
+                },
+            ),
             cx.subscribe_in(&skills_search, window, |_, _, event, _, cx| {
                 if matches!(event, InputEvent::Change) {
                     cx.notify();
@@ -497,6 +517,7 @@ impl Workspace {
             settings_error: None,
             skills: None,
             skills_search,
+            settings_search,
             connectors: None,
             connectors_search,
             open_connector: None,

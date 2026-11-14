@@ -209,6 +209,9 @@ impl Workspace {
             self.layers.close(layer);
         }
         self.layers.open(Layer::Settings);
+        // Every visit starts with all the pages listed.
+        self.settings_search
+            .update(cx, |input, cx| input.set_value("", window, cx));
         self.clear_messages();
         let model = self.settings.model.clone();
         model.update(cx, |input, cx| input.focus(window, cx));
@@ -708,9 +711,27 @@ impl Workspace {
                     .font_weight(FontWeight::MEDIUM)
                     .child("Settings"),
             );
-        let mut nav = nav;
+        let query = self.settings_search.read(cx).value().to_string();
+        let found = settings::search_sections(&query);
+        let mut nav = nav.child(
+            div().px_1().pb_1().child(
+                Input::new(&self.settings_search)
+                    .small()
+                    .prefix(crate::assets::icon("search").text_color(muted)),
+            ),
+        );
+        if found.is_empty() {
+            nav = nav.child(
+                div()
+                    .px_2()
+                    .pt_2()
+                    .text_xs()
+                    .text_color(muted)
+                    .child("No page is about that."),
+            );
+        }
         let mut group = "";
-        for section in Section::ALL {
+        for section in found {
             if section.group() != group {
                 group = section.group();
                 nav = nav.child(div().px_2().pt_2().text_xs().text_color(muted).child(group));

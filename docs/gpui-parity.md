@@ -212,7 +212,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Environments [环境]: default, add SSH host, import `~/.ssh/config`, paths, probe | Yes | Partial: SSH hosts with key, agent or config sign-in (add, change, remove, add from `~/.ssh/config`), a connection check that records what the host is, and where new work runs; no password sign-in, WSL, interpreter paths or storage locations | store + shared |
 | Storage [存储]: data directory, per-project usage breakdown | Yes | Partial: the data folder with a button to show it, database and favorites sizes, and what Wisp keeps in each project; nothing can be moved or cleaned | store |
 | Usage [用量]: tokens by day, model, workspace, skill/MCP ranking | Yes | Partial: totals, thirty days, by model and by project, counted from now on; no skill or MCP ranking | store |
-| Settings search | Yes | Missing | ui |
+| Settings search | Yes | Partial: finds pages by their name and by what they are about; it does not find or jump to a single setting inside a page | ui |
 
 ## 9. Across the app
 
