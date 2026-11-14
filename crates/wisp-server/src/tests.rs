@@ -1709,15 +1709,27 @@ async fn desktop_conversation_options_shape_the_next_turn() {
     let approval = pending.approvals[0].approval_id.clone();
     // "Deny for the conversation" does not exist; the request stays open.
     assert!(server
-        .answer_approval(PROJECT, &asking, &approval, false, true)
+        .answer_approval(
+            PROJECT,
+            &asking,
+            &approval,
+            false,
+            desktop::Remember::Conversation
+        )
         .await
         .is_err());
     assert!(server
-        .answer_approval(PROJECT, &asking, "missing", true, false)
+        .answer_approval(PROJECT, &asking, "missing", true, desktop::Remember::No)
         .await
         .is_err());
     server
-        .answer_approval(PROJECT, &asking, &approval, true, true)
+        .answer_approval(
+            PROJECT,
+            &asking,
+            &approval,
+            true,
+            desktop::Remember::Conversation,
+        )
         .await
         .unwrap();
     wait_for(&server, &asking, |s| !s.running).await;
@@ -1778,6 +1790,193 @@ async fn desktop_conversation_options_shape_the_next_turn() {
                 .is_err()
         );
     }
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn turn_defaults_and_project_grants_apply_from_the_next_turn() {
+    use desktop::Remember;
+    let temp = tempfile::tempdir().unwrap();
+    // Counts the calls the model was given no tools for: the agent's last
+    // word when a turn runs out of steps.
+    struct Counting(FakeModel, Arc<AtomicUsize>);
+    #[async_trait]
+    impl Provider for Counting {
+        fn name(&self) -> &str {
+            self.0.name()
+        }
+        fn model(&self) -> &str {
+            self.0.model()
+        }
+        async fn complete(
+            &self,
+            messages: &[Message],
+            tools: &[ToolSchema],
+        ) -> wisp_llm::Result<Completion> {
+            self.0.complete(messages, tools).await
+        }
+        async fn stream(
+            &self,
+            messages: &[Message],
+            tools: &[ToolSchema],
+            sink: &mut dyn StreamSink,
+        ) -> wisp_llm::Result<Completion> {
+            if tools.is_empty() {
+                self.1.fetch_add(1, Ordering::Relaxed);
+            }
+            self.0.stream(messages, tools, sink).await
+        }
+    }
+    let out_of_steps = Arc::new(AtomicUsize::new(0));
+    let counter = out_of_steps.clone();
+    let factory: ModelFactory = Arc::new(move |_| {
+        Box::new(Counting(
+            FakeModel {
+                calls: Arc::default(),
+                write: true,
+            },
+            counter.clone(),
+        ))
+    });
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+
+    // Until something is saved, turns run as the host was started.
+    let start = server.turn_defaults().await.unwrap();
+    assert_eq!(start.max_iterations, 5);
+    assert!(start.auto_compact && !start.full_access);
+    assert_eq!(start.auto_compact_percent, 80);
+    assert_eq!(start.compact_range, (10, 95));
+    for wrong in [
+        desktop::TurnDefaults {
+            max_iterations: 0,
+            ..start
+        },
+        desktop::TurnDefaults {
+            max_iterations: 1_001,
+            ..start
+        },
+        desktop::TurnDefaults {
+            auto_compact_percent: 9,
+            ..start
+        },
+        desktop::TurnDefaults {
+            auto_compact_percent: 96,
+            ..start
+        },
+    ] {
+        assert!(server.set_turn_defaults(wrong).await.is_err());
+    }
+    assert_eq!(server.turn_defaults().await.unwrap(), start);
+    let saved = server
+        .set_turn_defaults(desktop::TurnDefaults {
+            max_iterations: 7,
+            auto_compact: false,
+            auto_compact_percent: 60,
+            full_access: true,
+            ..start
+        })
+        .await
+        .unwrap();
+    assert_eq!(saved.max_iterations, 7);
+    assert!(!saved.auto_compact && saved.full_access);
+    assert_eq!(saved.auto_compact_percent, 60);
+    assert_eq!(server.turn_defaults().await.unwrap(), saved);
+
+    // A conversation made by the desktop starts the way the default says;
+    // one made before keeps what it had.
+    let trusting = server.create_conversation(PROJECT).await.unwrap();
+    let full = |id: String| {
+        let server = &server;
+        async move {
+            server
+                .conversation_status(PROJECT, &id)
+                .await
+                .unwrap()
+                .options
+                .full_access
+        }
+    };
+    assert!(full(trusting.clone()).await);
+    server
+        .set_turn_defaults(desktop::TurnDefaults {
+            full_access: false,
+            ..saved
+        })
+        .await
+        .unwrap();
+    let asking = server.create_conversation(PROJECT).await.unwrap();
+    assert!(!full(asking.clone()).await);
+    assert!(full(trusting).await);
+    assert!(server.create_conversation("missing").await.is_err());
+
+    // "Always" cannot be said while denying, and the request stays open.
+    send(&server, &asking, "write the answer").await.unwrap();
+    let approval = wait_for(&server, &asking, |s| !s.approvals.is_empty())
+        .await
+        .approvals[0]
+        .approval_id
+        .clone();
+    assert!(server
+        .answer_approval(PROJECT, &asking, &approval, false, Remember::Project)
+        .await
+        .is_err());
+    assert!(server.project_grants().await.unwrap().is_empty());
+    server
+        .answer_approval(PROJECT, &asking, &approval, true, Remember::Project)
+        .await
+        .unwrap();
+    wait_for(&server, &asking, |s| !s.running).await;
+    assert_eq!(
+        server.project_grants().await.unwrap(),
+        [desktop::ProjectGrants {
+            project_id: PROJECT.into(),
+            project_name: "Server".into(),
+            tools: vec!["write".into()],
+        }]
+    );
+
+    // Another conversation of the project is not asked at all.
+    let second = server.create_conversation(PROJECT).await.unwrap();
+    send(&server, &second, "write the answer").await.unwrap();
+    let done = wait_for(&server, &second, |s| !s.running).await;
+    assert!(done.approvals.is_empty());
+    assert!(done.items.iter().any(|item| item.role == "tool"));
+
+    // Taken back, the next conversation is asked again.
+    server.revoke_project_grant(PROJECT, "write").await.unwrap();
+    assert!(server.revoke_project_grant(PROJECT, "write").await.is_err());
+    assert!(server.project_grants().await.unwrap().is_empty());
+    let third = server.create_conversation(PROJECT).await.unwrap();
+    send(&server, &third, "write the answer").await.unwrap();
+    let approval = wait_for(&server, &third, |s| !s.approvals.is_empty())
+        .await
+        .approvals[0]
+        .approval_id
+        .clone();
+    server
+        .answer_approval(PROJECT, &third, &approval, true, Remember::No)
+        .await
+        .unwrap();
+    wait_for(&server, &third, |s| !s.running).await;
+
+    // The step limit is read at the start of each turn. Writing and then
+    // answering takes two steps; with one, the turn runs out after the
+    // write and the agent is asked for a last word without tools.
+    assert_eq!(out_of_steps.load(Ordering::Relaxed), 0);
+    server
+        .set_turn_defaults(desktop::TurnDefaults {
+            max_iterations: 1,
+            full_access: true,
+            ..saved
+        })
+        .await
+        .unwrap();
+    let limited = server.create_conversation(PROJECT).await.unwrap();
+    send(&server, &limited, "write the answer").await.unwrap();
+    wait_for(&server, &limited, |s| !s.running).await;
+    assert_eq!(out_of_steps.load(Ordering::Relaxed), 1);
     server.shutdown().await;
 }
 

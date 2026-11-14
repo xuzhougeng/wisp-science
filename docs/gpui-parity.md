@@ -192,7 +192,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | --- | --- | --- | --- |
 | General [常规]: language, workspace directory, per-project storage, resume last conversation, send key, selection quick actions, notifications, sound, update check, local tool paths | Yes | Missing | tauri |
 | Network [网络]: proxy per channel (model API, account login, MCP, code requests), package mirrors | Yes | Missing | tauri |
-| Conversation [对话]: iteration limit, auto-continue, auto-compaction and threshold, follow-up questions | Yes | Missing | tauri |
+| Conversation [对话]: iteration limit, auto-continue, auto-compaction and threshold, follow-up questions | Yes | Partial: steps per turn, automatic compaction and its threshold; no auto-continue or follow-up questions | tauri |
 | Appearance [外观]: system/light/dark, theme, accent, fonts and sizes, live preview | Yes | Partial: follows the system with the Wisp palette; the dark palette has not been looked at in the running app | ui |
 | Pet [宠物] | Yes | Missing | ui |
 | Models [模型]: API models with provider, URL, key, limits, effort | Several profiles, presets, default | Done: any number of models, the six presets, a default, a connection test | served |
@@ -208,7 +208,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Connections [连接]: built-in bio tools and user MCP servers, enable, add | Yes | Missing | shared |
 | Remote access [远程接入]: project sync relay, Feishu, WeChat, StickS3, web access, Wisp-Lab | Yes | Missing | shared |
 | Credentials [凭据]: service keys in the keyring, custom env keys | Yes | Missing | store |
-| Permissions [权限]: approval mode, remembered approvals | Yes | Missing | tauri |
+| Permissions [权限]: approval mode, remembered approvals | Yes | Partial: how new conversations start, and tools always allowed per project with revoke; no per-tool allow/ask/deny rules or global grants | tauri |
 | Environments [环境]: default, add SSH host, import `~/.ssh/config`, paths, probe | Yes | Missing | store + shared |
 | Storage [存储]: data directory, per-project usage breakdown | Yes | Missing | store |
 | Usage [用量]: tokens by day, model, workspace, skill/MCP ranking | Yes | Missing | store |
@@ -320,7 +320,8 @@ before the things that hang in it.
 8. **Memory, memos, highlights, favorites.** *(done as 8a memos, 8b memory,
    8c highlights and favorites)*
 9. **Settings** — conversation, permissions, hooks, skills, connections,
-   credentials, network, environments, storage, usage, general.
+   credentials, network, environments, storage, usage, general. *(9a done:
+   the pages frame, Conversation and Permissions)*
 10. **Project pages** — research journey, calendar, paper evidence, research
     assistant, trajectory, archive.
 11. **Project transfer and sync** — import, export, relay sync, remote access.

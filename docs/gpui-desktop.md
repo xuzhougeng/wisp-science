@@ -133,7 +133,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Branch | Under a reply: a new conversation holding everything through that turn, opened at once and listed under the one it came from |
 | Search | Titles and message text across the project, archived conversations included |
 | Command palette | One box over everything: projects, files by name in every project, conversations by title or message text, and the window's commands; arrow keys, Return, Escape |
-| Settings | Saved models with provider, endpoint, key and limits; presets, a default, a connection test; applied without restart |
+| Settings | Pages: Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold) and Permissions (how new conversations start, tools that are always allowed); applied without restart |
 | Inbox | Conversations in any project that are waiting for you; opens across projects |
 | Read state | A finished answer is marked read once it is on screen in the active window |
 | Transcript | Virtualized Markdown, selectable text, paginated history |
@@ -155,7 +155,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Attachments | Attach files with the system dialog, or add a project file, another conversation or a skill from the add-context box; shown as chips until sent |
 | Drafts | Survive navigation; preserved on send failure, cleared on durable acceptance |
 | Execution | Shared agent/tools, streamed snapshots while running, stop and errors |
-| Approvals | Exact pending request; allow once, allow that tool for the rest of the conversation, or deny |
+| Approvals | Exact pending request; allow once, allow that tool for the rest of the conversation, always allow it in this project, or deny |
 | Escape | One window-level stack: Escape closes only the topmost of command palette, file preview, Files panel, Settings, title editor, delete confirmation, remove-project confirmation, the Full access question, the model and effort menus, the remove-model question, the sort menu, select mode and its group menu and delete question, a group's name field, actions and delete question, the conversation's group and move menus, the go-back question, the memo editor and its delete question, the memory editor and its delete question, and the Favorites page and its remove question |
 | Shortcuts | Cmd/Ctrl+K opens the command palette; Cmd/Ctrl+N starts a conversation in the open project; Cmd/Ctrl+, opens Settings |
 | Lifecycle | Background IO, stale-result rejection, cancel/clean workers on exit |
@@ -225,6 +225,22 @@ Limits of this slice:
   `node_modules` and `__pycache__`, so a file deep in a very large tree can be
   missed. Results cannot yet be opened in a new window or attached to a
   message.
+- Conversation settings apply to every turn this host runs from the next one
+  on, a paired phone's included. Steps per turn replaces the `WISP_MAX_ITER`
+  the host was started with once it is saved; at the limit the model is asked
+  for a last word without tools. Compaction uses the WebView's keys
+  (`auto_compact`, `auto_compact_percent`). Auto-continue, follow-up
+  questions, compaction on a model switch and after idle hours are not
+  ported.
+- "Always in this project" is kept in the database
+  (`desktop.approvals.<project>`) and answers the standard tool question for
+  every conversation of that project, in turns that start after it was given
+  and for the rest of the one it was given in. It never answers the question
+  a dangerous shell command asks. Taking it back in Settings applies to turns
+  that start afterwards. The WebView's own approval rules (per-tool allow, ask
+  or deny, the three scopes, global grants) are a different store and are not
+  read. New conversations start in the mode Settings names only when the
+  desktop makes them; one a paired phone makes starts in Ask first.
 - Full access stops the questions before tools that change files or run
   commands. It does not cover the separate question a dangerous shell command
   asks; that one always appears. "Allow for this conversation" is offered only
@@ -413,6 +429,14 @@ press Escape (the page stays), press Escape again (the page closes). Open the
 conversation an item came from. Have a turn write an image, save it from
 Artifacts, delete the file and confirm the figure still shows in Favorites.
 Delete a conversation and confirm what was saved from it is still listed.
+In Settings open Conversation: type a letter into Steps per turn and save (it
+is refused), then 50, and confirm it is still 50 after a restart; turn
+compaction off and on; move the threshold to both ends. Open Permissions:
+choose Full access and confirm a new conversation starts in it while an
+existing one keeps Ask first. Let a tool ask, answer Always in this project,
+and confirm a second conversation of the project is not asked, another
+project's is, and the tool is listed in Settings; take it back and confirm
+the next conversation is asked again.
 Restart and confirm persisted messages. Close during a running tool and verify
 worker cleanup. Check missing credentials and invalid workspace errors. Validate
 each target OS; a macOS build does not establish Windows/Linux behavior.

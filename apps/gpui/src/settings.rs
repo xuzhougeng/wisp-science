@@ -5,6 +5,72 @@ use wisp_server::{
     desktop::{ModelProfile, ModelSettings, ModelSource},
 };
 
+/// The pages of Settings, in the order they are listed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Section {
+    #[default]
+    Models,
+    Conversation,
+    Permissions,
+}
+
+impl Section {
+    pub const ALL: [Section; 3] = [Section::Models, Section::Conversation, Section::Permissions];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Section::Models => "Models",
+            Section::Conversation => "Conversation",
+            Section::Permissions => "Permissions",
+        }
+    }
+
+    pub fn icon(self) -> &'static str {
+        match self {
+            Section::Models => "bot",
+            Section::Conversation => "chat",
+            Section::Permissions => "shield",
+        }
+    }
+
+    /// The heading the section is listed under.
+    pub fn group(self) -> &'static str {
+        match self {
+            Section::Models | Section::Conversation => "AI",
+            Section::Permissions => "Safety",
+        }
+    }
+}
+
+/// Reads the steps-per-turn field. The host has the last word; this keeps
+/// an obviously wrong entry from being sent.
+pub fn steps(text: &str, range: std::ops::RangeInclusive<usize>) -> Result<usize, String> {
+    let wrong = || {
+        format!(
+            "Enter a whole number from {} to {}.",
+            range.start(),
+            range.end()
+        )
+    };
+    let steps: usize = text.trim().parse().map_err(|_| wrong())?;
+    if range.contains(&steps) {
+        Ok(steps)
+    } else {
+        Err(wrong())
+    }
+}
+
+/// The compaction threshold one press up or down from `current`: to the next
+/// multiple of five in that direction, kept inside the host's range.
+pub fn step_percent(current: u8, up: bool, range: (u8, u8)) -> u8 {
+    let next = if up {
+        (current / 5 + 1).saturating_mul(5)
+    } else {
+        current.saturating_sub(1) / 5 * 5
+    };
+    next.clamp(range.0, range.1)
+}
+
 /// Providers the embedded host can run, with the label shown for each.
 pub const PROVIDERS: [(&str, &str); 3] = [
     ("openai", "OpenAI-compatible"),
@@ -117,6 +183,47 @@ pub fn model_label(settings: Option<&ModelSettings>, choice: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sections_are_listed_under_their_groups_in_order() {
+        let groups: Vec<_> = Section::ALL.iter().map(|section| section.group()).collect();
+        assert_eq!(groups, ["AI", "AI", "Safety"]);
+        assert_eq!(Section::default(), Section::Models);
+        // No two sections share a name or a drawing.
+        for (index, section) in Section::ALL.iter().enumerate() {
+            for other in &Section::ALL[index + 1..] {
+                assert_ne!(section.label(), other.label());
+                assert_ne!(section.icon(), other.icon());
+            }
+        }
+    }
+
+    #[test]
+    fn steps_must_be_a_whole_number_in_range() {
+        assert_eq!(steps(" 200 ", 1..=1000), Ok(200));
+        assert_eq!(steps("1", 1..=1000), Ok(1));
+        for wrong in ["", "0", "1001", "2.5", "many", "-3"] {
+            assert_eq!(
+                steps(wrong, 1..=1000),
+                Err("Enter a whole number from 1 to 1000.".into()),
+                "{wrong}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_threshold_moves_in_fives_and_stops_at_the_ends() {
+        let range = (10, 95);
+        assert_eq!(step_percent(80, true, range), 85);
+        assert_eq!(step_percent(80, false, range), 75);
+        // An odd saved value snaps to the nearest five in that direction.
+        assert_eq!(step_percent(82, true, range), 85);
+        assert_eq!(step_percent(82, false, range), 80);
+        assert_eq!(step_percent(95, true, range), 95);
+        assert_eq!(step_percent(10, false, range), 10);
+        assert_eq!(step_percent(12, false, range), 10);
+        assert_eq!(step_percent(255, true, range), 95);
+    }
     use wisp_server::desktop::ModelFields;
 
     fn profile(id: &str, is_default: bool, problem: Option<&str>) -> ModelProfile {

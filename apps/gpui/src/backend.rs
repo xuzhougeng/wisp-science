@@ -17,8 +17,8 @@ use wisp_server::{
     desktop::{
         ArtifactRow, BatchAction, BatchReport, ConversationList, ConversationOptions,
         ConversationStatus, Favorite, FileMatch, Folder, GlobalMemory, LibraryItem,
-        LibraryItemSummary, MemoryView, ModelInput, ModelSettings, ProjectMemo, ProjectMemoPatch,
-        ReferenceOption, TurnRef,
+        LibraryItemSummary, MemoryView, ModelInput, ModelSettings, ProjectGrants, ProjectMemo,
+        ProjectMemoPatch, ReferenceOption, Remember, TurnDefaults, TurnRef,
     },
 };
 use wisp_sync::DirectRemoteHost;
@@ -444,12 +444,33 @@ impl Backend {
         session: String,
         approval: String,
         approved: bool,
-        for_conversation: bool,
+        remember: Remember,
     ) -> Reply<()> {
         self.local(move |host| async move {
-            host.answer_approval(&project, &session, &approval, approved, for_conversation)
+            host.answer_approval(&project, &session, &approval, approved, remember)
                 .await
         })
+    }
+
+    /// Starts an empty conversation the way the desktop's defaults say.
+    pub fn create_conversation(&self, project: String) -> Reply<String> {
+        self.local(move |host| async move { host.create_conversation(&project).await })
+    }
+
+    pub fn turn_defaults(&self) -> Reply<TurnDefaults> {
+        self.local(|host| async move { host.turn_defaults().await })
+    }
+
+    pub fn set_turn_defaults(&self, defaults: TurnDefaults) -> Reply<TurnDefaults> {
+        self.local(move |host| async move { host.set_turn_defaults(defaults).await })
+    }
+
+    pub fn project_grants(&self) -> Reply<Vec<ProjectGrants>> {
+        self.local(|host| async move { host.project_grants().await })
+    }
+
+    pub fn revoke_project_grant(&self, project: String, tool: String) -> Reply<()> {
+        self.local(move |host| async move { host.revoke_project_grant(&project, &tool).await })
     }
 
     pub fn revoke_allowed_tools(&self, project: String, session: String) -> Reply<()> {

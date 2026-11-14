@@ -1858,21 +1858,47 @@ impl Server {
         session: &str,
         approval: &str,
         approved: bool,
-        for_conversation: bool,
+        remember: Remember,
     ) -> Result<()> {
         self.own_conversation(project, session).await?;
-        let session = self.session(session);
-        let mut live = session.live.lock().unwrap();
-        let (pending, sender) = live
+        let live = self.session(session);
+        // What the answer is about, before anything is decided.
+        let tool = {
+            let live = live.live.lock().unwrap();
+            let (pending, _) = live
+                .approvals
+                .get(approval)
+                .context("Approval expired or already answered")?;
+            ensure!(
+                remember == Remember::No
+                    || (approved && pending.message == tool_question(&pending.tool)),
+                "This request can only be answered once"
+            );
+            pending.tool.clone()
+        };
+        if remember == Remember::Project {
+            // Saved first: an approval that says "always" must not be lost.
+            let mut tools = crate::runtime::project_grants(&self.0.store, project).await;
+            if !tools.contains(&tool) {
+                tools.push(tool.clone());
+                tools.sort();
+                self.0
+                    .store
+                    .set_setting(
+                        &crate::runtime::project_grants_key(project),
+                        &serde_json::to_string(&tools)?,
+                    )
+                    .await?;
+            }
+        }
+        let mut live = live.live.lock().unwrap();
+        let (_, sender) = live
             .approvals
             .remove(approval)
             .context("Approval expired or already answered")?;
-        if for_conversation {
-            if !approved || pending.message != tool_question(&pending.tool) {
-                live.approvals.insert(approval.into(), (pending, sender));
-                bail!("This request can only be answered once");
-            }
-            live.allowed_tools.insert(pending.tool.clone());
+        if remember != Remember::No {
+            // The running turn asks no more either way.
+            live.allowed_tools.insert(tool);
         }
         sender
             .send(if approved {
@@ -1881,6 +1907,122 @@ impl Server {
                 wisp_tools::ConfirmDecision::Denied { feedback: None }
             })
             .map_err(|_| anyhow::anyhow!("Approval expired"))
+    }
+
+    /// Tools the user allowed for good, project by project. Projects with
+    /// none are left out.
+    pub async fn project_grants(&self) -> Result<Vec<ProjectGrants>> {
+        let mut all = Vec::new();
+        for (id, name, ..) in self.0.store.list_projects().await? {
+            let tools = crate::runtime::project_grants(&self.0.store, &id).await;
+            if !tools.is_empty() {
+                all.push(ProjectGrants {
+                    project_id: id,
+                    project_name: name,
+                    tools,
+                });
+            }
+        }
+        Ok(all)
+    }
+
+    /// Takes back "always allow" for one tool in one project. Turns that
+    /// start afterwards ask again; conversations that were also told "for
+    /// this conversation" keep that until the app restarts or they are
+    /// asked to forget it.
+    pub async fn revoke_project_grant(&self, project: &str, tool: &str) -> Result<()> {
+        self.known_project(project).await?;
+        let mut tools = crate::runtime::project_grants(&self.0.store, project).await;
+        let before = tools.len();
+        tools.retain(|other| other != tool);
+        ensure!(
+            tools.len() < before,
+            "That tool is not allowed here any more"
+        );
+        let key = crate::runtime::project_grants_key(project);
+        if tools.is_empty() {
+            self.0.store.delete_setting(&key).await
+        } else {
+            self.0
+                .store
+                .set_setting(&key, &serde_json::to_string(&tools)?)
+                .await
+        }
+    }
+
+    /// How turns run and how new conversations start.
+    pub async fn turn_defaults(&self) -> Result<TurnDefaults> {
+        let turns = crate::runtime::turn_settings(&self.0.config, &self.0.store).await;
+        let range = wisp_core::context::AUTO_COMPACT_PERCENT_RANGE;
+        Ok(TurnDefaults {
+            max_iterations: turns.max_iterations,
+            auto_compact: turns.auto_compact,
+            auto_compact_percent: turns.auto_compact_percent,
+            compact_range: (*range.start(), *range.end()),
+            full_access: self
+                .0
+                .store
+                .get_setting(DEFAULT_FULL_ACCESS)
+                .await?
+                .as_deref()
+                == Some("1"),
+        })
+    }
+
+    /// Saves them. They apply from the next turn, and to conversations made
+    /// from now on.
+    pub async fn set_turn_defaults(&self, defaults: TurnDefaults) -> Result<TurnDefaults> {
+        use crate::runtime::{AUTO_COMPACT, AUTO_COMPACT_PERCENT, ITERATION_RANGE, MAX_ITERATIONS};
+        ensure!(
+            ITERATION_RANGE.contains(&defaults.max_iterations),
+            "Steps per turn are between {} and {}",
+            ITERATION_RANGE.start(),
+            ITERATION_RANGE.end()
+        );
+        let range = wisp_core::context::AUTO_COMPACT_PERCENT_RANGE;
+        ensure!(
+            range.contains(&defaults.auto_compact_percent),
+            "Compaction starts between {}% and {}% of the context",
+            range.start(),
+            range.end()
+        );
+        let store = &self.0.store;
+        store
+            .set_setting(MAX_ITERATIONS, &defaults.max_iterations.to_string())
+            .await?;
+        store
+            .set_setting(AUTO_COMPACT, &defaults.auto_compact.to_string())
+            .await?;
+        store
+            .set_setting(
+                AUTO_COMPACT_PERCENT,
+                &defaults.auto_compact_percent.to_string(),
+            )
+            .await?;
+        if defaults.full_access {
+            store.set_setting(DEFAULT_FULL_ACCESS, "1").await?;
+        } else {
+            store.delete_setting(DEFAULT_FULL_ACCESS).await?;
+        }
+        self.turn_defaults().await
+    }
+
+    /// Starts an empty conversation the way the desktop's defaults say.
+    pub async fn create_conversation(&self, project: &str) -> Result<String> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let store = &self.0.store;
+        store
+            .create_frame(&id, project, "main", &self.model_id(""))
+            .await?;
+        store
+            .rename_session(&id, project, "New conversation")
+            .await?;
+        if self.turn_defaults().await?.full_access {
+            store.set_setting(&full_access_key(&id), "1").await?;
+        }
+        Ok(id)
     }
 
     /// Goes back to asking before every tool that changes something.
@@ -1957,6 +2099,43 @@ pub struct ConversationStatus {
     /// What the model is thinking right now; empty when it is not.
     pub reasoning: String,
 }
+
+/// Whether an approval is remembered, and for how long.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Remember {
+    /// This once.
+    #[default]
+    No,
+    /// Until the app restarts or the conversation is told to ask again.
+    Conversation,
+    /// For every conversation of the project, until it is taken back.
+    Project,
+}
+
+/// Tools one project runs without asking.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectGrants {
+    pub project_id: String,
+    pub project_name: String,
+    /// Sorted.
+    pub tools: Vec<String>,
+}
+
+/// How turns run and how new conversations start.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TurnDefaults {
+    /// Model calls one turn may make.
+    pub max_iterations: usize,
+    pub auto_compact: bool,
+    /// How full the context is, in percent, when older turns are summarised.
+    pub auto_compact_percent: u8,
+    /// The lowest and highest percent that can be chosen.
+    pub compact_range: (u8, u8),
+    /// New conversations run tools that change things without asking.
+    pub full_access: bool,
+}
+
+const DEFAULT_FULL_ACCESS: &str = "desktop.conversation.default_full_access";
 
 /// A saved item in full.
 #[derive(Clone, Debug, PartialEq, Eq)]

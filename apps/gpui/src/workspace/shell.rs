@@ -8,6 +8,7 @@ use gpui_component::{
     text::TextView,
 };
 use serde_json::json;
+use wisp_server::desktop::Remember;
 
 use super::{Workspace, chip, tone_color};
 use crate::{
@@ -717,7 +718,7 @@ impl Workspace {
             .overflow_y_scroll();
         for approval in &snapshot.approvals {
             let id = approval.approval_id.clone();
-            let answer = |label: &'static str, glyph_name: &'static str, approved, lasting| {
+            let answer = |label: &'static str, glyph_name: &'static str, approved, remember| {
                 let id = id.clone();
                 Button::new(SharedString::from(format!("{label}-{id}")))
                     .icon(glyph(glyph_name))
@@ -725,22 +726,28 @@ impl Workspace {
                     .small()
                     .disabled(self.pending)
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.answer_approval(id.clone(), approved, lasting, window, cx)
+                        this.answer_approval(id.clone(), approved, remember, window, cx)
                     }))
             };
             let mut buttons = div()
                 .h_flex()
+                .flex_wrap()
                 .gap_2()
-                .child(answer("Allow once", "check", true, false).primary());
+                .child(answer("Allow once", "check", true, Remember::No).primary());
             if controls::can_allow_for_conversation(approval) {
-                buttons = buttons.child(answer(
-                    "Allow for this conversation",
-                    "circle-check",
-                    true,
-                    true,
-                ));
+                buttons = buttons
+                    .child(answer(
+                        "Allow for this conversation",
+                        "circle-check",
+                        true,
+                        Remember::Conversation,
+                    ))
+                    .child(
+                        answer("Always in this project", "shield", true, Remember::Project)
+                            .tooltip("Take it back in Settings, under Permissions"),
+                    );
             }
-            buttons = buttons.child(answer("Deny", "ban", false, false));
+            buttons = buttons.child(answer("Deny", "ban", false, Remember::No));
             approvals = approvals.child(
                 div()
                     .v_flex()

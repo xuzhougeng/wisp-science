@@ -37,6 +37,61 @@ pub(crate) async fn memory_enabled(store: &Store) -> bool {
 
 pub(crate) const MEMORY_ENABLED: &str = "memory_enabled";
 
+/// How a turn runs, for every conversation of this host.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TurnSettings {
+    /// Model calls one turn may make before it stops and says so.
+    pub max_iterations: usize,
+    /// Summarise older turns when the context fills up.
+    pub auto_compact: bool,
+    /// How full the context must be, in percent, for that to happen.
+    pub auto_compact_percent: u8,
+}
+
+pub(crate) const MAX_ITERATIONS: &str = "desktop.turn.max_iterations";
+/// The WebView desktop keeps these two under the same keys.
+pub(crate) const AUTO_COMPACT: &str = "auto_compact";
+pub(crate) const AUTO_COMPACT_PERCENT: &str = "auto_compact_percent";
+pub const ITERATION_RANGE: std::ops::RangeInclusive<usize> = 1..=1_000;
+
+/// The saved turn settings, each falling back to what the host was started
+/// with or to the agent's own default.
+pub(crate) async fn turn_settings(config: &Config, store: &Store) -> TurnSettings {
+    let saved = |key: &'static str| async move { store.get_setting(key).await.ok().flatten() };
+    let range = wisp_core::context::AUTO_COMPACT_PERCENT_RANGE;
+    TurnSettings {
+        max_iterations: saved(MAX_ITERATIONS)
+            .await
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| ITERATION_RANGE.contains(value))
+            .unwrap_or(config.max_iterations),
+        auto_compact: saved(AUTO_COMPACT).await.as_deref() != Some("false"),
+        auto_compact_percent: saved(AUTO_COMPACT_PERCENT)
+            .await
+            .and_then(|value| value.parse::<u8>().ok())
+            .unwrap_or(wisp_core::context::DEFAULT_AUTO_COMPACT_PERCENT)
+            .clamp(*range.start(), *range.end()),
+    }
+}
+
+pub(crate) fn project_grants_key(project: &str) -> String {
+    format!("desktop.approvals.{project}")
+}
+
+/// Tools the user allowed for good in a project, sorted.
+pub(crate) async fn project_grants(store: &Store, project: &str) -> Vec<String> {
+    let mut tools: Vec<String> = store
+        .get_setting(&project_grants_key(project))
+        .await
+        .ok()
+        .flatten()
+        .and_then(|value| serde_json::from_str(&value).ok())
+        .unwrap_or_default();
+    tools.sort();
+    tools.dedup();
+    tools
+}
+
 pub async fn build(
     config: &Config,
     model: &ModelConfig,
@@ -58,6 +113,7 @@ pub async fn build(
     if reasoning_effort.is_some() {
         cfg.reasoning_effort = reasoning_effort;
     }
+    let turns = turn_settings(config, store).await;
     // One switch for everything memory: the search tool and the habits.
     let remembering = memory_enabled(store).await;
     let mut tools = wisp_core::build_registry(
@@ -79,10 +135,12 @@ pub async fn build(
         tools,
         wisp_core::ContextManager::new(model.max_context),
         root.clone(),
-        config.max_iterations,
+        turns.max_iterations,
         root.join(".wisp/server-sessions")
             .join(format!("{frame}.json")),
     );
+    agent.set_auto_compact(turns.auto_compact);
+    agent.set_auto_compact_percent(turns.auto_compact_percent);
     agent.ctx.messages = store.load_messages(frame).await?;
     agent.ctx.supports_vision = model.supports_vision;
     let repaired = wisp_core::repair_unpaired_tool_calls(&mut agent.ctx.messages);
@@ -436,6 +494,10 @@ pub async fn run(
         persist: tx,
         full_access,
         plan_mode,
+        always: project_grants(&store, &artifact_project)
+            .await
+            .into_iter()
+            .collect(),
     };
     let result = agent
         .run(&request.message, &out, Some(&session.cancel))

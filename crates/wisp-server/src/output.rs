@@ -118,6 +118,9 @@ pub struct ServerOutput {
     pub full_access: bool,
     /// The conversation plans: tools that change things refuse to run.
     pub plan_mode: bool,
+    /// Tools the user allowed for good in this project, as of the turn's
+    /// start. They answer the standard tool question only.
+    pub always: HashSet<String>,
 }
 
 impl Output for ServerOutput {
@@ -241,7 +244,8 @@ impl Output for ServerOutput {
                     };
                 }
                 let tool = live.tool.clone();
-                if live.allowed_tools.contains(&tool) && message == tool_question(&tool) {
+                let allowed = live.allowed_tools.contains(&tool) || self.always.contains(&tool);
+                if allowed && message == tool_question(&tool) {
                     return ConfirmDecision::Approved;
                 }
                 let preview = live.preview.clone();
@@ -295,6 +299,7 @@ mod tests {
             persist: tx,
             full_access: false,
             plan_mode: false,
+            always: Default::default(),
         };
         assert!(out.force_ask_mutations());
         assert!(!out.approval_bypass());
@@ -319,6 +324,7 @@ mod tests {
             persist: mpsc::unbounded_channel().0,
             full_access,
             plan_mode: false,
+            always: Default::default(),
         }
     }
 

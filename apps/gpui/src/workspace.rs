@@ -7,6 +7,7 @@ mod memos_view;
 mod organise_view;
 mod palette_view;
 mod panel_tabs;
+mod settings_sections;
 mod settings_view;
 mod shell;
 
@@ -118,6 +119,15 @@ pub struct Workspace {
     /// What the memory editor is writing, or the delete question is about.
     memory_target: Option<crate::memory::Target>,
     memory_text: Entity<InputState>,
+    /// The Settings page that is showing.
+    settings_section: crate::settings::Section,
+    /// How turns run and new conversations start; `None` until read.
+    turn_defaults: Option<wisp_server::desktop::TurnDefaults>,
+    steps_input: Entity<InputState>,
+    /// Tools that are always allowed, project by project.
+    grants: Vec<wisp_server::desktop::ProjectGrants>,
+    /// What went wrong on a Settings page other than Models.
+    settings_error: Option<String>,
     /// What the open conversation saved to the favorites, newest first.
     saved: Vec<LibraryItem>,
     saved_request: u64,
@@ -209,6 +219,7 @@ impl Workspace {
                 .searchable(false)
         });
         let memory_text = cx.new(|cx| InputState::new(window, cx).multi_line(true));
+        let steps_input = cx.new(|cx| InputState::new(window, cx));
         let favorites_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search your favorites…"));
         let handle = window.window_handle();
@@ -244,6 +255,11 @@ impl Workspace {
             cx.subscribe_in(&rename, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::PressEnter { .. }) {
                     this.save_rename(window, cx);
+                }
+            }),
+            cx.subscribe_in(&steps_input, window, |this, _, event, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    this.save_steps(window, cx);
                 }
             }),
             cx.subscribe_in(&favorites_search, window, |this, _, event, window, cx| {
@@ -337,6 +353,11 @@ impl Workspace {
             memory_request: 0,
             memory_target: None,
             memory_text,
+            settings_section: Default::default(),
+            turn_defaults: None,
+            steps_input,
+            grants: vec![],
+            settings_error: None,
             saved: vec![],
             saved_request: 0,
             favorites: None,
@@ -1064,11 +1085,12 @@ impl Workspace {
         }
         self.pending = true;
         let selection = self.state.selection();
-        let reply = self.backend.request::<String>(
-            "native_conversation_create",
-            selection.project.clone(),
-            json!({}),
-        );
+        // Through the desktop's own call, so the conversation starts the
+        // way Settings says new ones should.
+        let Some(project) = selection.project.clone() else {
+            return;
+        };
+        let reply = self.backend.create_conversation(project);
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -1460,7 +1482,7 @@ impl Workspace {
         &mut self,
         approval: String,
         approved: bool,
-        for_conversation: bool,
+        remember: wisp_server::desktop::Remember,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1474,9 +1496,9 @@ impl Workspace {
         }
         self.pending = true;
         self.error = None;
-        let reply =
-            self.backend
-                .answer_approval(project, session, approval, approved, for_conversation);
+        let reply = self
+            .backend
+            .answer_approval(project, session, approval, approved, remember);
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
             let _ = this.update_in(cx, |this, window, cx| {

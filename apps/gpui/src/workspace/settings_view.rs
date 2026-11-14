@@ -21,7 +21,7 @@ use crate::{
     backend::{Reply, receive},
     layers::Layer,
     present::Tone,
-    settings,
+    settings::{self, Section},
 };
 
 pub(super) struct SettingsForm {
@@ -706,9 +706,40 @@ impl Workspace {
                     .text_lg()
                     .font_weight(FontWeight::MEDIUM)
                     .child("Settings"),
-            )
-            .child(div().px_2().pt_2().text_xs().text_color(muted).child("AI"))
-            .child(nav_row("settings-model", "bot", "Models", true, false, cx).opacity(1.));
+            );
+        let mut nav = nav;
+        let mut group = "";
+        for section in Section::ALL {
+            if section.group() != group {
+                group = section.group();
+                nav = nav.child(div().px_2().pt_2().text_xs().text_color(muted).child(group));
+            }
+            let selected = self.settings_section == section;
+            nav = nav.child(
+                nav_row(
+                    SharedString::from(format!("settings-{}", section.label())),
+                    section.icon(),
+                    section.label(),
+                    selected,
+                    true,
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.show_settings_section(section, window, cx)
+                })),
+            );
+        }
+        let body = match self.settings_section {
+            Section::Models => div()
+                .h_flex()
+                .items_start()
+                .gap_8()
+                .p_6()
+                .child(self.render_model_list(cx))
+                .child(self.render_model_form(cx)),
+            Section::Conversation => self.render_conversation_settings(cx),
+            Section::Permissions => self.render_permission_settings(cx),
+        };
         div().h_flex().size_full().child(nav).child(
             div()
                 .v_flex()
@@ -724,7 +755,7 @@ impl Workspace {
                         .border_b_1()
                         .border_color(cx.theme().border)
                         .font_weight(FontWeight::MEDIUM)
-                        .child("Models"),
+                        .child(self.settings_section.label()),
                 )
                 .child(
                     div()
@@ -732,15 +763,7 @@ impl Workspace {
                         .flex_1()
                         .min_h_0()
                         .overflow_y_scroll()
-                        .child(
-                            div()
-                                .h_flex()
-                                .items_start()
-                                .gap_8()
-                                .p_6()
-                                .child(self.render_model_list(cx))
-                                .child(self.render_model_form(cx)),
-                        ),
+                        .child(body),
                 ),
         )
     }
