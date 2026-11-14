@@ -140,3 +140,32 @@ test("running tool, streaming caret and sidebar share the agent status tokens", 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await expect.poll(caret).toEqual({ content: '""', animation: "none", color: running });
 });
+
+for (const locale of ["en", "zh"]) {
+  test(`a running turn shows a waiting row until its first output arrives (${locale}) (#1720)`, async ({ page }) => {
+    await page.goto(`/?mockLocale=${locale}`);
+    await page.locator(".proj-card-main").first().click();
+    await page.locator("#composer-input").fill("PENDINGDEMO · 有没有文章做过类似分析");
+    await page.getByRole("button", { name: locale === "zh" ? "发送" : "Send", exact: true }).click();
+
+    // Nothing has streamed yet: the thread says so instead of staying blank.
+    const pending = page.getByTestId("turn-pending");
+    await expect(pending).toHaveText(locale === "zh" ? "等待模型响应…" : "Waiting for the model to respond…");
+    await expect(pending.locator("svg > path")).toHaveCSS("animation-name", "steps-orbit");
+    await expect(page.locator(".msg.user").last()).toContainText("PENDINGDEMO");
+
+    const frameId = await page.evaluate(() => {
+      const calls = (window as any).__skillInvokeLog as { cmd: string; args: any }[];
+      const args = calls.filter(call => call.cmd === "send_message").at(-1)!.args;
+      return (args instanceof Map ? args.get("sessionId") : args.sessionId) as string;
+    });
+    // The first visible output takes the waiting row's place.
+    await emit(page, frameId, { kind: "Text", delta: "Two related papers found." });
+    await expect(page.locator(".msg.assistant").last()).toContainText("Two related papers found.");
+    await expect(pending).toHaveCount(0);
+
+    await page.evaluate(() => (window as any).__finishPendingTurn());
+    await expect(page.locator(".msg.assistant").last()).toContainText("Two related papers found.");
+    await expect(pending).toHaveCount(0);
+  });
+}
