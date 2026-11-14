@@ -133,6 +133,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Branch | Under a reply: a new conversation holding everything through that turn, opened at once and listed under the one it came from |
 | Search | Titles and message text across the project, archived conversations included |
 | Command palette | One box over everything: projects, files by name in every project, conversations by title or message text, and the window's commands; arrow keys, Return, Escape |
+| Find in conversation | Cmd/Ctrl+F, or the command palette: a bar over the transcript marks every message, and every tool call, that contains the words; Return and the arrows move between them |
 | Help | Documentation (home page, Settings, palette) and Report a problem (Settings, palette) open the tutorials and the issue tracker in the system's browser |
 | Settings | Pages: General (appearance: system, light or dark; what the app opens on), Network (a route for model requests, for connectors and MCP servers, and for the code the model runs; a conda mirror, a Python package index and a CA bundle the model is told to use), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold), Skills (every skill with where it comes from, search, on or off), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Environments (the SSH hosts work can run on: add, change, remove, add from `~/.ssh/config`, check the connection and see what the host is, and which one new work goes to), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
 | Inbox | Conversations in any project that are waiting for you; opens across projects |
@@ -327,6 +328,12 @@ Limits of this slice:
   still kept in memory only: after a restart they are empty until the next
   turn. Usage has no ranking of skills and MCP tools, no per-conversation
   breakdown and no year calendar.
+- Find looks through the part of the conversation that is loaded, ignoring
+  case, in messages and in what tools printed. It marks whole rows, not the
+  words inside them, and does not open a folded tool row. Earlier messages
+  are searched once they are loaded; to search every conversation's whole
+  text use the command palette. The place is kept while a turn adds to the
+  transcript.
 - A message written while a turn runs waits in a queue above the composer
   with what was attached to it, up to ten per conversation, and is sent when
   the turn ends; several go one turn at a time, in order. A waiting message
@@ -596,6 +603,11 @@ connector route and run a PubMed search, and press Test on an HTTP MCP
 server. Set a Python package index, ask the model to install a package and
 confirm it uses the index. Restart and confirm the page still shows what was
 saved.
+In a conversation press Cmd/Ctrl+F and type a word that appears several
+times: the count is shown, the newest match is marked strongest, Return and
+the up arrow go to earlier ones and around again, and Escape closes the bar,
+removes the marks and leaves the conversation as it was. Type a word that
+does not appear and confirm it says so.
 Start a turn that takes a while and, before it ends, write two messages and
 press Queue for each: both are listed above the composer and the composer is
 empty again. When the turn ends the first is sent by itself, and the second

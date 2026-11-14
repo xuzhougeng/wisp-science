@@ -1,6 +1,7 @@
 mod conversation_actions;
 mod favorites_view;
 mod files_panel;
+mod find_view;
 mod home_view;
 mod memory_view;
 mod memos_view;
@@ -78,6 +79,9 @@ pub struct Workspace {
     copied: Option<usize>,
     palette: PaletteState,
     palette_input: Entity<InputState>,
+    /// What is being looked for in the open conversation, and its field.
+    find: crate::find::Find,
+    find_input: Entity<InputState>,
     palette_scroll: ScrollHandle,
     sessions: Vec<SessionSearchInfo>,
     /// Conversations in any project that are waiting for the user.
@@ -303,6 +307,8 @@ impl Workspace {
                     .placeholder("Always report effect sizes with confidence intervals.")
             }),
         ];
+        let find_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Find in this conversation…"));
         let mcp_target = cx.new(|cx| InputState::new(window, cx));
         let mcp_token = cx.new(|cx| InputState::new(window, cx).masked(true));
         let skills_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find a skill…"));
@@ -340,6 +346,13 @@ impl Workspace {
                     _ => {}
                 },
             ),
+            cx.subscribe_in(&find_input, window, |this, _, event, _, cx| match event {
+                InputEvent::Change => this.search_find(cx),
+                // Return goes back through the conversation; with the
+                // modifier it goes forward.
+                InputEvent::PressEnter { secondary } => this.step_find(!secondary, cx),
+                _ => {}
+            }),
             cx.subscribe_in(&rename, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::PressEnter { .. }) {
                     this.save_rename(window, cx);
@@ -427,6 +440,8 @@ impl Workspace {
             copied: None,
             palette: PaletteState::default(),
             palette_input,
+            find: Default::default(),
+            find_input,
             palette_scroll: ScrollHandle::new(),
             sessions: vec![],
             inbox: vec![],
@@ -582,6 +597,10 @@ impl Workspace {
                 self.project_form = None;
                 self.project_form_error = None;
             }
+            Some(Layer::Find) => {
+                self.find.clear();
+                self.focus_composer(window, cx);
+            }
             // Menus and questions that hold no focus of their own.
             Some(
                 Layer::SortMenu
@@ -617,6 +636,20 @@ impl Workspace {
             }
             Shortcut::Palette => {
                 self.toggle_palette(window, cx);
+                true
+            }
+            Shortcut::Find => {
+                // Only where a conversation is what is showing.
+                if self.screen != Screen::Project
+                    || self.state.session.is_none()
+                    || self.layers.contains(Layer::Settings)
+                    || self.layers.contains(Layer::Favorites)
+                    || self.layers.contains(Layer::Palette)
+                    || self.layers.contains(Layer::ProjectSettings)
+                {
+                    return false;
+                }
+                self.open_find(window, cx);
                 true
             }
             Shortcut::NewConversation => {
@@ -682,9 +715,11 @@ impl Workspace {
             Layer::EffortMenu,
             Layer::ModelMenu,
             Layer::RunsOnMenu,
+            Layer::Find,
         ] {
             self.layers.close(layer);
         }
+        self.find.clear();
         if self.state.session != session {
             self.saved.clear();
             self.rewind_turn = None;
@@ -1190,6 +1225,10 @@ impl Workspace {
         self.list
             .splice(prefix..self.rows.len(), rows.len() - prefix);
         self.rows = rows;
+        // The same words, in the transcript as it is now.
+        if self.layers.contains(Layer::Find) {
+            self.find.refresh(&self.rows);
+        }
     }
 
     fn older(&mut self, window: &mut Window, cx: &mut Context<Self>) {

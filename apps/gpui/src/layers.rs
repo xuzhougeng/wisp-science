@@ -29,6 +29,8 @@ pub enum Layer {
     RunsOnMenu,
     /// The dialog for a project's name, description and rules.
     ProjectSettings,
+    /// The find bar over the open conversation.
+    Find,
     /// Confirmation in Settings before a saved model is removed.
     ConfirmDeleteModel,
     /// Sort and grouping choices under the conversation list's heading.
@@ -177,6 +179,7 @@ pub enum Shortcut {
     NewConversation,
     Settings,
     Palette,
+    Find,
 }
 
 /// `primary` is Cmd on macOS and Ctrl elsewhere, held alone: adding Shift,
@@ -189,6 +192,7 @@ pub fn shortcut(key: &str, primary: bool, others: bool) -> Option<Shortcut> {
         "n" => Some(Shortcut::NewConversation),
         "," => Some(Shortcut::Settings),
         "k" => Some(Shortcut::Palette),
+        "f" => Some(Shortcut::Find),
         _ => None,
     }
 }
@@ -260,6 +264,9 @@ mod tests {
         assert_eq!(shortcut("n", false, false), None);
         assert_eq!(shortcut("n", true, true), None);
         assert_eq!(shortcut("k", true, false), Some(Shortcut::Palette));
+        assert_eq!(shortcut("f", true, false), Some(Shortcut::Find));
+        // With Shift it is someone else's chord.
+        assert_eq!(shortcut("f", true, true), None);
         assert_eq!(shortcut("j", true, false), None);
     }
 

@@ -1391,10 +1391,13 @@ impl Workspace {
                 ),
             );
         }
+        if self.layers.contains(Layer::Find) {
+            content = content.child(self.render_find_bar(cx));
+        }
         let weak = cx.entity().downgrade();
         content = content.child(
             list(self.list.clone(), move |index, window, cx| {
-                weak.update(cx, |this, cx| this.row(index, window, cx))
+                weak.update(cx, |this, cx| this.found_row(index, window, cx))
                     .unwrap_or_else(|_| div().into_any_element())
             })
             .flex_1()

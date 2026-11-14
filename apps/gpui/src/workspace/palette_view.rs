@@ -219,6 +219,7 @@ impl Workspace {
             // These leave the app: they open in the system's browser.
             Command::Docs => return cx.open_url(crate::links::DOCS),
             Command::Feedback => return cx.open_url(crate::links::ISSUES),
+            Command::Find => return self.open_find(window, cx),
             Command::ProjectSettings => {
                 if let Some(project) = self.state.project.clone() {
                     self.open_project_settings(project, window, cx);

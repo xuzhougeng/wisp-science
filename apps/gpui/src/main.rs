@@ -6,6 +6,7 @@ mod compose;
 mod controls;
 mod favorites;
 mod files;
+mod find;
 mod home;
 mod layers;
 mod links;
