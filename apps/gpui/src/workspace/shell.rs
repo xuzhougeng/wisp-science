@@ -1598,6 +1598,7 @@ impl Workspace {
             .on_drop(cx.listener(|this, dropped: &ExternalPaths, window, cx| {
                 this.attach_dropped(dropped.paths(), window, cx)
             }))
+            .children(self.render_tabs(cx))
             .child(self.render_topbar(cx));
         if let Some(bar) = self.render_conversation_bar(cx) {
             content = content.child(bar);

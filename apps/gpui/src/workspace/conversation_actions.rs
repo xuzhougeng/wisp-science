@@ -211,6 +211,7 @@ impl Workspace {
             reply,
             move |this, window, cx| {
                 this.known.remove(&session);
+                this.tabs.close(&session, None);
                 this.state.forget_draft(&session);
                 this.chips.remove(&session);
                 this.queue.forget(&session);

@@ -675,4 +675,5 @@ pub const ZH: &[(&str, &str)] = &[
     ("When a turn ends or a tool waits for approval while you are in another app, post a system notification. Windows has none without an installed app, so only the sound is available there.", "当你在使用其他应用时，如果一轮结束或有工具等待批准，就发出系统通知。Windows 上未安装的应用无法发通知，因此那里只能使用提示音。"),
     ("Play a sound", "播放提示音"),
     ("Also play a sound then, whether or not a notification is posted.", "此时同时播放提示音，无论是否发出通知。"),
+    ("Close this tab; the conversation is kept", "关闭这个标签页；会话会保留"),
 ];

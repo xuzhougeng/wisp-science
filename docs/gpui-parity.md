@@ -148,7 +148,7 @@ to find in the running app.
 
 | Feature | WebView | GPUI | Host |
 | --- | --- | --- | --- |
-| Conversation tabs | Yes | Missing | ui |
+| Conversation tabs | Yes | Done: the conversations opened in a window show as tabs above the conversation, across projects; not kept across restarts | ui |
 | Share conversation [分享对话] | Yes | Partial: as an exported Markdown file; no share link | tauri |
 | Trajectory [轨迹] | Yes | Done: a dialog with the totals and every turn's steps; a step opens to its whole text | store |
 | Research archive [研究归档] | Yes | Missing | store |

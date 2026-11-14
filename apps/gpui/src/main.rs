@@ -30,6 +30,7 @@ mod queue;
 mod review;
 mod settings;
 mod state;
+mod tabs;
 mod theme;
 mod trajectory;
 mod usage;

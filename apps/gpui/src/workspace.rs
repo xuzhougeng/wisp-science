@@ -27,6 +27,7 @@ mod settings_network;
 mod settings_sections;
 mod settings_view;
 mod shell;
+mod tabs_view;
 mod trajectory_view;
 mod transfer_view;
 
@@ -150,6 +151,8 @@ pub struct Workspace {
     /// Rows seen in any list, so the open conversation keeps its title and
     /// state while a search or the archive view does not include it.
     known: HashMap<String, SessionSearchInfo>,
+    /// The conversations opened in this window, as tabs.
+    tabs: crate::tabs::Tabs,
     pinned: Vec<String>,
     show_archived: bool,
     /// Only the latest list request may replace the rows on screen.
@@ -616,6 +619,7 @@ impl Workspace {
             sessions: vec![],
             inbox: vec![],
             known: HashMap::new(),
+            tabs: Default::default(),
             pinned: vec![],
             show_archived: false,
             list_request: 0,
@@ -1203,10 +1207,13 @@ impl Workspace {
             let _ = this.update_in(cx, |this, window, cx| {
                 this.pending = false;
                 this.layers.close(Layer::ConfirmRemoveProject);
-                this.removing = None;
+                let gone = this.removing.take();
                 this.removing_folder = None;
                 match result {
                     Ok(()) => {
+                        if let Some(gone) = gone {
+                            this.tabs.forget_project(&gone);
+                        }
                         this.notice = Some(crate::i18n::fill(
                             tr("Deleted \"{}\" and its folder."),
                             &[&folder.name],
@@ -1237,6 +1244,9 @@ impl Workspace {
             let _ = this.update_in(cx, |this, window, cx| {
                 this.pending = false;
                 this.layers.close(Layer::ConfirmRemoveProject);
+                if let (Ok(()), Some(gone)) = (&result, this.removing.take()) {
+                    this.tabs.forget_project(&gone);
+                }
                 this.removing = None;
                 if let Err(error) = result {
                     this.error = Some(error);
@@ -1362,6 +1372,12 @@ impl Workspace {
     fn select_session(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         self.state
             .save_draft(self.composer.read(cx).value().to_string());
+        if let Some(project) = self.state.project.clone() {
+            self.tabs.visit(&project, &id);
+            if let Some(row) = self.known.get(&id) {
+                self.tabs.name(&id, &row.title);
+            }
+        }
         self.choose(self.state.project.clone(), Some(id));
         self.clear_transcript();
         let draft = self.state.draft();

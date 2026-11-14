@@ -137,6 +137,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Project archives | Export on a project's card writes the project, its records and its files, as one zip; Import on the home page reads one and puts the project in a folder you choose |
 | Capabilities | A dialog for the open project: how many skills, connectors, MCP servers and SSH hosts are on or usable, the state of memory, and which command-line tools were found on this computer |
 | Follow-up questions | After an answer, up to three questions you could ask next show above the composer; picking one puts it in the composer to send or change, and the list can be put away |
+| Tabs | The conversations you open in a window line up as tabs above the conversation, across projects; click one to go back to it, close one to drop it from the strip |
 | Notifications | When a turn ends or a tool waits for approval while Wisp is in the background, a system notification is posted and, if chosen, a sound is played (Settings, General) |
 | Language | Settings, General, chooses the interface language: System (Chinese on a Chinese system, English otherwise), English or 中文 |
 | Delete a project's folder | Removing a project offers Delete folder too: after you type the project's name, the project is removed and its folder is deleted with every file in it |
@@ -327,6 +328,12 @@ Limits of this slice:
   for a last word without tools. Compaction uses the WebView's keys
   (`auto_compact`, `auto_compact_percent`). Auto-continue, compaction on a
   model switch and after idle hours are not ported.
+- Tabs belong to the window and are not saved: a new window, or the app
+  after a restart, starts with none, and the strip shows from the second
+  conversation on. A window keeps twelve; one more closes the tab that
+  has gone unvisited the longest. Closing a tab closes nothing else: the
+  conversation and a turn running in it are untouched. Tabs cannot be
+  reordered or moved between windows.
 - Notifications are for the conversation that is open in a window, and
   only while that window is not the active one: a turn that ends in a
   conversation you are not looking at is shown by the sidebar, not
@@ -771,6 +778,11 @@ press Escape (the page stays), press Escape again (the page closes). Open the
 conversation an item came from. Have a turn write an image, save it from
 Artifacts, delete the file and confirm the figure still shows in Favorites.
 Delete a conversation and confirm what was saved from it is still listed.
+Open three conversations, one of them in another project: tabs appear
+above the conversation from the second on. Click a tab of the other
+project: its project and conversation open. Close the tab in view: its
+neighbour opens; close a tab that is not in view: nothing else changes.
+Delete a conversation and confirm its tab goes.
 Start a slow turn, switch to another app and wait: a notification names
 the conversation when the turn ends, and another when a tool asks for
 approval. Stay in Wisp and confirm nothing is posted. Turn Notify me off
