@@ -654,6 +654,7 @@ impl Workspace {
                 self.file_naming = None;
                 self.focus_composer(window, cx);
             }
+            Some(Layer::Outline) => self.focus_composer(window, cx),
             Some(Layer::ConfirmTrashFile) => self.file_trashing = None,
             // Menus and questions that hold no focus of their own.
             Some(
@@ -770,6 +771,7 @@ impl Workspace {
             Layer::ModelMenu,
             Layer::RunsOnMenu,
             Layer::Find,
+            Layer::Outline,
         ] {
             self.layers.close(layer);
         }

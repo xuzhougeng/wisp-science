@@ -31,6 +31,8 @@ pub enum Layer {
     ProjectSettings,
     /// The find bar over the open conversation.
     Find,
+    /// The outline of the open conversation, under its header.
+    Outline,
     /// The name field in the Files panel: a new folder or file, or a rename.
     FileName,
     /// Question in the Files panel before an entry goes to the trash.

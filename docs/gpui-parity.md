@@ -140,7 +140,7 @@ to find in the running app.
 | Review a turn [审查] | Yes | Missing | tauri |
 | Select text: add to chat, ask aside, highlight | Yes | Partial: a whole message is saved with its star; a selected passage cannot be, and there is no add-to-chat or ask-aside | store |
 | Full record / model view toggles [完整记录 / 模型视角] | Yes | Missing | served |
-| Conversation outline [展开对话目录] | Yes | Missing | store |
+| Conversation outline [展开对话目录] | Yes | Partial: your messages in the loaded part of the conversation, to jump to | store |
 | Find in conversation | Yes *(source)* | Done: Cmd/Ctrl+F over the loaded transcript, with a count and next and previous; marks rows, not words | ui |
 | Sub-agent and delegation cards | Yes *(source)* | Missing | store |
 

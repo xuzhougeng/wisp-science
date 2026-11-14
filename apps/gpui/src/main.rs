@@ -14,6 +14,7 @@ mod links;
 mod memory;
 mod memos;
 mod organise;
+mod outline;
 mod palette;
 mod panel;
 mod present;

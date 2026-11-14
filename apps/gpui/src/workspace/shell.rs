@@ -330,6 +330,27 @@ impl Workspace {
                             cx.listener(|this, _, window, cx| this.toggle_palette(window, cx)),
                         ),
                     )
+                    .child({
+                        let open = self.layers.contains(Layer::Outline);
+                        let button = div().relative().child(
+                            icon_button("outline", "list", "Outline: what you asked, in order")
+                                .selected(open)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    if this.layers.close(Layer::Outline) {
+                                        this.focus_composer(window, cx);
+                                    } else {
+                                        this.layers.open(Layer::Outline);
+                                    }
+                                    cx.notify();
+                                })),
+                        );
+                        if open {
+                            // Painted last, over the transcript below.
+                            button.child(deferred(self.outline_menu(cx)))
+                        } else {
+                            button
+                        }
+                    })
                     .child(
                         icon_button("refresh", "refresh", "Refresh")
                             .disabled(self.pending)
@@ -946,6 +967,86 @@ impl Workspace {
                     cx,
                 )
                 .on_click(choose(host.alias.clone())),
+            );
+        }
+        menu
+    }
+
+    /// What the user asked in the open conversation, as places to jump to.
+    fn outline_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let muted = cx.theme().muted_foreground;
+        let hover = cx.theme().list_hover;
+        let entries = crate::outline::entries(&self.rows);
+        let mut menu = div()
+            .id("outline-menu")
+            .absolute()
+            .top(px(34.))
+            .right_0()
+            .w(px(420.))
+            .max_h(px(420.))
+            .overflow_y_scroll()
+            .v_flex()
+            .p_1()
+            .occlude()
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().popover)
+            .shadow_md();
+        if entries.is_empty() {
+            menu = menu.child(
+                div()
+                    .p_3()
+                    .text_sm()
+                    .text_color(muted)
+                    .child("Nothing has been asked here yet."),
+            );
+        }
+        if self.before.is_some() {
+            menu = menu.child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .text_xs()
+                    .text_color(muted)
+                    .child("Earlier messages are listed once they are loaded."),
+            );
+        }
+        for entry in entries {
+            let row = entry.row;
+            menu = menu.child(
+                div()
+                    .id(("outline-entry", row))
+                    .h_flex()
+                    .gap_2()
+                    .px_2()
+                    .h(px(28.))
+                    .flex_shrink_0()
+                    .rounded(cx.theme().radius)
+                    .cursor_pointer()
+                    .hover(move |style| style.bg(hover))
+                    .child(
+                        div()
+                            .w(px(24.))
+                            .flex_shrink_0()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(entry.number.to_string()),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_sm()
+                            .child(entry.title),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.layers.close(Layer::Outline);
+                        this.list.scroll_to_reveal_item(row);
+                        this.focus_composer(window, cx);
+                        cx.notify();
+                    })),
             );
         }
         menu
