@@ -2263,6 +2263,20 @@ button.stop:disabled { opacity: .45; cursor: default; }
   border-radius: var(--radius-sm); box-shadow: 0 8px 28px rgba(0,0,0,.14);
   animation: motion-surface-in-soft var(--motion-duration-fast) var(--motion-ease-decelerate) both;
 }
+/* A finished conversation's card leaves by itself (#1717): after the linger it
+   fades, and the fade's animationend removes it. Pointing at the card or
+   focusing a button in it drops the fade, so the wait starts over on leaving
+   and the card never vanishes under the pointer. Failures have no fade. */
+.session-notice-autoclose {
+  animation-name: motion-surface-in-soft, session-notice-leave;
+  animation-duration: var(--motion-duration-fast), 1.2s;
+  animation-timing-function: var(--motion-ease-decelerate), ease-in;
+  animation-delay: 0s, var(--session-notice-linger, 15s);
+  animation-fill-mode: both, forwards;
+}
+.session-notice-autoclose:hover,
+.session-notice-autoclose:focus-within { animation-name: motion-surface-in-soft; }
+@keyframes session-notice-leave { to { opacity: 0; } }
 .session-notice-icon { flex: 0 0 auto; display: inline-flex; color: var(--ok); }
 .session-notice-error .session-notice-icon { color: var(--err); }
 .session-notice-icon svg { width: 18px; height: 18px; }

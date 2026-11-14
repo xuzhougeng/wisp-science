@@ -3328,6 +3328,35 @@ test("dismissing a session notice keeps the others (#1619)", async ({ page }) =>
   expect(await invokeCount(page, "open_project_window")).toBe(0);
 });
 
+test("a finished conversation's notice fades out on its own while a failure stays (#1717)", async ({ page }) => {
+  await enterApp(page);
+  const failed = { ...otherProjectNotice, session_id: "s-failed", session_title: "Failed", kind: "error" };
+  const done = { ...otherProjectNotice, session_id: "s-done", session_title: "Done" };
+  await emitSessionNotice(page, failed);
+  await emitSessionNotice(page, done);
+  const cards = page.getByTestId("session-notice");
+  await expect(cards).toHaveCount(2);
+  const animations = (session: string) => page
+    .locator(`[data-testid="session-notice"][data-session="${session}"]`)
+    .evaluate((el) => getComputedStyle(el).animationName);
+  // Only the finished card carries the fade; pointing at it drops the fade so
+  // it cannot vanish under the pointer, and leaving starts the wait over.
+  await expect.poll(() => animations("s-done")).toContain("session-notice-leave");
+  await expect.poll(() => animations("s-failed")).not.toContain("session-notice-leave");
+  await page.locator('[data-testid="session-notice"][data-session="s-done"]').hover();
+  await expect.poll(() => animations("s-done")).not.toContain("session-notice-leave");
+  await page.mouse.move(0, 0);
+  await expect.poll(() => animations("s-done")).toContain("session-notice-leave");
+
+  // Shorten the linger and let the conversation finish again: the replacement
+  // card runs the real fade and removes itself. The failure is still there.
+  await page.evaluate(() => document.documentElement.style.setProperty("--session-notice-linger", "0.2s"));
+  await emitSessionNotice(page, done);
+  await expect(cards).toHaveCount(1);
+  await expect(cards).toHaveAttribute("data-session", "s-failed");
+  expect(await invokeCount(page, "open_project_window")).toBe(0);
+});
+
 test("topbar groups chrome actions and hides an empty status hint", async ({ page }) => {
   await enterApp(page);
   const actions = page.locator(".topbar-actions");
