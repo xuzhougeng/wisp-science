@@ -3,7 +3,7 @@
 use wisp_dto::ProjectSummary;
 use wisp_server::desktop::{FolderContents, ProjectFolder};
 
-use crate::present::Tone;
+use crate::{i18n::Locale, present::Tone};
 
 /// Where the question about deleting a project's folder stands.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,22 +73,41 @@ fn plural(count: i64, one: &str, many: &str) -> String {
 }
 
 pub fn counts(project: &ProjectSummary) -> String {
-    format!(
-        "{} · {}",
-        plural(project.session_count, "conversation", "conversations"),
-        plural(project.artifact_count, "artifact", "artifacts")
-    )
+    counts_in(crate::i18n::current(), project)
+}
+
+fn counts_in(locale: Locale, project: &ProjectSummary) -> String {
+    match locale {
+        Locale::En => format!(
+            "{} · {}",
+            plural(project.session_count, "conversation", "conversations"),
+            plural(project.artifact_count, "artifact", "artifacts")
+        ),
+        // Chinese counts with a measure word and has no plural.
+        Locale::Zh => format!(
+            "{} 个会话 · {} 个产物",
+            project.session_count, project.artifact_count
+        ),
+    }
 }
 
 /// What is happening in a project right now; empty when it is idle.
 pub fn activity(project: &ProjectSummary) -> Vec<(String, Tone)> {
+    activity_in(crate::i18n::current(), project)
+}
+
+fn activity_in(locale: Locale, project: &ProjectSummary) -> Vec<(String, Tone)> {
+    let (running, waiting) = match locale {
+        Locale::En => ("running", "waiting"),
+        Locale::Zh => ("个运行中", "个等你处理"),
+    };
     let mut chips = Vec::new();
     if project.running_count > 0 {
-        chips.push((format!("{} running", project.running_count), Tone::Active));
+        chips.push((format!("{} {running}", project.running_count), Tone::Active));
     }
     if project.needs_you_count > 0 {
         chips.push((
-            format!("{} waiting", project.needs_you_count),
+            format!("{} {waiting}", project.needs_you_count),
             Tone::Attention,
         ));
     }
@@ -98,6 +117,10 @@ pub fn activity(project: &ProjectSummary) -> Vec<(String, Tone)> {
 /// How long ago `then` was, as a short label. Both are Unix seconds; a
 /// millisecond value from an older row is accepted too.
 pub fn age(now: i64, then: i64) -> String {
+    age_in(crate::i18n::current(), now, then)
+}
+
+fn age_in(locale: Locale, now: i64, then: i64) -> String {
     let then = if then > 100_000_000_000 {
         then / 1000
     } else {
@@ -107,6 +130,17 @@ pub fn age(now: i64, then: i64) -> String {
         return String::new();
     }
     let seconds = (now - then).max(0);
+    if locale == Locale::Zh {
+        return match seconds {
+            0..=59 => "刚刚".into(),
+            60..=3_599 => format!("{} 分钟前", seconds / 60),
+            3_600..=86_399 => format!("{} 小时前", seconds / 3_600),
+            86_400..=1_209_599 => format!("{} 天前", seconds / 86_400),
+            1_209_600..=5_183_999 => format!("{} 周前", seconds / 604_800),
+            5_184_000..=31_535_999 => format!("{} 个月前", seconds / 2_592_000),
+            _ => format!("{} 年前", seconds / 31_536_000),
+        };
+    }
     match seconds {
         0..=59 => "just now".into(),
         60..=3_599 => format!("{} min ago", seconds / 60),
@@ -216,6 +250,35 @@ mod tests {
                 ("1 waiting".to_string(), Tone::Attention)
             ]
         );
+    }
+
+    #[test]
+    fn counts_activity_and_age_read_naturally_in_chinese() {
+        let mut one = project("p", false, 0);
+        one.session_count = 12;
+        one.artifact_count = 1;
+        one.running_count = 2;
+        one.needs_you_count = 1;
+        // A measure word, and no plural to get wrong.
+        assert_eq!(counts_in(Locale::Zh, &one), "12 个会话 · 1 个产物");
+        assert_eq!(
+            activity_in(Locale::Zh, &one),
+            [
+                ("2 个运行中".to_string(), Tone::Active),
+                ("1 个等你处理".to_string(), Tone::Attention)
+            ]
+        );
+        let now = 1_800_000_000;
+        let ago = |seconds: i64| age_in(Locale::Zh, now, now - seconds);
+        assert_eq!(ago(5), "刚刚");
+        assert_eq!(ago(120), "2 分钟前");
+        assert_eq!(ago(7_200), "2 小时前");
+        assert_eq!(ago(86_400), "1 天前");
+        assert_eq!(ago(3 * 604_800), "3 周前");
+        assert_eq!(ago(90 * 86_400), "3 个月前");
+        assert_eq!(ago(2 * 31_536_000), "2 年前");
+        // No time saved: nothing to say, in either language.
+        assert_eq!(age_in(Locale::Zh, now, 0), "");
     }
 
     #[test]

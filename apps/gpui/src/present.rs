@@ -1,5 +1,6 @@
 //! Wording and tone for transcript rows, runs and conversation status, kept
 //! apart from GPUI so it is covered without a graphics context.
+use crate::i18n::tr;
 use wisp_dto::{
     RunRecord, SessionSearchInfo,
     native_conversations::{Item, Snapshot},
@@ -18,7 +19,7 @@ pub fn heading(item: &Item) -> String {
     item.tool_name
         .clone()
         .unwrap_or_else(|| match item.role.as_str() {
-            "user" => "You".into(),
+            "user" => tr("You").into(),
             "assistant" => "Wisp".into(),
             other => other.into(),
         })
@@ -41,11 +42,11 @@ pub fn tool_status(item: &Item, turn_running: bool) -> Option<(String, Tone)> {
         return None;
     }
     let (label, tone) = match (item.ok, item.status.as_deref()) {
-        (Some(false), _) => ("Failed", Tone::Danger),
-        (Some(true), _) => ("Done", Tone::Success),
-        (None, Some("running")) if turn_running => ("Running", Tone::Active),
-        (None, Some("running")) => ("Interrupted", Tone::Neutral),
-        (None, _) => ("Done", Tone::Neutral),
+        (Some(false), _) => (tr("Failed"), Tone::Danger),
+        (Some(true), _) => (tr("Done"), Tone::Success),
+        (None, Some("running")) if turn_running => (tr("Running"), Tone::Active),
+        (None, Some("running")) => (tr("Interrupted"), Tone::Neutral),
+        (None, _) => (tr("Done"), Tone::Neutral),
     };
     Some(match item.duration_ms {
         Some(ms) => (format!("{label} · {}", duration_label(ms)), tone),
@@ -115,9 +116,9 @@ pub fn pinned_first(rows: Vec<SessionSearchInfo>, pinned: &[String]) -> Vec<Sess
 /// Label beside a conversation: its activity, else why it is set apart.
 pub fn session_badge(row: &SessionSearchInfo, pinned: bool) -> Option<(&'static str, Tone)> {
     session_status(&row.status).or(if row.shelved {
-        Some(("Archived", Tone::Neutral))
+        Some((tr("Archived"), Tone::Neutral))
     } else if pinned {
-        Some(("Pinned", Tone::Neutral))
+        Some((tr("Pinned"), Tone::Neutral))
     } else {
         None
     })
@@ -125,8 +126,8 @@ pub fn session_badge(row: &SessionSearchInfo, pinned: bool) -> Option<(&'static 
 
 pub fn session_status(status: &str) -> Option<(&'static str, Tone)> {
     match status {
-        "running" => Some(("Running", Tone::Active)),
-        "needs_you" => Some(("Needs you", Tone::Attention)),
+        "running" => Some((tr("Running"), Tone::Active)),
+        "needs_you" => Some((tr("Needs you"), Tone::Attention)),
         _ => None,
     }
 }

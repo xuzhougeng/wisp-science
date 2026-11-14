@@ -586,4 +586,9 @@ pub const ZH: &[(&str, &str)] = &[
     ("Writing {}…", "正在写入 {}…"),
     ("Reading {}…", "正在读取 {}…"),
     ("Deleted \"{}\" and its folder.", "已删除“{}”及其文件夹。"),
+    // Statuses.
+    ("Failed", "失败"),
+    ("Running", "运行中"),
+    ("Interrupted", "已中断"),
+    ("Pinned", "已固定"),
 ];
