@@ -212,6 +212,17 @@ impl Workspace {
             .child(files)
             .child(memos)
             .child(
+                nav_row(
+                    "capabilities",
+                    "sparkles",
+                    "Capabilities",
+                    false,
+                    has_project,
+                    cx,
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.open_capabilities(window, cx))),
+            )
+            .child(
                 nav_row("journey", "timeline", "Journey", false, has_project, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.open_journey(window, cx))),
             )

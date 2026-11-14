@@ -45,6 +45,7 @@ pub enum Command {
     Journey,
     Calendar,
     NewWindow,
+    Capabilities,
 }
 
 impl Command {
@@ -70,6 +71,7 @@ impl Command {
             Command::Journey => "Research journey",
             Command::Calendar => "Research calendar",
             Command::NewWindow => "New window",
+            Command::Capabilities => "Capabilities of this project",
         }
     }
 
@@ -94,6 +96,7 @@ impl Command {
             Command::Journey => "timeline",
             Command::Calendar => "calendar",
             Command::NewWindow => "dock",
+            Command::Capabilities => "sparkles",
         }
     }
 
@@ -111,7 +114,8 @@ impl Command {
             | Command::Archived
             | Command::ProjectSettings
             | Command::Find
-            | Command::Journey => screen == Screen::Project,
+            | Command::Journey
+            | Command::Capabilities => screen == Screen::Project,
             Command::OpenFolder
             | Command::Refresh
             | Command::Settings
@@ -123,7 +127,7 @@ impl Command {
         }
     }
 
-    const ALL: [Command; 20] = [
+    const ALL: [Command; 21] = [
         Command::NewConversation,
         Command::OpenFolder,
         Command::Home,
@@ -144,6 +148,7 @@ impl Command {
         Command::Journey,
         Command::Calendar,
         Command::NewWindow,
+        Command::Capabilities,
     ];
 }
 

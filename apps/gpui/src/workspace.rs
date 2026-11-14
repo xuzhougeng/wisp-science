@@ -1,4 +1,5 @@
 mod calendar_view;
+mod capabilities_view;
 mod conversation_actions;
 mod favorites_view;
 mod files_panel;
@@ -83,6 +84,10 @@ pub struct Workspace {
     copied: Option<usize>,
     palette: PaletteState,
     palette_input: Entity<InputState>,
+    /// The overview of what the open project can draw on, once read, and
+    /// why it could not be.
+    capabilities: Option<wisp_server::desktop::Capabilities>,
+    capabilities_error: Option<String>,
     /// The calendar across projects: the month shown, every project's
     /// records once read, the counter that drops late answers, the day
     /// that is chosen, and the projects left out.
@@ -515,6 +520,8 @@ impl Workspace {
             palette_input,
             find: Default::default(),
             find_input,
+            capabilities: None,
+            capabilities_error: None,
             calendar_month: None,
             calendar: None,
             calendar_request: 0,
@@ -705,6 +712,10 @@ impl Workspace {
             }
             Some(Layer::Calendar) => {
                 self.calendar = None;
+                self.focus_composer(window, cx);
+            }
+            Some(Layer::Capabilities) => {
+                self.capabilities = None;
                 self.focus_composer(window, cx);
             }
             // The page stays open underneath.
@@ -2073,6 +2084,11 @@ impl Render for Workspace {
         // Last, so they are drawn over whichever screen or layer is showing.
         let root = if self.layers.contains(Layer::ProjectSettings) {
             root.child(self.render_project_settings(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::Capabilities) {
+            root.child(self.render_capabilities(cx))
         } else {
             root
         };

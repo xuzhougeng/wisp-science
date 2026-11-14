@@ -4,8 +4,8 @@ use wisp_dto::NetworkSettings;
 use wisp_server::{
     config::default_api_url,
     desktop::{
-        ConnectorRow, EnvironmentCheck, McpTransport, ModelProfile, ModelSettings, ModelSource,
-        ProbeResult, RUNS_LOCALLY, SkillRow, SshHostRow,
+        Capabilities, ConnectorRow, EnvironmentCheck, McpTransport, ModelProfile, ModelSettings,
+        ModelSource, ProbeResult, RUNS_LOCALLY, SkillRow, SshHostRow,
     },
 };
 
@@ -319,6 +319,62 @@ pub fn ssh_target(host: &SshHostRow) -> String {
         line.push_str(&format!(" · via {}", host.proxy_jump));
     }
     line
+}
+
+/// The lines of the capabilities overview: what it is, how much of it
+/// there is, and the Settings page that manages it, if one does.
+pub fn capability_lines(found: &Capabilities) -> Vec<(&'static str, String, Option<Section>)> {
+    let of = |(on, total): (usize, usize), none: &str| match total {
+        0 => none.to_owned(),
+        _ if on == total => format!("{total}, all on"),
+        _ => format!("{on} on of {total}"),
+    };
+    vec![
+        (
+            "Skills",
+            of(found.skills, "None found"),
+            Some(Section::Skills),
+        ),
+        (
+            "Connectors",
+            of(found.connectors, "None"),
+            Some(Section::Connections),
+        ),
+        (
+            "MCP servers",
+            of(found.mcp_servers, "None added"),
+            Some(Section::Connections),
+        ),
+        (
+            "SSH hosts",
+            match found.hosts {
+                (_, 0) => "None added".to_owned(),
+                (ready, total) if ready == total => format!("{total}, all checked"),
+                (ready, total) => format!("{ready} checked of {total}"),
+            },
+            Some(Section::Environments),
+        ),
+        (
+            "Memory",
+            if found.memory_on {
+                format!(
+                    "On · {} · {}",
+                    plural(found.memory_notes, "day of notes", "days of notes"),
+                    plural(found.habits, "habit", "habits")
+                )
+            } else {
+                "Off".to_owned()
+            },
+            None,
+        ),
+    ]
+}
+
+fn plural(count: usize, one: &str, many: &str) -> String {
+    match count {
+        1 => format!("1 {one}"),
+        n => format!("{n} {many}"),
+    }
 }
 
 /// What the composer says about where a conversation's work runs.
@@ -1048,5 +1104,46 @@ mod tests {
             let word = section.keywords().split_whitespace().next().unwrap();
             assert!(search_sections(word).contains(&section), "{word}");
         }
+    }
+
+    #[test]
+    fn the_overview_counts_what_is_on_and_points_at_its_settings() {
+        let found = Capabilities {
+            skills: (40, 42),
+            connectors: (18, 18),
+            mcp_servers: (0, 0),
+            hosts: (1, 3),
+            memory_on: true,
+            memory_notes: 1,
+            habits: 4,
+            tools: vec![],
+        };
+        let lines = capability_lines(&found);
+        let read: Vec<_> = lines
+            .iter()
+            .map(|(label, value, _)| (*label, value.as_str()))
+            .collect();
+        assert_eq!(
+            read,
+            [
+                ("Skills", "40 on of 42"),
+                ("Connectors", "18, all on"),
+                ("MCP servers", "None added"),
+                ("SSH hosts", "1 checked of 3"),
+                ("Memory", "On · 1 day of notes · 4 habits"),
+            ]
+        );
+        // Each kind that Settings manages leads there; memory is in the panel.
+        assert_eq!(lines[0].2, Some(Section::Skills));
+        assert_eq!(lines[3].2, Some(Section::Environments));
+        assert_eq!(lines[4].2, None);
+        let off = Capabilities {
+            hosts: (2, 2),
+            ..Default::default()
+        };
+        let lines = capability_lines(&off);
+        assert_eq!(lines[3].1, "2, all checked");
+        assert_eq!(lines[4].1, "Off");
+        assert_eq!(lines[0].1, "None found");
     }
 }

@@ -4397,3 +4397,54 @@ async fn a_conversation_is_exported_whole_as_markdown() {
         .is_err());
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn capabilities_count_what_a_project_can_draw_on() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let start = server.capabilities(PROJECT).await.unwrap();
+    // Every bundled connector is on to begin with; nothing else is set up.
+    assert!(start.connectors.1 > 0 && start.connectors.0 == start.connectors.1);
+    assert_eq!(start.mcp_servers, (0, 0));
+    assert_eq!(start.hosts, (0, 0));
+    assert_eq!((start.memory_notes, start.habits), (0, 0));
+    assert!(start.memory_on);
+    // Each tool looked for is listed, found or not.
+    assert_eq!(start.tools.len(), 8);
+    assert!(start.tools.iter().any(|tool| tool.name == "git"));
+    for tool in &start.tools {
+        if let Some(path) = &tool.path {
+            assert!(std::path::Path::new(path).is_file(), "{path}");
+        }
+    }
+
+    // What is switched off or added shows in the counts.
+    let connector = server.connectors().await.unwrap()[0].domain.clone();
+    server
+        .set_connector_enabled(&connector, false)
+        .await
+        .unwrap();
+    server
+        .save_ssh_host(desktop::SshHostRow {
+            alias: "cap-host".into(),
+            host_name: "10.0.0.9".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    server.add_habit("Report effect sizes").await.unwrap();
+    server.set_memory_enabled(false).await.unwrap();
+    let after = server.capabilities(PROJECT).await.unwrap();
+    assert_eq!(
+        after.connectors,
+        (start.connectors.1 - 1, start.connectors.1)
+    );
+    // Saved, but not checked: it cannot run anything yet.
+    assert_eq!(after.hosts, (0, 1));
+    assert_eq!(after.habits, 1);
+    assert!(!after.memory_on);
+    assert!(server.capabilities("missing").await.is_err());
+    server.shutdown().await;
+}

@@ -39,6 +39,8 @@ pub enum Layer {
     JournalForm,
     /// The research calendar across projects: a page of its own.
     Calendar,
+    /// The overview of what Wisp can draw on in the open project.
+    Capabilities,
     /// The name field in the Files panel: a new folder or file, or a rename.
     FileName,
     /// Question in the Files panel before an entry goes to the trash.

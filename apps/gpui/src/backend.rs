@@ -197,6 +197,11 @@ impl Backend {
         self.local(move |host| async move { host.project_file(&project, &path).await })
     }
 
+    /// What Wisp can draw on in a project, counted.
+    pub fn capabilities(&self, project: String) -> Reply<wisp_server::desktop::Capabilities> {
+        self.local(move |host| async move { host.capabilities(&project).await })
+    }
+
     /// A conversation, whole, as a Markdown document.
     pub fn export_conversation(&self, project: String, session: String) -> Reply<String> {
         self.local(move |host| async move { host.export_conversation(&project, &session).await })

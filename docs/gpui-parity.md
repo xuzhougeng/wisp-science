@@ -90,7 +90,7 @@ to find in the running app.
 | Memos [备忘录] | Section 6 | Done | store |
 | Paper evidence [论文证据] | Section 7 | Missing | store |
 | Favorites [收藏库] | Section 1 | Done | store |
-| Capability summary [能力]: skills, MCP, memory counts, local tools found | Dialog | Missing | shared |
+| Capability summary [能力]: skills, MCP, memory counts, local tools found | Dialog | Done: counts of skills, connectors, MCP servers, SSH hosts and memory, and the tools found on the search path | shared |
 | Feedback [反馈] | Yes | Partial: "Report a problem" in Settings and the command palette opens the issue tracker; the report the model drafts with the app's version and system is not ported | ui |
 
 ## 3. Composer

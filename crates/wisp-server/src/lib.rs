@@ -8,6 +8,7 @@ mod output;
 mod runtime;
 #[cfg(test)]
 mod tests;
+mod tools_found;
 
 use anyhow::{bail, ensure, Context, Result};
 use async_trait::async_trait;

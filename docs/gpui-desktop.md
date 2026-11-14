@@ -134,6 +134,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Search | Titles and message text across the project, archived conversations included |
 | Command palette | One box over everything: projects, files by name in every project, conversations by title or message text, and the window's commands; arrow keys, Return, Escape |
 | Pictures in answers | When an answer shows a picture of the project with Markdown image syntax, the picture is drawn under the answer |
+| Capabilities | A dialog for the open project: how many skills, connectors, MCP servers and SSH hosts are on or usable, the state of memory, and which command-line tools were found on this computer |
 | Windows | New Window (the app menu, Cmd/Ctrl+Shift+N, or the command palette) opens another window on the same projects, each with its own page and conversation |
 | Export | A conversation's Export button saves the whole of it as a Markdown file where you choose |
 | Notebook | A tab of the side panel: the conversation's code as cells, with what each run returned; copy, save to favorites, or show it in the conversation |
@@ -380,6 +381,13 @@ Limits of this slice:
   the others; the app quits with the last. Windows are not restored at the
   next start, and a project or conversation cannot be sent to a new window
   from its row.
+- Capabilities counts what the Settings pages and the Memory tab already
+  hold, in one place, and looks along the search path the app was started
+  with for `python3`, `Rscript`, `uv`, `pixi`, `conda`, `git`, `ssh` and
+  `node`. A tool installed where that path does not reach reads as not
+  found although a shell may find it. An SSH host counts as usable only
+  after a check of it has passed. The list of tools cannot be changed, and
+  no interpreter or tool path can be set from here.
 - Export writes one Markdown file: the title, the project, what you and
   the model said in full, and each tool call with what it was given and
   what it returned, each cut to about four thousand bytes. It is read from
@@ -706,6 +714,9 @@ choose Finding, give it a line and save: it is the newest record of today.
 Save one without a title and confirm it is refused and the form stays.
 Press a row that came from a conversation and confirm that conversation
 opens. Open Journey again and press Escape: the page closes.
+In a project press Capabilities: the counts match the Settings pages, the
+tools on this computer are listed with where they were found, Settings on a
+line opens that page, and Escape closes the dialog.
 Press Cmd/Ctrl+Shift+N: a second window opens a little down and to the
 right of the first, on the home page, with the same projects. Open a
 different conversation in each, send a message in one and confirm the other

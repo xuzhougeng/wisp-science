@@ -748,6 +748,51 @@ impl Server {
         Ok(())
     }
 
+    /// What Wisp can draw on in `project`, counted: skills, connectors, MCP
+    /// servers, SSH hosts, memory, and the command-line tools found on
+    /// this computer.
+    pub async fn capabilities(&self, project: &str) -> Result<Capabilities> {
+        let on = |flags: Vec<bool>| (flags.iter().filter(|on| **on).count(), flags.len());
+        let skills = self.skills(Some(project)).await?;
+        let connectors = self.connectors().await?;
+        let servers = self.mcp_servers().await?;
+        let hosts = self.environments().await?;
+        let memory = self.memory(project).await?;
+        let tools = tokio::task::spawn_blocking(|| {
+            let (path, extensions) = crate::tools_found::search_path();
+            crate::tools_found::TOOLS
+                .iter()
+                .map(|(name, what)| LocalTool {
+                    name: (*name).to_owned(),
+                    what: (*what).to_owned(),
+                    path: crate::tools_found::find(name, &path, &extensions, |candidate| {
+                        candidate.is_file()
+                    })
+                    .map(|found| found.to_string_lossy().into_owned()),
+                })
+                .collect()
+        })
+        .await?;
+        Ok(Capabilities {
+            skills: on(skills.iter().map(|skill| skill.enabled).collect()),
+            connectors: on(connectors.iter().map(|row| row.enabled).collect()),
+            mcp_servers: on(servers.iter().map(|row| row.server.enabled).collect()),
+            // A host counts as usable once a check of it has passed.
+            hosts: (
+                hosts
+                    .checks
+                    .iter()
+                    .filter(|check| check.error.is_none())
+                    .count(),
+                hosts.hosts.len(),
+            ),
+            memory_on: memory.enabled,
+            memory_notes: memory.notes.len(),
+            habits: memory.habits.len(),
+            tools,
+        })
+    }
+
     /// The whole of a conversation as a Markdown document: what was said,
     /// and each tool call with what it was given and what it returned. It
     /// is read from what is saved, so a turn that is still running is in
@@ -3012,6 +3057,29 @@ impl SshHostRow {
         wisp_runs::ssh_hosts::SshConnection::from_host(&host).map_err(anyhow::Error::msg)?;
         Ok(host)
     }
+}
+
+/// What Wisp can draw on in a project. Each pair is how many are on, or
+/// usable, out of how many there are.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Capabilities {
+    pub skills: (usize, usize),
+    pub connectors: (usize, usize),
+    pub mcp_servers: (usize, usize),
+    /// SSH hosts whose last check passed, out of those saved.
+    pub hosts: (usize, usize),
+    pub memory_on: bool,
+    pub memory_notes: usize,
+    pub habits: usize,
+    pub tools: Vec<LocalTool>,
+}
+
+/// A command-line tool and where it was found, if it was.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LocalTool {
+    pub name: String,
+    pub what: String,
+    pub path: Option<String>,
 }
 
 /// What Project settings shows and saves.
