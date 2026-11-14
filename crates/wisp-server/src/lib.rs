@@ -9,6 +9,7 @@ pub mod mcp;
 mod network;
 mod output;
 mod project_archive;
+mod project_folder;
 mod runtime;
 #[cfg(test)]
 mod tests;

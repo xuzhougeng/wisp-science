@@ -57,7 +57,7 @@ to find in the running app.
 | Export project [导出项目] | Archive export | Partial: as a zip archive in the WebView's format; no folder packages and no progress display | tauri |
 | Project settings [项目设置] | Name, description, sync | Partial: name, description and the rules for the model (`.wisp/WISP.md`), from the project's card and the command palette; no sync or run retention | store |
 | Remove a project from Wisp, files kept [删除] | With confirmation | Done | store |
-| Delete a project together with its local data | Second choice in the same dialog, with a countdown | Missing | tauri |
+| Delete a project together with its local data | Second choice in the same dialog, with a countdown | Done: second choice in the same question; the project's name is typed instead of a countdown, and a folder that holds more than the project is refused | tauri |
 | Open in a new window [在新窗口打开] | Yes | Partial: a new window opens on the home page; a project cannot be sent to it from its card | ui |
 | Recent conversations across projects with status [最近会话] | Yes | Done | store |
 | Sample project, read-only [示例项目] | Yes | Missing | tauri |

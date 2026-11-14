@@ -73,6 +73,9 @@ pub struct Workspace {
     recent: Vec<SessionSearchInfo>,
     /// Project waiting for the remove confirmation on the home page.
     removing: Option<String>,
+    /// The second, stronger question: delete the project's folder too.
+    removing_folder: Option<home::FolderQuestion>,
+    delete_name_input: Entity<InputState>,
     /// Tool rows whose input and output are unfolded.
     open_tools: HashSet<String>,
     /// Files and references attached to the message being written, per
@@ -321,6 +324,8 @@ impl Workspace {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search conversations…"));
         let rename = cx.new(|cx| InputState::new(window, cx).placeholder("Conversation title"));
         let folder_name = cx.new(|cx| InputState::new(window, cx).placeholder("Group name"));
+        let delete_name_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Type the project's name"));
         let memo_title = cx.new(|cx| InputState::new(window, cx).placeholder("Title (optional)"));
         let memo_body = cx.new(|cx| {
             InputState::new(window, cx)
@@ -475,6 +480,14 @@ impl Workspace {
                     this.load_favorites(window, cx);
                 }
             }),
+            cx.subscribe_in(&delete_name_input, window, |this, _, event, window, cx| {
+                match event {
+                    // The button follows what is typed.
+                    InputEvent::Change => cx.notify(),
+                    InputEvent::PressEnter { .. } => this.delete_project_folder(window, cx),
+                    _ => {}
+                }
+            }),
             cx.subscribe_in(&folder_name, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::PressEnter { .. }) {
                     this.save_folder_name(window, cx);
@@ -528,6 +541,8 @@ impl Workspace {
             projects: vec![],
             recent: vec![],
             removing: None,
+            removing_folder: None,
+            delete_name_input,
             open_tools: HashSet::new(),
             chips: HashMap::new(),
             queue: Default::default(),
@@ -678,7 +693,10 @@ impl Workspace {
             Some(Layer::Settings | Layer::Rename | Layer::ConfirmDelete) => {
                 self.focus_composer(window, cx)
             }
-            Some(Layer::ConfirmRemoveProject) => self.removing = None,
+            Some(Layer::ConfirmRemoveProject) => {
+                self.removing = None;
+                self.removing_folder = None;
+            }
             Some(
                 Layer::Palette
                 | Layer::ConfirmFullAccess
@@ -955,6 +973,7 @@ impl Workspace {
         self.screen = Screen::Project;
         self.layers.close(Layer::ConfirmRemoveProject);
         self.removing = None;
+        self.removing_folder = None;
         self.select_project(id, window, cx);
         cx.notify();
     }
@@ -1007,6 +1026,7 @@ impl Workspace {
     fn ask_remove_project(&mut self, id: String, cx: &mut Context<Self>) {
         self.error = None;
         self.removing = Some(id);
+        self.removing_folder = None;
         self.layers.open(Layer::ConfirmRemoveProject);
         cx.notify();
     }
@@ -1014,8 +1034,81 @@ impl Workspace {
     fn cancel_remove_project(&mut self, cx: &mut Context<Self>) {
         if self.layers.close(Layer::ConfirmRemoveProject) {
             self.removing = None;
+            self.removing_folder = None;
             cx.notify();
         }
+    }
+
+    /// Turns the question into the stronger one: the folder goes too. The
+    /// host says what is in it, or why it may not be deleted.
+    fn ask_delete_project_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.removing.clone() else {
+            return;
+        };
+        self.removing_folder = Some(home::FolderQuestion::Looking);
+        self.delete_name_input
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        let reply = self.backend.project_folder(id.clone());
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                // Cancelled, or asked about another project, meanwhile.
+                if this.removing.as_ref() != Some(&id)
+                    || this.removing_folder != Some(home::FolderQuestion::Looking)
+                {
+                    return;
+                }
+                this.removing_folder = Some(match result {
+                    Ok(folder) => {
+                        this.delete_name_input
+                            .update(cx, |input, cx| input.focus(window, cx));
+                        home::FolderQuestion::Ask(folder)
+                    }
+                    Err(reason) => home::FolderQuestion::Refused(reason),
+                });
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Deletes the project and its folder, once its name has been typed.
+    fn delete_project_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending || !self.layers.contains(Layer::ConfirmRemoveProject) {
+            return;
+        }
+        let (Some(id), Some(home::FolderQuestion::Ask(folder))) =
+            (self.removing.clone(), self.removing_folder.clone())
+        else {
+            return;
+        };
+        let typed = self.delete_name_input.read(cx).value().to_string();
+        if !home::name_typed(&typed, &folder) {
+            return;
+        }
+        self.pending = true;
+        self.error = None;
+        let reply = self.backend.delete_project_and_folder(id, typed);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.pending = false;
+                this.layers.close(Layer::ConfirmRemoveProject);
+                this.removing = None;
+                this.removing_folder = None;
+                match result {
+                    Ok(()) => {
+                        this.notice = Some(format!("Deleted \"{}\" and its folder.", folder.name));
+                    }
+                    Err(error) => this.error = Some(error),
+                }
+                this.refresh_lists(window, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     fn remove_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {

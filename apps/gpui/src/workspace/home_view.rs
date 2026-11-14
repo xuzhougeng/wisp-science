@@ -6,6 +6,7 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
+    input::Input,
 };
 use wisp_dto::ProjectSummary;
 
@@ -39,6 +40,74 @@ fn card(id: SharedString, cx: &App) -> Stateful<Div> {
 }
 
 impl Workspace {
+    /// The stronger question on a project's card: its folder goes too.
+    /// Nothing is deleted until the project's name has been typed.
+    fn render_delete_folder(&self, question: &home::FolderQuestion, cx: &mut Context<Self>) -> Div {
+        let danger = cx.theme().danger;
+        let cancel = Button::new("delete-folder-cancel")
+            .label("Cancel")
+            .small()
+            .on_click(cx.listener(|this, _, _, cx| this.cancel_remove_project(cx)));
+        let block = div().v_flex().gap_2().pt_1();
+        let folder = match question {
+            home::FolderQuestion::Looking => {
+                return block
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Looking at the folder…"),
+                    )
+                    .child(div().h_flex().justify_end().child(cancel));
+            }
+            home::FolderQuestion::Refused(reason) => {
+                return block
+                    .child(div().text_xs().text_color(danger).child(format!(
+                        "The folder was not deleted: {reason}. You can still remove the \
+                         project from Wisp and keep its files."
+                    )))
+                    .child(div().h_flex().justify_end().child(cancel));
+            }
+            home::FolderQuestion::Ask(folder) => folder,
+        };
+        let typed = self.delete_name_input.read(cx).value().to_string();
+        let ready = home::name_typed(&typed, folder) && !self.pending;
+        block
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(danger)
+                    .child(home::folder_warning(folder)),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!(
+                        "Type the project's name, {}, to go on.",
+                        folder.name
+                    )),
+            )
+            .child(Input::new(&self.delete_name_input).small())
+            .child(
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .justify_end()
+                    .child(
+                        Button::new("delete-folder-confirm")
+                            .label("Delete project and folder")
+                            .small()
+                            .danger()
+                            .disabled(!ready)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.delete_project_folder(window, cx)
+                            })),
+                    )
+                    .child(cancel),
+            )
+    }
+
     fn project_card(
         &self,
         project: &ProjectSummary,
@@ -79,41 +148,51 @@ impl Workspace {
                     .child(home::short_path(&project.workspace_dir, home_dir)),
             );
         if self.removing.as_ref() == Some(&id) {
+            if let Some(question) = &self.removing_folder {
+                return card.child(self.render_delete_folder(question, cx));
+            }
             // Not a link while the question is open: a stray click must not
             // open the project that is about to be removed.
-            return card.child(
-                div()
-                    .h_flex()
-                    .gap_2()
-                    .pt_1()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_xs()
-                            .text_color(cx.theme().danger)
-                            .child(
-                                "Remove this project and its conversations from Wisp? \
-                                 The folder and its files stay on disk.",
-                            ),
-                    )
-                    .child(
-                        Button::new("remove-confirm")
-                            .label("Remove")
-                            .small()
-                            .danger()
-                            .disabled(self.pending)
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.remove_project(window, cx)),
-                            ),
-                    )
-                    .child(
-                        Button::new("remove-cancel")
-                            .label("Cancel")
-                            .small()
-                            .on_click(cx.listener(|this, _, _, cx| this.cancel_remove_project(cx))),
-                    ),
-            );
+            return card
+                .child(div().pt_1().text_xs().text_color(cx.theme().danger).child(
+                    "Remove this project and its conversations from Wisp? The folder \
+                         and its files stay on disk.",
+                ))
+                .child(
+                    div()
+                        .h_flex()
+                        .gap_2()
+                        .justify_end()
+                        .child(
+                            Button::new("remove-confirm")
+                                .label("Remove")
+                                .small()
+                                .danger()
+                                .disabled(self.pending)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.remove_project(window, cx)
+                                })),
+                        )
+                        .child(
+                            Button::new("remove-with-folder")
+                                .label("Delete folder too…")
+                                .small()
+                                .ghost()
+                                .tooltip("Also delete the project's folder and its files, for good")
+                                .disabled(self.pending)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.ask_delete_project_folder(window, cx)
+                                })),
+                        )
+                        .child(
+                            Button::new("remove-cancel")
+                                .label("Cancel")
+                                .small()
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.cancel_remove_project(cx)),
+                                ),
+                        ),
+                );
         }
         let starred = project.starred;
         let star_id = id.clone();

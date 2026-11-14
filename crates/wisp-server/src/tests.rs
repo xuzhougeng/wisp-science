@@ -4633,6 +4633,94 @@ async fn a_question_asked_aside_is_answered_without_touching_the_conversation() 
 }
 
 #[tokio::test]
+async fn a_project_and_its_folder_are_deleted_only_when_its_name_is_typed() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let folder = temp.path().join("lab");
+    std::fs::create_dir_all(folder.join("results")).unwrap();
+    std::fs::write(folder.join("results/counts.csv"), "gene,count\n").unwrap();
+    let neighbour = temp.path().join("neighbour");
+    std::fs::create_dir(&neighbour).unwrap();
+    std::fs::write(neighbour.join("keep.txt"), "mine").unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    let kept = server.register_local_project(&neighbour).await.unwrap();
+    let session = server.create_conversation(&lab).await.unwrap();
+    let listed = |id: String| {
+        let server = &server;
+        async move {
+            let value = call(server, "list_projects", "", json!({})).await.unwrap();
+            serde_json::from_value::<Vec<wisp_dto::ProjectSummary>>(value)
+                .unwrap()
+                .iter()
+                .any(|project| project.id == id)
+        }
+    };
+
+    // The question says what would go.
+    let asked = server.project_folder(&lab).await.unwrap();
+    assert_eq!(asked.name, "lab");
+    assert!(asked.path.ends_with("lab"), "{asked:?}");
+    assert_eq!(
+        asked.contents,
+        desktop::FolderContents::Files {
+            files: 1,
+            bytes: 11,
+            more: false
+        }
+    );
+
+    // Without the name, with another project's name, or for a project
+    // that cannot leave, nothing is touched.
+    for (project, typed) in [
+        (lab.as_str(), ""),
+        (lab.as_str(), "neighbour"),
+        (lab.as_str(), "LAB"),
+        (PROJECT, "Server"),
+        ("missing", "lab"),
+    ] {
+        assert!(server
+            .delete_project_and_folder(project, typed)
+            .await
+            .is_err());
+    }
+    assert!(server.project_folder(PROJECT).await.is_err());
+    assert!(folder.join("results/counts.csv").exists());
+    assert!(listed(lab.clone()).await);
+
+    server
+        .delete_project_and_folder(&lab, " lab ")
+        .await
+        .unwrap();
+    assert!(!folder.exists());
+    assert!(!listed(lab.clone()).await);
+    // Its conversation went with it; the neighbour and its files did not.
+    assert!(server.conversation_status(&lab, &session).await.is_err());
+    assert!(listed(kept.clone()).await);
+    assert_eq!(
+        std::fs::read_to_string(neighbour.join("keep.txt")).unwrap(),
+        "mine"
+    );
+
+    // A folder that is already gone leaves only records to remove.
+    std::fs::remove_dir_all(&neighbour).unwrap();
+    let asked = server.project_folder(&kept).await.unwrap();
+    assert_eq!(asked.contents, desktop::FolderContents::Missing);
+    server
+        .delete_project_and_folder(&kept, "neighbour")
+        .await
+        .unwrap();
+    assert!(!listed(kept).await);
+    // It is the desktop's own: a paired device cannot ask for it.
+    assert!(!server
+        .commands()
+        .iter()
+        .any(|name| name.contains("delete_project")));
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_conversation_is_exported_whole_as_markdown() {
     let temp = tempfile::tempdir().unwrap();
     let calls = Arc::new(AtomicUsize::new(0));

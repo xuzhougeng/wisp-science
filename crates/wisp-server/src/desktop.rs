@@ -1066,6 +1066,105 @@ impl Server {
     pub async fn remove_project(&self, project: &str) -> Result<()> {
         // Exclusive: no turn may be admitted while the project's rows go away.
         let _admission = self.0.admission.write().await;
+        self.leave(project, None).await
+    }
+
+    /// What deleting a project together with its folder would delete, for
+    /// the question that is asked first. Refused, with the reason, when the
+    /// folder is not one that may be deleted with a project.
+    pub async fn project_folder(&self, project: &str) -> Result<ProjectFolder> {
+        let (name, folder) = self.deletable_folder(project).await?;
+        let path = match &folder {
+            crate::project_folder::Target::Folder(path)
+            | crate::project_folder::Target::Link(path) => path.display().to_string(),
+            crate::project_folder::Target::Missing => String::new(),
+        };
+        let contents = match folder {
+            crate::project_folder::Target::Missing => FolderContents::Missing,
+            crate::project_folder::Target::Link(_) => FolderContents::Link,
+            crate::project_folder::Target::Folder(path) => {
+                let size = tokio::task::spawn_blocking(move || {
+                    crate::project_folder::measure(&path, FOLDER_COUNT_LIMIT)
+                })
+                .await?;
+                FolderContents::Files {
+                    files: size.files,
+                    bytes: size.bytes,
+                    more: size.more,
+                }
+            }
+        };
+        Ok(ProjectFolder {
+            name,
+            path,
+            contents,
+        })
+    }
+
+    /// Removes the project from Wisp and deletes its folder with every
+    /// file in it. This cannot be undone, so `typed` has to be the
+    /// project's name, and a folder that holds more than the project is
+    /// refused. Nothing is removed while a turn or a run of the project is
+    /// going. If the folder cannot be deleted the project stays, so it can
+    /// be tried again.
+    pub async fn delete_project_and_folder(&self, project: &str, typed: &str) -> Result<()> {
+        let _admission = self.0.admission.write().await;
+        let (name, folder) = self.deletable_folder(project).await?;
+        ensure!(
+            !name.trim().is_empty() && typed.trim() == name.trim(),
+            "Type the project's name exactly to delete its folder"
+        );
+        ensure!(
+            !self
+                .0
+                .store
+                .list_active_runs()
+                .await?
+                .iter()
+                .any(|run| run.project_id == project),
+            "Wait for this project's runs to end, or cancel them, before you delete its folder"
+        );
+        self.leave(project, Some(folder)).await
+    }
+
+    /// The project's name and what deleting its folder would delete.
+    async fn deletable_folder(
+        &self,
+        project: &str,
+    ) -> Result<(String, crate::project_folder::Target)> {
+        self.known_project(project).await?;
+        ensure!(
+            removable(project),
+            "The built-in workspace cannot be removed"
+        );
+        let mut own = None;
+        let mut others = Vec::new();
+        for (id, name, root, ..) in self.0.store.list_projects().await? {
+            if id == project {
+                own = Some((name, std::path::PathBuf::from(root)));
+            } else {
+                others.push((name, std::path::PathBuf::from(root)));
+            }
+        }
+        let (name, root) = own.context("Project not found")?;
+        let protected = crate::project_folder::Protected {
+            home: std::env::home_dir(),
+            data: self.0.config.data.clone(),
+            others,
+        };
+        let folder =
+            tokio::task::spawn_blocking(move || crate::project_folder::target(&root, &protected))
+                .await??;
+        Ok((name, folder))
+    }
+
+    /// Takes a project out of Wisp, deleting `folder` first when one is
+    /// given. The caller holds the admission lock.
+    async fn leave(
+        &self,
+        project: &str,
+        folder: Option<crate::project_folder::Target>,
+    ) -> Result<()> {
         self.known_project(project).await?;
         ensure!(
             removable(project),
@@ -1084,7 +1183,7 @@ impl Server {
             !busy,
             "Stop the running turns in this project before you remove it"
         );
-        self.0.store.delete_project(project).await?;
+        // Interpreters started in the folder are stopped before it goes.
         let closed: Vec<_> = {
             let mut sessions = self.0.sessions.lock().unwrap();
             frames.iter().filter_map(|id| sessions.remove(id)).collect()
@@ -1095,6 +1194,12 @@ impl Server {
                 runtime.shutdown_all().await;
             }
         }
+        // The folder first: if it cannot be deleted the project is still
+        // listed and nothing is half gone from Wisp.
+        if let Some(folder) = folder {
+            crate::project_folder::delete(folder).await?;
+        }
+        self.0.store.delete_project(project).await?;
         Ok(())
     }
 
@@ -3503,6 +3608,30 @@ pub struct ProjectGrants {
 }
 
 pub use crate::aside::Exchange as AsideExchange;
+
+/// A project's folder, as the question before it is deleted describes it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectFolder {
+    /// The project's name, which has to be typed to delete the folder.
+    pub name: String,
+    /// The folder's real path; empty when there is none any more.
+    pub path: String,
+    pub contents: FolderContents,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FolderContents {
+    /// The folder is already gone: only the project's records are removed.
+    Missing,
+    /// The registered path is a link: the link is removed, and the folder
+    /// it points at is kept.
+    Link,
+    /// What is in the folder. `more` says the count stopped early.
+    Files { files: u64, bytes: u64, more: bool },
+}
+
+/// Entries counted before the question is asked with "at least".
+const FOLDER_COUNT_LIMIT: u64 = 200_000;
 
 /// How turns run and how new conversations start.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

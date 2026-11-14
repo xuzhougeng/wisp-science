@@ -1,8 +1,49 @@
 //! Ordering and wording for the home page, kept apart from GPUI so it is
 //! covered without a graphics context.
 use wisp_dto::ProjectSummary;
+use wisp_server::desktop::{FolderContents, ProjectFolder};
 
 use crate::present::Tone;
+
+/// Where the question about deleting a project's folder stands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FolderQuestion {
+    /// The folder is being looked at.
+    Looking,
+    /// It may not be deleted with the project, and why.
+    Refused(String),
+    /// What would go, to be confirmed by typing the project's name.
+    Ask(ProjectFolder),
+}
+
+/// What deleting the folder would do, said before it is done.
+pub fn folder_warning(folder: &ProjectFolder) -> String {
+    match folder.contents {
+        FolderContents::Missing => format!(
+            "The folder of \"{}\" is already gone. Only its conversations and records are \
+             removed from Wisp.",
+            folder.name
+        ),
+        FolderContents::Link => format!(
+            "{} is a link. The link is deleted; the folder it points at is kept.",
+            folder.path
+        ),
+        FolderContents::Files { files, bytes, more } => format!(
+            "This deletes {} for good, with {}{} ({}), and removes the project from Wisp. It \
+             cannot be undone and nothing goes to the Trash.",
+            folder.path,
+            if more { "at least " } else { "" },
+            plural(files as i64, "file", "files"),
+            crate::files::size_label(bytes),
+        ),
+    }
+}
+
+/// Whether what was typed is the project's name, so the folder may go.
+pub fn name_typed(typed: &str, folder: &ProjectFolder) -> bool {
+    let name = folder.name.trim();
+    !name.is_empty() && typed.trim() == name
+}
 
 /// Which full-window surface is showing under any open layer.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -93,6 +134,46 @@ pub fn short_path(path: &str, home: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deleting_a_folder_says_what_goes_and_needs_the_name() {
+        let folder = |contents| ProjectFolder {
+            name: "RNA lab".into(),
+            path: "/work/rna".into(),
+            contents,
+        };
+        let full = folder(FolderContents::Files {
+            files: 1,
+            bytes: 2_048,
+            more: false,
+        });
+        assert_eq!(
+            folder_warning(&full),
+            "This deletes /work/rna for good, with 1 file (2.0 KB), and removes the project \
+             from Wisp. It cannot be undone and nothing goes to the Trash."
+        );
+        let large = folder(FolderContents::Files {
+            files: 200_000,
+            bytes: 5 * 1024 * 1024,
+            more: true,
+        });
+        assert!(folder_warning(&large).contains("with at least 200000 files (5.0 MB)"));
+        assert!(folder_warning(&folder(FolderContents::Link)).contains("it points at is kept"));
+        assert!(folder_warning(&folder(FolderContents::Missing)).contains("already gone"));
+
+        // The name, as it is written; spaces around it do not matter.
+        assert!(name_typed(" RNA lab ", &full));
+        assert!(!name_typed("rna lab", &full));
+        assert!(!name_typed("RNA", &full));
+        assert!(!name_typed("", &full));
+        // A project without a name cannot be confirmed by typing nothing.
+        let unnamed = ProjectFolder {
+            name: "  ".into(),
+            ..full
+        };
+        assert!(!name_typed("", &unnamed));
+        assert!(!name_typed("  ", &unnamed));
+    }
 
     fn project(id: &str, starred: bool, updated_at: i64) -> ProjectSummary {
         serde_json::from_value(serde_json::json!({

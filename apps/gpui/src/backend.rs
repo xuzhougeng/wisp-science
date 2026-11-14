@@ -268,6 +268,19 @@ impl Backend {
         self.local(move |host| async move { host.star_project(&project, starred).await })
     }
 
+    /// What deleting a project together with its folder would delete.
+    pub fn project_folder(&self, project: String) -> Reply<wisp_server::desktop::ProjectFolder> {
+        self.local(move |host| async move { host.project_folder(&project).await })
+    }
+
+    /// Removes a project and deletes its folder. `typed` is the project's
+    /// name as the user typed it; the host checks it again.
+    pub fn delete_project_and_folder(&self, project: String, typed: String) -> Reply<()> {
+        self.local(
+            move |host| async move { host.delete_project_and_folder(&project, &typed).await },
+        )
+    }
+
     pub fn remove_project(&self, project: String) -> Reply<()> {
         self.local(move |host| async move { host.remove_project(&project).await })
     }

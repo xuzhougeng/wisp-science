@@ -137,6 +137,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Project archives | Export on a project's card writes the project, its records and its files, as one zip; Import on the home page reads one and puts the project in a folder you choose |
 | Capabilities | A dialog for the open project: how many skills, connectors, MCP servers and SSH hosts are on or usable, the state of memory, and which command-line tools were found on this computer |
 | Follow-up questions | After an answer, up to three questions you could ask next show above the composer; picking one puts it in the composer to send or change, and the list can be put away |
+| Delete a project's folder | Removing a project offers Delete folder too: after you type the project's name, the project is removed and its folder is deleted with every file in it |
 | Save as skill | A conversation's Save as skill button (or the command palette) puts a request in the composer that asks Wisp to distill the conversation into a reusable skill; you send it, changed or not |
 | Trajectory | A conversation's Trajectory button (or the command palette) shows every turn's steps in the order they happened: what you asked, what the model said, each tool with how it went and how long it took, and each model call with its tokens; the totals are at the top |
 | Windows | New Window (the app menu, Cmd/Ctrl+Shift+N, or the command palette) opens another window on the same projects, each with its own page and conversation |
@@ -319,6 +320,15 @@ Limits of this slice:
   for a last word without tools. Compaction uses the WebView's keys
   (`auto_compact`, `auto_compact_percent`). Auto-continue, compaction on a
   model switch and after idle hours are not ported.
+- Delete folder too deletes for good: nothing goes to the Trash and there
+  is no undo. It deletes only the folder registered for the project, and
+  refuses one that is a whole disk or volume, sits at the top of a disk,
+  holds your home folder, holds Wisp's own data or holds another project.
+  A registered path that is a link loses the link and keeps the folder it
+  points at. It is refused while a turn or a run of the project is going,
+  and for the built-in workspace. If the folder cannot be deleted the
+  project stays listed. The question counts up to 200,000 entries before
+  it says "at least". A paired phone cannot ask for it.
 - Save as skill writes nothing by itself: it only puts the request in the
   composer, after whatever you had typed. The work is done by the bundled
   `skill-creator` skill in an ordinary turn, so it needs that skill turned
@@ -678,6 +688,14 @@ press Escape (the page stays), press Escape again (the page closes). Open the
 conversation an item came from. Have a turn write an image, save it from
 Artifacts, delete the file and confirm the figure still shows in Favorites.
 Delete a conversation and confirm what was saved from it is still listed.
+On a project you can lose (a folder made for the test), press its remove
+button and then Delete folder too: the question names the folder's full
+path, its file count and size. Type part of the name: the delete button
+stays off. Press Escape: nothing is deleted. Open it again, type the
+name, delete: the folder is gone from disk, the project and its
+conversations are gone from the home page, and the neighbouring folders
+are untouched. Register a folder that holds another project's folder and
+confirm deleting it is refused with the reason.
 Press Save as skill in a conversation: the request is in the composer and
 nothing is sent; with a draft in the composer the request follows it; a
 second press adds nothing. Send it and confirm the model reads the
