@@ -3830,6 +3830,7 @@ impl Store {
              SELECT * FROM searchable_sessions s \
              WHERE (?='' OR lower(COALESCE(NULLIF(s.custom_title,''), s.first_user, '')) LIKE ? \
                 OR EXISTS (SELECT 1 FROM messages m WHERE m.frame_id=s.id \
+                    AND m.role!='system' \
                     AND lower(COALESCE(m.content,'')) LIKE ?)) \
              ORDER BY CASE WHEN ? IS NOT NULL AND s.project_id=? THEN 0 ELSE 1 END, \
                 CASE WHEN ?='' OR lower(COALESCE(NULLIF(s.custom_title,''), s.first_user, '')) LIKE ? THEN 0 ELSE 1 END, \
