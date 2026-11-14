@@ -856,7 +856,7 @@ impl Workspace {
 
     /// The card a composer menu's rows sit in, drawn just above the button
     /// that opens it.
-    fn composer_menu(width: f32, cx: &App) -> Div {
+    pub(super) fn composer_menu(width: f32, cx: &App) -> Div {
         div()
             .absolute()
             .bottom(px(34.))
@@ -1597,6 +1597,7 @@ impl Workspace {
                                 .gap_1()
                                 .child(attach)
                                 .children(quick)
+                                .child(self.slash_button(cx))
                                 .child(plan)
                                 .child(access)
                                 .child(model)

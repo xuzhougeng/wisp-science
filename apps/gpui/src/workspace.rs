@@ -39,6 +39,7 @@ mod settings_sections;
 mod settings_view;
 mod settings_workflows;
 mod shell;
+mod slash_view;
 mod tabs_view;
 mod trajectory_view;
 mod transfer_view;
@@ -960,7 +961,8 @@ impl Workspace {
                 | Layer::ModelMenu
                 | Layer::RunsOnMenu
                 | Layer::ExpertMenu
-                | Layer::QuickMenu,
+                | Layer::QuickMenu
+                | Layer::SlashMenu,
             ) => self.focus_composer(window, cx),
             // Settings stays open underneath and keeps its focus.
             Some(Layer::ConfirmDeleteModel) => {}
@@ -1259,6 +1261,7 @@ impl Workspace {
             Layer::RunsOnMenu,
             Layer::ExpertMenu,
             Layer::QuickMenu,
+            Layer::SlashMenu,
             Layer::Find,
             Layer::Outline,
             Layer::Trajectory,
@@ -1975,6 +1978,10 @@ impl Workspace {
 
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.composer.read(cx).value().to_string();
+        // A message that is only a command is run, not sent.
+        if self.run_typed_slash(&text, window, cx) {
+            return;
+        }
         // While a turn runs the message waits for it to end.
         if self.state.snapshot.as_ref().is_some_and(|s| s.running) {
             return self.enqueue(text, window, cx);

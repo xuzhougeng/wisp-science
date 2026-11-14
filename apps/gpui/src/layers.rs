@@ -29,6 +29,8 @@ pub enum Layer {
     RunsOnMenu,
     /// The expert a new conversation is started as, above the composer.
     ExpertMenu,
+    /// The slash commands, above the composer.
+    SlashMenu,
     /// The quick actions, above the composer.
     QuickMenu,
     /// The dialog for a project's name, description and rules.
@@ -136,12 +138,13 @@ pub enum Layer {
 
 impl Layer {
     /// Menus that open above the composer; only one shows at a time.
-    pub const COMPOSER_MENUS: [Layer; 5] = [
+    pub const COMPOSER_MENUS: [Layer; 6] = [
         Layer::EffortMenu,
         Layer::ModelMenu,
         Layer::RunsOnMenu,
         Layer::ExpertMenu,
         Layer::QuickMenu,
+        Layer::SlashMenu,
     ];
     /// What the row under the conversation's title can turn into, one at a
     /// time.

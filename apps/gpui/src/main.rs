@@ -37,6 +37,7 @@ mod remote;
 mod review;
 mod schedules;
 mod settings;
+mod slash;
 mod state;
 mod tabs;
 mod terminal;

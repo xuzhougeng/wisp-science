@@ -923,4 +923,11 @@ pub const ZH: &[(&str, &str)] = &[
     ("Preferred hosts", "优先的站点"),
     ("A hint to the model for literature search and the like; other sites still open.", "给模型做文献检索等任务时的提示；其他站点仍然可以打开。"),
     ("Reason (optional)", "原因（可选）"),
+    // Slash commands.
+    ("{} is not available in this desktop yet. Type /help for what is.", "{} 在此桌面端尚不可用。输入 /help 查看可用的命令。"),
+    ("Commands: type one as a message, or pick it here", "命令：作为消息输入，或在这里选择"),
+    ("Switch plan first on or off", "开启或关闭先做计划"),
+    ("Show the skills in Settings", "在设置中查看技能"),
+    ("Attach files to the message", "为消息附加文件"),
+    ("List these commands", "列出这些命令"),
 ];

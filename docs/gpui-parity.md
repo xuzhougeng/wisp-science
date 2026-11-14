@@ -242,7 +242,7 @@ row says what is there.
 | Sidebar | Conversation menu: copy title, export conversation, export debug request, reload project rules | tauri |
 | Sidebar | Nested children: branches are nested — **Done**. Sub-agents, explorations and "load earlier" paging — Missing | store |
 | Sidebar | Update-available card; "done / failed in another project" notices (an update check is in Settings, General, and a turn that ends raises a system notification; there is no card in the sidebar) | tauri |
-| Composer | Slash commands: `/timer` `/archive` `/compact` `/fork` `/btw` `/rewind` `/review` `/remember` `/context` `/plan` `/permission` `/save-as-skill` `/skills` `/files` `/upload` `/share` `/trajectory` `/memo` | tauri |
+| Composer | Slash commands: `/timer` `/archive` `/compact` `/fork` `/btw` `/rewind` `/review` `/remember` `/context` `/plan` `/permission` `/save-as-skill` `/skills` `/files` `/upload` `/share` `/trajectory` `/memo` — twelve run here and are listed under the composer's "/" button; `/timer` `/compact` `/fork` `/rewind` `/permission` `/share` are Missing | tauri |
 | Composer | Conversation timer: repeat a prompt on an interval, pause, resume, cancel | store |
 | Composer | Queue panel: edit, remove, reorder, "guide now" | tauri |
 | Composer | Plan progress strip; read-only states (sample, archived notebook, sub-agent, frozen branch) | served |
