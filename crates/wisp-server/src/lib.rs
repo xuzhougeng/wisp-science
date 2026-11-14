@@ -466,6 +466,7 @@ impl Server {
         let full_access = options.full_access;
         let auto_review = options.auto_review;
         let plan_mode = options.plan_first;
+        let subagent = self.subagent_model_for(&request.session_id, &model).await;
         let agent = runtime::build(
             &self.0.config,
             &model,
@@ -481,6 +482,7 @@ impl Server {
             options.plan_first,
             &self.service_keys().await,
             self.mcp_tools().await,
+            &subagent,
         )
         .await?;
         let page = self

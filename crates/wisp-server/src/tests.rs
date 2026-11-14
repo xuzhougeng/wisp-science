@@ -1275,6 +1275,53 @@ async fn desktop_model_profiles_are_validated_saved_and_chosen_per_conversation(
     wait_for(&server, &session, |s| !s.running).await;
     assert_eq!(last_used(&used), ("deep-model".into(), "second-key".into()));
 
+    // Sub-agents work on the conversation's model until another is chosen
+    // for them: in Settings for all, or by a conversation for itself,
+    // which outranks Settings.
+    let own = server.0.model.read().unwrap().pick(&deep.id).unwrap();
+    let worker = |session: String| {
+        let (server, own) = (&server, own.clone());
+        async move {
+            server
+                .subagent_model_for(&session, &own)
+                .await
+                .provider
+                .model
+        }
+    };
+    assert_eq!(server.subagent_model().await.unwrap(), "");
+    assert_eq!(worker(session.clone()).await, "deep-model");
+    assert!(server.set_subagent_model("ghost").await.is_err());
+    assert_eq!(
+        server.set_subagent_model(&first.id).await.unwrap(),
+        first.id
+    );
+    assert_eq!(worker(session.clone()).await, "lab-model-2");
+    server
+        .0
+        .store
+        .set_frame_subagent_model(&session, PROJECT, Some(&deep.id))
+        .await
+        .unwrap();
+    assert_eq!(worker(session.clone()).await, "deep-model");
+    assert_eq!(worker(other_session.clone()).await, "lab-model-2");
+    // A choice that names a profile which is gone falls through.
+    server
+        .0
+        .store
+        .set_frame_subagent_model(&session, PROJECT, Some("gone"))
+        .await
+        .unwrap();
+    assert_eq!(worker(session.clone()).await, "lab-model-2");
+    assert_eq!(server.set_subagent_model("").await.unwrap(), "");
+    assert_eq!(worker(session.clone()).await, "deep-model");
+    server
+        .0
+        .store
+        .set_frame_subagent_model(&session, PROJECT, None)
+        .await
+        .unwrap();
+
     // A review is made with the conversation's model until another is
     // chosen for reviews. (This model writes no report, so the review
     // fails; which model was asked is what is checked.)

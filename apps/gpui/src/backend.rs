@@ -808,6 +808,15 @@ impl Backend {
         self.local(|host| async move { host.review_model().await })
     }
 
+    /// The model profile sub-agents work on; empty is the conversation's.
+    pub fn subagent_model(&self) -> Reply<String> {
+        self.local(|host| async move { host.subagent_model().await })
+    }
+
+    pub fn set_subagent_model(&self, profile: String) -> Reply<String> {
+        self.local(move |host| async move { host.set_subagent_model(&profile).await })
+    }
+
     pub fn set_review_model(&self, profile: String) -> Reply<String> {
         self.local(move |host| async move { host.set_review_model(&profile).await })
     }

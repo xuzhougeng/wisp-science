@@ -235,6 +235,7 @@ pub async fn build(
     plan_mode: bool,
     service_keys: &[(String, String)],
     extra_tools: Vec<Box<dyn wisp_tools::Tool>>,
+    subagent: &ModelConfig,
 ) -> Result<Agent> {
     let root = PathBuf::from(root);
     let skills = Arc::new(skill_index(config, store, &root).await);
@@ -274,9 +275,13 @@ pub async fn build(
     tools.add(Box::new(wisp_tools::ask_user::AskUserTool));
     // How a plan reaches the user while the conversation is in plan mode.
     tools.add(Box::new(wisp_tools::plan::ProposePlanTool));
+    // The model sub-agents work on, which may be another than the
+    // conversation's; it goes the same way to the network.
+    let mut worker = subagent.provider.clone().with_session_id(frame);
+    worker.proxy = cfg.proxy.clone();
     tools.add(Box::new(wisp_core::ExploreTool::from_config(
-        cfg.clone(),
-        model.max_context,
+        worker,
+        subagent.max_context,
     )));
     let mut agent = Agent::from_parts(
         models(cfg),

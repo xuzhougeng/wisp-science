@@ -3044,6 +3044,70 @@ impl Server {
         self.review_model().await
     }
 
+    /// The model profile sub-agents work on; empty is whichever model the
+    /// conversation runs on. The key is the WebView desktop's.
+    pub async fn subagent_model(&self) -> Result<String> {
+        Ok(self
+            .0
+            .store
+            .get_setting(SUBAGENT_MODEL)
+            .await?
+            .unwrap_or_default())
+    }
+
+    /// Chooses the model profile sub-agents work on, or with an empty id
+    /// goes back to each conversation's own model.
+    pub async fn set_subagent_model(&self, profile: &str) -> Result<String> {
+        let store = &self.0.store;
+        if profile.is_empty() {
+            store.delete_setting(SUBAGENT_MODEL).await?;
+        } else {
+            ensure!(
+                self.0
+                    .model
+                    .read()
+                    .unwrap()
+                    .settings()
+                    .profiles
+                    .iter()
+                    .any(|saved| saved.id == profile),
+                "That model was removed; choose another"
+            );
+            store.set_setting(SUBAGENT_MODEL, profile).await?;
+        }
+        self.subagent_model().await
+    }
+
+    /// The model a conversation's sub-agents work on: the conversation's
+    /// own choice for them when it has one, else the one chosen in
+    /// Settings, else `own`, the conversation's model. A choice that names
+    /// a profile which is gone or cannot be used falls through to the next.
+    pub(crate) async fn subagent_model_for(&self, session: &str, own: &ModelConfig) -> ModelConfig {
+        let store = &self.0.store;
+        let chosen = [
+            store.frame_subagent_model(session).await.ok().flatten(),
+            store.get_setting(SUBAGENT_MODEL).await.ok().flatten(),
+        ];
+        let models = self.0.model.read().unwrap();
+        chosen
+            .into_iter()
+            .flatten()
+            .map(|id| id.trim().to_owned())
+            .filter(|id| !id.is_empty())
+            .find_map(|id| {
+                // `pick` would quietly hand back the default for an id
+                // that is gone; only a profile that is there counts.
+                models
+                    .settings()
+                    .profiles
+                    .iter()
+                    .any(|saved| saved.id == id)
+                    .then(|| models.pick(&id).ok())
+                    .flatten()
+            })
+            .unwrap_or_else(|| own.clone())
+    }
+
     /// The model a review is made with: the chosen profile when it is
     /// still there and usable, otherwise `own`, the conversation's model.
     pub(crate) async fn reviewer(
@@ -4070,6 +4134,8 @@ pub struct TurnDefaults {
 }
 
 const DEFAULT_FULL_ACCESS: &str = "desktop.conversation.default_full_access";
+/// The WebView desktop's key for the model sub-agents work on.
+const SUBAGENT_MODEL: &str = "subagent_model_id";
 
 /// A saved item in full.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -98,7 +98,8 @@ impl Section {
             }
             Section::Conversation => {
                 "steps iterations turn limit compact compaction context follow-up questions \
-                 suggestions suggest next review reviewer automatic check"
+                 suggestions suggest next review reviewer automatic check sub-agent subagent \
+                 helper explore worker"
             }
             Section::Experts => "expert persona specialist role instructions illustrator 专家",
             Section::Skills => "skill workflow bundled folder reload",

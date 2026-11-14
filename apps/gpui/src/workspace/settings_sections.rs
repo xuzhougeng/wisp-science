@@ -106,6 +106,28 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Chooses the model sub-agents work on and shows what was kept.
+    fn save_subagent_model(
+        &mut self,
+        profile: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings_error = None;
+        let reply = self.backend.set_subagent_model(profile);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(kept) => this.subagent_model = kept,
+                    Err(error) => this.settings_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Chooses the model reviews are made with and shows what was kept.
     fn save_review_model(&mut self, profile: String, window: &mut Window, cx: &mut Context<Self>) {
         self.settings_error = None;
@@ -129,6 +151,16 @@ impl Workspace {
             if let Ok(chosen) = receive(chosen).await {
                 let _ = this.update(cx, |this, cx| {
                     this.review_model = chosen;
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+        let worker = self.backend.subagent_model();
+        cx.spawn_in(window, async move |this, cx| {
+            if let Ok(worker) = receive(worker).await {
+                let _ = this.update(cx, |this, cx| {
+                    this.subagent_model = worker;
                     cx.notify();
                 });
             }
@@ -1164,6 +1196,49 @@ impl Workspace {
             self.review_model_choices(cx),
             cx,
         ))
+        .child(setting(
+            tr("Sub-agent model"),
+            tr(
+                "The model that helpers the main model sends off to explore work on. A \
+                 cheaper, faster model here keeps long searches off the conversation's model.",
+            ),
+            self.subagent_model_choices(cx),
+            cx,
+        ))
+    }
+
+    /// The conversation's own model, or one of the saved ones.
+    fn subagent_model_choices(&self, cx: &mut Context<Self>) -> Div {
+        let current = self.subagent_model.as_str();
+        let profiles = self
+            .settings
+            .current()
+            .map(|models| models.profiles.as_slice())
+            .unwrap_or_default();
+        // A profile removed since reads as the conversation's own.
+        let own = !profiles.iter().any(|profile| profile.id == current);
+        let mut choices = div().h_flex().flex_wrap().gap_1().justify_end().child(
+            Button::new("subagent-model-own")
+                .label(tr("The conversation's"))
+                .small()
+                .selected(own)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.save_subagent_model(String::new(), window, cx)
+                })),
+        );
+        for profile in profiles {
+            let id = profile.id.clone();
+            choices = choices.child(
+                Button::new(SharedString::from(format!("subagent-model-{}", profile.id)))
+                    .label(profile.name.clone())
+                    .small()
+                    .selected(profile.id == current)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.save_subagent_model(id.clone(), window, cx)
+                    })),
+            );
+        }
+        choices
     }
 
     /// The conversation's own model, or one of the saved ones.

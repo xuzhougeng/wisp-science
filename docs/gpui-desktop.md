@@ -160,7 +160,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Outline | A button in the conversation's header lists what you asked, in order; choosing one scrolls to it |
 | Find in conversation | Cmd/Ctrl+F, or the command palette: a bar over the transcript marks every message, and every tool call, that contains the words; Return and the arrows move between them |
 | Help | Documentation (home page, Settings, palette) and Report a problem (Settings, palette) open the tutorials and the issue tracker in the system's browser |
-| Settings | A search field narrows the pages to those about what you type. Pages: General (appearance: system, light or dark; what the app opens on), Network (a route for model requests, for connectors and MCP servers, and for the code the model runs; a conda mirror, a Python package index and a CA bundle the model is told to use), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold, suggesting what to ask next, reviewing turns and the reviewer model), Skills (every skill with where it comes from, search, on or off), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Environments (the SSH hosts work can run on: add, change, remove, add from `~/.ssh/config`, check the connection and see what the host is, and which one new work goes to), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
+| Settings | A search field narrows the pages to those about what you type. Pages: General (appearance: system, light or dark; what the app opens on), Network (a route for model requests, for connectors and MCP servers, and for the code the model runs; a conda mirror, a Python package index and a CA bundle the model is told to use), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold, suggesting what to ask next, reviewing turns, the reviewer model and the sub-agent model), Skills (every skill with where it comes from, search, on or off), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Environments (the SSH hosts work can run on: add, change, remove, add from `~/.ssh/config`, check the connection and see what the host is, and which one new work goes to), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
 | Inbox | Conversations in any project that are waiting for you; opens across projects |
 | Read state | A finished answer is marked read once it is on screen in the active window |
 | Transcript | Virtualized Markdown, selectable text, paginated history |
@@ -423,6 +423,13 @@ Limits of this slice:
   a new one. There is no list of variables, no restart button and no
   memory limit; interpreters are also stopped when the conversation or
   its project is removed and when the app quits.
+- The sub-agent model is the model the `explore` helper works on, the
+  only sub-agent this host has. The order is the WebView's: a
+  conversation's own choice for its sub-agents (its `frames` column,
+  which this desktop reads but cannot set), then the choice in Settings
+  (`subagent_model_id`), then the conversation's model. A choice naming
+  a profile that is gone or unusable falls through to the next. It
+  applies from a conversation's next turn.
 - An expert is chosen before a conversation's first message and cannot
   be changed afterwards: its instructions are written into the system
   prompt with the first turn and stay as they were then, also if the

@@ -111,7 +111,7 @@ to find in the running app.
 | Plan first [先计划] | Yes | Done: the model investigates and submits a plan; tools that change things refuse until the plan is approved or plan mode is left | served |
 | Expert (persona) for the conversation [专家] | Yes | Partial: chosen in the composer before the first message; its instructions join the system prompt; an expert's own model and skill or connector lists are not applied | tauri |
 | Automatic review toggle and review model [自动审查] | Yes | Partial: per conversation, with a default and a reviewer model in Settings; the result shows above the composer and corrections are asked for by hand, not made automatically | tauri |
-| Sub-agent model [子智能体模型] | Yes | Missing | store |
+| Sub-agent model [子智能体模型] | Yes | Partial: one choice in Settings for the model the explore helper works on; a conversation's own choice is honoured when the WebView saved one but cannot be set here | store |
 | Compute environment for the conversation [计算环境] | Yes | Partial: the default, this computer or a saved SSH host, for where runs start; Python, R and the shell stay on this computer | store |
 | Context usage meter and manual compaction | Yes | Partial: how full the context is, as a percentage that opens the list of what the model is sent, message by message; no manual compaction | served |
 | Request a review of the conversation [请求审查] | Yes | Partial: a Review dialog lists what the reviewer model finds and puts the corrections in the composer; the report is not kept with the conversation | tauri |
@@ -227,7 +227,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Update check and install | Yes | Partial: Check for updates in Settings says whether a newer release exists and opens the release page; no automatic check and no in-app install | tauri |
 | Several windows | Yes | Partial: any number on the same host, each with its own page and conversation; not restored at the next start | ui |
 | Keyboard shortcuts (⌘N, ⌘K, ⌘B, ⌘F, ⌘⇧F, ⌘P, ⌘,) | Yes | Partial: ⌘K, ⌘N and ⌘, are wired and unit-tested, not yet pressed in the running app | ui |
-| Import existing WebView data | n/a | Missing: GPUI keeps its own database | store |
+| Import existing WebView data | n/a | Partial: project by project, by exporting an archive there and importing it here; settings, keys and favorites are not carried over | store |
 
 ## 10. Also in the WebView
 

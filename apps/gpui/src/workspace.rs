@@ -218,6 +218,8 @@ pub struct Workspace {
     turn_defaults: Option<wisp_server::desktop::TurnDefaults>,
     /// The model profile reviews are made with; empty is the conversation's.
     review_model: String,
+    /// The model profile sub-agents work on; empty is the conversation's.
+    subagent_model: String,
     steps_input: Entity<InputState>,
     /// Tools that are always allowed, project by project.
     grants: Vec<wisp_server::desktop::ProjectGrants>,
@@ -663,6 +665,7 @@ impl Workspace {
             settings_section: Default::default(),
             turn_defaults: None,
             review_model: String::new(),
+            subagent_model: String::new(),
             steps_input,
             grants: vec![],
             settings_error: None,
