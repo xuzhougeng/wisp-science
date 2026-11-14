@@ -134,6 +134,13 @@ Tests use synthetic state and temporary projects; no model keys or remote hosts.
 CI checks GPUI on macOS/Windows/Linux and keeps the iOS workflow independent.
 Compiler checks do not establish visual or IME parity.
 
+`apps/gpui/Cargo.lock` holds `libc` at 0.2.186, the version the root workspace
+uses. `libc` 0.2.191 no longer has the Linux `ENOATTR` alias that `xattr` 0.2.3
+(pulled in by Zed's `zed-async-tar`) references, so it compiles on macOS and
+Windows and fails only on the Linux job. If `cargo update` moves it, restore it
+with `cargo update --manifest-path apps/gpui/Cargo.toml -p libc --precise 0.2.186`
+until that dependency moves to `xattr` 1.x.
+
 Manual acceptance after approval: use a disposable project and two chats; type
 Chinese, emoji and multiline text; switch rapidly while loading; check draft and
 response ownership; send, approve/deny, stop, load history and copy Markdown.
