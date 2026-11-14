@@ -132,10 +132,12 @@ pub struct Connections {
     open: tokio::sync::Mutex<HashMap<String, Open>>,
     /// Why a server gave no tools the last time it was asked.
     errors: std::sync::Mutex<HashMap<String, String>>,
+    /// The route HTTP servers are reached over, as Settings names it.
+    proxy: std::sync::RwLock<String>,
 }
 
 impl Connections {
-    async fn connect(server: &McpServer, token: Option<&str>) -> Result<McpClient> {
+    async fn connect(server: &McpServer, token: Option<&str>, proxy: &str) -> Result<McpClient> {
         let connecting = async {
             match &server.transport {
                 McpTransport::Stdio { command, args } => McpClient::launch(command.trim(), args)
@@ -146,7 +148,7 @@ impl Connections {
                         .map(|token| ("Authorization".to_owned(), format!("Bearer {token}")))
                         .into_iter()
                         .collect();
-                    McpClient::connect_http(url.trim(), &headers)
+                    McpClient::connect_http_with_proxy(url.trim(), &headers, proxy)
                         .await
                         .with_context(|| format!("Could not reach {}", url.trim()))
                 }
@@ -177,7 +179,8 @@ impl Connections {
         if let Some(stale) = open.remove(&server.id) {
             let _ = stale.client.shutdown().await;
         }
-        let client = Arc::new(Self::connect(server, token.as_deref()).await?);
+        let proxy = self.proxy.read().unwrap().clone();
+        let client = Arc::new(Self::connect(server, token.as_deref(), &proxy).await?);
         open.insert(
             server.id.clone(),
             Open {
@@ -187,6 +190,12 @@ impl Connections {
             },
         );
         Ok(client)
+    }
+
+    /// Names the route for connections made from now on. Connections that
+    /// are open keep theirs until they are closed.
+    pub(crate) fn set_proxy(&self, proxy: &str) {
+        *self.proxy.write().unwrap() = proxy.trim().to_owned();
     }
 
     pub(crate) async fn close(&self, id: &str) {

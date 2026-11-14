@@ -459,6 +459,18 @@ impl Backend {
         self.local(move |host| async move { host.create_conversation(&project).await })
     }
 
+    pub fn network(&self) -> Reply<wisp_dto::NetworkSettings> {
+        self.local(|host| async move { host.network().await })
+    }
+
+    /// Saves the routes and package sources; the reply is what was kept.
+    pub fn set_network(
+        &self,
+        settings: wisp_dto::NetworkSettings,
+    ) -> Reply<wisp_dto::NetworkSettings> {
+        self.local(move |host| async move { host.set_network(settings).await })
+    }
+
     pub fn environments(&self) -> Reply<EnvironmentsView> {
         self.local(|host| async move { host.environments().await })
     }

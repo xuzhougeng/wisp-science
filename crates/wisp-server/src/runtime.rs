@@ -76,7 +76,9 @@ pub(crate) async fn connector_tools(
     keys: &[(String, String)],
 ) -> Vec<Box<dyn wisp_tools::Tool>> {
     let off = disabled_connectors(store).await;
-    let Ok(client) = wisp_bio::NativeBio::new(keys) else {
+    // Connectors share the route of the user's own MCP servers.
+    let proxy = crate::network::load(store).await.mcp_proxy_url;
+    let Ok(client) = wisp_bio::NativeBio::with_proxy(keys, &proxy) else {
         return vec![];
     };
     wisp_bio::tools(Arc::new(client))
@@ -182,6 +184,10 @@ pub async fn build(
     let root = PathBuf::from(root);
     let skills = Arc::new(skill_index(config, store, &root).await);
     let mut cfg = model.provider.clone().with_session_id(frame);
+    let network = crate::network::load(store).await;
+    if let Some(route) = crate::network::route(&network.model_proxy_url) {
+        cfg.proxy = Some(route);
+    }
     // The conversation's own choice outranks the model's default.
     if reasoning_effort.is_some() {
         cfg.reasoning_effort = reasoning_effort;
@@ -248,6 +254,9 @@ pub async fn build(
         .map(|message| &mut message.content)
     {
         wisp_tools::plan::sync_plan_prompt(prompt, plan_mode);
+        // Where packages come from is part of the prompt too, for the same
+        // reason: it applies from the next turn.
+        crate::network::sync_package_guidance(prompt, &network);
     }
     if repaired > 0 {
         store

@@ -32,7 +32,7 @@ const PAGE_WIDTH: f32 = 720.;
 const STEPS: std::ops::RangeInclusive<usize> = 1..=1_000;
 
 /// A setting: its name and what it does on the left, its control on the right.
-fn setting(
+pub(super) fn setting(
     title: &'static str,
     note: impl Into<SharedString>,
     control: impl IntoElement,
@@ -84,6 +84,7 @@ impl Workspace {
             }
             Section::Credentials => self.load_credentials(window, cx),
             Section::Environments => self.load_environments(window, cx),
+            Section::Network => self.load_network(window, cx),
             Section::Usage => self.load_usage(window, cx),
             Section::Storage => self.load_storage(window, cx),
             Section::Conversation => self.load_turn_defaults(window, cx),

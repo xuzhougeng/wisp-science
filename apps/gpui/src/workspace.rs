@@ -10,6 +10,7 @@ mod panel_tabs;
 mod settings_data;
 mod settings_environments;
 mod settings_mcp;
+mod settings_network;
 mod settings_sections;
 mod settings_view;
 mod shell;
@@ -145,6 +146,11 @@ pub struct Workspace {
     open_connector: Option<String>,
     /// The SSH hosts and the default place for new work; `None` until read.
     environments: Option<wisp_server::desktop::EnvironmentsView>,
+    /// What the Network page last read from the host, its fields, and
+    /// whether the last Save was kept.
+    network: Option<wisp_dto::NetworkSettings>,
+    network_fields: [Entity<InputState>; 6],
+    network_saved: bool,
     /// The host the form changes or the remove question is about; `None`
     /// in the form means a new one.
     env_target: Option<String>,
@@ -266,6 +272,15 @@ impl Workspace {
         let mcp_name = cx.new(|cx| InputState::new(window, cx).placeholder("Lab notebook"));
         let env_fields = ["gpu", "10.0.0.8", "", "22", "~/.ssh/id_ed25519", "", ""]
             .map(|hint| cx.new(|cx| InputState::new(window, cx).placeholder(hint)));
+        let network_fields = [
+            "http://127.0.0.1:7890",
+            "http://127.0.0.1:7890",
+            "http://127.0.0.1:7890",
+            "https://conda.example.org/conda-forge",
+            "https://pypi.example.org/simple",
+            "/etc/ssl/certs/lab-ca.pem",
+        ]
+        .map(|hint| cx.new(|cx| InputState::new(window, cx).placeholder(hint)));
         let mcp_target = cx.new(|cx| InputState::new(window, cx));
         let mcp_token = cx.new(|cx| InputState::new(window, cx).masked(true));
         let skills_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find a skill…"));
@@ -429,6 +444,9 @@ impl Workspace {
             connectors_search,
             open_connector: None,
             environments: None,
+            network: None,
+            network_fields,
+            network_saved: false,
             env_target: None,
             env_fields,
             mcp_servers: None,

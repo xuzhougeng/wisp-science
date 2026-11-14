@@ -191,7 +191,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Section | WebView | GPUI | Host |
 | --- | --- | --- | --- |
 | General [常规]: language, workspace directory, per-project storage, resume last conversation, send key, selection quick actions, notifications, sound, update check, local tool paths | Yes | Partial: resume the last conversation at launch; the rest is not ported | tauri |
-| Network [网络]: proxy per channel (model API, account login, MCP, code requests), package mirrors | Yes | Missing | tauri |
+| Network [网络]: proxy per channel (model API, account login, MCP, code requests), package mirrors | Yes | Partial: routes for model requests, connectors and MCP, and code; conda mirror, Python index and CA bundle; no sign-in route, and no route of its own for one model or one MCP server | tauri |
 | Conversation [对话]: iteration limit, auto-continue, auto-compaction and threshold, follow-up questions | Yes | Partial: steps per turn, automatic compaction and its threshold; no auto-continue or follow-up questions | tauri |
 | Appearance [外观]: system/light/dark, theme, accent, fonts and sizes, live preview | Yes | Partial: system, light or dark with the Wisp palettes, applied at once; no other themes, accent, fonts or sizes | ui |
 | Pet [宠物] | Yes | Missing | ui |
@@ -322,7 +322,8 @@ before the things that hang in it.
 9. **Settings** — conversation, permissions, hooks, skills, connections,
    credentials, network, environments, storage, usage, general. *(9a done:
    the pages frame, Conversation and Permissions; 9b done: Skills; 9c done: bundled connectors; 9d done: Usage and Storage; 9e done: Credentials; 9f done: General with appearance and launch; 9g done: your own MCP
-   servers; 9h done: Environments, SSH hosts and the default)*
+   servers; 9h done: Environments, SSH hosts and the default; 9i done: Network, routes
+   and package sources)*
 10. **Project pages** — research journey, calendar, paper evidence, research
     assistant, trajectory, archive.
 11. **Project transfer and sync** — import, export, relay sync, remote access.

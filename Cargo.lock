@@ -7333,6 +7333,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
  "wisp-app",
  "wisp-bio",

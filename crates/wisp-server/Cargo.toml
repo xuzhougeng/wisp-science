@@ -14,6 +14,7 @@ serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+url = { workspace = true }
 uuid = { workspace = true }
 wisp-app = { workspace = true }
 wisp-bio = { workspace = true }

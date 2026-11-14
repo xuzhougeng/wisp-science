@@ -133,7 +133,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Branch | Under a reply: a new conversation holding everything through that turn, opened at once and listed under the one it came from |
 | Search | Titles and message text across the project, archived conversations included |
 | Command palette | One box over everything: projects, files by name in every project, conversations by title or message text, and the window's commands; arrow keys, Return, Escape |
-| Settings | Pages: General (appearance: system, light or dark; what the app opens on), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold), Skills (every skill with where it comes from, search, on or off), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Environments (the SSH hosts work can run on: add, change, remove, add from `~/.ssh/config`, and which one new work goes to), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
+| Settings | Pages: General (appearance: system, light or dark; what the app opens on), Network (a route for model requests, for connectors and MCP servers, and for the code the model runs; a conda mirror, a Python package index and a CA bundle the model is told to use), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold), Skills (every skill with where it comes from, search, on or off), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Environments (the SSH hosts work can run on: add, change, remove, add from `~/.ssh/config`, and which one new work goes to), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
 | Inbox | Conversations in any project that are waiting for you; opens across projects |
 | Read state | A finished answer is marked read once it is on screen in the active window |
 | Transcript | Virtualized Markdown, selectable text, paginated history |
@@ -238,8 +238,9 @@ Limits of this slice:
   connectors (`wisp-bio`: PubMed, bioRxiv, UniProt and the rest), which the
   WebView has always had. They only read, so they never ask for approval, and
   their schemas are deferred, so they do not fill the prompt. Turning one off
-  uses the WebView's list (`disabled_connectors`). The network proxy setting
-  is not applied, and per-conversation connector grants are not ported.
+  uses the WebView's list (`disabled_connectors`). They follow the Network
+  page's route for connectors. Per-conversation connector grants are not
+  ported.
 - Your own MCP servers are kept in this database (`desktop.mcp_servers`), not
   in the WebView's list, so each desktop has its own. A server is reached
   over HTTP, with an optional bearer token kept in the keychain, or started
@@ -257,6 +258,19 @@ Limits of this slice:
   SQLite, are read at the start of each turn, and are not handed back to the
   window once saved. The WebView's keys are a separate set and are not read.
   Its other service keys and custom environment keys are not ported.
+- Network keeps the WebView's value under its key (`network_settings`). A
+  route is empty (follow the system and the environment), `none` (connect
+  directly) or an `http`, `https` or `socks5` proxy address; an address with
+  a user name or password in it is refused, because it would be kept in the
+  database in the clear. Model requests and the bundled connectors take
+  their route from the next turn, MCP servers reached over HTTP reconnect
+  when the page is saved, and the code route is handed to the commands the
+  tools start as the usual proxy variables. That last one is one value for
+  the whole app, as in the WebView. A model request that cannot connect says
+  which route it took. The mirror, the index and the CA bundle are advice in
+  the prompt of every turn, not a rule; nothing checks that they exist. A
+  route for one model, one MCP server or a subscription sign-in is not
+  ported; the sign-in route a WebView database carries is kept as it is.
 - Environments keeps SSH hosts in the WebView's list (`ssh_hosts`) and
   registers each as the execution context `ssh:<name>`, which is what the
   model passes to `run_in_context`; the turn's prompt names them and the one
@@ -528,6 +542,16 @@ under "New work runs on", ask the model where it would run a job and confirm
 it names that host; with a reachable host, start a run on it. Press Remove,
 then Escape, then remove the host and confirm new work is back on this
 computer.
+Open Network: save a model route that cannot be reached (for example
+`http://127.0.0.1:9`) and send a message: it fails and names that route.
+Write `none`, save, and the next message is answered. Save an address with a
+password in it and confirm it is refused, names the field, and keeps what was
+typed. Give the code route an address and have the model run
+`echo $HTTPS_PROXY`: the command prints it. With a real proxy, set the
+connector route and run a PubMed search, and press Test on an HTTP MCP
+server. Set a Python package index, ask the model to install a package and
+confirm it uses the index. Restart and confirm the page still shows what was
+saved.
 Open General: choose Dark, Light and System and confirm the whole window
 changes at once; with System chosen, switch the system's appearance and
 confirm the window follows, and with Dark chosen that it does not. Choose

@@ -3610,3 +3610,134 @@ async fn files_a_turn_writes_become_artifacts_of_its_conversation() {
     }
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn network_routes_reach_the_model_and_mcp_servers_and_mirrors_reach_the_prompt() {
+    use axum::{response::IntoResponse, Json, Router};
+    use desktop::{McpServerInput, McpTransport};
+    use wisp_dto::NetworkSettings;
+
+    // A proxy on the loopback interface that answers MCP itself, whatever
+    // host it was asked for.
+    let app = Router::new().fallback(|Json(body): Json<Value>| async move {
+        let Some(id) = body.get("id").cloned() else {
+            return axum::http::StatusCode::ACCEPTED.into_response();
+        };
+        let result = match body["method"].as_str().unwrap_or_default() {
+            "initialize" => json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "fake", "version": "1"}
+            }),
+            "tools/list" => json!({"tools": [{
+                "name": "echo",
+                "description": "Say it back",
+                "inputSchema": {"type": "object"}
+            }]}),
+            _ => json!({}),
+        };
+        Json(json!({"jsonrpc": "2.0", "id": id, "result": result})).into_response()
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await });
+
+    // A model that records the route it was built with and what it is shown.
+    let routes: Arc<std::sync::Mutex<Vec<Option<String>>>> = Arc::default();
+    let shown: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let factory = |routes: &Arc<std::sync::Mutex<Vec<Option<String>>>>,
+                   shown: &Arc<std::sync::Mutex<Vec<String>>>|
+     -> ModelFactory {
+        let (routes, shown) = (routes.clone(), shown.clone());
+        Arc::new(move |cfg| {
+            routes.lock().unwrap().push(cfg.proxy.clone());
+            Box::new(Everything(shown.clone()))
+        })
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), factory(&routes, &shown))
+        .await
+        .unwrap();
+    assert_eq!(server.network().await.unwrap(), NetworkSettings::default());
+
+    // A wrong field is named and nothing is saved, the good fields included.
+    let refused = server
+        .set_network(NetworkSettings {
+            model_proxy_url: "http://127.0.0.1:7890".into(),
+            command_proxy_url: "http://user:secret@proxy.test:1".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap_err();
+    assert!(refused.to_string().starts_with("Code proxy"), "{refused}");
+    assert_eq!(server.network().await.unwrap(), NetworkSettings::default());
+
+    // An MCP server whose name does not resolve: it answers only when the
+    // request goes through the proxy.
+    let fake = server
+        .save_mcp_server(McpServerInput {
+            id: None,
+            name: "Fake".into(),
+            transport: McpTransport::Http {
+                url: "http://mcp.invalid/mcp".into(),
+            },
+            token: None,
+        })
+        .await
+        .unwrap();
+    let saved = server
+        .set_network(NetworkSettings {
+            model_proxy_url: " http://127.0.0.1:7890 ".into(),
+            mcp_proxy_url: proxy.clone(),
+            pip_index_url: "https://pypi.mirror.test/simple".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(saved.model_proxy_url, "http://127.0.0.1:7890");
+    assert_eq!(server.network().await.unwrap(), saved);
+    assert_eq!(
+        server.test_mcp_server(&fake.id).await.unwrap(),
+        ["fake__echo"]
+    );
+
+    // The next turn's model is built with the route, and is told where
+    // packages come from.
+    let last_route = || routes.lock().unwrap().last().cloned().flatten();
+    let prompt = || shown.lock().unwrap().join("\n");
+    let session = create(&server).await;
+    send(&server, &session, "go").await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    assert_eq!(last_route().as_deref(), Some("http://127.0.0.1:7890"));
+    assert!(prompt().contains("<wisp-package-mirrors>"));
+    assert!(prompt().contains("\"https://pypi.mirror.test/simple\""));
+
+    // `none` is passed on as it is; with the mirror gone the same
+    // conversation is no longer told about it.
+    let direct = server
+        .set_network(NetworkSettings {
+            model_proxy_url: "none".into(),
+            mcp_proxy_url: proxy.clone(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    shown.lock().unwrap().clear();
+    send(&server, &session, "again").await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    assert_eq!(last_route().as_deref(), Some("none"));
+    assert!(!prompt().contains("<wisp-package-mirrors>"), "{}", prompt());
+
+    // The routes are kept and apply again when the host next opens.
+    server.shutdown().await;
+    drop(server);
+    let server = Server::open_with_models(config(temp.path()), factory(&routes, &shown))
+        .await
+        .unwrap();
+    assert_eq!(server.network().await.unwrap(), direct);
+    assert_eq!(
+        server.test_mcp_server(&fake.id).await.unwrap(),
+        ["fake__echo"]
+    );
+    server.shutdown().await;
+}

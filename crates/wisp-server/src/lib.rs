@@ -2,6 +2,7 @@ pub mod config;
 pub mod desktop;
 mod files;
 pub mod mcp;
+mod network;
 mod output;
 mod runtime;
 #[cfg(test)]
@@ -142,6 +143,12 @@ impl Server {
         }
         let runs = wisp_runs::RunManager::new();
         runs.recover(&store).await.map_err(anyhow::Error::msg)?;
+        let routes = network::load(&store).await;
+        // Programs the tools start take their route from here; the route is
+        // one per process, as in the WebView desktop.
+        wisp_tools::network::set_command_proxy(&routes.command_proxy_url);
+        let mcp = mcp::Connections::default();
+        mcp.set_proxy(&routes.mcp_proxy_url);
         let model = match config.model.take() {
             Some(model) => desktop::ModelState::environment(model),
             None => desktop::ModelState::saved(&store, secrets.as_ref()).await,
@@ -161,7 +168,7 @@ impl Server {
             model: std::sync::RwLock::new(model),
             secrets,
             library: Default::default(),
-            mcp: Default::default(),
+            mcp,
         })))
     }
 
@@ -515,7 +522,7 @@ impl Server {
             });
             let mut error = match task.await {
                 Ok(Ok(())) => None,
-                Ok(Err(e)) => Some(format!("{e:#}")),
+                Ok(Err(e)) => Some(network::explain(&server.0.store, &format!("{e:#}")).await),
                 Err(_) => Some("Agent task stopped unexpectedly".into()),
             };
             if let Err(e) = server

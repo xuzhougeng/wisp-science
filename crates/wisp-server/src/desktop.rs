@@ -548,7 +548,12 @@ impl Server {
     /// Sends one short request with the form as typed, without saving it,
     /// and returns what the model said.
     pub async fn test_model(&self, input: ModelInput) -> Result<String> {
-        let (model, _) = self.resolve_input(&input).await?;
+        let (mut model, _) = self.resolve_input(&input).await?;
+        // A test goes the way a turn would.
+        let routes = crate::network::load(&self.0.store).await;
+        if let Some(route) = crate::network::route(&routes.model_proxy_url) {
+            model.provider.proxy = Some(route);
+        }
         let provider = (self.0.models)(model.provider);
         let ask = [wisp_llm::Message::user("Reply with the single word: ready")];
         let reply = tokio::time::timeout(
@@ -556,8 +561,14 @@ impl Server {
             provider.complete(&ask, &[]),
         )
         .await
-        .context("The model did not answer within 30 seconds")?
-        .map_err(|error| anyhow::anyhow!("{error}"))?;
+        .context("The model did not answer within 30 seconds")?;
+        let reply = match reply {
+            Ok(reply) => reply,
+            Err(error) => bail!(
+                "{}",
+                crate::network::explain(&self.0.store, &error.to_string()).await
+            ),
+        };
         // One line is enough to show that it answered.
         let text: String = reply
             .content
@@ -1696,6 +1707,28 @@ impl Server {
                 .collect()
         })
         .await?)
+    }
+
+    /// The routes the host's own traffic takes and where packages are
+    /// installed from.
+    pub async fn network(&self) -> Result<wisp_dto::NetworkSettings> {
+        Ok(crate::network::load(&self.0.store).await)
+    }
+
+    /// Saves the routes, or changes nothing and says which field is wrong.
+    /// Model calls and connectors follow from the next turn; programs the
+    /// tools start and MCP servers follow at once, the latter by connecting
+    /// again.
+    pub async fn set_network(
+        &self,
+        settings: wisp_dto::NetworkSettings,
+    ) -> Result<wisp_dto::NetworkSettings> {
+        let _admission = self.0.admission.read().await;
+        let saved = crate::network::save(&self.0.store, settings).await?;
+        wisp_tools::network::set_command_proxy(&saved.command_proxy_url);
+        self.0.mcp.set_proxy(&saved.mcp_proxy_url);
+        self.0.mcp.close_all().await;
+        Ok(saved)
     }
 
     /// The SSH hosts work can run on, which of them (if any) new work goes
