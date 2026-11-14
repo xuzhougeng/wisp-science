@@ -612,6 +612,21 @@ async fn a_running_conversation_is_not_archived_or_deleted() {
             .transfer_conversation(PROJECT, &session, &lab, true)
             .await
             .map(|_| ()),
+        server
+            .rewind_conversation(
+                PROJECT,
+                &session,
+                &desktop::TurnRef {
+                    from_end: 0,
+                    text: "write the answer".into(),
+                },
+            )
+            .await
+            .map(|_| ()),
+        server
+            .branch_conversation(PROJECT, &session, None)
+            .await
+            .map(|_| ()),
     ] {
         assert!(result.unwrap_err().to_string().contains("Stop the running"));
     }
@@ -898,6 +913,201 @@ async fn desktop_groups_batches_and_moves_conversations_between_projects() {
     assert_eq!(
         ids(server.conversations(&lab, "", false).await.unwrap()),
         arrived
+    );
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn rewind_and_branch_act_on_the_named_message_or_change_nothing() {
+    use desktop::TurnRef;
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    for message in ["first question", "second question", "third question"] {
+        send(&server, &session, message).await.unwrap();
+        wait_for(&server, &session, |s| !s.running).await;
+    }
+    // The transcript as a client sees it: who said what, in order.
+    let said = |id: String| {
+        let server = &server;
+        async move {
+            snapshot(server, &id)
+                .await
+                .items
+                .into_iter()
+                .map(|item| format!("{}: {}", item.role, item.text))
+                .collect::<Vec<_>>()
+        }
+    };
+    let whole = said(session.clone()).await;
+    assert_eq!(
+        whole,
+        [
+            "user: first question",
+            "assistant: Saved result",
+            "user: second question",
+            "assistant: Saved result",
+            "user: third question",
+            "assistant: Saved result",
+        ]
+    );
+    let turn = |from_end: usize, text: &str| TurnRef {
+        from_end,
+        text: text.into(),
+    };
+
+    // A reference that does not match the saved conversation is refused.
+    for wrong in [
+        turn(0, "second question"),
+        turn(1, "second"),
+        turn(3, "first question"),
+        turn(5_000, "first question"),
+    ] {
+        for result in [
+            server
+                .rewind_conversation(PROJECT, &session, &wrong)
+                .await
+                .map(|_| ()),
+            server
+                .branch_conversation(PROJECT, &session, Some(&wrong))
+                .await
+                .map(|_| ()),
+        ] {
+            assert_eq!(result.unwrap_err().to_string(), desktop::TURN_NOT_FOUND);
+        }
+    }
+    assert!(server
+        .rewind_conversation("other-project", &session, &turn(0, "third question"))
+        .await
+        .is_err());
+    assert_eq!(said(session.clone()).await, whole);
+    assert_eq!(
+        server
+            .conversations(PROJECT, "", false)
+            .await
+            .unwrap()
+            .rows
+            .len(),
+        1
+    );
+
+    // A branch copies the conversation through the named message's reply
+    // and takes the source's group and choices with it.
+    let group = server.create_folder(PROJECT, "Screens").await.unwrap();
+    server
+        .group_conversation(PROJECT, &session, Some(&group.id))
+        .await
+        .unwrap();
+    server
+        .set_conversation_options(
+            PROJECT,
+            &session,
+            desktop::ConversationOptions {
+                full_access: true,
+                plan_first: true,
+                reasoning_effort: "high".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let branch = server
+        .branch_conversation(PROJECT, &session, Some(&turn(1, "second question")))
+        .await
+        .unwrap();
+    assert_eq!(said(branch.clone()).await, whole[..4]);
+    let full = server
+        .branch_conversation(PROJECT, &session, None)
+        .await
+        .unwrap();
+    assert_eq!(said(full.clone()).await, whole);
+    // Naming the last message means the whole conversation too.
+    let last = server
+        .branch_conversation(PROJECT, &session, Some(&turn(0, "third question")))
+        .await
+        .unwrap();
+    assert_eq!(said(last.clone()).await, whole);
+
+    let list = server.conversations(PROJECT, "", false).await.unwrap();
+    assert_eq!(list.rows.len(), 4);
+    for id in [&branch, &full, &last] {
+        assert_eq!(list.branched.get(id), Some(&session));
+        assert_eq!(list.grouped.get(id), Some(&group.id));
+        let row = list.rows.iter().find(|row| &row.id == id).unwrap();
+        assert!(row.title.ends_with(" (branch)"), "{}", row.title);
+        assert_eq!(row.status, "complete");
+    }
+    assert_eq!(list.branched.get(&session), None);
+    let options = server
+        .conversation_status(PROJECT, &branch)
+        .await
+        .unwrap()
+        .options;
+    assert!(options.full_access && options.plan_first);
+    assert_eq!(options.reasoning_effort, "high");
+
+    // A conversation with branches is not deleted or moved from under them.
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    for result in [
+        server.delete_conversation(PROJECT, &session).await,
+        server
+            .transfer_conversation(PROJECT, &session, &lab, false)
+            .await
+            .map(|_| ()),
+    ] {
+        assert!(result.unwrap_err().to_string().contains("branches"));
+    }
+    server.delete_conversation(PROJECT, &last).await.unwrap();
+    server.delete_conversation(PROJECT, &full).await.unwrap();
+
+    // Rewinding hands back the message and removes it and what followed.
+    // The branch made earlier keeps its copy.
+    let text = server
+        .rewind_conversation(PROJECT, &session, &turn(1, "second question"))
+        .await
+        .unwrap();
+    assert_eq!(text, "second question");
+    assert_eq!(said(session.clone()).await, whole[..2]);
+    assert_eq!(said(branch.clone()).await, whole[..4]);
+    // The same reference no longer names anything.
+    assert!(server
+        .rewind_conversation(PROJECT, &session, &turn(1, "second question"))
+        .await
+        .is_err());
+
+    // The conversation carries on from where it was cut.
+    send(&server, &session, "a better question").await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    assert_eq!(
+        said(session.clone()).await,
+        [
+            "user: first question",
+            "assistant: Saved result",
+            "user: a better question",
+            "assistant: Saved result",
+        ]
+    );
+
+    // Back to the very first message leaves an empty conversation that
+    // still works.
+    server
+        .rewind_conversation(PROJECT, &session, &turn(1, "first question"))
+        .await
+        .unwrap();
+    assert!(said(session.clone()).await.is_empty());
+    assert!(server
+        .branch_conversation(PROJECT, &session, None)
+        .await
+        .is_err());
+    send(&server, &session, "start over").await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    assert_eq!(
+        said(session.clone()).await,
+        ["user: start over", "assistant: Saved result"]
     );
     server.shutdown().await;
 }

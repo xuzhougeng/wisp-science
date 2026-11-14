@@ -24,7 +24,7 @@ use wisp_dto::{
 };
 
 use wisp_dto::native_conversations::SendRequest;
-use wisp_server::desktop::{ArtifactRow, ConversationOptions, ConversationStatus, Folder};
+use wisp_server::desktop::{ArtifactRow, ConversationOptions, ConversationStatus, Folder, TurnRef};
 
 use crate::{
     backend::{Backend, receive},
@@ -80,6 +80,10 @@ pub struct Workspace {
     folders: Vec<Folder>,
     /// Conversation id to the id of its group.
     grouped: HashMap<String, String>,
+    /// Branch id to the id of the conversation it was branched from.
+    branched: HashMap<String, String>,
+    /// The message the rewind question is about.
+    rewind_turn: Option<TurnRef>,
     /// Keys of the sections that are folded.
     collapsed: HashSet<String>,
     /// Conversations picked in select mode.
@@ -268,6 +272,8 @@ impl Workspace {
             arrangement: Arrangement::default(),
             folders: vec![],
             grouped: HashMap::new(),
+            branched: HashMap::new(),
+            rewind_turn: None,
             collapsed: HashSet::new(),
             picks: Picks::default(),
             folder_target: None,
@@ -330,6 +336,7 @@ impl Workspace {
                 self.focus_composer(window, cx);
             }
             Some(Layer::FolderMenu | Layer::ConfirmDeleteFolder) => self.folder_target = None,
+            Some(Layer::ConfirmRewind) => self.rewind_turn = None,
             // Menus and questions that hold no focus of their own.
             Some(
                 Layer::SortMenu
@@ -405,6 +412,7 @@ impl Workspace {
             self.picks.clear();
             self.folders.clear();
             self.grouped.clear();
+            self.branched.clear();
             self.folder_target = None;
             self.notice = None;
         }
@@ -414,6 +422,7 @@ impl Workspace {
             Layer::ConfirmDelete,
             Layer::GroupMenu,
             Layer::TransferMenu,
+            Layer::ConfirmRewind,
             Layer::ConfirmFullAccess,
             Layer::EffortMenu,
             Layer::ModelMenu,
@@ -421,6 +430,7 @@ impl Workspace {
             self.layers.close(layer);
         }
         if self.state.session != session {
+            self.rewind_turn = None;
             self.status = None;
             self.copied = None;
             // The list belonged to the conversation, or project, being left.
@@ -673,6 +683,7 @@ impl Workspace {
                         this.pinned = list.pinned;
                         this.folders = list.folders;
                         this.grouped = list.grouped;
+                        this.branched = list.branched;
                         this.picks.keep(&this.sessions);
                         if browsing && this.state.session.is_none() && !this.pending {
                             // The first one on screen, whatever the sections.

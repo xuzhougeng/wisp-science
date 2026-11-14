@@ -454,7 +454,7 @@ pub async fn run(
     Ok(())
 }
 
-fn bounded(text: &str) -> String {
+pub(crate) fn bounded(text: &str) -> String {
     const LIMIT: usize = 128 * 1024;
     if text.len() <= LIMIT {
         return text.into();

@@ -353,7 +353,28 @@ pub struct ConversationList {
     pub folders: Vec<Folder>,
     /// Conversation id to the id of the group it is in.
     pub grouped: HashMap<String, String>,
+    /// Branch id to the id of the conversation it was branched from.
+    pub branched: HashMap<String, String>,
 }
+
+/// Names one user message of a conversation without trusting a row number:
+/// how many user messages come after it, and what it says. A reference that
+/// does not match the saved conversation is refused, never resolved to the
+/// nearest guess.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TurnRef {
+    /// 0 is the last user message.
+    pub from_end: usize,
+    /// The message as the transcript shows it.
+    pub text: String,
+}
+
+/// Said when a [`TurnRef`] names no saved message. The WebView desktop
+/// refuses the same case in the same words.
+pub const TURN_NOT_FOUND: &str =
+    "That message could not be found in the saved conversation. Nothing was changed.";
+/// User messages a [`TurnRef`] may count back over.
+const TURN_LIMIT: usize = 5_000;
 
 /// A named group of conversations in one project.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -729,15 +750,19 @@ impl Server {
     ) -> Result<ConversationList> {
         let query = query.trim();
         let mut grouped = HashMap::new();
+        let mut branched = HashMap::new();
         let rows: Vec<SessionSearchInfo> = if archived {
             self.0
                 .store
                 .list_sessions_page_with_visibility(project, None, 100, Some(true), query)
                 .await?
                 .into_iter()
-                .map(|(id, title, ts, folder, _)| {
+                .map(|(id, title, ts, folder, source)| {
                     if let Some(folder) = folder {
                         grouped.insert(id.clone(), folder);
+                    }
+                    if let Some(source) = source {
+                        branched.insert(id.clone(), source);
                     }
                     SessionSearchInfo {
                         id,
@@ -756,9 +781,15 @@ impl Server {
                 .session_rows(Some(project), query, !query.is_empty())
                 .await?;
             let listed: HashSet<&str> = rows.iter().map(|row| row.id.as_str()).collect();
-            for (id, _, _, folder, _) in self.0.store.list_sessions(project).await? {
-                if let Some(folder) = folder.filter(|_| listed.contains(id.as_str())) {
-                    grouped.insert(id, folder);
+            for (id, _, _, folder, source) in self.0.store.list_sessions(project).await? {
+                if !listed.contains(id.as_str()) {
+                    continue;
+                }
+                if let Some(folder) = folder {
+                    grouped.insert(id.clone(), folder);
+                }
+                if let Some(source) = source {
+                    branched.insert(id, source);
                 }
             }
             rows
@@ -784,6 +815,7 @@ impl Server {
             pinned,
             folders,
             grouped,
+            branched,
         })
     }
 
@@ -941,6 +973,7 @@ impl Server {
                 .copy_session_to_project(session, project, target, &id)
                 .await?;
         } else {
+            self.without_branches(project, session, "move").await?;
             self.0
                 .store
                 .move_session_to_project(session, project, target, &id)
@@ -962,6 +995,184 @@ impl Server {
         }
         if !keep {
             self.forget(session, &live).await?;
+        }
+        Ok(id)
+    }
+
+    /// Finds the user message `turn` names: its sequence number and that of
+    /// the next user message, if there is one.
+    async fn locate_turn(&self, session: &str, turn: &TurnRef) -> Result<(i64, Option<i64>)> {
+        ensure!(turn.from_end < TURN_LIMIT, TURN_NOT_FOUND);
+        // The last `from_end + 1` turns, starting at the one that is meant.
+        let page = self
+            .0
+            .store
+            .load_session_transcript_page(session, None, turn.from_end + 1)
+            .await?;
+        let users: Vec<_> = page
+            .messages
+            .iter()
+            .filter(|(_, message)| message.role == wisp_llm::Role::User)
+            .collect();
+        ensure!(users.len() == turn.from_end + 1, TURN_NOT_FOUND);
+        let (seq, message) = users[0];
+        ensure!(
+            crate::runtime::bounded(&message.content.as_text()) == turn.text,
+            TURN_NOT_FOUND
+        );
+        Ok((*seq, users.get(1).map(|(seq, _)| *seq)))
+    }
+
+    /// Removes the user message `turn` names and everything after it, so it
+    /// can be written again. Returns its text without the list of attached
+    /// files. Files the removed turns wrote, their runs and their artifacts
+    /// stay as they are.
+    pub async fn rewind_conversation(
+        &self,
+        project: &str,
+        session: &str,
+        turn: &TurnRef,
+    ) -> Result<String> {
+        let live = self.session(session);
+        // Acceptance takes the same lock, so no turn can start mid-rewind.
+        let _accept = live.accept.lock().await;
+        let _admission = self.0.admission.read().await;
+        self.own_conversation(project, session).await?;
+        self.ensure_idle(session, "rewind")?;
+        let store = &self.0.store;
+        store.require_unarchived_session(session).await?;
+        ensure!(
+            !matches!(
+                store.session_branch_state(session).await?,
+                Some("merged" | "orphaned")
+            ),
+            "A branch that was merged or lost its source cannot be rewound"
+        );
+        let (seq, _) = self.locate_turn(session, turn).await?;
+        let keep = seq - 1;
+        // The row before the message decides which context the conversation
+        // returns to. A missing row is refused: assuming the first context
+        // would delete every later one.
+        let epoch = if keep <= 0 {
+            0
+        } else {
+            store
+                .resolve_message_epoch(session, keep)
+                .await?
+                .context(TURN_NOT_FOUND)?
+        };
+        store.rewind_to_seq(session, epoch, keep).await?;
+        {
+            // What the last turn left behind describes rows that are gone.
+            let mut live = live.live.lock().unwrap();
+            live.generation += 1;
+            live.messages.clear();
+            live.outcomes.clear();
+            live.usage = None;
+            live.error = None;
+        }
+        Ok(message_body(&turn.text).to_owned())
+    }
+
+    /// Starts a new conversation in the same project from a copy of this
+    /// one: all of it, or with `upto` everything through that message's
+    /// reply. The branch is listed under its source, in the same group, with
+    /// the same model, effort, Plan first and Full access choices. Returns
+    /// its id.
+    pub async fn branch_conversation(
+        &self,
+        project: &str,
+        session: &str,
+        upto: Option<&TurnRef>,
+    ) -> Result<String> {
+        let live = self.session(session);
+        // The copy must not race a turn that is still writing its rows.
+        let _accept = live.accept.lock().await;
+        let _admission = self.0.admission.read().await;
+        self.own_conversation(project, session).await?;
+        self.ensure_idle(session, "branch")?;
+        let store = &self.0.store;
+        let cut = match upto {
+            Some(turn) => self.locate_turn(session, turn).await?.1,
+            None => None,
+        };
+        let messages: Vec<wisp_llm::Message> = match cut {
+            // Through the last turn: the conversation as the model has it.
+            None => store.load_messages(session).await?,
+            Some(next) => {
+                let keep = next - 1;
+                let epoch = store
+                    .resolve_message_epoch(session, keep)
+                    .await?
+                    .context(TURN_NOT_FOUND)?;
+                store
+                    .load_messages_in_epoch(session, epoch)
+                    .await?
+                    .into_iter()
+                    .filter(|(seq, _)| *seq <= keep)
+                    .map(|(_, message)| message)
+                    .collect()
+            }
+        };
+        ensure!(
+            messages
+                .iter()
+                .any(|message| message.role == wisp_llm::Role::User),
+            "There is nothing to branch from yet"
+        );
+        let options = self.stored_options(session).await?;
+        let title = store.session_title(session).await?.unwrap_or_default();
+        let folder = store
+            .list_sessions(project)
+            .await?
+            .into_iter()
+            .find(|(id, ..)| id == session)
+            .and_then(|(_, _, _, folder, _)| folder);
+        let id = uuid::Uuid::new_v4().to_string();
+        store
+            .create_frame(&id, project, "main", &self.model_id(&options.model))
+            .await?;
+        let filled = async {
+            for (index, message) in messages.iter().enumerate() {
+                store.append_message(&id, index as i64 + 1, message).await?;
+            }
+            store
+                .rename_session(&id, project, &branch_title(&title))
+                .await?;
+            store.set_session_branched_from(&id, session).await?;
+            if let Some(folder) = &folder {
+                store
+                    .move_session_to_folder(&id, project, Some(folder))
+                    .await?;
+            }
+            if !options.reasoning_effort.is_empty() {
+                store
+                    .set_frame_reasoning_effort(&id, project, Some(&options.reasoning_effort))
+                    .await?;
+            }
+            for (key, value) in [
+                (model_choice_key(&id), options.model.as_str()),
+                (
+                    plan_mode_key(&id),
+                    if options.plan_first { "true" } else { "" },
+                ),
+                (
+                    full_access_key(&id),
+                    if options.full_access { "1" } else { "" },
+                ),
+            ] {
+                if !value.is_empty() {
+                    store.set_setting(&key, value).await?;
+                }
+            }
+            // Its messages were read where they were written.
+            store.mark_frame_seen(&id).await
+        }
+        .await;
+        if let Err(error) = filled {
+            // Half a branch is worse than none.
+            let _ = store.delete_session(&id, project).await;
+            return Err(error);
         }
         Ok(id)
     }
@@ -1008,6 +1219,19 @@ impl Server {
             .store
             .set_session_pinned(session, project, pinned)
             .await
+    }
+
+    /// A conversation with branches under it stays until they are gone.
+    async fn without_branches(&self, project: &str, session: &str, action: &str) -> Result<()> {
+        ensure!(
+            !self
+                .0
+                .store
+                .session_has_conversation_branches(session, project)
+                .await?,
+            "Delete this conversation's branches before you {action} it"
+        );
+        Ok(())
     }
 
     fn ensure_idle(&self, session: &str, action: &str) -> Result<()> {
@@ -1315,6 +1539,7 @@ impl Server {
         let _admission = self.0.admission.read().await;
         self.own_conversation(project, session).await?;
         self.ensure_idle(session, "delete")?;
+        self.without_branches(project, session, "delete").await?;
         self.0.store.delete_session(session, project).await?;
         self.forget(session, &live).await
     }
@@ -1366,6 +1591,31 @@ pub struct ConversationStatus {
     pub allowed_tools: Vec<String>,
     /// What the model is thinking right now; empty when it is not.
     pub reasoning: String,
+}
+
+/// A user message without the list of files that was sent with it.
+fn message_body(text: &str) -> &str {
+    const FILES: &str = "Uploaded files: ";
+    match text.rsplit_once("\n\n") {
+        Some((body, last)) if last.starts_with(FILES) => body,
+        None if text.starts_with(FILES) => "",
+        _ => text,
+    }
+}
+
+/// What a branch of the conversation titled `source` is called.
+fn branch_title(source: &str) -> String {
+    const SUFFIX: &str = " (branch)";
+    let source = source.trim();
+    let source = if source.is_empty() {
+        "Conversation"
+    } else {
+        source
+    };
+    let room = TITLE_LIMIT - SUFFIX.chars().count();
+    let mut title: String = source.chars().take(room).collect();
+    title.push_str(SUFFIX);
+    title
 }
 
 const PREFERENCE_LIMIT: usize = 2_000;
@@ -1425,6 +1675,30 @@ mod tests {
             model: model.into(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_rewound_message_comes_back_without_its_file_list() {
+        assert_eq!(message_body("plain"), "plain");
+        assert_eq!(message_body("two\n\nparagraphs"), "two\n\nparagraphs");
+        assert_eq!(
+            message_body("look at this\n\nUploaded files: a.csv, b.png"),
+            "look at this"
+        );
+        assert_eq!(message_body("Uploaded files: a.csv"), "");
+        assert_eq!(
+            message_body("one\n\ntwo\n\nUploaded files: a.csv"),
+            "one\n\ntwo"
+        );
+    }
+
+    #[test]
+    fn a_branch_is_named_after_its_source_within_the_title_limit() {
+        assert_eq!(branch_title(" Kinase screen "), "Kinase screen (branch)");
+        assert_eq!(branch_title(""), "Conversation (branch)");
+        let long = branch_title(&"基".repeat(300));
+        assert_eq!(long.chars().count(), TITLE_LIMIT);
+        assert!(long.ends_with(" (branch)"));
     }
 
     #[test]

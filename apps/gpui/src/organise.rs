@@ -112,8 +112,13 @@ pub enum Row {
         folder: Option<String>,
         collapsed: bool,
     },
-    /// Index into the conversations the layout was made from.
-    Conversation(usize),
+    Conversation {
+        /// Index into the conversations the layout was made from.
+        index: usize,
+        /// How many branches deep it sits under the conversation it came
+        /// from; 0 for one that is nobody's branch here.
+        depth: usize,
+    },
 }
 
 /// Everything a layout is made from.
@@ -123,6 +128,8 @@ pub struct Listed<'a> {
     pub folders: &'a [Folder],
     /// Conversation id to the id of its group.
     pub grouped: &'a HashMap<String, String>,
+    /// Branch id to the id of the conversation it was branched from.
+    pub branched: &'a HashMap<String, String>,
     /// Keys of folded sections.
     pub collapsed: &'a HashSet<String>,
     /// Unix seconds.
@@ -142,12 +149,63 @@ fn seconds(ts: i64) -> i64 {
     if ts > 100_000_000_000 { ts / 1000 } else { ts }
 }
 
+/// Each conversation of `order` that is nobody's branch here, followed by
+/// its branches and theirs, as `(index, depth)`. A branch whose source is
+/// not listed stands on its own.
+fn families(listed: &Listed, order: &[usize]) -> Vec<Vec<(usize, usize)>> {
+    let place: HashMap<&str, usize> = listed
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| (row.id.as_str(), index))
+        .collect();
+    let mut branches: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut sources = Vec::new();
+    for &index in order {
+        let source = listed
+            .branched
+            .get(&listed.rows[index].id)
+            .and_then(|id| place.get(id.as_str()))
+            .filter(|source| **source != index);
+        match source {
+            Some(source) => branches.entry(*source).or_default().push(index),
+            None => sources.push(index),
+        }
+    }
+    let mut placed = HashSet::new();
+    let mut families = Vec::new();
+    for source in sources {
+        let mut family = Vec::new();
+        let mut next = vec![(source, 0)];
+        while let Some((index, depth)) = next.pop() {
+            if !placed.insert(index) {
+                continue;
+            }
+            family.push((index, depth));
+            for branch in branches.get(&index).into_iter().flatten().rev() {
+                next.push((*branch, depth + 1));
+            }
+        }
+        families.push(family);
+    }
+    // Links that form a ring have no source to hang from; list their
+    // members plainly instead of losing them.
+    for &index in order {
+        if placed.insert(index) {
+            families.push(vec![(index, 0)]);
+        }
+    }
+    families
+}
+
 /// The rows of the conversation list, top to bottom. Pinned conversations
-/// lead their section; the chosen order applies after that.
+/// lead their section; the chosen order applies after that; a branch sits
+/// under the conversation it came from.
 pub fn layout(listed: &Listed, arrangement: Arrangement, listing: Listing) -> Vec<Row> {
     let mut order: Vec<usize> = (0..listed.rows.len()).collect();
+    let row = |(index, depth): (usize, usize)| Row::Conversation { index, depth };
     if listing == Listing::Search {
-        return order.into_iter().map(Row::Conversation).collect();
+        return order.into_iter().map(|index| row((index, 0))).collect();
     }
     let pinned = |index: &usize| listed.pinned.contains(&listed.rows[*index].id);
     order.sort_by(|a, b| {
@@ -165,8 +223,11 @@ pub fn layout(listed: &Listed, arrangement: Arrangement, listing: Listing) -> Ve
             })
     });
 
-    // Sections in display order: key, label, the group it stands for.
-    let mut sections: Vec<(String, String, Option<String>, Vec<usize>)> = Vec::new();
+    let families = families(listed, &order);
+
+    // Sections in display order: key, label, the group it stands for. A
+    // family goes where the conversation at its head belongs.
+    let mut sections: Vec<(String, String, Option<String>, Vec<(usize, usize)>)> = Vec::new();
     match arrangement.grouping {
         Grouping::Groups if listing == Listing::Browse && !listed.folders.is_empty() => {
             for folder in listed.folders {
@@ -179,13 +240,13 @@ pub fn layout(listed: &Listed, arrangement: Arrangement, listing: Listing) -> Ve
             }
             sections.push(("ungrouped".into(), "No group".into(), None, Vec::new()));
             let last = sections.len() - 1;
-            for index in order {
-                let folder = listed.grouped.get(&listed.rows[index].id);
+            for family in families {
+                let folder = listed.grouped.get(&listed.rows[family[0].0].id);
                 let section = sections
                     .iter()
                     .position(|(_, _, id, _)| id.is_some() && id.as_ref() == folder)
                     .unwrap_or(last);
-                sections[section].3.push(index);
+                sections[section].3.extend(family);
             }
             // A group the user made is shown even when it is empty.
             if sections[last].3.is_empty() {
@@ -196,14 +257,14 @@ pub fn layout(listed: &Listed, arrangement: Arrangement, listing: Listing) -> Ve
             for (index, (_, label)) in AGES.iter().enumerate() {
                 sections.push((format!("age:{index}"), (*label).into(), None, Vec::new()));
             }
-            for index in order {
-                let age = listed.now - seconds(listed.rows[index].activity_at);
+            for family in families {
+                let age = listed.now - seconds(listed.rows[family[0].0].activity_at);
                 let section = AGES.iter().position(|(limit, _)| age < *limit).unwrap_or(3);
-                sections[section].3.push(index);
+                sections[section].3.extend(family);
             }
             sections.retain(|(.., members)| !members.is_empty());
         }
-        _ => return order.into_iter().map(Row::Conversation).collect(),
+        _ => return families.into_iter().flatten().map(row).collect(),
     }
 
     let mut rows = Vec::new();
@@ -217,7 +278,7 @@ pub fn layout(listed: &Listed, arrangement: Arrangement, listing: Listing) -> Ve
             collapsed,
         });
         if !collapsed {
-            rows.extend(members.into_iter().map(Row::Conversation));
+            rows.extend(members.into_iter().map(row));
         }
     }
     rows
@@ -227,7 +288,7 @@ pub fn layout(listed: &Listed, arrangement: Arrangement, listing: Listing) -> Ve
 pub fn visible(rows: &[Row], sessions: &[SessionSearchInfo]) -> Vec<String> {
     rows.iter()
         .filter_map(|row| match row {
-            Row::Conversation(index) => sessions.get(*index).map(|row| row.id.clone()),
+            Row::Conversation { index, .. } => sessions.get(*index).map(|row| row.id.clone()),
             Row::Section { .. } => None,
         })
         .collect()
@@ -377,7 +438,8 @@ mod tests {
         }
     }
 
-    /// Renders a layout as text: `[label n]` for a section, ids otherwise.
+    /// Renders a layout as text: `[label n]` for a section, ids otherwise,
+    /// each `>` in front of an id being one level of branching.
     fn shape(rows: &[Row], sessions: &[SessionSearchInfo]) -> String {
         rows.iter()
             .map(|row| match row {
@@ -390,7 +452,9 @@ mod tests {
                     "[{label} {count}{}]",
                     if *collapsed { " folded" } else { "" }
                 ),
-                Row::Conversation(index) => sessions[*index].id.clone(),
+                Row::Conversation { index, depth } => {
+                    format!("{}{}", ">".repeat(*depth), sessions[*index].id)
+                }
             })
             .collect::<Vec<_>>()
             .join(" ")
@@ -443,6 +507,7 @@ mod tests {
                 pinned: &pinned,
                 folders,
                 grouped: &grouped,
+                branched: &HashMap::new(),
                 collapsed,
                 now: NOW,
             };
@@ -481,6 +546,7 @@ mod tests {
             pinned: &[],
             folders: &folders,
             grouped: &grouped,
+            branched: &HashMap::new(),
             collapsed: &HashSet::new(),
             now: NOW,
         };
@@ -506,6 +572,7 @@ mod tests {
             pinned: &[],
             folders: &[],
             grouped: &HashMap::new(),
+            branched: &HashMap::new(),
             collapsed: &HashSet::new(),
             now: NOW,
         };
@@ -526,6 +593,92 @@ mod tests {
             shape(&layout(&listed, by_date, Listing::Search), &sessions),
             "old week today millis"
         );
+    }
+
+    #[test]
+    fn a_branch_sits_under_its_source_wherever_sorting_would_put_it() {
+        let sessions = [
+            row("main", "Main", 50),
+            // Newer than its source, and a branch of a branch after it.
+            row("b1", "Branch one", 10),
+            row("b2", "Branch two", 5),
+            row("other", "Other", 20),
+            // Its source is archived, so it is not in this list.
+            row("stray", "Stray", 30),
+            row("deep", "Deep", 1),
+        ];
+        let branched: HashMap<String, String> = [
+            ("b1", "main"),
+            ("b2", "main"),
+            ("deep", "b1"),
+            ("stray", "archived"),
+        ]
+        .into_iter()
+        .map(|(id, source)| (id.to_string(), source.to_string()))
+        .collect();
+        let folders = [folder("f", "Screens")];
+        let grouped = HashMap::from([("main".to_string(), "f".to_string())]);
+        let pinned = ["b1".to_string()];
+        let collapsed = HashSet::new();
+        let flat = |branched: &HashMap<String, String>| {
+            let listed = Listed {
+                rows: &sessions,
+                pinned: &pinned,
+                folders: &[],
+                grouped: &grouped,
+                branched,
+                collapsed: &collapsed,
+                now: NOW,
+            };
+            shape(
+                &layout(&listed, Arrangement::default(), Listing::Browse),
+                &sessions,
+            )
+        };
+        // The pinned branch leads its siblings, not the list.
+        assert_eq!(flat(&branched), "other stray main >b1 >>deep >b2");
+
+        // With groups, a family is filed where its source is, whatever
+        // group its branches say.
+        let filed = Listed {
+            rows: &sessions,
+            pinned: &pinned,
+            folders: &folders,
+            grouped: &grouped,
+            branched: &branched,
+            collapsed: &collapsed,
+            now: NOW,
+        };
+        let rows = layout(&filed, Arrangement::default(), Listing::Browse);
+        assert_eq!(
+            shape(&rows, &sessions),
+            "[Screens 4] main >b1 >>deep >b2 [No group 2] other stray"
+        );
+        assert_eq!(
+            visible(&rows, &sessions),
+            ["main", "b1", "deep", "b2", "other", "stray"]
+        );
+        // Search results are a flat ranking.
+        assert_eq!(
+            shape(
+                &layout(&filed, Arrangement::default(), Listing::Search),
+                &sessions
+            ),
+            "main b1 b2 other stray deep"
+        );
+
+        // Two conversations that name each other still both show.
+        let ring: HashMap<String, String> = [("main", "other"), ("other", "main")]
+            .into_iter()
+            .map(|(id, source)| (id.to_string(), source.to_string()))
+            .collect();
+        let shown = flat(&ring);
+        for id in ["main", "other", "b1", "stray"] {
+            assert!(
+                shown.split(' ').any(|word| word.trim_matches('>') == id),
+                "{shown}"
+            );
+        }
     }
 
     #[test]

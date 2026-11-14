@@ -78,6 +78,7 @@ impl Workspace {
                 pinned: &self.pinned,
                 folders: &self.folders,
                 grouped: &self.grouped,
+                branched: &self.branched,
                 collapsed: &self.collapsed,
                 now: unix_now(),
             },
@@ -894,6 +895,7 @@ impl Workspace {
     fn session_row(
         &self,
         index: usize,
+        depth: usize,
         selecting: bool,
         indented: bool,
         cx: &mut Context<Self>,
@@ -910,7 +912,9 @@ impl Workspace {
             .h_flex()
             .gap_2()
             .px_2()
-            .when(indented && !selecting, |row| row.pl(px(22.)))
+            .pl(px(8. + if indented && !selecting { 14. } else { 0. }
+                // Deep chains stop stepping in before the title has no room.
+                + 14. * depth.min(3) as f32))
             .h(px(30.))
             .flex_shrink_0()
             .rounded(cx.theme().radius)
@@ -923,6 +927,9 @@ impl Workspace {
             } else {
                 icon("square").text_color(cx.theme().muted_foreground)
             });
+        }
+        if depth > 0 {
+            row = row.child(icon("branch").text_color(cx.theme().muted_foreground));
         }
         row = row.child(
             div()
@@ -976,8 +983,8 @@ impl Workspace {
         }
         for row in rows {
             match row {
-                Row::Conversation(index) => {
-                    list = list.child(self.session_row(index, selecting, sectioned, cx));
+                Row::Conversation { index, depth } => {
+                    list = list.child(self.session_row(index, depth, selecting, sectioned, cx));
                 }
                 Row::Section {
                     key,

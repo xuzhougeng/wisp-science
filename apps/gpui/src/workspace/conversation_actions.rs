@@ -11,6 +11,7 @@ use wisp_dto::SessionSearchInfo;
 use super::Workspace;
 use crate::{
     backend::{Reply, receive},
+    controls,
     layers::Layer,
 };
 
@@ -154,6 +155,113 @@ impl Workspace {
         );
     }
 
+    /// Asks before cutting the conversation back to the user message the
+    /// row at `index` belongs to.
+    pub(super) fn ask_rewind(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(turn) = controls::turn_of(&self.rows, index) else {
+            return;
+        };
+        self.rewind_turn = Some(turn);
+        self.layers
+            .switch(Layer::ConfirmRewind, &Layer::CONVERSATION_BAR);
+        cx.notify();
+    }
+
+    fn rewind(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.layers.contains(Layer::ConfirmRewind) {
+            return;
+        }
+        let (Some((project, session)), Some(turn)) = (self.current_ids(), self.rewind_turn.clone())
+        else {
+            return;
+        };
+        self.pending = true;
+        self.error = None;
+        self.notice = None;
+        let selection = self.state.selection();
+        let reply = self.backend.rewind_conversation(project, session, turn);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.pending = false;
+                // Answered either way; a refusal is not worth asking again.
+                this.layers.close(Layer::ConfirmRewind);
+                this.rewind_turn = None;
+                match result {
+                    Ok(text) if this.state.current(&selection) => {
+                        this.reload_conversation(window, cx);
+                        this.state.save_draft(text.clone());
+                        this.composer.update(cx, |input, cx| {
+                            input.set_value(text, window, cx);
+                            input.focus(window, cx);
+                        });
+                        this.refresh_lists(window, cx);
+                    }
+                    Ok(_) => this.refresh_lists(window, cx),
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Reads the open conversation afresh after its saved rows changed.
+    fn reload_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (project, session) = (self.state.project.clone(), self.state.session.clone());
+        // A new selection generation: answers to earlier requests are stale.
+        self.state.select(project, session);
+        self.clear_transcript();
+        self.start_poll(window, cx);
+        self.load_status(window, cx);
+    }
+
+    /// Starts a branch that holds the conversation through the turn the row
+    /// at `index` belongs to, and opens it.
+    pub(super) fn branch_from(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((project, session)) = self.current_ids() else {
+            return;
+        };
+        let Some(turn) = controls::turn_of(&self.rows, index) else {
+            return;
+        };
+        self.pending = true;
+        self.error = None;
+        self.notice = None;
+        let reply = self
+            .backend
+            .branch_conversation(project.clone(), session, Some(turn));
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.pending = false;
+                match result {
+                    Ok(branch) => {
+                        if this.state.project.as_ref() == Some(&project) {
+                            this.open_session(project, branch, window, cx);
+                            this.notice = Some(
+                                "This is a branch: a copy to take in another direction. \
+                                 The conversation it came from is unchanged."
+                                    .into(),
+                            );
+                        }
+                        this.refresh_lists(window, cx);
+                    }
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     /// Closes the open conversation; the next list load selects another.
     pub(super) fn leave_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.choose(self.state.project.clone(), None);
@@ -231,6 +339,32 @@ impl Workspace {
                         .small()
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.cancel_layer(Layer::ConfirmDelete, window, cx)
+                        })),
+                ),
+            );
+        }
+        if self.layers.contains(Layer::ConfirmRewind) {
+            return Some(
+                bar.child(div().flex_1().min_w_0().text_sm().child(
+                    "Go back to this message? It and everything after it leave the \
+                     conversation, and its text returns to the composer to be \
+                     changed. Files already written stay as they are.",
+                ))
+                .child(
+                    Button::new("rewind-confirm")
+                        .label("Go back and edit")
+                        .small()
+                        .primary()
+                        .disabled(busy || running)
+                        .on_click(cx.listener(|this, _, window, cx| this.rewind(window, cx))),
+                )
+                .child(
+                    Button::new("rewind-cancel")
+                        .label("Cancel")
+                        .small()
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.rewind_turn = None;
+                            this.cancel_layer(Layer::ConfirmRewind, window, cx)
                         })),
                 ),
             );

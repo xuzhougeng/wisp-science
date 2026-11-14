@@ -1,7 +1,7 @@
 //! Wording and small decisions for the conversation's controls: reasoning
 //! effort, token usage, approvals and the model's questions. No graphics.
 use wisp_dto::{PendingToolApproval, native_conversations::Item};
-use wisp_server::desktop::{TokenUsage, tool_question};
+use wisp_server::desktop::{TokenUsage, TurnRef, tool_question};
 
 /// Reasoning efforts in the order they are offered. The ids are the host's.
 pub const EFFORTS: [(&str, &str); 8] = [
@@ -119,6 +119,24 @@ pub fn question(item: &Item) -> Option<Question> {
 
 /// Whether the question in row `index` is still waiting: it is the last thing
 /// said, and the turn that asked it has ended.
+/// The user message the transcript row at `index` belongs to: the row itself,
+/// or the nearest user message above it. It is named the way the host wants
+/// it, by how many user messages follow and what it says, so a transcript
+/// that changed since cannot be cut in the wrong place.
+pub fn turn_of(rows: &[Item], index: usize) -> Option<TurnRef> {
+    let owner = rows
+        .get(..=index)?
+        .iter()
+        .rposition(|row| row.role == "user")?;
+    Some(TurnRef {
+        from_end: rows[owner + 1..]
+            .iter()
+            .filter(|row| row.role == "user")
+            .count(),
+        text: rows[owner].text.clone(),
+    })
+}
+
 pub fn awaiting_answer(rows: &[Item], index: usize, running: bool) -> bool {
     !running
         && rows.get(index).and_then(question).is_some()
@@ -183,6 +201,28 @@ mod tests {
             "ok": ok, "status": null
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn a_row_names_the_user_message_it_belongs_to() {
+        let rows = [
+            item("assistant", None, "hello", None),
+            item("user", None, "first", None),
+            item("assistant", None, "thinking", None),
+            item("tool", Some("shell"), "ls", Some(true)),
+            item("assistant", None, "answer one", None),
+            item("user", None, "second", None),
+            item("assistant", None, "answer two", None),
+        ];
+        let named = |index| turn_of(&rows, index).map(|turn| (turn.from_end, turn.text));
+        // Nothing was asked yet above the greeting.
+        assert_eq!(named(0), None);
+        for index in 1..=4 {
+            assert_eq!(named(index), Some((1, "first".into())), "row {index}");
+        }
+        assert_eq!(named(5), Some((0, "second".into())));
+        assert_eq!(named(6), Some((0, "second".into())));
+        assert_eq!(named(7), None);
     }
 
     fn ask(body: serde_json::Value) -> Item {

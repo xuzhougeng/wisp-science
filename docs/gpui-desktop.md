@@ -129,6 +129,8 @@ folder registers its research root; it does not import existing desktop chats.
 | Sort and group | The list by groups, by last activity or flat, newest first or by name; remembered across launches |
 | Select mode | Pick conversations by click, Shift-click for a range, or all; move them to a group, archive or restore them, or delete them after one confirmation; a line reports what changed and why anything was left |
 | Copy or move | Copy or move the open conversation's transcript to another project |
+| Edit and send again | Under a message of yours: after one confirmation the conversation goes back to just before it and its text returns to the composer |
+| Branch | Under a reply: a new conversation holding everything through that turn, opened at once and listed under the one it came from |
 | Search | Titles and message text across the project, archived conversations included |
 | Command palette | One box over everything: projects, files by name in every project, conversations by title or message text, and the window's commands; arrow keys, Return, Escape |
 | Settings | Saved models with provider, endpoint, key and limits; presets, a default, a connection test; applied without restart |
@@ -151,7 +153,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Drafts | Survive navigation; preserved on send failure, cleared on durable acceptance |
 | Execution | Shared agent/tools, streamed snapshots while running, stop and errors |
 | Approvals | Exact pending request; allow once, allow that tool for the rest of the conversation, or deny |
-| Escape | One window-level stack: Escape closes only the topmost of command palette, file preview, Files panel, Settings, title editor, delete confirmation, remove-project confirmation, the Full access question, the model and effort menus, the remove-model question, the sort menu, select mode and its group menu and delete question, a group's name field, actions and delete question, and the conversation's group and move menus |
+| Escape | One window-level stack: Escape closes only the topmost of command palette, file preview, Files panel, Settings, title editor, delete confirmation, remove-project confirmation, the Full access question, the model and effort menus, the remove-model question, the sort menu, select mode and its group menu and delete question, a group's name field, actions and delete question, the conversation's group and move menus, and the go-back question |
 | Shortcuts | Cmd/Ctrl+K opens the command palette; Cmd/Ctrl+N starts a conversation in the open project; Cmd/Ctrl+, opens Settings |
 | Lifecycle | Background IO, stale-result rejection, cancel/clean workers on exit |
 
@@ -180,8 +182,22 @@ Limits of this slice:
   conversation is reported when a message is sent, not replaced silently.
 - Deleting removes the conversation and its messages; files it wrote stay in the
   project. A running conversation must be stopped before it can be archived,
-  deleted, copied or moved. There is no export, import, share or branch view
-  yet.
+  deleted, copied, moved, rewound or branched. There is no export, import or
+  share yet.
+- Going back to a message removes it and everything after it from the
+  conversation for good. Files those turns wrote, their runs and their
+  artifacts are not undone, and files that were attached to the message are
+  not re-attached. The desktop names the message by how many of your messages
+  follow it and what it says; if that does not match the saved conversation
+  the host changes nothing and says so. This replaced counting rows, which is
+  how a past release cut a conversation in the wrong place.
+- A branch is a copy: the model's context through the chosen turn, in the same
+  project and group, with the source's model, effort, Plan first and Full
+  access. It is linked to its source for display only, so it can be rewound
+  and branched like any conversation. The WebView's branch cards and merging a
+  branch back with a summary are not ported, and a branch made here does not
+  take part in them. A conversation cannot be deleted or moved while it has
+  branches; delete those first.
 - A group holds a conversation together with its branches. Group names are
   unique in a project, ignoring case, and at most 60 characters. Groups are
   reordered one place at a time; conversations are not dragged. Sections show
@@ -342,6 +358,14 @@ delete and confirm the line says it was left and why. Delete a group and confirm
 its conversations remain. Copy the open conversation to another project and
 confirm both exist; move it and confirm it left this project, arrived read in
 the other, and asks before changing files there.
+In a conversation with three turns, press Branch under the second reply: a new
+conversation opens with two turns, listed under its source in the same group.
+In the branch press Edit under your second message, press Escape (nothing
+changes), press it again and confirm: one turn remains and the message is in
+the composer; change it and send. Open the source and confirm all three turns
+are still there. Try to delete the source and confirm it asks for its branches
+to be deleted first. Start a turn and confirm Edit and Branch are disabled
+while it runs.
 Restart and confirm persisted messages. Close during a running tool and verify
 worker cleanup. Check missing credentials and invalid workspace errors. Validate
 each target OS; a macOS build does not establish Windows/Linux behavior.

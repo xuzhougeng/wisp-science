@@ -45,6 +45,8 @@ pub enum Layer {
     GroupMenu,
     /// Projects the open conversation can be copied or moved to.
     TransferMenu,
+    /// Question before a conversation is cut back to an earlier message.
+    ConfirmRewind,
 }
 
 impl Layer {
@@ -52,11 +54,12 @@ impl Layer {
     pub const COMPOSER_MENUS: [Layer; 2] = [Layer::EffortMenu, Layer::ModelMenu];
     /// What the row under the conversation's title can turn into, one at a
     /// time.
-    pub const CONVERSATION_BAR: [Layer; 4] = [
+    pub const CONVERSATION_BAR: [Layer; 5] = [
         Layer::Rename,
         Layer::ConfirmDelete,
         Layer::GroupMenu,
         Layer::TransferMenu,
+        Layer::ConfirmRewind,
     ];
     /// Small surfaces of the sidebar's conversation list, one at a time.
     /// Select mode is not one of them: it is a mode they can open inside.
@@ -271,8 +274,9 @@ mod tests {
         assert_eq!(stack.dismiss_top(), Some(Layer::FolderMenu));
 
         stack.switch(Layer::Rename, &Layer::CONVERSATION_BAR);
+        stack.switch(Layer::ConfirmRewind, &Layer::CONVERSATION_BAR);
         stack.switch(Layer::TransferMenu, &Layer::CONVERSATION_BAR);
-        assert!(!stack.contains(Layer::Rename));
+        assert!(!stack.contains(Layer::Rename) && !stack.contains(Layer::ConfirmRewind));
         stack.switch(Layer::SortMenu, &Layer::SIDEBAR);
         assert_eq!(stack.dismiss_top(), Some(Layer::SortMenu));
         assert_eq!(stack.dismiss_top(), Some(Layer::TransferMenu));

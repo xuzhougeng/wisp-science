@@ -335,7 +335,7 @@ impl Workspace {
     /// The small actions under a message.
     fn message_actions(&self, index: usize, cx: &mut Context<Self>) -> Div {
         let copied = self.copied == Some(index);
-        div().h_flex().child(
+        let actions = div().h_flex().child(
             icon_button(
                 ("copy-row", index),
                 if copied { "check" } else { "copy" },
@@ -343,7 +343,29 @@ impl Workspace {
             )
             .xsmall()
             .on_click(cx.listener(move |this, _, window, cx| this.copy_row(index, window, cx))),
-        )
+        );
+        // Rewinding and branching work on saved turns of a conversation
+        // that is at rest and still part of everyday work.
+        let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
+        let archived = self.current_row().is_none_or(|row| row.shelved);
+        let idle = !running && !self.pending;
+        match self.rows.get(index).map(|row| row.role.as_str()) {
+            Some("user") if !archived => actions.child(
+                icon_button(("edit-row", index), "edit", "Edit and send again")
+                    .xsmall()
+                    .disabled(!idle)
+                    .on_click(cx.listener(move |this, _, _, cx| this.ask_rewind(index, cx))),
+            ),
+            Some("assistant") if controls::turn_of(&self.rows, index).is_some() => actions.child(
+                icon_button(("branch-row", index), "branch", "Branch from here")
+                    .xsmall()
+                    .disabled(!idle)
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| this.branch_from(index, window, cx)),
+                    ),
+            ),
+            _ => actions,
+        }
     }
 
     /// A question the model asked. While it waits, each option is one click.

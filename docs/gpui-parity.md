@@ -134,8 +134,8 @@ to find in the running app.
 | Token usage per turn | Yes | Partial: the running or latest turn only, and not after a restart | served |
 | Skill and attachment chips on the user message | Yes | Partial: file chips; references are context for that turn only and are not shown afterwards | served |
 | Copy message [复制] | Yes | Done: copies the message as Markdown | ui |
-| Rewind to a message [回溯 / 撤销] | Yes | Missing | store |
-| Branch from a message [分支] | Yes | Missing | store |
+| Rewind to a message [回溯 / 撤销] | Yes | Partial: goes back and returns the text to the composer; written files are not undone | store |
+| Branch from a message [分支] | Yes | Partial: a copy through that turn, nested under its source; no branch card or merge back | store |
 | Save to memory [记忆] | Yes | Missing | store |
 | Review a turn [审查] | Yes | Missing | tauri |
 | Select text: add to chat, ask aside, highlight | Yes | Missing | store |
@@ -239,7 +239,7 @@ Found in the sources rather than on screen; all `Missing` in GPUI.
 | Home | Import a folder in place, a ZIP, or recover conversations from a workspace; transfer progress | tauri |
 | Home | Sync now, device code, conflict resolution (use remote / use local), cloud-folder badges | shared |
 | Sidebar | Conversation menu: copy title, export conversation, export debug request, reload project rules | tauri |
-| Sidebar | Nested children: sub-agents, branches, explorations; "load earlier" paging | store |
+| Sidebar | Nested children: branches are nested — **Done**. Sub-agents, explorations and "load earlier" paging — Missing | store |
 | Sidebar | Update-available card; "done / failed in another project" notices | tauri |
 | Composer | Slash commands: `/timer` `/archive` `/compact` `/fork` `/btw` `/rewind` `/review` `/remember` `/context` `/plan` `/permission` `/save-as-skill` `/skills` `/files` `/upload` `/share` `/trajectory` `/memo` | tauri |
 | Composer | Conversation timer: repeat a prompt on an interval, pause, resume, cancel | store |
@@ -315,7 +315,8 @@ before the things that hang in it.
 7. **Conversation organisation** — folders, batch actions, sort and group,
    move between projects. *(done; rewind and branch are step 7a)*
 7a. **Rewind and branch** — edit and resend from an earlier message, branch a
-   conversation, show branches under their parent.
+   conversation, show branches under their parent. *(done; branch cards and
+   merging a branch back remain)*
 8. **Memory, memos, highlights, favorites.**
 9. **Settings** — conversation, permissions, hooks, skills, connections,
    credentials, network, environments, storage, usage, general.

@@ -16,7 +16,7 @@ use wisp_server::{
     config::Config,
     desktop::{
         ArtifactRow, BatchAction, BatchReport, ConversationList, ConversationOptions,
-        ConversationStatus, FileMatch, Folder, ModelInput, ModelSettings, ReferenceOption,
+        ConversationStatus, FileMatch, Folder, ModelInput, ModelSettings, ReferenceOption, TurnRef,
     },
 };
 use wisp_sync::DirectRemoteHost;
@@ -255,6 +255,33 @@ impl Backend {
     ) -> Reply<String> {
         self.local(move |host| async move {
             host.transfer_conversation(&project, &session, &target, keep)
+                .await
+        })
+    }
+
+    /// Cuts the conversation back to just before `turn` and returns that
+    /// message's text.
+    pub fn rewind_conversation(
+        &self,
+        project: String,
+        session: String,
+        turn: TurnRef,
+    ) -> Reply<String> {
+        self.local(
+            move |host| async move { host.rewind_conversation(&project, &session, &turn).await },
+        )
+    }
+
+    /// Copies the conversation, or its part through `upto`'s reply, into a
+    /// new one and returns its id.
+    pub fn branch_conversation(
+        &self,
+        project: String,
+        session: String,
+        upto: Option<TurnRef>,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.branch_conversation(&project, &session, upto.as_ref())
                 .await
         })
     }
