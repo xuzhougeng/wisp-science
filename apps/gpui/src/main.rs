@@ -17,6 +17,7 @@ mod present;
 mod settings;
 mod state;
 mod theme;
+mod usage;
 mod workspace;
 
 use gpui::{prelude::*, *};

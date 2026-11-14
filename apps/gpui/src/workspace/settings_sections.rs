@@ -74,6 +74,8 @@ impl Workspace {
             Section::Models => {}
             Section::Skills => self.load_skills(window, cx),
             Section::Connections => self.load_connectors(window, cx),
+            Section::Usage => self.load_usage(window, cx),
+            Section::Storage => self.load_storage(window, cx),
             Section::Conversation => self.load_turn_defaults(window, cx),
             Section::Permissions => {
                 self.load_turn_defaults(window, cx);
@@ -544,7 +546,7 @@ impl Workspace {
         )
     }
 
-    fn settings_page(&self, cx: &App) -> Div {
+    pub(super) fn settings_page(&self, cx: &App) -> Div {
         let mut page = div().v_flex().w(px(PAGE_WIDTH)).p_6();
         if let Some(error) = &self.settings_error {
             page = page.child(div().pb_3().child(error_banner(error, cx)));

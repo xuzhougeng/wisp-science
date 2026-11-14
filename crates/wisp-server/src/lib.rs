@@ -477,6 +477,7 @@ impl Server {
             live.generation = live.generation.wrapping_add(1);
             live.error = None;
             live.usage = None;
+            live.calls.clear();
             live.reasoning.clear();
             live.written.clear();
             live.draft.clear();

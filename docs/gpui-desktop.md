@@ -133,7 +133,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Branch | Under a reply: a new conversation holding everything through that turn, opened at once and listed under the one it came from |
 | Search | Titles and message text across the project, archived conversations included |
 | Command palette | One box over everything: projects, files by name in every project, conversations by title or message text, and the window's commands; arrow keys, Return, Escape |
-| Settings | Pages: Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold), Skills (every skill with where it comes from, search, on or off), Connections (the bundled literature and biology connectors with their tools and links, search, on or off) and Permissions (how new conversations start, tools that are always allowed); applied without restart |
+| Settings | Pages: Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold), Skills (every skill with where it comes from, search, on or off), Connections (the bundled literature and biology connectors with their tools and links, search, on or off), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
 | Inbox | Conversations in any project that are waiting for you; opens across projects |
 | Read state | A finished answer is marked read once it is on screen in the active window |
 | Transcript | Virtualized Markdown, selectable text, paginated history |
@@ -263,8 +263,17 @@ Limits of this slice:
   asks; that one always appears. "Allow for this conversation" is offered only
   for the standard tool question, is kept in memory, and is forgotten when the
   app restarts; "Ask again" under the transcript revokes it sooner.
-- Options changed while a turn runs apply to the next one. Token usage is not
-  stored: after a restart it is empty until the next turn. Thinking is shown
+- Options changed while a turn runs apply to the next one. What each model
+  call used is saved with the conversation when the turn ends, as the event
+  the WebView writes, and the Usage page counts from those rows; turns made
+  before this was added are not in it. The figures under the composer are
+  still kept in memory only: after a restart they are empty until the next
+  turn. Usage has no ranking of skills and MCP tools, no per-conversation
+  breakdown and no year calendar.
+- Storage measures Wisp's own files: the database, the favorites, and each
+  project's `.wisp` and `uploads` folders (up to 50,000 entries each). It
+  does not measure your data, and nothing can be moved or cleaned from the
+  page. Thinking is shown
   while it streams and is not kept in the transcript. Fast mode is not ported.
 - Plan mode uses the WebView's switch (`frame_plan_mode:<conversation>`) and its
   prompt section, which now lives in `wisp_tools::plan` for any host to use;
@@ -464,6 +473,9 @@ shown; search by a tool's name; turn one off and confirm the count of tools
 drops. With a real model, ask for a PubMed search and confirm a connector tool
 runs without an approval; turn PubMed off and confirm the model no longer has
 it.
+Send a message, open Usage and confirm today's bar, the model's share and the
+project's totals moved; hover a bar for its day and count. Open Storage, press
+Show, and confirm the folder that opens is the one named.
 Restart and confirm persisted messages. Close during a running tool and verify
 worker cleanup. Check missing credentials and invalid workspace errors. Validate
 each target OS; a macOS build does not establish Windows/Linux behavior.

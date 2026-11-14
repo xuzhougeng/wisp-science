@@ -579,6 +579,32 @@ pub async fn run(
         .await;
     drop(out);
     wisp_store::join_or_abort_persist(persist, std::time::Duration::from_secs(10)).await??;
+    // What the turn's model calls used, for the usage statistics. Written
+    // after the messages, when nothing else is numbering events.
+    let calls = std::mem::take(&mut session.live.lock().unwrap().calls);
+    if !calls.is_empty() {
+        let model = agent.provider.model().to_owned();
+        let mut seq = store.next_session_ui_event_seq(&request.session_id).await?;
+        for (round, call) in calls.into_iter().enumerate() {
+            let event = serde_json::to_string(&crate::output::UsageEvent {
+                kind: "Usage",
+                frame_id: &request.session_id,
+                round: round as u64,
+                model: &model,
+                created_at: call.created_at,
+                input: call.input,
+                output: call.output,
+                reasoning: call.reasoning,
+                cached: call.cached,
+                ctx_tokens: call.ctx_tokens,
+                max_context: call.max_context,
+            })?;
+            store
+                .append_session_ui_event(&request.session_id, seq, &event)
+                .await?;
+            seq += 1;
+        }
+    }
     // Whatever the turn's outcome, the files it wrote exist and are its work.
     let written = std::mem::take(&mut session.live.lock().unwrap().written);
     record_artifacts(

@@ -7,6 +7,7 @@ mod memos_view;
 mod organise_view;
 mod palette_view;
 mod panel_tabs;
+mod settings_data;
 mod settings_sections;
 mod settings_view;
 mod shell;
@@ -136,6 +137,10 @@ pub struct Workspace {
     connectors_search: Entity<InputState>,
     /// The connector whose tools and links are unfolded.
     open_connector: Option<String>,
+    /// Tokens used, as the Usage page shows them; `None` until read.
+    usage: Option<wisp_server::desktop::UsageView>,
+    /// What Wisp keeps and where; `None` until read.
+    storage: Option<wisp_server::desktop::StorageView>,
     /// What the open conversation saved to the favorites, newest first.
     saved: Vec<LibraryItem>,
     saved_request: u64,
@@ -385,6 +390,8 @@ impl Workspace {
             connectors: None,
             connectors_search,
             open_connector: None,
+            usage: None,
+            storage: None,
             saved: vec![],
             saved_request: 0,
             favorites: None,

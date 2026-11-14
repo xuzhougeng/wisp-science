@@ -1698,6 +1698,81 @@ impl Server {
         .await?)
     }
 
+    /// Tokens used so far: by project, by model, and by day over the last
+    /// year. Counted from what each model call reported when it was made.
+    pub async fn usage(&self) -> Result<UsageView> {
+        let store = &self.0.store;
+        Ok(UsageView {
+            projects: store
+                .token_usage_by_project()
+                .await?
+                .into_iter()
+                .map(|row| ProjectUsage {
+                    project_id: row.project_id,
+                    name: row.name,
+                    conversations: row.session_count.max(0) as u64,
+                    input: row.input.max(0) as u64,
+                    output: row.output.max(0) as u64,
+                    reasoning: row.reasoning.max(0) as u64,
+                    cached: row.cached.max(0) as u64,
+                })
+                .collect(),
+            models: store
+                .token_usage_by_model()
+                .await?
+                .into_iter()
+                .map(|row| (row.model, row.tokens.max(0) as u64))
+                .collect(),
+            days: store
+                .token_usage_activity()
+                .await?
+                .into_iter()
+                .filter(|day| !day.future)
+                .map(|day| (day.date, day.tokens.max(0) as u64))
+                .collect(),
+        })
+    }
+
+    /// Where Wisp keeps its data and how much room it takes: the database,
+    /// the favorites, and what it keeps inside each project's folder.
+    pub async fn storage(&self) -> Result<StorageView> {
+        let data = self.0.config.data.clone();
+        let projects = self.0.store.list_projects().await?;
+        Ok(tokio::task::spawn_blocking(move || {
+            let file = |name: &str| {
+                // The write-ahead log and its index are part of the database.
+                ["", "-wal", "-shm"]
+                    .iter()
+                    .filter_map(|suffix| {
+                        std::fs::metadata(data.join(format!("{name}{suffix}"))).ok()
+                    })
+                    .map(|meta| meta.len())
+                    .sum::<u64>()
+            };
+            StorageView {
+                database_bytes: file("wisp.sqlite"),
+                favorites_bytes: file("library.sqlite"),
+                projects: projects
+                    .into_iter()
+                    .map(|(id, name, workspace, _, _, conversations, ..)| {
+                        let root = std::path::Path::new(&workspace);
+                        ProjectStorage {
+                            conversations: conversations.max(0) as usize,
+                            wisp_bytes: folder_size(&root.join(".wisp")),
+                            uploads_bytes: folder_size(&root.join("uploads")),
+                            missing: !root.is_dir(),
+                            project_id: id,
+                            name,
+                            workspace_dir: workspace,
+                        }
+                    })
+                    .collect(),
+                data_dir: data.to_string_lossy().into_owned(),
+            }
+        })
+        .await?)
+    }
+
     /// The literature and biology connectors that ship with Wisp, by name,
     /// with the tools each gives the model and whether it is turned on.
     pub async fn connectors(&self) -> Result<Vec<ConnectorRow>> {
@@ -2213,6 +2288,85 @@ pub struct ConversationStatus {
     pub allowed_tools: Vec<String>,
     /// What the model is thinking right now; empty when it is not.
     pub reasoning: String,
+}
+
+/// Tokens one project's conversations used.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectUsage {
+    pub project_id: String,
+    pub name: String,
+    /// Conversations that used any.
+    pub conversations: u64,
+    /// Includes `cached`.
+    pub input: u64,
+    pub output: u64,
+    pub reasoning: u64,
+    pub cached: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct UsageView {
+    /// Most recently active first.
+    pub projects: Vec<ProjectUsage>,
+    /// `(model, input + output)`, largest first.
+    pub models: Vec<(String, u64)>,
+    /// `(YYYY-MM-DD, input + output)` for each day up to today, oldest first.
+    pub days: Vec<(String, u64)>,
+}
+
+/// What Wisp keeps for one project.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectStorage {
+    pub project_id: String,
+    pub name: String,
+    pub workspace_dir: String,
+    pub conversations: usize,
+    /// Size of the project's `.wisp` folder: memory, snapshots, sessions.
+    pub wisp_bytes: u64,
+    /// Size of the files attached from outside the project.
+    pub uploads_bytes: u64,
+    /// The folder is not there (an unplugged disk, a moved folder).
+    pub missing: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StorageView {
+    pub data_dir: String,
+    /// Conversations, settings and run records of every project.
+    pub database_bytes: u64,
+    pub favorites_bytes: u64,
+    pub projects: Vec<ProjectStorage>,
+}
+
+/// Entries one folder measurement may look at.
+const SIZE_BUDGET: usize = 50_000;
+
+/// The size of the regular files under `root`, links not followed. A very
+/// large folder is measured up to a bound rather than for minutes.
+fn folder_size(root: &std::path::Path) -> u64 {
+    let mut total = 0;
+    let mut seen = 0;
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            seen += 1;
+            if seen > SIZE_BUDGET {
+                return total;
+            }
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                pending.push(entry.path());
+            } else if kind.is_file() {
+                total += entry.metadata().map(|meta| meta.len()).unwrap_or_default();
+            }
+        }
+    }
+    total
 }
 
 /// A bundled connector as Settings lists it.

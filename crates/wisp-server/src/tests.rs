@@ -1960,6 +1960,163 @@ async fn a_bundled_connector_that_is_turned_off_gives_the_model_no_tools() {
 }
 
 #[tokio::test]
+async fn usage_is_counted_from_each_model_call_and_storage_is_measured() {
+    // A model that says what each call cost.
+    struct Metered;
+    #[async_trait]
+    impl Provider for Metered {
+        fn name(&self) -> &str {
+            "offline"
+        }
+        fn model(&self) -> &str {
+            "metered-1"
+        }
+        async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+            Ok(Completion {
+                content: "counted".into(),
+                finish_reason: Some("stop".into()),
+                usage: wisp_llm::Usage {
+                    input_tokens: 120,
+                    output_tokens: 30,
+                    reasoning_tokens: 5,
+                    cached_input_tokens: 100,
+                },
+                ..Default::default()
+            })
+        }
+        async fn stream(
+            &self,
+            messages: &[Message],
+            tools: &[ToolSchema],
+            sink: &mut dyn StreamSink,
+        ) -> wisp_llm::Result<Completion> {
+            sink.on_text("counted");
+            self.complete(messages, tools).await
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let settings = config(temp.path());
+    let data = settings.data.clone();
+    let factory: ModelFactory = Arc::new(|_| Box::new(Metered));
+    let server = Server::open_with_models(settings, factory).await.unwrap();
+    let folder = temp.path().join("lab");
+    std::fs::create_dir_all(folder.join("uploads")).unwrap();
+    std::fs::write(folder.join("uploads/reads.fastq"), vec![b'A'; 4_096]).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    let gone = temp.path().join("gone");
+    std::fs::create_dir(&gone).unwrap();
+    let lost = server.register_local_project(&gone).await.unwrap();
+    std::fs::remove_dir(&gone).unwrap();
+
+    // Nothing was used yet. The days run up to today.
+    let empty = server.usage().await.unwrap();
+    assert!(empty.projects.is_empty() && empty.models.is_empty());
+    assert!(empty.days.len() > 300);
+    assert!(empty.days.iter().all(|(_, tokens)| *tokens == 0));
+
+    let turn = |project: String, session: String, message: &'static str| {
+        let server = &server;
+        async move {
+            call(
+                server,
+                "native_conversation_send",
+                &project,
+                json!({"session_id": session, "request_id": message, "message": message}),
+            )
+            .await
+            .unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let value = call(
+                        server,
+                        "native_conversation_snapshot",
+                        &project,
+                        json!({"session_id": session}),
+                    )
+                    .await
+                    .unwrap();
+                    let snapshot: dto::Snapshot = serde_json::from_value(value).unwrap();
+                    if !snapshot.running {
+                        return snapshot;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap()
+        }
+    };
+    let first = server.create_conversation(&lab).await.unwrap();
+    let done = turn(lab.clone(), first.clone(), "one").await;
+    // The saved usage rows do not show up as anything in the transcript.
+    let roles: Vec<_> = done.items.iter().map(|item| item.role.as_str()).collect();
+    assert_eq!(roles, ["user", "assistant"]);
+    turn(lab.clone(), first.clone(), "two").await;
+    let other = server.create_conversation(PROJECT).await.unwrap();
+    turn(PROJECT.into(), other, "three").await;
+
+    let used = server.usage().await.unwrap();
+    let project = |id: &str| {
+        used.projects
+            .iter()
+            .find(|row| row.project_id == id)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(
+        project(&lab),
+        desktop::ProjectUsage {
+            project_id: lab.clone(),
+            name: "lab".into(),
+            conversations: 1,
+            input: 240,
+            output: 60,
+            reasoning: 10,
+            cached: 200,
+        }
+    );
+    assert_eq!(project(PROJECT).input, 120);
+    assert_eq!(used.projects.len(), 2);
+    // By model, and on today's row of the calendar: input plus output.
+    assert_eq!(used.models, [("metered-1".to_string(), 450)]);
+    assert_eq!(used.days.last().unwrap().1, 450);
+    assert_eq!(used.days.iter().map(|(_, tokens)| tokens).sum::<u64>(), 450);
+
+    // Storage: the database, no favorites yet, and what is kept in each
+    // project's folder.
+    let storage = server.storage().await.unwrap();
+    // The same folder, whatever links the temp path goes through.
+    let same = |shown: &str, wanted: &Path| {
+        std::fs::canonicalize(shown).unwrap() == std::fs::canonicalize(wanted).unwrap()
+    };
+    assert!(same(&storage.data_dir, &data));
+    assert!(storage.database_bytes > 0);
+    assert_eq!(storage.favorites_bytes, 0);
+    let kept = |id: &str| {
+        storage
+            .projects
+            .iter()
+            .find(|row| row.project_id == id)
+            .unwrap()
+            .clone()
+    };
+    let lab_kept = kept(&lab);
+    assert_eq!(lab_kept.conversations, 1);
+    assert_eq!(lab_kept.uploads_bytes, 4_096);
+    assert!(!lab_kept.missing);
+    assert!(same(&lab_kept.workspace_dir, &folder));
+    let lost_kept = kept(&lost);
+    assert!(lost_kept.missing);
+    assert_eq!((lost_kept.wisp_bytes, lost_kept.uploads_bytes), (0, 0));
+    server
+        .star_text(&lab, &first, "text", None, "kept")
+        .await
+        .unwrap();
+    assert!(server.storage().await.unwrap().favorites_bytes > 0);
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn turn_defaults_and_project_grants_apply_from_the_next_turn() {
     use desktop::Remember;
     let temp = tempfile::tempdir().unwrap();

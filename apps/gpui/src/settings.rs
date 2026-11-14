@@ -14,15 +14,19 @@ pub enum Section {
     Skills,
     Connections,
     Permissions,
+    Usage,
+    Storage,
 }
 
 impl Section {
-    pub const ALL: [Section; 5] = [
+    pub const ALL: [Section; 7] = [
         Section::Models,
         Section::Conversation,
         Section::Skills,
         Section::Connections,
         Section::Permissions,
+        Section::Usage,
+        Section::Storage,
     ];
 
     pub fn label(self) -> &'static str {
@@ -32,6 +36,8 @@ impl Section {
             Section::Skills => "Skills",
             Section::Connections => "Connections",
             Section::Permissions => "Permissions",
+            Section::Usage => "Usage",
+            Section::Storage => "Storage",
         }
     }
 
@@ -42,6 +48,8 @@ impl Section {
             Section::Skills => "skill",
             Section::Connections => "link",
             Section::Permissions => "shield",
+            Section::Usage => "gauge",
+            Section::Storage => "database",
         }
     }
 
@@ -51,6 +59,7 @@ impl Section {
             Section::Models | Section::Conversation => "AI",
             Section::Skills | Section::Connections => "Capabilities",
             Section::Permissions => "Safety",
+            Section::Usage | Section::Storage => "Data",
         }
     }
 }
@@ -270,7 +279,15 @@ mod tests {
         let groups: Vec<_> = Section::ALL.iter().map(|section| section.group()).collect();
         assert_eq!(
             groups,
-            ["AI", "AI", "Capabilities", "Capabilities", "Safety"]
+            [
+                "AI",
+                "AI",
+                "Capabilities",
+                "Capabilities",
+                "Safety",
+                "Data",
+                "Data"
+            ]
         );
         assert_eq!(Section::default(), Section::Models);
         // No two sections share a name or a drawing.

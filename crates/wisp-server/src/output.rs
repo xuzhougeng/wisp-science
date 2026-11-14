@@ -41,6 +41,37 @@ pub struct TokenUsage {
     pub max_context: usize,
 }
 
+/// What one model call used.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UsageCall {
+    /// Unix seconds.
+    pub created_at: i64,
+    pub input: u64,
+    pub output: u64,
+    pub reasoning: u64,
+    pub cached: u64,
+    pub ctx_tokens: usize,
+    pub max_context: usize,
+}
+
+/// A model call's usage as it is saved with the conversation: the event
+/// the WebView desktop writes, so both count from the same rows. `kind`
+/// leads, which is what the usage queries look for.
+#[derive(serde::Serialize)]
+pub struct UsageEvent<'a> {
+    pub kind: &'static str,
+    pub frame_id: &'a str,
+    pub round: u64,
+    pub model: &'a str,
+    pub created_at: i64,
+    pub input: u64,
+    pub output: u64,
+    pub reasoning: u64,
+    pub cached: u64,
+    pub ctx_tokens: usize,
+    pub max_context: usize,
+}
+
 /// The question the registry asks before a tool that needs approval runs.
 /// Anything else (a dangerous shell command, for one) is a different question
 /// and is never answered by a remembered "allow this tool".
@@ -63,6 +94,9 @@ pub struct Live {
     pub outcomes: HashMap<String, ToolOutcome>,
     pub approvals: HashMap<String, (PendingToolApproval, oneshot::Sender<ConfirmDecision>)>,
     pub usage: Option<TokenUsage>,
+    /// What each model call of the running turn used, in order, to be saved
+    /// when the turn ends.
+    pub calls: Vec<UsageCall>,
     /// What the model is thinking in the request that is in flight.
     pub reasoning: String,
     /// Files the running turn's tools wrote, to be recorded as artifacts
@@ -173,6 +207,18 @@ impl Output for ServerOutput {
         _: wisp_core::ContextUsage,
     ) {
         let mut live = self.session.live.lock().unwrap();
+        live.calls.push(UsageCall {
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_secs() as i64)
+                .unwrap_or_default(),
+            input,
+            output,
+            reasoning,
+            cached,
+            ctx_tokens,
+            max_context,
+        });
         let usage = live.usage.get_or_insert_with(TokenUsage::default);
         usage.input += input;
         usage.output += output;

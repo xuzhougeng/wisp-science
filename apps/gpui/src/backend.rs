@@ -18,7 +18,8 @@ use wisp_server::{
         ArtifactRow, BatchAction, BatchReport, ConnectorRow, ConversationList, ConversationOptions,
         ConversationStatus, Favorite, FileMatch, Folder, GlobalMemory, LibraryItem,
         LibraryItemSummary, MemoryView, ModelInput, ModelSettings, ProjectGrants, ProjectMemo,
-        ProjectMemoPatch, ReferenceOption, Remember, SkillRow, TurnDefaults, TurnRef,
+        ProjectMemoPatch, ReferenceOption, Remember, SkillRow, StorageView, TurnDefaults, TurnRef,
+        UsageView,
     },
 };
 use wisp_sync::DirectRemoteHost;
@@ -455,6 +456,14 @@ impl Backend {
     /// Starts an empty conversation the way the desktop's defaults say.
     pub fn create_conversation(&self, project: String) -> Reply<String> {
         self.local(move |host| async move { host.create_conversation(&project).await })
+    }
+
+    pub fn usage(&self) -> Reply<UsageView> {
+        self.local(|host| async move { host.usage().await })
+    }
+
+    pub fn storage(&self) -> Reply<StorageView> {
+        self.local(|host| async move { host.storage().await })
     }
 
     pub fn connectors(&self) -> Reply<Vec<ConnectorRow>> {
