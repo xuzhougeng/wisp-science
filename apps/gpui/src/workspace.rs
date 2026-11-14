@@ -18,6 +18,7 @@ mod notebook_view;
 mod organise_view;
 mod palette_view;
 mod panel_tabs;
+mod pet_view;
 mod project_settings;
 mod queue_view;
 mod remote_files_view;
@@ -276,6 +277,11 @@ pub struct Workspace {
     quick_editing: Option<String>,
     /// Name, request.
     quick_fields: [Entity<InputState>; 2],
+    /// The pet as the host keeps it; `None` until it answered.
+    pet: Option<wisp_server::desktop::Pet>,
+    pet_folder: Entity<InputState>,
+    /// The animated pet, a view of its own.
+    pet_view: Entity<pet_view::PetView>,
     /// The personas a conversation can be started as.
     experts: Vec<wisp_server::desktop::Expert>,
     /// The expert in the form or the remove question; empty is a new one.
@@ -435,6 +441,12 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
         ];
         let mcp_target = cx.new(|cx| InputState::new(window, cx));
+        let pet_folder =
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("A folder holding pet.json")));
+        let pet_view = {
+            let workspace = cx.entity().downgrade();
+            cx.new(|_| pet_view::PetView::new(workspace))
+        };
         let quick_fields = [
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
@@ -719,6 +731,9 @@ impl Workspace {
             quick_actions: Vec::new(),
             quick_editing: None,
             quick_fields,
+            pet: None,
+            pet_folder,
+            pet_view,
             experts: Vec::new(),
             expert_editing: None,
             expert_fields,

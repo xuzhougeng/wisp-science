@@ -3123,6 +3123,17 @@ impl Server {
         Ok(())
     }
 
+    /// The pet the user chose, checked again each time it is asked for.
+    pub async fn pet(&self) -> Result<Pet> {
+        Ok(crate::pet::read(&self.0.store).await)
+    }
+
+    /// Turns the pet on or off and keeps its folder. Turning it on with a
+    /// folder that is no pet is refused and changes nothing.
+    pub async fn set_pet(&self, enabled: bool, directory: &str) -> Result<Pet> {
+        crate::pet::save(&self.0.store, enabled, directory).await
+    }
+
     /// The requests kept as quick actions, in the order they were added.
     pub async fn quick_actions(&self) -> Result<Vec<QuickAction>> {
         Ok(crate::quick_actions::list(&self.0.store).await)
@@ -4240,6 +4251,7 @@ pub use crate::aside::Exchange as AsideExchange;
 pub use crate::experts::{Expert, ExpertInput};
 pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow};
 pub use crate::origin::FileOrigin;
+pub use crate::pet::{Pet, PetLook, SHEET_HEIGHT, SHEET_WIDTH};
 pub use crate::quick_actions::{QuickAction, QuickActionInput};
 pub use crate::remote_dir::RemoteDirectory;
 pub use crate::research_archive::ArchiveDraft;

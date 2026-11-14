@@ -29,12 +29,15 @@ pub enum Section {
     Storage,
     General,
     Network,
+    /// The animated companion.
+    Pet,
 }
 
 impl Section {
-    pub const ALL: [Section; 13] = [
+    pub const ALL: [Section; 14] = [
         Section::General,
         Section::Network,
+        Section::Pet,
         Section::Models,
         Section::Conversation,
         Section::Experts,
@@ -56,6 +59,7 @@ impl Section {
             Section::Conversation => tr("Conversation"),
             Section::Experts => tr("Experts"),
             Section::QuickActions => tr("Quick actions"),
+            Section::Pet => tr("Pet"),
             Section::Skills => tr("Skills"),
             Section::Connections => tr("Connections"),
             Section::Credentials => tr("Credentials"),
@@ -74,6 +78,7 @@ impl Section {
             Section::Conversation => "chat",
             Section::Experts => "user",
             Section::QuickActions => "bolt",
+            Section::Pet => "sparkles",
             Section::Skills => "skill",
             Section::Connections => "link",
             Section::Credentials => "lock",
@@ -107,6 +112,7 @@ impl Section {
                  helper explore worker"
             }
             Section::Experts => "expert persona specialist role instructions illustrator 专家",
+            Section::Pet => "pet companion mascot animation sprite 宠物",
             Section::QuickActions => "quick action prompt template shortcut reuse 快捷动作",
             Section::Skills => "skill workflow bundled folder reload",
             Section::Connections => {
@@ -126,7 +132,7 @@ impl Section {
     /// The heading the section is listed under.
     pub fn group(self) -> &'static str {
         match self {
-            Section::General | Section::Network => tr("App"),
+            Section::General | Section::Network | Section::Pet => tr("App"),
             Section::Models | Section::Conversation | Section::Experts | Section::QuickActions => {
                 "AI"
             }
@@ -790,6 +796,7 @@ mod tests {
         assert_eq!(
             groups,
             [
+                "App",
                 "App",
                 "App",
                 "AI",

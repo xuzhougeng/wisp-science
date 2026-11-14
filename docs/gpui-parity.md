@@ -194,7 +194,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Network [网络]: proxy per channel (model API, account login, MCP, code requests), package mirrors | Yes | Partial: routes for model requests, connectors and MCP, and code; conda mirror, Python index and CA bundle; no sign-in route, and no route of its own for one model or one MCP server | tauri |
 | Conversation [对话]: iteration limit, auto-continue, auto-compaction and threshold, follow-up questions | Yes | Partial: steps per turn, automatic compaction and its threshold, follow-up questions, review of turns and the reviewer model; no auto-continue | tauri |
 | Appearance [外观]: system/light/dark, theme, accent, fonts and sizes, live preview | Yes | Partial: system, light or dark with the Wisp palettes, applied at once; no other themes, accent, fonts or sizes | ui |
-| Pet [宠物] | Yes | Missing | ui |
+| Pet [宠物] | Yes | Partial: a Pet page turns it on and chooses its folder, and it shows the conversation's state in the transcript's corner; no desktop pet window, no walking or looking at the pointer | ui |
 | Models [模型]: API models with provider, URL, key, limits, effort | Several profiles, presets, default | Done: any number of models, the six presets, a default, a connection test | served |
 | Models: ACP agents, subscription accounts, decision model | Yes | Missing | tauri |
 | Quick actions [快捷动作] | Yes | Partial: named requests kept in Settings and put into the composer from its quick actions menu; they start no workflow, and the WebView's own list is not read | store |

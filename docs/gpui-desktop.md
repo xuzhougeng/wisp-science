@@ -150,6 +150,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Interpreters | The Python and R interpreters a conversation keeps between tool calls show above the composer with their version and state; Stop ends one, Dismiss takes a stopped one off the list |
 | Experts | Settings, Experts, keeps personas (a name and instructions); the composer's Expert menu starts a new conversation as one, and its instructions hold for the whole conversation |
 | Quick actions | Settings, Quick actions, keeps requests you make often under a name; the composer's quick actions menu puts one into the message box, after whatever is already typed, to finish and send |
+| Pet | Settings, Pet, turns on an animated companion drawn from a folder you choose (pet.json and a sprite sheet, Codex-compatible version 2); it stands in the transcript's corner and shows whether the conversation is working, being reviewed, waiting for you, done or failed |
 | Research archive | A conversation's Research archive button (or the command palette) has the model draft a report of its findings with the scripts behind them; you change the draft and freeze it, which writes it into the project and makes the conversation read-only |
 | Review turns | The composer's Review turns switch has each turn that used a tool, or said a good deal, reviewed when it ends; the result shows above the composer, and See opens the findings |
 | Review | A conversation's Review button (or the command palette) has the model read the conversation as a reviewer and lists claims its own tool output does not support, each with the evidence and a fix; Ask Wisp to correct puts the corrections in the composer |
@@ -467,6 +468,14 @@ Limits of this slice:
   `desktop.quick_actions` and neither reads nor changes the WebView's.
   It starts with four that can be changed or removed; at most 40 are
   kept, a name is at most 60 characters and a request 8,000.
+- The pet follows the conversation on screen only, inside the window:
+  there is no separate desktop pet window, it does not walk about or
+  look at the pointer, and it does not follow runs or other
+  conversations. The choice is kept under the WebView's keys
+  (`pet_enabled`, `pet_directory`), so both desktops show the same pet.
+  The folder is checked each time it is read (a 1536x2288 PNG or WebP
+  sheet of at most 16 MB inside the folder); a folder that stops being
+  a pet is reported in Settings and nothing is drawn.
 - A research archive is written once and cannot be undone from here:
   the report and scripts go to `.wisp/research-archives/<id>/` in the
   project, the record goes to the store's `research_archives` table (the
@@ -934,6 +943,12 @@ it: the request follows what was typed, the caret is at its end, and
 nothing is sent. Choose it again: it is not written twice. Press Escape
 with the menu open, then with the form open in Settings: each press
 closes only that. Remove the action: it leaves the menu.
+In Settings, Pet, turn the pet on without a folder: it is refused. Choose
+a folder that holds a version 2 pet and turn it on: its name shows on
+the page and the pet idles in the transcript's lower right corner. Click
+it: it waves once. Send a message: it works while the turn runs, waits
+while an approval is open, and jumps when the turn ends. Turn it off:
+it goes.
 In a conversation with results press Research archive: the dialog says a
 draft is being written, then shows a title and a report to edit and the
 scripts that go with it. Change a sentence and press Freeze: the dialog

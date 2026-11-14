@@ -1729,13 +1729,34 @@ impl Workspace {
             content = content.child(self.render_find_bar(cx));
         }
         let weak = cx.entity().downgrade();
+        // The pet stands in the transcript's lower right corner.
+        let pet = self
+            .pet
+            .as_ref()
+            .is_some_and(|pet| pet.look.is_some())
+            .then(|| {
+                div()
+                    .absolute()
+                    .right_4()
+                    .bottom_2()
+                    .child(self.pet_view.clone())
+            });
         content = content.child(
-            list(self.list.clone(), move |index, window, cx| {
-                weak.update(cx, |this, cx| this.found_row(index, window, cx))
-                    .unwrap_or_else(|_| div().into_any_element())
-            })
-            .flex_1()
-            .min_h_0(),
+            div()
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(
+                    list(self.list.clone(), move |index, window, cx| {
+                        weak.update(cx, |this, cx| this.found_row(index, window, cx))
+                            .unwrap_or_else(|_| div().into_any_element())
+                    })
+                    .flex_1()
+                    .min_h_0(),
+                )
+                .children(pet),
         );
         if let Some(approvals) = self.render_approvals(cx) {
             content = content.child(approvals);

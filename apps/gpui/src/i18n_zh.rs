@@ -738,4 +738,16 @@ pub const ZH: &[(&str, &str)] = &[
     ("The request. End it where you will go on typing, for example \"Question: \".", "请求内容。在你要接着输入的地方结尾，例如“问题：”。"),
     ("Requests you make often, kept under a name. The composer's quick actions menu puts one into the message box, to finish and send.", "你常用的请求，起个名字保存下来。输入栏的快捷动作菜单会把它放入消息框，补充完整后发送。"),
     ("Add a quick action", "添加快捷动作"),
+    // The pet.
+    ("Pet", "宠物"),
+    ("Show pet", "显示宠物"),
+    ("Pet folder", "宠物目录"),
+    ("No pet configured", "尚未配置宠物"),
+    ("A folder holding pet.json", "包含 pet.json 的目录"),
+    ("Choose…", "选择…"),
+    ("Choose", "选择"),
+    ("An animated companion in the corner of the conversation. It works while a turn runs, waits when you are needed, and jumps when the turn is done.", "对话角落里的动画伙伴。回合运行时它在工作，需要你时它在等待，回合完成时它会跳一下。"),
+    ("A folder holding pet.json and a sprite sheet (Codex-compatible, version 2). Nothing is read from it until the pet is turned on.", "包含 pet.json 和精灵图的目录（兼容 Codex v2）。开启宠物之前不会读取其中任何内容。"),
+    ("Idle", "空闲"),
+    ("Working", "工作中"),
 ];

@@ -26,6 +26,7 @@ mod organise;
 mod outline;
 mod palette;
 mod panel;
+mod pet;
 mod present;
 mod queue;
 mod review;

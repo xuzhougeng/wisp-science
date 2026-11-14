@@ -785,6 +785,15 @@ impl Backend {
         self.local(|host| async move { host.check_for_update().await })
     }
 
+    /// The pet the user chose, with what to draw when it is on.
+    pub fn pet(&self) -> Reply<wisp_server::desktop::Pet> {
+        self.local(|host| async move { host.pet().await })
+    }
+
+    pub fn set_pet(&self, enabled: bool, directory: String) -> Reply<wisp_server::desktop::Pet> {
+        self.local(move |host| async move { host.set_pet(enabled, &directory).await })
+    }
+
     /// The requests kept as quick actions.
     pub fn quick_actions(&self) -> Reply<Vec<wisp_server::desktop::QuickAction>> {
         self.local(|host| async move { host.quick_actions().await })
