@@ -20,6 +20,7 @@ mod memory;
 mod memos;
 mod model_view;
 mod notebook;
+mod notify;
 mod organise;
 mod outline;
 mod palette;

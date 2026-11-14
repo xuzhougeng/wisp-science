@@ -137,6 +137,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Project archives | Export on a project's card writes the project, its records and its files, as one zip; Import on the home page reads one and puts the project in a folder you choose |
 | Capabilities | A dialog for the open project: how many skills, connectors, MCP servers and SSH hosts are on or usable, the state of memory, and which command-line tools were found on this computer |
 | Follow-up questions | After an answer, up to three questions you could ask next show above the composer; picking one puts it in the composer to send or change, and the list can be put away |
+| Notifications | When a turn ends or a tool waits for approval while Wisp is in the background, a system notification is posted and, if chosen, a sound is played (Settings, General) |
 | Language | Settings, General, chooses the interface language: System (Chinese on a Chinese system, English otherwise), English or 中文 |
 | Delete a project's folder | Removing a project offers Delete folder too: after you type the project's name, the project is removed and its folder is deleted with every file in it |
 | What the model is sent | Clicking the context percentage by the composer (or the command palette) lists the conversation's working set: the instructions, the summary that stands in for compacted turns, and each message with about how many tokens it takes |
@@ -326,6 +327,16 @@ Limits of this slice:
   for a last word without tools. Compaction uses the WebView's keys
   (`auto_compact`, `auto_compact_percent`). Auto-continue, compaction on a
   model switch and after idle hours are not ported.
+- Notifications are for the conversation that is open in a window, and
+  only while that window is not the active one: a turn that ends in a
+  conversation you are not looking at is shown by the sidebar, not
+  announced. They are posted with what the system already has: on macOS
+  through `osascript` (so the banner is filed under Script Editor, and
+  the first one may ask for permission) and `afplay`; on Linux through
+  `notify-send` and `canberra-gtk-play`, silently doing nothing when
+  those are missing. Windows gets the sound only. The sound cannot be
+  chosen. Nothing is posted about turns a paired phone started unless
+  their conversation is open here.
 - The Chinese interface is not complete. Translated: the fixed text of
   the pages, panels and dialogs, the names of panel tabs, palette commands
   and settings sections, the placeholders of text fields, statuses,
@@ -760,6 +771,10 @@ press Escape (the page stays), press Escape again (the page closes). Open the
 conversation an item came from. Have a turn write an image, save it from
 Artifacts, delete the file and confirm the figure still shows in Favorites.
 Delete a conversation and confirm what was saved from it is still listed.
+Start a slow turn, switch to another app and wait: a notification names
+the conversation when the turn ends, and another when a tool asks for
+approval. Stay in Wisp and confirm nothing is posted. Turn Notify me off
+and Play a sound on in Settings, General: only the sound comes.
 In Settings, General, choose 中文: the sidebar, the home page and the
 composer read in Chinese at once, without a restart; choose English and
 they read in English; choose System on a Chinese system and they read in

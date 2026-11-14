@@ -24,6 +24,8 @@ use crate::{
 const APPEARANCE: &str = "appearance";
 const LANGUAGE: &str = "language";
 const LAUNCH: &str = "launch";
+const NOTIFY: &str = "notifications";
+const NOTIFY_SOUND: &str = "notification_sound";
 const LAST_OPEN: &str = "last_open";
 
 /// How wide a setting's name and note are, and the page that holds them.
@@ -595,6 +597,20 @@ impl Workspace {
     /// chosen palette and, if asked to, reopens the conversation that was
     /// open last time.
     pub(super) fn load_general(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (banner, sound) = (
+            self.backend.preference(NOTIFY),
+            self.backend.preference(NOTIFY_SOUND),
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            let saved = |reply| async move { receive(reply).await.ok().flatten() };
+            let (banner, sound) = (saved(banner).await, saved(sound).await);
+            let _ = this.update(cx, |this, cx| {
+                this.notify =
+                    crate::notify::Choice::from_saved(banner.as_deref(), sound.as_deref());
+                cx.notify();
+            });
+        })
+        .detach();
         // The composer offers them from the start.
         self.load_experts(window, cx);
         let language = self.backend.preference(LANGUAGE);
@@ -734,6 +750,36 @@ impl Workspace {
                 tr("Appearance"),
                 tr("System follows your computer's light or dark setting and changes with it."),
                 looks,
+                cx,
+            ))
+            .child(setting(
+                tr("Notify me"),
+                tr(
+                    "When a turn ends or a tool waits for approval while you are in another                      app, post a system notification. Windows has none without an installed                      app, so only the sound is available there.",
+                ),
+                Button::new("notify-banner")
+                    .label(if self.notify.banner { tr("On") } else { tr("Off") })
+                    .small()
+                    .selected(self.notify.banner)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.notify.banner = !this.notify.banner;
+                        let value = this.notify.banner.to_string();
+                        this.save_general(NOTIFY, value, window, cx);
+                    })),
+                cx,
+            ))
+            .child(setting(
+                tr("Play a sound"),
+                tr("Also play a sound then, whether or not a notification is posted."),
+                Button::new("notify-sound")
+                    .label(if self.notify.sound { tr("On") } else { tr("Off") })
+                    .small()
+                    .selected(self.notify.sound)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.notify.sound = !this.notify.sound;
+                        let value = this.notify.sound.to_string();
+                        this.save_general(NOTIFY_SOUND, value, window, cx);
+                    })),
                 cx,
             ))
             .child(setting(

@@ -667,4 +667,12 @@ pub const ZH: &[(&str, &str)] = &[
     ("Remove this expert? Conversations started as it keep the instructions they were given.", "要移除这位专家吗？以它开始的会话会保留当时的指令。"),
     ("An expert is a persona a conversation is started as: a name and the instructions the model works under throughout. Choose one in the composer before the first message.", "专家是会话开始时选定的角色：一个名称，加上模型在整个会话中遵循的指令。请在发送第一条消息之前，在输入栏中选择。"),
     ("Add an expert", "添加专家"),
+    // Notifications.
+    ("Wisp has answered", "Wisp 已回答"),
+    ("A turn stopped with an error", "有一轮因错误而停止"),
+    ("Wisp needs your approval", "Wisp 需要你的批准"),
+    ("Notify me", "通知我"),
+    ("When a turn ends or a tool waits for approval while you are in another app, post a system notification. Windows has none without an installed app, so only the sound is available there.", "当你在使用其他应用时，如果一轮结束或有工具等待批准，就发出系统通知。Windows 上未安装的应用无法发通知，因此那里只能使用提示音。"),
+    ("Play a sound", "播放提示音"),
+    ("Also play a sound then, whether or not a notification is posted.", "此时同时播放提示音，无论是否发出通知。"),
 ];

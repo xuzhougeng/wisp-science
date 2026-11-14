@@ -85,7 +85,7 @@ impl Section {
         match self {
             Section::General => {
                 "appearance theme dark light system start launch open home language \
-                 chinese english 中文 语言"
+                 chinese english 中文 语言 notify notification sound banner alert"
             }
             Section::Network => {
                 "proxy route socks http direct mirror conda pip pypi index package \

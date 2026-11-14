@@ -195,6 +195,8 @@ pub struct Workspace {
     /// Which palette the window wears.
     appearance: crate::theme::Appearance,
     language: crate::i18n::Language,
+    /// How the user is told that a conversation needs them.
+    notify: crate::notify::Choice,
     /// What the app opens on.
     launch: crate::settings::Launch,
     /// The Settings page that is showing.
@@ -639,6 +641,7 @@ impl Workspace {
             memory_text,
             appearance: Default::default(),
             language: Default::default(),
+            notify: Default::default(),
             launch: Default::default(),
             settings_section: Default::default(),
             turn_defaults: None,
@@ -927,6 +930,19 @@ impl Workspace {
         for (field, text) in fields {
             field.update(cx, |input, cx| input.set_placeholder(text, window, cx));
         }
+    }
+
+    /// Tells a user who is not looking at the window that the open
+    /// conversation needs them, in the way they chose.
+    fn tell_user(&self, event: crate::notify::Event, window: &Window) {
+        if !crate::notify::wanted(self.notify, window.is_window_active()) {
+            return;
+        }
+        let title = self
+            .current_row()
+            .map(|row| row.title.clone())
+            .unwrap_or_default();
+        crate::notify::post(self.notify, event, &title);
     }
 
     fn focus_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1505,9 +1521,28 @@ impl Workspace {
                             Ok(snapshot) => {
                                 let was_running =
                                     this.state.snapshot.as_ref().is_some_and(|s| s.running);
+                                let was_asking = this
+                                    .state
+                                    .snapshot
+                                    .as_ref()
+                                    .is_some_and(|s| !s.approvals.is_empty());
                                 let running = snapshot.running;
+                                // What to tell a user who is looking elsewhere.
+                                let event = if was_running && !running {
+                                    Some(match snapshot.error {
+                                        Some(_) => crate::notify::Event::Failed,
+                                        None => crate::notify::Event::Done,
+                                    })
+                                } else if !was_asking && !snapshot.approvals.is_empty() {
+                                    Some(crate::notify::Event::Approval)
+                                } else {
+                                    None
+                                };
                                 let active_runs = panel::active_runs(&snapshot.run_cards);
                                 if this.state.accept(&selection, snapshot) {
+                                    if let Some(event) = event {
+                                        this.tell_user(event, window);
+                                    }
                                     this.update_rows();
                                     this.load_inline_images(window, cx);
                                     if running {
