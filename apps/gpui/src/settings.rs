@@ -2,7 +2,9 @@
 //! without a window. Validation itself belongs to the host.
 use wisp_server::{
     config::default_api_url,
-    desktop::{ConnectorRow, McpTransport, ModelProfile, ModelSettings, ModelSource, SkillRow},
+    desktop::{
+        ConnectorRow, McpTransport, ModelProfile, ModelSettings, ModelSource, SkillRow, SshHostRow,
+    },
 };
 
 /// The pages of Settings, in the order they are listed.
@@ -14,6 +16,7 @@ pub enum Section {
     Skills,
     Connections,
     Credentials,
+    Environments,
     Permissions,
     Usage,
     Storage,
@@ -21,13 +24,14 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 9] = [
+    pub const ALL: [Section; 10] = [
         Section::General,
         Section::Models,
         Section::Conversation,
         Section::Skills,
         Section::Connections,
         Section::Credentials,
+        Section::Environments,
         Section::Permissions,
         Section::Usage,
         Section::Storage,
@@ -41,6 +45,7 @@ impl Section {
             Section::Skills => "Skills",
             Section::Connections => "Connections",
             Section::Credentials => "Credentials",
+            Section::Environments => "Environments",
             Section::Permissions => "Permissions",
             Section::Usage => "Usage",
             Section::Storage => "Storage",
@@ -55,6 +60,7 @@ impl Section {
             Section::Skills => "skill",
             Section::Connections => "link",
             Section::Credentials => "lock",
+            Section::Environments => "server",
             Section::Permissions => "shield",
             Section::Usage => "gauge",
             Section::Storage => "database",
@@ -66,7 +72,10 @@ impl Section {
         match self {
             Section::General => "App",
             Section::Models | Section::Conversation => "AI",
-            Section::Skills | Section::Connections | Section::Credentials => "Capabilities",
+            Section::Skills
+            | Section::Connections
+            | Section::Credentials
+            | Section::Environments => "Capabilities",
             Section::Permissions => "Safety",
             Section::Usage | Section::Storage => "Data",
         }
@@ -191,6 +200,42 @@ pub fn transport_line(transport: &McpTransport) -> String {
     match transport {
         McpTransport::Http { url } => url.clone(),
         McpTransport::Stdio { command, args } => join_command(command, args),
+    }
+}
+
+/// How an SSH host is reached, on one line.
+pub fn ssh_target(host: &SshHostRow) -> String {
+    if host.host_name.is_empty() {
+        return "From the entry of that name in your SSH config".into();
+    }
+    let mut line = String::new();
+    if !host.user.is_empty() {
+        line.push_str(&host.user);
+        line.push('@');
+    }
+    line.push_str(&host.host_name);
+    if let Some(port) = host.port {
+        line.push_str(&format!(":{port}"));
+    }
+    if !host.identity_file.is_empty() {
+        line.push_str(&format!(" · key {}", host.identity_file));
+    }
+    if !host.proxy_jump.is_empty() {
+        line.push_str(&format!(" · via {}", host.proxy_jump));
+    }
+    line
+}
+
+/// Reads the port field: empty leaves it to SSH, anything else must be a
+/// port.
+pub fn port(text: &str) -> Result<Option<u16>, String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    match text.parse::<u16>() {
+        Ok(port) if port > 0 => Ok(Some(port)),
+        _ => Err("A port is a number from 1 to 65535.".into()),
     }
 }
 
@@ -406,6 +451,7 @@ mod tests {
                 "Capabilities",
                 "Capabilities",
                 "Capabilities",
+                "Capabilities",
                 "Safety",
                 "Data",
                 "Data"
@@ -473,6 +519,33 @@ mod tests {
         assert!(!connector_matches(&rows[0], "uniprot"));
         assert_eq!(tool_count(1), "1 tool");
         assert_eq!(tool_count(4), "4 tools");
+    }
+
+    #[test]
+    fn an_ssh_host_is_described_by_what_was_filled_in() {
+        let mut host = SshHostRow {
+            alias: "gpu".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            ssh_target(&host),
+            "From the entry of that name in your SSH config"
+        );
+        host.host_name = "10.0.0.8".into();
+        assert_eq!(ssh_target(&host), "10.0.0.8");
+        host.user = "lab".into();
+        host.port = Some(2222);
+        host.identity_file = "~/.ssh/id_lab".into();
+        host.proxy_jump = "bastion".into();
+        assert_eq!(
+            ssh_target(&host),
+            "lab@10.0.0.8:2222 · key ~/.ssh/id_lab · via bastion"
+        );
+        assert_eq!(port(""), Ok(None));
+        assert_eq!(port(" 22 "), Ok(Some(22)));
+        for wrong in ["0", "65536", "ssh", "-1"] {
+            assert!(port(wrong).is_err(), "{wrong}");
+        }
     }
 
     #[test]

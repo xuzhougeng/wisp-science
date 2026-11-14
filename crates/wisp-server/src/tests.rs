@@ -2442,6 +2442,107 @@ async fn a_users_mcp_server_gives_turns_its_tools_and_each_asks_before_it_runs()
 }
 
 #[tokio::test]
+async fn ssh_hosts_are_registered_as_execution_contexts_without_their_keys() {
+    use desktop::SshHostRow;
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let start = server.environments().await.unwrap();
+    assert!(start.hosts.is_empty());
+    assert_eq!(start.default, None);
+
+    let gpu = SshHostRow {
+        alias: " gpu ".into(),
+        host_name: "10.0.0.8".into(),
+        user: "lab".into(),
+        port: Some(2222),
+        identity_file: "~/.ssh/id_lab".into(),
+        notes: "four A100".into(),
+        ..Default::default()
+    };
+    server.save_ssh_host(gpu.clone()).await.unwrap();
+    for wrong in [
+        SshHostRow::default(),
+        SshHostRow {
+            alias: "bad alias; rm -rf".into(),
+            ..Default::default()
+        },
+        SshHostRow {
+            alias: "ok".into(),
+            notes: "n".repeat(501),
+            ..Default::default()
+        },
+    ] {
+        assert!(server.save_ssh_host(wrong).await.is_err());
+    }
+    let view = server.environments().await.unwrap();
+    assert_eq!(
+        view.hosts,
+        [SshHostRow {
+            alias: "gpu".into(),
+            ..gpu.clone()
+        }]
+    );
+
+    // The host is an execution context a run can name, holding the path of
+    // the key and not a key.
+    let contexts = server.0.store.list_execution_contexts().await.unwrap();
+    let context = contexts.iter().find(|ctx| ctx.id == "ssh:gpu").unwrap();
+    assert!(context.config_json.contains("10.0.0.8"));
+    assert!(context.config_json.contains("id_lab"));
+    assert!(!context.config_json.contains("PRIVATE KEY"));
+
+    // Saving the same alias changes the host; it does not add another.
+    server
+        .save_ssh_host(SshHostRow {
+            alias: "gpu".into(),
+            host_name: "gpu.lab.example".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let view = server.environments().await.unwrap();
+    assert_eq!(view.hosts.len(), 1);
+    assert_eq!(view.hosts[0].host_name, "gpu.lab.example");
+    assert_eq!(view.hosts[0].user, "");
+
+    // New work can be sent there by default, and back to this computer.
+    server.set_default_environment(Some("gpu")).await.unwrap();
+    assert_eq!(
+        server.environments().await.unwrap().default.as_deref(),
+        Some("gpu")
+    );
+    assert!(server
+        .set_default_environment(Some("nowhere"))
+        .await
+        .is_err());
+    server.set_default_environment(None).await.unwrap();
+    assert_eq!(server.environments().await.unwrap().default, None);
+
+    // Removing the host removes its context and a default that named it.
+    server.set_default_environment(Some("gpu")).await.unwrap();
+    server.remove_ssh_host("gpu").await.unwrap();
+    assert!(server.remove_ssh_host("gpu").await.is_err());
+    let view = server.environments().await.unwrap();
+    assert!(view.hosts.is_empty());
+    assert_eq!(view.default, None);
+    assert!(server
+        .0
+        .store
+        .get_execution_context("ssh:gpu")
+        .await
+        .unwrap()
+        .is_none());
+    // Only hosts that are in the SSH config can be imported from it.
+    assert!(server
+        .import_ssh_hosts(&["surely-not-a-configured-host-name".into()])
+        .await
+        .is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn turn_defaults_and_project_grants_apply_from_the_next_turn() {
     use desktop::Remember;
     let temp = tempfile::tempdir().unwrap();

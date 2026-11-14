@@ -16,10 +16,11 @@ use wisp_server::{
     config::Config,
     desktop::{
         ArtifactRow, BatchAction, BatchReport, ConnectorRow, ConversationList, ConversationOptions,
-        ConversationStatus, CredentialRow, Favorite, FileMatch, Folder, GlobalMemory, LibraryItem,
-        LibraryItemSummary, McpServer, McpServerInput, McpServerRow, MemoryView, ModelInput,
-        ModelSettings, ProjectGrants, ProjectMemo, ProjectMemoPatch, ReferenceOption, Remember,
-        SkillRow, StorageView, TurnDefaults, TurnRef, UsageView,
+        ConversationStatus, CredentialRow, EnvironmentsView, Favorite, FileMatch, Folder,
+        GlobalMemory, LibraryItem, LibraryItemSummary, McpServer, McpServerInput, McpServerRow,
+        MemoryView, ModelInput, ModelSettings, ProjectGrants, ProjectMemo, ProjectMemoPatch,
+        ReferenceOption, Remember, SkillRow, SshHostRow, StorageView, TurnDefaults, TurnRef,
+        UsageView,
     },
 };
 use wisp_sync::DirectRemoteHost;
@@ -456,6 +457,27 @@ impl Backend {
     /// Starts an empty conversation the way the desktop's defaults say.
     pub fn create_conversation(&self, project: String) -> Reply<String> {
         self.local(move |host| async move { host.create_conversation(&project).await })
+    }
+
+    pub fn environments(&self) -> Reply<EnvironmentsView> {
+        self.local(|host| async move { host.environments().await })
+    }
+
+    pub fn save_ssh_host(&self, row: SshHostRow) -> Reply<()> {
+        self.local(move |host| async move { host.save_ssh_host(row).await })
+    }
+
+    pub fn import_ssh_hosts(&self, aliases: Vec<String>) -> Reply<()> {
+        self.local(move |host| async move { host.import_ssh_hosts(&aliases).await })
+    }
+
+    pub fn remove_ssh_host(&self, alias: String) -> Reply<()> {
+        self.local(move |host| async move { host.remove_ssh_host(&alias).await })
+    }
+
+    /// Where new work runs: the host with this alias, or this computer.
+    pub fn set_default_environment(&self, alias: Option<String>) -> Reply<()> {
+        self.local(move |host| async move { host.set_default_environment(alias.as_deref()).await })
     }
 
     pub fn mcp_servers(&self) -> Reply<Vec<McpServerRow>> {

@@ -64,6 +64,10 @@ pub enum Layer {
     McpForm,
     /// Question before an MCP server is removed.
     ConfirmRemoveMcp,
+    /// The form for an SSH host, on the Environments page of Settings.
+    EnvironmentForm,
+    /// Question before an SSH host is removed.
+    ConfirmRemoveEnvironment,
 }
 
 impl Layer {
@@ -99,9 +103,11 @@ impl Layer {
             | Layer::ConfirmDeleteMemo
             | Layer::MemoryEditor
             | Layer::ConfirmDeleteMemory => Some(Layer::FilesPanel),
-            Layer::ConfirmDeleteModel | Layer::McpForm | Layer::ConfirmRemoveMcp => {
-                Some(Layer::Settings)
-            }
+            Layer::ConfirmDeleteModel
+            | Layer::McpForm
+            | Layer::ConfirmRemoveMcp
+            | Layer::EnvironmentForm
+            | Layer::ConfirmRemoveEnvironment => Some(Layer::Settings),
             Layer::ConfirmRemoveFavorite => Some(Layer::Favorites),
             Layer::BatchGroupMenu | Layer::ConfirmBatchDelete => Some(Layer::SelectMode),
             _ => None,
@@ -359,8 +365,12 @@ mod tests {
         assert_eq!(stack.dismiss_top(), Some(Layer::McpForm));
         assert!(stack.contains(Layer::Settings));
         stack.open(Layer::ConfirmRemoveMcp);
+        stack.open(Layer::EnvironmentForm);
+        assert_eq!(stack.dismiss_top(), Some(Layer::EnvironmentForm));
+        stack.open(Layer::ConfirmRemoveEnvironment);
         assert!(stack.close(Layer::Settings));
         assert!(!stack.contains(Layer::ConfirmRemoveMcp));
+        assert!(!stack.contains(Layer::ConfirmRemoveEnvironment));
     }
 
     #[test]

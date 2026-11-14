@@ -1698,6 +1698,101 @@ impl Server {
         .await?)
     }
 
+    /// The SSH hosts work can run on, which of them (if any) new work goes
+    /// to, and the aliases in the user's SSH config that are not added yet.
+    pub async fn environments(&self) -> Result<EnvironmentsView> {
+        use wisp_runs::ssh_hosts;
+        let store = &self.0.store;
+        let hosts = ssh_hosts::load(store).await;
+        let aliases = tokio::task::spawn_blocking(ssh_hosts::list_ssh_config_aliases)
+            .await?
+            .into_iter()
+            .filter(|alias| !hosts.iter().any(|host| &host.alias == alias))
+            .collect();
+        Ok(EnvironmentsView {
+            default: ssh_hosts::stored_default_execution_context(store)
+                .await
+                .and_then(|id| id.strip_prefix("ssh:").map(str::to_owned)),
+            hosts: hosts.into_iter().map(SshHostRow::from).collect(),
+            config_aliases: aliases,
+        })
+    }
+
+    /// Adds an SSH host, or changes the one that has the alias. Wisp keeps
+    /// where the key file is, never the key.
+    pub async fn save_ssh_host(&self, input: SshHostRow) -> Result<()> {
+        use wisp_runs::ssh_hosts;
+        let _admission = self.0.admission.read().await;
+        let host = input.into_host()?;
+        let hosts = ssh_hosts::upsert_host(ssh_hosts::load(&self.0.store).await, host);
+        ssh_hosts::save_and_sync_contexts(&self.0.store, &hosts)
+            .await
+            .map_err(anyhow::Error::msg)
+    }
+
+    /// Adds the hosts of `~/.ssh/config` that are named here and not added
+    /// yet; OpenSSH keeps resolving their address, user and key from that
+    /// file.
+    pub async fn import_ssh_hosts(&self, aliases: &[String]) -> Result<()> {
+        use wisp_runs::ssh_hosts;
+        let _admission = self.0.admission.read().await;
+        let known = tokio::task::spawn_blocking(ssh_hosts::list_ssh_config_aliases).await?;
+        let wanted: Vec<String> = aliases
+            .iter()
+            .filter(|alias| known.contains(alias))
+            .cloned()
+            .collect();
+        ensure!(
+            !wanted.is_empty(),
+            "None of those hosts is in your SSH config"
+        );
+        let hosts = ssh_hosts::merge_config_aliases(ssh_hosts::load(&self.0.store).await, wanted);
+        ssh_hosts::save_and_sync_contexts(&self.0.store, &hosts)
+            .await
+            .map_err(anyhow::Error::msg)
+    }
+
+    /// Forgets an SSH host. Runs that were made on it keep their records.
+    pub async fn remove_ssh_host(&self, alias: &str) -> Result<()> {
+        use wisp_runs::ssh_hosts;
+        let _admission = self.0.admission.read().await;
+        let hosts = ssh_hosts::load(&self.0.store).await;
+        ensure!(
+            hosts.iter().any(|host| host.alias == alias),
+            "That host is no longer saved"
+        );
+        ssh_hosts::save(&self.0.store, &ssh_hosts::remove_host(hosts, alias))
+            .await
+            .map_err(anyhow::Error::msg)?;
+        // A default that pointed at it is cleared when it is next read.
+        ssh_hosts::remove_context_for_alias(&self.0.store, alias)
+            .await
+            .map_err(anyhow::Error::msg)
+    }
+
+    /// Says where new work runs unless told otherwise: on the host with
+    /// this alias, or with `None` on this computer.
+    pub async fn set_default_environment(&self, alias: Option<&str>) -> Result<()> {
+        use wisp_runs::ssh_hosts;
+        let id = match alias {
+            Some(alias) => {
+                ensure!(
+                    ssh_hosts::load(&self.0.store)
+                        .await
+                        .iter()
+                        .any(|host| host.alias == alias),
+                    "That host is no longer saved"
+                );
+                format!("ssh:{alias}")
+            }
+            None => String::new(),
+        };
+        self.0
+            .store
+            .set_setting(ssh_hosts::DEFAULT_EXECUTION_CONTEXT_KEY, &id)
+            .await
+    }
+
     fn mcp_secret(key_id: &str, server: &str) -> String {
         format!("desktop.mcp.{key_id}.{server}")
     }
@@ -2495,6 +2590,74 @@ pub struct ConversationStatus {
     pub allowed_tools: Vec<String>,
     /// What the model is thinking right now; empty when it is not.
     pub reasoning: String,
+}
+
+/// An SSH host as Settings shows and edits it. Signing in is by key or by
+/// whatever the user's SSH config and agent provide; a password is never
+/// part of it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SshHostRow {
+    /// What the host is called here and in tool calls.
+    pub alias: String,
+    /// Its address. Empty leaves it to the SSH config entry of that alias.
+    pub host_name: String,
+    pub user: String,
+    pub port: Option<u16>,
+    /// Where the private key is. The key itself is never read or kept.
+    pub identity_file: String,
+    /// A jump host, as OpenSSH's ProxyJump takes it.
+    pub proxy_jump: String,
+    pub notes: String,
+}
+
+impl From<wisp_runs::ssh_hosts::SshHost> for SshHostRow {
+    fn from(host: wisp_runs::ssh_hosts::SshHost) -> Self {
+        Self {
+            alias: host.alias,
+            host_name: host.host_name.unwrap_or_default(),
+            user: host.user.unwrap_or_default(),
+            port: host.port,
+            identity_file: host.identity_file.unwrap_or_default(),
+            proxy_jump: host.proxy_jump.unwrap_or_default(),
+            notes: host.notes.unwrap_or_default(),
+        }
+    }
+}
+
+impl SshHostRow {
+    fn into_host(self) -> Result<wisp_runs::ssh_hosts::SshHost> {
+        let filled = |text: String| Some(text.trim().to_owned()).filter(|text| !text.is_empty());
+        let alias = self.alias.trim().to_owned();
+        ensure!(!alias.is_empty(), "Give the host a name");
+        ensure!(
+            self.notes.chars().count() <= 500,
+            "Notes are limited to 500 characters"
+        );
+        let host = wisp_runs::ssh_hosts::SshHost {
+            alias,
+            host_name: filled(self.host_name),
+            user: filled(self.user),
+            port: self.port,
+            identity_file: filled(self.identity_file),
+            proxy_jump: filled(self.proxy_jump),
+            notes: filled(self.notes),
+            auth_method: None,
+            has_password: false,
+            password: None,
+        };
+        // The same rules a connection is held to, before anything is saved.
+        wisp_runs::ssh_hosts::SshConnection::from_host(&host).map_err(anyhow::Error::msg)?;
+        Ok(host)
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EnvironmentsView {
+    pub hosts: Vec<SshHostRow>,
+    /// Alias of the host new work runs on; `None` is this computer.
+    pub default: Option<String>,
+    /// Hosts named in `~/.ssh/config` that are not added yet.
+    pub config_aliases: Vec<String>,
 }
 
 pub use crate::mcp::{McpServer, McpTransport};

@@ -8,6 +8,7 @@ mod organise_view;
 mod palette_view;
 mod panel_tabs;
 mod settings_data;
+mod settings_environments;
 mod settings_mcp;
 mod settings_sections;
 mod settings_view;
@@ -142,6 +143,14 @@ pub struct Workspace {
     connectors_search: Entity<InputState>,
     /// The connector whose tools and links are unfolded.
     open_connector: Option<String>,
+    /// The SSH hosts and the default place for new work; `None` until read.
+    environments: Option<wisp_server::desktop::EnvironmentsView>,
+    /// The host the form changes or the remove question is about; `None`
+    /// in the form means a new one.
+    env_target: Option<String>,
+    /// The host form's fields: name, address, user, port, key file, jump
+    /// host, notes.
+    env_fields: [Entity<InputState>; 7],
     /// The user's MCP servers; `None` until read.
     mcp_servers: Option<Vec<wisp_server::desktop::McpServerRow>>,
     /// The server the form changes or the remove question is about; `None`
@@ -255,6 +264,8 @@ impl Workspace {
         let memory_text = cx.new(|cx| InputState::new(window, cx).multi_line(true));
         let steps_input = cx.new(|cx| InputState::new(window, cx));
         let mcp_name = cx.new(|cx| InputState::new(window, cx).placeholder("Lab notebook"));
+        let env_fields = ["gpu", "10.0.0.8", "", "22", "~/.ssh/id_ed25519", "", ""]
+            .map(|hint| cx.new(|cx| InputState::new(window, cx).placeholder(hint)));
         let mcp_target = cx.new(|cx| InputState::new(window, cx));
         let mcp_token = cx.new(|cx| InputState::new(window, cx).masked(true));
         let skills_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find a skill…"));
@@ -417,6 +428,9 @@ impl Workspace {
             connectors: None,
             connectors_search,
             open_connector: None,
+            environments: None,
+            env_target: None,
+            env_fields,
             mcp_servers: None,
             mcp_editing: None,
             mcp_http: true,
@@ -511,6 +525,9 @@ impl Workspace {
             // The page stays open underneath and keeps its focus.
             Some(Layer::ConfirmRemoveFavorite) => {}
             Some(Layer::McpForm | Layer::ConfirmRemoveMcp) => self.mcp_editing = None,
+            Some(Layer::EnvironmentForm | Layer::ConfirmRemoveEnvironment) => {
+                self.env_target = None
+            }
             // Menus and questions that hold no focus of their own.
             Some(
                 Layer::SortMenu

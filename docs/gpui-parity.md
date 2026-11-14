@@ -209,7 +209,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Remote access [远程接入]: project sync relay, Feishu, WeChat, StickS3, web access, Wisp-Lab | Yes | Missing | shared |
 | Credentials [凭据]: service keys in the keyring, custom env keys | Yes | Partial: the NCBI and OpenAlex keys the bundled connectors use; no other service keys, no custom environment keys | store |
 | Permissions [权限]: approval mode, remembered approvals | Yes | Partial: how new conversations start, and tools always allowed per project with revoke; no per-tool allow/ask/deny rules or global grants | tauri |
-| Environments [环境]: default, add SSH host, import `~/.ssh/config`, paths, probe | Yes | Missing | store + shared |
+| Environments [环境]: default, add SSH host, import `~/.ssh/config`, paths, probe | Yes | Partial: SSH hosts with key, agent or config sign-in (add, change, remove, add from `~/.ssh/config`) and where new work runs; no password sign-in, probe, WSL, interpreter paths or storage locations | store + shared |
 | Storage [存储]: data directory, per-project usage breakdown | Yes | Partial: the data folder with a button to show it, database and favorites sizes, and what Wisp keeps in each project; nothing can be moved or cleaned | store |
 | Usage [用量]: tokens by day, model, workspace, skill/MCP ranking | Yes | Partial: totals, thirty days, by model and by project, counted from now on; no skill or MCP ranking | store |
 | Settings search | Yes | Missing | ui |
@@ -322,7 +322,7 @@ before the things that hang in it.
 9. **Settings** — conversation, permissions, hooks, skills, connections,
    credentials, network, environments, storage, usage, general. *(9a done:
    the pages frame, Conversation and Permissions; 9b done: Skills; 9c done: bundled connectors; 9d done: Usage and Storage; 9e done: Credentials; 9f done: General with appearance and launch; 9g done: your own MCP
-   servers)*
+   servers; 9h done: Environments, SSH hosts and the default)*
 10. **Project pages** — research journey, calendar, paper evidence, research
     assistant, trajectory, archive.
 11. **Project transfer and sync** — import, export, relay sync, remote access.

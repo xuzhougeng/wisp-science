@@ -83,6 +83,7 @@ impl Workspace {
                 self.load_mcp_servers(window, cx);
             }
             Section::Credentials => self.load_credentials(window, cx),
+            Section::Environments => self.load_environments(window, cx),
             Section::Usage => self.load_usage(window, cx),
             Section::Storage => self.load_storage(window, cx),
             Section::Conversation => self.load_turn_defaults(window, cx),
