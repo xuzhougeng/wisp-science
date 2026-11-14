@@ -1781,6 +1781,157 @@ async fn desktop_conversation_options_shape_the_next_turn() {
     server.shutdown().await;
 }
 
+/// Records every message of every request, whatever its role.
+struct Everything(Arc<std::sync::Mutex<Vec<String>>>);
+#[async_trait]
+impl Provider for Everything {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+        Ok(Completion {
+            content: "noted".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        {
+            let mut seen = self.0.lock().unwrap();
+            seen.extend(messages.iter().map(|message| message.content.as_text()));
+            seen.extend(tools.iter().map(|tool| format!("{tool:?}")));
+        }
+        sink.on_text("noted");
+        self.complete(messages, tools).await
+    }
+}
+
+#[tokio::test]
+async fn memos_are_the_researchers_own_and_never_shown_to_the_model() {
+    let temp = tempfile::tempdir().unwrap();
+    let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let record = seen.clone();
+    let factory: ModelFactory = Arc::new(move |_| Box::new(Everything(record.clone())));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+
+    let draft = server
+        .add_memo(
+            PROJECT,
+            "  Prompt draft ",
+            " ask about the quokka-7 plasmid ",
+        )
+        .await
+        .unwrap();
+    assert_eq!(draft.title, "Prompt draft");
+    assert_eq!(draft.body, "ask about the quokka-7 plasmid");
+    assert!(!draft.pinned);
+    // A title is optional; a body is not, and both have limits.
+    let untitled = server.add_memo(PROJECT, "", "ssh lab-gpu").await.unwrap();
+    for (title, body) in [
+        ("empty", "  ".to_string()),
+        ("long body", "x".repeat(20_001)),
+        (&"t".repeat(201), "body".to_string()),
+    ] {
+        assert!(server.add_memo(PROJECT, title, &body).await.is_err());
+    }
+    assert!(server.add_memo("missing", "", "body").await.is_err());
+    assert!(server.memos("missing").await.is_err());
+
+    let titles = |memos: Vec<desktop::ProjectMemo>| {
+        memos.into_iter().map(|memo| memo.body).collect::<Vec<_>>()
+    };
+    // Newest first, until one is pinned.
+    assert_eq!(
+        titles(server.memos(PROJECT).await.unwrap()),
+        ["ssh lab-gpu", "ask about the quokka-7 plasmid"]
+    );
+    let patch = |id: &str| desktop::ProjectMemoPatch {
+        id: id.into(),
+        title: None,
+        body: None,
+        pinned: None,
+    };
+    let pinned = server
+        .update_memo(
+            PROJECT,
+            desktop::ProjectMemoPatch {
+                pinned: Some(true),
+                ..patch(&draft.id)
+            },
+        )
+        .await
+        .unwrap();
+    assert!(pinned.pinned);
+    assert_eq!(pinned.body, draft.body);
+    assert_eq!(
+        titles(server.memos(PROJECT).await.unwrap()),
+        ["ask about the quokka-7 plasmid", "ssh lab-gpu"]
+    );
+    let edited = server
+        .update_memo(
+            PROJECT,
+            desktop::ProjectMemoPatch {
+                title: Some("Server".into()),
+                body: Some("ssh lab-gpu -p 2222".into()),
+                ..patch(&untitled.id)
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (edited.title.as_str(), edited.body.as_str()),
+        ("Server", "ssh lab-gpu -p 2222")
+    );
+    assert!(server
+        .update_memo(
+            PROJECT,
+            desktop::ProjectMemoPatch {
+                body: Some(" ".into()),
+                ..patch(&untitled.id)
+            }
+        )
+        .await
+        .is_err());
+
+    // A memo belongs to its project: another one neither lists nor changes it.
+    assert!(server.memos(&lab).await.unwrap().is_empty());
+    assert!(server.update_memo(&lab, patch(&draft.id)).await.is_err());
+    assert!(server.delete_memo(&lab, &draft.id).await.is_err());
+
+    // A whole turn runs without the memo reaching the model in any message
+    // or tool description.
+    let session = create(&server).await;
+    send(&server, &session, "what should I ask next?")
+        .await
+        .unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    let seen = seen.lock().unwrap().join("\n");
+    assert!(seen.contains("what should I ask next?"));
+    assert!(!seen.contains("quokka-7"), "a memo reached the model");
+    assert!(!seen.contains("lab-gpu"), "a memo reached the model");
+
+    server.delete_memo(PROJECT, &draft.id).await.unwrap();
+    assert!(server.delete_memo(PROJECT, &draft.id).await.is_err());
+    assert_eq!(
+        titles(server.memos(PROJECT).await.unwrap()),
+        ["ssh lab-gpu -p 2222"]
+    );
+    server.shutdown().await;
+}
+
 /// Records what the model was shown, turn by turn.
 struct Recorder(Arc<std::sync::Mutex<Vec<Vec<String>>>>);
 #[async_trait]

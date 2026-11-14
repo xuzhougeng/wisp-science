@@ -36,6 +36,7 @@ impl Workspace {
         match tab {
             PanelTab::Files => self.ensure_files(window, cx),
             PanelTab::Artifacts => self.load_artifacts(window, cx),
+            PanelTab::Memos => self.load_memos(window, cx),
             PanelTab::Runs => {}
         }
         cx.notify();
@@ -115,22 +116,29 @@ impl Workspace {
             .map_or(0, |snapshot| panel::active_runs(&snapshot.run_cards));
         let mut tabs = div().h_flex().gap_1().flex_1().min_w_0();
         for tab in PanelTab::ALL {
-            let label = match (tab, active) {
-                (PanelTab::Runs, 1..) => format!("Runs · {active}"),
-                _ => tab.label().to_owned(),
+            let selected = self.panel_tab == tab;
+            // Only the open tab spells its name; the rest are icons with a
+            // tooltip, so more tabs still fit a narrow panel. Runs that are
+            // still going show their count either way.
+            let label = match (tab, active, selected) {
+                (PanelTab::Runs, 1.., true) => Some(format!("Runs · {active}")),
+                (PanelTab::Runs, 1.., false) => Some(active.to_string()),
+                (_, _, true) => Some(tab.label().to_owned()),
+                _ => None,
             };
-            tabs =
-                tabs.child(
-                    Button::new(SharedString::from(format!("panel-tab-{}", tab.label())))
-                        .icon(glyph(tab.icon()))
-                        .label(label)
-                        .small()
-                        .ghost()
-                        .selected(self.panel_tab == tab)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.show_panel_tab(tab, window, cx)
-                        })),
+            let mut button = Button::new(SharedString::from(format!("panel-tab-{}", tab.label())))
+                .icon(glyph(tab.icon()))
+                .small()
+                .ghost()
+                .selected(selected)
+                .tooltip(tab.label())
+                .on_click(
+                    cx.listener(move |this, _, window, cx| this.show_panel_tab(tab, window, cx)),
                 );
+            if let Some(label) = label {
+                button = button.label(label);
+            }
+            tabs = tabs.child(button);
         }
         div()
             .h_flex()

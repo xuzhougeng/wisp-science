@@ -228,6 +228,7 @@ impl Workspace {
             | Command::Files
             | Command::Runs
             | Command::Artifacts
+            | Command::Memos
             | Command::Archived => {
                 self.layers.close(Layer::Settings);
                 match command {
@@ -236,6 +237,7 @@ impl Workspace {
                     Command::Files => self.toggle_files(window, cx),
                     Command::Runs => self.show_panel_tab(PanelTab::Runs, window, cx),
                     Command::Artifacts => self.show_panel_tab(PanelTab::Artifacts, window, cx),
+                    Command::Memos => self.show_panel_tab(PanelTab::Memos, window, cx),
                     _ => {
                         self.show_archived = !self.show_archived;
                         self.sessions.clear();

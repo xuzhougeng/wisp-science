@@ -87,7 +87,7 @@ to find in the running app.
 | Copy or move a conversation to another project | Yes *(source)* | Partial: transcript only; moving its artifacts along is not ported | store |
 | Files entry [文件] | Opens the Files panel | Done | served |
 | Research journey [研究历程] | Section 7 | Missing | store |
-| Memos [备忘录] | Section 6 | Missing | store |
+| Memos [备忘录] | Section 6 | Done | store |
 | Paper evidence [论文证据] | Section 7 | Missing | store |
 | Favorites [收藏库] | Section 1 | Missing | store |
 | Capability summary [能力]: skills, MCP, memory counts, local tools found | Dialog | Missing | shared |
@@ -177,7 +177,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Highlights [划线] | Yes | Missing | store |
 | Provenance [溯源]: tool evidence behind a claim | Yes | Missing | store |
 | Side question [侧边问答]: ask without changing the main thread | Yes | Missing | tauri |
-| Memos [备忘录]: private notes the model cannot read | Yes | Missing | store |
+| Memos [备忘录]: private notes the model cannot read | Yes | Done: no search, no `/memo` command | store |
 
 ## 7. Project pages
 
@@ -317,7 +317,8 @@ before the things that hang in it.
 7a. **Rewind and branch** — edit and resend from an earlier message, branch a
    conversation, show branches under their parent. *(done; branch cards and
    merging a branch back remain)*
-8. **Memory, memos, highlights, favorites.**
+8. **Memory, memos, highlights, favorites.** *(memos done as 8a; memory is
+   8b, highlights and favorites 8c)*
 9. **Settings** — conversation, permissions, hooks, skills, connections,
    credentials, network, environments, storage, usage, general.
 10. **Project pages** — research journey, calendar, paper evidence, research

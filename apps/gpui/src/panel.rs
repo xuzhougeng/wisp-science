@@ -10,16 +10,23 @@ pub enum PanelTab {
     Files,
     Runs,
     Artifacts,
+    Memos,
 }
 
 impl PanelTab {
-    pub const ALL: [PanelTab; 3] = [PanelTab::Files, PanelTab::Runs, PanelTab::Artifacts];
+    pub const ALL: [PanelTab; 4] = [
+        PanelTab::Files,
+        PanelTab::Runs,
+        PanelTab::Artifacts,
+        PanelTab::Memos,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             PanelTab::Files => "Files",
             PanelTab::Runs => "Runs",
             PanelTab::Artifacts => "Artifacts",
+            PanelTab::Memos => "Memos",
         }
     }
 
@@ -28,6 +35,7 @@ impl PanelTab {
             PanelTab::Files => "folder",
             PanelTab::Runs => "activity-orbit",
             PanelTab::Artifacts => "layers",
+            PanelTab::Memos => "note-plus",
         }
     }
 }

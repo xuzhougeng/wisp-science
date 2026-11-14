@@ -165,6 +165,19 @@ impl Workspace {
             }));
         }
 
+        let memos_open =
+            self.layers.contains(Layer::FilesPanel) && self.panel_tab == PanelTab::Memos;
+        let mut memos = nav_row("memos", "note-plus", "Memos", memos_open, has_project, cx);
+        if has_project {
+            memos = memos.on_click(cx.listener(|this, _, window, cx| {
+                if this.layers.contains(Layer::FilesPanel) && this.panel_tab == PanelTab::Memos {
+                    this.toggle_files(window, cx)
+                } else {
+                    this.show_panel_tab(PanelTab::Memos, window, cx)
+                }
+            }));
+        }
+
         let mut sidebar = div()
             .v_flex()
             .w(px(256.))
@@ -196,6 +209,7 @@ impl Workspace {
             )
             .child(new_chat)
             .child(files)
+            .child(memos)
             .child(
                 div().py_1().child(
                     Input::new(&self.search)

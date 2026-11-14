@@ -140,7 +140,8 @@ folder registers its research root; it does not import existing desktop chats.
 | Tool calls | One folded line each with outcome and elapsed time; click for the verbatim input and output; interrupted calls stop claiming to run |
 | Runs | A Runs tab: runs started by the conversation with kind, status, exit code, command and output tails; a run that has not ended can be cancelled, and is followed until it ends |
 | Artifacts | Files a turn wrote are recorded when it ends; an Artifacts tab lists them for the conversation or the project and opens them |
-| Side panel | Tabs: Files, Runs, Artifacts |
+| Side panel | Tabs: Files, Runs, Artifacts, Memos; the open tab is named, the others are icons |
+| Memos | Your own notes per project: add, edit, pin, copy, delete after a confirmation, and put one into the message box. The model is never shown them |
 | Files | Project file browser, available before the first conversation; read-only text and Markdown preview |
 | Composer | Native multiline input; Enter for newline, Cmd/Ctrl+Enter to send |
 | Plan first | The model investigates and submits a plan as a card; nothing is changed until you approve it, which leaves plan mode and starts the work |
@@ -153,7 +154,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Drafts | Survive navigation; preserved on send failure, cleared on durable acceptance |
 | Execution | Shared agent/tools, streamed snapshots while running, stop and errors |
 | Approvals | Exact pending request; allow once, allow that tool for the rest of the conversation, or deny |
-| Escape | One window-level stack: Escape closes only the topmost of command palette, file preview, Files panel, Settings, title editor, delete confirmation, remove-project confirmation, the Full access question, the model and effort menus, the remove-model question, the sort menu, select mode and its group menu and delete question, a group's name field, actions and delete question, the conversation's group and move menus, and the go-back question |
+| Escape | One window-level stack: Escape closes only the topmost of command palette, file preview, Files panel, Settings, title editor, delete confirmation, remove-project confirmation, the Full access question, the model and effort menus, the remove-model question, the sort menu, select mode and its group menu and delete question, a group's name field, actions and delete question, the conversation's group and move menus, the go-back question, and the memo editor and its delete question |
 | Shortcuts | Cmd/Ctrl+K opens the command palette; Cmd/Ctrl+N starts a conversation in the open project; Cmd/Ctrl+, opens Settings |
 | Lifecycle | Background IO, stale-result rejection, cancel/clean workers on exit |
 
@@ -243,6 +244,11 @@ Limits of this slice:
   drag and drop, and typing `@`, `#` or `/` in the composer are not ported.
 - Runs can be cancelled. Harvest, review of a remote workspace, transfers and
   the full log are not ported.
+- Memos use the WebView's table and limits (a body of 1 to 20,000 characters,
+  a title of up to 200), so both desktops see the same notes on the same
+  database. There is no search within memos and no `/memo` command in the
+  composer. Putting a memo into the message box appends it to what is there;
+  nothing is sent until you send it.
 - An artifact is a project file a tool wrote during a turn, recorded with the
   WebView's identity (`path:<relative path>`) and snapshot rules, so the two
   desktops would agree on the same database. Files outside the project, and
@@ -366,6 +372,11 @@ the composer; change it and send. Open the source and confirm all three turns
 are still there. Try to delete the source and confirm it asks for its branches
 to be deleted first. Start a turn and confirm Edit and Branch are disabled
 while it runs.
+Open Memos from the sidebar: write one with a title and one without, pin the
+older one and confirm it leads; press Use and confirm its text is added to the
+message box after what was there; edit one, press Escape in the editor (the
+panel stays, nothing is saved); ask to delete, press Escape, then delete. Switch
+project and confirm the other project's memos are its own.
 Restart and confirm persisted messages. Close during a running tool and verify
 worker cleanup. Check missing credentials and invalid workspace errors. Validate
 each target OS; a macOS build does not establish Windows/Linux behavior.

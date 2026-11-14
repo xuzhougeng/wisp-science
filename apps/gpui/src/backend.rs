@@ -16,7 +16,8 @@ use wisp_server::{
     config::Config,
     desktop::{
         ArtifactRow, BatchAction, BatchReport, ConversationList, ConversationOptions,
-        ConversationStatus, FileMatch, Folder, ModelInput, ModelSettings, ReferenceOption, TurnRef,
+        ConversationStatus, FileMatch, Folder, ModelInput, ModelSettings, ProjectMemo,
+        ProjectMemoPatch, ReferenceOption, TurnRef,
     },
 };
 use wisp_sync::DirectRemoteHost;
@@ -284,6 +285,22 @@ impl Backend {
             host.branch_conversation(&project, &session, upto.as_ref())
                 .await
         })
+    }
+
+    pub fn memos(&self, project: String) -> Reply<Vec<ProjectMemo>> {
+        self.local(move |host| async move { host.memos(&project).await })
+    }
+
+    pub fn add_memo(&self, project: String, title: String, body: String) -> Reply<ProjectMemo> {
+        self.local(move |host| async move { host.add_memo(&project, &title, &body).await })
+    }
+
+    pub fn update_memo(&self, project: String, patch: ProjectMemoPatch) -> Reply<ProjectMemo> {
+        self.local(move |host| async move { host.update_memo(&project, patch).await })
+    }
+
+    pub fn delete_memo(&self, project: String, memo: String) -> Reply<()> {
+        self.local(move |host| async move { host.delete_memo(&project, &memo).await })
     }
 
     pub fn preference(&self, name: &'static str) -> Reply<Option<String>> {

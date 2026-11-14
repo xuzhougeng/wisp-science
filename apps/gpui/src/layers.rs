@@ -47,6 +47,10 @@ pub enum Layer {
     TransferMenu,
     /// Question before a conversation is cut back to an earlier message.
     ConfirmRewind,
+    /// The memo being written or changed, in place of the memo list.
+    MemoEditor,
+    /// Question before a memo is deleted.
+    ConfirmDeleteMemo,
 }
 
 impl Layer {
@@ -77,7 +81,9 @@ impl Layer {
     /// The surface this one is drawn inside, which it cannot outlive.
     fn parent(self) -> Option<Layer> {
         match self {
-            Layer::FilePreview => Some(Layer::FilesPanel),
+            Layer::FilePreview | Layer::MemoEditor | Layer::ConfirmDeleteMemo => {
+                Some(Layer::FilesPanel)
+            }
             Layer::ConfirmDeleteModel => Some(Layer::Settings),
             Layer::BatchGroupMenu | Layer::ConfirmBatchDelete => Some(Layer::SelectMode),
             _ => None,
@@ -281,6 +287,21 @@ mod tests {
         assert_eq!(stack.dismiss_top(), Some(Layer::SortMenu));
         assert_eq!(stack.dismiss_top(), Some(Layer::TransferMenu));
         assert_eq!(stack.dismiss_top(), None);
+    }
+
+    #[test]
+    fn the_memo_editor_lives_and_dies_with_the_side_panel() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::MemoEditor);
+        // Escape gives up the edit, not the panel.
+        assert_eq!(stack.dismiss_top(), Some(Layer::MemoEditor));
+        assert!(stack.contains(Layer::FilesPanel));
+        stack.open(Layer::ConfirmDeleteMemo);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmDeleteMemo));
+        stack.open(Layer::MemoEditor);
+        assert!(stack.close(Layer::FilesPanel));
+        assert!(!stack.contains(Layer::MemoEditor));
     }
 
     #[test]

@@ -7,6 +7,7 @@ mod controls;
 mod files;
 mod home;
 mod layers;
+mod memos;
 mod organise;
 mod palette;
 mod panel;

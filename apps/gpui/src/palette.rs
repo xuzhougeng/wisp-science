@@ -31,6 +31,7 @@ pub enum Command {
     Files,
     Runs,
     Artifacts,
+    Memos,
     Archived,
     Refresh,
     Settings,
@@ -45,6 +46,7 @@ impl Command {
             Command::Files => "Show or hide Files",
             Command::Runs => "Show runs",
             Command::Artifacts => "Show artifacts",
+            Command::Memos => "Show memos",
             Command::Archived => "Show or hide archived conversations",
             Command::Refresh => "Refresh",
             Command::Settings => "Settings",
@@ -59,6 +61,7 @@ impl Command {
             Command::Files => "folder",
             Command::Runs => "activity-orbit",
             Command::Artifacts => "layers",
+            Command::Memos => "note-plus",
             Command::Archived => "archive",
             Command::Refresh => "refresh",
             Command::Settings => "gear",
@@ -73,18 +76,20 @@ impl Command {
             | Command::Files
             | Command::Runs
             | Command::Artifacts
+            | Command::Memos
             | Command::Archived => screen == Screen::Project,
             Command::OpenFolder | Command::Refresh | Command::Settings => true,
         }
     }
 
-    const ALL: [Command; 9] = [
+    const ALL: [Command; 10] = [
         Command::NewConversation,
         Command::OpenFolder,
         Command::Home,
         Command::Files,
         Command::Runs,
         Command::Artifacts,
+        Command::Memos,
         Command::Archived,
         Command::Refresh,
         Command::Settings,

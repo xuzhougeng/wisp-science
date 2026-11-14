@@ -1,6 +1,7 @@
 mod conversation_actions;
 mod files_panel;
 mod home_view;
+mod memos_view;
 mod organise_view;
 mod palette_view;
 mod panel_tabs;
@@ -24,7 +25,9 @@ use wisp_dto::{
 };
 
 use wisp_dto::native_conversations::SendRequest;
-use wisp_server::desktop::{ArtifactRow, ConversationOptions, ConversationStatus, Folder, TurnRef};
+use wisp_server::desktop::{
+    ArtifactRow, ConversationOptions, ConversationStatus, Folder, ProjectMemo, TurnRef,
+};
 
 use crate::{
     backend::{Backend, receive},
@@ -96,6 +99,15 @@ pub struct Workspace {
     transfer_copy: bool,
     /// Something that went as asked and is worth a line.
     notice: Option<String>,
+    /// The project's memos; `None` until they were read.
+    memos: Option<Vec<ProjectMemo>>,
+    /// Only the latest memo request may fill the list.
+    memos_request: u64,
+    /// The memo being edited or asked about; `None` in the editor means a
+    /// new one.
+    memo_target: Option<String>,
+    memo_title: Entity<InputState>,
+    memo_body: Entity<InputState>,
     rename: Entity<InputState>,
     settings: settings_view::SettingsForm,
     composer: Entity<InputState>,
@@ -158,6 +170,12 @@ impl Workspace {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search conversations…"));
         let rename = cx.new(|cx| InputState::new(window, cx).placeholder("Conversation title"));
         let folder_name = cx.new(|cx| InputState::new(window, cx).placeholder("Group name"));
+        let memo_title = cx.new(|cx| InputState::new(window, cx).placeholder("Title (optional)"));
+        let memo_body = cx.new(|cx| {
+            InputState::new(window, cx)
+                .multi_line(true)
+                .placeholder("A prompt you reuse, a server address, a reminder…")
+        });
         let settings = settings_view::SettingsForm::new(window, cx);
         let palette_input = cx.new(|cx| {
             InputState::new(window, cx).placeholder("Search conversations, projects and files…")
@@ -280,6 +298,11 @@ impl Workspace {
             folder_name,
             transfer_copy: false,
             notice: None,
+            memos: None,
+            memos_request: 0,
+            memo_target: None,
+            memo_title,
+            memo_body,
             rename,
             settings,
             composer,
@@ -337,6 +360,11 @@ impl Workspace {
             }
             Some(Layer::FolderMenu | Layer::ConfirmDeleteFolder) => self.folder_target = None,
             Some(Layer::ConfirmRewind) => self.rewind_turn = None,
+            Some(Layer::MemoEditor) => {
+                self.memo_target = None;
+                self.focus_composer(window, cx);
+            }
+            Some(Layer::ConfirmDeleteMemo) => self.memo_target = None,
             // Menus and questions that hold no focus of their own.
             Some(
                 Layer::SortMenu
@@ -415,6 +443,11 @@ impl Workspace {
             self.branched.clear();
             self.folder_target = None;
             self.notice = None;
+            // Memos are the project's, and so is an edit in progress.
+            self.layers.close(Layer::MemoEditor);
+            self.layers.close(Layer::ConfirmDeleteMemo);
+            self.memos = None;
+            self.memo_target = None;
         }
         // These act on the conversation that is being left.
         for layer in [

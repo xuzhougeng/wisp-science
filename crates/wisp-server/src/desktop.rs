@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 pub use wisp_dto::native_conversations::ReferenceOption;
 use wisp_dto::SessionSearchInfo;
+pub use wisp_dto::{ProjectMemo, ProjectMemoPatch};
 use wisp_llm::ProviderKind;
 use wisp_store::Store;
 
@@ -817,6 +818,38 @@ impl Server {
             grouped,
             branched,
         })
+    }
+
+    /// The project's memos, pinned first, then the most recently changed.
+    /// A memo is the researcher's own note. Nothing in the host hands one to
+    /// the model: it reaches a conversation only as part of a message the
+    /// researcher sends.
+    pub async fn memos(&self, project: &str) -> Result<Vec<ProjectMemo>> {
+        self.known_project(project).await?;
+        self.0.store.list_project_memos(project).await
+    }
+
+    pub async fn add_memo(&self, project: &str, title: &str, body: &str) -> Result<ProjectMemo> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        let input = wisp_dto::ProjectMemoInput {
+            title: title.into(),
+            body: body.into(),
+        };
+        self.0.store.add_project_memo(project, &input).await
+    }
+
+    /// Changes the parts of a memo the patch names: title, body or pin.
+    pub async fn update_memo(&self, project: &str, patch: ProjectMemoPatch) -> Result<ProjectMemo> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        self.0.store.update_project_memo(project, &patch).await
+    }
+
+    pub async fn delete_memo(&self, project: &str, memo: &str) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        self.0.store.delete_project_memo(project, memo).await
     }
 
     /// A choice about how the desktop looks, such as how the sidebar is
