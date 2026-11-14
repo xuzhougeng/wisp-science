@@ -304,11 +304,11 @@ impl Workspace {
                             .child(div().text_sm().child(settings::skills_summary(skills)))
                             .child(div().text_xs().text_color(muted).child(
                                 if self.state.project.is_some() {
-                                    "The open project's skills and the ones for every project. \
-                                     A skill that is off is not offered to the model."
+                                    tr("The open project's skills and the ones for every project. \
+                                     A skill that is off is not offered to the model.")
                                 } else {
-                                    "Skills for every project. Open a project to see its own \
-                                     as well. A skill that is off is not offered to the model."
+                                    tr("Skills for every project. Open a project to see its own \
+                                     as well. A skill that is off is not offered to the model.")
                                 },
                             )),
                     )
@@ -318,7 +318,7 @@ impl Workspace {
                             .label("Reload")
                             .small()
                             .flex_shrink_0()
-                            .tooltip("Read the skill folders again")
+                            .tooltip(tr("Read the skill folders again"))
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.load_skills(window, cx)),
                             ),
@@ -335,7 +335,12 @@ impl Workspace {
             .filter(|row| settings::skill_matches(row, &query))
             .collect();
         if shown.is_empty() && !skills.is_empty() {
-            page = page.child(div().text_sm().text_color(muted).child("No skill matches."));
+            page = page.child(
+                div()
+                    .text_sm()
+                    .text_color(muted)
+                    .child(tr("No skill matches.")),
+            );
         }
         for row in shown {
             let name = row.name.clone();
@@ -376,7 +381,7 @@ impl Workspace {
                     )
                     .child(
                         Button::new(SharedString::from(format!("skill-{}", row.name)))
-                            .label(if enabled { "On" } else { "Off" })
+                            .label(if enabled { tr("On") } else { tr("Off") })
                             .small()
                             .selected(enabled)
                             .flex_shrink_0()
@@ -454,10 +459,10 @@ impl Workspace {
                             .text_sm()
                             .child(settings::connectors_summary(connectors)),
                     )
-                    .child(div().text_xs().text_color(muted).child(
+                    .child(div().text_xs().text_color(muted).child(tr(
                         "Literature and biology sources that ship with Wisp. The model can \
                          only read through them. A connector that is off gives it no tools.",
-                    )),
+                    ))),
             )
             .child(
                 div()
@@ -474,7 +479,7 @@ impl Workspace {
                 div()
                     .text_sm()
                     .text_color(muted)
-                    .child("No connector matches."),
+                    .child(tr("No connector matches.")),
             );
         }
         for row in shown {
@@ -552,7 +557,7 @@ impl Workspace {
                                         row.domain
                                     )),
                                     "external-link",
-                                    "Open in your browser",
+                                    tr("Open in your browser"),
                                 )
                                 .xsmall()
                                 .on_click(cx.listener(move |_, _, _, cx| cx.open_url(&target))),
@@ -572,7 +577,7 @@ impl Workspace {
                     .child(about)
                     .child(
                         Button::new(SharedString::from(format!("connector-{}", row.domain)))
-                            .label(if enabled { "On" } else { "Off" })
+                            .label(if enabled { tr("On") } else { tr("Off") })
                             .small()
                             .selected(enabled)
                             .flex_shrink_0()
@@ -722,14 +727,16 @@ impl Workspace {
             ))
             .child(setting(
                 tr("Appearance"),
-                "System follows your computer's light or dark setting and changes with it.",
+                tr("System follows your computer's light or dark setting and changes with it."),
                 looks,
                 cx,
             ))
             .child(setting(
-                "When Wisp starts",
-                "Open on the home page with every project, or on the conversation that \
+                tr("When Wisp starts"),
+                tr(
+                    "Open on the home page with every project, or on the conversation that \
                  was open when you last used it.",
+                ),
                 starts,
                 cx,
             ))
@@ -817,11 +824,11 @@ impl Workspace {
                 .pb_2()
                 .text_xs()
                 .text_color(muted)
-                .child(
+                .child(tr(
                     "Keys for the services the connectors read from. They are kept in the \
                      system keychain, never in the project database, and are not shown again \
                      once saved. They are used from the next turn.",
-                ),
+                )),
         );
         if self.credentials.is_empty() {
             page = page.child(div().text_sm().text_color(muted).child("Loading…"));
@@ -841,10 +848,10 @@ impl Workspace {
             if row.saved {
                 buttons = buttons.child(
                     Button::new(SharedString::from(format!("credential-forget-{id}")))
-                        .label("Forget")
+                        .label(tr("Forget"))
                         .small()
                         .ghost()
-                        .tooltip("Remove it from the keychain")
+                        .tooltip(tr("Remove it from the keychain"))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.save_credential(id, true, window, cx)
                         })),
@@ -868,9 +875,9 @@ impl Workspace {
                                     .child(row.label),
                             )
                             .child(div().text_xs().text_color(muted).child(if row.saved {
-                                "Saved"
+                                tr("Saved")
                             } else {
-                                "Not set"
+                                tr("Not set")
                             })),
                     )
                     .child(
@@ -928,7 +935,7 @@ impl Workspace {
                 }))
         };
         page.child(setting(
-            "Steps per turn",
+            tr("Steps per turn"),
             format!(
                 "How many times the model may call tools or answer within one turn, from {} \
                  to {}. At the limit it stops and says where it got to.",
@@ -952,11 +959,17 @@ impl Workspace {
             cx,
         ))
         .child(setting(
-            "Compact automatically",
-            "When the context fills up, older turns are summarised so the conversation \
+            tr("Compact automatically"),
+            tr(
+                "When the context fills up, older turns are summarised so the conversation \
              can go on. Off, a long conversation ends when the model's window is full.",
+            ),
             Button::new("auto-compact")
-                .label(if defaults.auto_compact { "On" } else { "Off" })
+                .label(if defaults.auto_compact {
+                    tr("On")
+                } else {
+                    tr("Off")
+                })
                 .small()
                 .selected(defaults.auto_compact)
                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -972,7 +985,7 @@ impl Workspace {
             cx,
         ))
         .child(setting(
-            "Compact at",
+            tr("Compact at"),
             format!(
                 "How full the context is when that happens, from {low}% to {high}%. Lower \
                  compacts sooner and keeps more room for long tool output."
@@ -980,7 +993,7 @@ impl Workspace {
             div()
                 .h_flex()
                 .gap_1()
-                .child(step("compact-down", "minus", "Compact sooner", false))
+                .child(step("compact-down", "minus", tr("Compact sooner"), false))
                 .child(
                     div()
                         .w(px(48.))
@@ -988,16 +1001,22 @@ impl Workspace {
                         .text_sm()
                         .child(format!("{percent}%")),
                 )
-                .child(step("compact-up", "plus", "Compact later", true)),
+                .child(step("compact-up", "plus", tr("Compact later"), true)),
             cx,
         ))
         .child(setting(
-            "Suggest what to ask next",
-            "After an answer the model is asked once more, briefly, for up to three \
+            tr("Suggest what to ask next"),
+            tr(
+                "After an answer the model is asked once more, briefly, for up to three \
              questions you could ask next. They show above the composer. Off, that extra \
              request is not made.",
+            ),
             Button::new("follow-ups")
-                .label(if defaults.follow_ups { "On" } else { "Off" })
+                .label(if defaults.follow_ups {
+                    tr("On")
+                } else {
+                    tr("Off")
+                })
                 .small()
                 .selected(defaults.follow_ups)
                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -1014,11 +1033,17 @@ impl Workspace {
         ))
         .child(setting(
             tr("Review turns"),
-            "When a turn that used a tool, or said a good deal, ends, a reviewer checks its \
+            tr(
+                "When a turn that used a tool, or said a good deal, ends, a reviewer checks its \
              claims against the tool output and the result shows above the composer. This \
              is what conversations start with; each can be switched in its composer.",
+            ),
             Button::new("auto-review-default")
-                .label(if defaults.auto_review { "On" } else { "Off" })
+                .label(if defaults.auto_review {
+                    tr("On")
+                } else {
+                    tr("Off")
+                })
                 .small()
                 .selected(defaults.auto_review)
                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -1034,9 +1059,11 @@ impl Workspace {
             cx,
         ))
         .child(setting(
-            "Reviewer model",
-            "The model that reviews, for automatic reviews and those you ask for. A second \
+            tr("Reviewer model"),
+            tr(
+                "The model that reviews, for automatic reviews and those you ask for. A second \
              model catches more than a model checking itself.",
+            ),
             self.review_model_choices(cx),
             cx,
         ))
@@ -1054,7 +1081,7 @@ impl Workspace {
         let own = !profiles.iter().any(|profile| profile.id == current);
         let mut choices = div().h_flex().flex_wrap().gap_1().justify_end().child(
             Button::new("review-model-own")
-                .label("The conversation's")
+                .label(tr("The conversation's"))
                 .small()
                 .selected(own)
                 .on_click(cx.listener(|this, _, window, cx| {
@@ -1099,10 +1126,12 @@ impl Workspace {
                 }))
         };
         let mut page = page.child(setting(
-            "New conversations start in",
-            "Ask first: tools that change files or run commands wait for your answer. \
+            tr("New conversations start in"),
+            tr(
+                "Ask first: tools that change files or run commands wait for your answer. \
              Full access: they run at once. A dangerous shell command asks either way. \
              Conversations you already have keep their own choice.",
+            ),
             div()
                 .h_flex()
                 .gap_1()
@@ -1119,12 +1148,18 @@ impl Workspace {
                     div()
                         .text_sm()
                         .font_weight(FontWeight::MEDIUM)
-                        .child("Always allowed"),
+                        .child(tr("Always allowed")),
                 )
-                .child(div().w(px(NOTE_WIDTH)).text_xs().text_color(muted).child(
-                    "Tools you answered \"Always in this project\" for. They run without \
+                .child(
+                    div()
+                        .w(px(NOTE_WIDTH))
+                        .text_xs()
+                        .text_color(muted)
+                        .child(tr(
+                            "Tools you answered \"Always in this project\" for. They run without \
                      asking in every conversation of that project until you take them back.",
-                )),
+                        )),
+                ),
         );
         if self.grants.is_empty() {
             page = page.child(
@@ -1132,7 +1167,7 @@ impl Workspace {
                     .pt_3()
                     .text_sm()
                     .text_color(muted)
-                    .child("No tool is always allowed."),
+                    .child(tr("No tool is always allowed.")),
             );
         }
         for grants in &self.grants {
@@ -1147,7 +1182,7 @@ impl Workspace {
                     .icon(glyph("close"))
                     .label(tool.clone())
                     .small()
-                    .tooltip("Ask again before this tool runs")
+                    .tooltip(tr("Ask again before this tool runs"))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.revoke_grant(project.clone(), name.clone(), window, cx)
                     })),

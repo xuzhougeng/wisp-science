@@ -1,5 +1,6 @@
 //! The Settings pages about what Wisp has used and what it keeps: Usage and
 //! Storage. Both only read.
+use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{ActiveTheme, Sizable, StyledExt, button::Button, tooltip::Tooltip};
 
@@ -79,20 +80,20 @@ impl Workspace {
             return page.child(div().text_sm().text_color(muted).child("Loading…"));
         };
         if view.projects.is_empty() {
-            return page.child(div().text_sm().text_color(muted).child(
+            return page.child(div().text_sm().text_color(muted).child(tr(
                 "Nothing has been used yet. Tokens are counted from what the model \
                  reports after each call.",
-            ));
+            )));
         }
         let totals = usage::totals(view);
         let mut page = page.child(
             div()
                 .h_flex()
                 .gap_2()
-                .child(figure(compact(totals.input), "Input tokens", cx))
-                .child(figure(compact(totals.output), "Output tokens", cx))
-                .child(figure(compact(totals.cached), "Read from cache", cx))
-                .child(figure(compact(totals.reasoning), "Reasoning", cx)),
+                .child(figure(compact(totals.input), tr("Input tokens"), cx))
+                .child(figure(compact(totals.output), tr("Output tokens"), cx))
+                .child(figure(compact(totals.cached), tr("Read from cache"), cx))
+                .child(figure(compact(totals.reasoning), tr("Reasoning"), cx)),
         );
 
         // One series, so one colour and no legend: the heading names it.
@@ -128,7 +129,7 @@ impl Workspace {
             _ => String::new(),
         };
         let busiest = usage::busiest(days).map_or_else(
-            || "No use in this period.".to_owned(),
+            || tr("No use in this period.").to_owned(),
             |(date, tokens)| {
                 format!(
                     "Busiest: {} with {} tokens.",
@@ -138,7 +139,7 @@ impl Workspace {
             },
         );
         page = page
-            .child(heading("Input and output per day"))
+            .child(heading(tr("Input and output per day")))
             .child(
                 div()
                     .pb_2()
@@ -150,7 +151,7 @@ impl Workspace {
             .child(div().h(px(1.)).bg(cx.theme().border));
 
         let all: u64 = view.models.iter().map(|(_, tokens)| tokens).sum();
-        page = page.child(heading("By model"));
+        page = page.child(heading(tr("By model")));
         for (model, tokens) in &view.models {
             let share = usage::percent(*tokens, all);
             page = page.child(
@@ -182,7 +183,7 @@ impl Workspace {
             );
         }
 
-        page = page.child(heading("By project"));
+        page = page.child(heading(tr("By project")));
         for row in &view.projects {
             page = page.child(
                 div()
@@ -253,7 +254,7 @@ impl Workspace {
                                 div()
                                     .text_sm()
                                     .font_weight(FontWeight::MEDIUM)
-                                    .child("Data folder"),
+                                    .child(tr("Data folder")),
                             )
                             .child(
                                 div()
@@ -267,33 +268,33 @@ impl Workspace {
                     .child(
                         Button::new("storage-reveal")
                             .icon(glyph("folder"))
-                            .label("Show")
+                            .label(tr("Show"))
                             .small()
                             .flex_shrink_0()
-                            .tooltip("Show the folder in your file manager")
+                            .tooltip(tr("Show the folder in your file manager"))
                             .on_click(cx.listener(move |_, _, _, cx| cx.reveal_path(&folder))),
                     ),
             )
             .child(div().pt_3())
             .child(line(
-                "Database",
-                "Conversations, settings and run records of every project.",
+                tr("Database"),
+                tr("Conversations, settings and run records of every project."),
                 view.database_bytes,
             ))
             .child(line(
-                "Favorites",
-                "Copies of what you saved, apart from the conversations.",
+                tr("Favorites"),
+                tr("Copies of what you saved, apart from the conversations."),
                 view.favorites_bytes,
             ))
-            .child(heading("In each project's folder"))
-            .child(div().pb_1().text_xs().text_color(muted).child(
+            .child(heading(tr("In each project's folder")))
+            .child(div().pb_1().text_xs().text_color(muted).child(tr(
                 "What Wisp itself keeps there: its .wisp folder (memory, snapshots) and the \
                  files you attached from elsewhere. Your own files are not counted.",
-            ));
+            )));
         let home_dir = dirs::home_dir().map(|path| path.to_string_lossy().into_owned());
         for row in &view.projects {
             let detail = if row.missing {
-                "The folder is not there.".to_owned()
+                tr("The folder is not there.").to_owned()
             } else {
                 format!(
                     ".wisp {} · uploads {}",

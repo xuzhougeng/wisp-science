@@ -2,6 +2,7 @@
 //! lists the saved model profiles and edits one at a time. The host validates
 //! and stores every form; API keys go to the system keychain and are never
 //! read back into the window.
+use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
@@ -48,12 +49,12 @@ impl SettingsForm {
         let mut field = |placeholder: &'static str| {
             cx.new(|cx| InputState::new(window, cx).placeholder(placeholder))
         };
-        let name = field("Shown in lists; defaults to the model ID");
+        let name = field(tr("Shown in lists; defaults to the model ID"));
         let url = field("https://api.openai.com/v1");
-        let model = field("Model ID, for example gpt-4o");
-        let context = field("From the model catalog");
-        let output = field("From the model catalog");
-        let effort = field("Provider default");
+        let model = field(tr("Model ID, for example gpt-4o"));
+        let context = field(tr("From the model catalog"));
+        let output = field(tr("From the model catalog"));
+        let effort = field(tr("Provider default"));
         let key = cx.new(|cx| {
             InputState::new(window, cx)
                 .masked(true)
@@ -337,7 +338,7 @@ impl Workspace {
         let reply = self.backend.save_model_profile(input);
         self.change_models(
             reply,
-            "Saved. New messages use it; running turns keep their model.",
+            tr("Saved. New messages use it; running turns keep their model."),
             select,
             window,
             cx,
@@ -354,7 +355,7 @@ impl Workspace {
         let reply = self.backend.set_default_model(id);
         self.change_models(
             reply,
-            "New conversations now use this model.",
+            tr("New conversations now use this model."),
             None,
             window,
             cx,
@@ -383,7 +384,7 @@ impl Workspace {
             return;
         }
         let reply = self.backend.delete_model_profile(id);
-        self.change_models(reply, "Removed.", None, window, cx);
+        self.change_models(reply, tr("Removed."), None, window, cx);
     }
 
     /// Asks the model for one word with the form as it is typed.
@@ -423,7 +424,7 @@ impl Workspace {
                 .text_color(muted)
                 .child(match &form.current {
                     Some(current) => settings::summary(current),
-                    None => "Loading settings…".into(),
+                    None => tr("Loading settings…").into(),
                 }),
         );
         for profile in form.current.iter().flat_map(|current| &current.profiles) {
@@ -437,7 +438,7 @@ impl Workspace {
                     .child(profile.name.clone()),
             );
             if profile.is_default {
-                heading = heading.child(chip("Default", Tone::Success, cx));
+                heading = heading.child(chip(tr("Default"), Tone::Success, cx));
             }
             let detail = match &profile.problem {
                 Some(problem) => div()
@@ -485,7 +486,7 @@ impl Workspace {
             div().pt_2().child(
                 Button::new("model-add")
                     .icon(glyph("plus"))
-                    .label("Add a model")
+                    .label(tr("Add a model"))
                     .small()
                     .selected(form.editing.is_none())
                     .on_click(
@@ -498,7 +499,7 @@ impl Workspace {
                 .pt_3()
                 .text_xs()
                 .text_color(muted)
-                .child("Or start from a provider:"),
+                .child(tr("Or start from a provider:")),
         )
         .child(presets)
     }
@@ -541,34 +542,34 @@ impl Workspace {
                     .font_weight(FontWeight::MEDIUM)
                     .child(match saved {
                         Some(profile) => profile.name.clone(),
-                        None => "New model".into(),
+                        None => tr("New model").into(),
                     }),
             )
             .child(field(
                 "Name",
-                "What this model is called in lists and in the composer.",
+                tr("What this model is called in lists and in the composer."),
                 &form.name,
             ))
             .child(
                 div()
                     .v_flex()
                     .gap_1()
-                    .child(div().text_sm().child("Provider"))
+                    .child(div().text_sm().child(tr("Provider")))
                     .child(providers),
             )
             .child(field(
-                "API URL",
-                "Leave blank for the provider's own endpoint.",
+                tr("API URL"),
+                tr("Leave blank for the provider's own endpoint."),
                 &form.url,
             ))
             .child(field(
-                "Model",
-                "The exact model ID the endpoint expects.",
+                tr("Model"),
+                tr("The exact model ID the endpoint expects."),
                 &form.model,
             ))
             .child(field(
-                "API key",
-                "Stored in the system keychain, never in the project database.",
+                tr("API key"),
+                tr("Stored in the system keychain, never in the project database."),
                 &form.key,
             ))
             .child(
@@ -578,24 +579,24 @@ impl Workspace {
                     .items_start()
                     .child(
                         field(
-                            "Context window (tokens)",
-                            "Required for models outside the catalog.",
+                            tr("Context window (tokens)"),
+                            tr("Required for models outside the catalog."),
                             &form.context,
                         )
                         .flex_1(),
                     )
                     .child(
                         field(
-                            "Output limit (tokens)",
-                            "Required for models outside the catalog.",
+                            tr("Output limit (tokens)"),
+                            tr("Required for models outside the catalog."),
                             &form.output,
                         )
                         .flex_1(),
                     ),
             )
             .child(field(
-                "Reasoning effort",
-                "The default for conversations that do not choose one.",
+                tr("Reasoning effort"),
+                tr("The default for conversations that do not choose one."),
                 &form.effort,
             ));
         if let Some(error) = &form.error {
@@ -619,14 +620,14 @@ impl Workspace {
                             .min_w_0()
                             .text_sm()
                             .text_color(cx.theme().danger)
-                            .child(
+                            .child(tr(
                                 "Remove this model and its key? Conversations that use it go \
                                  back to the default.",
-                            ),
+                            )),
                     )
                     .child(
                         Button::new("model-delete-confirm")
-                            .label("Remove")
+                            .label(tr("Remove"))
                             .small()
                             .danger()
                             .on_click(
@@ -635,7 +636,7 @@ impl Workspace {
                     )
                     .child(
                         Button::new("model-delete-cancel")
-                            .label("Cancel")
+                            .label(tr("Cancel"))
                             .small()
                             .on_click(cx.listener(|this, _, _, cx| this.cancel_delete_model(cx))),
                     ),
@@ -656,9 +657,9 @@ impl Workspace {
                 Button::new("settings-test")
                     .icon(glyph("bolt"))
                     .label(if form.busy {
-                        "Working…"
+                        tr("Working…")
                     } else {
-                        "Test connection"
+                        tr("Test connection")
                     })
                     .disabled(form.busy)
                     .on_click(cx.listener(|this, _, window, cx| this.test_connection(window, cx))),
@@ -667,7 +668,7 @@ impl Workspace {
             actions = actions
                 .child(
                     Button::new("settings-default")
-                        .label("Use for new conversations")
+                        .label(tr("Use for new conversations"))
                         .disabled(locked || profile.is_default)
                         .on_click(cx.listener(|this, _, window, cx| this.make_default(window, cx))),
                 )
@@ -675,7 +676,7 @@ impl Workspace {
                 .child(
                     Button::new("settings-delete")
                         .icon(glyph("trash"))
-                        .label("Remove")
+                        .label(tr("Remove"))
                         .ghost()
                         .disabled(locked)
                         .on_click(cx.listener(|this, _, _, cx| this.ask_delete_model(cx))),
@@ -709,7 +710,7 @@ impl Workspace {
                     .pb_1()
                     .text_lg()
                     .font_weight(FontWeight::MEDIUM)
-                    .child("Settings"),
+                    .child(tr("Settings")),
             );
         let query = self.settings_search.read(cx).value().to_string();
         let found = settings::search_sections(&query);
@@ -727,7 +728,7 @@ impl Workspace {
                     .pt_2()
                     .text_xs()
                     .text_color(muted)
-                    .child("No page is about that."),
+                    .child(tr("No page is about that.")),
             );
         }
         let mut group = "";
@@ -759,17 +760,24 @@ impl Workspace {
                     .pt_2()
                     .text_xs()
                     .text_color(muted)
-                    .child("Help"),
+                    .child(tr("Help")),
             )
             .child(
-                nav_row("settings-docs", "book", "Documentation", false, true, cx)
-                    .on_click(cx.listener(|_, _, _, cx| cx.open_url(crate::links::DOCS))),
+                nav_row(
+                    "settings-docs",
+                    "book",
+                    tr("Documentation"),
+                    false,
+                    true,
+                    cx,
+                )
+                .on_click(cx.listener(|_, _, _, cx| cx.open_url(crate::links::DOCS))),
             )
             .child(
                 nav_row(
                     "settings-feedback",
                     "bubble",
-                    "Report a problem",
+                    tr("Report a problem"),
                     false,
                     true,
                     cx,

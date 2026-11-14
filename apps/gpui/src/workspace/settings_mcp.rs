@@ -1,6 +1,7 @@
 //! The user's own MCP servers, at the top of the Connections page: add,
 //! change, test, switch off and remove. The form and the remove question are
 //! layers inside Settings.
+use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
@@ -184,9 +185,9 @@ impl Workspace {
             .border_color(cx.theme().border)
             .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(
                 if self.mcp_editing.is_some() {
-                    "Change the server"
+                    tr("Change the server")
                 } else {
-                    "Add an MCP server"
+                    tr("Add an MCP server")
                 },
             ))
             .child(label("Name"))
@@ -195,27 +196,27 @@ impl Workspace {
                 div()
                     .h_flex()
                     .gap_1()
-                    .child(kind("mcp-http", "Over HTTP", true))
-                    .child(kind("mcp-stdio", "A program on this computer", false)),
+                    .child(kind("mcp-http", tr("Over HTTP"), true))
+                    .child(kind("mcp-stdio", tr("A program on this computer"), false)),
             )
             .child(label(if self.mcp_http {
-                "URL"
+                tr("URL")
             } else {
-                "Command, with what it is given. Put words with spaces in quotes."
+                tr("Command, with what it is given. Put words with spaces in quotes.")
             }))
             .child(Input::new(&self.mcp_target).small());
         if self.mcp_http {
             form = form
-                .child(label(
+                .child(label(tr(
                     "Token, if the server asks for one. Sent as a bearer token and kept \
                      in the system keychain; leave empty to keep the one that is saved.",
-                ))
+                )))
                 .child(Input::new(&self.mcp_token).small());
         } else {
-            form = form.child(label(
+            form = form.child(label(tr(
                 "The program runs as you, with your files within its reach. Add only \
                  servers you trust.",
-            ));
+            )));
         }
         form.child(
             div()
@@ -231,7 +232,7 @@ impl Workspace {
                 )
                 .child(
                     Button::new("mcp-cancel")
-                        .label("Cancel")
+                        .label(tr("Cancel"))
                         .small()
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.layers.close(Layer::McpForm);
@@ -271,12 +272,12 @@ impl Workspace {
         // The latest test says more than the last turn's failure.
         match (self.mcp_tested.get(&id), &row.error) {
             (Some(None), _) => {
-                about = about.child(div().text_xs().text_color(muted).child("Connecting…"));
+                about = about.child(div().text_xs().text_color(muted).child(tr("Connecting…")));
             }
             (Some(Some(Ok(tools))), _) => {
                 about = about.child(div().text_xs().text_color(cx.theme().success).child(
                     if tools.is_empty() {
-                        "Connected. It offers no tools.".to_owned()
+                        tr("Connected. It offers no tools.").to_owned()
                     } else {
                         format!("Connected: {}", tools.join(", "))
                     },
@@ -299,7 +300,7 @@ impl Workspace {
             actions
                 .child(
                     Button::new("mcp-remove-confirm")
-                        .label("Remove")
+                        .label(tr("Remove"))
                         .xsmall()
                         .danger()
                         .on_click(cx.listener(|this, _, window, cx| this.remove_mcp(window, cx))),
@@ -318,17 +319,17 @@ impl Workspace {
             actions
                 .child(
                     Button::new(SharedString::from(format!("mcp-test-{id}")))
-                        .label("Test")
+                        .label(tr("Test"))
                         .xsmall()
                         .ghost()
-                        .tooltip("Connect now and list its tools")
+                        .tooltip(tr("Connect now and list its tools"))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.test_mcp(testing.clone(), window, cx)
                         })),
                 )
                 .child(
                     Button::new(SharedString::from(format!("mcp-edit-{id}")))
-                        .label("Change")
+                        .label(tr("Change"))
                         .xsmall()
                         .ghost()
                         .on_click(cx.listener(move |this, _, window, cx| {
@@ -337,7 +338,7 @@ impl Workspace {
                 )
                 .child(
                     Button::new(SharedString::from(format!("mcp-remove-{id}")))
-                        .label("Remove")
+                        .label(tr("Remove"))
                         .xsmall()
                         .ghost()
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -360,7 +361,7 @@ impl Workspace {
             .child(about)
             .child(
                 Button::new(SharedString::from(format!("mcp-enabled-{id}")))
-                    .label(if enabled { "On" } else { "Off" })
+                    .label(if enabled { tr("On") } else { tr("Off") })
                     .small()
                     .selected(enabled)
                     .flex_shrink_0()
@@ -388,12 +389,12 @@ impl Workspace {
                             div()
                                 .text_sm()
                                 .font_weight(FontWeight::MEDIUM)
-                                .child("Your MCP servers"),
+                                .child(tr("Your MCP servers")),
                         )
-                        .child(div().text_xs().text_color(muted).child(
+                        .child(div().text_xs().text_color(muted).child(tr(
                             "Servers you add give the model their tools in every project. \
                              Each tool asks before it runs.",
-                        )),
+                        ))),
                 )
                 .child(
                     Button::new("mcp-add")
@@ -416,8 +417,13 @@ impl Workspace {
             }
             Some(servers) if servers.is_empty() => {
                 if !self.layers.contains(Layer::McpForm) {
-                    section =
-                        section.child(div().pt_2().text_xs().text_color(muted).child("None yet."));
+                    section = section.child(
+                        div()
+                            .pt_2()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(tr("None yet.")),
+                    );
                 }
             }
             Some(servers) => {

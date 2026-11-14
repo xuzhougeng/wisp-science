@@ -1,5 +1,6 @@
 //! The Network page of Settings: the route each kind of the app's own
 //! traffic takes, and where the model is told to install packages from.
+use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Sizable, StyledExt,
@@ -133,16 +134,18 @@ impl Workspace {
                 .child(div().w(px(640.)).text_xs().text_color(muted).child(note))
         };
         let mut page = page.child(heading(
-            "Routes",
-            "Leave a route empty to follow the system and the environment, write none to \
+            tr("Routes"),
+            tr(
+                "Leave a route empty to follow the system and the environment, write none to \
              connect directly, or give a proxy address (http, https or socks5) without a \
              user name or password.",
+            ),
         ));
         for (index, ((title, note), field)) in FIELDS.iter().zip(&self.network_fields).enumerate() {
             if index == settings::NETWORK_ROUTES {
                 page = page.child(div().pt_4().child(heading(
-                    "Packages",
-                    "Advice the model is given with every turn, not a rule the app enforces.",
+                    tr("Packages"),
+                    tr("Advice the model is given with every turn, not a rule the app enforces."),
                 )));
             }
             let mut control = div()
@@ -159,7 +162,8 @@ impl Workspace {
                         .child(settings::route_note(&values[index])),
                 );
             }
-            page = page.child(setting(title, *note, control, cx));
+            // `setting` words the title; the note is worded here.
+            page = page.child(setting(title, tr(note), control, cx));
         }
         let mut actions = div().h_flex().gap_3().pt_4().child(
             Button::new("network-save")
@@ -169,7 +173,7 @@ impl Workspace {
                 .on_click(cx.listener(|this, _, window, cx| this.save_network(window, cx))),
         );
         if self.network_saved && &typed == saved {
-            actions = actions.child(div().text_xs().text_color(muted).child("Saved"));
+            actions = actions.child(div().text_xs().text_color(muted).child(tr("Saved")));
         }
         page.child(actions)
     }

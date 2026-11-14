@@ -1,6 +1,7 @@
 //! The Environments page of Settings: the SSH hosts work can run on and
 //! where new work goes by default. The form and the remove question are
 //! layers inside Settings.
+use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
@@ -187,9 +188,9 @@ impl Workspace {
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
                     .child(if changing {
-                        "Change the host"
+                        tr("Change the host")
                     } else {
-                        "Add an SSH host"
+                        tr("Add an SSH host")
                     }),
             );
         for (index, (label, field)) in LABELS.iter().zip(&self.env_fields).enumerate() {
@@ -198,7 +199,7 @@ impl Workspace {
                 continue;
             }
             form = form
-                .child(div().text_xs().text_color(muted).child(*label))
+                .child(div().text_xs().text_color(muted).child(tr(label)))
                 .child(Input::new(field).small());
         }
         form.child(
@@ -217,7 +218,7 @@ impl Workspace {
                 )
                 .child(
                     Button::new("environment-cancel")
-                        .label("Cancel")
+                        .label(tr("Cancel"))
                         .small()
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.layers.close(Layer::EnvironmentForm);
@@ -251,7 +252,7 @@ impl Workspace {
         };
         let mut places = div().h_flex().flex_wrap().gap_1().child(place(
             "environment-local".into(),
-            "This computer".into(),
+            tr("This computer").into(),
             None,
         ));
         for host in &view.hosts {
@@ -271,12 +272,12 @@ impl Workspace {
                         div()
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
-                            .child("New work runs on"),
+                            .child(tr("New work runs on")),
                     )
-                    .child(div().w(px(540.)).text_xs().text_color(muted).child(
+                    .child(div().w(px(540.)).text_xs().text_color(muted).child(tr(
                         "Where the model starts runs unless you or it say otherwise. \
                          Conversation tools such as shell stay on this computer.",
-                    ))
+                    )))
                     .child(places),
             )
             .child(
@@ -291,13 +292,13 @@ impl Workspace {
                                 div()
                                     .text_sm()
                                     .font_weight(FontWeight::MEDIUM)
-                                    .child("SSH hosts"),
+                                    .child(tr("SSH hosts")),
                             )
-                            .child(div().text_xs().text_color(muted).child(
+                            .child(div().text_xs().text_color(muted).child(tr(
                                 "Servers and clusters the model may start runs on. Wisp signs \
                                  in with your SSH keys, agent and config. Check a host once \
                                  it is added: work runs on it only after a check passes.",
-                            )),
+                            ))),
                     )
                     .child(
                         Button::new("environment-add")
@@ -314,7 +315,13 @@ impl Workspace {
             page = page.child(div().pt_3().child(self.environment_form(cx)));
         }
         if view.hosts.is_empty() && !self.layers.contains(Layer::EnvironmentForm) {
-            page = page.child(div().pt_2().text_xs().text_color(muted).child("None yet."));
+            page = page.child(
+                div()
+                    .pt_2()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(tr("None yet.")),
+            );
         }
         for host in &view.hosts {
             let asking = self.layers.contains(Layer::ConfirmRemoveEnvironment)
@@ -379,7 +386,7 @@ impl Workspace {
                     .gap_1()
                     .child(
                         Button::new("environment-remove-confirm")
-                            .label("Remove")
+                            .label(tr("Remove"))
                             .xsmall()
                             .danger()
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -406,13 +413,13 @@ impl Workspace {
                             host.alias
                         )))
                         .label(if check.is_some() {
-                            "Check again"
+                            tr("Check again")
                         } else {
-                            "Check"
+                            tr("Check")
                         })
                         .xsmall()
                         .disabled(checking)
-                        .tooltip("Connect now and see what the host is")
+                        .tooltip(tr("Connect now and see what the host is"))
                         .on_click(cx.listener(
                             move |this, _, window, cx| {
                                 this.check_environment(checked.clone(), window, cx)
@@ -424,7 +431,7 @@ impl Workspace {
                             "environment-edit-{}",
                             host.alias
                         )))
-                        .label("Change")
+                        .label(tr("Change"))
                         .xsmall()
                         .ghost()
                         .on_click(cx.listener(
@@ -438,7 +445,7 @@ impl Workspace {
                             "environment-remove-{}",
                             host.alias
                         )))
-                        .label("Remove")
+                        .label(tr("Remove"))
                         .xsmall()
                         .ghost()
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -490,17 +497,17 @@ impl Workspace {
                                         div()
                                             .text_sm()
                                             .font_weight(FontWeight::MEDIUM)
-                                            .child("In your SSH config"),
+                                            .child(tr("In your SSH config")),
                                     )
-                                    .child(div().text_xs().text_color(muted).child(
+                                    .child(div().text_xs().text_color(muted).child(tr(
                                         "Hosts named in ~/.ssh/config that are not added yet. \
                                          Added this way, their address, user and key stay in \
                                          that file.",
-                                    )),
+                                    ))),
                             )
                             .child(
                                 Button::new("environment-import-all")
-                                    .label("Add all")
+                                    .label(tr("Add all"))
                                     .small()
                                     .flex_shrink_0()
                                     .on_click(cx.listener(move |this, _, window, cx| {
