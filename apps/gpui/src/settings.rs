@@ -86,7 +86,10 @@ impl Section {
                 "model api key provider endpoint url context tokens reasoning effort default \
                  openai anthropic test connection"
             }
-            Section::Conversation => "steps iterations turn limit compact compaction context",
+            Section::Conversation => {
+                "steps iterations turn limit compact compaction context follow-up questions \
+                 suggestions suggest next"
+            }
             Section::Skills => "skill workflow bundled folder reload",
             Section::Connections => {
                 "mcp server connector tool literature biology pubmed uniprot token http"

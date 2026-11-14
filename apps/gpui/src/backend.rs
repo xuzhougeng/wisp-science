@@ -687,6 +687,17 @@ impl Backend {
         self.local(move |host| async move { host.revoke_project_grant(&project, &tool).await })
     }
 
+    /// Returns once the host is no longer asking the model what could be
+    /// asked next in a conversation.
+    pub fn follow_ups_settled(&self, project: String, session: String) -> Reply<()> {
+        self.local(move |host| async move { host.follow_ups_settled(&project, &session).await })
+    }
+
+    /// Puts away the questions suggested after the latest answer.
+    pub fn dismiss_follow_ups(&self, project: String, session: String) -> Reply<()> {
+        self.local(move |host| async move { host.dismiss_follow_ups(&project, &session).await })
+    }
+
     pub fn revoke_allowed_tools(&self, project: String, session: String) -> Reply<()> {
         self.local(move |host| async move { host.revoke_allowed_tools(&project, &session).await })
     }

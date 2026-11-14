@@ -105,6 +105,10 @@ pub struct Live {
     /// Tools the user allowed for the rest of this conversation. Kept in
     /// memory only: a restart asks again.
     pub allowed_tools: HashSet<String>,
+    /// Questions suggested after the latest answer, until the next turn.
+    pub follow_ups: Vec<String>,
+    /// The model is being asked for them right now.
+    pub suggesting: bool,
 }
 
 pub struct Session {
@@ -112,6 +116,8 @@ pub struct Session {
     pub cancel: Arc<AtomicBool>,
     /// Serializes acceptance, including the durable request-id check.
     pub accept: tokio::sync::Mutex<()>,
+    /// Woken whenever `suggesting` is cleared.
+    pub suggested: tokio::sync::Notify,
     pub runtime: Mutex<Option<wisp_runtime::RuntimeManager>>,
     #[cfg(test)]
     pub snapshot_after_read: Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
@@ -123,6 +129,7 @@ impl Default for Session {
             live: Mutex::new(Live::default()),
             cancel: Arc::new(AtomicBool::new(false)),
             accept: Default::default(),
+            suggested: Default::default(),
             runtime: Mutex::new(None),
             #[cfg(test)]
             snapshot_after_read: Mutex::new(None),

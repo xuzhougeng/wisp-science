@@ -2,6 +2,7 @@ pub mod config;
 pub mod desktop;
 mod export;
 mod files;
+mod follow_ups;
 pub mod mcp;
 mod network;
 mod output;
@@ -502,6 +503,10 @@ impl Server {
             live.generation = live.generation.wrapping_add(1);
             live.error = None;
             live.usage = None;
+            // They were about the answer before this turn.
+            live.follow_ups.clear();
+            live.suggesting = false;
+            session.suggested.notify_waiters();
             live.calls.clear();
             live.reasoning.clear();
             live.written.clear();
@@ -514,8 +519,8 @@ impl Server {
         let session = session.clone();
         let project = project.to_string();
         let root = std::path::PathBuf::from(root);
+        let side_model = model.provider.clone();
         tokio::spawn(async move {
-            let _permit = permit;
             let inner = server.clone();
             let running = session.clone();
             let input = request.clone();
@@ -545,16 +550,73 @@ impl Server {
             {
                 error = Some(format!("Could not save turn completion: {e}"));
             }
-            let mut live = session.live.lock().unwrap();
-            live.running = false;
-            live.generation = live.generation.wrapping_add(1);
-            live.approvals.clear();
-            live.messages.clear();
-            live.draft.clear();
-            live.reasoning.clear();
-            live.error = error;
+            let answered = error.is_none();
+            let ended = {
+                let mut live = session.live.lock().unwrap();
+                live.running = false;
+                live.generation = live.generation.wrapping_add(1);
+                live.approvals.clear();
+                live.messages.clear();
+                live.draft.clear();
+                live.reasoning.clear();
+                live.error = error;
+                // Set with the turn's end, so whoever sees the turn over
+                // can wait for the questions without missing them.
+                live.suggesting = answered;
+                live.generation
+            };
+            // The turn is over: what follows is not one of the four.
+            drop(permit);
+            if answered {
+                server
+                    .suggest_follow_ups(&request.session_id, &session, side_model, ended)
+                    .await;
+            }
         });
         Ok(reply)
+    }
+
+    /// Asks the conversation's model what could be asked next and keeps
+    /// the answer for the snapshot, unless a newer turn began meanwhile.
+    /// A failure costs the user nothing but the suggestions.
+    async fn suggest_follow_ups(
+        &self,
+        frame: &str,
+        session: &Session,
+        mut model: wisp_llm::ProviderConfig,
+        ended: u64,
+    ) {
+        let store = &self.0.store;
+        let found = async {
+            if self.0.shutting_down.load(Ordering::Relaxed) || !follow_ups::enabled(store).await {
+                return Ok(vec![]);
+            }
+            let messages = store
+                .load_recent_turn_preview_messages(frame, follow_ups::TURNS)
+                .await?;
+            // The call goes the way the turn went, and is kept short.
+            let routes = network::load(store).await;
+            if let Some(route) = network::route(&routes.model_proxy_url) {
+                model.proxy = Some(route);
+            }
+            model.max_tokens = follow_ups::MAX_TOKENS;
+            let provider = (self.0.models)(model);
+            follow_ups::suggest(provider.as_ref(), &messages).await
+        }
+        .await;
+        let questions = found.unwrap_or_else(|error| {
+            tracing::warn!(%frame, "No follow-up questions: {error:#}");
+            vec![]
+        });
+        {
+            // A newer turn has its own questions to wait for.
+            let mut live = session.live.lock().unwrap();
+            if live.generation == ended {
+                live.follow_ups = questions;
+                live.suggesting = false;
+            }
+        }
+        session.suggested.notify_waiters();
     }
 
     async fn snapshot(&self, project: &str, request: &dto::SessionRequest) -> Result<Value> {
@@ -654,7 +716,7 @@ impl Server {
             context_view: Some(false),
             file_browser: Some(true),
             file_transfers: Some(false),
-            follow_ups: vec![],
+            follow_ups: live.follow_ups.clone(),
             plan_mode: Some(options.plan_first),
             fast_mode: None,
             acp_agent_id: None,

@@ -1530,6 +1530,9 @@ impl Workspace {
         if let Some(approvals) = self.render_approvals(cx) {
             content = content.child(approvals);
         }
+        if let Some(follow_ups) = self.render_follow_ups(cx) {
+            content = content.child(follow_ups);
+        }
         content.child(self.render_composer(running, cx))
     }
 }

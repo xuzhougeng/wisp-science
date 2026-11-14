@@ -4,6 +4,7 @@ mod conversation_actions;
 mod favorites_view;
 mod files_panel;
 mod find_view;
+mod follow_ups_view;
 mod home_view;
 mod inline_view;
 mod journey_view;
@@ -1322,6 +1323,9 @@ impl Workspace {
                                         this.refresh_lists(window, cx);
                                         this.reload_files(window, cx);
                                         this.reload_artifacts(window, cx);
+                                        // What could be asked next arrives
+                                        // a little after the answer.
+                                        this.await_follow_ups(window, cx);
                                     }
                                     this.mark_seen(window, cx);
                                     // The turn is over: what was written

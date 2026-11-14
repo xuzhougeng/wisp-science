@@ -136,6 +136,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Pictures in answers | When an answer shows a picture of the project with Markdown image syntax, the picture is drawn under the answer |
 | Project archives | Export on a project's card writes the project, its records and its files, as one zip; Import on the home page reads one and puts the project in a folder you choose |
 | Capabilities | A dialog for the open project: how many skills, connectors, MCP servers and SSH hosts are on or usable, the state of memory, and which command-line tools were found on this computer |
+| Follow-up questions | After an answer, up to three questions you could ask next show above the composer; picking one puts it in the composer to send or change, and the list can be put away |
 | Trajectory | A conversation's Trajectory button (or the command palette) shows every turn's steps in the order they happened: what you asked, what the model said, each tool with how it went and how long it took, and each model call with its tokens; the totals are at the top |
 | Windows | New Window (the app menu, Cmd/Ctrl+Shift+N, or the command palette) opens another window on the same projects, each with its own page and conversation |
 | Export | A conversation's Export button saves the whole of it as a Markdown file where you choose |
@@ -145,7 +146,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Outline | A button in the conversation's header lists what you asked, in order; choosing one scrolls to it |
 | Find in conversation | Cmd/Ctrl+F, or the command palette: a bar over the transcript marks every message, and every tool call, that contains the words; Return and the arrows move between them |
 | Help | Documentation (home page, Settings, palette) and Report a problem (Settings, palette) open the tutorials and the issue tracker in the system's browser |
-| Settings | A search field narrows the pages to those about what you type. Pages: General (appearance: system, light or dark; what the app opens on), Network (a route for model requests, for connectors and MCP servers, and for the code the model runs; a conda mirror, a Python package index and a CA bundle the model is told to use), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold), Skills (every skill with where it comes from, search, on or off), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Environments (the SSH hosts work can run on: add, change, remove, add from `~/.ssh/config`, check the connection and see what the host is, and which one new work goes to), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
+| Settings | A search field narrows the pages to those about what you type. Pages: General (appearance: system, light or dark; what the app opens on), Network (a route for model requests, for connectors and MCP servers, and for the code the model runs; a conda mirror, a Python package index and a CA bundle the model is told to use), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold, suggesting what to ask next), Skills (every skill with where it comes from, search, on or off), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Environments (the SSH hosts work can run on: add, change, remove, add from `~/.ssh/config`, check the connection and see what the host is, and which one new work goes to), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
 | Inbox | Conversations in any project that are waiting for you; opens across projects |
 | Read state | A finished answer is marked read once it is on screen in the active window |
 | Transcript | Virtualized Markdown, selectable text, paginated history |
@@ -314,9 +315,18 @@ Limits of this slice:
   on, a paired phone's included. Steps per turn replaces the `WISP_MAX_ITER`
   the host was started with once it is saved; at the limit the model is asked
   for a last word without tools. Compaction uses the WebView's keys
-  (`auto_compact`, `auto_compact_percent`). Auto-continue, follow-up
-  questions, compaction on a model switch and after idle hours are not
-  ported.
+  (`auto_compact`, `auto_compact_percent`). Auto-continue, compaction on a
+  model switch and after idle hours are not ported.
+- Follow-up questions cost one more, short model request after every turn
+  that ends on an answer: the conversation's model reads the last four
+  turns, with long messages and tool results cut short, and may write up to
+  1,024 tokens. Those tokens are not in the usage statistics or the
+  trajectory. The switch is the WebView's (`follow_up_questions`, on until
+  turned off) and applies to every turn this host runs, so a paired phone
+  is offered the questions too. Nothing is suggested after a turn that
+  failed, was stopped, or ended on a question to you; a model that does not
+  reply with a list suggests nothing, silently. The questions are kept in
+  memory: they are gone when the next turn starts or the app restarts.
 - "Always in this project" is kept in the database
   (`desktop.approvals.<project>`) and answers the standard tool question for
   every conversation of that project, in turns that start after it was given
@@ -650,6 +660,13 @@ press Escape (the page stays), press Escape again (the page closes). Open the
 conversation an item came from. Have a turn write an image, save it from
 Artifacts, delete the file and confirm the figure still shows in Favorites.
 Delete a conversation and confirm what was saved from it is still listed.
+After an answer, wait a moment: up to three questions show above the
+composer. Click one: it is in the composer, not sent. Send it and confirm
+the list is gone while the turn runs and a new one follows the answer. Put
+the list away with its close button and confirm it stays away after
+switching conversations and back. In Settings, Conversation, turn Suggest
+what to ask next off: the next answer is followed by no list and the model
+endpoint receives no extra request.
 In Settings open Conversation: type a letter into Steps per turn and save (it
 is refused), then 50, and confirm it is still 50 after a restart; turn
 compaction off and on; move the threshold to both ends. Open Permissions:

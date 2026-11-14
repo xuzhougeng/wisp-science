@@ -918,6 +918,27 @@ impl Workspace {
                 .child(step("compact-up", "plus", "Compact later", true)),
             cx,
         ))
+        .child(setting(
+            "Suggest what to ask next",
+            "After an answer the model is asked once more, briefly, for up to three \
+             questions you could ask next. They show above the composer. Off, that extra \
+             request is not made.",
+            Button::new("follow-ups")
+                .label(if defaults.follow_ups { "On" } else { "Off" })
+                .small()
+                .selected(defaults.follow_ups)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.save_turn_defaults(
+                        TurnDefaults {
+                            follow_ups: !defaults.follow_ups,
+                            ..defaults
+                        },
+                        window,
+                        cx,
+                    )
+                })),
+            cx,
+        ))
     }
 
     pub(super) fn render_permission_settings(&self, cx: &mut Context<Self>) -> Div {

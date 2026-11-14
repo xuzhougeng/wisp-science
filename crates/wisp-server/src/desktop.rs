@@ -2937,7 +2937,42 @@ impl Server {
                 .await?
                 .as_deref()
                 == Some("1"),
+            follow_ups: crate::follow_ups::enabled(&self.0.store).await,
         })
+    }
+
+    /// Returns once the model is no longer being asked what could come
+    /// next in a conversation: at once when it is not, and after a minute
+    /// at the latest. The questions, if any, are then in the snapshot.
+    pub async fn follow_ups_settled(&self, project: &str, session: &str) -> Result<()> {
+        self.own_conversation(project, session).await?;
+        let session = self.session(session);
+        let settled = async {
+            loop {
+                let woken = session.suggested.notified();
+                tokio::pin!(woken);
+                // Listening before looking, so a wake in between is kept.
+                woken.as_mut().enable();
+                if !session.live.lock().unwrap().suggesting {
+                    return;
+                }
+                woken.await;
+            }
+        };
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(60), settled).await;
+        Ok(())
+    }
+
+    /// Puts away the questions suggested after the latest answer.
+    pub async fn dismiss_follow_ups(&self, project: &str, session: &str) -> Result<()> {
+        self.own_conversation(project, session).await?;
+        self.session(session)
+            .live
+            .lock()
+            .unwrap()
+            .follow_ups
+            .clear();
+        Ok(())
     }
 
     /// Saves them. They apply from the next turn, and to conversations made
@@ -2969,6 +3004,9 @@ impl Server {
                 AUTO_COMPACT_PERCENT,
                 &defaults.auto_compact_percent.to_string(),
             )
+            .await?;
+        store
+            .set_setting(crate::follow_ups::SETTING, &defaults.follow_ups.to_string())
             .await?;
         if defaults.full_access {
             store.set_setting(DEFAULT_FULL_ACCESS, "1").await?;
@@ -3443,6 +3481,8 @@ pub struct TurnDefaults {
     pub compact_range: (u8, u8),
     /// New conversations run tools that change things without asking.
     pub full_access: bool,
+    /// After an answer, ask the model for questions that could come next.
+    pub follow_ups: bool,
 }
 
 const DEFAULT_FULL_ACCESS: &str = "desktop.conversation.default_full_access";

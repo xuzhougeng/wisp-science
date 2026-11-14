@@ -1,7 +1,21 @@
 //! What a message being written carries besides its text: project files and
 //! references to conversations and skills. Kept per conversation, like the
 //! draft, and without graphics.
-use wisp_dto::{ComposerReferenceArg, native_conversations::Item};
+use wisp_dto::{
+    ComposerReferenceArg,
+    native_conversations::{Item, Snapshot},
+};
+
+/// The questions to offer above the composer: the ones suggested after the
+/// latest answer. They are kept back while a turn runs, while a tool waits
+/// for approval and in a conversation that cannot be written to, because a
+/// question could not be asked then.
+pub fn suggestions(snapshot: &Snapshot) -> &[String] {
+    if snapshot.running || snapshot.read_only || !snapshot.approvals.is_empty() {
+        return &[];
+    }
+    &snapshot.follow_ups
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Chip {
@@ -143,6 +157,39 @@ pub fn user_text(item: &Item) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn suggestions_are_offered_only_when_a_question_could_be_asked() {
+        let snapshot = |change: serde_json::Value| -> Snapshot {
+            let mut value = json!({
+                "schema": "test", "epoch": "host-1", "sequence": 1,
+                "project_id": "p", "session_id": "s", "items": [],
+                "next_before_seq": null, "running": false, "stopping": false,
+                "read_only": false, "model_id": "offline", "request_id": null,
+                "error": null, "approvals": [],
+                "follow_ups": ["Why?", "How many?"]
+            });
+            for (key, changed) in change.as_object().unwrap() {
+                value[key] = changed.clone();
+            }
+            serde_json::from_value(value).unwrap()
+        };
+        assert_eq!(suggestions(&snapshot(json!({}))), ["Why?", "How many?"]);
+        assert!(suggestions(&snapshot(json!({"follow_ups": []}))).is_empty());
+        // A host that suggests nothing sends no list at all.
+        let mut bare = serde_json::to_value(snapshot(json!({"follow_ups": []}))).unwrap();
+        assert!(bare.get("follow_ups").is_none());
+        bare["sequence"] = json!(2);
+        assert!(suggestions(&serde_json::from_value::<Snapshot>(bare).unwrap()).is_empty());
+        // Nothing could be asked now: they wait.
+        assert!(suggestions(&snapshot(json!({"running": true}))).is_empty());
+        assert!(suggestions(&snapshot(json!({"read_only": true}))).is_empty());
+        let waiting = json!({"approvals": [{
+            "approval_id": "a1", "frame_id": "s", "message": "Run tool 'write'?",
+            "tool": "write", "preview": ""
+        }]});
+        assert!(suggestions(&snapshot(waiting)).is_empty());
+    }
 
     #[test]
     fn chips_are_unique_and_split_into_files_and_references() {

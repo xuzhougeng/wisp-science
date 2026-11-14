@@ -4395,6 +4395,127 @@ async fn a_conversation_is_read_back_as_a_trajectory() {
 }
 
 #[tokio::test]
+async fn an_answer_is_followed_by_questions_to_ask_next() {
+    // A model that answers a turn, and suggests when asked on the side.
+    struct Advising {
+        suggested: Arc<AtomicUsize>,
+        hold: Arc<AtomicBool>,
+    }
+    #[async_trait]
+    impl Provider for Advising {
+        fn name(&self) -> &str {
+            "offline"
+        }
+        fn model(&self) -> &str {
+            "offline"
+        }
+        async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+            self.suggested.fetch_add(1, Ordering::Relaxed);
+            Ok(Completion {
+                content: r#"["Why?", "How many?", "What next?"]"#.into(),
+                finish_reason: Some("stop".into()),
+                ..Default::default()
+            })
+        }
+        async fn stream(
+            &self,
+            _: &[Message],
+            _: &[ToolSchema],
+            sink: &mut dyn StreamSink,
+        ) -> wisp_llm::Result<Completion> {
+            while self.hold.load(Ordering::Relaxed) {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+            sink.on_text("The answer.");
+            Ok(Completion {
+                content: "The answer.".into(),
+                finish_reason: Some("stop".into()),
+                ..Default::default()
+            })
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let suggested = Arc::new(AtomicUsize::new(0));
+    let hold = Arc::new(AtomicBool::new(false));
+    let factory: ModelFactory = {
+        let (suggested, hold) = (suggested.clone(), hold.clone());
+        Arc::new(move |_| {
+            Box::new(Advising {
+                suggested: suggested.clone(),
+                hold: hold.clone(),
+            })
+        })
+    };
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    // On until it is turned off.
+    let defaults = server.turn_defaults().await.unwrap();
+    assert!(defaults.follow_ups);
+
+    let session = create(&server).await;
+    assert!(snapshot(&server, &session).await.follow_ups.is_empty());
+    // Nothing to wait for before anything was asked.
+    server.follow_ups_settled(PROJECT, &session).await.unwrap();
+    assert!(server
+        .follow_ups_settled("missing", &session)
+        .await
+        .is_err());
+    send(&server, &session, "one").await.unwrap();
+    // Whoever sees the turn over can wait for the questions.
+    wait_for(&server, &session, |s| !s.running).await;
+    server.follow_ups_settled(PROJECT, &session).await.unwrap();
+    let after = snapshot(&server, &session).await;
+    assert!(!after.running);
+    assert_eq!(after.follow_ups, ["Why?", "How many?", "What next?"]);
+    assert_eq!(suggested.load(Ordering::Relaxed), 1);
+
+    // They are about that answer: the next turn starts without them.
+    hold.store(true, Ordering::Relaxed);
+    send(&server, &session, "two").await.unwrap();
+    let during = wait_for(&server, &session, |s| s.running).await;
+    assert!(during.follow_ups.is_empty());
+    hold.store(false, Ordering::Relaxed);
+    wait_for(&server, &session, |s| !s.follow_ups.is_empty()).await;
+
+    // Put away, they stay away; only the conversation's project may.
+    assert!(server
+        .dismiss_follow_ups("missing", &session)
+        .await
+        .is_err());
+    server.dismiss_follow_ups(PROJECT, &session).await.unwrap();
+    assert!(snapshot(&server, &session).await.follow_ups.is_empty());
+
+    // Turned off, the model is not asked at all.
+    let off = server
+        .set_turn_defaults(desktop::TurnDefaults {
+            follow_ups: false,
+            ..defaults
+        })
+        .await
+        .unwrap();
+    assert!(!off.follow_ups);
+    // The key and value are the WebView desktop's.
+    assert_eq!(
+        server
+            .0
+            .store
+            .get_setting("follow_up_questions")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("false")
+    );
+    let before = suggested.load(Ordering::Relaxed);
+    send(&server, &session, "three").await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    server.follow_ups_settled(PROJECT, &session).await.unwrap();
+    assert!(snapshot(&server, &session).await.follow_ups.is_empty());
+    assert_eq!(suggested.load(Ordering::Relaxed), before);
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_conversation_is_exported_whole_as_markdown() {
     let temp = tempfile::tempdir().unwrap();
     let calls = Arc::new(AtomicUsize::new(0));

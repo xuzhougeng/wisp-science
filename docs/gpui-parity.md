@@ -128,7 +128,7 @@ to find in the running app.
 | Tool calls: input, output, status, time | Collapsible cards | Done: one folded line each, click to unfold | served |
 | Approvals: allow once / deny | Plus allow for session / always | Partial: once, or for the rest of the conversation (forgotten on restart, can be revoked); no project-wide or permanent rules | served |
 | Agent question card with free-text answer [Agent 需要你的决定] | Yes | Done: options answer with one click, or type the answer | served |
-| Follow-up suggestions | Yes | Missing | tauri |
+| Follow-up suggestions | Yes | Done: up to three questions above the composer after an answer; picking one puts it in the composer | served |
 | Thinking blocks | Yes | Partial: shown above the composer while the model thinks; not kept in the transcript afterwards | served |
 | Images and figures inline | Yes | Partial: project pictures an answer shows with Markdown image syntax, drawn under the answer; not pictures only a tool wrote, and no zoom | served |
 | Token usage per turn | Yes | Partial: the running or latest turn only, and not after a restart | served |
@@ -192,7 +192,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | --- | --- | --- | --- |
 | General [常规]: language, workspace directory, per-project storage, resume last conversation, send key, selection quick actions, notifications, sound, update check, local tool paths | Yes | Partial: resume the last conversation at launch; the rest is not ported | tauri |
 | Network [网络]: proxy per channel (model API, account login, MCP, code requests), package mirrors | Yes | Partial: routes for model requests, connectors and MCP, and code; conda mirror, Python index and CA bundle; no sign-in route, and no route of its own for one model or one MCP server | tauri |
-| Conversation [对话]: iteration limit, auto-continue, auto-compaction and threshold, follow-up questions | Yes | Partial: steps per turn, automatic compaction and its threshold; no auto-continue or follow-up questions | tauri |
+| Conversation [对话]: iteration limit, auto-continue, auto-compaction and threshold, follow-up questions | Yes | Partial: steps per turn, automatic compaction and its threshold, follow-up questions; no auto-continue | tauri |
 | Appearance [外观]: system/light/dark, theme, accent, fonts and sizes, live preview | Yes | Partial: system, light or dark with the Wisp palettes, applied at once; no other themes, accent, fonts or sizes | ui |
 | Pet [宠物] | Yes | Missing | ui |
 | Models [模型]: API models with provider, URL, key, limits, effort | Several profiles, presets, default | Done: any number of models, the six presets, a default, a connection test | served |
@@ -306,6 +306,8 @@ before the things that hang in it.
    test, and the model per conversation. *(done)*
 4a. **Plan first and thinking** — plan mode with its plan card; reasoning
    shown while it streams. *(done; thinking is not kept after the turn)*
+4b. **Follow-up suggestions** — what could be asked next, after an answer.
+   *(done)*
 5. **Attachments and mentions** — files, images, `@`, `#`, `/`. *(done for
    files, conversations and skills; paste, drop, images as model input and
    inline triggers remain)*
