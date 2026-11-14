@@ -349,15 +349,26 @@ impl Workspace {
     /// The small actions under a message.
     fn message_actions(&self, index: usize, cx: &mut Context<Self>) -> Div {
         let copied = self.copied == Some(index);
-        let actions = div().h_flex().child(
-            icon_button(
-                ("copy-row", index),
-                if copied { "check" } else { "copy" },
-                if copied { "Copied" } else { "Copy" },
+        let actions = div()
+            .h_flex()
+            .child(
+                icon_button(
+                    ("copy-row", index),
+                    if copied { "check" } else { "copy" },
+                    if copied { "Copied" } else { "Copy" },
+                )
+                .xsmall()
+                .on_click(cx.listener(move |this, _, window, cx| this.copy_row(index, window, cx))),
             )
-            .xsmall()
-            .on_click(cx.listener(move |this, _, window, cx| this.copy_row(index, window, cx))),
-        );
+            .child(
+                icon_button(("remember-row", index), "memory", "Save to memory")
+                    .xsmall()
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| {
+                            this.remember_row(index, window, cx)
+                        }),
+                    ),
+            );
         // Rewinding and branching work on saved turns of a conversation
         // that is at rest and still part of everyday work.
         let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);

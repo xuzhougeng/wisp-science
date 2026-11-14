@@ -136,7 +136,7 @@ to find in the running app.
 | Copy message [复制] | Yes | Done: copies the message as Markdown | ui |
 | Rewind to a message [回溯 / 撤销] | Yes | Partial: goes back and returns the text to the composer; written files are not undone | store |
 | Branch from a message [分支] | Yes | Partial: a copy through that turn, nested under its source; no branch card or merge back | store |
-| Save to memory [记忆] | Yes | Missing | store |
+| Save to memory [记忆] | Yes | Partial: the message is opened for trimming and saved for the project or as a habit; no model-written suggestion | store |
 | Review a turn [审查] | Yes | Missing | tauri |
 | Select text: add to chat, ask aside, highlight | Yes | Missing | store |
 | Full record / model view toggles [完整记录 / 模型视角] | Yes | Missing | served |
@@ -200,7 +200,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Quick actions [快捷动作] | Yes | Missing | store |
 | Workflows [工作流]: library, graph editor, approval policy | Yes | Missing | store |
 | Experts [专家]: built-in and custom, default sub-agent model | Yes | Missing | tauri |
-| Memory [记忆]: project notes, global habits, enable switch | Yes | Missing | store |
+| Memory [记忆]: project notes, global habits, enable switch | Yes | Done, as a side-panel tab rather than a Settings page; no "clear all", automatic proposals or weekly tidy | store |
 | Hooks [钩子]: automatic review, tool-failure analysis, command hooks | Yes | Missing | tauri |
 | Skills [技能]: list, tags, enable, community, GitHub, reload | Yes | Missing | shared |
 | Plugins [插件] | Yes | Missing | store |
@@ -317,8 +317,8 @@ before the things that hang in it.
 7a. **Rewind and branch** — edit and resend from an earlier message, branch a
    conversation, show branches under their parent. *(done; branch cards and
    merging a branch back remain)*
-8. **Memory, memos, highlights, favorites.** *(memos done as 8a; memory is
-   8b, highlights and favorites 8c)*
+8. **Memory, memos, highlights, favorites.** *(memos done as 8a, memory as
+   8b; highlights and favorites are 8c)*
 9. **Settings** — conversation, permissions, hooks, skills, connections,
    credentials, network, environments, storage, usage, general.
 10. **Project pages** — research journey, calendar, paper evidence, research

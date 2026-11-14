@@ -11,14 +11,16 @@ pub enum PanelTab {
     Runs,
     Artifacts,
     Memos,
+    Memory,
 }
 
 impl PanelTab {
-    pub const ALL: [PanelTab; 4] = [
+    pub const ALL: [PanelTab; 5] = [
         PanelTab::Files,
         PanelTab::Runs,
         PanelTab::Artifacts,
         PanelTab::Memos,
+        PanelTab::Memory,
     ];
 
     pub fn label(self) -> &'static str {
@@ -27,6 +29,7 @@ impl PanelTab {
             PanelTab::Runs => "Runs",
             PanelTab::Artifacts => "Artifacts",
             PanelTab::Memos => "Memos",
+            PanelTab::Memory => "Memory",
         }
     }
 
@@ -36,6 +39,7 @@ impl PanelTab {
             PanelTab::Runs => "activity-orbit",
             PanelTab::Artifacts => "layers",
             PanelTab::Memos => "note-plus",
+            PanelTab::Memory => "memory",
         }
     }
 }

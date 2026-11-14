@@ -279,6 +279,9 @@ impl Workspace {
             PanelTab::Memos => {
                 return panel.child(self.render_memos_tab(cx)).into_any_element();
             }
+            PanelTab::Memory => {
+                return panel.child(self.render_memory_tab(cx)).into_any_element();
+            }
             PanelTab::Files => {}
         }
         let location = if self.files.path.is_empty() {

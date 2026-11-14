@@ -1,0 +1,538 @@
+//! The side panel's Memory tab: one switch, the habits the model is shown in
+//! every project, and this project's notes, which it can search. The editor
+//! and the delete question are layers inside the panel.
+use gpui::{prelude::*, *};
+use gpui_component::{
+    ActiveTheme, Disableable, Sizable, StyledExt,
+    button::{Button, ButtonVariants},
+    input::Input,
+};
+
+use super::{
+    Workspace,
+    shell::{error_banner, glyph, icon_button},
+};
+use crate::{
+    assets::icon,
+    backend::{Reply, receive},
+    files::size_label,
+    layers::Layer,
+    memory::{self, Target},
+    panel::PanelTab,
+};
+
+impl Workspace {
+    /// Reads what is remembered. Only the answer for the project that is
+    /// still open, to the latest request, is shown.
+    pub(super) fn load_memory(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        self.memory_request += 1;
+        let request = self.memory_request;
+        let reply = self.backend.memory(project.clone());
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.state.project.as_ref() != Some(&project) || this.memory_request != request {
+                    return;
+                }
+                match result {
+                    Ok(view) => this.memory = Some(view),
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Runs one change to memory and reads it again. `then` runs only if the
+    /// same project is still open.
+    fn change_memory<T: 'static>(
+        &mut self,
+        reply: Reply<T>,
+        then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending = true;
+        self.error = None;
+        let project = self.state.project.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.pending = false;
+                if this.state.project != project {
+                    return;
+                }
+                match result {
+                    Ok(_) => {
+                        then(this, window, cx);
+                        this.load_memory(window, cx);
+                    }
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn toggle_memory(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(enabled) = self.memory.as_ref().map(|view| view.enabled) else {
+            return;
+        };
+        let reply = self.backend.set_memory_enabled(!enabled);
+        self.change_memory(reply, |_, _, _| {}, window, cx);
+    }
+
+    /// Opens the editor on `target` with `text` in it.
+    fn open_memory_editor(
+        &mut self,
+        target: Target,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.memory_target = Some(target);
+        self.layers.close(Layer::ConfirmDeleteMemory);
+        self.layers.open(Layer::MemoryEditor);
+        self.memory_text.update(cx, |input, cx| {
+            input.set_value(text, window, cx);
+            input.focus(window, cx);
+        });
+        cx.notify();
+    }
+
+    fn edit_habit(&mut self, id: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        let text = id
+            .as_deref()
+            .and_then(|id| {
+                let habits = &self.memory.as_ref()?.habits;
+                habits.iter().find(|habit| habit.id == id)
+            })
+            .map(|habit| habit.content.clone())
+            .unwrap_or_default();
+        self.open_memory_editor(Target::Habit(id), text, window, cx);
+    }
+
+    /// Reads a note in full, then opens the editor on it.
+    fn edit_note(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        self.error = None;
+        let reply = self.backend.memory_note(project.clone(), name.clone());
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if this.state.project.as_ref() != Some(&project) {
+                    return;
+                }
+                match result {
+                    Ok(text) => this.open_memory_editor(Target::Note(name), text, window, cx),
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Offers the transcript row at `index` for remembering.
+    pub(super) fn remember_row(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(text) = self.rows.get(index).map(|row| memory::offered(&row.text)) else {
+            return;
+        };
+        let session = self.state.session.clone();
+        self.show_panel_tab(PanelTab::Memory, window, cx);
+        self.open_memory_editor(Target::Remember { session }, text, window, cx);
+    }
+
+    /// Saves the editor. `everywhere` matters only for remembered text: it
+    /// becomes a habit instead of joining the project's note.
+    fn save_memory(&mut self, everywhere: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending || !self.layers.contains(Layer::MemoryEditor) {
+            return;
+        }
+        let (Some(project), Some(target)) =
+            (self.state.project.clone(), self.memory_target.clone())
+        else {
+            return;
+        };
+        let text = self.memory_text.read(cx).value().to_string();
+        // Only on success: a refused entry keeps the editor and its text.
+        let close = |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
+            this.layers.close(Layer::MemoryEditor);
+            this.memory_target = None;
+            this.focus_composer(window, cx);
+        };
+        match target {
+            Target::Remember { session } => {
+                let reply = self.backend.remember(project, session, text, everywhere);
+                self.change_memory(reply, close, window, cx);
+            }
+            Target::Habit(None) => {
+                let reply = self.backend.add_habit(text);
+                self.change_memory(reply, close, window, cx);
+            }
+            Target::Habit(Some(id)) => {
+                let reply = self.backend.update_habit(id, text);
+                self.change_memory(reply, close, window, cx);
+            }
+            Target::Note(name) => {
+                let reply = self.backend.save_memory_note(project, name, text);
+                self.change_memory(reply, close, window, cx);
+            }
+        }
+    }
+
+    fn close_memory_layer(&mut self, layer: Layer, window: &mut Window, cx: &mut Context<Self>) {
+        if self.layers.close(layer) {
+            self.memory_target = None;
+            self.focus_composer(window, cx);
+            cx.notify();
+        }
+    }
+
+    fn ask_delete_memory(&mut self, target: Target, cx: &mut Context<Self>) {
+        self.memory_target = Some(target);
+        self.layers.open(Layer::ConfirmDeleteMemory);
+        cx.notify();
+    }
+
+    fn delete_memory(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.layers.contains(Layer::ConfirmDeleteMemory) {
+            return;
+        }
+        let (Some(project), Some(target)) =
+            (self.state.project.clone(), self.memory_target.clone())
+        else {
+            return;
+        };
+        let done = |this: &mut Self, _: &mut Window, _: &mut Context<Self>| {
+            this.layers.close(Layer::ConfirmDeleteMemory);
+            this.memory_target = None;
+        };
+        match target {
+            Target::Habit(Some(id)) => {
+                let reply = self.backend.delete_habit(id);
+                self.change_memory(reply, done, window, cx);
+            }
+            Target::Note(name) => {
+                let reply = self.backend.delete_memory_note(project, name);
+                self.change_memory(reply, done, window, cx);
+            }
+            Target::Habit(None) | Target::Remember { .. } => {}
+        }
+    }
+
+    fn memory_editor(&self, target: &Target, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let problem = memory::problem(target, &self.memory_text.read(cx).value());
+        let ready = problem.is_none() && !self.pending;
+        let save =
+            |id: &'static str, label: &'static str, everywhere: bool| {
+                Button::new(id)
+                    .label(label)
+                    .small()
+                    .disabled(!ready)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.save_memory(everywhere, window, cx)
+                    }))
+            };
+        let mut buttons = div().h_flex().flex_wrap().gap_2();
+        buttons = match target {
+            Target::Remember { .. } => buttons
+                .child(save("memory-save-project", "Save for this project", false).primary())
+                .child(save("memory-save-habit", "Save as a habit", true)),
+            _ => buttons.child(save("memory-save", "Save", false).primary()),
+        };
+        let mut editor = div()
+            .v_flex()
+            .flex_1()
+            .min_h_0()
+            .gap_2()
+            .p_3()
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(target.title()),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_h(px(160.))
+                    .child(Input::new(&self.memory_text).h_full()),
+            )
+            .child(div().text_xs().text_color(muted).child(target.hint()));
+        // An empty editor needs no telling; an over-long entry does.
+        if let Some(problem) =
+            problem.filter(|_| !self.memory_text.read(cx).value().trim().is_empty())
+        {
+            editor = editor.child(div().text_xs().text_color(cx.theme().danger).child(problem));
+        }
+        editor.child(
+            buttons.child(
+                Button::new("memory-cancel")
+                    .label("Cancel")
+                    .small()
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.close_memory_layer(Layer::MemoryEditor, window, cx)
+                    })),
+            ),
+        )
+    }
+
+    /// One habit or note in the list, with its actions or its delete question.
+    fn memory_card(
+        &self,
+        id: SharedString,
+        heading: Option<String>,
+        detail: String,
+        target: Target,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let asking = self.layers.contains(Layer::ConfirmDeleteMemory)
+            && self.memory_target.as_ref() == Some(&target);
+        let mut card = div()
+            .v_flex()
+            .gap_1()
+            .p_2()
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(cx.theme().border);
+        if let Some(heading) = heading {
+            card = card.child(
+                div()
+                    .truncate()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(heading),
+            );
+        }
+        if !detail.is_empty() {
+            card = card.child(div().text_xs().text_color(muted).child(detail));
+        }
+        if asking {
+            let what = match target {
+                Target::Note(_) => "Delete this day's note? The file is removed from the project.",
+                _ => "Delete this habit? It stops applying in every project.",
+            };
+            return card
+                .child(div().text_xs().text_color(cx.theme().danger).child(what))
+                .child(
+                    div()
+                        .h_flex()
+                        .gap_1()
+                        .child(
+                            Button::new("memory-delete-confirm")
+                                .label("Delete")
+                                .xsmall()
+                                .danger()
+                                .disabled(self.pending)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.delete_memory(window, cx)
+                                })),
+                        )
+                        .child(
+                            Button::new("memory-delete-cancel")
+                                .label("Cancel")
+                                .xsmall()
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.close_memory_layer(Layer::ConfirmDeleteMemory, window, cx)
+                                })),
+                        ),
+                );
+        }
+        let (editing, deleting) = (target.clone(), target);
+        card.child(
+            div()
+                .h_flex()
+                .justify_end()
+                .gap_0p5()
+                .child(
+                    icon_button(SharedString::from(format!("{id}-edit")), "edit", "Edit")
+                        .xsmall()
+                        .on_click(
+                            cx.listener(move |this, _, window, cx| match editing.clone() {
+                                Target::Note(name) => this.edit_note(name, window, cx),
+                                Target::Habit(id) => this.edit_habit(id, window, cx),
+                                Target::Remember { .. } => {}
+                            }),
+                        ),
+                )
+                .child(
+                    icon_button(
+                        SharedString::from(format!("{id}-delete")),
+                        "trash",
+                        "Delete",
+                    )
+                    .xsmall()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.ask_delete_memory(deleting.clone(), cx)
+                    })),
+                ),
+        )
+    }
+
+    fn memory_heading(title: &'static str, note: &'static str, button: Button, cx: &App) -> Div {
+        div()
+            .h_flex()
+            .gap_2()
+            .pt_2()
+            .child(
+                div()
+                    .v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(title))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(note),
+                    ),
+            )
+            .child(button.small().flex_shrink_0())
+    }
+
+    pub(super) fn render_memory_tab(&self, cx: &mut Context<Self>) -> AnyElement {
+        if let Some(target) = self
+            .memory_target
+            .as_ref()
+            .filter(|_| self.layers.contains(Layer::MemoryEditor))
+        {
+            let mut editor = div().v_flex().flex_1().min_h_0();
+            if let Some(error) = &self.error {
+                editor = editor.child(div().p_3().child(error_banner(error, cx)));
+            }
+            return editor
+                .child(self.memory_editor(target, cx))
+                .into_any_element();
+        }
+        let muted = cx.theme().muted_foreground;
+        let mut list = div()
+            .id("memory")
+            .v_flex()
+            .flex_1()
+            .min_h_0()
+            .gap_2()
+            .p_3()
+            .overflow_y_scroll();
+        if let Some(error) = &self.error {
+            list = list.child(error_banner(error, cx));
+        }
+        let Some(view) = &self.memory else {
+            return list
+                .child(div().text_sm().text_color(muted).child("Loading…"))
+                .into_any_element();
+        };
+        let enabled = view.enabled;
+        list = list.child(
+            div()
+                .h_flex()
+                .gap_2()
+                .p_2()
+                .rounded(cx.theme().radius)
+                .bg(cx.theme().muted)
+                .child(icon("memory").text_color(if enabled { cx.theme().primary } else { muted }))
+                .child(
+                    div()
+                        .v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .child(div().text_sm().child(if enabled {
+                            "Memory is on"
+                        } else {
+                            "Memory is off"
+                        }))
+                        .child(div().text_xs().text_color(muted).child(if enabled {
+                            memory::summary(view)
+                        } else {
+                            "The model is not shown habits and cannot search notes. \
+                             Nothing is deleted."
+                                .to_owned()
+                        })),
+                )
+                .child(
+                    Button::new("memory-toggle")
+                        .label(if enabled { "Turn off" } else { "Turn on" })
+                        .small()
+                        .flex_shrink_0()
+                        .disabled(self.pending)
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.toggle_memory(window, cx)),
+                        ),
+                ),
+        );
+
+        list = list.child(Self::memory_heading(
+            "Habits",
+            "Shown to the model in every project.",
+            Button::new("habit-new")
+                .icon(glyph("plus"))
+                .label("Add")
+                .on_click(cx.listener(|this, _, window, cx| this.edit_habit(None, window, cx))),
+            cx,
+        ));
+        if view.habits.is_empty() {
+            list =
+                list.child(div().text_xs().text_color(muted).child(
+                    "None yet. For example: \"Report medians with the interquartile range.\"",
+                ));
+        }
+        for habit in &view.habits {
+            list = list.child(self.memory_card(
+                SharedString::from(format!("habit-{}", habit.id)),
+                None,
+                memory::preview(&habit.content, 260),
+                Target::Habit(Some(habit.id.clone())),
+                cx,
+            ));
+        }
+
+        let today = view.today.clone();
+        list = list.child(Self::memory_heading(
+            "This project's notes",
+            "One per day, in .wisp/memory. The model searches them when it needs to.",
+            Button::new("note-new")
+                .icon(glyph("note-plus"))
+                .label("Today")
+                .tooltip("Open today's note")
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.edit_note(today.clone(), window, cx)
+                })),
+            cx,
+        ));
+        if view.notes.is_empty() {
+            list =
+                list.child(div().text_xs().text_color(muted).child(
+                    "None yet. Save a finding from a message with the memory button under it.",
+                ));
+        }
+        for note in &view.notes {
+            list = list.child(self.memory_card(
+                SharedString::from(format!("note-{}", note.name)),
+                Some(format!(
+                    "{} · {}",
+                    memory::note_label(&note.name, &view.today),
+                    size_label(note.bytes)
+                )),
+                memory::preview(&note.preview, 200),
+                Target::Note(note.name.clone()),
+                cx,
+            ));
+        }
+        list.into_any_element()
+    }
+}

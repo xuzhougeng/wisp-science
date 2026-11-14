@@ -1,6 +1,7 @@
 mod conversation_actions;
 mod files_panel;
 mod home_view;
+mod memory_view;
 mod memos_view;
 mod organise_view;
 mod palette_view;
@@ -26,7 +27,7 @@ use wisp_dto::{
 
 use wisp_dto::native_conversations::SendRequest;
 use wisp_server::desktop::{
-    ArtifactRow, ConversationOptions, ConversationStatus, Folder, ProjectMemo, TurnRef,
+    ArtifactRow, ConversationOptions, ConversationStatus, Folder, MemoryView, ProjectMemo, TurnRef,
 };
 
 use crate::{
@@ -108,6 +109,13 @@ pub struct Workspace {
     memo_target: Option<String>,
     memo_title: Entity<InputState>,
     memo_body: Entity<InputState>,
+    /// What is remembered, as the Memory tab shows it; `None` until read.
+    memory: Option<MemoryView>,
+    /// Only the latest memory request may fill the tab.
+    memory_request: u64,
+    /// What the memory editor is writing, or the delete question is about.
+    memory_target: Option<crate::memory::Target>,
+    memory_text: Entity<InputState>,
     rename: Entity<InputState>,
     settings: settings_view::SettingsForm,
     composer: Entity<InputState>,
@@ -186,6 +194,7 @@ impl Workspace {
                 .code_editor("text")
                 .searchable(false)
         });
+        let memory_text = cx.new(|cx| InputState::new(window, cx).multi_line(true));
         let handle = window.window_handle();
         let weak = cx.weak_entity();
         let subscriptions = vec![
@@ -303,6 +312,10 @@ impl Workspace {
             memo_target: None,
             memo_title,
             memo_body,
+            memory: None,
+            memory_request: 0,
+            memory_target: None,
+            memory_text,
             rename,
             settings,
             composer,
@@ -365,6 +378,11 @@ impl Workspace {
                 self.focus_composer(window, cx);
             }
             Some(Layer::ConfirmDeleteMemo) => self.memo_target = None,
+            Some(Layer::MemoryEditor) => {
+                self.memory_target = None;
+                self.focus_composer(window, cx);
+            }
+            Some(Layer::ConfirmDeleteMemory) => self.memory_target = None,
             // Menus and questions that hold no focus of their own.
             Some(
                 Layer::SortMenu
@@ -448,6 +466,10 @@ impl Workspace {
             self.layers.close(Layer::ConfirmDeleteMemo);
             self.memos = None;
             self.memo_target = None;
+            self.layers.close(Layer::MemoryEditor);
+            self.layers.close(Layer::ConfirmDeleteMemory);
+            self.memory = None;
+            self.memory_target = None;
         }
         // These act on the conversation that is being left.
         for layer in [

@@ -12,6 +12,7 @@ pub use wisp_dto::native_conversations::ReferenceOption;
 use wisp_dto::SessionSearchInfo;
 pub use wisp_dto::{ProjectMemo, ProjectMemoPatch};
 use wisp_llm::ProviderKind;
+pub use wisp_store::GlobalMemory;
 use wisp_store::Store;
 
 /// The saved model profiles: `{"profiles": [...], "default": "<id>"}`.
@@ -852,6 +853,176 @@ impl Server {
         self.0.store.delete_project_memo(project, memo).await
     }
 
+    /// What is remembered: whether memory is on, the project's notes and the
+    /// habits that apply in every project.
+    pub async fn memory(&self, project: &str) -> Result<MemoryView> {
+        let root = std::path::PathBuf::from(self.project_root(project).await?);
+        let dir = wisp_core::MemoryManager::at(&root).dir().to_owned();
+        let mut notes = Vec::new();
+        if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
+            while let Some(entry) = entries.next_entry().await? {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if memory_note_name(&name).is_err() {
+                    continue;
+                }
+                let (Ok(meta), Ok(text)) = (
+                    entry.metadata().await,
+                    tokio::fs::read_to_string(&path).await,
+                ) else {
+                    continue;
+                };
+                notes.push(MemoryNote {
+                    name,
+                    preview: text.chars().take(240).collect(),
+                    bytes: meta.len(),
+                });
+            }
+        }
+        // Notes are named by day, so this is newest first.
+        notes.sort_by(|a, b| b.name.cmp(&a.name));
+        Ok(MemoryView {
+            enabled: crate::runtime::memory_enabled(&self.0.store).await,
+            today: today_note(),
+            notes,
+            habits: self.0.store.list_global_memories(100).await?,
+        })
+    }
+
+    /// Turns memory on or off for every project, from the next turn: off,
+    /// the model cannot search notes and is not shown habits. Nothing is
+    /// deleted.
+    pub async fn set_memory_enabled(&self, enabled: bool) -> Result<()> {
+        self.0
+            .store
+            .set_setting(crate::runtime::MEMORY_ENABLED, &enabled.to_string())
+            .await
+    }
+
+    async fn memory_note_path(&self, project: &str, name: &str) -> Result<std::path::PathBuf> {
+        let name = memory_note_name(name)?;
+        let root = std::path::PathBuf::from(self.project_root(project).await?);
+        Ok(wisp_core::MemoryManager::at(&root).dir().join(name))
+    }
+
+    /// The whole text of one note; empty when it does not exist yet.
+    pub async fn memory_note(&self, project: &str, name: &str) -> Result<String> {
+        let path = self.memory_note_path(project, name).await?;
+        match tokio::fs::read_to_string(&path).await {
+            Ok(text) => Ok(text),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Replaces one note with `content`.
+    pub async fn save_memory_note(&self, project: &str, name: &str, content: &str) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        let path = self.memory_note_path(project, name).await?;
+        ensure!(
+            !content.trim().is_empty(),
+            "A note cannot be empty; delete it instead"
+        );
+        ensure!(
+            content.len() <= NOTE_LIMIT,
+            "A note holds at most {NOTE_LIMIT} bytes"
+        );
+        if let Some(dir) = path.parent() {
+            tokio::fs::create_dir_all(dir).await?;
+        }
+        tokio::fs::write(&path, content).await?;
+        self.memory_changed(project).await
+    }
+
+    pub async fn delete_memory_note(&self, project: &str, name: &str) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        let path = self.memory_note_path(project, name).await?;
+        match tokio::fs::remove_file(&path).await {
+            Ok(()) => self.memory_changed(project).await,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                bail!("That note no longer exists")
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Project notes are research state other devices sync.
+    async fn memory_changed(&self, project: &str) -> Result<()> {
+        self.0
+            .store
+            .bump_state_generation(&wisp_store::StateScope::mainline(project.to_owned()))
+            .await?;
+        Ok(())
+    }
+
+    /// Keeps `text` for later turns: with `everywhere` as a habit for every
+    /// project, otherwise at the end of today's note in this project.
+    /// `session` says which conversation it came from, when it came from one.
+    pub async fn remember(
+        &self,
+        project: &str,
+        session: Option<&str>,
+        text: &str,
+        everywhere: bool,
+    ) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        let text = confirmed_memory(text)?;
+        if let Some(session) = session {
+            self.own_conversation(project, session).await?;
+        }
+        if everywhere {
+            self.known_project(project).await?;
+            return self.insert_habit(text, session).await.map(|_| ());
+        }
+        let root = std::path::PathBuf::from(self.project_root(project).await?);
+        let entry = match session {
+            Some(session) => {
+                let short: String = session.chars().take(8).collect();
+                format!("[MEMORY · session {short}]\n{text}")
+            }
+            None => text,
+        };
+        // Appending is a short blocking write to a local file.
+        tokio::task::spawn_blocking(move || wisp_core::MemoryManager::new(&root).append(&entry))
+            .await??;
+        self.memory_changed(project).await
+    }
+
+    async fn insert_habit(&self, content: String, session: Option<&str>) -> Result<GlobalMemory> {
+        let now = unix_now();
+        let habit = GlobalMemory {
+            id: uuid::Uuid::new_v4().to_string(),
+            content,
+            source_frame_id: session.map(str::to_owned),
+            source_turn_index: None,
+            created_at: now,
+            updated_at: now,
+        };
+        self.0.store.insert_global_memory(&habit).await?;
+        Ok(habit)
+    }
+
+    /// Adds a habit: something about how the user works that the model is
+    /// shown in every project while memory is on.
+    pub async fn add_habit(&self, content: &str) -> Result<GlobalMemory> {
+        self.insert_habit(confirmed_memory(content)?, None).await
+    }
+
+    pub async fn update_habit(&self, id: &str, content: &str) -> Result<()> {
+        let content = confirmed_memory(content)?;
+        let updated = self
+            .0
+            .store
+            .update_global_memory(id, &content, unix_now())
+            .await?;
+        ensure!(updated, "That habit no longer exists");
+        Ok(())
+    }
+
+    pub async fn delete_habit(&self, id: &str) -> Result<()> {
+        self.0.store.delete_global_memory(id).await
+    }
+
     /// A choice about how the desktop looks, such as how the sidebar is
     /// arranged. `None` until one was saved.
     pub async fn preference(&self, name: &str) -> Result<Option<String>> {
@@ -1624,6 +1795,74 @@ pub struct ConversationStatus {
     pub allowed_tools: Vec<String>,
     /// What the model is thinking right now; empty when it is not.
     pub reasoning: String,
+}
+
+/// One day's notes in a project's memory.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemoryNote {
+    /// File name, `YYYY-MM-DD.md` for notes Wisp wrote.
+    pub name: String,
+    /// The first characters of the note.
+    pub preview: String,
+    pub bytes: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemoryView {
+    /// Off, the model neither searches notes nor is shown habits.
+    pub enabled: bool,
+    /// The note new entries go into today.
+    pub today: String,
+    /// Newest first.
+    pub notes: Vec<MemoryNote>,
+    /// Newest first.
+    pub habits: Vec<GlobalMemory>,
+}
+
+/// Characters one remembered entry may hold, as in the WebView desktop.
+const MEMORY_LIMIT: usize = 4_000;
+const NOTE_LIMIT: usize = 1_000_000;
+
+fn confirmed_memory(text: &str) -> Result<String> {
+    let text = text.trim();
+    ensure!(!text.is_empty(), "There is nothing to remember");
+    ensure!(
+        text.chars().count() <= MEMORY_LIMIT,
+        "One memory holds at most {MEMORY_LIMIT} characters"
+    );
+    Ok(text.to_owned())
+}
+
+/// A note is a Markdown file directly inside the project's memory folder.
+fn memory_note_name(name: &str) -> Result<&str> {
+    let name = name.trim();
+    ensure!(
+        !name.is_empty()
+            && !name.starts_with('.')
+            && !name.contains(['/', '\\'])
+            && !name.contains("..")
+            && name.len() <= 120,
+        "That is not a note's name"
+    );
+    ensure!(
+        std::path::Path::new(name)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            == Some("md"),
+        "Notes are Markdown files (.md)"
+    );
+    Ok(name)
+}
+
+fn today_note() -> String {
+    wisp_core::MemoryManager::today_file_name()
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs() as i64)
+        .unwrap_or_default()
 }
 
 /// A user message without the list of files that was sent with it.

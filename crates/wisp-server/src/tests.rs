@@ -1932,6 +1932,205 @@ async fn memos_are_the_researchers_own_and_never_shown_to_the_model() {
     server.shutdown().await;
 }
 
+#[tokio::test]
+async fn memory_reaches_the_model_only_while_it_is_on_and_is_never_saved_with_a_turn() {
+    let temp = tempfile::tempdir().unwrap();
+    let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let record = seen.clone();
+    let factory: ModelFactory = Arc::new(move |_| Box::new(Everything(record.clone())));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+
+    // Memory starts on and empty.
+    let view = server.memory(&lab).await.unwrap();
+    assert!(view.enabled);
+    assert!(view.notes.is_empty() && view.habits.is_empty());
+    assert!(view.today.ends_with(".md"));
+    assert!(server.memory("missing").await.is_err());
+
+    // A remembered line lands in today's note of that project only.
+    server
+        .remember(&lab, None, "  the queue is called gpu-long  ", false)
+        .await
+        .unwrap();
+    let view = server.memory(&lab).await.unwrap();
+    assert_eq!(view.notes.len(), 1);
+    assert_eq!(view.notes[0].name, view.today);
+    assert_eq!(view.notes[0].preview.trim(), "the queue is called gpu-long");
+    assert!(folder.join(".wisp/memory").join(&view.today).is_file());
+    assert!(server.memory(PROJECT).await.unwrap().notes.is_empty());
+    for (text, why) in [("  ", "empty"), (&"x".repeat(4_001), "too long")] {
+        assert!(
+            server.remember(&lab, None, text, false).await.is_err(),
+            "{why}"
+        );
+        assert!(server.add_habit(text).await.is_err(), "{why}");
+    }
+
+    // A note is edited as a whole file, by a name that stays in the folder.
+    server
+        .save_memory_note(&lab, "2026-01-02.md", "older finding\n")
+        .await
+        .unwrap();
+    assert_eq!(
+        server.memory_note(&lab, "2026-01-02.md").await.unwrap(),
+        "older finding\n"
+    );
+    assert_eq!(server.memory_note(&lab, "2020-01-01.md").await.unwrap(), "");
+    for name in [
+        "",
+        "notes.txt",
+        "../escape.md",
+        "sub/note.md",
+        "sub\\note.md",
+        ".hidden.md",
+    ] {
+        assert!(
+            server.save_memory_note(&lab, name, "x").await.is_err(),
+            "{name}"
+        );
+        assert!(server.memory_note(&lab, name).await.is_err(), "{name}");
+        assert!(
+            server.delete_memory_note(&lab, name).await.is_err(),
+            "{name}"
+        );
+    }
+    assert!(server
+        .save_memory_note(&lab, "2026-01-02.md", "  ")
+        .await
+        .is_err());
+    let names: Vec<_> = server
+        .memory(&lab)
+        .await
+        .unwrap()
+        .notes
+        .into_iter()
+        .map(|note| note.name)
+        .collect();
+    assert_eq!(names, [view.today.clone(), "2026-01-02.md".into()]);
+    server
+        .delete_memory_note(&lab, "2026-01-02.md")
+        .await
+        .unwrap();
+    assert!(server
+        .delete_memory_note(&lab, "2026-01-02.md")
+        .await
+        .is_err());
+
+    // Habits belong to the user, not to a project.
+    let habit = server.add_habit(" always report medians ").await.unwrap();
+    assert_eq!(habit.content, "always report medians");
+    server
+        .update_habit(&habit.id, "always report medians and IQR")
+        .await
+        .unwrap();
+    assert!(server.update_habit("missing", "text").await.is_err());
+    let session = call(&server, "native_conversation_create", &lab, json!({}))
+        .await
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_owned();
+    server
+        .remember(&lab, Some(&session), "prefers vector figures", true)
+        .await
+        .unwrap();
+    // A conversation of another project cannot be named as the source.
+    assert!(server
+        .remember(PROJECT, Some(&session), "stolen", true)
+        .await
+        .is_err());
+    let habits = |view: desktop::MemoryView| {
+        view.habits
+            .into_iter()
+            .map(|habit| habit.content)
+            .collect::<Vec<_>>()
+    };
+    // Most recently written or changed first; the edit above counts.
+    let expected = ["always report medians and IQR", "prefers vector figures"];
+    assert_eq!(habits(server.memory(&lab).await.unwrap()), expected);
+    assert_eq!(habits(server.memory(PROJECT).await.unwrap()), expected);
+
+    // On: the turn carries the habits and can search the notes.
+    let turn = |message: &'static str| {
+        let (server, lab, seen) = (&server, &lab, &seen);
+        async move {
+            seen.lock().unwrap().clear();
+            let session = call(server, "native_conversation_create", lab, json!({}))
+                .await
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_owned();
+            call(
+                server,
+                "native_conversation_send",
+                lab,
+                json!({"session_id": session, "request_id": message, "message": message}),
+            )
+            .await
+            .unwrap();
+            let done = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let value = call(
+                        server,
+                        "native_conversation_snapshot",
+                        lab,
+                        json!({"session_id": session}),
+                    )
+                    .await
+                    .unwrap();
+                    let snapshot: dto::Snapshot = serde_json::from_value(value).unwrap();
+                    if !snapshot.running {
+                        return snapshot;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap();
+            (seen.lock().unwrap().join("\n"), done)
+        }
+    };
+    // The system prompt always explains the block; this is the block itself.
+    const BLOCK: &str = "<global_memory>\nHost-provided user context";
+    let (shown, saved) = turn("plot the counts").await;
+    assert!(shown.contains(BLOCK));
+    assert!(shown.contains("always report medians and IQR"));
+    assert!(shown.contains("search_memory"));
+    // The habits were for that turn; the saved message is what was typed.
+    let user: Vec<_> = saved
+        .items
+        .iter()
+        .filter(|item| item.role == "user")
+        .map(|item| item.text.as_str())
+        .collect();
+    assert_eq!(user, ["plot the counts"]);
+
+    // Off: neither reaches the model, and nothing was deleted.
+    server.set_memory_enabled(false).await.unwrap();
+    let (shown, _) = turn("plot them again").await;
+    assert!(shown.contains("plot them again"));
+    assert!(!shown.contains(BLOCK));
+    assert!(!shown.contains("always report medians"));
+    assert!(!shown.contains("search_memory"));
+    let view = server.memory(&lab).await.unwrap();
+    assert!(!view.enabled);
+    assert_eq!(view.notes.len(), 1);
+    assert_eq!(view.habits.len(), 2);
+
+    server.set_memory_enabled(true).await.unwrap();
+    server.delete_habit(&habit.id).await.unwrap();
+    let (shown, _) = turn("and once more").await;
+    assert!(shown.contains("prefers vector figures"));
+    assert!(!shown.contains("always report medians"));
+    server.shutdown().await;
+}
+
 /// Records what the model was shown, turn by turn.
 struct Recorder(Arc<std::sync::Mutex<Vec<Vec<String>>>>);
 #[async_trait]

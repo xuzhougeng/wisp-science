@@ -16,8 +16,8 @@ use wisp_server::{
     config::Config,
     desktop::{
         ArtifactRow, BatchAction, BatchReport, ConversationList, ConversationOptions,
-        ConversationStatus, FileMatch, Folder, ModelInput, ModelSettings, ProjectMemo,
-        ProjectMemoPatch, ReferenceOption, TurnRef,
+        ConversationStatus, FileMatch, Folder, GlobalMemory, MemoryView, ModelInput, ModelSettings,
+        ProjectMemo, ProjectMemoPatch, ReferenceOption, TurnRef,
     },
 };
 use wisp_sync::DirectRemoteHost;
@@ -301,6 +301,54 @@ impl Backend {
 
     pub fn delete_memo(&self, project: String, memo: String) -> Reply<()> {
         self.local(move |host| async move { host.delete_memo(&project, &memo).await })
+    }
+
+    pub fn memory(&self, project: String) -> Reply<MemoryView> {
+        self.local(move |host| async move { host.memory(&project).await })
+    }
+
+    pub fn set_memory_enabled(&self, enabled: bool) -> Reply<()> {
+        self.local(move |host| async move { host.set_memory_enabled(enabled).await })
+    }
+
+    pub fn memory_note(&self, project: String, name: String) -> Reply<String> {
+        self.local(move |host| async move { host.memory_note(&project, &name).await })
+    }
+
+    pub fn save_memory_note(&self, project: String, name: String, content: String) -> Reply<()> {
+        self.local(
+            move |host| async move { host.save_memory_note(&project, &name, &content).await },
+        )
+    }
+
+    pub fn delete_memory_note(&self, project: String, name: String) -> Reply<()> {
+        self.local(move |host| async move { host.delete_memory_note(&project, &name).await })
+    }
+
+    /// Keeps `text` for the project, or with `everywhere` as a habit.
+    pub fn remember(
+        &self,
+        project: String,
+        session: Option<String>,
+        text: String,
+        everywhere: bool,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.remember(&project, session.as_deref(), &text, everywhere)
+                .await
+        })
+    }
+
+    pub fn add_habit(&self, content: String) -> Reply<GlobalMemory> {
+        self.local(move |host| async move { host.add_habit(&content).await })
+    }
+
+    pub fn update_habit(&self, id: String, content: String) -> Reply<()> {
+        self.local(move |host| async move { host.update_habit(&id, &content).await })
+    }
+
+    pub fn delete_habit(&self, id: String) -> Reply<()> {
+        self.local(move |host| async move { host.delete_habit(&id).await })
     }
 
     pub fn preference(&self, name: &'static str) -> Reply<Option<String>> {

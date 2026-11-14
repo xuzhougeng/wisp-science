@@ -23,6 +23,20 @@ pub fn skill_index(config: &Config, root: &std::path::Path) -> SkillIndex {
     SkillIndex::load(&paths)
 }
 
+/// Whether memory is on. The WebView desktop keeps the same switch under
+/// the same key, and it is on until someone turns it off.
+pub(crate) async fn memory_enabled(store: &Store) -> bool {
+    store
+        .get_setting(MEMORY_ENABLED)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|value| serde_json::from_str::<bool>(&value).ok())
+        .unwrap_or(true)
+}
+
+pub(crate) const MEMORY_ENABLED: &str = "memory_enabled";
+
 pub async fn build(
     config: &Config,
     model: &ModelConfig,
@@ -44,8 +58,13 @@ pub async fn build(
     if reasoning_effort.is_some() {
         cfg.reasoning_effort = reasoning_effort;
     }
-    let mut tools =
-        wisp_core::build_registry(skills.clone(), Arc::new(MemoryManager::new(&root)), true);
+    // One switch for everything memory: the search tool and the habits.
+    let remembering = memory_enabled(store).await;
+    let mut tools = wisp_core::build_registry(
+        skills.clone(),
+        Arc::new(MemoryManager::new(&root)),
+        remembering,
+    );
     // The model's way to stop and ask; the answer is the next user message.
     tools.add(Box::new(wisp_tools::ask_user::AskUserTool));
     // How a plan reaches the user while the conversation is in plan mode.
@@ -117,6 +136,14 @@ pub async fn build(
     // their request and is not saved with the conversation.
     for injection in reference_context(store, &skills, references).await? {
         agent.ctx.inject_user(injection);
+    }
+    // The user's habits, for this turn only, like the references above.
+    if remembering {
+        let habits = store.list_global_memories(100).await?;
+        let habits = habits.iter().map(|habit| habit.content.as_str());
+        if let Some(block) = wisp_core::global_memory_block(habits) {
+            agent.ctx.inject_user(block);
+        }
     }
     agent.ctx.prefix_runtime_injections_to_user();
     let scope = wisp_store::StateScope::mainline(project.to_string());

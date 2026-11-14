@@ -37,6 +37,7 @@ impl Workspace {
             PanelTab::Files => self.ensure_files(window, cx),
             PanelTab::Artifacts => self.load_artifacts(window, cx),
             PanelTab::Memos => self.load_memos(window, cx),
+            PanelTab::Memory => self.load_memory(window, cx),
             PanelTab::Runs => {}
         }
         cx.notify();

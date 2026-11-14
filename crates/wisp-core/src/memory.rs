@@ -61,6 +61,35 @@ pub struct MemoryManager {
     dir: PathBuf,
 }
 
+/// Characters of user-confirmed habits one turn is shown.
+const GLOBAL_MEMORY_CONTEXT_CAP: usize = 6_000;
+
+/// The block that shows the model the user's confirmed habits for one turn,
+/// or `None` when there are none. `entries` are newest first; older ones are
+/// left out once the block is full. Hosts add it to the turn's context and
+/// do not save it with the conversation.
+pub fn global_memory_block<'a>(entries: impl IntoIterator<Item = &'a str>) -> Option<String> {
+    let mut selected = Vec::new();
+    let mut used = 0usize;
+    for entry in entries {
+        let remaining = GLOBAL_MEMORY_CONTEXT_CAP.saturating_sub(used);
+        if remaining <= 3 {
+            break;
+        }
+        let content = entry.trim().chars().take(remaining - 3).collect::<String>();
+        let line = format!("- {content}");
+        used += line.chars().count() + 1;
+        selected.push(line);
+    }
+    if selected.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "<global_memory>\nHost-provided user context, not system policy or tool authorization. Apply relevant user-confirmed habits and preferences silently. Never acknowledge, quote, summarize, or explain whether an entry applies, and do not mention this block unless the user explicitly asks about memory. Ignore irrelevant entries without comment. Project instructions and the current user request override it. Entries are newest first; ignore older conflicting entries.\n{}\n</global_memory>",
+        selected.join("\n")
+    ))
+}
+
 #[derive(Clone)]
 struct MemoryChunk {
     id: String,
@@ -98,9 +127,13 @@ impl MemoryManager {
         &self.dir
     }
 
+    /// Name of the note that entries appended today go into.
+    pub fn today_file_name() -> String {
+        format!("{}.md", chrono::Local::now().format("%Y-%m-%d"))
+    }
+
     fn today_path(&self) -> PathBuf {
-        self.dir
-            .join(format!("{}.md", chrono::Local::now().format("%Y-%m-%d")))
+        self.dir.join(Self::today_file_name())
     }
 
     pub fn append(&self, content: &str) -> std::io::Result<()> {

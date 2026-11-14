@@ -51,6 +51,11 @@ pub enum Layer {
     MemoEditor,
     /// Question before a memo is deleted.
     ConfirmDeleteMemo,
+    /// The habit, note or remembered text being written, in place of the
+    /// Memory tab's lists.
+    MemoryEditor,
+    /// Question before a habit or a note is deleted.
+    ConfirmDeleteMemory,
 }
 
 impl Layer {
@@ -81,9 +86,11 @@ impl Layer {
     /// The surface this one is drawn inside, which it cannot outlive.
     fn parent(self) -> Option<Layer> {
         match self {
-            Layer::FilePreview | Layer::MemoEditor | Layer::ConfirmDeleteMemo => {
-                Some(Layer::FilesPanel)
-            }
+            Layer::FilePreview
+            | Layer::MemoEditor
+            | Layer::ConfirmDeleteMemo
+            | Layer::MemoryEditor
+            | Layer::ConfirmDeleteMemory => Some(Layer::FilesPanel),
             Layer::ConfirmDeleteModel => Some(Layer::Settings),
             Layer::BatchGroupMenu | Layer::ConfirmBatchDelete => Some(Layer::SelectMode),
             _ => None,
@@ -300,8 +307,11 @@ mod tests {
         stack.open(Layer::ConfirmDeleteMemo);
         assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmDeleteMemo));
         stack.open(Layer::MemoEditor);
+        stack.open(Layer::MemoryEditor);
+        stack.open(Layer::ConfirmDeleteMemory);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmDeleteMemory));
         assert!(stack.close(Layer::FilesPanel));
-        assert!(!stack.contains(Layer::MemoEditor));
+        assert!(!stack.contains(Layer::MemoEditor) && !stack.contains(Layer::MemoryEditor));
     }
 
     #[test]
