@@ -223,6 +223,7 @@ impl Workspace {
             Command::Journey => return self.open_journey(window, cx),
             Command::Calendar => return self.open_calendar(window, cx),
             Command::Capabilities => return self.open_capabilities(window, cx),
+            Command::Trajectory => return self.open_trajectory(window, cx),
             Command::NewWindow => {
                 crate::open_window(self.backend.clone(), cx);
                 return;

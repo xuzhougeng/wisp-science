@@ -41,6 +41,8 @@ pub enum Layer {
     Calendar,
     /// The overview of what Wisp can draw on in the open project.
     Capabilities,
+    /// The trajectory of the open conversation: a dialog over it.
+    Trajectory,
     /// The name field in the Files panel: a new folder or file, or a rename.
     FileName,
     /// Question in the Files panel before an entry goes to the trash.
@@ -437,6 +439,13 @@ mod tests {
         stack.open(Layer::JournalForm);
         assert!(stack.close(Layer::Journey));
         assert!(!stack.contains(Layer::JournalForm));
+        // The trajectory is a dialog over the conversation: Escape closes
+        // it alone, and a panel that was open beside it stays.
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::Trajectory);
+        assert_eq!(stack.dismiss_top(), Some(Layer::Trajectory));
+        assert!(stack.contains(Layer::FilesPanel));
+        assert!(stack.close(Layer::FilesPanel));
         // The project dialog opens over whatever is showing; Escape closes
         // it alone, and what was under it is still there.
         stack.open(Layer::FilesPanel);

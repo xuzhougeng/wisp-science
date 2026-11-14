@@ -868,25 +868,8 @@ impl Server {
     pub async fn export_conversation(&self, project: &str, session: &str) -> Result<String> {
         self.own_conversation(project, session).await?;
         let store = &self.0.store;
-        // Pages come newest first; the document reads oldest first.
-        let mut pages = Vec::new();
-        let mut before = None;
-        loop {
-            let page = store
-                .load_session_transcript_page(session, before, 200)
-                .await?;
-            before = page.next_before_seq;
-            pages.push(page.messages);
-            if before.is_none() {
-                break;
-            }
-        }
-        let messages: Vec<_> = pages
-            .into_iter()
-            .rev()
-            .flatten()
-            .map(|(_, message)| message)
-            .collect();
+        // The document reads oldest first.
+        let messages = self.whole_transcript(session).await?;
         let mut rows = crate::runtime::items(&messages);
         let outcomes: HashMap<_, _> = store
             .load_session_ui_events(session)
@@ -908,6 +891,45 @@ impl Server {
             .map(|(name, _)| name)
             .unwrap_or_default();
         Ok(crate::export::markdown(&title, &name, &rows))
+    }
+
+    /// A conversation as a trajectory: every turn's steps in the order
+    /// they happened, with what each tool and model call took.
+    pub async fn trajectory(
+        &self,
+        project: &str,
+        session: &str,
+    ) -> Result<wisp_dto::TrajectorySnapshotDto> {
+        self.own_conversation(project, session).await?;
+        let store = &self.0.store;
+        let messages = self.whole_transcript(session).await?;
+        let events = store.load_session_ui_events_timed(session).await?;
+        Ok(crate::trajectory::fold(session, &messages, &events))
+    }
+
+    /// Every saved message of a conversation, oldest first.
+    async fn whole_transcript(&self, session: &str) -> Result<Vec<wisp_llm::Message>> {
+        // Pages come newest first.
+        let mut pages = Vec::new();
+        let mut before = None;
+        loop {
+            let page = self
+                .0
+                .store
+                .load_session_transcript_page(session, before, 200)
+                .await?;
+            before = page.next_before_seq;
+            pages.push(page.messages);
+            if before.is_none() {
+                break;
+            }
+        }
+        Ok(pages
+            .into_iter()
+            .rev()
+            .flatten()
+            .map(|(_, message)| message)
+            .collect())
     }
 
     /// What happened in a project from `from` up to `until` (seconds since

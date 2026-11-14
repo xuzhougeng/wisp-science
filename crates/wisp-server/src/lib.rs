@@ -10,6 +10,7 @@ mod runtime;
 #[cfg(test)]
 mod tests;
 mod tools_found;
+mod trajectory;
 
 use anyhow::{bail, ensure, Context, Result};
 use async_trait::async_trait;

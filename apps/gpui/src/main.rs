@@ -25,6 +25,7 @@ mod queue;
 mod settings;
 mod state;
 mod theme;
+mod trajectory;
 mod usage;
 mod workspace;
 

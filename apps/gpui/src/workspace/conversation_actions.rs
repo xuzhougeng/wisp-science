@@ -450,6 +450,14 @@ impl Workspace {
                     ),
             )
             .child(
+                Button::new("conversation-trajectory")
+                    .label("Trajectory")
+                    .small()
+                    .ghost()
+                    .tooltip("Every step of this conversation, with what it took")
+                    .on_click(cx.listener(|this, _, window, cx| this.open_trajectory(window, cx))),
+            )
+            .child(
                 Button::new("conversation-archive")
                     .label(if archived { "Unarchive" } else { "Archive" })
                     .small()

@@ -4334,6 +4334,67 @@ async fn a_projects_journey_lists_what_happened_and_what_the_researcher_recorded
 }
 
 #[tokio::test]
+async fn a_conversation_is_read_back_as_a_trajectory() {
+    let temp = tempfile::tempdir().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    // A model that runs one tool, then answers.
+    let server = Server::open_with_models(config(temp.path()), models(calls, true))
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    // Nothing asked yet: nothing to show, and nothing made up.
+    let empty = server.trajectory(PROJECT, &session).await.unwrap();
+    assert!(empty.turns.is_empty());
+    assert_eq!(empty.stats, wisp_dto::TrajectoryStatsDto::default());
+
+    send(&server, &session, "write the file").await.unwrap();
+    let asked = wait_for(&server, &session, |s| !s.approvals.is_empty() || !s.running).await;
+    for approval in &asked.approvals {
+        server
+            .answer_approval(
+                PROJECT,
+                &session,
+                &approval.approval_id,
+                true,
+                desktop::Remember::No,
+            )
+            .await
+            .unwrap();
+    }
+    wait_for(&server, &session, |s| !s.running).await;
+
+    let trajectory = server.trajectory(PROJECT, &session).await.unwrap();
+    assert_eq!(trajectory.frame_id, session);
+    assert_eq!(trajectory.turns.len(), 1);
+    let turn = &trajectory.turns[0];
+    assert_eq!(turn.index, 1);
+    assert!(turn.started_at.is_some());
+    let cells = |kind: &str| -> Vec<_> { turn.cells.iter().filter(|c| c.kind == kind).collect() };
+    assert_eq!(turn.cells[0].kind, "user");
+    assert_eq!(turn.cells[0].summary, "write the file");
+    // The tool is one step: what it was given, what it answered, how it went.
+    let tools = cells("tool");
+    assert_eq!(tools.len(), 1, "{turn:?}");
+    assert!(tools[0].summary.starts_with("write {"), "{turn:?}");
+    assert!(tools[0]
+        .detail_input
+        .as_deref()
+        .unwrap()
+        .contains("answer.txt"));
+    assert!(tools[0].detail_output.is_some());
+    assert_eq!((tools[0].ok, tools[0].is_error), (Some(true), false));
+    assert_eq!(cells("assistant").len(), 1, "{turn:?}");
+    // Two model calls: the one that asked for the tool and the one that answered.
+    assert_eq!(cells("usage").len(), 2, "{turn:?}");
+    assert_eq!((trajectory.stats.turns, trajectory.stats.steps), (1, 2));
+
+    // Only the conversation's own project may read it.
+    assert!(server.trajectory("missing", &session).await.is_err());
+    assert!(server.trajectory(PROJECT, "missing").await.is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_conversation_is_exported_whole_as_markdown() {
     let temp = tempfile::tempdir().unwrap();
     let calls = Arc::new(AtomicUsize::new(0));

@@ -136,6 +136,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Pictures in answers | When an answer shows a picture of the project with Markdown image syntax, the picture is drawn under the answer |
 | Project archives | Export on a project's card writes the project, its records and its files, as one zip; Import on the home page reads one and puts the project in a folder you choose |
 | Capabilities | A dialog for the open project: how many skills, connectors, MCP servers and SSH hosts are on or usable, the state of memory, and which command-line tools were found on this computer |
+| Trajectory | A conversation's Trajectory button (or the command palette) shows every turn's steps in the order they happened: what you asked, what the model said, each tool with how it went and how long it took, and each model call with its tokens; the totals are at the top |
 | Windows | New Window (the app menu, Cmd/Ctrl+Shift+N, or the command palette) opens another window on the same projects, each with its own page and conversation |
 | Export | A conversation's Export button saves the whole of it as a Markdown file where you choose |
 | Notebook | A tab of the side panel: the conversation's code as cells, with what each run returned; copy, save to favorites, or show it in the conversation |
@@ -393,6 +394,14 @@ Limits of this slice:
   one you choose, never inside the app's data. There is no progress
   display, a large project simply takes a while; the folder form of a
   package, relay sync and remote access are not ported.
+- Trajectory reads what is saved, so a turn that is still running shows
+  only as far as it has been saved, and its model calls appear when it
+  ends. Saved times are whole seconds: model time and speed are rough for
+  short calls, and a call is timed from the question or the latest tool
+  result before it. A tool's own time is measured to the millisecond.
+  Conversations from the WebView desktop show their steps, but that
+  desktop records tool outcomes differently, so their tools show no
+  outcome or time here. A step's opened text stops at 4,000 characters.
 - Capabilities counts what the Settings pages and the Memory tab already
   hold, in one place, and looks along the search path the app was started
   with for `python3`, `Rscript`, `uv`, `pixi`, `conda`, `git`, `ssh` and
@@ -736,6 +745,13 @@ import, and one of its exports here.
 In a project press Capabilities: the counts match the Settings pages, the
 tools on this computer are listed with where they were found, Settings on a
 line opens that page, and Escape closes the dialog.
+In a conversation that ran a tool press Trajectory: the totals are at the
+top, each turn is headed by its number, time and cost, and the steps read
+You, Tool, Model call, Wisp in the order they happened. Click a tool step:
+its input and result open under it; click again to close. A failed tool is
+marked failed. Press Escape: only the dialog closes. Open it from the
+command palette as well, and in a conversation with nothing asked yet
+confirm it says so.
 Press Cmd/Ctrl+Shift+N: a second window opens a little down and to the
 right of the first, on the home page, with the same projects. Open a
 different conversation in each, send a message in one and confirm the other

@@ -150,7 +150,7 @@ to find in the running app.
 | --- | --- | --- | --- |
 | Conversation tabs | Yes | Missing | ui |
 | Share conversation [分享对话] | Yes | Partial: as an exported Markdown file; no share link | tauri |
-| Trajectory [轨迹] | Yes | Missing | store |
+| Trajectory [轨迹] | Yes | Done: a dialog with the totals and every turn's steps; a step opens to its whole text | store |
 | Research archive [研究归档] | Yes | Missing | store |
 | Pending decisions [N 个待处理] | Yes | Done (sidebar inbox) | served |
 | Terminal [打开终端] | Yes | Missing | tauri |
@@ -326,7 +326,7 @@ before the things that hang in it.
    and package sources; 9j done: checking an SSH host)*
 10. **Project pages** — research journey, calendar, paper evidence, research
     assistant, trajectory, archive. *(10a done: the research journey; 10b done: the
-    research calendar)*
+    research calendar; 10c done: the trajectory of a conversation)*
 11. **Project transfer and sync** — import, export, relay sync, remote access. *(11a done:
     export and import as an archive)*
 12. **Experts, workflows, quick actions, ACP, accounts, plugins, browser.**

@@ -22,6 +22,7 @@ mod settings_network;
 mod settings_sections;
 mod settings_view;
 mod shell;
+mod trajectory_view;
 mod transfer_view;
 
 use std::{
@@ -89,6 +90,10 @@ pub struct Workspace {
     /// why it could not be.
     capabilities: Option<wisp_server::desktop::Capabilities>,
     capabilities_error: Option<String>,
+    trajectory: Option<wisp_dto::TrajectorySnapshotDto>,
+    trajectory_error: Option<String>,
+    /// The steps opened to show their whole text: (turn, step).
+    trajectory_open: HashSet<(usize, usize)>,
     /// The calendar across projects: the month shown, every project's
     /// records once read, the counter that drops late answers, the day
     /// that is chosen, and the projects left out.
@@ -523,6 +528,9 @@ impl Workspace {
             find_input,
             capabilities: None,
             capabilities_error: None,
+            trajectory: None,
+            trajectory_error: None,
+            trajectory_open: HashSet::new(),
             calendar_month: None,
             calendar: None,
             calendar_request: 0,
@@ -719,6 +727,10 @@ impl Workspace {
                 self.capabilities = None;
                 self.focus_composer(window, cx);
             }
+            Some(Layer::Trajectory) => {
+                self.clear_trajectory();
+                self.focus_composer(window, cx);
+            }
             // The page stays open underneath.
             Some(Layer::JournalForm) => {}
             Some(Layer::ConfirmTrashFile) => self.file_trashing = None,
@@ -842,9 +854,11 @@ impl Workspace {
             Layer::RunsOnMenu,
             Layer::Find,
             Layer::Outline,
+            Layer::Trajectory,
         ] {
             self.layers.close(layer);
         }
+        self.clear_trajectory();
         self.find.clear();
         if self.state.session != session {
             self.saved.clear();
@@ -2090,6 +2104,11 @@ impl Render for Workspace {
         };
         let root = if self.layers.contains(Layer::Capabilities) {
             root.child(self.render_capabilities(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::Trajectory) {
+            root.child(self.render_trajectory(cx))
         } else {
             root
         };

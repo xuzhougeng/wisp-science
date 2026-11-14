@@ -212,6 +212,15 @@ impl Backend {
         self.local(move |host| async move { host.capabilities(&project).await })
     }
 
+    /// A conversation as a trajectory: its turns, their steps and totals.
+    pub fn trajectory(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<wisp_dto::TrajectorySnapshotDto> {
+        self.local(move |host| async move { host.trajectory(&project, &session).await })
+    }
+
     /// A conversation, whole, as a Markdown document.
     pub fn export_conversation(&self, project: String, session: String) -> Reply<String> {
         self.local(move |host| async move { host.export_conversation(&project, &session).await })
