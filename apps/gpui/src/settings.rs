@@ -2,7 +2,7 @@
 //! without a window. Validation itself belongs to the host.
 use wisp_server::{
     config::default_api_url,
-    desktop::{ConnectorRow, ModelProfile, ModelSettings, ModelSource, SkillRow},
+    desktop::{ConnectorRow, McpTransport, ModelProfile, ModelSettings, ModelSource, SkillRow},
 };
 
 /// The pages of Settings, in the order they are listed.
@@ -138,6 +138,59 @@ pub fn tool_count(count: usize) -> String {
     match count {
         1 => "1 tool".into(),
         n => format!("{n} tools"),
+    }
+}
+
+/// A command line as typed, taken apart into the program and what it is
+/// given. Quotes keep words with spaces together; nothing else is special.
+pub fn split_command(line: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut quote = None;
+    let mut started = false;
+    for c in line.chars() {
+        match quote {
+            Some(open) if c == open => quote = None,
+            Some(_) => word.push(c),
+            None if c == '"' || c == '\'' => {
+                quote = Some(c);
+                started = true;
+            }
+            None if c.is_whitespace() => {
+                if started || !word.is_empty() {
+                    words.push(std::mem::take(&mut word));
+                    started = false;
+                }
+            }
+            None => word.push(c),
+        }
+    }
+    if started || !word.is_empty() {
+        words.push(word);
+    }
+    words
+}
+
+/// The command line `split_command` reads back the same way.
+pub fn join_command(command: &str, args: &[String]) -> String {
+    std::iter::once(command)
+        .chain(args.iter().map(String::as_str))
+        .map(|word| {
+            if word.is_empty() || word.contains(char::is_whitespace) {
+                format!("\"{word}\"")
+            } else {
+                word.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// How a server is reached, on one line.
+pub fn transport_line(transport: &McpTransport) -> String {
+    match transport {
+        McpTransport::Http { url } => url.clone(),
+        McpTransport::Stdio { command, args } => join_command(command, args),
     }
 }
 
@@ -420,6 +473,35 @@ mod tests {
         assert!(!connector_matches(&rows[0], "uniprot"));
         assert_eq!(tool_count(1), "1 tool");
         assert_eq!(tool_count(4), "4 tools");
+    }
+
+    #[test]
+    fn a_command_line_is_split_on_spaces_and_kept_whole_in_quotes() {
+        assert_eq!(
+            split_command("uvx lab-mcp --port 8000"),
+            ["uvx", "lab-mcp", "--port", "8000"]
+        );
+        assert_eq!(
+            split_command("  python  \"my server.py\" --name 'Lab One'  "),
+            ["python", "my server.py", "--name", "Lab One"]
+        );
+        // An empty quoted word is still a word.
+        assert_eq!(split_command("run \"\" x"), ["run", "", "x"]);
+        assert!(split_command("   ").is_empty());
+        for line in [
+            "uvx lab-mcp",
+            "python \"my server.py\" --flag",
+            "run \"\" x",
+        ] {
+            let words = split_command(line);
+            assert_eq!(split_command(&join_command(&words[0], &words[1..])), words);
+        }
+        assert_eq!(
+            transport_line(&McpTransport::Http {
+                url: "https://mcp.example/".into()
+            }),
+            "https://mcp.example/"
+        );
     }
 
     #[test]

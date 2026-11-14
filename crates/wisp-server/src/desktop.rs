@@ -1698,6 +1698,152 @@ impl Server {
         .await?)
     }
 
+    fn mcp_secret(key_id: &str, server: &str) -> String {
+        format!("desktop.mcp.{key_id}.{server}")
+    }
+
+    /// The token saved for a server, if there is one.
+    async fn mcp_token(&self, server: &str) -> Option<String> {
+        let key_id = self.0.store.get_setting(MODEL_KEY_ID).await.ok()??;
+        self.0
+            .secrets
+            .get(&Self::mcp_secret(&key_id, server))
+            .filter(|token| !token.is_empty())
+    }
+
+    /// The tools the user's enabled MCP servers give a turn.
+    pub(crate) async fn mcp_tools(&self) -> Vec<Box<dyn wisp_tools::Tool>> {
+        let servers = crate::mcp::load(&self.0.store).await;
+        if !servers.iter().any(|server| server.enabled) {
+            return vec![];
+        }
+        let mut tokens = HashMap::new();
+        for server in &servers {
+            if let Some(token) = self.mcp_token(&server.id).await {
+                tokens.insert(server.id.clone(), token);
+            }
+        }
+        self.0
+            .mcp
+            .tools(&servers, |id| tokens.get(id).cloned())
+            .await
+    }
+
+    /// The MCP servers the user added, in the order they were added, each
+    /// with whether a token is saved for it and why it gave no tools the
+    /// last time, if it did not.
+    pub async fn mcp_servers(&self) -> Result<Vec<McpServerRow>> {
+        let mut rows = Vec::new();
+        for server in crate::mcp::load(&self.0.store).await {
+            rows.push(McpServerRow {
+                has_token: self.mcp_token(&server.id).await.is_some(),
+                error: self.0.mcp.error(&server.id),
+                server,
+            });
+        }
+        Ok(rows)
+    }
+
+    /// Adds a server, or with an id changes the one that has it. A token is
+    /// kept in the system keychain: `Some("")` forgets it, `None` leaves it.
+    pub async fn save_mcp_server(&self, input: McpServerInput) -> Result<McpServer> {
+        let mut servers = crate::mcp::load(&self.0.store).await;
+        let existing = input
+            .id
+            .as_deref()
+            .map(|id| {
+                servers
+                    .iter()
+                    .position(|server| server.id == id)
+                    .context("That server is no longer saved")
+            })
+            .transpose()?;
+        let server = McpServer {
+            id: input
+                .id
+                .clone()
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            name: input.name.trim().to_owned(),
+            enabled: existing.is_none_or(|index| servers[index].enabled),
+            transport: input.transport,
+        };
+        server.validate()?;
+        ensure!(
+            !servers
+                .iter()
+                .any(|other| other.id != server.id && other.slug() == server.slug()),
+            "Another server already has that name"
+        );
+        if let Some(token) = input.token {
+            let token = token.trim();
+            ensure!(
+                token.len() <= 4_096 && !token.contains(char::is_whitespace),
+                "A token is one word of at most 4096 characters"
+            );
+            let key_id = self.key_id().await?;
+            self.0
+                .secrets
+                .set(&Self::mcp_secret(&key_id, &server.id), token)?;
+        }
+        match existing {
+            Some(index) => servers[index] = server.clone(),
+            None => servers.push(server.clone()),
+        }
+        crate::mcp::save(&self.0.store, &servers).await?;
+        // The next turn connects afresh, as the server is now written.
+        self.0.mcp.close(&server.id).await;
+        Ok(server)
+    }
+
+    /// Turns a server off or on, from the next turn.
+    pub async fn set_mcp_server_enabled(&self, id: &str, enabled: bool) -> Result<()> {
+        let mut servers = crate::mcp::load(&self.0.store).await;
+        let server = servers
+            .iter_mut()
+            .find(|server| server.id == id)
+            .context("That server is no longer saved")?;
+        server.enabled = enabled;
+        crate::mcp::save(&self.0.store, &servers).await?;
+        if !enabled {
+            self.0.mcp.close(id).await;
+        }
+        Ok(())
+    }
+
+    /// Forgets a server and its token, and closes the connection to it.
+    pub async fn delete_mcp_server(&self, id: &str) -> Result<()> {
+        let mut servers = crate::mcp::load(&self.0.store).await;
+        let before = servers.len();
+        servers.retain(|server| server.id != id);
+        ensure!(servers.len() < before, "That server is no longer saved");
+        crate::mcp::save(&self.0.store, &servers).await?;
+        if let Some(key_id) = self.0.store.get_setting(MODEL_KEY_ID).await? {
+            self.0.secrets.set(&Self::mcp_secret(&key_id, id), "")?;
+        }
+        self.0.mcp.close(id).await;
+        Ok(())
+    }
+
+    /// Connects to a server now and says what it offers, by the names the
+    /// model would call the tools by.
+    pub async fn test_mcp_server(&self, id: &str) -> Result<Vec<String>> {
+        let servers = crate::mcp::load(&self.0.store).await;
+        let server = servers
+            .iter()
+            .find(|server| server.id == id)
+            .context("That server is no longer saved")?;
+        let token = self.mcp_token(id).await;
+        Ok(self
+            .0
+            .mcp
+            .list(server, token)
+            .await?
+            .iter()
+            .filter(|tool| tool.visible_to_model())
+            .map(|tool| server.tool_name(&tool.name))
+            .collect())
+    }
+
     fn service_secret(key_id: &str, id: &str) -> String {
         format!("desktop.service.{key_id}.{id}")
     }
@@ -2349,6 +2495,30 @@ pub struct ConversationStatus {
     pub allowed_tools: Vec<String>,
     /// What the model is thinking right now; empty when it is not.
     pub reasoning: String,
+}
+
+pub use crate::mcp::{McpServer, McpTransport};
+
+/// An MCP server as Settings lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct McpServerRow {
+    pub server: McpServer,
+    /// A token is saved for it. The token itself is never handed back.
+    pub has_token: bool,
+    /// Why it gave no tools the last time it was asked.
+    pub error: Option<String>,
+}
+
+/// What Settings sends to add or change a server.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct McpServerInput {
+    /// The server to change; `None` adds one.
+    pub id: Option<String>,
+    pub name: String,
+    pub transport: McpTransport,
+    /// A bearer token for an HTTP server: `Some("")` forgets the saved
+    /// one, `None` leaves it as it is.
+    pub token: Option<String>,
 }
 
 /// A service key the bundled connectors can use.

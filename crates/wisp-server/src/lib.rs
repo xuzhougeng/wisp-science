@@ -1,6 +1,7 @@
 pub mod config;
 pub mod desktop;
 mod files;
+pub mod mcp;
 mod output;
 mod runtime;
 #[cfg(test)]
@@ -60,6 +61,8 @@ struct Inner {
     /// The favorites library: a database of its own, opened when a desktop
     /// first asks for it, so a headless host never creates one.
     library: tokio::sync::OnceCell<wisp_store::LibraryStore>,
+    /// Connections to the MCP servers the user added.
+    mcp: mcp::Connections,
 }
 
 type ModelFactory =
@@ -158,6 +161,7 @@ impl Server {
             model: std::sync::RwLock::new(model),
             secrets,
             library: Default::default(),
+            mcp: Default::default(),
         })))
     }
 
@@ -445,6 +449,7 @@ impl Server {
             &request.references,
             options.plan_first,
             &self.service_keys().await,
+            self.mcp_tools().await,
         )
         .await?;
         let page = self
@@ -680,6 +685,7 @@ impl Server {
             .values()
             .filter_map(|s| s.runtime.lock().unwrap().clone())
             .collect();
+        self.0.mcp.close_all().await;
         for runtime in runtimes {
             runtime.shutdown_all().await;
         }

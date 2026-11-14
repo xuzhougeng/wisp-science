@@ -60,6 +60,10 @@ pub enum Layer {
     Favorites,
     /// Question on the Favorites page before a saved item is removed.
     ConfirmRemoveFavorite,
+    /// The form for an MCP server, on the Connections page of Settings.
+    McpForm,
+    /// Question before an MCP server is removed.
+    ConfirmRemoveMcp,
 }
 
 impl Layer {
@@ -95,7 +99,9 @@ impl Layer {
             | Layer::ConfirmDeleteMemo
             | Layer::MemoryEditor
             | Layer::ConfirmDeleteMemory => Some(Layer::FilesPanel),
-            Layer::ConfirmDeleteModel => Some(Layer::Settings),
+            Layer::ConfirmDeleteModel | Layer::McpForm | Layer::ConfirmRemoveMcp => {
+                Some(Layer::Settings)
+            }
             Layer::ConfirmRemoveFavorite => Some(Layer::Favorites),
             Layer::BatchGroupMenu | Layer::ConfirmBatchDelete => Some(Layer::SelectMode),
             _ => None,
@@ -343,6 +349,18 @@ mod tests {
         assert!(stack.close(Layer::Favorites));
         assert!(!stack.contains(Layer::ConfirmRemoveFavorite));
         assert!(stack.contains(Layer::FilesPanel));
+    }
+
+    #[test]
+    fn the_mcp_form_is_part_of_settings_and_escape_leaves_it_first() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::Settings);
+        stack.open(Layer::McpForm);
+        assert_eq!(stack.dismiss_top(), Some(Layer::McpForm));
+        assert!(stack.contains(Layer::Settings));
+        stack.open(Layer::ConfirmRemoveMcp);
+        assert!(stack.close(Layer::Settings));
+        assert!(!stack.contains(Layer::ConfirmRemoveMcp));
     }
 
     #[test]

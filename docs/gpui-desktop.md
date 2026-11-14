@@ -133,7 +133,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Branch | Under a reply: a new conversation holding everything through that turn, opened at once and listed under the one it came from |
 | Search | Titles and message text across the project, archived conversations included |
 | Command palette | One box over everything: projects, files by name in every project, conversations by title or message text, and the window's commands; arrow keys, Return, Escape |
-| Settings | Pages: General (appearance: system, light or dark; what the app opens on), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold), Skills (every skill with where it comes from, search, on or off), Connections (the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
+| Settings | Pages: General (appearance: system, light or dark; what the app opens on), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold), Skills (every skill with where it comes from, search, on or off), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
 | Inbox | Conversations in any project that are waiting for you; opens across projects |
 | Read state | A finished answer is marked read once it is on screen in the active window |
 | Transcript | Virtualized Markdown, selectable text, paginated history |
@@ -239,8 +239,18 @@ Limits of this slice:
   WebView has always had. They only read, so they never ask for approval, and
   their schemas are deferred, so they do not fill the prompt. Turning one off
   uses the WebView's list (`disabled_connectors`). The network proxy setting
-  is not applied. Your own MCP servers and per-conversation connector grants
-  are not ported.
+  is not applied, and per-conversation connector grants are not ported.
+- Your own MCP servers are kept in this database (`desktop.mcp_servers`), not
+  in the WebView's list, so each desktop has its own. A server is reached
+  over HTTP, with an optional bearer token kept in the keychain, or started
+  as a program on this computer; other headers, environment variables for
+  the program, OAuth and per-server proxies are not ported. Connections are
+  kept between turns and closed when a server is changed, switched off or
+  removed, and when the app quits. The model calls a tool as
+  `<server>__<tool>`; every such tool asks before it runs, and that question
+  cannot be answered "for this conversation" or "always". A server that
+  cannot be reached gives a turn no tools and says why in Settings; it never
+  stops the turn. MCP Apps are not ported.
 - Credentials holds the three keys the connectors read: the NCBI key and
   contact email, and the OpenAlex key. They go to the keychain under this
   data directory's own names (`desktop.service.<id>.<name>`), never into
@@ -492,6 +502,12 @@ Open Credentials: save a contact email and confirm the field empties and says
 Saved; restart and confirm it is still Saved; press Forget. With a real NCBI
 key saved, run several PubMed searches in a row and confirm none is refused
 for rate.
+In Connections add an MCP server over HTTP and one as a local program (for
+example with a quoted argument); press Test on each and confirm the tools are
+listed, or the reason when it fails. Ask the model to use one of the tools:
+it asks first, then runs. Switch the server off and confirm the model no
+longer has the tool. Change its name and confirm Test lists the new names.
+Press Remove, then Escape (Settings stays), then remove it.
 Open General: choose Dark, Light and System and confirm the whole window
 changes at once; with System chosen, switch the system's appearance and
 confirm the window follows, and with Dark chosen that it does not. Choose

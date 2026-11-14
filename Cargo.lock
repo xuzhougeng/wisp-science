@@ -7339,6 +7339,7 @@ dependencies = [
  "wisp-core",
  "wisp-dto",
  "wisp-llm",
+ "wisp-mcp",
  "wisp-runs",
  "wisp-runtime",
  "wisp-skills",

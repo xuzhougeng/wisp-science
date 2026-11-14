@@ -17,9 +17,9 @@ use wisp_server::{
     desktop::{
         ArtifactRow, BatchAction, BatchReport, ConnectorRow, ConversationList, ConversationOptions,
         ConversationStatus, CredentialRow, Favorite, FileMatch, Folder, GlobalMemory, LibraryItem,
-        LibraryItemSummary, MemoryView, ModelInput, ModelSettings, ProjectGrants, ProjectMemo,
-        ProjectMemoPatch, ReferenceOption, Remember, SkillRow, StorageView, TurnDefaults, TurnRef,
-        UsageView,
+        LibraryItemSummary, McpServer, McpServerInput, McpServerRow, MemoryView, ModelInput,
+        ModelSettings, ProjectGrants, ProjectMemo, ProjectMemoPatch, ReferenceOption, Remember,
+        SkillRow, StorageView, TurnDefaults, TurnRef, UsageView,
     },
 };
 use wisp_sync::DirectRemoteHost;
@@ -456,6 +456,27 @@ impl Backend {
     /// Starts an empty conversation the way the desktop's defaults say.
     pub fn create_conversation(&self, project: String) -> Reply<String> {
         self.local(move |host| async move { host.create_conversation(&project).await })
+    }
+
+    pub fn mcp_servers(&self) -> Reply<Vec<McpServerRow>> {
+        self.local(|host| async move { host.mcp_servers().await })
+    }
+
+    pub fn save_mcp_server(&self, input: McpServerInput) -> Reply<McpServer> {
+        self.local(move |host| async move { host.save_mcp_server(input).await })
+    }
+
+    pub fn set_mcp_server_enabled(&self, id: String, enabled: bool) -> Reply<()> {
+        self.local(move |host| async move { host.set_mcp_server_enabled(&id, enabled).await })
+    }
+
+    pub fn delete_mcp_server(&self, id: String) -> Reply<()> {
+        self.local(move |host| async move { host.delete_mcp_server(&id).await })
+    }
+
+    /// Connects now and returns the names of the tools the server offers.
+    pub fn test_mcp_server(&self, id: String) -> Reply<Vec<String>> {
+        self.local(move |host| async move { host.test_mcp_server(&id).await })
     }
 
     pub fn credentials(&self) -> Reply<Vec<CredentialRow>> {

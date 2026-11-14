@@ -177,6 +177,7 @@ pub async fn build(
     references: &[wisp_dto::ComposerReferenceArg],
     plan_mode: bool,
     service_keys: &[(String, String)],
+    extra_tools: Vec<Box<dyn wisp_tools::Tool>>,
 ) -> Result<Agent> {
     let root = PathBuf::from(root);
     let skills = Arc::new(skill_index(config, store, &root).await);
@@ -197,6 +198,13 @@ pub async fn build(
     // They only read, and a name a built-in tool already has stays the
     // built-in's.
     for tool in connector_tools(store, service_keys).await {
+        if tools.get(tool.name()).is_none() {
+            tools.add(tool);
+        }
+    }
+    // What the user's own MCP servers offer; a name already taken stays
+    // with the tool that had it.
+    for tool in extra_tools {
         if tools.get(tool.name()).is_none() {
             tools.add(tool);
         }

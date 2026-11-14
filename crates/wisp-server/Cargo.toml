@@ -20,6 +20,7 @@ wisp-bio = { workspace = true }
 wisp-core = { workspace = true }
 wisp-dto = { workspace = true }
 wisp-llm = { workspace = true }
+wisp-mcp = { workspace = true }
 wisp-runs = { workspace = true }
 wisp-runtime = { workspace = true }
 wisp-skills = { workspace = true }

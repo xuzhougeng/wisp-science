@@ -2216,6 +2216,232 @@ async fn service_keys_live_in_the_secret_store_and_are_never_read_back() {
 }
 
 #[tokio::test]
+async fn a_users_mcp_server_gives_turns_its_tools_and_each_asks_before_it_runs() {
+    use axum::{http::HeaderMap, response::IntoResponse, routing::post, Json, Router};
+    use desktop::{McpServerInput, McpTransport};
+
+    // An MCP server on the loopback interface with one tool, `echo`.
+    let tokens: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let heard = tokens.clone();
+    let app = Router::new().route(
+        "/mcp",
+        post(move |headers: HeaderMap, Json(body): Json<Value>| {
+            let heard = heard.clone();
+            async move {
+                let auth = headers
+                    .get("authorization")
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or_default()
+                    .to_owned();
+                heard.lock().unwrap().push(auth);
+                let Some(id) = body.get("id").cloned() else {
+                    return axum::http::StatusCode::ACCEPTED.into_response();
+                };
+                let result = match body["method"].as_str().unwrap_or_default() {
+                    "initialize" => json!({
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {"tools": {}},
+                        "serverInfo": {"name": "fake", "version": "1"}
+                    }),
+                    "tools/list" => json!({"tools": [{
+                        "name": "echo",
+                        "description": "Say it back",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {"text": {"type": "string"}}
+                        }
+                    }]}),
+                    "tools/call" => json!({
+                        "content": [{
+                            "type": "text",
+                            "text": format!("echo: {}", body["params"]["arguments"]["text"].as_str().unwrap_or_default())
+                        }],
+                        "isError": false
+                    }),
+                    _ => json!({}),
+                };
+                Json(json!({"jsonrpc": "2.0", "id": id, "result": result})).into_response()
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await });
+
+    // A model that calls the server's tool once, then says what came back.
+    struct Caller;
+    #[async_trait]
+    impl Provider for Caller {
+        fn name(&self) -> &str {
+            "offline"
+        }
+        fn model(&self) -> &str {
+            "offline"
+        }
+        async fn complete(
+            &self,
+            messages: &[Message],
+            _: &[ToolSchema],
+        ) -> wisp_llm::Result<Completion> {
+            let back = messages
+                .iter()
+                .rev()
+                .find(|message| message.role == wisp_llm::Role::Tool)
+                .map(|message| message.content.as_text());
+            Ok(match back {
+                Some(text) => Completion {
+                    content: format!("It said: {text}"),
+                    finish_reason: Some("stop".into()),
+                    ..Default::default()
+                },
+                None => Completion {
+                    tool_calls: vec![ToolCall {
+                        id: "call-1".into(),
+                        kind: "function".into(),
+                        function: wisp_llm::FunctionCall {
+                            name: "fake__echo".into(),
+                            arguments: json!({"text": "hi"}).to_string(),
+                        },
+                    }],
+                    finish_reason: Some("tool_calls".into()),
+                    ..Default::default()
+                },
+            })
+        }
+        async fn stream(
+            &self,
+            messages: &[Message],
+            tools: &[ToolSchema],
+            _: &mut dyn StreamSink,
+        ) -> wisp_llm::Result<Completion> {
+            self.complete(messages, tools).await
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let factory: ModelFactory = Arc::new(|_| Box::new(Caller));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+
+    // What is refused before anything is saved.
+    let input = |name: &str, url: &str| McpServerInput {
+        id: None,
+        name: name.into(),
+        transport: McpTransport::Http { url: url.into() },
+        token: None,
+    };
+    assert!(server.save_mcp_server(input(" ", &url)).await.is_err());
+    assert!(server
+        .save_mcp_server(input("Fake", "fake.example"))
+        .await
+        .is_err());
+    assert!(server.mcp_servers().await.unwrap().is_empty());
+
+    let fake = server
+        .save_mcp_server(McpServerInput {
+            token: Some("tok-1".into()),
+            ..input("Fake", &url)
+        })
+        .await
+        .unwrap();
+    assert!(fake.enabled);
+    // Two servers may not answer to the same name.
+    assert!(server.save_mcp_server(input("fake", &url)).await.is_err());
+    let rows = server.mcp_servers().await.unwrap();
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].has_token && rows[0].error.is_none());
+
+    // Asked now, it says what it offers, and it was shown the token.
+    assert_eq!(
+        server.test_mcp_server(&fake.id).await.unwrap(),
+        ["fake__echo"]
+    );
+    assert!(tokens
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|auth| auth == "Bearer tok-1"));
+    assert!(server.test_mcp_server("missing").await.is_err());
+
+    // In a turn its tool asks first, then runs.
+    let session = create(&server).await;
+    send(&server, &session, "go").await.unwrap();
+    let asked = wait_for(&server, &session, |s| !s.approvals.is_empty()).await;
+    // The card marks it as coming from an MCP server.
+    assert_eq!(asked.approvals[0].tool, "mcp:fake__echo");
+    server
+        .answer_approval(
+            PROJECT,
+            &session,
+            &asked.approvals[0].approval_id,
+            true,
+            desktop::Remember::No,
+        )
+        .await
+        .unwrap();
+    let done = wait_for(&server, &session, |s| !s.running).await;
+    let said = |snapshot: &dto::Snapshot| {
+        snapshot
+            .items
+            .iter()
+            .map(|item| item.text.clone())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert!(said(&done).contains("It said: echo: hi"), "{}", said(&done));
+
+    // Switched off, the model has no such tool, and nothing asks.
+    server
+        .set_mcp_server_enabled(&fake.id, false)
+        .await
+        .unwrap();
+    let without = create(&server).await;
+    send(&server, &without, "go").await.unwrap();
+    let done = wait_for(&server, &without, |s| !s.running).await;
+    assert!(done.approvals.is_empty());
+    assert!(!said(&done).contains("echo: hi"), "{}", said(&done));
+
+    // A server that cannot be reached says why, and turns still run.
+    let dead = server
+        .save_mcp_server(input("Dead", "http://127.0.0.1:1/mcp"))
+        .await
+        .unwrap();
+    assert!(server.test_mcp_server(&dead.id).await.is_err());
+    let rows = server.mcp_servers().await.unwrap();
+    assert!(rows
+        .iter()
+        .find(|row| row.server.id == dead.id)
+        .unwrap()
+        .error
+        .is_some());
+    let beside = create(&server).await;
+    send(&server, &beside, "go").await.unwrap();
+    wait_for(&server, &beside, |s| !s.running).await;
+
+    // Renaming keeps the switch as it was; forgetting the token is explicit.
+    let renamed = server
+        .save_mcp_server(McpServerInput {
+            id: Some(fake.id.clone()),
+            token: Some(String::new()),
+            ..input("Echo box", &url)
+        })
+        .await
+        .unwrap();
+    assert!(!renamed.enabled);
+    assert!(!server.mcp_servers().await.unwrap()[0].has_token);
+    server.set_mcp_server_enabled(&fake.id, true).await.unwrap();
+    assert_eq!(
+        server.test_mcp_server(&fake.id).await.unwrap(),
+        ["echo_box__echo"]
+    );
+
+    server.delete_mcp_server(&dead.id).await.unwrap();
+    assert!(server.delete_mcp_server(&dead.id).await.is_err());
+    assert_eq!(server.mcp_servers().await.unwrap().len(), 1);
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn turn_defaults_and_project_grants_apply_from_the_next_turn() {
     use desktop::Remember;
     let temp = tempfile::tempdir().unwrap();

@@ -8478,6 +8478,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "wisp-mcp"
+version = "1.24.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wisp-llm",
+ "wisp-tools",
+]
+
+[[package]]
 name = "wisp-paths"
 version = "1.24.0"
 
@@ -8545,6 +8562,7 @@ dependencies = [
  "wisp-core",
  "wisp-dto",
  "wisp-llm",
+ "wisp-mcp",
  "wisp-runs",
  "wisp-runtime",
  "wisp-skills",

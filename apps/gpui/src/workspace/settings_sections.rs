@@ -78,7 +78,10 @@ impl Workspace {
         match section {
             Section::Models | Section::General => {}
             Section::Skills => self.load_skills(window, cx),
-            Section::Connections => self.load_connectors(window, cx),
+            Section::Connections => {
+                self.load_connectors(window, cx);
+                self.load_mcp_servers(window, cx);
+            }
             Section::Credentials => self.load_credentials(window, cx),
             Section::Usage => self.load_usage(window, cx),
             Section::Storage => self.load_storage(window, cx),
@@ -405,6 +408,7 @@ impl Workspace {
         };
         let query = self.connectors_search.read(cx).value().to_string();
         let mut page = page
+            .child(self.render_mcp_servers(cx))
             .child(
                 div()
                     .v_flex()
@@ -542,14 +546,7 @@ impl Workspace {
                     ),
             );
         }
-        page.child(
-            div()
-                .pt_4()
-                .w(px(NOTE_WIDTH + 80.))
-                .text_xs()
-                .text_color(muted)
-                .child("Your own MCP servers cannot be added here yet."),
-        )
+        page
     }
 
     /// Reads the choices of the General page and acts on them: wears the

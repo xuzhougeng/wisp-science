@@ -8,6 +8,7 @@ mod organise_view;
 mod palette_view;
 mod panel_tabs;
 mod settings_data;
+mod settings_mcp;
 mod settings_sections;
 mod settings_view;
 mod shell;
@@ -141,6 +142,19 @@ pub struct Workspace {
     connectors_search: Entity<InputState>,
     /// The connector whose tools and links are unfolded.
     open_connector: Option<String>,
+    /// The user's MCP servers; `None` until read.
+    mcp_servers: Option<Vec<wisp_server::desktop::McpServerRow>>,
+    /// The server the form changes or the remove question is about; `None`
+    /// in the form means a new one.
+    mcp_editing: Option<String>,
+    /// The form is for a server over HTTP rather than a local program.
+    mcp_http: bool,
+    mcp_name: Entity<InputState>,
+    mcp_target: Entity<InputState>,
+    mcp_token: Entity<InputState>,
+    /// What testing a server found: `None` while it runs, then its tools
+    /// or why it failed.
+    mcp_tested: HashMap<String, Option<Result<Vec<String>, String>>>,
     /// The service keys, as the Credentials page lists them, each with the
     /// field a new value is typed into.
     credentials: Vec<(wisp_server::desktop::CredentialRow, Entity<InputState>)>,
@@ -240,6 +254,9 @@ impl Workspace {
         });
         let memory_text = cx.new(|cx| InputState::new(window, cx).multi_line(true));
         let steps_input = cx.new(|cx| InputState::new(window, cx));
+        let mcp_name = cx.new(|cx| InputState::new(window, cx).placeholder("Lab notebook"));
+        let mcp_target = cx.new(|cx| InputState::new(window, cx));
+        let mcp_token = cx.new(|cx| InputState::new(window, cx).masked(true));
         let skills_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find a skill…"));
         let connectors_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Find a connector or a tool…"));
@@ -400,6 +417,13 @@ impl Workspace {
             connectors: None,
             connectors_search,
             open_connector: None,
+            mcp_servers: None,
+            mcp_editing: None,
+            mcp_http: true,
+            mcp_name,
+            mcp_target,
+            mcp_token,
+            mcp_tested: HashMap::new(),
             credentials: vec![],
             usage: None,
             storage: None,
@@ -486,6 +510,7 @@ impl Workspace {
             }
             // The page stays open underneath and keeps its focus.
             Some(Layer::ConfirmRemoveFavorite) => {}
+            Some(Layer::McpForm | Layer::ConfirmRemoveMcp) => self.mcp_editing = None,
             // Menus and questions that hold no focus of their own.
             Some(
                 Layer::SortMenu
