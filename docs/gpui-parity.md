@@ -231,7 +231,8 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 
 ## 10. Also in the WebView
 
-Found in the sources rather than on screen; all `Missing` in GPUI.
+Found in the sources rather than on screen. `Missing` in GPUI unless the
+row says what is there.
 
 | Area | Feature | Host |
 | --- | --- | --- |
@@ -240,7 +241,7 @@ Found in the sources rather than on screen; all `Missing` in GPUI.
 | Home | Sync now, device code, conflict resolution (use remote / use local), cloud-folder badges | shared |
 | Sidebar | Conversation menu: copy title, export conversation, export debug request, reload project rules | tauri |
 | Sidebar | Nested children: branches are nested — **Done**. Sub-agents, explorations and "load earlier" paging — Missing | store |
-| Sidebar | Update-available card; "done / failed in another project" notices | tauri |
+| Sidebar | Update-available card; "done / failed in another project" notices (an update check is in Settings, General, and a turn that ends raises a system notification; there is no card in the sidebar) | tauri |
 | Composer | Slash commands: `/timer` `/archive` `/compact` `/fork` `/btw` `/rewind` `/review` `/remember` `/context` `/plan` `/permission` `/save-as-skill` `/skills` `/files` `/upload` `/share` `/trajectory` `/memo` | tauri |
 | Composer | Conversation timer: repeat a prompt on an interval, pause, resume, cancel | store |
 | Composer | Queue panel: edit, remove, reorder, "guide now" | tauri |
@@ -255,28 +256,28 @@ Found in the sources rather than on screen; all `Missing` in GPUI.
 | Transcript | Explorations: start, diff, promote to mainline, discard, abandon | store |
 | Transcript | Branch cards and merge a branch back with a summary | store |
 | Transcript | Plan card: approve and run, or leave plan mode — **Done**. Plan review with per-step feedback, and the execution-plan progress strip — Missing | served |
-| Transcript | Reviewer findings panel and the automatic correction pass | tauri |
+| Transcript | Reviewer findings panel and the automatic correction pass — review on request, of one turn and after every turn are **Done**; the correction is put into the composer to send, not run by itself | tauri |
 | Transcript | MCP App previews; Motif DNA selection | tauri |
-| Context | Usage breakdown panel, compact dialog (regular / semantic), handoff note to a new conversation, too-long recovery | tauri |
-| Top bar | Find in conversation (⌘F); search the project's chat history (⌘⇧F) | store |
+| Context | Usage breakdown panel, compact dialog (regular / semantic), handoff note to a new conversation, too-long recovery — what the model is sent, message by message with token estimates, is **Done**; the rest is Missing | tauri |
+| Top bar | Find in conversation (⌘F) — **Done**; search the project's chat history (⌘⇧F) — Missing | store |
 | Top bar | Import Codex and Claude Code conversations; import a conversation archive | tauri |
 | Centre | Open a file as a centre tab, split chat beside a document, snapshot, open in an external editor | ui |
 | Files | Copy path, attach to chat, register as an artifact, reveal in the file manager, open with the default app | tauri |
 | Previews | PDF, images with zoom and region pins, CSV/TSV, DOCX/XLSX/PPTX, LaTeX, HTML, notebooks, structures, molecules, alignments, FASTA, trees | ui |
 | Previews | Code editor: save, run the selection or the script in a runtime | shared |
 | Previews | DOCX review: accept or reject tracked changes | tauri |
-| Runs | Review a remote run's workspace: download, delete, clean up; remote files pane | shared |
+| Runs | Review a remote run's workspace: download, delete, clean up; remote files pane — an SSH host's folders can be looked at from Files; the rest is Missing | shared |
 | Environments | Add or edit an SSH host (key or password, ProxyJump, test), import WSL, interpreter paths, storage locations | store + shared |
-| Runtimes | Python / R runtime cards: start, stop, restart, object inspector, console, plots | shared |
-| Terminal | Several terminals, choose the environment, collapse, close | tauri |
-| Agents | Swarm progress, agent workflow runs (draft, approve, run, cancel, retry), method-search runs | store |
+| Runtimes | Python / R runtime cards: start, stop, restart, object inspector, console, plots — the interpreters a conversation keeps show above the composer and can be stopped; the rest is Missing | shared |
+| Terminal | Several terminals, choose the environment, collapse, close — one terminal in the project folder is there; the rest is Missing | tauri |
+| Agents | Swarm progress, agent workflow runs (draft, approve, run, cancel, retry), method-search runs — an Agents tab lists a conversation's helpers, and workflows run as one conversation (section 8); the rest is Missing | store |
 | Library | Versions of saved code, edit code, insert into chat | store |
-| Publication | Revisions, manuscript items, evidence binding, readiness waivers, reproduction check, capsule | store |
-| Assistant | Assistant chat, saved plans, scheduled tasks, daily recap, weekly memory tidy, research mandates, WeChat binding | store |
+| Publication | Revisions, manuscript items, evidence binding, readiness waivers, reproduction check, capsule — papers, items and evidence from results and runs are there (section 7); the rest is Missing | store |
+| Assistant | Assistant chat, saved plans, scheduled tasks, daily recap, weekly memory tidy, research mandates, WeChat binding — scheduled tasks are there (section 1); the rest is Missing | store |
 | App | Onboarding wizard, toolchain installer (uv, Python, R, Node, pixi), local tool detection | tauri |
 | App | Action palette (⌘P), privacy mode (⌘⇧H), application and native menus | ui |
 | App | Browser automation prompts (tab cleanup, needs a human), browser-extension update banner | tauri |
-| App | SSH connectivity check, generic confirmation dialogs | shared |
+| App | SSH connectivity check — **Done** in Settings, Environments; generic confirmation dialogs | shared |
 
 `src-tauri` also carries a second, already-split command contract: the
 `native_*` families defined in `crates/wisp-dto/src/native_*.rs`
@@ -329,9 +330,18 @@ before the things that hang in it.
    and package sources; 9j done: checking an SSH host)*
 10. **Project pages** — research journey, calendar, paper evidence, research
     assistant, trajectory, archive. *(10a done: the research journey; 10b done: the
-    research calendar; 10c done: the trajectory of a conversation)*
+    research calendar; 10c done: the trajectory of a conversation; 10d done:
+    archiving a conversation's research; 10e done: paper evidence, first
+    phase; 10f done: scheduled tasks)*
 11. **Project transfer and sync** — import, export, relay sync, remote access. *(11a done:
-    export and import as an archive)*
+    export and import as an archive; 11b done: remote web access through a
+    relay; relay sync and the messaging channels remain)*
 12. **Experts, workflows, quick actions, ACP, accounts, plugins, browser.**
+    *(done in a first phase: experts, quick actions, the decision model,
+    plugins and workflows; ACP agents, subscription accounts and the browser
+    bridge remain — the last needs the loopback bridge to the Chrome
+    extension, which this host does not have)*
 13. **Finish** — localization, notifications, several windows, updates,
-    data import from the WebView desktop, installers.
+    data import from the WebView desktop, installers. *(done: the Chinese
+    interface, notifications, several windows, the update check and the pet;
+    installers remain)*
