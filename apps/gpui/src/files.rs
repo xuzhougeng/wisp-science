@@ -295,6 +295,23 @@ pub enum PreviewMode {
 /// Rendered Markdown is parsed in full, so very large documents stay verbatim.
 const MARKDOWN_LIMIT: usize = 256 * 1024;
 
+pub fn is_html(path: &str) -> bool {
+    let name = file_name(path).to_ascii_lowercase();
+    [".html", ".htm", ".xhtml"]
+        .iter()
+        .any(|kind| name.ends_with(kind))
+}
+
+/// Whether a file is shown as a page: an HTML file small enough to lay out
+/// in full (a larger one is shown as its source).
+pub fn html_page(content: &FileContent) -> bool {
+    is_html(&content.path)
+        && content
+            .text
+            .as_ref()
+            .is_some_and(|text| text.len() <= MARKDOWN_LIMIT)
+}
+
 pub fn preview_mode(content: &FileContent) -> PreviewMode {
     match &content.text {
         None => PreviewMode::Binary,
@@ -925,6 +942,17 @@ mod tests {
         content.total_bytes = None;
         assert_eq!(preview_mode(&content), PreviewMode::Binary);
         assert_eq!(preview_note(&content), "");
+    }
+
+    #[test]
+    fn an_html_file_is_shown_as_a_page_unless_it_is_too_large() {
+        let mut content = preview("p", "report/index.HTML", "<h1>Title</h1>").content;
+        assert!(is_html("a.htm") && is_html("b.xhtml") && !is_html("html/notes.txt"));
+        assert!(html_page(&content));
+        content.text = Some("x".repeat(MARKDOWN_LIMIT + 1));
+        assert!(!html_page(&content));
+        content.text = None;
+        assert!(!html_page(&content));
     }
 
     #[test]

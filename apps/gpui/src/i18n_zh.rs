@@ -1864,6 +1864,12 @@ pub const ZH: &[(&str, &str)] = &[
     ("The first {} of {} atoms · drag to turn", "显示前 {} 个原子（共 {} 个）· 拖动可旋转"),
     ("{} atoms · {} bonds · drag to turn", "{} 个原子 · {} 个化学键 · 拖动可旋转"),
     ("the first of {} molecules", "共 {} 个分子中的第一个"),
+    ("Show the page", "显示页面"),
+    ("Show the source", "显示源码"),
+    (
+        "The page's text, headings, lists, tables and links; its scripts do not run and its styles and pictures are not loaded.",
+        "显示页面的文字、标题、列表、表格和链接；脚本不会运行，样式和图片不会加载。",
+    ),
     // A method search's card in the Runs tab.
     ("Start the search", "开始搜索"),
     ("higher is better", "越高越好"),

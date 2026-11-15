@@ -685,6 +685,9 @@ impl Workspace {
                 {
                     return self.render_structure(read.clone(), cx);
                 }
+                if files::html_page(content) {
+                    return self.render_html(&content.path, text, window, cx);
+                }
                 if let Some(book) = files::notebook(&content.path, text) {
                     return self.render_notebook(&content.path, book, window, cx);
                 }
@@ -703,6 +706,71 @@ impl Workspace {
             .flex_1()
             .min_h_0()
             .child(Input::new(&self.file_view).disabled(true).h_full())
+            .into_any_element()
+    }
+
+    /// An HTML file as a page, the way a document is laid out, with a
+    /// switch to its source. Nothing in it runs or is fetched: scripts and
+    /// styles are left out, and the app has no network client for pictures.
+    fn render_html(
+        &self,
+        path: &str,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let switch = Button::new("file-html-switch")
+            .label(if self.file_as_text {
+                tr("Show the page")
+            } else {
+                tr("Show the source")
+            })
+            .xsmall()
+            .ghost()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.file_as_text = !this.file_as_text;
+                cx.notify();
+            }));
+        let bar = div()
+            .h_flex()
+            .gap_2()
+            .px_3()
+            .py_1()
+            .child(
+                div()
+                    .flex_1()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(tr(
+                        "The page's text, headings, lists, tables and links; its scripts do not run and its styles and pictures are not loaded.",
+                    )),
+            )
+            .child(switch);
+        let body = if self.file_as_text {
+            self.render_text_preview()
+        } else {
+            div()
+                .flex_1()
+                .min_h_0()
+                .p_4()
+                .child(
+                    TextView::html(
+                        SharedString::from(format!("file-html-{path}")),
+                        text.to_owned(),
+                        window,
+                        cx,
+                    )
+                    .selectable(true)
+                    .scrollable(true),
+                )
+                .into_any_element()
+        };
+        div()
+            .v_flex()
+            .flex_1()
+            .min_h_0()
+            .child(bar)
+            .child(body)
             .into_any_element()
     }
 
