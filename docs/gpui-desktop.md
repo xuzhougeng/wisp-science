@@ -158,7 +158,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Slash commands | A message that is only a command does something instead of being sent: `/review`, `/trajectory`, `/context`, `/btw <question>`, `/plan`, `/save-as-skill`, `/skills`, `/files`, `/upload`, `/memo`, `/remember`, `/archive`, `/compact`, `/timer 30m <prompt>`, `/fork`, `/rewind`, `/permission`, `/share`, `/help`; the composer's "/" button lists them |
 | Browser | Settings, Browser, switches on a bridge to the Wisp extension in your own Chrome or Chromium; conversations can then open a tab, read it and run a script in it, only in tabs they opened themselves, and hosts can be blocked or preferred |
 | Workflows | Settings, Workflows, keeps templates of a goal broken into tasks, each saying which earlier tasks it needs; Run starts a conversation in the open project and gives the model the tasks stage by stage |
-| Chat apps | Settings, Chat apps, binds a WeChat bot by scanning a QR code, and a Feishu (or Lark) bot by scanning to make its app or by entering an App ID and App Secret, with its owner confirmed here; the owner's messages then run in the project chats go to and the answer comes back (on Feishu as a card that shows the turn's progress), with `/project`, `/session`, `/new`, `/status`, `/stop` and, in WeChat, approvals answered by code (`/approve`, `/reject`); and Wisp Lab: found a lab on a wisp-relay or ask to join one with an invite code, see the members (the leader approves, refuses or removes them and makes invite codes), choose the project that answers other members' agents, replace the relay token, leave |
+| Chat apps | Settings, Chat apps, binds a WeChat bot by scanning a QR code (and a second one for the research assistant), and a Feishu (or Lark) bot by scanning to make its app or by entering an App ID and App Secret, with its owner confirmed here; the owner's messages then run in the project chats go to and the answer comes back (on Feishu as a card that shows the turn's progress), with `/project`, `/session`, `/new`, `/status`, `/stop` and, in WeChat, approvals answered by code (`/approve`, `/reject`); and Wisp Lab: found a lab on a wisp-relay or ask to join one with an invite code, see the members (the leader approves, refuses or removes them and makes invite codes), choose the project that answers other members' agents, replace the relay token, leave |
 | Remote web access | Settings, Remote access, opens this desktop's projects in a phone or a browser through a wisp-relay of your own: it dials out (no inbound port), shows whether the tunnel is up and how many browsers are connected, and gives a link and a code that can be copied or replaced; the same page turns on the StickS3 desk display's listener (one IPv4 address and port of this computer, a token to show, copy or replace), which shows the device what the agent is doing and the pet, and opens the conversation the device asks for |
 | Plugins | Settings, Plugins, installs a plugin from a folder in the Claude plugin layout (`.claude-plugin/plugin.json`, `skills/*/SKILL.md`) into the app's data without running anything in it, lists what each brings, switches one on for the open project, whose conversations then have its skills, and removes it |
 | Decision model | Settings, Decision model, sets up one fast endpoint (TypeSafe Jev, StartLux-Decision hosted or self-hosted, or a custom System One server) with its key, thinking mode and timeout, and tests it; while one is in use the model's `map_items` tool, which runs one step over many items, also offers its `decide` step |
@@ -822,7 +822,20 @@ Limits of this slice:
   as `weixin_bot_token`, the binding, the poll cursor and whether it is
   on under `weixin_binding`, `weixin_sync_buf` and `weixin_enabled`, so
   either desktop's binding serves both (run one at a time: both would
-  poll the same bot). The bot runs while the app is open. Feishu follows
+  poll the same bot). The bot runs while the app is open. The research
+  assistant has a WeChat bot of its own, as in the WebView's
+  `channels/assistant.rs`: a second card binds a different bot, kept
+  under `assistant_weixin_bot_token`, `assistant_weixin_binding`,
+  `assistant_weixin_sync_buf` and `assistant_weixin_enabled` (one bot
+  cannot serve both). Every message there is a turn of the assistant's
+  conversation, never the shared route; `yes` and `no` answer what it
+  waits on, `full` approves it and turns on the assistant conversation's
+  full access (kept with the conversation, `full off` turns it off),
+  and `/approval`, `/approve`, `/reject`, `/status`, `/model [number or
+  name]`, `/resume` (the last request whose turn failed), `/mandates`
+  and `/stop` work as there; other commands are refused. A mandate's
+  notice to the assistant is also queued for that WeChat and goes out
+  with the owner's next message, the window iLink replies in. Feishu follows
   `feishu.rs`: a self-built app's bot over Feishu's long connection
   (endpoint discovery, then pbbp2 frames over a WebSocket, each
   acknowledged at once and repeated deliveries dropped), replies over
@@ -1065,8 +1078,9 @@ Limits of this slice:
   folds each project's complete days into it with the default model, up
   to a week of days per run, and only the assistant reads it. Not
   ported: privacy mode (every project is visible to the assistant),
-  the side model that answers approvals of dispatched work, a selected
-  project as the message's scope, and the assistant on WeChat. Its
+  the side model that answers approvals of dispatched work, and a
+  selected project as the message's scope. It is reachable on WeChat
+  too (see Chat apps). Its
   `research_mandates` and `reply_to_mandate` list the mandates and pass
   the researcher's words on.
 - Research mandates follow the WebView's `mandates.rs` and reuse
@@ -1716,6 +1730,14 @@ code arrives; send `/approve` with it and the answer follows. From
 another WeChat account send a message: nothing is answered. Press
 Unbind, then Escape: only the question closes; Unbind again and answer
 it: the line reads Not bound.
+Under Research assistant on WeChat, bind a second bot the same way (the
+first bot is refused here) and turn it on. Send `/help`: the assistant's
+commands come back. Send a question about your projects: it appears in
+the research assistant's conversation and its answer comes back. Send
+`full`, then `/status`: full access reads on; `full off` turns it off.
+Run a mandate that asks for something, then write to the bot: the
+mandate's notice arrives with the reply. Unbind it and Escape at once:
+only that card's question closes.
 On the same page, under Feishu, turn Answer messages on with nothing
 filled in: it is refused. Press Make the app by scanning and scan the
 code with Feishu: the line reads Bound · off and the Owner field holds

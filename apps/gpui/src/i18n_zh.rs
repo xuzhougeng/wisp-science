@@ -1823,4 +1823,20 @@ pub const ZH: &[(&str, &str)] = &[
     ("Tokens", "Token 数"),
     ("Nested", "嵌套"),
     ("Own worktree", "独立工作树"),
+    (
+        "Research assistant on WeChat",
+        "科研助理微信",
+    ),
+    (
+        "A second WeChat bot that talks only to the research assistant: every message goes to its conversation, yes, no and full answer what it asks, and its mandate notices arrive with your next message. Bind a different bot from the one above.",
+        "第二个微信机器人，只连接科研助理：每条消息都进入助理的会话，用 yes、no、full 回答它的审批请求，研究职责的通知会在你下一条消息时一并送达。请绑定与上面不同的机器人。",
+    ),
+    (
+        "The assistant's WeChat is bound. Turn it on to answer messages.",
+        "科研助理微信已绑定。打开后即可回复消息。",
+    ),
+    (
+        "Unbind the assistant's WeChat? Its bot stops and its token is forgotten on this computer.",
+        "解除科研助理微信绑定？机器人会停止，本机将忘记它的令牌。",
+    ),
 ];

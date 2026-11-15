@@ -173,6 +173,8 @@ pub enum Layer {
     ConfirmRemoveCodexAccount,
     /// Question before WeChat is unbound, on the Chat apps page.
     ConfirmUnbindWeixin,
+    /// Question before the research assistant's WeChat is unbound.
+    ConfirmUnbindAssistantWeixin,
     /// Question before Feishu is unbound, on the same page.
     ConfirmUnbindFeishu,
     /// Question before this computer leaves its Wisp Lab.
@@ -243,6 +245,7 @@ impl Layer {
             | Layer::ConfirmRemoveAcpAgent
             | Layer::ConfirmRemoveCodexAccount
             | Layer::ConfirmUnbindWeixin
+            | Layer::ConfirmUnbindAssistantWeixin
             | Layer::ConfirmUnbindFeishu
             | Layer::ConfirmLeaveLab
             | Layer::ConfirmRemoveLabMember
@@ -584,6 +587,7 @@ mod tests {
         // So are the questions before WeChat and Feishu are unbound.
         for question in [
             Layer::ConfirmUnbindWeixin,
+            Layer::ConfirmUnbindAssistantWeixin,
             Layer::ConfirmUnbindFeishu,
             Layer::ConfirmLeaveLab,
             Layer::ConfirmRemoveLabMember,

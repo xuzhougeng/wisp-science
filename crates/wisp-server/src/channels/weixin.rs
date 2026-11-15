@@ -4,8 +4,10 @@
 //! answers in the same chat. Only the owner who scanned is answered, and
 //! only one to one. The bot token is kept in the keychain under the
 //! WebView's name, the binding and the poll cursor in the store, so both
-//! desktops share one binding. The research assistant's own WeChat (the
-//! WebView's second destination) is not ported.
+//! desktops share one binding. The research assistant has a WeChat bot of
+//! its own, as in the WebView (its second destination): a separate
+//! binding, token, cursor and worker, whose messages go to the assistant's
+//! conversation and which also carries the assistant's notices.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,8 +32,56 @@ pub(crate) const ENABLED: &str = "weixin_enabled";
 const BINDING: &str = "weixin_binding";
 const CURSOR: &str = "weixin_sync_buf";
 const TOKEN: &str = "weixin_bot_token";
-/// The research assistant's WeChat in the WebView; one bot serves one.
+/// The research assistant's WeChat, under the WebView's names; one bot
+/// serves one of the two.
+pub(crate) const ASSISTANT_ENABLED: &str = "assistant_weixin_enabled";
 const ASSISTANT_BINDING: &str = "assistant_weixin_binding";
+const ASSISTANT_CURSOR: &str = "assistant_weixin_sync_buf";
+const ASSISTANT_TOKEN: &str = "assistant_weixin_bot_token";
+/// The most of a notice sent to WeChat at once.
+const NOTICE_MAX_CHARS: usize = 8000;
+
+/// Which WeChat bot: the one that reaches the projects, or the research
+/// assistant's own; the WebView's `WeixinDestination`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum WeixinDestination {
+    Projects,
+    Assistant,
+}
+
+#[derive(Clone, Copy)]
+struct Keys {
+    enabled: &'static str,
+    binding: &'static str,
+    cursor: &'static str,
+    token: &'static str,
+}
+
+impl WeixinDestination {
+    fn keys(self) -> Keys {
+        match self {
+            WeixinDestination::Projects => Keys {
+                enabled: ENABLED,
+                binding: BINDING,
+                cursor: CURSOR,
+                token: TOKEN,
+            },
+            WeixinDestination::Assistant => Keys {
+                enabled: ASSISTANT_ENABLED,
+                binding: ASSISTANT_BINDING,
+                cursor: ASSISTANT_CURSOR,
+                token: ASSISTANT_TOKEN,
+            },
+        }
+    }
+
+    fn other(self) -> Self {
+        match self {
+            WeixinDestination::Projects => WeixinDestination::Assistant,
+            WeixinDestination::Assistant => WeixinDestination::Projects,
+        }
+    }
+}
 
 #[derive(Deserialize, Default)]
 struct QrCode {
@@ -331,9 +381,10 @@ async fn agent_turn(
     client: &IlinkClient,
     context: &RwLock<String>,
     message: Inbound,
+    destination: WeixinDestination,
 ) {
     let (events, mut heard) = mpsc::unbounded_channel();
-    let turn = server.handle_inbound(Channel::Weixin, &message.from, &message.text, Some(events));
+    let turn = server.weixin_inbound(destination, &message.from, &message.text, Some(events));
     tokio::pin!(turn);
     // WeChat shows no progress; only approvals are sent while it runs.
     let reply = loop {
@@ -358,11 +409,13 @@ async fn agent_turn(
 
 async fn run(
     server: Server,
+    destination: WeixinDestination,
     binding: Binding,
     token: String,
     status: Arc<std::sync::Mutex<(ChannelState, String)>>,
     mut stop: watch::Receiver<bool>,
 ) {
+    let keys = destination.keys();
     let client = match IlinkClient::new(&binding.base_url, &token) {
         Ok(client) => Arc::new(client),
         Err(error) => {
@@ -375,7 +428,7 @@ async fn run(
         }
     };
     let store = server.0.store.clone();
-    let mut cursor = get_setting(&store, CURSOR).await;
+    let mut cursor = get_setting(&store, keys.cursor).await;
     let context = Arc::new(RwLock::new(String::new()));
     // Turns run one after another; commands (an approval, /stop) at once.
     let (turns, mut queued) = mpsc::channel::<Inbound>(32);
@@ -392,7 +445,7 @@ async fn run(
                     message = queued.recv() => message,
                 };
                 let Some(message) = message else { break };
-                agent_turn(&server, &client, &context, message).await;
+                agent_turn(&server, &client, &context, message, destination).await;
             }
         })
     };
@@ -427,7 +480,7 @@ async fn run(
         };
         if updates.errcode == SESSION_EXPIRED_ERRCODE {
             // The token comes from a scan only; it cannot be refreshed.
-            let _ = store.set_setting(ENABLED, "false").await;
+            let _ = store.set_setting(keys.enabled, "false").await;
             set_status(
                 &status,
                 ChannelState::Error,
@@ -476,11 +529,16 @@ async fn run(
                 continue;
             };
             let message = Inbound { from, text };
-            if message.text.trim_start().starts_with('/') {
+            // A command is answered at once, even while a turn waits on it.
+            let command = match destination {
+                WeixinDestination::Projects => message.text.trim_start().starts_with('/'),
+                WeixinDestination::Assistant => super::assistant::is_control_text(&message.text),
+            };
+            if command {
                 let (server, client, context) = (server.clone(), client.clone(), context.clone());
                 commands.spawn(async move {
                     let reply = server
-                        .handle_inbound(Channel::Weixin, &message.from, &message.text, None)
+                        .weixin_inbound(destination, &message.from, &message.text, None)
                         .await;
                     if !reply.is_empty() {
                         send_latest(&client, &context, &message.from, &reply).await;
@@ -502,7 +560,22 @@ async fn run(
         }
         if !updates.get_updates_buf.is_empty() && updates.get_updates_buf != cursor {
             cursor = updates.get_updates_buf.clone();
-            let _ = store.set_setting(CURSOR, &cursor).await;
+            let _ = store.set_setting(keys.cursor, &cursor).await;
+        }
+        // The assistant's notices go out in the window of the owner's
+        // latest message; until there is one they wait.
+        if destination == WeixinDestination::Assistant && !context.read().await.is_empty() {
+            let notices: Vec<String> = server
+                .0
+                .channels
+                .assistant_outbox
+                .lock()
+                .unwrap()
+                .drain(..)
+                .collect();
+            for notice in notices {
+                send_latest(&client, &context, &binding.user_id, &notice).await;
+            }
         }
         while commands.try_join_next().is_some() {}
         let pause = Duration::from_millis(updates.longpolling_timeout_ms.max(1000) as u64);
@@ -530,12 +603,38 @@ impl Server {
         IlinkClient::new(&self.0.channels.ilink_base.lock().unwrap(), "")
     }
 
-    /// WeChat as it stands.
-    pub async fn weixin_status(&self) -> WeixinStatus {
-        let (state, detail) = self.0.channels.weixin.snapshot();
+    fn weixin_worker(&self, destination: WeixinDestination) -> &super::Worker {
+        match destination {
+            WeixinDestination::Projects => &self.0.channels.weixin,
+            WeixinDestination::Assistant => &self.0.channels.weixin_assistant,
+        }
+    }
+
+    /// One message from the owner, to the projects' route or to the
+    /// research assistant.
+    async fn weixin_inbound(
+        &self,
+        destination: WeixinDestination,
+        from: &str,
+        text: &str,
+        events: Option<mpsc::UnboundedSender<ChatEvent>>,
+    ) -> String {
+        match destination {
+            WeixinDestination::Projects => {
+                self.handle_inbound(Channel::Weixin, from, text, events)
+                    .await
+            }
+            WeixinDestination::Assistant => self.handle_assistant_inbound(text, events).await,
+        }
+    }
+
+    /// One of the two WeChat bots as it stands.
+    pub async fn weixin_status(&self, destination: WeixinDestination) -> WeixinStatus {
+        let keys = destination.keys();
+        let (state, detail) = self.weixin_worker(destination).snapshot();
         WeixinStatus {
-            enabled: get_setting(&self.0.store, ENABLED).await == "true",
-            bound: self.weixin_binding(BINDING).await.is_some(),
+            enabled: get_setting(&self.0.store, keys.enabled).await == "true",
+            bound: self.weixin_binding(keys.binding).await.is_some(),
             state,
             detail,
         }
@@ -551,8 +650,14 @@ impl Server {
     }
 
     /// Where the scan of `qrcode` stands. Once confirmed the binding is
-    /// kept (the token in the keychain) and the bot restarts when on.
-    pub async fn poll_weixin_bind(&self, qrcode: &str) -> Result<WeixinScan> {
+    /// kept for `destination` (the token in the keychain) and its bot
+    /// restarts when on.
+    pub async fn poll_weixin_bind(
+        &self,
+        destination: WeixinDestination,
+        qrcode: &str,
+    ) -> Result<WeixinScan> {
+        let keys = destination.keys();
         let status = self.ilink_client()?.qrcode_status(qrcode).await?;
         ensure!(
             status.ret == 0,
@@ -574,13 +679,16 @@ impl Server {
             bail!("The scan did not say who the owner or the bot is; bind again");
         }
         if self
-            .weixin_binding(ASSISTANT_BINDING)
+            .weixin_binding(destination.other().keys().binding)
             .await
             .is_some_and(|binding| binding.account_id == status.ilink_bot_id)
         {
-            bail!("This WeChat bot is bound to the research assistant already; use another bot, or unbind it there first");
+            match destination {
+                WeixinDestination::Projects => bail!("This WeChat bot is bound to the research assistant already; use another bot, or unbind it there first"),
+                WeixinDestination::Assistant => bail!("This WeChat bot already reaches the projects; use another bot for the research assistant, or unbind it there first"),
+            }
         }
-        self.0.secrets.set(TOKEN, &status.bot_token)?;
+        self.0.secrets.set(keys.token, &status.bot_token)?;
         let binding = Binding {
             user_id: status.ilink_user_id,
             account_id: status.ilink_bot_id,
@@ -589,59 +697,87 @@ impl Server {
         };
         let store = &self.0.store;
         store
-            .set_setting(BINDING, &serde_json::to_string(&binding)?)
+            .set_setting(keys.binding, &serde_json::to_string(&binding)?)
             .await?;
         // A new binding starts from now, never another sign-in's backlog.
-        store.set_setting(CURSOR, "").await?;
-        if get_setting(store, ENABLED).await == "true" {
-            self.start_weixin().await;
+        store.set_setting(keys.cursor, "").await?;
+        if get_setting(store, keys.enabled).await == "true" {
+            self.start_weixin(destination).await;
         }
         Ok(WeixinScan::Confirmed)
     }
 
-    /// Turns the bot on or off; on needs a binding.
-    pub async fn set_weixin_enabled(&self, enabled: bool) -> Result<WeixinStatus> {
+    /// Turns a bot on or off; on needs a binding.
+    pub async fn set_weixin_enabled(
+        &self,
+        destination: WeixinDestination,
+        enabled: bool,
+    ) -> Result<WeixinStatus> {
+        let keys = destination.keys();
         {
             let _config = self.0.channels.weixin_config.lock().await;
             ensure!(
-                !enabled || self.weixin_binding(BINDING).await.is_some(),
+                !enabled || self.weixin_binding(keys.binding).await.is_some(),
                 "Bind WeChat with a QR code before turning it on"
             );
             self.0
                 .store
-                .set_setting(ENABLED, if enabled { "true" } else { "false" })
+                .set_setting(keys.enabled, if enabled { "true" } else { "false" })
                 .await?;
             if enabled {
-                self.start_weixin().await;
+                self.start_weixin(destination).await;
             } else {
-                self.0.channels.weixin.stop();
+                self.weixin_worker(destination).stop();
             }
         }
-        Ok(self.weixin_status().await)
+        Ok(self.weixin_status(destination).await)
     }
 
-    /// Forgets the binding and its token, and stops the bot.
-    pub async fn unbind_weixin(&self) -> Result<WeixinStatus> {
+    /// Forgets a binding and its token, and stops its bot.
+    pub async fn unbind_weixin(&self, destination: WeixinDestination) -> Result<WeixinStatus> {
+        let keys = destination.keys();
         {
             let _config = self.0.channels.weixin_config.lock().await;
-            self.0.channels.weixin.stop();
+            self.weixin_worker(destination).stop();
             // The keychain has no delete here; empty reads as none.
-            self.0.secrets.set(TOKEN, "")?;
+            self.0.secrets.set(keys.token, "")?;
             let store = &self.0.store;
-            store.set_setting(BINDING, "").await?;
-            store.set_setting(CURSOR, "").await?;
-            store.set_setting(ENABLED, "false").await?;
+            store.set_setting(keys.binding, "").await?;
+            store.set_setting(keys.cursor, "").await?;
+            store.set_setting(keys.enabled, "false").await?;
         }
-        Ok(self.weixin_status().await)
+        if destination == WeixinDestination::Assistant {
+            self.0.channels.assistant_outbox.lock().unwrap().clear();
+        }
+        Ok(self.weixin_status(destination).await)
     }
 
-    /// Starts the bot in place of any running one. Called with the
-    /// WeChat lock held.
-    pub(crate) async fn start_weixin(&self) {
-        let worker = &self.0.channels.weixin;
+    /// Queues a notice of the research assistant's for its WeChat, when
+    /// that is on; it goes out in the window of the owner's next message.
+    pub(crate) async fn notify_assistant_weixin(&self, text: &str) {
+        let keys = WeixinDestination::Assistant.keys();
+        if get_setting(&self.0.store, keys.enabled).await != "true"
+            || self.weixin_binding(keys.binding).await.is_none()
+        {
+            return;
+        }
+        let text: String = text.chars().take(NOTICE_MAX_CHARS).collect();
+        self.0
+            .channels
+            .assistant_outbox
+            .lock()
+            .unwrap()
+            .push_back(text);
+    }
+
+    /// Starts a bot in place of any running one. Called with the WeChat
+    /// lock held.
+    pub(crate) async fn start_weixin(&self, destination: WeixinDestination) {
+        let keys = destination.keys();
+        let worker = self.weixin_worker(destination);
         let stop = worker.begin();
         let status = worker.status.clone();
-        let Some(binding) = self.weixin_binding(BINDING).await else {
+        let Some(binding) = self.weixin_binding(keys.binding).await else {
             set_status(
                 &status,
                 ChannelState::Error,
@@ -649,7 +785,7 @@ impl Server {
             );
             return;
         };
-        let token = self.0.secrets.get(TOKEN).unwrap_or_default();
+        let token = self.0.secrets.get(keys.token).unwrap_or_default();
         if token.is_empty() {
             set_status(
                 &status,
@@ -658,7 +794,7 @@ impl Server {
             );
             return;
         }
-        tokio::spawn(run(self.clone(), binding, token, status, stop));
+        tokio::spawn(run(self.clone(), destination, binding, token, status, stop));
     }
 }
 

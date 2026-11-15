@@ -8029,18 +8029,29 @@ async fn wechat_binds_by_qr_code_and_runs_the_owners_messages_as_turns() {
     *server.0.channels.ilink_base.lock().unwrap() = fake.lock().unwrap().base.clone();
 
     // Nothing is bound; WeChat cannot be turned on yet.
-    let status = server.weixin_status().await;
+    let status = server
+        .weixin_status(desktop::WeixinDestination::Projects)
+        .await;
     assert!(!status.bound && !status.enabled);
-    assert!(server.set_weixin_enabled(true).await.is_err());
+    assert!(server
+        .set_weixin_enabled(desktop::WeixinDestination::Projects, true)
+        .await
+        .is_err());
     let qr = server.start_weixin_bind().await.unwrap();
     assert_eq!(qr.qrcode, "qr-1");
     assert_eq!(qr.matrix.dark.len(), qr.matrix.width * qr.matrix.width);
     assert_eq!(
-        server.poll_weixin_bind("qr-1").await.unwrap(),
+        server
+            .poll_weixin_bind(desktop::WeixinDestination::Projects, "qr-1")
+            .await
+            .unwrap(),
         WeixinScan::Waiting
     );
     assert_eq!(
-        server.poll_weixin_bind("qr-1").await.unwrap(),
+        server
+            .poll_weixin_bind(desktop::WeixinDestination::Projects, "qr-1")
+            .await
+            .unwrap(),
         WeixinScan::Confirmed
     );
     // The WebView's keychain name, so either desktop uses the binding.
@@ -8048,12 +8059,23 @@ async fn wechat_binds_by_qr_code_and_runs_the_owners_messages_as_turns() {
         secrets.get("weixin_bot_token").as_deref(),
         Some("test-bot-token")
     );
-    assert!(server.weixin_status().await.bound);
+    assert!(
+        server
+            .weixin_status(desktop::WeixinDestination::Projects)
+            .await
+            .bound
+    );
 
     let folder = temp.path().join("chat project");
     std::fs::create_dir(&folder).unwrap();
     let project = server.register_local_project(&folder).await.unwrap();
-    assert!(server.set_weixin_enabled(true).await.unwrap().enabled);
+    assert!(
+        server
+            .set_weixin_enabled(desktop::WeixinDestination::Projects, true)
+            .await
+            .unwrap()
+            .enabled
+    );
 
     let mut seen = 0;
     say(&fake, "owner-1", "/help");
@@ -8090,13 +8112,139 @@ async fn wechat_binds_by_qr_code_and_runs_the_owners_messages_as_turns() {
     say(&fake, "owner-1", "/status");
     let status = wait_sent(&fake, &mut seen, |text| text.contains("最近 IM 会话")).await;
     assert!(status.contains("chat project"), "{status}");
-    assert!(server.weixin_status().await.state == ChannelState::Running);
+    assert!(
+        server
+            .weixin_status(desktop::WeixinDestination::Projects)
+            .await
+            .state
+            == ChannelState::Running
+    );
 
     // Unbinding forgets the token and stops the bot.
-    let status = server.unbind_weixin().await.unwrap();
+    let status = server
+        .unbind_weixin(desktop::WeixinDestination::Projects)
+        .await
+        .unwrap();
     assert!(!status.bound && !status.enabled);
     assert_eq!(status.state, ChannelState::Stopped);
     assert_eq!(secrets.get("weixin_bot_token").as_deref(), Some(""));
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_research_assistant_has_a_wechat_of_its_own() {
+    use desktop::{ChannelState, SecretStore, WeixinDestination, WeixinScan};
+    let temp = tempfile::tempdir().unwrap();
+    let secrets = Arc::new(desktop::MemorySecrets::default());
+    let server = Server::open_with(
+        config(temp.path()),
+        models(Arc::default(), false),
+        secrets.clone(),
+    )
+    .await
+    .unwrap();
+    let fake = fake_ilink().await;
+    *server.0.channels.ilink_base.lock().unwrap() = fake.lock().unwrap().base.clone();
+
+    // Bound for the assistant, under the WebView's names; the projects'
+    // WeChat stays as it was.
+    let assistant = WeixinDestination::Assistant;
+    assert!(server.set_weixin_enabled(assistant, true).await.is_err());
+    let qr = server.start_weixin_bind().await.unwrap();
+    assert_eq!(
+        server
+            .poll_weixin_bind(assistant, &qr.qrcode)
+            .await
+            .unwrap(),
+        WeixinScan::Waiting
+    );
+    assert_eq!(
+        server
+            .poll_weixin_bind(assistant, &qr.qrcode)
+            .await
+            .unwrap(),
+        WeixinScan::Confirmed
+    );
+    assert_eq!(
+        secrets.get("assistant_weixin_bot_token").as_deref(),
+        Some("test-bot-token")
+    );
+    assert!(server.weixin_status(assistant).await.bound);
+    assert!(
+        !server
+            .weixin_status(WeixinDestination::Projects)
+            .await
+            .bound
+    );
+    // One bot serves one of the two.
+    let refused = server
+        .poll_weixin_bind(WeixinDestination::Projects, &qr.qrcode)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(refused.contains("research assistant"), "{refused}");
+    assert!(
+        server
+            .set_weixin_enabled(assistant, true)
+            .await
+            .unwrap()
+            .enabled
+    );
+
+    let mut seen = 0;
+    say(&fake, "owner-1", "/help");
+    wait_sent(&fake, &mut seen, |text| text.contains("这里是科研助理")).await;
+    // The projects' routing words go nowhere here.
+    say(&fake, "owner-1", "/project 1");
+    wait_sent(&fake, &mut seen, |text| text.contains("固定连接科研助理")).await;
+    say(&fake, "owner-1", "yes");
+    wait_sent(&fake, &mut seen, |text| text.contains("没有待审批")).await;
+    // A message is a turn of the assistant's conversation.
+    say(&fake, "owner-1", "how are the projects going?");
+    let answer = wait_sent(&fake, &mut seen, |text| text.contains("Saved result")).await;
+    assert_eq!(answer, "Saved result");
+    let (_, frame) = server.open_assistant().await.unwrap();
+    assert!(texts_of(&server, &frame)
+        .await
+        .iter()
+        .any(|text| text == "how are the projects going?"));
+    say(&fake, "owner-1", "/model");
+    wait_sent(&fake, &mut seen, |text| text.contains("助理当前模型")).await;
+    say(&fake, "owner-1", "full");
+    wait_sent(&fake, &mut seen, |text| {
+        text.contains("已开启助理会话完全权限")
+    })
+    .await;
+    assert!(server.stored_options(&frame).await.unwrap().full_access);
+    say(&fake, "owner-1", "full off");
+    wait_sent(&fake, &mut seen, |text| text.contains("已关闭")).await;
+    assert!(!server.stored_options(&frame).await.unwrap().full_access);
+    say(&fake, "owner-1", "/mandates");
+    wait_sent(&fake, &mut seen, |text| text.contains("研究职责")).await;
+
+    // A notice of the assistant's goes out with the owner's next message.
+    server
+        .announce("职责需要你 / A mandate needs you")
+        .await
+        .unwrap();
+    let mut notices = seen;
+    say(&fake, "owner-1", "/status");
+    wait_sent(&fake, &mut seen, |text| {
+        text.contains("科研助理微信：已接入")
+    })
+    .await;
+    wait_sent(&fake, &mut notices, |text| text.starts_with("职责需要你")).await;
+    assert_eq!(
+        server.weixin_status(assistant).await.state,
+        ChannelState::Running
+    );
+
+    let status = server.unbind_weixin(assistant).await.unwrap();
+    assert!(!status.bound && !status.enabled);
+    assert_eq!(
+        secrets.get("assistant_weixin_bot_token").as_deref(),
+        Some("")
+    );
     server.shutdown().await;
 }
 

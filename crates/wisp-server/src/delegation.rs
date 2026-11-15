@@ -1368,6 +1368,29 @@ async fn reacquire_slot(store: &Store, attempt: &str) -> Result<(), String> {
     }
 }
 
+/// Removes an isolated task's worktree when the task is dropped before it
+/// is settled; the WebView's `IsolatedExecutionGuard`.
+struct WorktreeGuard {
+    isolation: crate::delegation_isolation::GitWorktreeIsolation,
+    workspace: Option<crate::delegation_isolation::IsolatedWorkspace>,
+}
+
+impl Drop for WorktreeGuard {
+    fn drop(&mut self) {
+        let Some(workspace) = self.workspace.take() else {
+            return;
+        };
+        let isolation = self.isolation.clone();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                if let Err(error) = isolation.abort(&workspace).await {
+                    tracing::warn!(%error, "Could not remove an abandoned task worktree");
+                }
+            });
+        }
+    }
+}
+
 /// Copies the snapshots an isolated task recorded in its worktree into the
 /// project's own store; they are named by their content, so the paths kept
 /// with its artifacts stay right, and one already there is left alone.
@@ -2002,6 +2025,12 @@ impl Server {
             }
         };
         let root = workspace.project_root.to_string_lossy().into_owned();
+        // A task cut off midway (its batch dropped) still has its worktree
+        // removed.
+        let mut guard = WorktreeGuard {
+            isolation: isolation.clone(),
+            workspace: Some(workspace.clone()),
+        };
         let mut response = self.run_task_in(delegator, request, &root).await;
         if let Some(child) = response.child_frame_id.clone() {
             if let Err(error) = self
@@ -2042,6 +2071,7 @@ impl Server {
                 ),
             }
         };
+        guard.workspace = None;
         let result = match isolation.finish(&workspace, finish).await {
             Ok(result) => result,
             Err(error) => {

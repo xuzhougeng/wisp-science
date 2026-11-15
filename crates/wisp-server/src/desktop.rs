@@ -311,7 +311,7 @@ impl ModelState {
             .unwrap_or_default()
     }
 
-    fn settings(&self) -> ModelSettings {
+    pub(crate) fn settings(&self) -> ModelSettings {
         let default = self
             .default_profile()
             .map(|loaded| loaded.profile.id.clone());
@@ -5349,7 +5349,7 @@ pub use crate::browser::{BrowserSettings, BrowserStatus};
 pub use crate::browser_filters::{BrowserFilters, BrowserHostRule};
 pub use crate::channels::{
     feishu::{FeishuBind, FeishuBindPoll, FeishuStatus},
-    weixin::{QrMatrix, WeixinQr, WeixinScan, WeixinStatus},
+    weixin::{QrMatrix, WeixinDestination, WeixinQr, WeixinScan, WeixinStatus},
     ChannelState,
 };
 pub use crate::compact::Compacted;

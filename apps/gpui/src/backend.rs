@@ -1355,25 +1355,38 @@ impl Backend {
         })
     }
 
-    pub fn weixin_status(&self) -> Reply<wisp_server::desktop::WeixinStatus> {
-        self.local(|host| async move { Ok(host.weixin_status().await) })
+    pub fn weixin_status(
+        &self,
+        destination: wisp_server::desktop::WeixinDestination,
+    ) -> Reply<wisp_server::desktop::WeixinStatus> {
+        self.local(move |host| async move { Ok(host.weixin_status(destination).await) })
     }
 
-    /// Asks Tencent's iLink service for a QR code to bind WeChat with.
     pub fn start_weixin_bind(&self) -> Reply<wisp_server::desktop::WeixinQr> {
         self.local(|host| async move { host.start_weixin_bind().await })
     }
 
-    pub fn poll_weixin_bind(&self, qrcode: String) -> Reply<wisp_server::desktop::WeixinScan> {
-        self.local(move |host| async move { host.poll_weixin_bind(&qrcode).await })
+    pub fn poll_weixin_bind(
+        &self,
+        destination: wisp_server::desktop::WeixinDestination,
+        qrcode: String,
+    ) -> Reply<wisp_server::desktop::WeixinScan> {
+        self.local(move |host| async move { host.poll_weixin_bind(destination, &qrcode).await })
     }
 
-    pub fn set_weixin_enabled(&self, enabled: bool) -> Reply<wisp_server::desktop::WeixinStatus> {
-        self.local(move |host| async move { host.set_weixin_enabled(enabled).await })
+    pub fn set_weixin_enabled(
+        &self,
+        destination: wisp_server::desktop::WeixinDestination,
+        enabled: bool,
+    ) -> Reply<wisp_server::desktop::WeixinStatus> {
+        self.local(move |host| async move { host.set_weixin_enabled(destination, enabled).await })
     }
 
-    pub fn unbind_weixin(&self) -> Reply<wisp_server::desktop::WeixinStatus> {
-        self.local(|host| async move { host.unbind_weixin().await })
+    pub fn unbind_weixin(
+        &self,
+        destination: wisp_server::desktop::WeixinDestination,
+    ) -> Reply<wisp_server::desktop::WeixinStatus> {
+        self.local(move |host| async move { host.unbind_weixin(destination).await })
     }
 
     pub fn feishu_status(&self) -> Reply<wisp_server::desktop::FeishuStatus> {

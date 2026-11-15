@@ -493,11 +493,10 @@ pub struct Workspace {
     /// WeChat on the Chat apps page: where it stands, the QR code being
     /// scanned and how far the scan got, which binding attempt is current,
     /// and how the last change went.
-    weixin: Option<wisp_server::desktop::WeixinStatus>,
-    weixin_qr: Option<wisp_server::desktop::WeixinQr>,
-    weixin_scan: Option<wisp_server::desktop::WeixinScan>,
-    weixin_bind: u64,
-    weixin_note: Option<Result<String, String>>,
+    /// The WeChat bot that reaches the projects, and the research
+    /// assistant's own.
+    weixin: crate::channels::WeixinCard,
+    assistant_weixin: crate::channels::WeixinCard,
     /// Feishu on the same page: where it stands, its form (App ID, a new
     /// secret, the owner) and service, the scan that makes its app, and how
     /// the last change went.
@@ -1237,11 +1236,8 @@ impl Workspace {
             codex_usage: std::collections::HashMap::new(),
             codex_usage_checking: false,
             codex_removing: None,
-            weixin: None,
-            weixin_qr: None,
-            weixin_scan: None,
-            weixin_bind: 0,
-            weixin_note: None,
+            weixin: Default::default(),
+            assistant_weixin: Default::default(),
             feishu: None,
             feishu_fields,
             feishu_lark: false,
@@ -1398,7 +1394,10 @@ impl Workspace {
             Some(Layer::AcpAgentForm | Layer::ConfirmRemoveAcpAgent) => self.acp_editing = None,
             Some(Layer::ConfirmRemoveCodexAccount) => self.codex_removing = None,
             Some(
-                Layer::ConfirmUnbindWeixin | Layer::ConfirmUnbindFeishu | Layer::ConfirmLeaveLab,
+                Layer::ConfirmUnbindWeixin
+                | Layer::ConfirmUnbindAssistantWeixin
+                | Layer::ConfirmUnbindFeishu
+                | Layer::ConfirmLeaveLab,
             ) => {}
             Some(Layer::ConfirmRemoveLabMember) => self.lab_removing = None,
             Some(Layer::ConfirmRemovePlugin) => self.plugin_removing = None,

@@ -5,8 +5,67 @@ use crate::{
     present::Tone,
 };
 use wisp_server::desktop::{
-    ChannelState, FeishuStatus, LabMemberInfo, LabStatus, WeixinScan, WeixinStatus,
+    ChannelState, FeishuStatus, LabMemberInfo, LabStatus, WeixinDestination, WeixinQr, WeixinScan,
+    WeixinStatus,
 };
+
+/// One WeChat bot's card: where it stands, the QR code being scanned and
+/// how far, which bind attempt is current, and how the last action went.
+#[derive(Default)]
+pub struct WeixinCard {
+    pub status: Option<WeixinStatus>,
+    pub qr: Option<WeixinQr>,
+    pub scan: Option<WeixinScan>,
+    pub bind: u64,
+    pub note: Option<Result<String, String>>,
+}
+
+/// The card's heading.
+pub fn weixin_title(destination: WeixinDestination) -> &'static str {
+    match destination {
+        WeixinDestination::Projects => tr("WeChat"),
+        WeixinDestination::Assistant => tr("Research assistant on WeChat"),
+    }
+}
+
+/// What the card's bot is for.
+pub fn weixin_about(destination: WeixinDestination) -> &'static str {
+    match destination {
+        WeixinDestination::Projects => tr(
+            "A WeChat bot through Tencent's iLink service. Only the person who scanned \
+             the code is answered, one to one. The bot's token is kept in the system \
+             keychain and shared with the WebView desktop.",
+        ),
+        WeixinDestination::Assistant => tr(
+            "A second WeChat bot that talks only to the research assistant: every message \
+             goes to its conversation, yes, no and full answer what it asks, and its \
+             mandate notices arrive with your next message. Bind a different bot from \
+             the one above.",
+        ),
+    }
+}
+
+/// What is said once a scan binds the bot.
+pub fn weixin_bound_note(destination: WeixinDestination) -> &'static str {
+    match destination {
+        WeixinDestination::Projects => tr("WeChat is bound. Turn it on to answer messages."),
+        WeixinDestination::Assistant => {
+            tr("The assistant's WeChat is bound. Turn it on to answer messages.")
+        }
+    }
+}
+
+/// The question before the bot is unbound.
+pub fn weixin_unbind_question(destination: WeixinDestination) -> &'static str {
+    match destination {
+        WeixinDestination::Projects => {
+            tr("Unbind WeChat? The bot stops and its token is forgotten on this computer.")
+        }
+        WeixinDestination::Assistant => tr(
+            "Unbind the assistant's WeChat? Its bot stops and its token is forgotten on this computer.",
+        ),
+    }
+}
 
 /// The line under WeChat's name, and its colour.
 pub fn weixin_line(status: &WeixinStatus) -> (String, Tone) {
@@ -130,6 +189,23 @@ mod tests {
             state,
             detail: detail.into(),
         }
+    }
+
+    #[test]
+    fn each_wechat_bot_says_what_it_is_for() {
+        let both = [WeixinDestination::Projects, WeixinDestination::Assistant];
+        for destination in both {
+            assert!(!weixin_title(destination).is_empty());
+            assert!(!weixin_bound_note(destination).is_empty());
+        }
+        assert_ne!(
+            weixin_title(WeixinDestination::Projects),
+            weixin_title(WeixinDestination::Assistant)
+        );
+        assert!(weixin_about(WeixinDestination::Assistant).contains("research assistant"));
+        assert!(weixin_unbind_question(WeixinDestination::Assistant).contains("assistant"));
+        let card = WeixinCard::default();
+        assert!(card.status.is_none() && card.qr.is_none() && card.bind == 0);
     }
 
     #[test]

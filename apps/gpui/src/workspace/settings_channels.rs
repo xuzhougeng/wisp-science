@@ -10,7 +10,9 @@ use gpui_component::{
     button::{Button, ButtonVariants},
     input::Input,
 };
-use wisp_server::desktop::{FeishuBindPoll, FeishuStatus, QrMatrix, WeixinScan, WeixinStatus};
+use wisp_server::desktop::{
+    FeishuBindPoll, FeishuStatus, QrMatrix, WeixinDestination, WeixinScan, WeixinStatus,
+};
 
 use super::{Workspace, chip, settings_sections::setting, tone_color};
 use crate::{
@@ -42,8 +44,10 @@ fn qr_code(matrix: &QrMatrix) -> Div {
 
 impl Workspace {
     pub(super) fn load_channels(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let reply = self.backend.weixin_status();
-        self.receive_weixin(reply, window, cx);
+        for destination in [WeixinDestination::Projects, WeixinDestination::Assistant] {
+            let reply = self.backend.weixin_status(destination);
+            self.receive_weixin(destination, reply, window, cx);
+        }
         let reply = self.backend.feishu_status();
         self.receive_feishu(reply, true, window, cx);
         self.load_lab(window, cx);
@@ -505,8 +509,24 @@ impl Workspace {
         card
     }
 
+    /// The card of one of the two WeChat bots.
+    fn weixin_state(&mut self, destination: WeixinDestination) -> &mut channels::WeixinCard {
+        match destination {
+            WeixinDestination::Projects => &mut self.weixin,
+            WeixinDestination::Assistant => &mut self.assistant_weixin,
+        }
+    }
+
+    fn weixin_shown(&self, destination: WeixinDestination) -> &channels::WeixinCard {
+        match destination {
+            WeixinDestination::Projects => &self.weixin,
+            WeixinDestination::Assistant => &self.assistant_weixin,
+        }
+    }
+
     fn receive_weixin(
         &mut self,
+        destination: WeixinDestination,
         reply: Reply<WeixinStatus>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -514,9 +534,10 @@ impl Workspace {
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
             let _ = this.update(cx, |this, cx| {
+                let card = this.weixin_state(destination);
                 match result {
-                    Ok(status) => this.weixin = Some(status),
-                    Err(error) => this.weixin_note = Some(Err(error)),
+                    Ok(status) => card.status = Some(status),
+                    Err(error) => card.note = Some(Err(error)),
                 }
                 cx.notify();
             });
@@ -525,18 +546,23 @@ impl Workspace {
     }
 
     /// Looks at the bot again a few times while it connects.
-    fn watch_weixin(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn watch_weixin(
+        &mut self,
+        destination: WeixinDestination,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let backend = self.backend.clone();
         cx.spawn_in(window, async move |this, cx| {
             for wait in [800, 2_000, 5_000] {
                 cx.background_executor()
                     .timer(Duration::from_millis(wait))
                     .await;
-                let result = receive(backend.weixin_status()).await;
+                let result = receive(backend.weixin_status(destination)).await;
                 let open = this
                     .update(cx, |this, cx| {
                         if let Ok(status) = result {
-                            this.weixin = Some(status);
+                            this.weixin_state(destination).status = Some(status);
                         }
                         cx.notify();
                         this.settings_section == crate::settings::Section::Channels
@@ -550,27 +576,39 @@ impl Workspace {
         .detach();
     }
 
-    fn set_weixin_enabled(&mut self, enabled: bool, window: &mut Window, cx: &mut Context<Self>) {
-        self.weixin_note = None;
-        let reply = self.backend.set_weixin_enabled(enabled);
-        self.receive_weixin(reply, window, cx);
-        self.watch_weixin(window, cx);
+    fn set_weixin_enabled(
+        &mut self,
+        destination: WeixinDestination,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.weixin_state(destination).note = None;
+        let reply = self.backend.set_weixin_enabled(destination, enabled);
+        self.receive_weixin(destination, reply, window, cx);
+        self.watch_weixin(destination, window, cx);
     }
 
     /// Gets a QR code and follows its scan every two seconds until it is
     /// confirmed, expires, or the panel is closed.
-    fn bind_weixin(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.weixin_note = None;
-        self.weixin_scan = None;
-        self.weixin_bind += 1;
-        let bind = self.weixin_bind;
+    fn bind_weixin(
+        &mut self,
+        destination: WeixinDestination,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let card = self.weixin_state(destination);
+        card.note = None;
+        card.scan = None;
+        card.bind += 1;
+        let bind = card.bind;
         let backend = self.backend.clone();
         cx.spawn_in(window, async move |this, cx| {
             let qr = match receive(backend.start_weixin_bind()).await {
                 Ok(qr) => qr,
                 Err(error) => {
                     let _ = this.update(cx, |this, cx| {
-                        this.weixin_note = Some(Err(error));
+                        this.weixin_state(destination).note = Some(Err(error));
                         cx.notify();
                     });
                     return;
@@ -578,8 +616,9 @@ impl Workspace {
             };
             let code = qr.qrcode.clone();
             let _ = this.update(cx, |this, cx| {
-                if this.weixin_bind == bind {
-                    this.weixin_qr = Some(qr);
+                let card = this.weixin_state(destination);
+                if card.bind == bind {
+                    card.qr = Some(qr);
                 }
                 cx.notify();
             });
@@ -591,37 +630,41 @@ impl Workspace {
                     .update(cx, |this, cx| {
                         let shown = this.layers.contains(Layer::Settings)
                             && this.settings_section == crate::settings::Section::Channels;
-                        if !shown && this.weixin_bind == bind {
-                            this.cancel_weixin_bind(cx);
+                        let card = this.weixin_shown(destination);
+                        let ours = card.bind == bind;
+                        let showing = card.qr.is_some();
+                        if !shown && ours {
+                            this.cancel_weixin_bind(destination, cx);
                         }
-                        shown && this.weixin_bind == bind && this.weixin_qr.is_some()
+                        shown && ours && showing
                     })
                     .unwrap_or(false);
                 if !current {
                     return;
                 }
-                let result = receive(backend.poll_weixin_bind(code.clone())).await;
+                let result = receive(backend.poll_weixin_bind(destination, code.clone())).await;
                 let go_on = this
                     .update_in(cx, |this, window, cx| {
-                        if this.weixin_bind != bind {
+                        if this.weixin_shown(destination).bind != bind {
                             return false;
                         }
                         let go_on = match result {
                             Ok(scan) => {
-                                this.weixin_scan = Some(scan);
+                                let card = this.weixin_state(destination);
+                                card.scan = Some(scan);
                                 if scan == WeixinScan::Confirmed {
-                                    this.weixin_qr = None;
-                                    this.weixin_note = Some(Ok(tr(
-                                        "WeChat is bound. Turn it on to answer messages.",
-                                    )
-                                    .to_owned()));
+                                    card.qr = None;
+                                    card.note = Some(Ok(
+                                        channels::weixin_bound_note(destination).to_owned()
+                                    ));
                                     this.load_channels(window, cx);
                                 }
                                 channels::scanning(Some(scan))
                             }
                             Err(error) => {
-                                this.weixin_qr = None;
-                                this.weixin_note = Some(Err(error));
+                                let card = this.weixin_state(destination);
+                                card.qr = None;
+                                card.note = Some(Err(error));
                                 false
                             }
                         };
@@ -637,23 +680,42 @@ impl Workspace {
         .detach();
     }
 
-    pub(super) fn cancel_weixin_bind(&mut self, cx: &mut Context<Self>) {
-        self.weixin_bind += 1;
-        self.weixin_qr = None;
-        self.weixin_scan = None;
+    fn cancel_weixin_bind(&mut self, destination: WeixinDestination, cx: &mut Context<Self>) {
+        let card = self.weixin_state(destination);
+        card.bind += 1;
+        card.qr = None;
+        card.scan = None;
         cx.notify();
     }
 
-    fn unbind_weixin(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.layers.close(Layer::ConfirmUnbindWeixin);
-        self.weixin_note = None;
-        let reply = self.backend.unbind_weixin();
-        self.receive_weixin(reply, window, cx);
+    fn unbind_question(destination: WeixinDestination) -> Layer {
+        match destination {
+            WeixinDestination::Projects => Layer::ConfirmUnbindWeixin,
+            WeixinDestination::Assistant => Layer::ConfirmUnbindAssistantWeixin,
+        }
     }
 
-    fn weixin_card(&self, cx: &mut Context<Self>) -> Div {
+    fn unbind_weixin(
+        &mut self,
+        destination: WeixinDestination,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.layers.close(Self::unbind_question(destination));
+        self.weixin_state(destination).note = None;
+        let reply = self.backend.unbind_weixin(destination);
+        self.receive_weixin(destination, reply, window, cx);
+    }
+
+    fn weixin_card(&self, destination: WeixinDestination, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
-        let Some(status) = &self.weixin else {
+        // Element ids apart for the two cards.
+        let n: usize = match destination {
+            WeixinDestination::Projects => 0,
+            WeixinDestination::Assistant => 1,
+        };
+        let shown = self.weixin_shown(destination);
+        let Some(status) = &shown.status else {
             return div().text_sm().text_color(muted).child(tr("Loading…"));
         };
         let (line, tone) = channels::weixin_line(status);
@@ -669,34 +731,37 @@ impl Workspace {
                         div()
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
-                            .child(tr("WeChat")),
+                            .child(channels::weixin_title(destination)),
                     )
                     .child(div().text_sm().text_color(tone_color(tone, cx)).child(line)),
             )
-            .child(div().w(px(640.)).text_xs().text_color(muted).child(tr(
-                "A WeChat bot through Tencent's iLink service. Only the person who scanned \
-                 the code is answered, one to one. The bot's token is kept in the system \
-                 keychain and shared with the WebView desktop.",
-            )));
+            .child(
+                div()
+                    .w(px(640.))
+                    .text_xs()
+                    .text_color(muted)
+                    .child(channels::weixin_about(destination)),
+            );
         if status.bound {
             card = card.child(setting(
                 tr("Answer messages"),
                 tr("On, the bot runs while the app is open."),
-                Button::new("weixin-enabled")
+                Button::new(("weixin-enabled", n))
                     .label(if enabled { tr("On") } else { tr("Off") })
                     .small()
                     .selected(enabled)
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.set_weixin_enabled(!enabled, window, cx)
+                        this.set_weixin_enabled(destination, !enabled, window, cx)
                     })),
                 cx,
             ));
         }
-        let asking = self.layers.contains(Layer::ConfirmUnbindWeixin);
+        let question = Self::unbind_question(destination);
+        let asking = self.layers.contains(question);
         let mut actions = div().h_flex().gap_2();
-        if self.weixin_qr.is_none() {
+        if shown.qr.is_none() {
             actions = actions.child(
-                Button::new("weixin-bind")
+                Button::new(("weixin-bind", n))
                     .label(if status.bound {
                         tr("Bind again")
                     } else {
@@ -704,17 +769,19 @@ impl Workspace {
                     })
                     .small()
                     .when(!status.bound, |button| button.primary())
-                    .on_click(cx.listener(|this, _, window, cx| this.bind_weixin(window, cx))),
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.bind_weixin(destination, window, cx)
+                    })),
             );
         }
         if status.bound && !asking {
             actions = actions.child(
-                Button::new("weixin-unbind")
+                Button::new(("weixin-unbind", n))
                     .label(tr("Unbind"))
                     .small()
                     .ghost()
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.layers.open(Layer::ConfirmUnbindWeixin);
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.layers.open(question);
                         cx.notify();
                     })),
             );
@@ -725,30 +792,32 @@ impl Workspace {
                 div()
                     .h_flex()
                     .gap_2()
-                    .child(div().text_xs().child(tr(
-                        "Unbind WeChat? The bot stops and its token is forgotten on this computer.",
-                    )))
                     .child(
-                        Button::new("weixin-unbind-yes")
+                        div()
+                            .text_xs()
+                            .child(channels::weixin_unbind_question(destination)),
+                    )
+                    .child(
+                        Button::new(("weixin-unbind-yes", n))
                             .label(tr("Unbind"))
                             .small()
                             .danger()
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.unbind_weixin(window, cx)),
-                            ),
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.unbind_weixin(destination, window, cx)
+                            })),
                     )
                     .child(
-                        Button::new("weixin-unbind-no")
+                        Button::new(("weixin-unbind-no", n))
                             .label(tr("Keep"))
                             .small()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.layers.close(Layer::ConfirmUnbindWeixin);
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.layers.close(question);
                                 cx.notify();
                             })),
                     ),
             );
         }
-        if let Some(qr) = &self.weixin_qr {
+        if let Some(qr) = &shown.qr {
             card = card.child(
                 div()
                     .h_flex()
@@ -759,25 +828,21 @@ impl Workspace {
                         div()
                             .v_flex()
                             .gap_2()
-                            .child(div().text_sm().child(channels::scan_note(self.weixin_scan)))
+                            .child(div().text_sm().child(channels::scan_note(shown.scan)))
                             .child(
-                                Button::new("weixin-bind-cancel")
+                                Button::new(("weixin-bind-cancel", n))
                                     .label(tr("Cancel"))
                                     .small()
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| this.cancel_weixin_bind(cx)),
-                                    ),
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.cancel_weixin_bind(destination, cx)
+                                    })),
                             ),
                     ),
             );
-        } else if self.weixin_scan == Some(WeixinScan::Expired) {
-            card = card.child(chip(
-                channels::scan_note(self.weixin_scan),
-                Tone::Attention,
-                cx,
-            ));
+        } else if shown.scan == Some(WeixinScan::Expired) {
+            card = card.child(chip(channels::scan_note(shown.scan), Tone::Attention, cx));
         }
-        if let Some(note) = &self.weixin_note {
+        if let Some(note) = &shown.note {
             card = card.child(match note {
                 Ok(said) => chip(said.clone(), Tone::Success, cx),
                 Err(error) => chip(crate::i18n::host(error), Tone::Danger, cx),
@@ -811,7 +876,16 @@ impl Workspace {
                  the answer comes back in the chat. A turn started from a chat always asks \
                  before changing anything, and the approval is sent to the chat with a code.",
             )))
-            .child(div().pt_4().child(self.weixin_card(cx)))
+            .child(
+                div()
+                    .pt_4()
+                    .child(self.weixin_card(WeixinDestination::Projects, cx)),
+            )
+            .child(
+                div()
+                    .pt_6()
+                    .child(self.weixin_card(WeixinDestination::Assistant, cx)),
+            )
             .child(div().pt_6().child(self.feishu_card(cx)))
             .child(
                 div()

@@ -16,6 +16,7 @@
 //! conversation and never takes the target. Settings that are not secret
 //! live in the store; a bot's token in the keychain.
 
+pub(crate) mod assistant;
 pub(crate) mod feishu;
 mod feishu_card;
 pub(crate) mod feishu_registration;
@@ -125,6 +126,12 @@ pub(crate) fn set_status(
 /// The channels of one host.
 pub(crate) struct Channels {
     pub(crate) weixin: Worker,
+    /// The research assistant's own WeChat bot.
+    pub(crate) weixin_assistant: Worker,
+    /// The assistant's notices waiting for the owner's next WeChat message.
+    pub(crate) assistant_outbox: Mutex<std::collections::VecDeque<String>>,
+    /// The assistant's last WeChat request whose turn failed, for `resume`.
+    pub(crate) assistant_unstarted: Mutex<Option<String>>,
     pub(crate) feishu: Worker,
     /// Scans under way that make a Feishu app.
     pub(crate) feishu_flows:
@@ -151,6 +158,9 @@ impl Default for Channels {
     fn default() -> Self {
         Self {
             weixin: Worker::default(),
+            weixin_assistant: Worker::default(),
+            assistant_outbox: Default::default(),
+            assistant_unstarted: Default::default(),
             feishu: Worker::default(),
             feishu_flows: Default::default(),
             feishu_hosts: Default::default(),
@@ -168,6 +178,7 @@ impl Default for Channels {
 impl Channels {
     pub(crate) fn stop_all(&self) {
         self.weixin.stop();
+        self.weixin_assistant.stop();
         self.feishu.stop();
         self.lab.stop();
     }
@@ -962,9 +973,17 @@ impl Server {
         if self.is_lab_member().await {
             self.start_lab();
         }
-        if get_setting(&self.0.store, weixin::ENABLED).await == "true" {
-            let _config = self.0.channels.weixin_config.lock().await;
-            self.start_weixin().await;
+        for (enabled, destination) in [
+            (weixin::ENABLED, weixin::WeixinDestination::Projects),
+            (
+                weixin::ASSISTANT_ENABLED,
+                weixin::WeixinDestination::Assistant,
+            ),
+        ] {
+            if get_setting(&self.0.store, enabled).await == "true" {
+                let _config = self.0.channels.weixin_config.lock().await;
+                self.start_weixin(destination).await;
+            }
         }
     }
 }

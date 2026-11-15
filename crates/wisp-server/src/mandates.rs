@@ -584,8 +584,12 @@ impl Server {
                     store
                         .append_message(&frame, seq, &wisp_llm::Message::assistant(text))
                         .await?;
-                    let mut live = assistant.live.lock().unwrap();
-                    live.generation = live.generation.wrapping_add(1);
+                    {
+                        let mut live = assistant.live.lock().unwrap();
+                        live.generation = live.generation.wrapping_add(1);
+                    }
+                    // And to the assistant's WeChat, when that is on.
+                    self.notify_assistant_weixin(text).await;
                     return Ok(());
                 }
             }
