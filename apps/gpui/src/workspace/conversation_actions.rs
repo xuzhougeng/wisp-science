@@ -72,6 +72,69 @@ impl Workspace {
 
     /// Asks where to save the conversation and writes it there as
     /// Markdown. The file is the user's: it is put only where they say.
+    /// Saves what the conversation sends the model as a JSON file the
+    /// researcher picks.
+    pub(super) fn export_debug_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((project, session)) = self.current_ids() else {
+            return;
+        };
+        self.error = None;
+        self.notice = None;
+        let reply = self.backend.debug_request(project, session);
+        cx.spawn_in(window, async move |this, cx| {
+            let prepared = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match prepared {
+                    Ok((name, json)) => this.save_debug_request(name, json, window, cx),
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn save_debug_request(
+        &mut self,
+        name: String,
+        json: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let folder = dirs::document_dir()
+            .or_else(dirs::home_dir)
+            .unwrap_or_default();
+        let place = cx.prompt_for_new_path(&folder, Some(&name));
+        cx.spawn_in(window, async move |this, cx| {
+            let result = async {
+                let Some(path) = place
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .map_err(|error| error.to_string())?
+                else {
+                    return Ok(None);
+                };
+                std::fs::write(&path, json).map_err(|error| {
+                    crate::i18n::fill(tr("Could not save {}: {}"), &[&path.display(), &error])
+                })?;
+                Ok::<_, String>(Some(path))
+            }
+            .await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(Some(path)) => {
+                        this.notice =
+                            Some(crate::i18n::fill(tr("Saved to {}"), &[&path.display()]));
+                    }
+                    Ok(None) => {}
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     pub(super) fn export_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some((project, session)), Some(title)) = (
             self.current_ids(),
@@ -508,6 +571,19 @@ impl Workspace {
                     .disabled(busy)
                     .on_click(
                         cx.listener(|this, _, window, cx| this.export_conversation(window, cx)),
+                    ),
+            )
+            .child(
+                Button::new("conversation-debug-request")
+                    .label(tr("Debug request"))
+                    .small()
+                    .ghost()
+                    .tooltip(tr(
+                        "Save what this conversation sends the model as a JSON file, with sizes",
+                    ))
+                    .disabled(busy)
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.export_debug_request(window, cx)),
                     ),
             )
             .child(

@@ -124,7 +124,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Projects | Persisted list, native folder picker, reopen registered roots, running and waiting counts, star to keep first, remove from Wisp (files stay); Project settings for the name, a description, and the rules the model follows in the project |
 | Look | Wisp's light and dark palettes, following the system or fixed to one in Settings; the shared icon set |
 | Conversations | Create, select, restore messages, running / needs-you status |
-| Conversation management | Rename, copy the title, pin (shown first), archive and restore, delete with confirmation |
+| Conversation management | Rename, copy the title, pin (shown first), archive and restore, delete with confirmation, and save what it sends the model as a JSON debug request |
 | Groups | Named groups per project: create, rename, reorder, delete (conversations stay); put a conversation in one from its bar; fold a section |
 | Sort and group | The list by groups, by last activity or flat, newest first or by name; remembered across launches |
 | Select mode | Pick conversations by click, Shift-click for a range, or all; move them to a group, archive or restore them, or delete them after one confirmation; a line reports what changed and why anything was left |
@@ -1094,6 +1094,11 @@ Limits of this slice:
   Evidence is not reviewed or marked from here, and items are flat:
   they are shown in the order they were added and cannot be nested or
   reordered.
+- Debug request follows the WebView's `debug_request.rs` in its
+  stored-messages form (this host keeps no agent between turns): the saved
+  working set with each message's size and token estimate, the system
+  prompt's share, the model, the turn step limit and how the last turn
+  ended; tool definitions are not included.
 - The research journey reads the project's history from the same tables the
   WebView does, a month at a time, grouped into your computer's local days.
   A record of your own is progress, a finding, a decision or what comes

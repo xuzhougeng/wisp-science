@@ -1563,6 +1563,11 @@ impl Backend {
         self.local(move |host| async move { host.join_lab_knowledge_base(&parent).await })
     }
 
+    /// What the conversation sends the model, as JSON, and a file name.
+    pub fn debug_request(&self, project: String, session: String) -> Reply<(String, String)> {
+        self.local(move |host| async move { host.debug_request(&project, &session).await })
+    }
+
     /// Keeps a project file as an artifact of the conversation.
     pub fn register_artifact(&self, project: String, session: String, path: String) -> Reply<()> {
         self.local(

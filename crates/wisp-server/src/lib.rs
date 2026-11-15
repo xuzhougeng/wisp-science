@@ -9,6 +9,7 @@ mod browser_filters;
 mod channels;
 mod compact;
 pub mod config;
+mod debug_request;
 mod decision_model;
 mod delegation;
 pub mod desktop;

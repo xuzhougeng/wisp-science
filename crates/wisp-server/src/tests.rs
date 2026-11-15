@@ -9517,6 +9517,39 @@ async fn a_project_file_is_kept_as_an_artifact_of_the_conversation() {
     server.shutdown().await;
 }
 
+#[tokio::test]
+async fn a_conversations_request_is_exported_as_json() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    assert!(server.debug_request(PROJECT, &session).await.is_err());
+    send(&server, &session, "summarize the sheet")
+        .await
+        .unwrap();
+    turn_done(&server, &session).await;
+    let (name, json) = server.debug_request(PROJECT, &session).await.unwrap();
+    assert!(name.starts_with("wisp-debug-request-") && name.ends_with(".json"));
+    // The conversation's id is one plain component of the name.
+    assert!(!name["wisp-debug-request-".len()..].contains('-'));
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(value["source"], "stored-messages");
+    assert_eq!(value["messages"][0]["role"], "system");
+    assert!(value["system_prompt_est_tokens"].as_u64().unwrap() > 0);
+    assert_eq!(value["message_count"], 3);
+    assert_eq!(value["model"], "offline");
+    assert_eq!(value["termination_reason"], "completed");
+    assert_eq!(value["configured_max_iter"], 5);
+    assert!(value["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| message["text"] == "summarize the sheet"));
+    assert!(server.debug_request("other", &session).await.is_err());
+    server.shutdown().await;
+}
+
 /// A ChatGPT access token as Codex CLI keeps it (unsigned; claims only).
 fn chatgpt_token(account: &str, exp: i64, email: &str) -> String {
     use base64::Engine;

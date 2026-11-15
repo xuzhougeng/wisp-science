@@ -1782,4 +1782,6 @@ pub const ZH: &[(&str, &str)] = &[
     ("Kept as an artifact of this conversation.", "已保存为本会话的产物。"),
     ("Copy title", "复制标题"),
     ("Title copied.", "已复制标题。"),
+    ("Debug request", "调试请求"),
+    ("Save what this conversation sends the model as a JSON file, with sizes", "把这个会话发给模型的内容连同大小保存为 JSON 文件"),
 ];
