@@ -1,6 +1,7 @@
 mod acp_agents;
 pub mod acp_bridge;
 mod acp_turn;
+mod approvals;
 mod aside;
 mod assistant;
 mod branch_merge;

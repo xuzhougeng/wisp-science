@@ -904,6 +904,7 @@ pub async fn run(
         lab_mail: scope.lab_mail,
         write_locked: scope.write_locked,
         isolation: scope.isolation,
+        approvals: crate::approvals::load(&store, &artifact_project).await,
     };
     let guidance = Some(&session.guidance);
     // A model that can see is given the attached pictures themselves; one

@@ -412,6 +412,9 @@ pub struct Workspace {
     steps_input: Entity<InputState>,
     /// Tools that are always allowed, project by project.
     grants: Vec<wisp_server::desktop::ProjectGrants>,
+    /// The open project's approval mode and tool rules, with the project
+    /// they are for.
+    approvals: Option<(String, wisp_server::desktop::ProjectApprovals)>,
     /// What went wrong on a Settings page other than Models.
     settings_error: Option<String>,
     /// Every skill there is, as the Skills page lists them; `None` until read.
@@ -1382,6 +1385,7 @@ impl Workspace {
             picture_model: String::new(),
             steps_input,
             grants: vec![],
+            approvals: None,
             settings_error: None,
             skills: None,
             skills_search,

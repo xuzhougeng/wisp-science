@@ -5,8 +5,8 @@ use wisp_dto::NetworkSettings;
 use wisp_server::{
     config::default_api_url,
     desktop::{
-        Capabilities, ConnectorRow, EnvironmentCheck, McpTransport, ModelProfile, ModelSettings,
-        ModelSource, ProbeResult, RUNS_LOCALLY, SkillRow, SshHostRow,
+        ApprovalScope, Capabilities, ConnectorRow, EnvironmentCheck, McpTransport, ModelProfile,
+        ModelSettings, ModelSource, ProbeResult, RUNS_LOCALLY, SkillRow, SshHostRow, ToolRule,
     },
 };
 
@@ -256,6 +256,48 @@ pub fn expert_label(experts: &[wisp_server::desktop::Expert], chosen: &str) -> S
         .iter()
         .find(|expert| expert.id == chosen)
         .map_or_else(|| tr("Expert").to_owned(), |expert| expert.name.clone())
+}
+
+/// A project's approval modes, in the order Permissions offers them, with
+/// what each is called and what it does, in the WebView's words.
+pub const APPROVAL_SCOPES: [(ApprovalScope, &str, &str); 3] = [
+    (
+        ApprovalScope::Ask,
+        "Per-tool rules",
+        "Each tool's allow, ask or deny rule applies, and tools that change files or run \
+         commands ask first unless the conversation has full access. Dangerous commands \
+         still require confirmation.",
+    ),
+    (
+        ApprovalScope::Auto,
+        "Auto-approve",
+        "Skip ordinary tool prompts. Dangerous commands still require confirmation.",
+    ),
+    (
+        ApprovalScope::Full,
+        "Full bypass",
+        "Skip tool prompts, including confirmation for dangerous commands.",
+    ),
+];
+
+/// What a tool's rule button says, and the rule it sets: none is allow.
+pub const TOOL_RULES: [(Option<ToolRule>, &str); 3] = [
+    (None, "Allow"),
+    (Some(ToolRule::Ask), "Ask first"),
+    (Some(ToolRule::Deny), "Deny"),
+];
+
+/// The line under a project's mode: what it does, and that a denied tool
+/// stays denied.
+pub fn approval_note(scope: ApprovalScope) -> String {
+    let about = APPROVAL_SCOPES
+        .iter()
+        .find(|(which, ..)| *which == scope)
+        .map_or("", |(_, _, about)| *about);
+    crate::i18n::fill(
+        tr("{} A tool set to Deny on the Connections page never runs, whatever the mode."),
+        &[&tr(about)],
+    )
 }
 
 /// The saved models that can be chosen to read pictures: those that can
@@ -1278,6 +1320,21 @@ mod tests {
             problem: problem.map(str::to_owned),
             sees: false,
         }
+    }
+
+    #[test]
+    fn every_approval_mode_is_offered_once_with_what_it_does() {
+        for (index, (scope, label, about)) in APPROVAL_SCOPES.iter().enumerate() {
+            assert!(!label.is_empty() && !about.is_empty());
+            assert!(
+                APPROVAL_SCOPES[index + 1..]
+                    .iter()
+                    .all(|(other, ..)| other != scope)
+            );
+            assert!(approval_note(*scope).starts_with(about));
+        }
+        assert!(approval_note(ApprovalScope::Full).contains("dangerous commands"));
+        assert_eq!(TOOL_RULES[0], (None, "Allow"));
     }
 
     #[test]

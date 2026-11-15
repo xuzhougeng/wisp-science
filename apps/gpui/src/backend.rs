@@ -2281,6 +2281,32 @@ impl Backend {
         self.local(move |host| async move { host.set_review_model(&profile).await })
     }
 
+    /// How a project's tools are approved: its mode and rules for single
+    /// tools, under the WebView's keys.
+    pub fn project_approvals(
+        &self,
+        project: String,
+    ) -> Reply<wisp_server::desktop::ProjectApprovals> {
+        self.local(move |host| async move { host.project_approvals(&project).await })
+    }
+
+    pub fn set_approval_scope(
+        &self,
+        project: String,
+        scope: wisp_server::desktop::ApprovalScope,
+    ) -> Reply<wisp_server::desktop::ProjectApprovals> {
+        self.local(move |host| async move { host.set_approval_scope(&project, scope).await })
+    }
+
+    pub fn set_tool_rule(
+        &self,
+        project: String,
+        tool: String,
+        rule: Option<wisp_server::desktop::ToolRule>,
+    ) -> Reply<wisp_server::desktop::ProjectApprovals> {
+        self.local(move |host| async move { host.set_tool_rule(&project, &tool, rule).await })
+    }
+
     /// The model profile that describes pictures for a model that cannot
     /// see them; empty is the first saved one that can.
     pub fn picture_model(&self) -> Reply<String> {

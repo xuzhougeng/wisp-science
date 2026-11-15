@@ -1314,6 +1314,89 @@ async fn a_proposed_plan_can_be_sent_back_with_what_should_change() {
 }
 
 #[tokio::test]
+async fn a_projects_approval_mode_and_tool_rules_decide_what_asks() {
+    use desktop::{ApprovalScope, ToolRule};
+    let tmp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(tmp.path()), models(Arc::default(), true))
+        .await
+        .unwrap();
+    let start = server.project_approvals(PROJECT).await.unwrap();
+    assert_eq!(start.scope, ApprovalScope::Ask);
+    assert!(start.rules.is_empty());
+    assert!(server
+        .set_tool_rule(PROJECT, " ", Some(ToolRule::Ask))
+        .await
+        .is_err());
+    assert!(server
+        .set_approval_scope("missing", ApprovalScope::Full)
+        .await
+        .is_err());
+
+    // A denied tool does not run, and nothing asks about it.
+    let rules = server
+        .set_tool_rule(PROJECT, "write", Some(ToolRule::Deny))
+        .await
+        .unwrap();
+    assert_eq!(rules.rules.get("write"), Some(&ToolRule::Deny));
+    let denied = create(&server).await;
+    send(&server, &denied, "Write the result").await.unwrap();
+    let done = wait_for(&server, &denied, |s| !s.running).await;
+    assert!(done.approvals.is_empty());
+    let blocked = done
+        .items
+        .iter()
+        .find(|item| item.tool_name.as_deref() == Some("write"))
+        .unwrap();
+    assert!(
+        blocked.text.contains("blocked by the approval policy"),
+        "{}",
+        blocked.text
+    );
+    assert!(!server.0.config.workspace.join("answer.txt").exists());
+
+    // Auto-approve: a change runs without the question before it.
+    server.set_tool_rule(PROJECT, "write", None).await.unwrap();
+    let auto = server
+        .set_approval_scope(PROJECT, ApprovalScope::Auto)
+        .await
+        .unwrap();
+    assert_eq!(auto.scope, ApprovalScope::Auto);
+    assert!(auto.rules.is_empty());
+    let free = create(&server).await;
+    send(&server, &free, "Write the result").await.unwrap();
+    let done = wait_for(&server, &free, |s| !s.running).await;
+    assert!(done.error.is_none(), "{:?}", done.error);
+    assert!(server.0.config.workspace.join("answer.txt").is_file());
+
+    // Kept under the WebView's keys, and its default is read for a project
+    // without its own.
+    let store = &server.0.store;
+    assert_eq!(
+        store
+            .get_setting(&format!("approval_scope:{PROJECT}"))
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("\"auto\"")
+    );
+    store
+        .set_setting("approval_scope", "\"full\"")
+        .await
+        .unwrap();
+    store
+        .set_setting("tool_approvals", r#"{"pubmed_search":"ask","odd":"maybe"}"#)
+        .await
+        .unwrap();
+    let inherited = crate::approvals::load(store, "another").await;
+    assert_eq!(inherited.scope, ApprovalScope::Full);
+    assert_eq!(
+        inherited.rules.into_iter().collect::<Vec<_>>(),
+        [("pubmed_search".to_owned(), ToolRule::Ask)]
+    );
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn guidance_is_read_by_the_running_turn_and_refused_when_none_runs() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = config(tmp.path());

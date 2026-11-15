@@ -712,6 +712,7 @@ pub(crate) async fn run(
         .into_iter()
         .collect();
     let (persist, saved) = crate::runtime::persisting(&store, &frame, &session).await?;
+    let out_project = project.clone();
     let out = ServerOutput {
         session: session.clone(),
         frame: frame.clone(),
@@ -724,6 +725,7 @@ pub(crate) async fn run(
         lab_mail: false,
         write_locked: false,
         isolation: None,
+        approvals: crate::approvals::load(&store, &out_project).await,
     };
     out.on_message(&Message::user(&request.message));
     let prompt = handle.prompt(

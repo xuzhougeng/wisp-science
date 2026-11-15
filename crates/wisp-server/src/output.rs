@@ -205,6 +205,9 @@ pub struct ServerOutput {
     /// The turn runs in an exploration: local code may not name the
     /// mainline's folder.
     pub isolation: Option<wisp_runs::exploration_isolation::ExplorationIsolationBoundary>,
+    /// The project's approval mode and rules for single tools, as of the
+    /// turn's start.
+    pub approvals: crate::approvals::ProjectApprovals,
 }
 
 impl Output for ServerOutput {
@@ -328,11 +331,13 @@ impl Output for ServerOutput {
             live.error = Some("Conversation could not be saved; stopping the turn".into());
         }
     }
-    fn approval_mode(&self, _: &str) -> Approval {
-        Approval::Allow
+    fn approval_mode(&self, tool: &str) -> Approval {
+        self.approvals.mode(tool)
     }
     fn force_ask_mutations(&self) -> bool {
-        !self.full_access || self.lab_mail
+        // The project's mode can skip the question before changes; another
+        // member's mail always asks.
+        (!self.full_access && self.approvals.asks_before_changes()) || self.lab_mail
     }
     fn unattended_tools(&self) -> Option<&'static [&'static str]> {
         self.lab_mail
@@ -351,8 +356,12 @@ impl Output for ServerOutput {
         }
     }
     fn approval_bypass(&self) -> bool {
-        // Dangerous shell commands keep their own question either way.
-        self.full_access
+        // Dangerous shell commands keep their own question, unless the
+        // project's mode is full bypass.
+        self.full_access || self.approvals.bypasses_all()
+    }
+    fn danger_auto_approve(&self) -> bool {
+        self.approvals.bypasses_all() && !self.lab_mail
     }
     fn confirm(&self, _: &str) -> bool {
         false
@@ -440,6 +449,7 @@ mod tests {
             lab_mail: false,
             write_locked: false,
             isolation: None,
+            approvals: Default::default(),
         };
         assert!(out.force_ask_mutations());
         assert!(!out.approval_bypass());
@@ -468,6 +478,7 @@ mod tests {
             lab_mail: false,
             write_locked: false,
             isolation: None,
+            approvals: Default::default(),
         }
     }
 

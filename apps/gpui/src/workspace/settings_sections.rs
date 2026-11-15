@@ -98,6 +98,7 @@ impl Workspace {
             Section::Connections => {
                 self.load_connectors(window, cx);
                 self.load_mcp_servers(window, cx);
+                self.load_approvals(window, cx);
             }
             Section::Credentials => self.load_credentials(window, cx),
             Section::Environments => self.load_environments(window, cx),
@@ -122,6 +123,7 @@ impl Workspace {
             Section::Permissions => {
                 self.load_turn_defaults(window, cx);
                 self.load_grants(window, cx);
+                self.load_approvals(window, cx);
             }
         }
         cx.notify();
@@ -290,6 +292,180 @@ impl Workspace {
                 cx.notify();
             }
         }
+    }
+
+    /// Reads the open project's approval mode and tool rules; none when no
+    /// project is open.
+    fn load_approvals(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(project) = self.state.project.clone() else {
+            self.approvals = None;
+            return;
+        };
+        let reply = self.backend.project_approvals(project.clone());
+        self.keep_approvals(project, reply, window, cx);
+    }
+
+    /// Shows what the host kept for `project`'s approvals.
+    fn keep_approvals(
+        &mut self,
+        project: String,
+        reply: crate::backend::Reply<wisp_server::desktop::ProjectApprovals>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings_error = None;
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(kept) => this.approvals = Some((project, kept)),
+                    Err(error) => this.settings_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn save_approval_scope(
+        &mut self,
+        scope: wisp_server::desktop::ApprovalScope,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = self.approvals.as_ref().map(|(project, _)| project.clone()) else {
+            return;
+        };
+        let reply = self.backend.set_approval_scope(project.clone(), scope);
+        self.keep_approvals(project, reply, window, cx);
+    }
+
+    fn save_tool_rule(
+        &mut self,
+        tool: String,
+        rule: Option<wisp_server::desktop::ToolRule>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = self.approvals.as_ref().map(|(project, _)| project.clone()) else {
+            return;
+        };
+        let reply = self.backend.set_tool_rule(project.clone(), tool, rule);
+        self.keep_approvals(project, reply, window, cx);
+    }
+
+    /// The open project's approval mode, and the tools that have a rule of
+    /// their own, on the Permissions page.
+    fn approval_settings(&self, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let mut section = div().v_flex().gap_2().pt_4().child(
+            div()
+                .text_sm()
+                .font_weight(FontWeight::MEDIUM)
+                .child(tr("Tool approval mode")),
+        );
+        let Some((project, approvals)) = &self.approvals else {
+            return section.child(
+                div()
+                    .w(px(NOTE_WIDTH))
+                    .text_xs()
+                    .text_color(muted)
+                    .child(tr("Open a project to choose how its tools are approved.")),
+            );
+        };
+        let name = self
+            .projects
+            .iter()
+            .find(|row| &row.id == project)
+            .map_or_else(|| project.clone(), |row| row.name.clone());
+        let mut modes = div().h_flex().gap_1();
+        for (scope, label, _) in settings::APPROVAL_SCOPES {
+            modes = modes.child(
+                Button::new(SharedString::from(format!("approval-scope-{label}")))
+                    .label(tr(label))
+                    .small()
+                    .selected(approvals.scope == scope)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.save_approval_scope(scope, window, cx)
+                    })),
+            );
+        }
+        section = section
+            .child(div().text_xs().text_color(muted).child(crate::i18n::fill(
+                tr("For {}, from the next turn."),
+                &[&name],
+            )))
+            .child(modes)
+            .child(
+                div()
+                    .w(px(NOTE_WIDTH))
+                    .text_xs()
+                    .text_color(muted)
+                    .child(settings::approval_note(approvals.scope)),
+            );
+        if !approvals.rules.is_empty() {
+            let mut rules = div().h_flex().flex_wrap().gap_2();
+            for (tool, rule) in &approvals.rules {
+                let name = tool.clone();
+                let said = match rule {
+                    wisp_server::desktop::ToolRule::Ask => tr("Ask first"),
+                    wisp_server::desktop::ToolRule::Deny => tr("Deny"),
+                };
+                rules = rules.child(
+                    Button::new(SharedString::from(format!("tool-rule-{tool}")))
+                        .icon(glyph("close"))
+                        .label(format!("{tool} · {said}"))
+                        .small()
+                        .tooltip(tr("Allow it again"))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.save_tool_rule(name.clone(), None, window, cx)
+                        })),
+                );
+            }
+            section = section
+                .child(div().text_xs().text_color(muted).child(tr(
+                    "Tools with a rule of their own, set on the Connections page:",
+                )))
+                .child(rules);
+        }
+        section
+    }
+
+    /// A connector's tools with their rules for the open project, or their
+    /// names alone when no project is open.
+    fn connector_tool_rules(&self, tools: &[String], cx: &mut Context<Self>) -> Div {
+        let mono = cx.theme().mono_font_family.clone();
+        let Some((_, approvals)) = &self.approvals else {
+            return div().text_xs().font_family(mono).child(tools.join("  "));
+        };
+        let mut list = div().v_flex().gap_1();
+        for tool in tools {
+            let current = approvals.rules.get(tool).copied();
+            let mut row = div().h_flex().gap_2().child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_xs()
+                    .font_family(mono.clone())
+                    .child(tool.clone()),
+            );
+            for (rule, label) in settings::TOOL_RULES {
+                let name = tool.clone();
+                row = row.child(
+                    Button::new(SharedString::from(format!("rule-{tool}-{label}")))
+                        .label(tr(label))
+                        .xsmall()
+                        .ghost()
+                        .selected(current == rule)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.save_tool_rule(name.clone(), rule, window, cx)
+                        })),
+                );
+            }
+            list = list.child(row);
+        }
+        list
     }
 
     fn load_grants(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -718,12 +894,7 @@ impl Workspace {
                     ),
                 );
             if open {
-                about = about.child(
-                    div()
-                        .text_xs()
-                        .font_family(cx.theme().mono_font_family.clone())
-                        .child(row.tools.join("  ")),
-                );
+                about = about.child(self.connector_tool_rules(&row.tools, cx));
                 for (index, (label, url)) in row.links.iter().enumerate() {
                     let target = url.clone();
                     about = about.child(
@@ -2022,6 +2193,7 @@ impl Workspace {
                 .child(mode("default-full", tr("Full access"), true)),
             cx,
         ));
+        page = page.child(self.approval_settings(cx));
         page = page.child(
             div()
                 .v_flex()

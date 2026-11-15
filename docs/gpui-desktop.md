@@ -180,7 +180,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Outline | A button in the conversation's header lists what you asked, in order; choosing one scrolls to it |
 | Find in conversation | Cmd/Ctrl+F, or the command palette: a bar over the transcript marks every message, and every tool call, that contains the words; Return and the arrows move between them |
 | Help | Documentation (home page, Settings, palette) opens the tutorials and Known problems (Settings) the issue tracker in the system's browser; Report a problem (Settings, palette) starts a conversation, in the open project or the built-in one, with the app's version, system and model in the composer, for the model to draft the report and a prefilled GitHub link |
-| Settings | A search field narrows the pages to those about what you type. Pages: General (language; appearance: system, light or dark; the send key; notifications and sound; update check; what the app opens on), Network (a route for model requests, for connectors and MCP servers, and for the code the model runs; a conda mirror, a Python package index and a CA bundle the model is told to use), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test; and subscriptions: sign in to ChatGPT, ChatGPT through Codex or SuperGrok to use their models without a key), ACP agents (programs on this computer that speak the Agent Client Protocol: add, change, remove, and Test, which starts one and shows its name, version and how it signs in, with a button for each way: signed in by the agent itself, or in the system's terminal), Conversation (steps per turn, continuing cut-off answers, automatic compaction and its threshold, suggesting what to ask next, reviewing turns, the reviewer model, the sub-agent model and the picture model for a model that cannot see), Skills (every skill with where it comes from and its tags, search, on or off, and Tags to give it your own tags in place of the ones it came with, kept under the WebView's `skill_tags`), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, and keys of your own under an environment variable you name, all kept in the system keychain and given to the interpreters a conversation starts), Environments (Python, R and Node.js installed into Wisp's own data folder with progress, a log and Stop; the SSH hosts work can run on: add, change, remove, add from `~/.ssh/config`, check the connection and see what the host is, and which one new work goes to), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project, and the skills and MCP tools the model called most, counted from its messages, the first nine and the rest as Other) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
+| Settings | A search field narrows the pages to those about what you type. Pages: General (language; appearance: system, light or dark; the send key; notifications and sound; update check; what the app opens on), Network (a route for model requests, for connectors and MCP servers, and for the code the model runs; a conda mirror, a Python package index and a CA bundle the model is told to use), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test; and subscriptions: sign in to ChatGPT, ChatGPT through Codex or SuperGrok to use their models without a key), ACP agents (programs on this computer that speak the Agent Client Protocol: add, change, remove, and Test, which starts one and shows its name, version and how it signs in, with a button for each way: signed in by the agent itself, or in the system's terminal), Conversation (steps per turn, continuing cut-off answers, automatic compaction and its threshold, suggesting what to ask next, reviewing turns, the reviewer model, the sub-agent model and the picture model for a model that cannot see), Skills (every skill with where it comes from and its tags, search, on or off, and Tags to give it your own tags in place of the ones it came with, kept under the WebView's `skill_tags`), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off, and each tool's Allow, Ask first or Deny for the open project), Credentials (the service keys the connectors use, and keys of your own under an environment variable you name, all kept in the system keychain and given to the interpreters a conversation starts), Environments (Python, R and Node.js installed into Wisp's own data folder with progress, a log and Stop; the SSH hosts work can run on: add, change, remove, add from `~/.ssh/config`, check the connection and see what the host is, and which one new work goes to), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project, and the skills and MCP tools the model called most, counted from its messages, the first nine and the rest as Other) and Storage (where the data is and how much room it takes) (how new conversations start, the open project's tool approval mode and the tools with a rule, tools that are always allowed); applied without restart |
 | Inbox | Conversations in any project that are waiting for you; opens across projects |
 | Read state | A finished answer is marked read once it is on screen in the active window |
 | Transcript | Virtualized Markdown, selectable text, paginated history |
@@ -1147,10 +1147,23 @@ Limits of this slice:
   every conversation of that project, in turns that start after it was given
   and for the rest of the one it was given in. It never answers the question
   a dangerous shell command asks. Taking it back in Settings applies to turns
-  that start afterwards. The WebView's own approval rules (per-tool allow, ask
-  or deny, the three scopes, global grants) are a different store and are not
-  read. New conversations start in the mode Settings names only when the
-  desktop makes them; one a paired phone makes starts in Ask first.
+  that start afterwards. New conversations start in the mode Settings names
+  only when the desktop makes them; one a paired phone makes starts in Ask
+  first.
+- A project's tool approval mode and its rules for single tools are the
+  WebView's, read and written under its keys (`approval_scope:<project>`,
+  `tool_approvals:<project>`, and the keys alone as the default for a project
+  without its own). Per-tool rules keeps this desktop's question before
+  changes and applies each tool's rule: Ask first asks before every call,
+  even one that changes nothing; Deny never runs it. Auto-approve skips the
+  question before changes and the Ask first rules; a dangerous shell command
+  still asks. Full bypass skips every question, the dangerous command's too.
+  Deny holds in every mode, and another lab member's mail asks before
+  changes whatever the mode. Rules are set on the Connections page for the
+  bundled connectors' tools, whose names are known, as in the WebView; the
+  mode is chosen on Permissions; both for the project that is open, from
+  the next turn. The WebView's global grants and its per-connector "Skip
+  approvals" are not ported.
 - Full access stops the questions before tools that change files or run
   commands. It does not cover the separate question a dangerous shell command
   asks; that one always appears. "Allow for this conversation" is offered only
@@ -2078,7 +2091,12 @@ choose Full access and confirm a new conversation starts in it while an
 existing one keeps Ask first. Let a tool ask, answer Always in this project,
 and confirm a second conversation of the project is not asked, another
 project's is, and the tool is listed in Settings; take it back and confirm
-the next conversation is asked again.
+the next conversation is asked again. In a project, open Connections,
+unfold PubMed and set one of its tools to Deny: ask for a search that needs
+it and confirm the call is blocked without a question; Permissions lists the
+rule, and pressing it allows the tool again. Choose Auto-approve and ask
+for a file to be written: it is written without a question; choose Per-tool
+rules again and it asks.
 Open Skills from the home page and from inside a project: the bundled skills
 are listed, and the project's own only in the second case. Search by a word
 from a description and by a tag. Turn one off, confirm the count says so and
