@@ -1413,6 +1413,205 @@ async fn a_projects_approval_mode_and_tool_rules_decide_what_asks() {
     server.shutdown().await;
 }
 
+fn command_hook(event: wisp_dto::HookEvent, matcher: &str, command: &str) -> wisp_dto::CommandHook {
+    wisp_dto::CommandHook {
+        event,
+        matcher: matcher.into(),
+        command: command.into(),
+        enabled: true,
+        timeout: Some(20),
+    }
+}
+
+#[tokio::test]
+async fn a_prompt_hook_adds_context_or_refuses_the_message() {
+    use wisp_dto::HookEvent;
+    let tmp = tempfile::tempdir().unwrap();
+    let shown: Arc<std::sync::Mutex<Vec<Vec<String>>>> = Arc::default();
+    let record = shown.clone();
+    let factory: ModelFactory = Arc::new(move |_| Box::new(Recorder(record.clone())));
+    let server = Server::open_with_models(config(tmp.path()), factory)
+        .await
+        .unwrap();
+    assert!(server
+        .set_command_hooks(vec![command_hook(HookEvent::PreToolUse, "(", "x")])
+        .await
+        .is_err());
+    // Runs unchanged under sh and PowerShell.
+    let saved = server
+        .set_command_hooks(vec![command_hook(
+            HookEvent::UserPromptSubmit,
+            "ignored",
+            "  echo queue: gpu  ",
+        )])
+        .await
+        .unwrap();
+    assert_eq!(saved[0].command, "echo queue: gpu");
+    assert_eq!(saved[0].matcher, "");
+    assert_eq!(server.command_hooks().await.unwrap(), saved);
+    let id = create(&server).await;
+    send(&server, &id, "Count the reads").await.unwrap();
+    wait_for(&server, &id, |s| !s.running).await;
+    let told = shown.lock().unwrap().last().cloned().unwrap().join("\n");
+    assert!(told.contains("queue: gpu"), "{told}");
+    // Exit 2 refuses the message, and no turn starts.
+    server
+        .set_command_hooks(vec![command_hook(
+            HookEvent::UserPromptSubmit,
+            "",
+            "exit 2",
+        )])
+        .await
+        .unwrap();
+    let refused = send(&server, &id, "Again").await.unwrap_err();
+    assert!(
+        refused.contains("Blocked by a UserPromptSubmit hook"),
+        "{refused}"
+    );
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_tool_hook_blocks_the_call_and_a_project_file_runs_once_trusted() {
+    use wisp_dto::HookEvent;
+    let tmp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(tmp.path()), models(Arc::default(), true))
+        .await
+        .unwrap();
+    // A PreToolUse hook that fails closes the call before any question.
+    server
+        .set_command_hooks(vec![command_hook(
+            HookEvent::PreToolUse,
+            "write|edit",
+            "exit 3",
+        )])
+        .await
+        .unwrap();
+    let id = create(&server).await;
+    send(&server, &id, "Write the result").await.unwrap();
+    let done = wait_for(&server, &id, |s| !s.running).await;
+    assert!(done.approvals.is_empty());
+    let blocked = done
+        .items
+        .iter()
+        .find(|item| item.tool_name.as_deref() == Some("write"))
+        .unwrap();
+    assert!(blocked.text.contains("fail closed"), "{}", blocked.text);
+    assert!(!server.0.config.workspace.join("answer.txt").exists());
+    let failures = server
+        .conversation_status(PROJECT, &id)
+        .await
+        .unwrap()
+        .hook_failures;
+    assert_eq!(failures.len(), 1, "{failures:?}");
+
+    // A project's own file is not run until it is trusted as it is.
+    server.set_command_hooks(vec![]).await.unwrap();
+    assert!(server.project_hooks(PROJECT).await.unwrap().is_none());
+    let file = server.0.config.workspace.join(".wisp/hooks.json");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(
+        &file,
+        r#"{"hooks":{"PreToolUse":[{"matcher":"write","hooks":[{"type":"command","command":"exit 2"}]}]}}"#,
+    )
+    .unwrap();
+    let shown = server.project_hooks(PROJECT).await.unwrap().unwrap();
+    assert!(!shown.trusted && shown.error.is_none());
+    assert_eq!(shown.hooks.len(), 1);
+    let untrusted = create(&server).await;
+    send(&server, &untrusted, "Write the result").await.unwrap();
+    let pending = wait_for(&server, &untrusted, |s| !s.approvals.is_empty()).await;
+    assert!(server
+        .conversation_status(PROJECT, &untrusted)
+        .await
+        .unwrap()
+        .hook_failures
+        .iter()
+        .any(|failure| failure.contains("was not run")));
+    drop(pending);
+    call(
+        &server,
+        "native_conversation_stop",
+        PROJECT,
+        json!({"session_id": untrusted}),
+    )
+    .await
+    .unwrap();
+    wait_for(&server, &untrusted, |s| !s.running).await;
+    // Trust is for the content shown: a stale one is refused.
+    assert!(server
+        .set_project_hooks_trust(PROJECT, Some("stale".into()))
+        .await
+        .is_err());
+    let trusted = server
+        .set_project_hooks_trust(PROJECT, Some(shown.sha256.clone()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(trusted.trusted);
+    let guarded = create(&server).await;
+    send(&server, &guarded, "Write the result").await.unwrap();
+    let done = wait_for(&server, &guarded, |s| !s.running).await;
+    assert!(done.approvals.is_empty());
+    // Changed, it is no longer trusted.
+    std::fs::write(&file, r#"{"hooks":{}}"#).unwrap();
+    assert!(
+        !server
+            .project_hooks(PROJECT)
+            .await
+            .unwrap()
+            .unwrap()
+            .trusted
+    );
+    assert!(
+        !server
+            .set_project_hooks_trust(PROJECT, None)
+            .await
+            .unwrap()
+            .unwrap()
+            .trusted
+    );
+    server.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_stop_hook_keeps_the_turn_going_once() {
+    use wisp_dto::HookEvent;
+    let tmp = tempfile::tempdir().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let server = Server::open_with_models(config(tmp.path()), models(calls.clone(), false))
+        .await
+        .unwrap();
+    // Blocks while it has not yet asked once, then lets the turn end.
+    server
+        .set_command_hooks(vec![command_hook(
+            HookEvent::Stop,
+            "",
+            r#"grep -q '"stop_hook_active":false' && { echo "run the tests" >&2; exit 2; }; exit 0"#,
+        )])
+        .await
+        .unwrap();
+    let id = create(&server).await;
+    send(&server, &id, "Finish up").await.unwrap();
+    // The first turn, then the one the hook asked for.
+    let done = wait_for(&server, &id, |s| {
+        !s.running && calls.load(Ordering::Relaxed) >= 2
+    })
+    .await;
+    assert!(done.error.is_none(), "{:?}", done.error);
+    // It stopped asking: nothing failed and no third turn ran.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(calls.load(Ordering::Relaxed), 2);
+    assert!(server
+        .conversation_status(PROJECT, &id)
+        .await
+        .unwrap()
+        .hook_failures
+        .is_empty());
+    server.shutdown().await;
+}
+
 #[tokio::test]
 async fn guidance_is_read_by_the_running_turn_and_refused_when_none_runs() {
     let tmp = tempfile::tempdir().unwrap();

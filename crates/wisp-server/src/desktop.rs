@@ -3960,6 +3960,7 @@ impl Server {
             fast_available,
             memory_proposal: live.memory_proposal.clone(),
             queued,
+            hook_failures: live.hook_failures.clone(),
         })
     }
 
@@ -5711,6 +5712,9 @@ pub struct ConversationStatus {
     pub memory_proposal: Option<MemoryProposal>,
     /// Messages waiting for the turn to end, first to go first.
     pub queued: Vec<QueuedMessage>,
+    /// Your command hooks that failed in the latest turn, or a project's
+    /// hooks file that was not run.
+    pub hook_failures: Vec<String>,
 }
 
 /// An interpreter a conversation started and keeps, with what it has in

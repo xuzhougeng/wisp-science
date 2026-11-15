@@ -977,6 +977,11 @@ pub async fn run(
         write_locked: scope.write_locked,
         isolation: scope.isolation,
         approvals: crate::approvals::load(&store, &artifact_project).await,
+        hooks: std::sync::Arc::new(
+            crate::hooks::TurnHooks::load(&store, &artifact_project, &root, &request.session_id)
+                .await
+                .0,
+        ),
     };
     let guidance = Some(&session.guidance);
     // A model that can see is given the attached pictures themselves; one

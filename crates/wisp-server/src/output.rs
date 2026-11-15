@@ -117,6 +117,9 @@ pub struct Live {
     pub suggesting: bool,
     /// The review that followed the latest turn, until the next turn.
     pub review: Option<Result<crate::review::Review, String>>,
+    /// Your command hooks that failed in the latest turn, or a project's
+    /// hooks file that was not run, until the next turn.
+    pub hook_failures: Vec<String>,
     /// The reviewer is reading the latest turn right now.
     pub reviewing: bool,
     /// A memory the model drafted after the latest turn, for the
@@ -208,6 +211,22 @@ pub struct ServerOutput {
     /// The project's approval mode and rules for single tools, as of the
     /// turn's start.
     pub approvals: crate::approvals::ProjectApprovals,
+    /// Your command hooks and a trusted project file's, as of the turn's
+    /// start.
+    pub hooks: Arc<crate::hooks::TurnHooks>,
+}
+
+impl ServerOutput {
+    fn hooks_failed(&self, outcome: &crate::hooks::HookOutcome) {
+        if !outcome.errors.is_empty() {
+            self.session
+                .live
+                .lock()
+                .unwrap()
+                .hook_failures
+                .extend(outcome.errors.iter().cloned());
+        }
+    }
 }
 
 impl Output for ServerOutput {
@@ -229,18 +248,6 @@ impl Output for ServerOutput {
             Some(current) => current.merge(progress),
             None => live.swarm = Some(progress),
         }
-    }
-    fn pre_tool_use<'a>(
-        &'a self,
-        tool: &'a str,
-        args: &'a serde_json::Value,
-    ) -> OutputFuture<'a, wisp_core::PreToolDecision> {
-        Box::pin(async move {
-            let mut live = self.session.live.lock().unwrap();
-            live.tool = tool.into();
-            live.preview = serde_json::to_string_pretty(args).unwrap_or_default();
-            wisp_core::PreToolDecision::Continue
-        })
     }
     fn assistant_text(&self, delta: &str) {
         self.session.live.lock().unwrap().draft.push_str(delta);
@@ -333,6 +340,60 @@ impl Output for ServerOutput {
     }
     fn approval_mode(&self, tool: &str) -> Approval {
         self.approvals.mode(tool)
+    }
+    fn pre_tool_use<'a>(
+        &'a self,
+        tool: &'a str,
+        args: &'a serde_json::Value,
+    ) -> wisp_core::OutputFuture<'a, wisp_core::PreToolDecision> {
+        Box::pin(async move {
+            {
+                let mut live = self.session.live.lock().unwrap();
+                live.tool = tool.into();
+                live.preview = serde_json::to_string_pretty(args).unwrap_or_default();
+            }
+            let outcome = self
+                .hooks
+                .fire(
+                    wisp_dto::HookEvent::PreToolUse,
+                    Some(tool),
+                    serde_json::json!({ "tool_name": tool, "tool_input": args }),
+                )
+                .await;
+            self.hooks_failed(&outcome);
+            match outcome.block {
+                Some(reason) => wisp_core::PreToolDecision::Block(reason),
+                None if outcome.ask => wisp_core::PreToolDecision::Ask,
+                None => wisp_core::PreToolDecision::Continue,
+            }
+        })
+    }
+    fn post_tool_use<'a>(
+        &'a self,
+        tool: &'a str,
+        args: &'a serde_json::Value,
+        result: &'a wisp_tools::ToolResult,
+    ) -> wisp_core::OutputFuture<'a, Option<String>> {
+        Box::pin(async move {
+            let event = match result.success {
+                true => wisp_dto::HookEvent::PostToolUse,
+                false => wisp_dto::HookEvent::PostToolUseFailure,
+            };
+            let outcome = self
+                .hooks
+                .fire(
+                    event,
+                    Some(tool),
+                    serde_json::json!({
+                        "tool_name": tool,
+                        "tool_input": args,
+                        "tool_response": { "success": result.success, "content": result.content },
+                    }),
+                )
+                .await;
+            self.hooks_failed(&outcome);
+            outcome.feedback()
+        })
     }
     fn force_ask_mutations(&self) -> bool {
         // The project's mode can skip the question before changes; another
@@ -450,6 +511,7 @@ mod tests {
             write_locked: false,
             isolation: None,
             approvals: Default::default(),
+            hooks: Default::default(),
         };
         assert!(out.force_ask_mutations());
         assert!(!out.approval_bypass());
@@ -479,6 +541,7 @@ mod tests {
             write_locked: false,
             isolation: None,
             approvals: Default::default(),
+            hooks: Default::default(),
         }
     }
 

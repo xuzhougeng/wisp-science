@@ -24,6 +24,7 @@ mod explorations;
 mod export;
 mod files;
 mod follow_ups;
+mod hooks;
 mod mandate_report;
 mod mandates;
 pub mod mcp;
@@ -167,6 +168,9 @@ struct Inner {
     /// Conversations whose running turn corrects what an automatic review
     /// found; the review after it is not corrected again.
     corrections: std::sync::Mutex<HashSet<String>>,
+    /// Conversations whose running turn goes on because a Stop hook asked;
+    /// if it still asks when that turn ends, it is only said.
+    stop_continued: std::sync::Mutex<HashSet<String>>,
     /// Corrections to start and queues to move on, for the worker that does
     /// it, one after another: a turn's end cannot start the next turn
     /// itself.
@@ -423,6 +427,7 @@ impl Server {
             subagent_resumes: Default::default(),
             delivering: Default::default(),
             corrections: Default::default(),
+            stop_continued: Default::default(),
             to_correct,
             sweeping_deliveries: AtomicBool::new(false),
             recapping: AtomicBool::new(false),
@@ -822,6 +827,33 @@ impl Server {
             !session.live.lock().unwrap().running,
             "A turn is already running in this conversation"
         );
+        // Your UserPromptSubmit hooks see a new message first: one can
+        // refuse it, and what they print is context for the turn.
+        let mut hook_failures = Vec::new();
+        if !request.resume {
+            let (hooks, notice) = hooks::TurnHooks::load(
+                &self.0.store,
+                project,
+                std::path::Path::new(root),
+                &request.session_id,
+            )
+            .await;
+            let outcome = hooks
+                .fire(
+                    wisp_dto::HookEvent::UserPromptSubmit,
+                    None,
+                    serde_json::json!({ "prompt": request.message }),
+                )
+                .await;
+            if let Some(reason) = outcome.block {
+                bail!("Blocked by a UserPromptSubmit hook: {reason}");
+            }
+            if !outcome.context.is_empty() {
+                notes.push(outcome.context);
+            }
+            hook_failures.extend(notice);
+            hook_failures.extend(outcome.errors);
+        }
         // Held while the turn runs, so an exploration is not started or
         // ended under it.
         let activity = self
@@ -962,6 +994,12 @@ impl Server {
             }
         }
         self.begin_turn(&session, page);
+        session
+            .live
+            .lock()
+            .unwrap()
+            .hook_failures
+            .extend(hook_failures);
         let server = self.clone();
         let (project_of_turn, root_of_turn) = (project.to_owned(), root.to_owned());
         let session = session.clone();
@@ -1185,6 +1223,7 @@ impl Server {
         live.memory_proposal = None;
         live.proposing = false;
         live.stop_reason = None;
+        live.hook_failures.clear();
         session.suggested.notify_waiters();
         live.calls.clear();
         live.provenance.clear();
@@ -1226,7 +1265,8 @@ impl Server {
         // the turn over, so an exploration can start from its answer at
         // once, while follow-ups and the review are still being asked for.
         drop(activity);
-        let answered = error.is_none() && side_model.is_some();
+        let succeeded = error.is_none();
+        let answered = succeeded && side_model.is_some();
         let ended = {
             let mut live = session.live.lock().unwrap();
             live.running = false;
@@ -1255,21 +1295,78 @@ impl Server {
                     async {
                         // A correction the review asks for goes before
                         // what was queued, as the WebView's review runs
-                        // before its queue moves.
-                        self.review_after_turn(
-                            frame,
-                            session,
-                            side_model,
-                            ended,
-                            auto_review,
-                            place,
-                        )
-                        .await;
+                        // before its queue moves. Stop hooks look at the
+                        // turn once it is corrected, at that turn's end.
+                        let corrected = self
+                            .review_after_turn(
+                                frame,
+                                session,
+                                side_model,
+                                ended,
+                                auto_review,
+                                place,
+                            )
+                            .await;
+                        if !corrected {
+                            self.stop_hooks_after_turn(frame, session, place).await;
+                        }
                         self.drain_later(frame);
                     },
                 );
             }
-            _ => self.drain_later(frame),
+            _ => {
+                if succeeded {
+                    self.stop_hooks_after_turn(frame, session, place).await;
+                }
+                self.drain_later(frame)
+            }
+        }
+    }
+
+    /// Your Stop hooks, after a turn that ended well: one that blocks has the
+    /// turn go on once with its reason; if it still blocks after that, it is
+    /// only said.
+    async fn stop_hooks_after_turn(&self, frame: &str, session: &Session, place: TurnPlace<'_>) {
+        let again = self.0.stop_continued.lock().unwrap().remove(frame);
+        let (hooks, _) = hooks::TurnHooks::load(
+            &self.0.store,
+            place.project,
+            std::path::Path::new(place.root),
+            frame,
+        )
+        .await;
+        let outcome = hooks
+            .fire(
+                wisp_dto::HookEvent::Stop,
+                None,
+                serde_json::json!({ "stop_hook_active": again }),
+            )
+            .await;
+        let mut failures = outcome.errors.clone();
+        match outcome.block {
+            Some(reason) if again => failures.push(format!(
+                "A Stop hook still blocks after one continuation: {reason}"
+            )),
+            Some(reason) if !self.0.shutting_down.load(Ordering::Relaxed) => {
+                self.0
+                    .stop_continued
+                    .lock()
+                    .unwrap()
+                    .insert(frame.to_owned());
+                let _ = self.0.to_correct.send(AfterTurn::Correct(Correction {
+                    frame: frame.to_owned(),
+                    prompt: format!(
+                        "A Stop hook asked you to keep working before finishing:\n{reason}"
+                    ),
+                    project: place.project.to_owned(),
+                    root: place.root.to_owned(),
+                    origin: place.origin,
+                }));
+            }
+            _ => {}
+        }
+        if !failures.is_empty() {
+            session.live.lock().unwrap().hook_failures.extend(failures);
         }
     }
 
@@ -1284,12 +1381,12 @@ impl Server {
         ended: u64,
         wanted: bool,
         place: TurnPlace<'_>,
-    ) {
+    ) -> bool {
         // The turn that ended corrected an earlier review: this one only
         // checks the correction.
         let follow_up = self.0.corrections.lock().unwrap().remove(frame);
         if !wanted {
-            return;
+            return false;
         }
         let found = async {
             anyhow::ensure!(
@@ -1331,8 +1428,8 @@ impl Server {
             current
         };
         session.suggested.notify_waiters();
-        if let (true, Some(review)) = (current, to_correct) {
-            if !self.0.shutting_down.load(Ordering::Relaxed) {
+        match (current, to_correct) {
+            (true, Some(review)) if !self.0.shutting_down.load(Ordering::Relaxed) => {
                 let _ = self.0.to_correct.send(AfterTurn::Correct(Correction {
                     frame: frame.to_owned(),
                     prompt: review.correction(),
@@ -1340,7 +1437,9 @@ impl Server {
                     root: place.root.to_owned(),
                     origin: place.origin,
                 }));
+                true
             }
+            _ => false,
         }
     }
 

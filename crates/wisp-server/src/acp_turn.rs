@@ -723,6 +723,8 @@ pub(crate) async fn run(
         write_locked: false,
         isolation: None,
         approvals: crate::approvals::load(&store, &out_project).await,
+        // The agent's own tools are its to approve; Wisp's hooks are not run.
+        hooks: Default::default(),
     };
     out.on_message(&Message::user(&request.message));
     let prompt = handle.prompt(
