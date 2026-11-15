@@ -16,6 +16,10 @@
 //! conversation and never takes the target. Settings that are not secret
 //! live in the store; a bot's token in the keychain.
 
+pub(crate) mod feishu;
+mod feishu_card;
+pub(crate) mod feishu_registration;
+pub(crate) mod pbbp2;
 pub(crate) mod weixin;
 
 use std::collections::HashMap;
@@ -52,7 +56,6 @@ pub enum ChannelState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Channel {
     Weixin,
-    #[allow(dead_code)]
     Feishu,
 }
 
@@ -105,6 +108,12 @@ pub(crate) fn set_status(
 /// The channels of one host.
 pub(crate) struct Channels {
     pub(crate) weixin: Worker,
+    pub(crate) feishu: Worker,
+    /// Scans under way that make a Feishu app.
+    pub(crate) feishu_flows:
+        tokio::sync::Mutex<HashMap<String, feishu_registration::RegistrationFlow>>,
+    /// Where Feishu's services are; tests point them at a fake.
+    pub(crate) feishu_hosts: Mutex<feishu::Hosts>,
     /// Serializes binding, enabling and unbinding WeChat.
     pub(crate) weixin_config: tokio::sync::Mutex<()>,
     /// Serializes reading and changing the shared target.
@@ -119,6 +128,9 @@ impl Default for Channels {
     fn default() -> Self {
         Self {
             weixin: Worker::default(),
+            feishu: Worker::default(),
+            feishu_flows: Default::default(),
+            feishu_hosts: Default::default(),
             weixin_config: Default::default(),
             route: Default::default(),
             chats: Default::default(),
@@ -130,6 +142,7 @@ impl Default for Channels {
 impl Channels {
     pub(crate) fn stop_all(&self) {
         self.weixin.stop();
+        self.feishu.stop();
     }
 
     fn chat_lock(&self, key: &str) -> Arc<tokio::sync::Mutex<()>> {
@@ -157,6 +170,62 @@ pub(crate) fn truncate_reply(text: &str, max_chars: usize) -> String {
     }
     let cut: String = text.chars().take(max_chars).collect();
     format!("{cut}\n……(内容过长已截断,完整内容请在桌面端查看)")
+}
+
+/// Where a chat's turn has got, for a channel that shows it as it runs:
+/// what the model is writing and the latest tool calls (name, and how it
+/// went once finished). Reasoning and tool output are never part of it:
+/// they can hold secrets and do not belong in another app.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct TurnProgress {
+    pub active: bool,
+    pub assistant: String,
+    pub tools: Vec<(String, Option<(bool, u64)>)>,
+}
+
+/// What a channel hears while a chat's turn runs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ChatEvent {
+    /// An approval the turn waits for, as text to send.
+    Approval(String),
+    Progress(TurnProgress),
+}
+
+/// The latest tool calls a chat is shown.
+const PROGRESS_TOOLS: usize = 4;
+
+/// The turn's progress from the conversation's live state; `from` is how
+/// many messages it held before the turn.
+fn progress_of(live: &crate::output::Live, from: usize) -> TurnProgress {
+    let new = live.messages.get(from..).unwrap_or_default();
+    let mut tools: Vec<(String, Option<(bool, u64)>)> = new
+        .iter()
+        .flat_map(|message| message.tool_calls.iter())
+        .map(|call| {
+            let outcome = live
+                .outcomes
+                .get(&call.id)
+                .map(|outcome| (outcome.ok, outcome.duration_ms));
+            (call.function.name.clone(), outcome)
+        })
+        .collect();
+    if tools.len() > PROGRESS_TOOLS {
+        tools.drain(..tools.len() - PROGRESS_TOOLS);
+    }
+    let assistant = if live.draft.trim().is_empty() {
+        new.iter()
+            .rev()
+            .find(|message| message.role == wisp_llm::Role::Assistant)
+            .map(|message| message.content.as_text())
+            .unwrap_or_default()
+    } else {
+        live.draft.clone()
+    };
+    TurnProgress {
+        active: !new.is_empty() || !live.draft.is_empty() || !live.reasoning.is_empty(),
+        assistant,
+        tools,
+    }
 }
 
 /// A tool waiting for an answer, as a chat is told about it.
@@ -606,13 +675,13 @@ impl Server {
 
     /// One text from a chat: a command is answered here, anything else is
     /// sent to the target conversation. Returns the reply, which may be
-    /// empty. Approvals the turn asks for go to `approvals` meanwhile.
+    /// empty. What the turn asks for and does meanwhile goes to `events`.
     pub(crate) async fn handle_inbound(
         &self,
         channel: Channel,
         chat: &str,
         text: &str,
-        approvals: Option<mpsc::UnboundedSender<String>>,
+        events: Option<mpsc::UnboundedSender<ChatEvent>>,
     ) -> String {
         let text = text.trim();
         if text.is_empty() {
@@ -775,7 +844,7 @@ impl Server {
         };
         // The long turn runs without the chat's lock, so /stop gets through.
         drop(guard);
-        match self.chat_turn(&project, &session, text, approvals).await {
+        match self.chat_turn(&project, &session, text, events).await {
             Ok(reply) => reply,
             Err(error) => format!("处理失败:{error:#}"),
         }
@@ -787,7 +856,7 @@ impl Server {
         project: &str,
         session: &str,
         text: &str,
-        approvals: Option<mpsc::UnboundedSender<String>>,
+        events: Option<mpsc::UnboundedSender<ChatEvent>>,
     ) -> Result<String> {
         let root = self.project_root(project).await?;
         let request = wisp_dto::native_conversations::SendRequest {
@@ -800,15 +869,19 @@ impl Server {
             references: Vec::new(),
             acp_agent_id: None,
         };
-        self.start_turn(project, &root, request, true).await?;
         let live = self.session(session);
+        self.start_turn(project, &root, request, true).await?;
+        // The history the turn started from; what follows is this turn's.
+        let from = live.live.lock().unwrap().messages.len();
         let mut told = std::collections::HashSet::new();
+        let mut shown = TurnProgress::default();
         let error = loop {
-            let (running, error, waiting) = {
+            let (running, error, progress, waiting) = {
                 let live = live.live.lock().unwrap();
                 (
                     live.running,
                     live.error.clone(),
+                    progress_of(&live, from),
                     live.approvals
                         .iter()
                         .filter(|(id, _)| !told.contains(*id))
@@ -824,9 +897,15 @@ impl Server {
             };
             for request in waiting {
                 told.insert(request.approval_id.clone());
-                if let Some(approvals) = &approvals {
-                    let _ = approvals.send(render_approval_request(&request));
+                if let Some(events) = &events {
+                    let _ = events.send(ChatEvent::Approval(render_approval_request(&request)));
                 }
+            }
+            if running && progress != shown {
+                if let Some(events) = &events {
+                    let _ = events.send(ChatEvent::Progress(progress.clone()));
+                }
+                shown = progress;
             }
             if !running {
                 break error;
@@ -846,6 +925,9 @@ impl Server {
     /// Starts the channels that were left on. The desktop calls this once
     /// it has opened the host; a headless server does not.
     pub async fn start_channels(&self) {
+        if get_setting(&self.0.store, feishu::ENABLED).await == "true" {
+            self.start_feishu().await;
+        }
         if get_setting(&self.0.store, weixin::ENABLED).await == "true" {
             let _config = self.0.channels.weixin_config.lock().await;
             self.start_weixin().await;

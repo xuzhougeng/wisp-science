@@ -157,7 +157,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Slash commands | A message that is only a command does something instead of being sent: `/review`, `/trajectory`, `/context`, `/btw <question>`, `/plan`, `/save-as-skill`, `/skills`, `/files`, `/upload`, `/memo`, `/remember`, `/archive`, `/compact`, `/timer 30m <prompt>`, `/fork`, `/rewind`, `/permission`, `/share`, `/help`; the composer's "/" button lists them |
 | Browser | Settings, Browser, switches on a bridge to the Wisp extension in your own Chrome or Chromium; conversations can then open a tab, read it and run a script in it, only in tabs they opened themselves, and hosts can be blocked or preferred |
 | Workflows | Settings, Workflows, keeps templates of a goal broken into tasks, each saying which earlier tasks it needs; Run starts a conversation in the open project and gives the model the tasks stage by stage |
-| Chat apps | Settings, Chat apps, binds a WeChat bot by scanning a QR code; the owner's messages then run in the project chats go to and the answer comes back in WeChat, with `/project`, `/session`, `/new`, `/status`, `/stop` and approvals answered by code (`/approve`, `/reject`) |
+| Chat apps | Settings, Chat apps, binds a WeChat bot by scanning a QR code, and a Feishu (or Lark) bot by scanning to make its app or by entering an App ID and App Secret, with its owner confirmed here; the owner's messages then run in the project chats go to and the answer comes back (on Feishu as a card that shows the turn's progress), with `/project`, `/session`, `/new`, `/status`, `/stop` and, in WeChat, approvals answered by code (`/approve`, `/reject`) |
 | Remote web access | Settings, Remote access, opens this desktop's projects in a phone or a browser through a wisp-relay of your own: it dials out (no inbound port), shows whether the tunnel is up and how many browsers are connected, and gives a link and a code that can be copied or replaced |
 | Plugins | Settings, Plugins, installs a plugin from a folder in the Claude plugin layout (`.claude-plugin/plugin.json`, `skills/*/SKILL.md`) into the app's data without running anything in it, lists what each brings, switches one on for the open project, whose conversations then have its skills, and removes it |
 | Decision model | Settings, Decision model, sets up one fast endpoint (TypeSafe Jev, StartLux-Decision hosted or self-hosted, or a custom System One server) with its key, thinking mode and timeout, and tests it; while one is in use the model's `map_items` tool, which runs one step over many items, also offers its `decide` step |
@@ -682,9 +682,26 @@ Limits of this slice:
   as `weixin_bot_token`, the binding, the poll cursor and whether it is
   on under `weixin_binding`, `weixin_sync_buf` and `weixin_enabled`, so
   either desktop's binding serves both (run one at a time: both would
-  poll the same bot). The bot runs while the app is open. Not ported
-  yet: Feishu, the research assistant's own WeChat, `/mandates`, and
-  WeChat's notices of work that finished unasked.
+  poll the same bot). The bot runs while the app is open. Feishu follows
+  `feishu.rs`: a self-built app's bot over Feishu's long connection
+  (endpoint discovery, then pbbp2 frames over a WebSocket, each
+  acknowledged at once and repeated deliveries dropped), replies over
+  REST. Scanning makes the app through Feishu's device flow
+  (`feishu_registration.rs`) and makes the one who scanned its owner;
+  an App ID and App Secret made in the developer console can be entered
+  instead. Only the owner is answered; with none, the first to write is
+  kept as pending until Settings makes them owner or refuses them. An
+  ordinary message gets a CardKit card that shows the answer so far and
+  the latest tools (names and how they went, never their output or the
+  model's reasoning), redrawn about once a second from the turn as the
+  host polls it, and ending as the answer. Approvals are not answered
+  from Feishu; the turn waits for the desktop. The App Secret is kept in
+  the keychain as `feishu_app_secret`, the rest under `feishu_app_id`,
+  `feishu_international`, `feishu_enabled`, `feishu_owner_binding` and
+  `feishu_pending_owner`. Not ported yet: the research assistant's own
+  WeChat, `/mandates`, notices to the owner of work that finished
+  unasked, and Feishu's interactive approval cards (the WebView has none
+  either).
 - Remote web access is the only tunnel ported: there is no project
   sync through the relay, StickS3 or Wisp-Lab. A browser
   gets the commands a headless `wisp-server` offers (projects,
@@ -1404,6 +1421,17 @@ code arrives; send `/approve` with it and the answer follows. From
 another WeChat account send a message: nothing is answered. Press
 Unbind, then Escape: only the question closes; Unbind again and answer
 it: the line reads Not bound.
+On the same page, under Feishu, turn Answer messages on with nothing
+filled in: it is refused. Press Make the app by scanning and scan the
+code with Feishu: the line reads Bound · off and the Owner field holds
+your open_id. Turn it on: the line reads Connected. Send `/project 1`,
+then a question: a card shows the progress and ends as the answer.
+Empty the Owner field and save, then write to the bot: it says no owner
+is confirmed, and Settings shows your open_id waiting with Make owner
+and Refuse; press Make owner and write again: it answers. From another
+account write to the bot: it says it answers only its owner. Unbind,
+then Escape: only the question closes; Unbind and answer it: the line
+reads Not bound and the App ID field is empty.
 In Settings, Remote access, switch it on with nothing filled in: it is
 refused. Give a relay address that is plain http on another machine: it
 is refused. With a relay of your own running, give its https address

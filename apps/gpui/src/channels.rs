@@ -4,18 +4,33 @@ use crate::{
     i18n::{fill, host, tr},
     present::Tone,
 };
-use wisp_server::desktop::{ChannelState, WeixinScan, WeixinStatus};
+use wisp_server::desktop::{ChannelState, FeishuStatus, WeixinScan, WeixinStatus};
 
 /// The line under WeChat's name, and its colour.
 pub fn weixin_line(status: &WeixinStatus) -> (String, Tone) {
-    if !status.bound {
+    line(status.bound, status.enabled, status.state, &status.detail)
+}
+
+/// The line under Feishu's name, and its colour.
+pub fn feishu_line(status: &FeishuStatus) -> (String, Tone) {
+    line(status.bound, status.enabled, status.state, &status.detail)
+}
+
+/// Whether the Feishu form differs from what is kept: another App ID, a
+/// typed secret, or the other service.
+pub fn feishu_changed(status: &FeishuStatus, app_id: &str, secret: &str, lark: bool) -> bool {
+    app_id.trim() != status.app_id || !secret.trim().is_empty() || lark != status.international
+}
+
+fn line(bound: bool, enabled: bool, state: ChannelState, detail: &str) -> (String, Tone) {
+    if !bound {
         return (tr("Not bound").to_owned(), Tone::Neutral);
     }
-    if !status.enabled {
+    if !enabled {
         return (tr("Bound · off").to_owned(), Tone::Neutral);
     }
-    let detail = host(status.detail.lines().next().unwrap_or_default().trim());
-    match status.state {
+    let detail = host(detail.lines().next().unwrap_or_default().trim());
+    match state {
         ChannelState::Running => (
             tr("Connected; waiting for messages").to_owned(),
             Tone::Success,
@@ -94,6 +109,26 @@ mod tests {
             "Not connected: The WeChat sign-in expired; bind again with a new QR code"
         );
         assert!(matches!(tone, Tone::Danger));
+    }
+
+    #[test]
+    fn the_feishu_form_is_saved_only_when_it_changed() {
+        let status = FeishuStatus {
+            enabled: true,
+            bound: true,
+            international: false,
+            app_id: "cli_1".into(),
+            has_secret: true,
+            state: ChannelState::Connecting,
+            detail: String::new(),
+            owner: "ou_1".into(),
+            pending_owner: String::new(),
+        };
+        assert_eq!(feishu_line(&status).0, "Connecting…");
+        assert!(!feishu_changed(&status, " cli_1 ", "", false));
+        assert!(feishu_changed(&status, "cli_2", "", false));
+        assert!(feishu_changed(&status, "cli_1", "secret", false));
+        assert!(feishu_changed(&status, "cli_1", "", true));
     }
 
     #[test]

@@ -41,7 +41,7 @@ pub enum Section {
     Network,
     /// Opening this desktop in a browser through a relay.
     Remote,
-    /// Chat apps that talk to Wisp: WeChat.
+    /// Chat apps that talk to Wisp: WeChat and Feishu.
     Channels,
     /// The animated companion.
     Pet,
@@ -157,7 +157,8 @@ impl Section {
             }
             Section::Remote => "remote access web browser phone relay tunnel code link 远程接入",
             Section::Channels => {
-                "chat app wechat weixin ilink bot im message phone qr scan bind 微信 消息 渠道"
+                "chat app wechat weixin ilink feishu lark bot im message phone qr scan bind owner \
+                 微信 飞书 消息 渠道"
             }
             Section::Pet => "pet companion mascot animation sprite 宠物",
             Section::Workflows => "workflow template task stage dependency run 工作流",

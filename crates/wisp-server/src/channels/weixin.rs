@@ -17,7 +17,7 @@ use serde_json::json;
 use tokio::sync::{mpsc, watch, RwLock};
 use tokio::task::JoinSet;
 
-use super::{get_setting, set_status, Channel, ChannelState};
+use super::{get_setting, set_status, Channel, ChannelState, ChatEvent};
 use crate::Server;
 
 pub const DEFAULT_BASE_URL: &str = "https://ilinkai.weixin.qq.com";
@@ -332,22 +332,24 @@ async fn agent_turn(
     context: &RwLock<String>,
     message: Inbound,
 ) {
-    let (approvals, mut asked) = mpsc::unbounded_channel();
-    let turn = server.handle_inbound(
-        Channel::Weixin,
-        &message.from,
-        &message.text,
-        Some(approvals),
-    );
+    let (events, mut heard) = mpsc::unbounded_channel();
+    let turn = server.handle_inbound(Channel::Weixin, &message.from, &message.text, Some(events));
     tokio::pin!(turn);
+    // WeChat shows no progress; only approvals are sent while it runs.
     let reply = loop {
         tokio::select! {
             reply = &mut turn => break reply,
-            Some(text) = asked.recv() => send_latest(client, context, &message.from, &text).await,
+            Some(event) = heard.recv() => {
+                if let ChatEvent::Approval(text) = event {
+                    send_latest(client, context, &message.from, &text).await;
+                }
+            }
         }
     };
-    while let Ok(text) = asked.try_recv() {
-        send_latest(client, context, &message.from, &text).await;
+    while let Ok(event) = heard.try_recv() {
+        if let ChatEvent::Approval(text) = event {
+            send_latest(client, context, &message.from, &text).await;
+        }
     }
     if !reply.is_empty() {
         send_latest(client, context, &message.from, &reply).await;

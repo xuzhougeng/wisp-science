@@ -1307,6 +1307,53 @@ impl Backend {
         self.local(|host| async move { host.unbind_weixin().await })
     }
 
+    pub fn feishu_status(&self) -> Reply<wisp_server::desktop::FeishuStatus> {
+        self.local(|host| async move { Ok(host.feishu_status().await) })
+    }
+
+    /// Keeps the Feishu app's ID, its service, a typed secret (none keeps
+    /// the stored one), and turns the bot on or off.
+    pub fn set_feishu(
+        &self,
+        enabled: bool,
+        lark: bool,
+        app_id: String,
+        secret: Option<String>,
+    ) -> Reply<wisp_server::desktop::FeishuStatus> {
+        self.local(move |host| async move { host.set_feishu(enabled, lark, &app_id, secret).await })
+    }
+
+    pub fn start_feishu_bind(&self, lark: bool) -> Reply<wisp_server::desktop::FeishuBind> {
+        self.local(move |host| async move { host.start_feishu_bind(lark).await })
+    }
+
+    pub fn poll_feishu_bind(&self, flow: String) -> Reply<wisp_server::desktop::FeishuBindPoll> {
+        self.local(move |host| async move { host.poll_feishu_bind(&flow).await })
+    }
+
+    pub fn cancel_feishu_bind(&self, flow: String) -> Reply<()> {
+        self.local(move |host| async move {
+            host.cancel_feishu_bind(&flow).await;
+            Ok(())
+        })
+    }
+
+    pub fn unbind_feishu(&self) -> Reply<wisp_server::desktop::FeishuStatus> {
+        self.local(|host| async move { host.unbind_feishu().await })
+    }
+
+    pub fn set_feishu_owner(&self, open_id: String) -> Reply<wisp_server::desktop::FeishuStatus> {
+        self.local(move |host| async move { host.set_feishu_owner(&open_id).await })
+    }
+
+    pub fn confirm_feishu_owner(&self) -> Reply<wisp_server::desktop::FeishuStatus> {
+        self.local(|host| async move { host.confirm_feishu_owner().await })
+    }
+
+    pub fn reject_feishu_owner(&self) -> Reply<wisp_server::desktop::FeishuStatus> {
+        self.local(|host| async move { host.reject_feishu_owner().await })
+    }
+
     pub fn onboarding_done(&self) -> Reply<bool> {
         self.local(|host| async move { host.onboarding_done().await })
     }

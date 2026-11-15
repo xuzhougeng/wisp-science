@@ -454,6 +454,15 @@ pub struct Workspace {
     weixin_scan: Option<wisp_server::desktop::WeixinScan>,
     weixin_bind: u64,
     weixin_note: Option<Result<String, String>>,
+    /// Feishu on the same page: where it stands, its form (App ID, a new
+    /// secret, the owner) and service, the scan that makes its app, and how
+    /// the last change went.
+    feishu: Option<wisp_server::desktop::FeishuStatus>,
+    feishu_fields: [Entity<InputState>; 3],
+    feishu_lark: bool,
+    feishu_qr: Option<wisp_server::desktop::FeishuBind>,
+    feishu_bind_id: u64,
+    feishu_note: Option<Result<String, String>>,
     acp_reports:
         std::collections::HashMap<String, Result<wisp_server::desktop::AcpAgentReport, String>>,
     mcp_servers: Option<Vec<wisp_server::desktop::McpServerRow>>,
@@ -642,6 +651,11 @@ impl Workspace {
         let workflow_fields = [
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
+        ];
+        let feishu_fields = [
+            cx.new(|cx| InputState::new(window, cx).placeholder("cli_…")),
+            cx.new(|cx| InputState::new(window, cx).masked(true)),
+            cx.new(|cx| InputState::new(window, cx).placeholder("ou_…")),
         ];
         let remote_fields = [
             cx.new(|cx| InputState::new(window, cx).placeholder("https://relay.example")),
@@ -1070,6 +1084,12 @@ impl Workspace {
             weixin_scan: None,
             weixin_bind: 0,
             weixin_note: None,
+            feishu: None,
+            feishu_fields,
+            feishu_lark: false,
+            feishu_qr: None,
+            feishu_bind_id: 0,
+            feishu_note: None,
             acp_reports: Default::default(),
             mcp_servers: None,
             mcp_editing: None,
@@ -1188,7 +1208,7 @@ impl Workspace {
             Some(Layer::ExpertForm | Layer::ConfirmRemoveExpert) => self.expert_editing = None,
             Some(Layer::AcpAgentForm | Layer::ConfirmRemoveAcpAgent) => self.acp_editing = None,
             Some(Layer::ConfirmRemoveCodexAccount) => self.codex_removing = None,
-            Some(Layer::ConfirmUnbindWeixin) => {}
+            Some(Layer::ConfirmUnbindWeixin | Layer::ConfirmUnbindFeishu) => {}
             Some(Layer::ConfirmRemovePlugin) => self.plugin_removing = None,
             Some(Layer::ConfirmResetRemoteCode) => {}
             Some(Layer::WorkflowForm) => {

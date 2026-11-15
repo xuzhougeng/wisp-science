@@ -5197,6 +5197,7 @@ pub use crate::aside::Exchange as AsideExchange;
 pub use crate::browser::{BrowserSettings, BrowserStatus};
 pub use crate::browser_filters::{BrowserFilters, BrowserHostRule};
 pub use crate::channels::{
+    feishu::{FeishuBind, FeishuBindPoll, FeishuStatus},
     weixin::{QrMatrix, WeixinQr, WeixinScan, WeixinStatus},
     ChannelState,
 };

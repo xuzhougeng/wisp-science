@@ -151,6 +151,8 @@ pub enum Layer {
     ConfirmRemoveCodexAccount,
     /// Question before WeChat is unbound, on the Chat apps page.
     ConfirmUnbindWeixin,
+    /// Question before Feishu is unbound, on the same page.
+    ConfirmUnbindFeishu,
     /// Question before an expert is removed.
     ConfirmRemoveExpert,
     /// The form for an SSH host, on the Environments page of Settings.
@@ -214,6 +216,7 @@ impl Layer {
             | Layer::ConfirmRemoveAcpAgent
             | Layer::ConfirmRemoveCodexAccount
             | Layer::ConfirmUnbindWeixin
+            | Layer::ConfirmUnbindFeishu
             | Layer::QuickActionForm
             | Layer::WorkflowForm
             | Layer::ConfirmRemoveWorkflow
@@ -547,14 +550,16 @@ mod tests {
         stack.open(Layer::AcpAgentForm);
         assert!(stack.close(Layer::Settings));
         assert!(!stack.contains(Layer::AcpAgentForm));
-        // So is the question before WeChat is unbound.
-        stack.open(Layer::Settings);
-        stack.open(Layer::ConfirmUnbindWeixin);
-        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmUnbindWeixin));
-        assert!(stack.contains(Layer::Settings));
-        stack.open(Layer::ConfirmUnbindWeixin);
-        assert!(stack.close(Layer::Settings));
-        assert!(!stack.contains(Layer::ConfirmUnbindWeixin));
+        // So are the questions before WeChat and Feishu are unbound.
+        for question in [Layer::ConfirmUnbindWeixin, Layer::ConfirmUnbindFeishu] {
+            stack.open(Layer::Settings);
+            stack.open(question);
+            assert_eq!(stack.dismiss_top(), Some(question));
+            assert!(stack.contains(Layer::Settings));
+            stack.open(question);
+            assert!(stack.close(Layer::Settings));
+            assert!(!stack.contains(question));
+        }
         // And the question before a Codex account is removed.
         stack.open(Layer::Settings);
         stack.open(Layer::ConfirmRemoveCodexAccount);

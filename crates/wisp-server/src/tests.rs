@@ -7519,6 +7519,344 @@ async fn wechat_binds_by_qr_code_and_runs_the_owners_messages_as_turns() {
     server.shutdown().await;
 }
 
+/// Feishu's REST, accounts and long-connection services, on loopback.
+#[derive(Default)]
+struct FakeFeishu {
+    base: String,
+    socket: String,
+    polls: usize,
+    events: Vec<Vec<u8>>,
+    acks: usize,
+    texts: Vec<String>,
+    cards: Vec<String>,
+    closed: usize,
+}
+
+async fn fake_feishu() -> Arc<std::sync::Mutex<FakeFeishu>> {
+    use axum::{
+        extract::State,
+        routing::{get, patch, post, put},
+        Form, Json, Router,
+    };
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message as WsMessage;
+    type Shared = Arc<std::sync::Mutex<FakeFeishu>>;
+    let fake: Shared = Default::default();
+    let ok = || Json(json!({"code": 0}));
+    let app = Router::new()
+        .route(
+            "/open-apis/auth/v3/tenant_access_token/internal",
+            post(|| async {
+                Json(json!({"code": 0, "tenant_access_token": "t-test", "expire": 7200}))
+            }),
+        )
+        .route(
+            "/open-apis/bot/v3/info",
+            get(|| async { Json(json!({"code": 0, "bot": {"open_id": "ou_bot"}})) }),
+        )
+        .route(
+            "/callback/ws/endpoint",
+            post(|State(fake): State<Shared>| async move {
+                let url = format!("{}/ws?service_id=7", fake.lock().unwrap().socket);
+                Json(
+                    json!({"code": 0, "data": {"URL": url, "ClientConfig": {"PingInterval": 120}}}),
+                )
+            }),
+        )
+        .route(
+            "/open-apis/im/v1/messages",
+            post(
+                |State(fake): State<Shared>, Json(body): Json<serde_json::Value>| async move {
+                    if body["msg_type"] == "text" {
+                        let content: serde_json::Value =
+                            serde_json::from_str(body["content"].as_str().unwrap()).unwrap();
+                        fake.lock()
+                            .unwrap()
+                            .texts
+                            .push(content["text"].as_str().unwrap().to_owned());
+                    }
+                    Json(json!({"code": 0, "data": {"message_id": "om_1"}}))
+                },
+            ),
+        )
+        .route(
+            "/open-apis/cardkit/v1/cards",
+            post(|| async { Json(json!({"code": 0, "data": {"card_id": "card-1"}})) }),
+        )
+        .route(
+            "/open-apis/cardkit/v1/cards/{card}/elements/md/content",
+            put(
+                move |State(fake): State<Shared>, Json(body): Json<serde_json::Value>| async move {
+                    fake.lock()
+                        .unwrap()
+                        .cards
+                        .push(body["content"].as_str().unwrap_or_default().to_owned());
+                    ok()
+                },
+            ),
+        )
+        .route(
+            "/open-apis/cardkit/v1/cards/{card}/settings",
+            patch(move |State(fake): State<Shared>| async move {
+                fake.lock().unwrap().closed += 1;
+                ok()
+            }),
+        )
+        .route(
+            "/oauth/v1/app/registration",
+            post(
+                |State(fake): State<Shared>,
+                 Form(form): Form<std::collections::HashMap<String, String>>| async move {
+                    if form.get("action").map(String::as_str) == Some("begin") {
+                        return Json(json!({
+                            "device_code": "dc-1",
+                            "verification_uri_complete": "https://example.test/verify",
+                            "interval": 1,
+                            "expire_in": 600,
+                        }));
+                    }
+                    let mut fake = fake.lock().unwrap();
+                    fake.polls += 1;
+                    Json(if fake.polls == 1 {
+                        json!({"error": "authorization_pending"})
+                    } else {
+                        json!({
+                            "client_id": "cli_test",
+                            "client_secret": "test-feishu-secret",
+                            "user_info": {"open_id": "ou_owner", "tenant_brand": "feishu"},
+                        })
+                    })
+                },
+            ),
+        )
+        .with_state(fake.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let sockets = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    {
+        let mut fake = fake.lock().unwrap();
+        fake.base = format!("http://{}", listener.local_addr().unwrap());
+        fake.socket = format!("ws://{}", sockets.local_addr().unwrap());
+    }
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    let shared = fake.clone();
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = sockets.accept().await {
+            let fake = shared.clone();
+            tokio::spawn(async move {
+                let Ok(socket) = tokio_tungstenite::accept_async(stream).await else {
+                    return;
+                };
+                let (mut sink, mut stream) = socket.split();
+                loop {
+                    let queued: Vec<Vec<u8>> = fake.lock().unwrap().events.drain(..).collect();
+                    for (at, payload) in queued.into_iter().enumerate() {
+                        let frame = crate::channels::pbbp2::Frame {
+                            seqid: at as u64 + 1,
+                            service: 7,
+                            method: 1,
+                            headers: vec![("type".into(), "event".into())],
+                            payload,
+                            ..Default::default()
+                        };
+                        let bytes = crate::channels::pbbp2::encode(&frame);
+                        if sink.send(WsMessage::Binary(bytes.into())).await.is_err() {
+                            return;
+                        }
+                    }
+                    match tokio::time::timeout(std::time::Duration::from_millis(50), stream.next())
+                        .await
+                    {
+                        Ok(Some(Ok(WsMessage::Binary(data)))) => {
+                            let frame = crate::channels::pbbp2::decode(&data).unwrap();
+                            if frame.method == 1 && frame.payload == b"{\"code\":200}" {
+                                fake.lock().unwrap().acks += 1;
+                            }
+                        }
+                        Ok(None) | Ok(Some(Err(_))) => return,
+                        _ => {}
+                    }
+                }
+            });
+        }
+    });
+    fake
+}
+
+fn feishu_event(id: &str, sender: &str, text: &str) -> Vec<u8> {
+    json!({
+        "header": {"event_type": "im.message.receive_v1", "event_id": id},
+        "event": {
+            "sender": {"sender_id": {"open_id": sender}},
+            "message": {
+                "chat_id": "oc_chat",
+                "chat_type": "p2p",
+                "message_type": "text",
+                "content": json!({"text": text}).to_string(),
+            },
+        },
+    })
+    .to_string()
+    .into_bytes()
+}
+
+async fn until<T>(what: &str, mut ready: impl FnMut() -> Option<T>) -> T {
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        loop {
+            if let Some(found) = ready() {
+                return found;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for {what}"))
+}
+
+#[tokio::test]
+async fn feishu_makes_its_app_by_scan_and_answers_only_its_owner() {
+    use crate::channels::{feishu::Hosts, feishu_registration::Accounts};
+    use desktop::{ChannelState, FeishuBindPoll, SecretStore};
+    let temp = tempfile::tempdir().unwrap();
+    let secrets = Arc::new(desktop::MemorySecrets::default());
+    let server = Server::open_with(
+        config(temp.path()),
+        models(Arc::default(), false),
+        secrets.clone(),
+    )
+    .await
+    .unwrap();
+    assert!(!server
+        .commands()
+        .iter()
+        .any(|command| command.contains("feishu")));
+    let fake = fake_feishu().await;
+    let base = fake.lock().unwrap().base.clone();
+    *server.0.channels.feishu_hosts.lock().unwrap() = Hosts {
+        feishu: base.clone(),
+        lark: base.clone(),
+        accounts: Accounts {
+            feishu: base.clone(),
+            lark: base,
+        },
+    };
+    assert!(!server.feishu_status().await.bound);
+    assert!(server.set_feishu(true, false, "", None).await.is_err());
+
+    // Scanning makes the app; whoever scanned is its owner.
+    let bind = server.start_feishu_bind(false).await.unwrap();
+    assert_eq!(
+        bind.matrix.dark.len(),
+        bind.matrix.width * bind.matrix.width
+    );
+    let mut app = None;
+    for _ in 0..40 {
+        match server.poll_feishu_bind(&bind.flow).await.unwrap() {
+            FeishuBindPoll::Confirmed { app_id } => {
+                app = Some(app_id);
+                break;
+            }
+            FeishuBindPoll::Pending { .. } => {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    assert_eq!(app.as_deref(), Some("cli_test"));
+    assert!(server.poll_feishu_bind(&bind.flow).await.is_err());
+    assert_eq!(
+        secrets.get("feishu_app_secret").as_deref(),
+        Some("test-feishu-secret")
+    );
+    let status = server.feishu_status().await;
+    assert!(status.bound && status.owner == "ou_owner" && !status.enabled);
+
+    let folder = temp.path().join("feishu project");
+    std::fs::create_dir(&folder).unwrap();
+    let project = server.register_local_project(&folder).await.unwrap();
+    assert!(
+        server
+            .set_feishu(true, false, "cli_test", None)
+            .await
+            .unwrap()
+            .enabled
+    );
+    let connected = || {
+        let server = server.clone();
+        async move { server.feishu_status().await.state == ChannelState::Running }
+    };
+    for _ in 0..200 {
+        if connected().await {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(connected().await);
+
+    let push = |event: Vec<u8>| fake.lock().unwrap().events.push(event);
+    let said = |wanted: &'static str| {
+        let fake = fake.clone();
+        move || {
+            fake.lock()
+                .unwrap()
+                .texts
+                .iter()
+                .any(|text| text.contains(wanted))
+                .then_some(())
+        }
+    };
+    push(feishu_event(
+        "ev-1",
+        "ou_owner",
+        &format!("/project {project}"),
+    ));
+    // Delivered twice: answered once.
+    push(feishu_event(
+        "ev-1",
+        "ou_owner",
+        &format!("/project {project}"),
+    ));
+    until("the switch", said("IM 目标已切换到项目")).await;
+    push(feishu_event("ev-2", "ou_stranger", "hello"));
+    until("the refusal", said("只响应已绑定的所有者")).await;
+
+    // A turn shows on a card that ends as the answer.
+    push(feishu_event("ev-3", "ou_owner", "what is the answer?"));
+    until("the answer card", || {
+        let fake = fake.lock().unwrap();
+        (fake.closed == 1 && fake.cards.last().map(String::as_str) == Some("Saved result"))
+            .then_some(())
+    })
+    .await;
+
+    // With no owner, the first to write waits for the desktop to confirm.
+    assert!(server.set_feishu_owner("").await.unwrap().owner.is_empty());
+    push(feishu_event("ev-4", "ou_new", "hello"));
+    until("the pairing note", said("尚未绑定所有者")).await;
+    let status = server.feishu_status().await;
+    assert_eq!(status.pending_owner, "ou_new");
+    let status = server.confirm_feishu_owner().await.unwrap();
+    assert!(status.owner == "ou_new" && status.pending_owner.is_empty());
+    assert!(server.confirm_feishu_owner().await.is_err());
+
+    {
+        let fake = fake.lock().unwrap();
+        assert_eq!(
+            fake.texts
+                .iter()
+                .filter(|text| text.contains("IM 目标已切换"))
+                .count(),
+            1
+        );
+        // Every frame was acknowledged, the repeated one too.
+        assert_eq!(fake.acks, 5);
+    }
+    let status = server.unbind_feishu().await.unwrap();
+    assert!(!status.bound && !status.enabled && status.owner.is_empty());
+    assert_eq!(status.state, ChannelState::Stopped);
+    assert_eq!(secrets.get("feishu_app_secret").as_deref(), Some(""));
+    server.shutdown().await;
+}
+
 /// A ChatGPT access token as Codex CLI keeps it (unsigned; claims only).
 fn chatgpt_token(account: &str, exp: i64, email: &str) -> String {
     use base64::Engine;
