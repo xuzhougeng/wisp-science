@@ -431,13 +431,56 @@ impl Workspace {
         section
     }
 
+    /// The open project's switch that lets every tool of a connector run
+    /// whatever its rule; none without an open project.
+    fn connector_skip(&self, connector: &str, cx: &mut Context<Self>) -> Option<Div> {
+        let (_, approvals) = self.approvals.as_ref()?;
+        let on = approvals.skip.contains(connector);
+        let domain = connector.to_owned();
+        Some(
+            div().h_flex().child(
+                Button::new(SharedString::from(format!("connector-skip-{connector}")))
+                    .label(tr("Skip approvals"))
+                    .xsmall()
+                    .selected(on)
+                    .tooltip(tr("Its tools run without asking, whatever their rules"))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.save_connector_skip(domain.clone(), !on, window, cx)
+                    })),
+            ),
+        )
+    }
+
+    fn save_connector_skip(
+        &mut self,
+        connector: String,
+        on: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = self.approvals.as_ref().map(|(project, _)| project.clone()) else {
+            return;
+        };
+        let reply = self
+            .backend
+            .set_connector_skip(project.clone(), connector, on);
+        self.keep_approvals(project, reply, window, cx);
+    }
+
     /// A connector's tools with their rules for the open project, or their
     /// names alone when no project is open.
-    fn connector_tool_rules(&self, tools: &[String], cx: &mut Context<Self>) -> Div {
+    fn connector_tool_rules(
+        &self,
+        connector: &str,
+        tools: &[String],
+        cx: &mut Context<Self>,
+    ) -> Div {
         let mono = cx.theme().mono_font_family.clone();
         let Some((_, approvals)) = &self.approvals else {
             return div().text_xs().font_family(mono).child(tools.join("  "));
         };
+        // Skipped, the rules do not apply.
+        let skipped = approvals.skip.contains(connector);
         let mut list = div().v_flex().gap_1();
         for tool in tools {
             let current = approvals.rules.get(tool).copied();
@@ -458,6 +501,7 @@ impl Workspace {
                         .xsmall()
                         .ghost()
                         .selected(current == rule)
+                        .disabled(skipped)
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.save_tool_rule(name.clone(), rule, window, cx)
                         })),
@@ -894,7 +938,9 @@ impl Workspace {
                     ),
                 );
             if open {
-                about = about.child(self.connector_tool_rules(&row.tools, cx));
+                about = about
+                    .children(self.connector_skip(&row.domain, cx))
+                    .child(self.connector_tool_rules(&row.domain, &row.tools, cx));
                 for (index, (label, url)) in row.links.iter().enumerate() {
                     let target = url.clone();
                     about = about.child(

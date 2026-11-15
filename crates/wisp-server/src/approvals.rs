@@ -1,8 +1,10 @@
 //! How a project's tools are approved, as the WebView's Permissions and
 //! Connections pages keep it: a mode (`approval_scope:{project}`) and rules
 //! for single tools (`tool_approvals:{project}`, a tool's name to `ask` or
-//! `deny`; a tool without one is allowed by its rule). A project without
-//! its own value reads the WebView's default under the key alone.
+//! `deny`; a tool without one is allowed by its rule), and the bundled
+//! connectors whose tools skip their rules (`skip_approval_connectors:
+//! {project}`). A project without its own value reads the WebView's
+//! default under the key alone.
 //!
 //! The mode sits over the rules and over this desktop's own question before
 //! changes. Per-tool rules (the default) keeps both. Auto-approve skips the
@@ -10,7 +12,7 @@
 //! skips every question, the dangerous command's too. A tool that is denied
 //! stays denied in every mode.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{ensure, Result};
 use wisp_store::Store;
@@ -20,6 +22,7 @@ use crate::Server;
 
 const SCOPE: &str = "approval_scope";
 const RULES: &str = "tool_approvals";
+const SKIP: &str = "skip_approval_connectors";
 
 /// The mode over a project's approvals.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -83,11 +86,26 @@ pub struct ProjectApprovals {
     pub scope: ApprovalScope,
     /// Tool name to its rule, for the tools that have one.
     pub rules: BTreeMap<String, ToolRule>,
+    /// Bundled connectors whose tools are allowed whatever their rules.
+    pub skip: BTreeSet<String>,
+}
+
+/// The bundled connector a tool belongs to.
+fn connector_of(tool: &str) -> Option<&'static str> {
+    wisp_bio::catalog()
+        .into_iter()
+        .find(|(_, schema)| schema.function.name == tool)
+        .map(|(domain, _)| domain)
 }
 
 impl ProjectApprovals {
     /// What the tool's rule says, under the mode.
     pub(crate) fn mode(&self, tool: &str) -> Approval {
+        // A connector set to skip approvals allows all its tools, as the
+        // WebView's does, a denied one included.
+        if !self.skip.is_empty() && connector_of(tool).is_some_and(|c| self.skip.contains(c)) {
+            return Approval::Allow;
+        }
         match (self.rules.get(tool), self.scope) {
             (Some(ToolRule::Deny), _) => Approval::Deny,
             (Some(ToolRule::Ask), ApprovalScope::Ask) => Approval::Ask,
@@ -138,7 +156,10 @@ pub(crate) async fn load(store: &Store, project: &str) -> ProjectApprovals {
         .into_iter()
         .filter_map(|(tool, rule)| Some((tool, ToolRule::parse(&rule)?)))
         .collect();
-    ProjectApprovals { scope, rules }
+    let skip = read::<BTreeSet<String>>(store, SKIP, project)
+        .await
+        .unwrap_or_default();
+    ProjectApprovals { scope, rules, skip }
 }
 
 impl Server {
@@ -205,6 +226,36 @@ impl Server {
     }
 }
 
+impl Server {
+    /// Lets every tool of a bundled connector run whatever its rule, or
+    /// with `on` false gives the rules back.
+    pub async fn set_connector_skip(
+        &self,
+        project: &str,
+        connector: &str,
+        on: bool,
+    ) -> Result<ProjectApprovals> {
+        ensure!(
+            wisp_bio::catalog()
+                .into_iter()
+                .any(|(domain, _)| domain == connector),
+            "There is no connector called {connector}"
+        );
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        let store = &self.0.store;
+        let mut skip = load(store, project).await.skip;
+        match on {
+            true => skip.insert(connector.to_owned()),
+            false => skip.remove(connector),
+        };
+        store
+            .set_setting(&format!("{SKIP}:{project}"), &serde_json::to_string(&skip)?)
+            .await?;
+        Ok(load(store, project).await)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,5 +283,19 @@ mod tests {
         assert_eq!(ApprovalScope::parse("auto"), ApprovalScope::Auto);
         assert_eq!(ApprovalScope::parse("anything"), ApprovalScope::Ask);
         assert_eq!(ToolRule::parse("allow"), None);
+    }
+
+    #[test]
+    fn a_skipped_connector_allows_its_tools_over_their_rules() {
+        let (domain, schema) = wisp_bio::catalog().into_iter().next().unwrap();
+        let tool = schema.function.name;
+        let mut approvals = ProjectApprovals::default();
+        approvals.rules.insert(tool.clone(), ToolRule::Deny);
+        approvals.rules.insert("shell".into(), ToolRule::Ask);
+        assert_eq!(approvals.mode(&tool), Approval::Deny);
+        approvals.skip.insert(domain.to_owned());
+        assert_eq!(approvals.mode(&tool), Approval::Allow);
+        // Only the connector's own tools.
+        assert_eq!(approvals.mode("shell"), Approval::Ask);
     }
 }

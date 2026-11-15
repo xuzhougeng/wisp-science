@@ -2298,6 +2298,18 @@ impl Backend {
         self.local(move |host| async move { host.set_approval_scope(&project, scope).await })
     }
 
+    /// Lets a bundled connector's tools run whatever their rules.
+    pub fn set_connector_skip(
+        &self,
+        project: String,
+        connector: String,
+        on: bool,
+    ) -> Reply<wisp_server::desktop::ProjectApprovals> {
+        self.local(
+            move |host| async move { host.set_connector_skip(&project, &connector, on).await },
+        )
+    }
+
     pub fn set_tool_rule(
         &self,
         project: String,

@@ -1387,6 +1387,23 @@ async fn a_projects_approval_mode_and_tool_rules_decide_what_asks() {
         .set_setting("tool_approvals", r#"{"pubmed_search":"ask","odd":"maybe"}"#)
         .await
         .unwrap();
+    // A connector set to skip approvals is kept in the WebView's list.
+    let connector = server.connectors().await.unwrap()[0].domain.clone();
+    let skipped = server
+        .set_connector_skip(PROJECT, &connector, true)
+        .await
+        .unwrap();
+    assert!(skipped.skip.contains(&connector));
+    assert!(server
+        .set_connector_skip(PROJECT, "no-such-connector", true)
+        .await
+        .is_err());
+    assert!(!server
+        .set_connector_skip(PROJECT, &connector, false)
+        .await
+        .unwrap()
+        .skip
+        .contains(&connector));
     let inherited = crate::approvals::load(store, "another").await;
     assert_eq!(inherited.scope, ApprovalScope::Full);
     assert_eq!(
