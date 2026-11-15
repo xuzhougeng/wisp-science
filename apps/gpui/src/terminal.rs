@@ -74,9 +74,138 @@ pub fn open(folder: &Path) -> Result<(), String> {
     })
 }
 
+/// One word for `/bin/sh`, whatever it holds.
+fn quoted(word: &str) -> String {
+    format!("'{}'", word.replace('\'', r"'\''"))
+}
+
+/// What a terminal on macOS runs to start `program` in `folder` with
+/// `env` set: every value is quoted, and a name that is not one is left
+/// out.
+pub fn script(folder: &Path, program: &str, args: &[String], env: &[(String, String)]) -> String {
+    let mut text = format!(
+        "#!/bin/sh\ncd {} || exit 1\n",
+        quoted(&folder.to_string_lossy())
+    );
+    for (name, value) in env {
+        let valid = name
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+            && name
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+        if valid {
+            text.push_str(&format!("export {name}={}\n", quoted(value)));
+        }
+    }
+    text.push_str("exec ");
+    text.push_str(
+        &std::iter::once(program)
+            .chain(args.iter().map(String::as_str))
+            .map(quoted)
+            .collect::<Vec<_>>()
+            .join(" "),
+    );
+    text.push('\n');
+    text
+}
+
+/// Opens the system's terminal running `program` in `folder`, for a
+/// program that asks the user something there (an agent's sign-in).
+pub fn run(
+    folder: &Path,
+    program: &str,
+    args: &[String],
+    env: &[(String, String)],
+) -> Result<(), String> {
+    if !folder.is_dir() {
+        return Err(crate::i18n::fill(
+            crate::i18n::tr("The folder {} is not there."),
+            &[&folder.display()],
+        ));
+    }
+    let failed = |problem: std::io::Error| {
+        crate::i18n::fill(
+            crate::i18n::tr("Could not open a terminal: {}"),
+            &[&problem],
+        )
+    };
+    let mut command = match System::current() {
+        System::Mac => {
+            // Terminal runs a `.command` file it is given; the file holds
+            // the command, quoted, so nothing is parsed from a string.
+            let path = std::env::temp_dir().join(format!(
+                "wisp-{}-{}.command",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|elapsed| elapsed.as_nanos())
+                    .unwrap_or_default()
+            ));
+            std::fs::write(&path, script(folder, program, args, env)).map_err(failed)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
+                    .map_err(failed)?;
+            }
+            let mut command = std::process::Command::new("/usr/bin/open");
+            command.args(["-a", "Terminal"]).arg(path);
+            command
+        }
+        System::Windows => {
+            let mut command = std::process::Command::new("cmd.exe");
+            command
+                .args(["/C", "start", "", "/D"])
+                .arg(folder)
+                .arg(program)
+                .args(args)
+                .envs(env.iter().cloned());
+            command
+        }
+        System::Linux => {
+            let mut command = std::process::Command::new("x-terminal-emulator");
+            command
+                .arg("-e")
+                .arg(program)
+                .args(args)
+                .current_dir(folder)
+                .envs(env.iter().cloned());
+            command
+        }
+    };
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(drop)
+        .map_err(failed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_command_for_the_terminal_is_quoted_word_by_word() {
+        let text = script(
+            Path::new("/work/it's here"),
+            "/opt/agent bin/agent",
+            &["auth".into(), "log in; rm -rf ~".into()],
+            &[
+                ("AGENT_TOKEN_FILE".into(), "a'b".into()),
+                ("not a name".into(), "x".into()),
+            ],
+        );
+        assert_eq!(
+            text,
+            "#!/bin/sh\ncd '/work/it'\\''s here' || exit 1\n\
+             export AGENT_TOKEN_FILE='a'\\''b'\n\
+             exec '/opt/agent bin/agent' 'auth' 'log in; rm -rf ~'\n"
+        );
+    }
 
     #[test]
     fn each_system_is_asked_its_own_way_with_the_folder_as_data() {

@@ -421,6 +421,8 @@ pub struct Workspace {
     acp_editing: Option<String>,
     acp_fields: [Entity<InputState>; 3],
     acp_testing: Option<String>,
+    /// How signing in to each agent went.
+    acp_signed: std::collections::HashMap<String, Result<String, String>>,
     acp_reports:
         std::collections::HashMap<String, Result<wisp_server::desktop::AcpAgentReport, String>>,
     mcp_servers: Option<Vec<wisp_server::desktop::McpServerRow>>,
@@ -1018,6 +1020,7 @@ impl Workspace {
             acp_editing: None,
             acp_fields,
             acp_testing: None,
+            acp_signed: Default::default(),
             acp_reports: Default::default(),
             mcp_servers: None,
             mcp_editing: None,

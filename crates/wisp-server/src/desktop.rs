@@ -3605,6 +3605,12 @@ impl Server {
         crate::acp_agents::test(&self.0.store, id).await
     }
 
+    /// Signs in to an agent with one of the ways it offers, or says what
+    /// to run in a terminal to do so.
+    pub async fn sign_in_acp_agent(&self, id: &str, method: &str) -> Result<AcpSignInOutcome> {
+        crate::acp_agents::sign_in(&self.0.store, id, method).await
+    }
+
     /// Python, R and Node installed under the data directory, and how the
     /// current or last install is going.
     pub fn toolchain(&self) -> wisp_dto::ToolchainStatus {
@@ -4953,7 +4959,9 @@ pub struct ProjectGrants {
     pub tools: Vec<String>,
 }
 
-pub use crate::acp_agents::{AcpAgent, AcpAgentReport, AcpAgentRow};
+pub use crate::acp_agents::{
+    AcpAgent, AcpAgentReport, AcpAgentRow, AcpSignIn, AcpSignInKind, AcpSignInOutcome,
+};
 pub use crate::aside::Exchange as AsideExchange;
 pub use crate::browser::{BrowserSettings, BrowserStatus};
 pub use crate::browser_filters::{BrowserFilters, BrowserHostRule};

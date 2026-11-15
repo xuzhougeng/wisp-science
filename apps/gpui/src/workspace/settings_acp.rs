@@ -8,7 +8,7 @@ use gpui_component::{
     button::{Button, ButtonVariants},
     input::Input,
 };
-use wisp_server::desktop::{AcpAgent, AcpAgentRow};
+use wisp_server::desktop::{AcpAgent, AcpAgentRow, AcpSignInKind, AcpSignInOutcome};
 
 use super::{Workspace, chip, shell::glyph};
 use crate::{acp, backend::receive, layers::Layer, present::Tone};
@@ -132,6 +132,52 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Signs in to an agent one of the ways it offers. One that signs in
+    /// in a terminal gets the system's terminal, in the open project's
+    /// folder or the home folder.
+    fn sign_in_acp_agent(
+        &mut self,
+        id: String,
+        method: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.acp_testing.is_some() {
+            return;
+        }
+        self.acp_testing = Some(id.clone());
+        self.acp_signed.remove(&id);
+        let folder = self
+            .state
+            .project
+            .as_ref()
+            .and_then(|project| self.projects.iter().find(|row| &row.id == project))
+            .map(|project| std::path::PathBuf::from(&project.workspace_dir))
+            .or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from))
+            .unwrap_or_else(std::env::temp_dir);
+        let reply = self.backend.sign_in_acp_agent(id.clone(), method);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                this.acp_testing = None;
+                let said = match result {
+                    Ok(AcpSignInOutcome::Done) => Ok(tr("Signed in.").to_owned()),
+                    Ok(AcpSignInOutcome::Terminal { program, args, env }) => {
+                        crate::terminal::run(&folder, &program, &args, &env).map(|()| {
+                            tr("Finish signing in in the terminal that opened, then test again.")
+                                .to_owned()
+                        })
+                    }
+                    Err(error) => Err(error),
+                };
+                this.acp_signed.insert(id, said);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn acp_form(&self, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
         let label = |text: &'static str| div().text_xs().text_color(muted).child(text);
@@ -222,6 +268,38 @@ impl Workspace {
         } else if let Some(report) = self.acp_reports.get(&id) {
             about = about.child(match report {
                 Ok(report) => chip(acp::report_line(report), Tone::Success, cx),
+                Err(error) => chip(crate::i18n::host(error), Tone::Danger, cx),
+            });
+            // The ways it offers to be signed in to, each a button; one
+            // that reads a key from the environment is only named.
+            if let Ok(report) = report {
+                let mut ways = div().h_flex().flex_wrap().gap_1();
+                for way in &report.sign_in {
+                    if way.kind == AcpSignInKind::Environment {
+                        continue;
+                    }
+                    let (agent, method) = (id.clone(), way.id.clone());
+                    ways = ways.child(
+                        Button::new(SharedString::from(format!("acp-sign-in-{id}-{}", way.id)))
+                            .icon(glyph(match way.kind {
+                                AcpSignInKind::Terminal => "terminal",
+                                _ => "user",
+                            }))
+                            .label(crate::i18n::fill(tr("Sign in: {}"), &[&way.name]))
+                            .xsmall()
+                            .ghost()
+                            .disabled(self.acp_testing.is_some())
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.sign_in_acp_agent(agent.clone(), method.clone(), window, cx)
+                            })),
+                    );
+                }
+                about = about.child(ways);
+            }
+        }
+        if let Some(said) = self.acp_signed.get(&id) {
+            about = about.child(match said {
+                Ok(said) => chip(said.clone(), Tone::Success, cx),
                 Err(error) => chip(crate::i18n::host(error), Tone::Danger, cx),
             });
         }

@@ -17,6 +17,8 @@ const PROFILES_KEY: &str = "acp_agent_profiles";
 const LABEL_LIMIT: usize = 80;
 /// How long Test waits for the agent to start and introduce itself.
 const TEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long an agent may take to sign in by itself, the user included.
+const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// One agent as it is kept: a name, the program and its arguments.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,6 +38,25 @@ pub struct AcpAgentRow {
     pub found: bool,
 }
 
+/// How an agent wants to be signed in to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AcpSignInKind {
+    /// It signs in by itself when asked, often in the browser.
+    Agent,
+    /// It runs a sign-in program of its own in a terminal.
+    Terminal,
+    /// It reads a key from an environment variable you set.
+    Environment,
+}
+
+/// One way an agent offers to be signed in to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AcpSignIn {
+    pub id: String,
+    pub name: String,
+    pub kind: AcpSignInKind,
+}
+
 /// What an agent said about itself when it was tested.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AcpAgentReport {
@@ -43,8 +64,20 @@ pub struct AcpAgentReport {
     /// Its name and version, when it gave them.
     pub name: String,
     pub version: String,
-    /// The ways it offers to sign in, by name.
-    pub sign_in: Vec<String>,
+    /// The ways it offers to be signed in to.
+    pub sign_in: Vec<AcpSignIn>,
+}
+
+/// How signing in went: done, or to be finished in a terminal running
+/// the agent's own sign-in, started in `folder`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AcpSignInOutcome {
+    Done,
+    Terminal {
+        program: String,
+        args: Vec<String>,
+        env: Vec<(String, String)>,
+    },
 }
 
 /// Whether `command` names a program that exists: a path to a file, or a
@@ -163,10 +196,66 @@ pub(crate) async fn test(store: &Store, id: &str) -> Result<AcpAgentReport> {
         sign_in: info
             .auth_methods
             .into_iter()
-            .map(|method| match method.kind {
-                AcpAuthMethodKind::Terminal { .. } => format!("{} (terminal)", method.name),
-                _ => method.name,
+            .map(|method| AcpSignIn {
+                kind: match method.kind {
+                    AcpAuthMethodKind::Agent => AcpSignInKind::Agent,
+                    AcpAuthMethodKind::Terminal { .. } => AcpSignInKind::Terminal,
+                    AcpAuthMethodKind::Environment => AcpSignInKind::Environment,
+                },
+                id: method.id,
+                name: method.name,
             })
             .collect(),
     })
+}
+
+/// Signs in to an agent with one of the ways it offers: asks it to, or
+/// says which command to run in a terminal (the agent's program with the
+/// arguments and environment it named).
+pub(crate) async fn sign_in(store: &Store, id: &str, method: &str) -> Result<AcpSignInOutcome> {
+    let agent = list(store)
+        .await
+        .into_iter()
+        .find(|agent| agent.id == id)
+        .context("That agent is gone")?;
+    ensure!(
+        found(&agent.command),
+        "The agent's program was not found on this computer"
+    );
+    let handle = tokio::time::timeout(TEST_TIMEOUT, AcpSessionHandle::launch(profile(&agent)))
+        .await
+        .context("The agent did not answer within 30 seconds")?
+        .map_err(|error| anyhow::anyhow!("The agent could not be started: {error}"))?;
+    let chosen = handle
+        .info()
+        .auth_methods
+        .iter()
+        .find(|offered| offered.id == method)
+        .cloned();
+    let outcome = match chosen.map(|chosen| chosen.kind) {
+        None => Err(anyhow::anyhow!(
+            "The agent no longer offers this way to sign in"
+        )),
+        Some(AcpAuthMethodKind::Agent) => {
+            // The agent may open the browser and wait for the user.
+            match tokio::time::timeout(SIGN_IN_TIMEOUT, handle.authenticate(method)).await {
+                Ok(Ok(())) => Ok(AcpSignInOutcome::Done),
+                Ok(Err(error)) => Err(anyhow::anyhow!("Signing in failed: {error}")),
+                Err(_) => Err(anyhow::anyhow!(
+                    "Signing in did not finish within five minutes"
+                )),
+            }
+        }
+        Some(AcpAuthMethodKind::Terminal { args, env }) => Ok(AcpSignInOutcome::Terminal {
+            program: agent.command.clone(),
+            args: agent.args.iter().cloned().chain(args).collect(),
+            env: env.into_iter().collect(),
+        }),
+        Some(AcpAuthMethodKind::Environment) => Err(anyhow::anyhow!(
+            "This agent reads its key from an environment variable; set it where the agent's \
+             documentation says, then test again"
+        )),
+    };
+    handle.shutdown(Duration::from_secs(2)).await;
+    outcome
 }

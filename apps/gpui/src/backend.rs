@@ -1174,6 +1174,14 @@ impl Backend {
         self.local(move |host| async move { host.remove_acp_agent(&id).await })
     }
 
+    pub fn sign_in_acp_agent(
+        &self,
+        id: String,
+        method: String,
+    ) -> Reply<wisp_server::desktop::AcpSignInOutcome> {
+        self.local(move |host| async move { host.sign_in_acp_agent(&id, &method).await })
+    }
+
     pub fn test_acp_agent(&self, id: String) -> Reply<wisp_server::desktop::AcpAgentReport> {
         self.local(move |host| async move { host.test_acp_agent(&id).await })
     }

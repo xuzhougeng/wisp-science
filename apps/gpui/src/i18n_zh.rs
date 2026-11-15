@@ -1392,4 +1392,10 @@ pub const ZH: &[(&str, &str)] = &[
     ("R, Node.js and the progress of an install are in Settings, Environments.", "R、Node.js 以及安装进度在“设置 › 环境”中。"),
     ("Paste the DeepSeek API key", "粘贴 DeepSeek API 密钥"),
     ("Paste the key first", "请先粘贴密钥"),
+    ("Signed in.", "已登录。"),
+    ("Finish signing in in the terminal that opened, then test again.", "请在打开的终端中完成登录，然后再测试一次。"),
+    ("Sign in: {}", "登录：{}"),
+    ("The agent no longer offers this way to sign in", "该智能体已不再提供这种登录方式"),
+    ("Signing in did not finish within five minutes", "登录未在五分钟内完成"),
+    ("This agent reads its key from an environment variable; set it where the agent's documentation says, then test again", "该智能体从环境变量读取密钥；请按其文档设置后再测试"),
 ];

@@ -78,7 +78,8 @@ pub fn report_line(report: &AcpAgentReport) -> String {
     }
     parts.push(format!("ACP v{}", report.protocol));
     if !report.sign_in.is_empty() {
-        parts.push(fill(tr("sign in: {}"), &[&report.sign_in.join(", ")]));
+        let names: Vec<&str> = report.sign_in.iter().map(|way| way.name.as_str()).collect();
+        parts.push(fill(tr("sign in: {}"), &[&names.join(", ")]));
     }
     parts.join(" · ")
 }
@@ -129,7 +130,11 @@ mod tests {
             protocol: 1,
             name: "Fake agent".into(),
             version: "0.1.0".into(),
-            sign_in: vec!["Sign in".into()],
+            sign_in: vec![wisp_server::desktop::AcpSignIn {
+                id: "login".into(),
+                name: "Sign in".into(),
+                kind: wisp_server::desktop::AcpSignInKind::Agent,
+            }],
         };
         assert_eq!(
             report_line(&report),

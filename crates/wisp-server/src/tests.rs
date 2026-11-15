@@ -6720,7 +6720,10 @@ while IFS= read -r line; do
   method=$(printf '%s\n' "$line" | grep -o '"method":"[^"]*"' | head -n 1 | cut -d'"' -f4)
   case "$method" in
     initialize)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[{"id":"login","name":"Sign in"}],"agentInfo":{"name":"fake-agent","title":"Fake agent","version":"0.1.0"}}}\n' "$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[{"id":"login","name":"Sign in"},{"type":"terminal","id":"tui","name":"Sign in in a terminal","args":["auth","login"],"env":{"FAKE_AGENT_AUTH":"1"}}],"agentInfo":{"name":"fake-agent","title":"Fake agent","version":"0.1.0"}}}\n' "$id"
+      ;;
+    authenticate)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"
       ;;
   esac
 done
@@ -7045,7 +7048,33 @@ async fn acp_agents_are_kept_in_the_shared_list_tested_and_removed() {
         assert_eq!(report.protocol, 1);
         assert_eq!(report.name, "Fake agent");
         assert_eq!(report.version, "0.1.0");
-        assert_eq!(report.sign_in, ["Sign in"]);
+        let ways: Vec<_> = report
+            .sign_in
+            .iter()
+            .map(|way| (way.id.as_str(), way.kind))
+            .collect();
+        assert_eq!(
+            ways,
+            [
+                ("login", desktop::AcpSignInKind::Agent),
+                ("tui", desktop::AcpSignInKind::Terminal)
+            ]
+        );
+        // The agent signs in by itself, or names a command for a terminal:
+        // its program with its own arguments and then the method's.
+        assert_eq!(
+            server.sign_in_acp_agent(&fake, "login").await.unwrap(),
+            desktop::AcpSignInOutcome::Done
+        );
+        assert_eq!(
+            server.sign_in_acp_agent(&fake, "tui").await.unwrap(),
+            desktop::AcpSignInOutcome::Terminal {
+                program: script.to_string_lossy().into(),
+                args: vec!["auth".into(), "login".into()],
+                env: vec![("FAKE_AGENT_AUTH".into(), "1".into())],
+            }
+        );
+        assert!(server.sign_in_acp_agent(&fake, "gone").await.is_err());
     }
 
     server.remove_acp_agent(&id).await.unwrap();
