@@ -348,13 +348,19 @@ mod tests {
     fn translated(source: &str) -> Vec<String> {
         let mut found = Vec::new();
         let mut rest = source;
-        while let Some(at) = rest.find("tr(\"") {
+        while let Some(at) = rest.find("tr(") {
             // `tr(` and not the end of a longer name.
             let named = rest[..at]
                 .chars()
                 .next_back()
                 .is_some_and(|before| before.is_alphanumeric() || before == '_');
-            rest = &rest[at + 4..];
+            rest = &rest[at + 3..];
+            // The literal may start on the next line, as rustfmt puts a
+            // long one there.
+            let Some(literal) = rest.trim_start().strip_prefix('"') else {
+                continue;
+            };
+            rest = literal;
             if named {
                 continue;
             }
@@ -384,7 +390,10 @@ mod tests {
     #[test]
     fn the_scanner_reads_literals_the_way_the_compiler_does() {
         let source = "x.label(tr(\"Send\")).child(tr(\"Two \\\n             lines\")); \
-                      attr(\"no\"); tr(\"Say \\\"hi\\\"\")";
-        assert_eq!(translated(source), ["Send", "Two lines", "Say \"hi\""]);
+                      attr(\"no\"); tr(\"Say \\\"hi\\\"\"); tr(\n    \"Next line\"); tr(x)";
+        assert_eq!(
+            translated(source),
+            ["Send", "Two lines", "Say \"hi\"", "Next line"]
+        );
     }
 }

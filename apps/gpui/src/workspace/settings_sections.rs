@@ -814,7 +814,7 @@ impl Workspace {
             .child(setting(
                 tr("Notify me"),
                 tr(
-                    "When a turn ends or a tool waits for approval while you are in another                      app, post a system notification. Windows has none without an installed                      app, so only the sound is available there.",
+                    "When a turn ends or a tool waits for approval while you are in another app, post a system notification. Windows has none without an installed app, so only the sound is available there.",
                 ),
                 Button::new("notify-banner")
                     .label(if self.notify.banner { tr("On") } else { tr("Off") })
