@@ -5,9 +5,9 @@ use crate::i18n::tr;
 use std::time::Duration;
 
 use gpui::{prelude::*, *};
-use gpui_component::{ActiveTheme, StyledExt, input::Input};
+use gpui_component::{ActiveTheme, Sizable, StyledExt, input::Input};
 
-use super::Workspace;
+use super::{Workspace, shell::icon_button};
 use crate::{
     assets::icon,
     backend::receive,
@@ -380,6 +380,22 @@ impl Workspace {
                     (command.icon(), command.label().to_owned(), String::new())
                 }
             };
+            // A project can also be opened in a window of its own.
+            let new_window = entry.window_project(self.palette.mode).map(|id| {
+                let id = id.to_owned();
+                icon_button(
+                    ("palette-window", index),
+                    "dock",
+                    tr("Open in a new window"),
+                )
+                .xsmall()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.layers.close(Layer::Palette);
+                    crate::open_window_on(this.backend.clone(), Some(id.clone()), cx);
+                    cx.notify();
+                }))
+            });
             list = list.child(
                 div()
                     .id(("palette-row", index))
@@ -409,6 +425,7 @@ impl Workspace {
                             .text_color(muted)
                             .child(detail),
                     )
+                    .children(new_window)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.activate_palette(Some(index), window, cx)
                     })),

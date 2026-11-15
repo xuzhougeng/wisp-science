@@ -80,6 +80,12 @@ pub fn cascade(open: usize) -> f32 {
 /// Opens a window on the same host: its own page, conversation and panels,
 /// the same projects and settings. Returns whether it opened.
 pub fn open_window(backend: backend::Backend, cx: &mut App) -> bool {
+    open_window_on(backend, None, cx)
+}
+
+/// Opens a window as [`open_window`] does, in `project` when one is given
+/// rather than on the home page.
+pub fn open_window_on(backend: backend::Backend, project: Option<String>, cx: &mut App) -> bool {
     let shift = cascade(cx.windows().len());
     let mut bounds = Bounds::centered(None, size(px(1180.), px(780.)), cx);
     bounds.origin.x += px(shift);
@@ -97,6 +103,11 @@ pub fn open_window(backend: backend::Backend, cx: &mut App) -> bool {
         },
         |window, cx| {
             let workspace = cx.new(|cx| workspace::Workspace::new(backend, window, cx));
+            if let Some(project) = project {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.enter_project(project, window, cx)
+                });
+            }
             cx.new(|cx| Root::new(workspace, window, cx))
         },
     );

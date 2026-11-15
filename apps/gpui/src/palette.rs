@@ -272,6 +272,15 @@ impl Entry {
             Entry::Command(_) => Section::Commands,
         }
     }
+
+    /// The project this row can also open in a window of its own: a
+    /// project found to go to, not one listed to attach.
+    pub fn window_project(&self, mode: Mode) -> Option<&str> {
+        match (self, mode) {
+            (Entry::Project { id, .. }, Mode::Open) => Some(id),
+            _ => None,
+        }
+    }
 }
 
 /// Every whitespace-separated word of `query` occurs in `text`, ignoring
@@ -488,6 +497,21 @@ pub fn child_index(entries: &[Entry], index: usize) -> usize {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_project_found_to_go_to_can_open_in_a_new_window() {
+        let found = Entry::Project {
+            id: "p1".into(),
+            name: "Lab".into(),
+            path: "/lab".into(),
+        };
+        assert_eq!(found.window_project(Mode::Open), Some("p1"));
+        assert_eq!(found.window_project(Mode::Attach), None);
+        assert_eq!(
+            Entry::Command(Command::NewWindow).window_project(Mode::Open),
+            None
+        );
+    }
 
     fn project(name: &str, path: &str) -> ProjectSummary {
         serde_json::from_value(json!({"id": name, "name": name, "workspace_dir": path})).unwrap()

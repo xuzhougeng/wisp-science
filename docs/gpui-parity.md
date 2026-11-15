@@ -58,13 +58,13 @@ to find in the running app.
 | Project settings [项目设置] | Name, description, sync | Partial: name, description and the rules for the model (`.wisp/WISP.md`), from the project's card and the command palette; Sync now, device code, conflict resolution and cloud-drive folder saving; no run retention | store |
 | Remove a project from Wisp, files kept [删除] | With confirmation | Done | store |
 | Delete a project together with its local data | Second choice in the same dialog, with a countdown | Done: second choice in the same question; the project's name is typed instead of a countdown, and a folder that holds more than the project is refused | tauri |
-| Open in a new window [在新窗口打开] | Yes | Partial: a new window opens on the home page; a project cannot be sent to it from its card | ui |
+| Open in a new window [在新窗口打开] | Yes | Yes: New window (⇧⌘N, the menu or the palette) opens on the home page, and a project's card or its row in the palette opens it in a new window | ui |
 | Recent conversations across projects with status [最近会话] | Yes | Done | store |
 | Sample project, read-only [示例项目] | Yes | Partial: the home page makes a sample project (made-up data, a script, a README of things to ask) in a folder you choose; it is an ordinary project to work in, not a read-only tour with prepared conversations | tauri |
 | Research assistant [科研助理] | Scheduled tasks and plans | Partial: a Scheduled tasks page across projects (every few hours, daily or weekly; run now, on or off, delete; templates) that fires into a new conversation while the app is open, the daily recap run with its time, switch and Run now, the assistant's conversation with its plan for the day and dispatching to projects, and the weekly habit tidy on the Memory tab; and research mandates with their page, rounds, requests and reports | store |
 | Research calendar [研究日历] | Month grid, per-project filter, day detail | Done: month grid with counts, projects can be left out, and the chosen day's records | store |
 | Favorites library [收藏库] | Saved code, figures, highlights; search and kind filter | Done: a page of its own; saved snippets cannot be edited into versions | store |
-| Command palette [搜索, ⌘K] | Projects, files, conversations, commands | Partial: finds projects, files and conversations in every project and runs GPUI's own commands; no open-in-new-window or attach-from-result, and the commands for features not ported yet are absent | served + ui |
+| Command palette [搜索, ⌘K] | Projects, files, conversations, commands | Partial: finds projects, files and conversations in every project and runs GPUI's own commands; a project found there opens in a new window from its row; no attach-from-result, and the commands for features not ported yet are absent | served + ui |
 | Documentation [文档] | Opens the docs | Done: from the home page, Settings and the command palette, in the system's browser | ui |
 | Settings entry | Yes | Done | ui |
 

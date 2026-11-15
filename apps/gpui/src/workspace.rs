@@ -2002,7 +2002,12 @@ impl Workspace {
     }
 
     /// Opens a project from the home page.
-    fn enter_project(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn enter_project(
+        &mut self,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // A cloud-drive folder project takes in a newer version another
         // device saved, while this one has nothing unsaved.
         let adopting = self.backend.adopt_newer_folder_version(id.clone());

@@ -237,6 +237,18 @@ impl Workspace {
                 this.open_project_settings(settings_id.clone(), window, cx)
             })),
         );
+        let window_id = id.clone();
+        actions = actions.child(
+            icon_button(
+                SharedString::from(format!("project-window-{id}")),
+                "dock",
+                tr("Open in a new window"),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                crate::open_window_on(this.backend.clone(), Some(window_id.clone()), cx);
+            })),
+        );
         let export_id = id.clone();
         actions = actions.child(
             icon_button(
