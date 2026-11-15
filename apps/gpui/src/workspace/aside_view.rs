@@ -20,6 +20,18 @@ impl Workspace {
             .update(cx, |input, cx| input.focus(window, cx));
     }
 
+    /// Opens the tab to ask about one run, its live snapshot going along.
+    pub(super) fn open_aside_about_run(
+        &mut self,
+        run: String,
+        title: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.aside_run = Some((run, title));
+        self.open_aside(window, cx);
+    }
+
     /// Asks what is in the question field about the open conversation.
     pub(super) fn ask_aside(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(project), Some(session)) =
@@ -34,9 +46,15 @@ impl Workspace {
         };
         self.aside_input
             .update(cx, |input, cx| input.set_value("", window, cx));
-        let reply = self
-            .backend
-            .ask_aside(project, session.clone(), earlier, question);
+        let reply = match self.aside_run.clone() {
+            Some((run, _)) => {
+                self.backend
+                    .ask_aside_about_run(project, session.clone(), run, earlier, question)
+            }
+            None => self
+                .backend
+                .ask_aside(project, session.clone(), earlier, question),
+        };
         cx.spawn_in(window, async move |this, cx| {
             let answer = receive(reply).await;
             let _ = this.update(cx, |this, cx| {
@@ -158,6 +176,31 @@ impl Workspace {
                 .disabled(session.is_none() || asking)
                 .on_click(cx.listener(|this, _, window, cx| this.ask_aside(window, cx))),
         );
+        // A question about one run says so, and can go back to the
+        // conversation as a whole.
+        let about = self.aside_run.as_ref().map(|(_, title)| {
+            div()
+                .h_flex()
+                .gap_1()
+                .text_xs()
+                .text_color(muted)
+                .child(div().flex_1().min_w_0().truncate().child(crate::i18n::fill(
+                    tr("About the run “{}”: its live state goes along"),
+                    &[title],
+                )))
+                .child(
+                    icon_button(
+                        "aside-run-clear",
+                        "close",
+                        tr("Ask about the conversation instead"),
+                    )
+                    .xsmall()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.aside_run = None;
+                        cx.notify();
+                    })),
+                )
+        });
         div().v_flex().flex_1().min_h_0().child(list).child(
             div()
                 .v_flex()
@@ -166,6 +209,7 @@ impl Workspace {
                 .p_3()
                 .border_t_1()
                 .border_color(border)
+                .children(about)
                 .child(Input::new(&self.aside_input).small())
                 .child(actions),
         )

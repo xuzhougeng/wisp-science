@@ -6568,6 +6568,30 @@ async fn a_question_asked_aside_is_answered_without_touching_the_conversation() 
         .await
         .is_err());
     assert_eq!(asked.lock().unwrap().len(), 1);
+
+    // About one of the project's runs: its live snapshot goes along.
+    let mut run =
+        wisp_store::RunRecord::new("run-aside", PROJECT, "local", "Align reads", "command");
+    run.status = wisp_store::RunStatus::Failed;
+    run.stderr_tail = Some("index not found".into());
+    server.0.store.create_run(&run).await.unwrap();
+    server
+        .ask_aside_about_run(PROJECT, &session, "run-aside", &[], "why did it fail?")
+        .await
+        .unwrap();
+    {
+        let asked = asked.lock().unwrap();
+        let sent = asked.last().unwrap()[1].content.as_text();
+        assert!(
+            sent.contains("<run>\nRun run-aside \"Align reads\""),
+            "{sent}"
+        );
+        assert!(sent.contains("stderr tail:\nindex not found"), "{sent}");
+    }
+    assert!(server
+        .ask_aside_about_run(PROJECT, &session, "ghost", &[], "why?")
+        .await
+        .is_err());
     // It is the desktop's own: a paired device cannot ask it.
     assert!(!server.commands().iter().any(|name| name.contains("aside")));
     server.shutdown().await;

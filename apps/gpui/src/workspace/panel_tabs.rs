@@ -564,6 +564,19 @@ impl Workspace {
                         })),
                 );
             }
+            {
+                let (asked, title) = (id.clone(), run.title.clone());
+                actions = actions.child(
+                    Button::new(SharedString::from(format!("run-ask-{id}")))
+                        .label(tr("Ask"))
+                        .xsmall()
+                        .ghost()
+                        .tooltip(tr("Ask aside about this run, with its live state"))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.open_aside_about_run(asked.clone(), title.clone(), window, cx)
+                        })),
+                );
+            }
             if panel::can_cancel(&run.status) {
                 let cancel = id.clone();
                 actions = actions.child(

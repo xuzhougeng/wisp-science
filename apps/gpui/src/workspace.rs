@@ -288,6 +288,9 @@ pub struct Workspace {
     plan_feedback: Entity<InputState>,
     /// What was asked aside, by conversation. Kept until the app closes.
     asides: HashMap<String, crate::aside::Thread>,
+    /// The run the next side question is about, with its title, when it
+    /// was asked from a run card.
+    aside_run: Option<(String, String)>,
     palette_scroll: ScrollHandle,
     sessions: Vec<SessionSearchInfo>,
     /// Conversations in any project that are waiting for the user.
@@ -1213,6 +1216,7 @@ impl Workspace {
             aside_input,
             plan_feedback,
             asides: HashMap::new(),
+            aside_run: None,
             capabilities: None,
             capabilities_error: None,
             archive: None,
@@ -2351,6 +2355,8 @@ impl Workspace {
     fn clear_transcript(&mut self) {
         self.poll = None;
         self.rows.clear();
+        // A side question about a run was about the conversation left.
+        self.aside_run = None;
         self.turn_tokens.clear();
         self.batches.clear();
         self.swarm = None;

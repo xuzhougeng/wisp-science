@@ -5062,7 +5062,51 @@ impl Server {
         earlier: &[AsideExchange],
         question: &str,
     ) -> Result<String> {
+        self.ask_aside_about(project, session, None, earlier, question)
+            .await
+    }
+
+    /// A question aside about one of the project's runs: as [`ask_aside`],
+    /// with the run's live snapshot (status, timing, exit code, command,
+    /// progress and its stored output tails) as the newest source, as the
+    /// WebView asks from a run card.
+    ///
+    /// [`ask_aside`]: Self::ask_aside
+    pub async fn ask_aside_about_run(
+        &self,
+        project: &str,
+        session: &str,
+        run: &str,
+        earlier: &[AsideExchange],
+        question: &str,
+    ) -> Result<String> {
+        self.ask_aside_about(project, session, Some(run), earlier, question)
+            .await
+    }
+
+    async fn ask_aside_about(
+        &self,
+        project: &str,
+        session: &str,
+        run: Option<&str>,
+        earlier: &[AsideExchange],
+        question: &str,
+    ) -> Result<String> {
         self.own_conversation(project, session).await?;
+        let snapshot = match run {
+            None => None,
+            Some(run) => {
+                let record = self.0.store.get_run(run).await?.context("Run not found")?;
+                ensure!(
+                    record.project_id == project,
+                    "Run does not belong to the selected project"
+                );
+                Some(crate::aside::run_snapshot(
+                    &record,
+                    chrono::Utc::now().timestamp(),
+                ))
+            }
+        };
         let store = &self.0.store;
         let options = self.stored_options(session).await?;
         let mut model = self.0.model.read().unwrap().pick(&options.model)?.provider;
@@ -5075,7 +5119,15 @@ impl Server {
             .load_recent_turn_preview_messages(session, crate::aside::TURNS)
             .await?;
         let provider = (self.0.models)(model);
-        match crate::aside::ask(provider.as_ref(), &messages, earlier, question).await {
+        match crate::aside::ask(
+            provider.as_ref(),
+            &messages,
+            snapshot.as_deref(),
+            earlier,
+            question,
+        )
+        .await
+        {
             Ok(answer) => Ok(answer),
             Err(error) => bail!(
                 "{}",

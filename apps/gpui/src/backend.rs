@@ -2149,6 +2149,20 @@ impl Backend {
 
     /// Asks the conversation's model a question about the conversation,
     /// without adding anything to it.
+    pub fn ask_aside_about_run(
+        &self,
+        project: String,
+        session: String,
+        run: String,
+        earlier: Vec<wisp_server::desktop::AsideExchange>,
+        question: String,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.ask_aside_about_run(&project, &session, &run, &earlier, &question)
+                .await
+        })
+    }
+
     pub fn ask_aside(
         &self,
         project: String,

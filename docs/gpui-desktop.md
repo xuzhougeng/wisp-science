@@ -1115,8 +1115,12 @@ Limits of this slice:
   question (at most 4,000 characters). It can be asked while a turn runs
   and then reads what has been saved so far. The answer is the model's
   reading of the conversation, not a search of the project: there is no
-  list of the evidence it used, and a question cannot be tied to one run
-  or to selected text. The thread is kept per conversation in the window
+  list of the evidence it used. Ask on a run card ties the next questions
+  to that run: its live snapshot (status, timing, exit code, command,
+  progress and stored output tails) goes along as the newest source, as
+  the WebView's run-card questions do, until it is put away or another
+  conversation opens; the run's server is not asked anything. A question
+  cannot be tied to selected text. The thread is kept per conversation in the window
   that asked, until the app closes; nothing is written to the database,
   and the tokens are not in the usage statistics or the trajectory.
 - Follow-up questions cost one more, short model request after every turn

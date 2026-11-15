@@ -33,16 +33,80 @@ pub struct Exchange {
     pub answer: String,
 }
 
-/// What the model is sent: the rule, the conversation, the latest earlier
-/// exchanges as they went, and the question.
-fn request(messages: &[Message], earlier: &[Exchange], question: &str) -> Vec<Message> {
+/// Said to the model when the question is about one run.
+const ABOUT_RUN: &str = "The question is about the run quoted after the conversation: its \
+    live snapshot is the newest source. Answer from it first, and say when it does not show \
+    what is asked (for instance, whether its outputs were checked).";
+
+/// One run as the WebView's side questions quote it: the live snapshot the
+/// question is about, its stored output tails whole.
+pub(crate) fn run_snapshot(run: &wisp_store::RunRecord, now: i64) -> String {
+    let ago = |at: i64| format!("{}s ago", now.saturating_sub(at));
+    let mut text = format!(
+        "Run {} \"{}\"\nstatus: {}\ncontext: {} ({})\n",
+        run.id,
+        run.title,
+        run.status.as_str(),
+        run.context_id,
+        run.kind
+    );
+    let started = run.started_at.unwrap_or(run.created_at);
+    match run.ended_at {
+        Some(ended) => text.push_str(&format!(
+            "ran for: {}s, ended {}\n",
+            ended.saturating_sub(started),
+            ago(ended)
+        )),
+        None => text.push_str(&format!("running for: {}s\n", now.saturating_sub(started))),
+    }
+    if let Some(code) = run.exit_code {
+        text.push_str(&format!("exit code: {code}\n"));
+    }
+    if let Some(limit) = run.timeout_secs.filter(|seconds| *seconds > 0) {
+        text.push_str(&format!("time limit: {limit}s\n"));
+    }
+    if let Some(polled) = run.last_polled_at {
+        text.push_str(&format!("last successful status poll: {}\n", ago(polled)));
+    }
+    let mut section = |label: &str, value: Option<&str>| {
+        if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
+            text.push_str(&format!("{label}:\n{value}\n"));
+        }
+    };
+    section("last poll error", run.last_poll_error.as_deref());
+    section("command", run.command.as_deref());
+    if run.progress_json != "{}" {
+        section("progress", Some(&run.progress_json));
+    }
+    section("stdout tail", run.stdout_tail.as_deref());
+    section("stderr tail", run.stderr_tail.as_deref());
+    text.trim_end().to_owned()
+}
+
+/// What the model is sent: the rule, the conversation (and the run the
+/// question is about, when it is about one), the latest earlier exchanges
+/// as they went, and the question.
+fn request(
+    messages: &[Message],
+    run: Option<&str>,
+    earlier: &[Exchange],
+    question: &str,
+) -> Vec<Message> {
     let conversation = match excerpt::transcript(messages, &SHOWN) {
         empty if empty.is_empty() => "(Nothing has been said in the conversation yet.)".into(),
         text => text,
     };
+    let mut quoted = format!("<conversation>\n{conversation}\n</conversation>");
+    if let Some(run) = run {
+        quoted.push_str(&format!("\n\n<run>\n{run}\n</run>"));
+    }
+    let system = match run {
+        Some(_) => format!("{SYSTEM}\n\n{ABOUT_RUN}"),
+        None => SYSTEM.to_owned(),
+    };
     let mut request = vec![
-        Message::system(SYSTEM),
-        Message::user(format!("<conversation>\n{conversation}\n</conversation>")),
+        Message::system(system),
+        Message::user(quoted),
         // The quoted conversation is not a question; the model acknowledges
         // it so that the roles keep alternating.
         Message::assistant("I have read the conversation."),
@@ -59,6 +123,7 @@ fn request(messages: &[Message], earlier: &[Exchange], question: &str) -> Vec<Me
 pub(crate) async fn ask(
     model: &dyn Provider,
     messages: &[Message],
+    run: Option<&str>,
     earlier: &[Exchange],
     question: &str,
 ) -> Result<String> {
@@ -70,7 +135,7 @@ pub(crate) async fn ask(
     );
     let reply = tokio::time::timeout(
         WAIT,
-        model.complete(&request(messages, earlier, question), &[]),
+        model.complete(&request(messages, run, earlier, question), &[]),
     )
     .await
     .context("The model did not answer within two minutes")??;
@@ -96,7 +161,7 @@ mod tests {
     #[test]
     fn the_model_is_sent_the_conversation_then_the_exchanges_then_the_question() {
         let conversation = [Message::user("count the reads"), Message::assistant("100.")];
-        let sent = request(&conversation, &[exchange(1)], "why 100?");
+        let sent = request(&conversation, None, &[exchange(1)], "why 100?");
         let roles: Vec<_> = sent.iter().map(|message| message.role).collect();
         assert_eq!(
             roles,
@@ -119,9 +184,38 @@ mod tests {
 
         // Only the latest exchanges go along, in the order they went.
         let many: Vec<_> = (0..EARLIER + 3).map(exchange).collect();
-        let sent = request(&[], &many, "and now?");
+        let sent = request(&[], None, &many, "and now?");
         assert_eq!(sent.len(), 3 + 2 * EARLIER + 1);
         assert_eq!(sent[3].content.as_text(), "q3");
         assert!(sent[1].content.as_text().contains("Nothing has been said"));
+    }
+
+    #[test]
+    fn a_question_about_a_run_quotes_its_live_snapshot() {
+        let mut run = wisp_store::RunRecord::new("r1", "p", "local", "Align reads", "command");
+        run.status = wisp_store::RunStatus::Failed;
+        run.created_at = 100;
+        run.started_at = Some(110);
+        run.ended_at = Some(170);
+        run.exit_code = Some(2);
+        run.command = Some("bwa mem ref.fa reads.fq".into());
+        run.stderr_tail = Some("\n[E::bwa_idx_load] fail to locate the index\n".into());
+        let snapshot = run_snapshot(&run, 200);
+        assert!(
+            snapshot.starts_with("Run r1 \"Align reads\"\nstatus: failed\n"),
+            "{snapshot}"
+        );
+        assert!(snapshot.contains("ran for: 60s, ended 30s ago"));
+        assert!(snapshot.contains("exit code: 2"));
+        assert!(snapshot.contains("command:\nbwa mem ref.fa reads.fq"));
+        assert!(snapshot.ends_with("stderr tail:\n[E::bwa_idx_load] fail to locate the index"));
+        assert!(!snapshot.contains("stdout tail"));
+        let sent = request(&[], Some(&snapshot), &[], "why did it fail?");
+        assert!(sent[0].content.as_text().contains("about the run quoted"));
+        assert!(sent[1].content.as_text().contains("<run>\nRun r1"));
+        assert!(!request(&[], None, &[], "q")[1]
+            .content
+            .as_text()
+            .contains("<run>"));
     }
 }
