@@ -213,7 +213,12 @@ impl Workspace {
                     .child(acp::command_line(&agent.command, &agent.args)),
             );
         if self.acp_testing.as_deref() == Some(id.as_str()) {
-            about = about.child(div().text_xs().text_color(muted).child(tr("Starting…")));
+            about = about.child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(tr("Starting the agent…")),
+            );
         } else if let Some(report) = self.acp_reports.get(&id) {
             about = about.child(match report {
                 Ok(report) => chip(acp::report_line(report), Tone::Success, cx),

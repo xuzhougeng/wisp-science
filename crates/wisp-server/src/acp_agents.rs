@@ -142,6 +142,10 @@ pub(crate) async fn test(store: &Store, id: &str) -> Result<AcpAgentReport> {
         .into_iter()
         .find(|agent| agent.id == id)
         .context("That agent is gone")?;
+    ensure!(
+        found(&agent.command),
+        "The agent's program was not found on this computer"
+    );
     let handle = tokio::time::timeout(TEST_TIMEOUT, AcpSessionHandle::launch(profile(&agent)))
         .await
         .context("The agent did not answer within 30 seconds")?

@@ -1156,8 +1156,8 @@ Stop: it reads stopped; ask the model to use the variable it had set and
 confirm the reply says the interpreter was stopped. Press Dismiss: the
 chip goes, and the next code call starts a fresh interpreter.
 In Settings, ACP agents, add an agent with a name and a program that is
-not installed: it is listed with Program not found, and Test says it
-could not be started. Change it to an installed ACP agent (or adapter)
+not installed: it is listed with Program not found, and Test says its
+program was not found on this computer. Change it to an installed ACP agent (or adapter)
 with its arguments, one of them quoted: Test shows its name, version,
 `ACP v1` and how it signs in. Press Add, then Escape: the form closes and
 Settings stays. Remove it: the question has to be answered first.

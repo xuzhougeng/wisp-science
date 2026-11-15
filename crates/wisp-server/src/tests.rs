@@ -6796,7 +6796,11 @@ async fn acp_agents_are_kept_in_the_shared_list_tested_and_removed() {
     assert_eq!(kept[0]["id"], id.as_str());
     assert_eq!(kept[0]["command"], "wisp-no-such-agent");
     assert_eq!(kept[0]["args"], json!(["--acp"]));
-    assert!(server.test_acp_agent(&id).await.is_err());
+    let missing = server.test_acp_agent(&id).await.unwrap_err().to_string();
+    assert_eq!(
+        missing,
+        "The agent's program was not found on this computer"
+    );
     assert!(server.test_acp_agent("missing").await.is_err());
 
     server

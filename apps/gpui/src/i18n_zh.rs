@@ -1359,4 +1359,6 @@ pub const ZH: &[(&str, &str)] = &[
     ("The program and its arguments are one line each", "程序和参数各占一行"),
     ("That agent is gone", "该智能体已不存在"),
     ("The agent did not answer within 30 seconds", "智能体 30 秒内没有回应"),
+    ("Starting the agent…", "正在启动智能体…"),
+    ("The agent's program was not found on this computer", "在这台电脑上找不到该智能体的程序"),
 ];
