@@ -7335,6 +7335,7 @@ dependencies = [
  "hex",
  "ignore",
  "image",
+ "portable-pty",
  "qrcode",
  "regex",
  "reqwest 0.12.28",

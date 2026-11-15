@@ -12,6 +12,7 @@ axum = { workspace = true }
 futures-util = { workspace = true }
 chrono = { workspace = true }
 base64 = { workspace = true }
+portable-pty = { workspace = true }
 dunce = { workspace = true }
 flate2 = { workspace = true }
 regex = { workspace = true }

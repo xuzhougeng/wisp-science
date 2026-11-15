@@ -53,6 +53,7 @@ mod schedules;
 mod session_import;
 mod subagents;
 mod subscriptions;
+mod terminals;
 #[cfg(test)]
 mod tests;
 mod toolchain;
@@ -170,6 +171,8 @@ struct Inner {
     /// Python; set by tests only.
     method_search_evaluator:
         std::sync::RwLock<Option<Arc<dyn method_search::prepare::MethodSearchEvaluator>>>,
+    /// Terminals drawn in the window.
+    terminals: terminals::Terminals,
 }
 
 /// What runs a turn: Wisp's own agent (with the model its side requests
@@ -328,6 +331,7 @@ impl Server {
             tidying: AtomicBool::new(false),
             assistant_lock: Default::default(),
             method_search_evaluator: Default::default(),
+            terminals: Default::default(),
         })))
     }
 
@@ -1345,6 +1349,7 @@ impl Server {
         if let Err(error) = self.0.store.pause_method_searches_for_shutdown().await {
             tracing::warn!(%error, "Could not pause method searches for shutdown");
         }
+        self.0.terminals.stop_all();
     }
 }
 

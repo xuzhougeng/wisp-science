@@ -11780,3 +11780,115 @@ async fn a_skill_is_turned_into_a_workflow_to_review() {
         .is_err());
     server.shutdown().await;
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_terminal_runs_in_the_app_and_answers_what_is_typed() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let root = std::path::PathBuf::from(server.project_root(PROJECT).await.unwrap());
+    let script = "printf 'hello from %s\\n' \"$(basename \"$PWD\")\"; read line; printf 'got %s\\n' \"$line\"";
+    let info = server
+        .start_terminal(
+            PROJECT,
+            "local",
+            "Test".into(),
+            crate::terminals::Launch {
+                program: "/bin/sh".into(),
+                args: vec!["-c".into(), script.into()],
+                cwd: Some(root.clone()),
+                display_cwd: root.display().to_string(),
+                envs: Vec::new(),
+            },
+        )
+        .unwrap();
+    assert!(info.running);
+    assert_eq!(server.terminals(PROJECT).len(), 1);
+    assert!(server.terminals("other").is_empty());
+
+    // Reads by offset until what is wanted has been written.
+    use base64::Engine as _;
+    let decode = |output: &wisp_dto::native_conversations::TerminalOutput| {
+        String::from_utf8_lossy(
+            &base64::engine::general_purpose::STANDARD
+                .decode(&output.base64)
+                .unwrap(),
+        )
+        .into_owned()
+    };
+    let until = |wanted: &'static str| {
+        let server = server.clone();
+        let id = info.id.clone();
+        async move {
+            let mut seen = String::new();
+            let mut cursor = None;
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                loop {
+                    let output = server
+                        .read_terminal(PROJECT, &id, cursor, std::time::Duration::from_millis(500))
+                        .await
+                        .unwrap();
+                    seen.push_str(&decode(&output));
+                    cursor = Some(output.end);
+                    if seen.contains(wanted) {
+                        return output;
+                    }
+                }
+            })
+            .await
+            .unwrap_or_else(|_| panic!("never saw {wanted:?} in {seen:?}"))
+        }
+    };
+    let folder = root.file_name().unwrap().to_string_lossy().into_owned();
+    let first = until("hello from").await;
+    assert!(decode(&first).contains(&folder) || first.reset);
+    server.resize_terminal(PROJECT, &info.id, 40, 120).unwrap();
+    assert!(server.resize_terminal(PROJECT, &info.id, 0, 120).is_err());
+    server.write_terminal(PROJECT, &info.id, b"abc\r").unwrap();
+    until("got abc").await;
+    // It ends by itself; reading again from nothing redraws all of it.
+    let ended = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let output = server
+                .read_terminal(
+                    PROJECT,
+                    &info.id,
+                    None,
+                    std::time::Duration::from_millis(200),
+                )
+                .await
+                .unwrap();
+            if output.exit_code.is_some() {
+                return output;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(ended.exit_code, Some(0));
+    assert!(ended.reset);
+    assert!(decode(&ended).contains("got abc"));
+    assert!(!server.terminals(PROJECT)[0].running);
+    assert!(server.write_terminal(PROJECT, &info.id, b"more").is_err());
+    // Only its own project reads or closes it.
+    assert!(server
+        .read_terminal("other", &info.id, None, std::time::Duration::ZERO)
+        .await
+        .is_err());
+    server.close_terminal(PROJECT, &info.id).unwrap();
+    assert!(server.terminals(PROJECT).is_empty());
+    assert!(server.close_terminal(PROJECT, &info.id).is_err());
+
+    // A local terminal opens only inside the project's folder.
+    assert!(server
+        .open_terminal(PROJECT, None, Some("../elsewhere"))
+        .await
+        .is_err());
+    assert!(server
+        .open_terminal(PROJECT, None, Some("missing"))
+        .await
+        .is_err());
+    server.shutdown().await;
+}
