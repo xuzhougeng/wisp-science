@@ -785,6 +785,13 @@ pub const ZH: &[(&str, &str)] = &[
     ("It read:", "它读取了："),
     // Sample project.
     ("Make a sample project to try Wisp on", "创建一个示例项目来试用 Wisp"),
+    ("Example conversations", "示例对话"),
+    ("This copy of Wisp has no example conversations.", "这个 Wisp 没有附带示例对话。"),
+    ("The example was copied into {}, to go on with there.", "示例已复制到 {}，可在那里继续。"),
+    ("Copy to a project", "复制到项目"),
+    ("Make a project first, then copy the example into it.", "请先创建一个项目，再把示例复制进去。"),
+    ("{} requests and {} tool calls, as recorded. Read only: copy it into a project to go on with it.", "按录制保留的 {} 个请求和 {} 次工具调用。只读：复制到项目后即可继续。"),
+    ("Research recorded with Wisp, to read before you start. Copying one into a project adds it as a conversation you can go on with, with the files it refers to; files already there are left as they are.", "用 Wisp 录制的研究过程，开始前可以先读一读。复制到项目后，它会成为一个可以继续的对话，并带上它提到的文件；项目里已有的文件保持不变。"),
     ("Put the sample here", "把示例放在这里"),
     ("The sample project is ready. Its README says what to try.", "示例项目已就绪。可以试什么，见其中的 README。"),
     ("Sub-agent model", "子智能体模型"),

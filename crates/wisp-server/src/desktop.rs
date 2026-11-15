@@ -1152,6 +1152,57 @@ impl Server {
         self.register_local_project(&folder).await
     }
 
+    /// The example conversations that ship with Wisp, in the order of the
+    /// research they record. None when the app has no `seed/` folder.
+    pub async fn demos(&self) -> Result<Vec<DemoInfo>> {
+        Ok(
+            tokio::task::spawn_blocking(|| crate::demos::list(wisp_paths::seed_dir().as_deref()))
+                .await?,
+        )
+    }
+
+    /// One example conversation, to be read as it was recorded.
+    pub async fn demo(&self, id: &str) -> Result<Demo> {
+        let id = id.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let dir = wisp_paths::seed_dir().context("This app has no example conversations")?;
+            crate::demos::load(&dir, &id).map(|manifest| manifest.demo)
+        })
+        .await?
+    }
+
+    /// Copies an example into `project` as a conversation of its own, to be
+    /// continued there, with the files it refers to; files already in the
+    /// project are left as they are. Returns the new conversation.
+    pub async fn copy_demo(&self, id: &str, project: &str) -> Result<String> {
+        let _admission = self.0.admission.read().await;
+        let root = std::path::PathBuf::from(self.project_root(project).await?);
+        let id = id.to_owned();
+        let (title, messages) = tokio::task::spawn_blocking(move || {
+            let dir = wisp_paths::seed_dir().context("This app has no example conversations")?;
+            let manifest = crate::demos::load(&dir, &id)?;
+            let messages = crate::demos::messages(&manifest.demo.rows);
+            ensure!(
+                !messages.is_empty(),
+                "The example {id} has no conversation to copy"
+            );
+            crate::demos::write_files(&dir, &id, &root, &manifest.files)?;
+            anyhow::Ok((manifest.demo.title, messages))
+        })
+        .await??;
+        let store = &self.0.store;
+        let frame = uuid::Uuid::new_v4().to_string();
+        store
+            .create_frame(&frame, project, "main", &self.model_id(""))
+            .await?;
+        store.replace_messages(&frame, &messages).await?;
+        if !title.trim().is_empty() {
+            store.rename_session(&frame, project, title.trim()).await?;
+        }
+        store.mark_frame_seen(&frame).await?;
+        Ok(frame)
+    }
+
     /// What Wisp can draw on in `project`, counted: skills, connectors, MCP
     /// servers, SSH hosts, memory, and the command-line tools found on
     /// this computer.
@@ -6129,6 +6180,7 @@ pub use crate::channels::{
 };
 pub use crate::compact::Compacted;
 pub use crate::delegation::{DelegatedBatch, DelegatedTask};
+pub use crate::demos::{Demo, DemoInfo, DemoRole, DemoRow};
 pub use crate::device_bridge::{DeviceBridge, DeviceBridgeState};
 pub use crate::experts::{Expert, ExpertInput};
 pub use crate::explorations::{FileChange, PromotionPreview, StartedExploration};

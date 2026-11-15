@@ -138,7 +138,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Project sync | Project settings, Sync: Sync now publishes the project through a relay or a shared folder (set in Settings, Remote access) or brings in another device's changes, Copy device code, and after a conflict Use the other device's copy or Keep this device's copy, each asked first; a project in a cloud-drive folder can save itself there instead. Join a project from another device on the home page takes a device code and a folder |
 | Capabilities | A dialog for the open project: how many skills, connectors, MCP servers and SSH hosts are on or usable, the state of memory, and which command-line tools were found on this computer |
 | Follow-up questions | After an answer, up to three questions you could ask next show above the composer; picking one puts it in the composer to send or change, and the list can be put away |
-| Sample project | The home page's flask button makes a small sample project in a folder you choose and opens it: made-up counts for twelve samples, a script, and a README of things to ask |
+| Sample project | The home page's flask button makes a small sample project in a folder you choose and opens it: made-up counts for twelve samples, a script, and a README of things to ask. Its book button opens Example conversations: the research recorded with Wisp that ships with it, read only, and Copy to a project, which adds one to a project as a conversation to go on with |
 | Host folders | With an SSH host saved, the Files tab offers it beside the project: its folders are listed, to walk through and see what is there |
 | File origin | A file's preview has Origin: which tool call last wrote it, with the code it ran, the project files it read and the conversation, which it can open |
 | Terminal | Terminals drawn in the window, in a dock at the foot of the conversation (Terminals in the top bar shows or hides it; hidden, they keep running): the Files tab's terminal button (or the command palette) opens one in the folder being browsed, + one in the project's folder, the host button one on a saved SSH host, and Terminal on a host's row in Environments or over a host's folder in Files one there; several at once as tabs, each closed with its ×; the dock's last button opens the system's terminal instead |
@@ -581,10 +581,19 @@ Limits of this slice:
   switch and after idle hours are not ported.
 - The sample project is four small text files with made-up numbers,
   written into a new folder ("Wisp sample project", numbered if that
-  exists) under the folder you choose, never over anything. Unlike the
-  WebView's example it has no prepared conversations and is not read
-  only: it is an ordinary project, and asking about it uses your model.
-  Removing it is removing a project.
+  exists) under the folder you choose, never over anything. It is an
+  ordinary project, and asking about it uses your model. Removing it is
+  removing a project.
+- Example conversations are the WebView's example project: the
+  recordings in the bundled `seed/` folder (`manifest_*.json`, and the
+  figures and tables of two of them in `assets_*.tar.gz`), found where the
+  bundled skills are. Reading one asks no model and writes nothing.
+  Copying one into a project writes its notes and files into the project
+  folder (the archives' files at its top, by name), skips any path that is
+  already there, and only takes plain files from the archives; the conversation keeps the recorded
+  answers and tool results (the plans are left out, as the WebView leaves
+  them) and is named after the example. The title is the first sentence
+  of the recorded request.
 - A host's folders are only listed: files there cannot be opened,
   downloaded, uploaded, renamed or removed from the Files tab, and
   nothing on the host is changed by looking. The host has to have passed
@@ -1632,6 +1641,13 @@ Delete a conversation and confirm what was saved from it is still listed.
 On the home page press the flask button and choose a folder: a "Wisp
 sample project" folder appears there and opens as a project with its
 README, data and script. Cancel the folder dialog: nothing is made.
+On the home page press the book button: Example conversations opens on
+the first recording. Choose another; open a tool row and a thinking row
+and close them again. Press Copy to a project, press Escape (the menu
+closes, the dialog stays), press Escape again (the dialog closes). Copy
+the RNA-seq example into a project: its conversation opens there, named
+after it, and the counts matrix is in the project folder; copy it again
+and confirm a file you had changed is left as it was.
 With a real SSH host that has passed its check, open the Files tab:
 the host is offered beside This project. Choose it: its home folder is
 listed, folders first; go into one and back Up; Reload. Choose This

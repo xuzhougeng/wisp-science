@@ -993,6 +993,21 @@ impl Backend {
         self.local(move |host| async move { host.create_sample_project(&parent).await })
     }
 
+    /// The example conversations that ship with Wisp.
+    pub fn demos(&self) -> Reply<Vec<wisp_server::desktop::DemoInfo>> {
+        self.local(move |host| async move { host.demos().await })
+    }
+
+    /// One example conversation, as it was recorded.
+    pub fn demo(&self, id: String) -> Reply<wisp_server::desktop::Demo> {
+        self.local(move |host| async move { host.demo(&id).await })
+    }
+
+    /// Copies an example into a project; the reply is the new conversation.
+    pub fn copy_demo(&self, id: String, project: String) -> Reply<String> {
+        self.local(move |host| async move { host.copy_demo(&id, &project).await })
+    }
+
     /// The research archive of a conversation, if it has been frozen.
     pub fn research_archive(
         &self,

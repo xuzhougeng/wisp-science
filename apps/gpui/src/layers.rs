@@ -46,6 +46,11 @@ pub enum Layer {
     JoinSyncedProject,
     /// The dialog that names a new project before its folder is made.
     NewProject,
+    /// The example conversations that ship with Wisp, read only: a dialog
+    /// over the home page.
+    Examples,
+    /// The projects the example being read can be copied into.
+    ExampleCopy,
     /// The dialog that names an exploration before it starts.
     StartExploration,
     /// What keeping an exploration would bring in.
@@ -277,6 +282,7 @@ impl Layer {
             | Layer::PaperFinalize => Some(Layer::Papers),
             Layer::PaperWaiver => Some(Layer::PaperFinalize),
             Layer::BatchGroupMenu | Layer::ConfirmBatchDelete => Some(Layer::SelectMode),
+            Layer::ExampleCopy => Some(Layer::Examples),
             _ => None,
         }
     }
@@ -840,6 +846,20 @@ mod tests {
         // So is the dialog for a new project.
         stack.open(Layer::NewProject);
         assert_eq!(stack.dismiss_top(), Some(Layer::NewProject));
+        assert_eq!(stack.dismiss_top(), None);
+    }
+
+    #[test]
+    fn the_copy_menu_closes_before_the_examples() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::Examples);
+        stack.open(Layer::ExampleCopy);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ExampleCopy));
+        assert!(stack.contains(Layer::Examples));
+        // Closing the dialog closes the menu drawn in it.
+        stack.open(Layer::ExampleCopy);
+        assert!(stack.close(Layer::Examples));
+        assert!(!stack.contains(Layer::ExampleCopy));
         assert_eq!(stack.dismiss_top(), None);
     }
 

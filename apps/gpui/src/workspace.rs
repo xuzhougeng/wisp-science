@@ -5,6 +5,7 @@ mod assistant_view;
 mod calendar_view;
 mod capabilities_view;
 mod conversation_actions;
+mod demos_view;
 mod explore_view;
 mod favorites_view;
 mod files_panel;
@@ -702,6 +703,16 @@ pub struct Workspace {
     history: Vec<Item>,
     before: Option<i64>,
     list: ListState,
+    /// The example conversations that ship with Wisp, once listed.
+    demos: Vec<wisp_server::desktop::DemoInfo>,
+    /// The example being read.
+    demo: Option<wisp_server::desktop::Demo>,
+    /// Its rows, drawn as they scroll into view.
+    demo_list: ListState,
+    /// Its folded rows that are open.
+    demo_open: HashSet<usize>,
+    /// Why the examples could not be read or copied.
+    demo_note: Option<String>,
     /// Open dismissible surfaces; the only place that decides what Escape closes.
     layers: EscapeStack,
     files: FilesState,
@@ -1520,6 +1531,11 @@ impl Workspace {
             history: vec![],
             before: None,
             list: ListState::new(0, ListAlignment::Bottom, px(300.)),
+            demos: vec![],
+            demo: None,
+            demo_list: ListState::new(0, ListAlignment::Top, px(300.)),
+            demo_open: HashSet::new(),
+            demo_note: None,
             layers: EscapeStack::default(),
             files: FilesState::default(),
             file_view,
@@ -1636,6 +1652,8 @@ impl Workspace {
                 self.project_form_error = None;
             }
             Some(Layer::ConfirmSyncReplace | Layer::JoinSyncedProject | Layer::NewProject) => {}
+            Some(Layer::Examples) => self.close_examples(),
+            Some(Layer::ExampleCopy) => {}
             Some(Layer::StartExploration) => self.explore_from = None,
             Some(Layer::ExplorationPreview) => self.explore_preview = None,
             Some(Layer::ConfirmExploration) => self.explore_question = None,
@@ -1775,6 +1793,7 @@ impl Workspace {
                     || self.layers.contains(Layer::ProjectSettings)
                     || self.layers.contains(Layer::JoinSyncedProject)
                     || self.layers.contains(Layer::NewProject)
+                    || self.layers.contains(Layer::Examples)
                     || self.layers.contains(Layer::StartExploration)
                     || self.layers.contains(Layer::ExplorationPreview)
                 {
@@ -3944,6 +3963,11 @@ impl Render for Workspace {
         };
         let root = if self.layers.contains(Layer::NewProject) {
             root.child(self.render_new_project(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::Examples) {
+            root.child(self.render_examples(cx))
         } else {
             root
         };

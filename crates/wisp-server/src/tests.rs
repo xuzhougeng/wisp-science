@@ -7520,6 +7520,57 @@ async fn a_sample_project_is_made_where_the_user_says() {
 }
 
 #[tokio::test]
+async fn an_example_is_read_and_copied_into_a_project_to_go_on_with() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let examples = server.demos().await.unwrap();
+    assert_eq!(examples.len(), 6);
+    let rnaseq = &examples[2];
+    assert_eq!(rnaseq.id, "manifest_esr1_03_rnaseq");
+    let read = server.demo(&rnaseq.id).await.unwrap();
+    assert_eq!(read.title, rnaseq.title);
+    assert!(read
+        .rows
+        .iter()
+        .any(|row| row.role == desktop::DemoRole::Tool));
+    assert!(server.demo("../manifest_esr1_03_rnaseq").await.is_err());
+
+    let parent = temp.path().join("somewhere");
+    std::fs::create_dir(&parent).unwrap();
+    let project = server.create_sample_project(&parent).await.unwrap();
+    let folder = parent.join("Wisp sample project");
+    std::fs::write(folder.join("GSE153250_counts_matrix.tsv"), "mine").unwrap();
+    let session = server.copy_demo(&rnaseq.id, &project).await.unwrap();
+    // A conversation of its own, named as the example, to go on with.
+    let listed = server.conversations(&project, "", false).await.unwrap();
+    let row = listed.rows.iter().find(|row| row.id == session).unwrap();
+    assert_eq!(row.title, rnaseq.title);
+    let saved = server.0.store.load_messages(&session).await.unwrap();
+    assert!(saved.len() > 50, "{}", saved.len());
+    assert!(saved[0].content.as_text().contains("GSE153250"));
+    // Its files, and nothing of the project's written over.
+    assert!(folder.join("GSE153250_sample_groups.txt").is_file());
+    assert_eq!(
+        std::fs::read_to_string(folder.join("GSE153250_counts_matrix.tsv")).unwrap(),
+        "mine"
+    );
+    // Copied again, it is another conversation.
+    let again = server.copy_demo(&rnaseq.id, &project).await.unwrap();
+    assert_ne!(again, session);
+    assert!(server
+        .copy_demo("manifest_nothing", &project)
+        .await
+        .is_err());
+    assert!(server
+        .copy_demo(&rnaseq.id, "no-such-project")
+        .await
+        .is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_conversations_research_is_drafted_reviewed_and_frozen() {
     // A model that answers a turn, and drafts an archive when asked to.
     struct Archivist;

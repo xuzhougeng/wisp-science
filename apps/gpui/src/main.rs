@@ -15,6 +15,7 @@ mod compose;
 mod console;
 mod controls;
 mod decision;
+mod demos;
 mod explore;
 mod favorites;
 mod files;

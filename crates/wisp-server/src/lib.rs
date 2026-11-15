@@ -13,6 +13,7 @@ mod debug_request;
 mod decision_model;
 mod delegation;
 mod delegation_isolation;
+mod demos;
 pub mod desktop;
 mod device_bridge;
 mod excerpt;
