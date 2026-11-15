@@ -51,6 +51,7 @@ mod review;
 mod schedules;
 mod sequences;
 mod settings;
+mod share;
 mod slash;
 mod smiles;
 mod state;

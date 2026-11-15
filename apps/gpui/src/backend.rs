@@ -258,6 +258,14 @@ impl Backend {
     }
 
     /// A conversation, whole, as a Markdown document.
+    pub fn share_rows(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<Vec<wisp_dto::native_conversations::ShareRow>> {
+        self.local(move |host| async move { host.share_rows(&project, &session).await })
+    }
+
     pub fn export_conversation(&self, project: String, session: String) -> Reply<String> {
         self.local(move |host| async move { host.export_conversation(&project, &session).await })
     }

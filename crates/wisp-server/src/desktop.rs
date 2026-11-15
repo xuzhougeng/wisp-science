@@ -1214,6 +1214,19 @@ impl Server {
         Ok(crate::export::markdown(&title, &name, &rows))
     }
 
+    /// What was said in a conversation, for a page to share: your messages
+    /// and its answers, oldest first, without tool calls. Read from what is
+    /// saved, as the export is.
+    pub async fn share_rows(
+        &self,
+        project: &str,
+        session: &str,
+    ) -> Result<Vec<wisp_dto::native_conversations::ShareRow>> {
+        self.own_conversation(project, session).await?;
+        let messages = self.whole_transcript(session).await?;
+        Ok(crate::export::share_rows(&crate::runtime::items(&messages)))
+    }
+
     /// A conversation as a trajectory: every turn's steps in the order
     /// they happened, with what each tool and model call took.
     pub async fn trajectory(

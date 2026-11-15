@@ -7122,6 +7122,17 @@ async fn a_conversation_is_exported_whole_as_markdown() {
     let between = &text[first..second];
     assert!(between.contains("**Tool `"), "{text}");
     assert!(between.contains("## Wisp"), "{text}");
+    // A page to share has what was said, in order, and no tools.
+    let shared = server.share_rows(PROJECT, &session).await.unwrap();
+    assert_eq!(
+        shared.first().map(|row| row.text.as_str()),
+        Some("write the file")
+    );
+    assert!(shared.iter().any(|row| row.role == "assistant"));
+    assert!(shared
+        .iter()
+        .all(|row| matches!(row.role.as_str(), "user" | "assistant")));
+    assert!(server.share_rows("missing", &session).await.is_err());
     // Only the conversation's own project may export it.
     assert!(server
         .export_conversation("missing", &session)

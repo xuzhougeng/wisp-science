@@ -182,6 +182,56 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Saves what was said in the conversation as one HTML page to pass
+    /// on, light or dark as the window is.
+    pub(super) fn share_conversation_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some((project, session)), Some(title)) = (
+            self.current_ids(),
+            self.current_row().map(|row| row.title.clone()),
+        ) else {
+            return;
+        };
+        self.error = None;
+        self.notice = None;
+        let dark = cx.theme().mode.is_dark();
+        let folder = dirs::document_dir()
+            .or_else(dirs::home_dir)
+            .unwrap_or_default();
+        let place = cx.prompt_for_new_path(&folder, Some(&crate::share::file_name(&title)));
+        let backend = self.backend.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = async {
+                let Some(path) = place
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .map_err(|error| error.to_string())?
+                else {
+                    return Ok(None);
+                };
+                let rows = receive(backend.share_rows(project, session)).await?;
+                let page = crate::share::html(&title, &rows, dark)?;
+                std::fs::write(&path, page).map_err(|error| {
+                    crate::i18n::fill(tr("Could not save {}: {}"), &[&path.display(), &error])
+                })?;
+                Ok::<_, String>(Some(path))
+            }
+            .await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(Some(path)) => {
+                        this.notice =
+                            Some(crate::i18n::fill(tr("Saved to {}"), &[&path.display()]));
+                    }
+                    Ok(None) => {}
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn begin_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(title) = self
             .current_row()
@@ -572,6 +622,19 @@ impl Workspace {
                     .on_click(
                         cx.listener(|this, _, window, cx| this.export_conversation(window, cx)),
                     ),
+            )
+            .child(
+                Button::new("conversation-share-page")
+                    .label(tr("Share as HTML"))
+                    .small()
+                    .ghost()
+                    .tooltip(tr(
+                        "Save what was said as one page to open in any browser, without the tools",
+                    ))
+                    .disabled(busy)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.share_conversation_page(window, cx)
+                    })),
             )
             .child(
                 Button::new("conversation-debug-request")

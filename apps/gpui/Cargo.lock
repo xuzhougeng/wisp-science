@@ -9188,6 +9188,7 @@ dependencies = [
  "gpui",
  "gpui-component",
  "hayro",
+ "markdown",
  "serde",
  "serde_json",
  "tokio",

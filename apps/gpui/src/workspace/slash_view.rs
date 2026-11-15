@@ -83,7 +83,7 @@ impl Workspace {
                 }
             }
             Slash::Permission => self.toggle_full_access(window, cx),
-            Slash::Share => self.export_conversation(window, cx),
+            Slash::Share => self.share_conversation_page(window, cx),
             Slash::Help => {
                 self.layers.open(Layer::SlashMenu);
                 self.focus_composer(window, cx);

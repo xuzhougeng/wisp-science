@@ -115,7 +115,7 @@ to find in the running app.
 | Compute environment for the conversation [计算环境] | Yes | Partial: the default, this computer or a saved SSH host, for where runs start; Python, R and the shell stay on this computer | store |
 | Context usage meter and manual compaction | Yes | Yes: how full the context is, as a percentage that opens the list of what the model is sent, message by message; /compact shortens the history at once | served |
 | Request a review of the conversation [请求审查] | Yes | Partial: a Review dialog lists what the reviewer model finds and puts the corrections in the composer; the report is not kept with the conversation | tauri |
-| Share as long image or HTML [分享为长图] | Yes | Partial: Export saves the conversation as a Markdown file; no long image or HTML | ui |
+| Share as long image or HTML [分享为长图] | Yes | Partial: Share as HTML (and `/share`) saves the whole conversation's messages and answers as one page with the WebView's share stylesheet, and Export saves a Markdown file; no picking messages and no long image | ui |
 | Save the conversation as a skill [保存为技能] | Yes | Done: puts the request for the `skill-creator` skill in the composer, after anything already typed | shared |
 | Interactive runtime status (Python / R) [Local · Python · R] | Yes | Yes: the conversation's Python and R interpreters above the composer with their state and version, and in the tooltip their path, PID, generation, memory in use, when they started and last ran code, and why they stopped; Stop, and a console with their variables, code of your own and Restart | shared |
 
@@ -149,7 +149,7 @@ to find in the running app.
 | Feature | WebView | GPUI | Host |
 | --- | --- | --- | --- |
 | Conversation tabs | Yes | Done: the conversations opened in a window show as tabs above the conversation, across projects; not kept across restarts | ui |
-| Share conversation [分享对话] | Yes | Partial: as an exported Markdown file; no share link | tauri |
+| Share conversation [分享对话] | Yes | Partial: as an HTML page or a Markdown file saved where you choose; no share link | tauri |
 | Trajectory [轨迹] | Yes | Done: a dialog with the totals and every turn's steps; a step opens to its whole text | store |
 | Research archive [研究归档] | Yes | Partial: the model drafts a report and scripts, you edit title and report, and freezing writes them into the project and makes the conversation read-only; no choice of files to snapshot or delete, no script editing, no continuation link | store |
 | Pending decisions [N 个待处理] | Yes | Done (sidebar inbox) | served |

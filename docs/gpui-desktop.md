@@ -169,7 +169,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Save as skill | A conversation's Save as skill button (or the command palette) puts a request in the composer that asks Wisp to distill the conversation into a reusable skill; you send it, changed or not |
 | Trajectory | A conversation's Trajectory button (or the command palette) shows every turn's steps in the order they happened: what you asked, what the model said, each tool with how it went and how long it took, and each model call with its tokens; the totals are at the top |
 | Windows | New Window (the app menu, Cmd/Ctrl+Shift+N, or the command palette) opens another window on the same projects, each with its own page and conversation; a project's card or palette row opens it in a window of its own, which opens again at the next start until it is closed |
-| Export | A conversation's Export button saves the whole of it as a Markdown file where you choose |
+| Export | A conversation's Export button saves the whole of it as a Markdown file where you choose; Share as HTML (or `/share`) saves what was said as one page to open in any browser |
 | Notebook | A tab of the side panel: the conversation's code as cells, with what each run returned; copy, save to favorites, or show it in the conversation |
 | Research calendar | A page across every project: a month as a grid with how many records each day holds, and the chosen day's records; projects can be left out |
 | Scheduled tasks | A page across projects (the clock on the home page, or the command palette): a prompt is sent into a new conversation of its project every few hours, daily or weekly at a time, while the app is open; each task can be run now, switched off or deleted, and its latest firing opens the conversation it made |
@@ -838,8 +838,9 @@ Limits of this slice:
   sent as a message. There is no list that narrows as you type.
   `/fork` branches the conversation as it stands, `/rewind` asks about
   going back to the latest message, `/permission` switches full access
-  (asking first when it turns it on), and `/share` exports the
-  conversation as Markdown rather than publishing it anywhere.
+  (asking first when it turns it on), and `/share` saves the
+  conversation as an HTML page, as Share as HTML does, rather than
+  publishing it anywhere.
 - The browser bridge is off until it is switched on, and then listens
   on this computer only, on the port the extension dials
   (127.0.0.1:18765), so it and the WebView desktop cannot both hold it.
@@ -1315,8 +1316,13 @@ Limits of this slice:
   what it returned, each cut to about four thousand bytes. It is read from
   what is saved, the whole conversation and not only the loaded part; a
   turn that is still running is in it only as far as it has been saved.
-  Pictures are not embedded, and there is no HTML, long image or share
-  link.
+  Pictures are not embedded. Share as HTML writes one page instead, with
+  the WebView's share stylesheet (copied into `apps/gpui/assets`, a test
+  keeping it equal while the WebView sources exist): your messages and the
+  answers, light or dark as the window is, without tool calls or
+  reasoning. Answers are rendered from Markdown with raw HTML shown as
+  text and links that could run code dropped. It shares the whole
+  conversation; there is no picking messages, long image or share link.
 - The notebook is a reading of the transcript, as in the WebView, not
   something saved: every `python`, `r` and `shell` call with its output,
   and every code block an answer shows; code that was shown and then run

@@ -1,7 +1,7 @@
 //! A conversation as a Markdown document, for the researcher to keep or
 //! pass on outside Wisp.
 
-use wisp_dto::native_conversations::Item;
+use wisp_dto::native_conversations::{Item, ShareRow};
 
 /// How much of one tool's input or output the document carries.
 const TOOL_LIMIT: usize = 4_000;
@@ -89,10 +89,47 @@ pub(crate) fn markdown(title: &str, project: &str, rows: &[Item]) -> String {
     out
 }
 
+/// What was said, for a page to share: each message and each answer with
+/// text, oldest first, without the tools between them.
+pub(crate) fn share_rows(rows: &[Item]) -> Vec<ShareRow> {
+    rows.iter()
+        .filter(|row| matches!(row.role.as_str(), "user" | "assistant"))
+        .filter(|row| !row.text.trim().is_empty())
+        .map(|row| ShareRow {
+            role: row.role.clone(),
+            text: row.text.trim().to_owned(),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::runtime::item;
+
+    #[test]
+    fn a_shared_page_has_what_was_said_and_no_tools() {
+        let mut call = item("tool", "secret output");
+        call.tool_name = Some("shell".into());
+        let rows = share_rows(&[
+            item("user", " Align the reads "),
+            item("assistant", ""),
+            call,
+            item("assistant", "Mapped: **98%**."),
+            item("user", "  "),
+        ]);
+        let said: Vec<_> = rows
+            .iter()
+            .map(|row| (row.role.as_str(), row.text.as_str()))
+            .collect();
+        assert_eq!(
+            said,
+            [
+                ("user", "Align the reads"),
+                ("assistant", "Mapped: **98%**.")
+            ]
+        );
+    }
 
     #[test]
     fn a_conversation_reads_as_a_document_and_tools_cannot_break_it() {

@@ -31,7 +31,7 @@ pub enum Slash {
     Rewind,
     /// Switches full access on or off.
     Permission,
-    /// Exports the conversation as a document.
+    /// Saves what was said as one HTML page to pass on.
     Share,
     /// Lists the commands.
     Help,
@@ -79,7 +79,7 @@ pub const COMMANDS: [(&str, Slash, &str); 19] = [
     (
         "/share",
         Slash::Share,
-        "Export this conversation as Markdown",
+        "Save this conversation as an HTML page to share",
     ),
     ("/help", Slash::Help, "List these commands"),
 ];
