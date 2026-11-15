@@ -688,4 +688,41 @@ impl Workspace {
             )
             .child(card)
     }
+
+    /// Over a subagent's conversation: it is watched, not written to.
+    pub(super) fn render_subagent_bar(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let session = self.state.session.as_ref()?;
+        let parent = self.dispatched.get(session)?.clone();
+        let muted = cx.theme().muted_foreground;
+        let title = self
+            .known
+            .get(&parent)
+            .map(|row| row.title.clone())
+            .unwrap_or_default();
+        Some(
+            div()
+                .h_flex()
+                .gap_2()
+                .px_4()
+                .py_2()
+                .flex_shrink_0()
+                .bg(tone_color(Tone::Neutral, cx).opacity(0.06))
+                .child(glyph("bot").text_color(muted))
+                .child(div().flex_1().text_xs().text_color(muted).child(crate::i18n::fill(
+                    tr("A subagent of “{}”. Its agent takes instructions only from there; you can watch it here."),
+                    &[&title],
+                )))
+                .child(
+                    Button::new("subagent-parent")
+                        .label(tr("Open the parent"))
+                        .small()
+                        .ghost()
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            if let Some(project) = this.state.project.clone() {
+                                this.open_session(project, parent.clone(), window, cx);
+                            }
+                        })),
+                ),
+        )
+    }
 }

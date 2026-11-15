@@ -375,6 +375,9 @@ pub struct ConversationList {
     pub grouped: HashMap<String, String>,
     /// Branch id to the id of the conversation it was branched from.
     pub branched: HashMap<String, String>,
+    /// Subagent conversation id to the id of the conversation that started
+    /// it; it is watched, not written to.
+    pub dispatched: HashMap<String, String>,
 }
 
 /// Names one user message of a conversation without trusting a row number:
@@ -1601,12 +1604,14 @@ impl Server {
             .into_iter()
             .map(|(id, ..)| id)
             .collect();
+        let dispatched = self.0.store.list_dispatched_sessions(project).await?;
         Ok(ConversationList {
             rows,
             pinned,
             folders,
             grouped,
             branched,
+            dispatched,
         })
     }
 
@@ -5310,7 +5315,7 @@ pub struct TurnDefaults {
 
 const DEFAULT_FULL_ACCESS: &str = "desktop.conversation.default_full_access";
 /// The WebView desktop's key for the model sub-agents work on.
-const SUBAGENT_MODEL: &str = "subagent_model_id";
+pub(crate) const SUBAGENT_MODEL: &str = "subagent_model_id";
 
 /// A saved item in full.
 #[derive(Clone, Debug, PartialEq, Eq)]

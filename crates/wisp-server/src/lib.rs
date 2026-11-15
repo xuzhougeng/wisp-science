@@ -40,6 +40,7 @@ mod runtime;
 mod sample;
 mod schedules;
 mod session_import;
+mod subagents;
 mod subscriptions;
 #[cfg(test)]
 mod tests;
@@ -141,6 +142,10 @@ struct Inner {
     device: device_bridge::Slot,
     /// Per project: what turns hold shared and exploration changes alone.
     project_locks: explorations::ProjectActivityLocks,
+    /// A parent conversation's next turn resumes to handle a subagent's
+    /// report: what it is told, whether dispatching is held, and the
+    /// original request.
+    subagent_resumes: std::sync::Mutex<HashMap<String, (String, bool, String)>>,
 }
 
 /// What runs a turn: Wisp's own agent (with the model its side requests
@@ -282,6 +287,7 @@ impl Server {
             channels: Default::default(),
             device: Default::default(),
             project_locks: Default::default(),
+            subagent_resumes: Default::default(),
         })))
     }
 
@@ -516,8 +522,10 @@ impl Server {
         // The same block the WebView saves, so a reloaded transcript shows
         // the files and the model sees their project-relative paths.
         request.message = dto::message_with_attachments(&request.message, &request.attachments);
+        // A resumed turn carries no new message.
         ensure!(
-            !request.message.trim().is_empty() && request.message.len() <= 128 * 1024,
+            (request.resume || !request.message.trim().is_empty())
+                && request.message.len() <= 128 * 1024,
             "Message must contain 1–131072 bytes"
         );
         ensure!(
@@ -624,8 +632,50 @@ impl Server {
             .clone()
             .try_acquire_owned()
             .context("Server is busy; at most four turns can run concurrently")?;
-        let full_access = options.full_access && origin == channels::TurnOrigin::Desktop;
+        // Only the desktop's own turns (and its subagents') may run with the
+        // conversation's full access.
+        let full_access = options.full_access
+            && matches!(
+                origin,
+                channels::TurnOrigin::Desktop
+                    | channels::TurnOrigin::Subagent { unattended: false }
+            );
         let lab_mail = origin == channels::TurnOrigin::LabMail;
+        // A subagent's conversation takes instructions only from its parent;
+        // a parent resumed for a subagent's report is told about it.
+        let dispatched_from = self.subagent_parent(&request.session_id).await;
+        ensure!(
+            dispatched_from.is_none()
+                || request.resume
+                || matches!(origin, channels::TurnOrigin::Subagent { .. }),
+            "This subagent conversation only takes instructions from the conversation that started it."
+        );
+        let resumed = if request.resume {
+            self.0
+                .subagent_resumes
+                .lock()
+                .unwrap()
+                .remove(&request.session_id)
+        } else {
+            None
+        };
+        let mut notes = notes;
+        let subagents = match (&dispatched_from, resumed) {
+            (Some(_), _) => None,
+            (None, Some((prompt, held, authorization))) => {
+                notes.push(prompt);
+                Some(subagents::SubagentSetup {
+                    authorization,
+                    held,
+                    unattended: origin != channels::TurnOrigin::Desktop,
+                })
+            }
+            (None, None) => Some(subagents::SubagentSetup {
+                authorization: request.message.clone(),
+                held: false,
+                unattended: origin != channels::TurnOrigin::Desktop,
+            }),
+        };
         let auto_review = options.auto_review;
         let plan_mode = options.plan_first;
         let engine = match (acp, model) {
@@ -638,6 +688,7 @@ impl Server {
                 let agent = self
                     .wisp_agent(
                         project, root, &request, &session, &options, &model, lab_mail, notes,
+                        subagents,
                     )
                     .await?;
                 Engine::Wisp(Box::new(agent), model.provider.clone())
@@ -657,9 +708,11 @@ impl Server {
         if let Err(error) = self.record_last_message_session(&request.session_id).await {
             tracing::warn!(%error, "Could not record the latest conversation");
         }
-        // A conversation a lab member's mail opened keeps its sender's name.
-        if !lab_mail && self.0.store.max_message_seq(&request.session_id).await? == 0
-            || !lab_mail
+        // A conversation a lab member's mail or a parent's dispatch opened
+        // keeps the name it was given.
+        let keep_name = lab_mail || matches!(origin, channels::TurnOrigin::Subagent { .. });
+        if !keep_name && self.0.store.max_message_seq(&request.session_id).await? == 0
+            || !keep_name
                 && matches!(&engine, Engine::Wisp(agent, _) if !agent
                 .ctx
                 .messages
@@ -779,6 +832,7 @@ impl Server {
         model: &config::ModelConfig,
         lab_mail: bool,
         notes: Vec<String>,
+        subagents: Option<subagents::SubagentSetup>,
     ) -> Result<wisp_core::Agent> {
         let subagent = self.subagent_model_for(&request.session_id, model).await;
         // A lab member's agent can list the lab and write to its members.
@@ -815,6 +869,26 @@ impl Server {
             lab,
         )
         .await?;
+        // A top-level conversation can run subagents; a subagent cannot,
+        // and asks its parent rather than the researcher.
+        match subagents {
+            Some(setup) => {
+                for tool in self.subagent_tools(project, &request.session_id, setup) {
+                    agent.add_tool(tool);
+                }
+            }
+            None => {
+                let keep: Vec<String> = agent
+                    .tools
+                    .names()
+                    .into_iter()
+                    .filter(|name| !subagents::WITHHELD.contains(name))
+                    .map(str::to_owned)
+                    .collect();
+                let tools = std::mem::replace(&mut agent.tools, wisp_tools::Registry::builtins());
+                agent.tools = tools.filtered(&keep);
+            }
+        }
         if member {
             agent.add_tool(Box::new(channels::lab_mail::LabMembersTool {
                 server: self.clone(),
@@ -841,6 +915,7 @@ impl Server {
         live.suggesting = false;
         live.review = None;
         live.reviewing = false;
+        live.stop_reason = None;
         session.suggested.notify_waiters();
         live.calls.clear();
         live.provenance.clear();
@@ -1060,6 +1135,7 @@ impl Server {
                 .unwrap_or_else(|| "ACP agent".into()),
         };
         let exploration = self.exploration_state(project, &request.session_id).await;
+        let dispatched = self.subagent_parent(&request.session_id).await.is_some();
         let live = session.live.lock().unwrap();
         // Completion clears the live transcript only after persisting it. If it
         // crossed these store reads, reload instead of returning an old page as
@@ -1107,7 +1183,8 @@ impl Server {
             running: live.running,
             stopping: live.running && session.cancel.load(Ordering::Relaxed),
             activity_status: None,
-            read_only: archived,
+            // A subagent's conversation is watched, not written to.
+            read_only: archived || dispatched,
             model_id,
             composer_references: Some(false),
             context_view: Some(false),

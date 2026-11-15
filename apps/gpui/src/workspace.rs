@@ -270,6 +270,8 @@ pub struct Workspace {
     grouped: HashMap<String, String>,
     /// Branch id to the id of the conversation it was branched from.
     branched: HashMap<String, String>,
+    /// Subagent conversation id to the conversation that started it.
+    dispatched: HashMap<String, String>,
     /// The message the rewind question is about.
     rewind_turn: Option<TurnRef>,
     /// Keys of the sections that are folded.
@@ -1052,6 +1054,7 @@ impl Workspace {
             folders: vec![],
             grouped: HashMap::new(),
             branched: HashMap::new(),
+            dispatched: HashMap::new(),
             rewind_turn: None,
             collapsed: HashSet::new(),
             picks: Picks::default(),
@@ -2026,6 +2029,7 @@ impl Workspace {
                         this.folders = list.folders;
                         this.grouped = list.grouped;
                         this.branched = list.branched;
+                        this.dispatched = list.dispatched;
                         this.picks.keep(&this.sessions);
                         if browsing && this.state.session.is_none() && !this.pending {
                             // The first one on screen, whatever the sections.

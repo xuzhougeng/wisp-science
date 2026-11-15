@@ -73,13 +73,16 @@ impl Workspace {
 
     /// The conversation list as it is drawn, sections included.
     pub(super) fn session_rows(&self, cx: &App) -> Vec<Row> {
+        // Subagents are listed under the conversation that started them,
+        // the way branches are under theirs.
+        let nested = organise::nested(&self.branched, &self.dispatched);
         organise::layout(
             &Listed {
                 rows: &self.sessions,
                 pinned: &self.pinned,
                 folders: &self.folders,
                 grouped: &self.grouped,
-                branched: &self.branched,
+                branched: &nested,
                 collapsed: &self.collapsed,
                 now: unix_now(),
             },

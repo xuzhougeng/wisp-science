@@ -2097,6 +2097,9 @@ impl Workspace {
         if let Some(bar) = self.render_exploration_bar(cx) {
             content = content.child(bar);
         }
+        if let Some(bar) = self.render_subagent_bar(cx) {
+            content = content.child(bar);
+        }
         if !self.settings.configured() {
             let attention = tone_color(Tone::Attention, cx);
             content = content.child(

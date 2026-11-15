@@ -449,9 +449,32 @@ pub fn conversations(count: usize) -> String {
     }
 }
 
+/// Branches and subagents together, each under the conversation it came
+/// from, for laying the list out.
+pub fn nested(
+    branched: &HashMap<String, String>,
+    dispatched: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    branched
+        .iter()
+        .chain(dispatched.iter())
+        .map(|(child, parent)| (child.clone(), parent.clone()))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subagents_nest_like_branches() {
+        let branched = HashMap::from([("b".to_owned(), "a".to_owned())]);
+        let dispatched = HashMap::from([("s".to_owned(), "a".to_owned())]);
+        let both = nested(&branched, &dispatched);
+        assert_eq!(both.len(), 2);
+        assert_eq!(both["s"], "a");
+        assert_eq!(both["b"], "a");
+    }
 
     const NOW: i64 = 1_800_000_000;
 

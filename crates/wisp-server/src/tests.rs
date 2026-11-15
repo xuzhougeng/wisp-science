@@ -53,6 +53,66 @@ impl Provider for FakeModel {
     }
 }
 
+/// A model that, asked by a conversation, hands the work to a subagent;
+/// as the subagent, answers it; and reviews and handles its report.
+struct DispatchingModel;
+
+#[async_trait]
+impl Provider for DispatchingModel {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+        Ok(Completion {
+            content: "Report: the subagent counted 42 reads.".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        messages: &[Message],
+        _tools: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        let said = |needle: &str| {
+            messages
+                .iter()
+                .any(|m| m.content.as_text().contains(needle))
+        };
+        let text = if said("[From the parent conversation's agent]") {
+            "42 reads"
+        } else if said("Report: the subagent counted") {
+            "Handled the subagent's report."
+        } else if messages.iter().any(|m| m.role == wisp_llm::Role::Tool) {
+            "Started a subagent."
+        } else {
+            return Ok(Completion {
+                tool_calls: vec![ToolCall {
+                    id: "dispatch-1".into(),
+                    kind: "function".into(),
+                    function: wisp_llm::FunctionCall {
+                        name: "dispatch_subagent".into(),
+                        arguments: json!({"instruction": "Count the reads in data.fastq", "title": "Counting"})
+                            .to_string(),
+                    },
+                }],
+                finish_reason: Some("tool_calls".into()),
+                ..Default::default()
+            });
+        };
+        sink.on_text(text);
+        Ok(Completion {
+            content: text.into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+}
+
 pub(crate) fn config(root: &Path) -> Config {
     Config {
         data: root.join("data"),
@@ -8619,6 +8679,94 @@ async fn explorations_branch_a_turn_into_copies_and_keep_one() {
         "v2"
     );
     let _ = fourth;
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_subagent_works_in_its_own_conversation_and_reports_back() {
+    let temp = tempfile::tempdir().unwrap();
+    let factory: ModelFactory = Arc::new(|_| Box::new(DispatchingModel));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let folder = temp.path().join("reads");
+    std::fs::create_dir(&folder).unwrap();
+    let project = server.register_local_project(&folder).await.unwrap();
+    // Dispatching asks first, like any tool that sets work going, unless
+    // the conversation has full access.
+    let defaults = server.turn_defaults().await.unwrap();
+    server
+        .set_turn_defaults(desktop::TurnDefaults {
+            full_access: true,
+            ..defaults
+        })
+        .await
+        .unwrap();
+    let parent = server.create_conversation(&project).await.unwrap();
+    server
+        .send(&project, send_text(&parent, "p1", "count the reads please"))
+        .await
+        .unwrap();
+    turn_done(&server, &parent).await;
+
+    // The subagent has its own conversation, under its parent.
+    let list = server.conversations(&project, "", false).await.unwrap();
+    let (child, owner) = list.dispatched.iter().next().unwrap();
+    assert_eq!(owner, &parent);
+    let child = child.clone();
+    let titled = list.rows.iter().find(|row| row.id == child).unwrap();
+    assert_eq!(titled.title, "Counting");
+    let asked = texts_of(&server, &child).await;
+    assert!(asked.iter().any(
+        |text| text.starts_with("[From the parent conversation's agent]")
+            && text.ends_with("Count the reads in data.fastq")
+    ));
+    // It is watched, not written to.
+    let refused = server
+        .send(&project, send_text(&child, "c1", "hello"))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(refused.contains("only takes instructions"), "{refused}");
+
+    // Its outcome comes back as a report, and the parent handles it.
+    let handled = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        loop {
+            let texts = texts_of(&server, &parent).await;
+            if texts
+                .iter()
+                .any(|text| text == "Handled the subagent's report.")
+            {
+                return texts;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the parent must handle the report");
+    assert!(handled
+        .iter()
+        .any(|text| text == "Report: the subagent counted 42 reads."));
+    // The resumed turn added no message of the user's.
+    let users = server
+        .0
+        .store
+        .load_messages(&parent)
+        .await
+        .unwrap()
+        .iter()
+        .filter(|message| message.role == wisp_llm::Role::User)
+        .count();
+    assert_eq!(users, 1);
+    let status = server
+        .subagent_status(&project, &parent, None)
+        .await
+        .unwrap();
+    assert!(status.contains(&child) && status.contains("Counting"));
+    assert!(server
+        .subagent_status(&project, &child, Some(&parent))
+        .await
+        .is_err());
     server.shutdown().await;
 }
 

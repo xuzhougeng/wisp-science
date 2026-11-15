@@ -197,6 +197,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Plan first | The model investigates and submits a plan as a card; nothing is changed until you approve it, which leaves plan mode and starts the work |
 | First-run guide | On a first run a dialog walks through four steps: welcome, what Wisp can do, a model (a DeepSeek key sets up deepseek-v4-flash as the default and deepseek-v4-pro beside it, or a link to Settings, Models for another provider), and the tools on this computer (install Python with uv). Get started or Escape puts it away for good, in this desktop and the WebView one |
 | Import from Codex or Claude Code | The import button in the conversation list's header lists the conversations Codex CLI (`~/.codex/sessions`) and Claude Code (`~/.claude/projects`) keep on this computer, newest first, with the first thing asked and the folder it was had in. Import brings one into the project in a group named `codex` or `claude`, with its messages and tool calls; importing it again brings in only what was added since, and leaves a conversation continued here alone. Only this computer is looked at, not SSH or WSL hosts |
+| Subagents | The model can start a subagent: a conversation of its own for one focused task, listed under the conversation that started it, with a bar saying it is watched and Open the parent; its composer is closed. When it ends, a report is added to the parent, whose agent goes on to handle it |
 | Explorations | On an answer, Start an exploration from here names one and continues the conversation in its own copy of the project; more candidates of the same round start from the same answer. The source shows a bar with each candidate and Abandon the round; a candidate shows its status, View changes and keep (what it changed, what the mainline changed meanwhile, why it cannot be kept), Discard, Back to the mainline and Abandon the round; when it cannot be kept, Show both folders and Finish by hand |
 | Bringing a branch back | In a branch, Bring back in the conversation's toolbar has the model summarise what the branch did since it split off; you read and change the summary, and Bring it back adds it to the conversation the branch came from, which reads it from then on, and opens that conversation. A branch is brought back once |
 | Approving a plan | When the model sets out a new plan it waits for you: the plan's steps show above the composer with Approve, Turn down, and a box to say what should change; Send feedback (or Return in the box) turns the plan down with your words, which the model reads to revise it |
@@ -282,6 +283,28 @@ Limits of this slice:
   branch back with a summary are not ported, and a branch made here does not
   take part in them. A conversation cannot be deleted or moved while it has
   branches; delete those first.
+- Subagents follow the WebView's `subagent_tool.rs` and `dispatch.rs`. A
+  conversation's agent gets `dispatch_subagent` (a new subagent, or a
+  follow-up to an idle one it started), `subagent_status` and
+  `stop_subagent`; only the conversation that started a subagent may use
+  them on it. Each dispatch gives the child the parent's execution
+  contexts and default compute target, and the configured subagent model
+  (or the parent's with `model_tier: inherit`); the instruction arrives
+  with a brief saying the researcher only watches. A subagent's own turns
+  get none of those tools, nor `ask_user` or `map_items`, and a send from
+  the desktop or a chat to its conversation is refused. When its turn
+  ends, the parent's model reviews the outcome into a report (a plain one
+  if it does not answer within a minute), which is added to the parent
+  once that conversation is at rest; the parent then resumes without a
+  new message, told what came back and the request it originally
+  answered. A child that stopped at its step limit holds
+  `dispatch_subagent` in that resumed turn, so the researcher is asked
+  first. Dispatching asks first, like other tools that set work going,
+  unless the conversation has full access; a subagent's turns keep that
+  asking when its parent's turn came from a chat. Not ported: the side
+  model's automatic answer to a subagent's approvals (its own approval
+  card is answered in its conversation), and `delegate_tasks` with its
+  workflow cards.
 - Explorations follow the WebView's `exploration_commands.rs`,
   `exploration_promotion.rs` and `exploration_workspace.rs`, whose
   services and tests are carried over. The first candidate of a round
@@ -1780,6 +1803,12 @@ Sync now on one, then on the other: the second says both changed and
 offers Use the other device's copy and Keep this device's copy; press
 one, then Escape: only the question closes; answer it: the files match
 the side chosen.
+With a model that can use tools and full access in a conversation, ask
+it to start a subagent that lists the project's files: a conversation
+named after the task appears under it, with the instruction and a bar
+saying it is watched; its composer does not send. When it ends, the
+parent shows a report and its agent answers it without a new message of
+yours.
 In a project with a file `notes.txt`, ask something and wait for the
 answer; on it press Start an exploration from here, keep the offered
 name and Start: a conversation opens with the same history and a bar

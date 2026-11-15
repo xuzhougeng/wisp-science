@@ -116,6 +116,9 @@ pub struct Live {
     pub review: Option<Result<crate::review::Review, String>>,
     /// The reviewer is reading the latest turn right now.
     pub reviewing: bool,
+    /// Why the latest turn's loop stopped short (`max_iterations`), if it
+    /// did.
+    pub stop_reason: Option<String>,
     /// What the running turn's tool calls reported doing, to be kept in
     /// the execution log when it ends.
     pub provenance: Vec<wisp_core::provenance::ProvenanceRecord>,

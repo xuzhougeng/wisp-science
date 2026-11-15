@@ -1698,4 +1698,7 @@ pub const ZH: &[(&str, &str)] = &[
     ("modified", "修改"),
     ("exploration_round_active: finish the current exploration round before starting from another conversation", "exploration_round_active：请先结束当前这一轮探索，再从其他会话开始"),
     ("This project is busy. Try again when the current project operation finishes.", "这个项目正忙。请在当前项目操作结束后重试。"),
+    ("A subagent of “{}”. Its agent takes instructions only from there; you can watch it here.", "“{}”的子智能体。它只接受那个会话的指令；你可以在这里查看。"),
+    ("Open the parent", "打开父会话"),
+    ("This subagent conversation only takes instructions from the conversation that started it.", "这个子智能体会话只接受启动它的会话的指令。"),
 ];

@@ -839,16 +839,23 @@ pub async fn run(
         isolation: scope.isolation,
     };
     let guidance = Some(&session.guidance);
-    let mut result = agent
-        .run_with_images(
-            &request.message,
-            &[],
-            false,
-            &out,
-            Some(&session.cancel),
-            guidance,
-        )
-        .await;
+    // A resumed turn goes on from the history, with no new message.
+    let mut result = if request.resume {
+        agent
+            .run_resume(&out, Some(&session.cancel), guidance)
+            .await
+    } else {
+        agent
+            .run_with_images(
+                &request.message,
+                &[],
+                false,
+                &out,
+                Some(&session.cancel),
+                guidance,
+            )
+            .await
+    };
     // Guidance that arrived after the loop last looked is answered in the
     // same turn. Once none is waiting the turn takes no more, under the same
     // lock `guide` takes, so nothing put in is left unread.
@@ -956,6 +963,10 @@ pub async fn run(
                 },
             )
             .await?;
+    }
+    // A subagent's parent learns whether it stopped at its step limit.
+    if let Ok(outcome) = &result {
+        session.live.lock().unwrap().stop_reason = outcome.stop_reason().map(str::to_owned);
     }
     result?;
     anyhow::ensure!(

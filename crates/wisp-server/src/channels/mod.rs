@@ -61,6 +61,11 @@ pub(crate) enum TurnOrigin {
     Desktop,
     Chat,
     LabMail,
+    /// A subagent's turn its parent started; `unattended` when the
+    /// parent's own turn was not the desktop's.
+    Subagent {
+        unattended: bool,
+    },
 }
 
 /// Which chat app a text came from. Approvals are answered by text only
