@@ -1096,6 +1096,8 @@ pub const ZH: &[(&str, &str)] = &[
     // Counts, sizes and sentences that carry a value.
     ("{} in memory", "内存占用 {}"),
     ("PID {}", "进程号 {}"),
+    ("{} lines back", "已向上翻 {} 行"),
+    ("Back to live", "回到最新"),
     ("generation {}", "第 {} 代"),
     ("started {}", "{}启动"),
     ("last ran code {}", "上次运行代码：{}"),

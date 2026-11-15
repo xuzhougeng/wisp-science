@@ -689,6 +689,39 @@ impl Workspace {
                             .bg(foreground.opacity(0.45)),
                     );
                 }
+                // Scrolled back: say so, with the way back to what is live.
+                let back = tab.screen.scrolled();
+                if back > 0 {
+                    body = body.child(
+                        div()
+                            .absolute()
+                            .top_1()
+                            .right_2()
+                            .h_flex()
+                            .gap_1()
+                            .px_2()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(border)
+                            .bg(background)
+                            .text_xs()
+                            .text_color(muted)
+                            .child(crate::i18n::fill(tr("{} lines back"), &[&back]))
+                            .child(
+                                Button::new("terminal-follow")
+                                    .label(tr("Back to live"))
+                                    .xsmall()
+                                    .ghost()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let active = this.terminal.active;
+                                        if let Some(tab) = this.terminal.tabs.get_mut(active) {
+                                            tab.screen.follow();
+                                            cx.notify();
+                                        }
+                                    })),
+                            ),
+                    );
+                }
                 if !tab.info.running {
                     body = body.child(div().text_xs().text_color(muted).child(crate::i18n::fill(
                         tr("The terminal ended (exit code {})."),
