@@ -145,7 +145,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Updates | Wisp looks for a newer release when it starts (unless turned off) and shows a note only when there is one; Settings, General, has Check for updates and the At start switch, says whether a newer release has been published and opens the release page |
 | Tabs | The conversations you open in a window line up as tabs above the conversation, across projects; click one to go back to it, close one to drop it from the strip |
 | Sidebar | The project's sidebar hides for more room and comes back with the button left of the conversation's title or Cmd/Ctrl+B; it stays as it was left, across restarts. Cmd/Ctrl+Shift+F brings it back if hidden and puts you in its search, which finds conversations by their title or by any word in their messages |
-| Notifications | When a turn ends or a tool waits for approval while Wisp is in the background, a system notification is posted and, if chosen, a sound is played (Settings, General) |
+| Notifications | When a turn ends or a tool waits for approval while Wisp is in the background, a system notification is posted and, if chosen, a sound is played (Settings, General); a recent conversation that is not open is announced too when it stops working |
 | Language | Settings, General, chooses the interface language: System (Chinese on a Chinese system, English otherwise), English or 中文 |
 | Delete a project's folder | Removing a project offers Delete folder too: after you type the project's name, the project is removed and its folder is deleted with every file in it |
 | What the model is sent | Clicking the context percentage by the composer (or the command palette) lists the conversation's working set: the instructions, the summary that stands in for compacted turns, and each message with about how many tokens it takes; above them, the same set by kind (system prompt, rules, skills, sub-agent definitions, conversation), with the core's estimate and each one's share, as the WebView's context usage splits it, tool definitions excepted |
@@ -646,16 +646,17 @@ Limits of this slice:
   has gone unvisited the longest. Closing a tab closes nothing else: the
   conversation and a turn running in it are untouched. Tabs cannot be
   reordered or moved between windows.
-- Notifications are for the conversation that is open in a window, and
-  only while that window is not the active one: a turn that ends in a
-  conversation you are not looking at is shown by the sidebar, not
-  announced. They are posted with what the system already has: on macOS
+- Notifications are posted only while the window is not the active one:
+  for the conversation open in it when its turn ends or a tool waits, and
+  for a conversation among the twelve most recent that is not open when
+  it stops working, as answered or as needing you (an answer to read or a
+  question to answer; the host does not say which). They are posted with
+  what the system already has: on macOS
   through `osascript` (so the banner is filed under Script Editor, and
   the first one may ask for permission) and `afplay`; on Linux through
   `notify-send` and `canberra-gtk-play`, silently doing nothing when
   those are missing. Windows gets the sound only. The sound cannot be
-  chosen. Nothing is posted about turns a paired phone started unless
-  their conversation is open here.
+  chosen.
 - The Chinese interface is not complete. Translated: the fixed text of
   the pages, panels and dialogs, the names of panel tabs, palette commands
   and settings sections, the placeholders of text fields, statuses,

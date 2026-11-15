@@ -57,6 +57,7 @@ pub const ZH: &[(&str, &str)] = &[
     ("Branch from here", "从这里分支"),
     ("Review this turn", "审查这一轮"),
     ("Open in a new window", "在新窗口打开"),
+    ("A conversation needs you", "有会话需要你处理"),
     ("Your own", "自定义"),
     ("Any other key, given to the code the model runs under the environment variable you name. Adding one with a variable that is already here replaces its value.", "其他任何密钥，会以你指定的环境变量名提供给模型运行的代码。添加一个已存在的变量会替换它的值。"),
     ("Name, for you", "名称（给你看的）"),

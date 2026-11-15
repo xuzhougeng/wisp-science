@@ -2051,9 +2051,21 @@ impl Workspace {
         let reply = self.backend.recent_conversations(12);
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
-            let _ = this.update(cx, |this, cx| {
+            let _ = this.update_in(cx, |this, window, cx| {
                 match result {
-                    Ok(recent) => this.recent = recent,
+                    Ok(recent) => {
+                        // Conversations that are not open and stopped
+                        // working are told about like the open one.
+                        let open = this.state.session.clone();
+                        for (event, title) in
+                            crate::notify::elsewhere(&this.recent, &recent, open.as_deref())
+                        {
+                            if crate::notify::wanted(this.notify, window.is_window_active()) {
+                                crate::notify::post(this.notify, event, &title);
+                            }
+                        }
+                        this.recent = recent;
+                    }
                     Err(error) => this.error = Some(error),
                 }
                 cx.notify();

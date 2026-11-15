@@ -18,6 +18,9 @@ pub enum Event {
     Failed,
     /// A tool is waiting for approval.
     Approval,
+    /// A conversation that is not open stopped working and waits for you:
+    /// an answer to read or a question to answer.
+    NeedsYou,
 }
 
 /// What the user chose in Settings.
@@ -66,6 +69,7 @@ pub fn title(event: Event) -> &'static str {
         Event::Done => tr("Wisp has answered"),
         Event::Failed => tr("A turn stopped with an error"),
         Event::Approval => tr("Wisp needs your approval"),
+        Event::NeedsYou => tr("A conversation needs you"),
     }
 }
 
@@ -85,6 +89,33 @@ pub fn body(conversation: &str) -> String {
         (false, true) => format!("{kept}…"),
         (false, false) => kept,
     }
+}
+
+/// What to tell about conversations other than the open one, from two
+/// readings of the recent conversations: each that was working and has
+/// stopped, with its title. One that now waits for you says so; one that
+/// simply finished has answered.
+pub fn elsewhere(
+    before: &[wisp_dto::SessionSearchInfo],
+    after: &[wisp_dto::SessionSearchInfo],
+    open: Option<&str>,
+) -> Vec<(Event, String)> {
+    after
+        .iter()
+        .filter(|row| Some(row.id.as_str()) != open && row.status != "running")
+        .filter(|row| {
+            before
+                .iter()
+                .any(|was| was.id == row.id && was.status == "running")
+        })
+        .map(|row| {
+            let event = match row.status.as_str() {
+                "needs_you" => Event::NeedsYou,
+                _ => Event::Done,
+            };
+            (event, row.title.clone())
+        })
+        .collect()
 }
 
 /// The systems that are told apart here.
@@ -200,6 +231,44 @@ pub fn post(choice: Choice, event: Event, conversation: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_conversation_that_is_not_open_is_told_about_when_it_stops() {
+        let row = |id: &str, status: &str| -> wisp_dto::SessionSearchInfo {
+            serde_json::from_value(serde_json::json!({
+                "id": id, "project_id": "p", "project_name": "Lab",
+                "title": format!("About {id}"), "status": status
+            }))
+            .unwrap()
+        };
+        let before = [
+            row("a", "running"),
+            row("b", "running"),
+            row("c", "running"),
+            row("d", "complete"),
+        ];
+        let after = [
+            row("a", "needs_you"),
+            row("b", "complete"),
+            row("c", "running"),
+            row("d", "needs_you"),
+            row("e", "complete"),
+        ];
+        assert_eq!(
+            elsewhere(&before, &after, None),
+            [
+                (Event::NeedsYou, "About a".to_string()),
+                (Event::Done, "About b".to_string()),
+            ]
+        );
+        // The open conversation is told about on its own.
+        assert_eq!(
+            elsewhere(&before, &after, Some("a")),
+            [(Event::Done, "About b".to_string())]
+        );
+        assert!(elsewhere(&[], &after, None).is_empty());
+        assert_eq!(title(Event::NeedsYou), "A conversation needs you");
+    }
 
     const BOTH: Choice = Choice {
         banner: true,
