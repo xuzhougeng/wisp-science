@@ -73,6 +73,8 @@ pub enum Layer {
     ResearchArchive,
     /// Bringing the open branch back into its source: a dialog over it.
     BranchMerge,
+    /// Conversations from Codex or Claude Code to import: a dialog.
+    ImportConversations,
     /// The name field in the Files panel: a new folder or file, or a rename.
     FileName,
     /// Question in the Files panel before an entry goes to the trash.
@@ -603,6 +605,11 @@ mod tests {
         stack.open(Layer::FilesPanel);
         stack.open(Layer::ResearchArchive);
         assert_eq!(stack.dismiss_top(), Some(Layer::ResearchArchive));
+        assert!(stack.close(Layer::FilesPanel));
+        // So is importing conversations.
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::ImportConversations);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ImportConversations));
         assert!(stack.close(Layer::FilesPanel));
         // So is bringing a branch back.
         stack.open(Layer::FilesPanel);

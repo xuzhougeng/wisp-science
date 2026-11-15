@@ -3090,6 +3090,132 @@ impl Server {
         }
     }
 
+    /// The conversations Codex CLI and Claude Code keep on this computer,
+    /// newest first, with whether each is in this project already.
+    pub async fn external_conversations(&self, project: &str) -> Result<Vec<ExternalConversation>> {
+        let home = crate::session_import::home().context("The home folder is not known")?;
+        self.external_in(project, home).await
+    }
+
+    pub(crate) async fn external_in(
+        &self,
+        project: &str,
+        home: std::path::PathBuf,
+    ) -> Result<Vec<ExternalConversation>> {
+        self.project_root(project).await?;
+        let found = tokio::task::spawn_blocking(move || crate::session_import::list(&home)).await?;
+        let mut listed = Vec::with_capacity(found.len());
+        for external in found {
+            let imported = match &external.key {
+                Some(key) => self.existing_import(project, key).await?.is_some(),
+                None => false,
+            };
+            listed.push(ExternalConversation {
+                source: external.source.label(),
+                path: external.path,
+                title: external.title,
+                folder: external.folder,
+                modified_ms: external.modified_ms,
+                size: external.size,
+                imported,
+            });
+        }
+        Ok(listed)
+    }
+
+    /// The conversation an earlier import of `key` made in this project.
+    async fn existing_import(&self, project: &str, key: &str) -> Result<Option<String>> {
+        let store = &self.0.store;
+        for key in [
+            crate::session_import::project_key(project, key),
+            key.to_owned(),
+        ] {
+            if let Some(frame) = store.find_codex_import(&key).await? {
+                if store.frame_project_id(&frame).await?.as_deref() == Some(project) {
+                    return Ok(Some(frame));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Brings one conversation into this project, in a group named after
+    /// the tool, or brings in what was added to it since it was imported.
+    /// Returns the conversation and what was done.
+    pub async fn import_external_conversation(
+        &self,
+        project: &str,
+        path: &str,
+    ) -> Result<(String, ImportOutcome)> {
+        let home = crate::session_import::home().context("The home folder is not known")?;
+        self.import_external_in(project, &home, path).await
+    }
+
+    pub(crate) async fn import_external_in(
+        &self,
+        project: &str,
+        home: &std::path::Path,
+        path: &str,
+    ) -> Result<(String, ImportOutcome)> {
+        self.project_root(project).await?;
+        let (home, wanted) = (home.to_owned(), path.to_owned());
+        let (source, parsed) =
+            tokio::task::spawn_blocking(move || crate::session_import::read(&home, &wanted))
+                .await??;
+        let store = &self.0.store;
+        let key = source.import_key(&parsed.session_id);
+        let messages = crate::session_import::messages(source, &parsed);
+        let now = chrono::Utc::now().timestamp();
+        let seconds = |ms: i64| if ms > 0 { ms / 1000 } else { now };
+        let (created, updated) = (
+            seconds(parsed.created_at_ms),
+            seconds(parsed.last_active_at_ms),
+        );
+        let recorded = crate::session_import::project_key(project, &key);
+        if let Some(frame) = self.existing_import(project, &key).await? {
+            self.ensure_idle(&frame, "import into")?;
+            // Only forward: a conversation continued here keeps its turns.
+            if messages.len() as i64 <= store.message_count(&frame).await? {
+                return Ok((frame, ImportOutcome::Unchanged));
+            }
+            store.replace_messages(&frame, &messages).await?;
+            store.set_frame_timestamps(&frame, created, updated).await?;
+            store.record_codex_import(&recorded, &frame, path).await?;
+            // Nothing in it is news to whoever had it.
+            store.mark_frame_seen(&frame).await?;
+            return Ok((frame, ImportOutcome::Updated));
+        }
+        let folder = match store
+            .list_folders(project)
+            .await?
+            .into_iter()
+            .find(|(_, name, _)| name.eq_ignore_ascii_case(source.folder()))
+        {
+            Some((id, ..)) => id,
+            None => {
+                let id = uuid::Uuid::new_v4().to_string();
+                store.create_folder(&id, project, source.folder()).await?;
+                id
+            }
+        };
+        let frame = uuid::Uuid::new_v4().to_string();
+        store
+            .create_frame(&frame, project, source.label(), &self.model_id(""))
+            .await?;
+        store
+            .move_session_to_folder(&frame, project, Some(&folder))
+            .await?;
+        for (index, message) in messages.iter().enumerate() {
+            store
+                .append_message(&frame, index as i64 + 1, message)
+                .await?;
+        }
+        store.set_frame_timestamps(&frame, created, updated).await?;
+        store.record_codex_import(&recorded, &frame, path).await?;
+        store.mark_frame_seen(&frame).await?;
+        Ok((frame, ImportOutcome::Imported))
+    }
+
     /// Where a branch stands for being brought back into the conversation
     /// it came from. Refused for a conversation that is not a branch or has
     /// been brought back already.
@@ -4110,6 +4236,31 @@ impl Server {
         self.0.store.delete_session(session, project).await?;
         self.forget(session, &live).await
     }
+}
+
+/// A conversation had in Codex CLI or Claude Code on this computer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExternalConversation {
+    /// "Codex" or "Claude Code".
+    pub source: &'static str,
+    pub path: String,
+    pub title: String,
+    /// The folder it was had in.
+    pub folder: String,
+    pub modified_ms: i64,
+    pub size: u64,
+    /// Already brought into this project.
+    pub imported: bool,
+}
+
+/// What importing a conversation did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImportOutcome {
+    Imported,
+    /// It had been imported; what was added since was brought in.
+    Updated,
+    /// It had been imported and nothing was added since.
+    Unchanged,
 }
 
 /// A branch as it stands for being brought back.

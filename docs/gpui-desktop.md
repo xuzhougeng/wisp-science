@@ -192,6 +192,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Files | Project file browser, available before the first conversation; read-only text and Markdown preview, pictures (PNG, JPEG, GIF, WebP, SVG, BMP), and Jupyter notebooks as their cells with what each printed or returned (a figure is named, not drawn; Show as text gives the file itself); new folder, new file, rename, and move to the project's trash; listed by name, newest first or largest first, folders first, in the order last chosen |
 | Composer | Native multiline input. Return sends and Shift+Return starts a new line, or, with the other choice in Settings, General, Return starts a new line and Cmd/Ctrl+Return sends; Cmd/Ctrl+Return always sends. While an input method is composing, Return goes to it. While a turn runs the same key queues the message: it is sent when the turn ends, or given to the running turn at once with the queue's lightning button |
 | Plan first | The model investigates and submits a plan as a card; nothing is changed until you approve it, which leaves plan mode and starts the work |
+| Import from Codex or Claude Code | The import button in the conversation list's header lists the conversations Codex CLI (`~/.codex/sessions`) and Claude Code (`~/.claude/projects`) keep on this computer, newest first, with the first thing asked and the folder it was had in. Import brings one into the project in a group named `codex` or `claude`, with its messages and tool calls; importing it again brings in only what was added since, and leaves a conversation continued here alone. Only this computer is looked at, not SSH or WSL hosts |
 | Bringing a branch back | In a branch, Bring back in the conversation's toolbar has the model summarise what the branch did since it split off; you read and change the summary, and Bring it back adds it to the conversation the branch came from, which reads it from then on, and opens that conversation. A branch is brought back once |
 | Approving a plan | When the model sets out a new plan it waits for you: the plan's steps show above the composer with Approve, Turn down, and a box to say what should change; Send feedback (or Return in the box) turns the plan down with your words, which the model reads to revise it |
 | Working plan | When the model sets out or updates its plan for a long piece of work, the update is a checklist in the transcript (done, in progress, to do, dropped), and while steps remain a line above the composer says how many are done and which is next |
@@ -1057,6 +1058,11 @@ Start a slow turn, switch to another app and wait: a notification names
 the conversation when the turn ends, and another when a tool asks for
 approval. Stay in Wisp and confirm nothing is posted. Turn Notify me off
 and Play a sound on in Settings, General: only the sound comes.
+Press the import button in the conversation list's header: conversations
+from Codex and Claude Code on this computer are listed; Import one, and it
+appears in a group named after the tool, reads as it did there, and is not
+listed under Needs you; press the row's button to open it. Import it again:
+it says there is nothing new.
 Branch a conversation from an answer, send a message in the branch, then
 press Bring back: the dialog says how many messages the branch added; Write
 the summary fills the field with the model's summary, which can be changed;

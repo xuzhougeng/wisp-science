@@ -774,6 +774,25 @@ impl Backend {
     }
 
     /// Has the model draft an archive of a conversation; nothing is saved.
+    /// Conversations Codex and Claude Code keep on this computer.
+    pub fn external_conversations(
+        &self,
+        project: String,
+    ) -> Reply<Vec<wisp_server::desktop::ExternalConversation>> {
+        self.local(move |host| async move { host.external_conversations(&project).await })
+    }
+
+    /// Brings one of them into the project.
+    pub fn import_external_conversation(
+        &self,
+        project: String,
+        path: String,
+    ) -> Reply<(String, wisp_server::desktop::ImportOutcome)> {
+        self.local(
+            move |host| async move { host.import_external_conversation(&project, &path).await },
+        )
+    }
+
     /// Where a branch stands for being brought back into its source.
     pub fn branch_merge(
         &self,

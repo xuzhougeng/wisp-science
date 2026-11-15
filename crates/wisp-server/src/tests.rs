@@ -229,6 +229,89 @@ async fn mobile_project_list_omits_a_missing_registered_database() {
 }
 
 #[tokio::test]
+async fn a_codex_conversation_is_imported_once_and_brought_forward_after() {
+    let tmp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(tmp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let home = tmp.path().join("home");
+    let day = home.join(".codex/sessions/2026/11/14");
+    std::fs::create_dir_all(&day).unwrap();
+    let file = day.join("rollout-1.jsonl");
+    let rollout = r#"{"timestamp":"2026-11-14T08:00:00Z","type":"session_meta","payload":{"id":"thread-1","cwd":"/work/rnaseq"}}
+{"timestamp":"2026-11-14T08:00:02Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Align the reads"}]}}
+{"timestamp":"2026-11-14T08:00:05Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Aligned."}]}}
+"#;
+    std::fs::write(&file, rollout).unwrap();
+    let path = file.to_string_lossy().into_owned();
+    let listed = server.external_in(PROJECT, home.clone()).await.unwrap();
+    assert_eq!(
+        (
+            listed[0].source,
+            listed[0].title.as_str(),
+            listed[0].imported
+        ),
+        ("Codex", "Align the reads", false)
+    );
+    let (frame, outcome) = server
+        .import_external_in(PROJECT, &home, &path)
+        .await
+        .unwrap();
+    assert_eq!(outcome, desktop::ImportOutcome::Imported);
+    // Not something waiting for whoever imported it.
+    let inbox = call(&server, "native_conversation_inbox", PROJECT, json!({}))
+        .await
+        .unwrap();
+    assert!(!inbox.to_string().contains(&frame), "{inbox}");
+    let kept = server.whole_transcript(&frame).await.unwrap();
+    assert_eq!(kept.len(), 2);
+    assert_eq!(kept[1].content.as_text(), "Aligned.");
+    // In a group named after the tool, and marked imported in the list.
+    assert!(server
+        .0
+        .store
+        .list_folders(PROJECT)
+        .await
+        .unwrap()
+        .iter()
+        .any(|(_, name, _)| name == "codex"));
+    assert!(server.external_in(PROJECT, home.clone()).await.unwrap()[0].imported);
+    // Again: nothing new, nothing done.
+    let again = server
+        .import_external_in(PROJECT, &home, &path)
+        .await
+        .unwrap();
+    assert_eq!(again, (frame.clone(), desktop::ImportOutcome::Unchanged));
+    // The conversation went on in Codex: what was added comes in.
+    std::fs::write(
+        &file,
+        format!(
+            "{rollout}{}\n",
+            r#"{"timestamp":"2026-11-14T09:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Now count them"}]}}"#
+        ),
+    )
+    .unwrap();
+    let forward = server
+        .import_external_in(PROJECT, &home, &path)
+        .await
+        .unwrap();
+    assert_eq!(forward, (frame.clone(), desktop::ImportOutcome::Updated));
+    assert_eq!(server.whole_transcript(&frame).await.unwrap().len(), 3);
+    // Nothing outside the tools' folders, and nothing a phone can ask for.
+    let stray = home.join("rollout-9.jsonl");
+    std::fs::write(&stray, rollout).unwrap();
+    assert!(server
+        .import_external_in(PROJECT, &home, &stray.to_string_lossy())
+        .await
+        .is_err());
+    assert!(!server
+        .commands()
+        .iter()
+        .any(|command| command.contains("import_external")));
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_branch_is_brought_back_as_a_summary_the_user_approved() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = config(tmp.path());

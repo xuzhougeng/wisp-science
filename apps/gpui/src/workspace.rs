@@ -9,6 +9,7 @@ mod files_panel;
 mod find_view;
 mod follow_ups_view;
 mod home_view;
+mod import_view;
 mod inline_view;
 mod journey_view;
 mod memory_view;
@@ -139,6 +140,8 @@ pub struct Workspace {
     merge: Option<merge_view::MergeView>,
     merge_error: Option<String>,
     merge_summary: Entity<InputState>,
+    /// The import dialog.
+    imports: import_view::Imports,
     /// Title, report.
     archive_fields: [Entity<InputState>; 2],
     model_view: Option<wisp_server::desktop::ModelView>,
@@ -818,6 +821,7 @@ impl Workspace {
             merge: None,
             merge_error: None,
             merge_summary,
+            imports: Default::default(),
             archive_fields,
             model_view: None,
             model_view_error: None,
@@ -1119,6 +1123,9 @@ impl Workspace {
                 self.merge = None;
                 self.merge_error = None;
                 self.focus_composer(window, cx);
+            }
+            Some(Layer::ImportConversations) => {
+                self.imports = Default::default();
             }
             // The page stays open underneath.
             Some(Layer::JournalForm) => {}
@@ -2899,6 +2906,11 @@ impl Render for Workspace {
         };
         let root = if self.layers.contains(Layer::BranchMerge) {
             root.child(self.render_branch_merge(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::ImportConversations) {
+            root.child(self.render_imports(cx))
         } else {
             root
         };

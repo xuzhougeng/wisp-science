@@ -139,6 +139,16 @@ pub fn session_status(status: &str) -> Option<(&'static str, Tone)> {
     }
 }
 
+/// What importing a conversation did, on the button that opens it.
+pub fn import_outcome(outcome: wisp_server::desktop::ImportOutcome) -> &'static str {
+    use wisp_server::desktop::ImportOutcome;
+    match outcome {
+        ImportOutcome::Imported => tr("Imported · open"),
+        ImportOutcome::Updated => tr("Brought up to date · open"),
+        ImportOutcome::Unchanged => tr("Nothing new · open"),
+    }
+}
+
 pub fn run_status(run: &RunRecord) -> (String, Tone) {
     run_state(run.status.as_str(), run.exit_code)
 }
@@ -224,6 +234,19 @@ pub fn should_mark_seen(status: &str, snapshot: Option<&Snapshot>, window_active
 #[cfg(test)]
 mod tests {
     use super::one_line;
+
+    #[test]
+    fn an_import_says_what_it_did() {
+        use wisp_server::desktop::ImportOutcome;
+        assert_eq!(
+            super::import_outcome(ImportOutcome::Imported),
+            "Imported · open"
+        );
+        assert_eq!(
+            super::import_outcome(ImportOutcome::Unchanged),
+            "Nothing new · open"
+        );
+    }
 
     #[test]
     fn a_title_is_shown_on_one_line() {

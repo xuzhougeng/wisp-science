@@ -648,6 +648,16 @@ impl Workspace {
                         cx.listener(|this, _, window, cx| this.begin_folder_name(None, window, cx)),
                     ),
             );
+            heading = heading.child(
+                icon_button(
+                    "import-conversations",
+                    "conversation-import",
+                    "Import from Codex or Claude Code",
+                )
+                .xsmall()
+                .disabled(disabled)
+                .on_click(cx.listener(|this, _, window, cx| this.open_imports(window, cx))),
+            );
         }
         heading =
             heading

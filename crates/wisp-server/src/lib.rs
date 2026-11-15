@@ -30,6 +30,7 @@ mod run_log;
 mod runtime;
 mod sample;
 mod schedules;
+mod session_import;
 #[cfg(test)]
 mod tests;
 mod tools_found;
