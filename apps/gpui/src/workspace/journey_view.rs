@@ -1,7 +1,7 @@
 //! The research journey of the open project: a page that shows one month
 //! of what happened, grouped by day, and lets the researcher add records
 //! of their own.
-use crate::i18n::tr;
+use crate::i18n::{fill, tr};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::Local;
@@ -11,7 +11,7 @@ use gpui_component::{
     button::{Button, ButtonVariants},
     input::Input,
 };
-use wisp_dto::ResearchJournalInput;
+use wisp_dto::{ResearchJournalInput, ResearchRecap};
 
 use super::{
     Workspace, chip,
@@ -81,6 +81,129 @@ impl Workspace {
         })
         .detach();
         cx.notify();
+    }
+
+    /// Drafts the recap of the local day `[from, until)` again, or for the
+    /// first time, and shows the month with it.
+    fn draft_recap(&mut self, from: i64, until: i64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        self.recap_drafting = Some(from);
+        self.error = None;
+        let reply = self.backend.draft_recap(project, from, until);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.recap_drafting = None;
+                match result {
+                    Ok(Some(_)) => this.reload_journey(window, cx),
+                    Ok(None) => {
+                        this.error = Some(
+                            tr("Nothing was recorded that day, so there is nothing to recap.")
+                                .to_owned(),
+                        )
+                    }
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Confirms or dismisses a recap as it is.
+    fn review_recap(
+        &mut self,
+        recap: &ResearchRecap,
+        status: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        self.error = None;
+        let reply = self
+            .backend
+            .update_recap(project, journey::reviewed(recap, status));
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(_) => this.reload_journey(window, cx),
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn reload_journey(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(month) = self.journey_month {
+            self.show_month(month, window, cx);
+        }
+    }
+
+    /// A day's recap: how it stands, its headline, what it says in each
+    /// section, and its review buttons.
+    fn recap_card(&self, index: usize, recap: &ResearchRecap, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let (status, tone) = journey::recap_status(&recap.status);
+        let mut head = div().h_flex().gap_2().child(chip(status, tone, cx)).child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .text_sm()
+                .font_weight(FontWeight::MEDIUM)
+                .child(recap.headline.clone()),
+        );
+        if recap.status != "confirmed" {
+            let confirmed = recap.clone();
+            head = head.child(
+                Button::new(("recap-confirm", index))
+                    .label(tr("Confirm"))
+                    .xsmall()
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.review_recap(&confirmed, "confirmed", window, cx)
+                    })),
+            );
+        }
+        let dismissed = recap.clone();
+        head = head.child(
+            Button::new(("recap-dismiss", index))
+                .label(tr("Dismiss"))
+                .xsmall()
+                .ghost()
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.review_recap(&dismissed, "dismissed", window, cx)
+                })),
+        );
+        let mut card = div()
+            .v_flex()
+            .gap_2()
+            .p_3()
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(cx.theme().border)
+            .child(head);
+        for (label, items) in journey::recap_sections(recap) {
+            let mut section = div()
+                .v_flex()
+                .gap_0p5()
+                .child(div().text_xs().text_color(muted).child(label));
+            for item in items {
+                section = section.child(div().text_sm().child(format!("• {item}")));
+            }
+            card = card.child(section);
+        }
+        card.child(div().text_xs().text_color(muted).child(fill(
+            tr("Drafted by {} from this day's records."),
+            &[&recap.model],
+        )))
     }
 
     fn open_journal_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -355,14 +478,39 @@ impl Workspace {
                 .child(journey::summary(history, shown)),
         );
         for (day_index, day) in days.iter().enumerate() {
-            let mut group = div().v_flex().gap_1().child(
-                div()
-                    .pt_2()
-                    .pb_1()
-                    .text_sm()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(day.label.clone()),
-            );
+            let recap = journey::recap_for(history, day.date, &Local);
+            let (from, until) = journey::day_range(day.date, &Local);
+            let drafting = self.recap_drafting == Some(from);
+            let header = div()
+                .h_flex()
+                .gap_2()
+                .pt_2()
+                .pb_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(day.label.clone()),
+                )
+                .child(div().flex_1())
+                .child(
+                    Button::new(("recap-draft", day_index))
+                        .label(match (drafting, recap.is_some()) {
+                            (true, _) => tr("Drafting…"),
+                            (false, true) => tr("Draft again"),
+                            (false, false) => tr("Draft a recap"),
+                        })
+                        .xsmall()
+                        .ghost()
+                        .disabled(self.recap_drafting.is_some())
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.draft_recap(from, until, window, cx)
+                        })),
+                );
+            let mut group = div().v_flex().gap_1().child(header);
+            if let Some(recap) = recap {
+                group = group.child(self.recap_card(day_index, recap, cx));
+            }
             for (entry_index, (time, entry)) in day.entries.iter().enumerate() {
                 let tone = match (entry.kind.as_str(), entry.status.as_str()) {
                     ("run", "failed") => Tone::Danger,

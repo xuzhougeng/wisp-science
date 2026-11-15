@@ -4,7 +4,9 @@
 //! parameter here and the window's is used when drawing.
 use crate::i18n::{Locale, tr};
 use chrono::{DateTime, Datelike, NaiveDate, TimeZone};
-use wisp_dto::{ResearchJourney, ResearchJourneyEntry};
+use wisp_dto::{ResearchJourney, ResearchJourneyEntry, ResearchRecap, ResearchRecapEdit};
+
+use crate::present::Tone;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Month {
@@ -141,6 +143,8 @@ pub fn status_label(entry: &ResearchJourneyEntry) -> Option<&'static str> {
 /// One local day of the history.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Day<'a> {
+    /// The local date.
+    pub date: NaiveDate,
     /// "Saturday 14 November".
     pub label: String,
     /// Newest first, each with its local time of day, "14:05".
@@ -180,6 +184,7 @@ pub fn days<'a, Tz: TimeZone>(
             _ => days.push((
                 date,
                 Day {
+                    date,
                     label: day_label(date),
                     entries: vec![(time, entry)],
                 },
@@ -187,6 +192,63 @@ pub fn days<'a, Tz: TimeZone>(
         }
     }
     days.into_iter().map(|(_, day)| day).collect()
+}
+
+/// The local day as seconds since 1970: from its midnight up to the next.
+pub fn day_range<Tz: TimeZone>(date: NaiveDate, zone: &Tz) -> (i64, i64) {
+    let midnight = |date: NaiveDate| {
+        date.and_hms_opt(0, 0, 0)
+            .and_then(|at| zone.from_local_datetime(&at).earliest())
+            .map_or(0, |at| at.timestamp())
+    };
+    let next = date.succ_opt().unwrap_or(date);
+    (midnight(date), midnight(next))
+}
+
+/// The recap of a local day, unless the researcher dismissed it.
+pub fn recap_for<'a, Tz: TimeZone>(
+    journey: &'a ResearchJourney,
+    date: NaiveDate,
+    zone: &Tz,
+) -> Option<&'a ResearchRecap> {
+    journey.recaps.iter().find(|recap| {
+        recap.status != "dismissed" && local(recap.day_start, zone).date_naive() == date
+    })
+}
+
+/// How a recap stands, as its chip says.
+pub fn recap_status(status: &str) -> (&'static str, Tone) {
+    match status {
+        "confirmed" => (tr("Confirmed"), Tone::Success),
+        _ => (tr("Draft"), Tone::Attention),
+    }
+}
+
+/// A recap's sections that say something, each with its items.
+pub fn recap_sections(recap: &ResearchRecap) -> Vec<(&'static str, Vec<String>)> {
+    [
+        (tr("Done"), &recap.done),
+        (tr("Findings"), &recap.findings),
+        (tr("Issues"), &recap.issues),
+        (tr("Next"), &recap.next),
+    ]
+    .into_iter()
+    .filter(|(_, items)| !items.is_empty())
+    .map(|(label, items)| (label, items.iter().map(|item| item.text.clone()).collect()))
+    .collect()
+}
+
+/// The researcher's review of a recap as it stands, with a new status.
+pub fn reviewed(recap: &ResearchRecap, status: &str) -> ResearchRecapEdit {
+    ResearchRecapEdit {
+        id: recap.id.clone(),
+        status: status.into(),
+        headline: recap.headline.clone(),
+        done: recap.done.clone(),
+        findings: recap.findings.clone(),
+        issues: recap.issues.clone(),
+        next: recap.next.clone(),
+    }
 }
 
 fn day_label(date: NaiveDate) -> String {
@@ -259,6 +321,53 @@ mod tests {
             occurred_at,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_days_recap_is_found_by_its_local_date_unless_dismissed() {
+        use wisp_dto::ResearchRecapItem;
+        let tokyo = zone(9);
+        let date = NaiveDate::from_ymd_opt(2026, 11, 14).unwrap();
+        let (start, end) = day_range(date, &tokyo);
+        assert_eq!(end - start, 86_400);
+        assert_eq!(local(start, &tokyo).date_naive(), date);
+        let item = |text: &str| ResearchRecapItem {
+            text: text.into(),
+            refs: vec![0],
+        };
+        let recap = ResearchRecap {
+            id: "r".into(),
+            day_start: start,
+            status: "draft".into(),
+            headline: "Filter settled".into(),
+            findings: vec![item("Cells under 200 genes go")],
+            next: vec![item("Re-cluster")],
+            ..Default::default()
+        };
+        let mut journey = ResearchJourney {
+            recaps: vec![recap.clone()],
+            ..Default::default()
+        };
+        assert_eq!(
+            recap_for(&journey, date, &tokyo).map(|r| r.id.as_str()),
+            Some("r")
+        );
+        assert!(recap_for(&journey, date.succ_opt().unwrap(), &tokyo).is_none());
+        assert_eq!(recap_status("draft"), ("Draft", Tone::Attention));
+        assert_eq!(recap_status("confirmed"), ("Confirmed", Tone::Success));
+        let sections = recap_sections(&recap);
+        assert_eq!(
+            sections,
+            vec![
+                ("Findings", vec!["Cells under 200 genes go".to_owned()]),
+                ("Next", vec!["Re-cluster".to_owned()]),
+            ]
+        );
+        let confirmed = reviewed(&recap, "confirmed");
+        assert_eq!(confirmed.status, "confirmed");
+        assert_eq!(confirmed.findings, recap.findings);
+        journey.recaps[0].status = "dismissed".into();
+        assert!(recap_for(&journey, date, &tokyo).is_none());
     }
 
     #[test]

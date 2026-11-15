@@ -32,6 +32,7 @@ mod project_archive;
 mod project_folder;
 mod project_sync;
 mod quick_actions;
+mod recaps;
 mod remote_access;
 mod remote_dir;
 mod research_archive;
@@ -150,6 +151,8 @@ struct Inner {
     /// Conversations a background batch's result is being delivered to.
     delivering: std::sync::Mutex<HashSet<String>>,
     sweeping_deliveries: AtomicBool,
+    /// The daily recap run is going.
+    recapping: AtomicBool,
 }
 
 /// What runs a turn: Wisp's own agent (with the model its side requests
@@ -299,6 +302,7 @@ impl Server {
             subagent_resumes: Default::default(),
             delivering: Default::default(),
             sweeping_deliveries: AtomicBool::new(false),
+            recapping: AtomicBool::new(false),
         })))
     }
 

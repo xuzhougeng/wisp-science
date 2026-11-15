@@ -315,6 +315,8 @@ impl Server {
                 let _ = server
                     .fire_due_schedules(chrono::Utc::now().timestamp())
                     .await;
+                // The day's recaps are drafted once it is time.
+                server.daily_recap_tick().await;
             }
         });
     }

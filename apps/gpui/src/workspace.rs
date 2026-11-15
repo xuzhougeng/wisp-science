@@ -179,6 +179,11 @@ pub struct Workspace {
     journey: Option<wisp_dto::ResearchJourney>,
     journey_request: u64,
     journey_search: Entity<InputState>,
+    /// The local day whose recap is being drafted, by its midnight.
+    recap_drafting: Option<i64>,
+    /// The daily recap run, on the Scheduled tasks page.
+    daily_recap: Option<wisp_dto::DailyRecapAutomation>,
+    recap_time: Entity<InputState>,
     /// Every project's scheduled tasks; `None` until the host answered.
     schedules: Option<Vec<wisp_server::desktop::ScheduleRow>>,
     /// Name, prompt, hours, time of day.
@@ -668,6 +673,7 @@ impl Workspace {
         });
         let journey_search =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Filter this month…")));
+        let recap_time = cx.new(|cx| InputState::new(window, cx).placeholder("09:00"));
         let journal_fields = [
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("The reads are clean"))),
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
@@ -1009,6 +1015,9 @@ impl Workspace {
             journey: None,
             journey_request: 0,
             journey_search,
+            recap_drafting: None,
+            daily_recap: None,
+            recap_time,
             schedules: None,
             schedule_fields,
             schedule_project: None,

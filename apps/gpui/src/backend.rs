@@ -264,6 +264,41 @@ impl Backend {
     }
 
     /// Adds a record the researcher wrote to the project's history.
+    /// Drafts (again) the recap of one local day of the project.
+    pub fn draft_recap(
+        &self,
+        project: String,
+        from: i64,
+        until: i64,
+    ) -> Reply<Option<wisp_dto::ResearchRecap>> {
+        self.local(move |host| async move { host.draft_recap(&project, from, until).await })
+    }
+
+    /// Confirms, dismisses or edits a recap.
+    pub fn update_recap(
+        &self,
+        project: String,
+        edit: wisp_dto::ResearchRecapEdit,
+    ) -> Reply<wisp_dto::ResearchRecap> {
+        self.local(move |host| async move { host.update_recap(&project, edit).await })
+    }
+
+    pub fn daily_recap(&self) -> Reply<wisp_dto::DailyRecapAutomation> {
+        self.local(move |host| async move { Ok(host.daily_recap().await) })
+    }
+
+    pub fn set_daily_recap(
+        &self,
+        enabled: bool,
+        time: String,
+    ) -> Reply<wisp_dto::DailyRecapAutomation> {
+        self.local(move |host| async move { host.set_daily_recap(enabled, &time).await })
+    }
+
+    pub fn run_daily_recap_now(&self) -> Reply<wisp_dto::DailyRecapAutomation> {
+        self.local(move |host| async move { Ok(host.run_daily_recap_now().await) })
+    }
+
     pub fn add_journal_entry(
         &self,
         project: String,

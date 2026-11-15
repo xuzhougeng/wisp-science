@@ -61,7 +61,7 @@ to find in the running app.
 | Open in a new window [在新窗口打开] | Yes | Partial: a new window opens on the home page; a project cannot be sent to it from its card | ui |
 | Recent conversations across projects with status [最近会话] | Yes | Done | store |
 | Sample project, read-only [示例项目] | Yes | Partial: the home page makes a sample project (made-up data, a script, a README of things to ask) in a folder you choose; it is an ordinary project to work in, not a read-only tour with prepared conversations | tauri |
-| Research assistant [科研助理] | Scheduled tasks and plans | Partial: a Scheduled tasks page across projects (every few hours, daily or weekly; run now, on or off, delete; templates) that fires into a new conversation while the app is open; no plan for the day, daily recap, memory tidy or mandates | store |
+| Research assistant [科研助理] | Scheduled tasks and plans | Partial: a Scheduled tasks page across projects (every few hours, daily or weekly; run now, on or off, delete; templates) that fires into a new conversation while the app is open, and the daily recap run with its time, switch and Run now; no plan for the day, memory tidy or mandates | store |
 | Research calendar [研究日历] | Month grid, per-project filter, day detail | Done: month grid with counts, projects can be left out, and the chosen day's records | store |
 | Favorites library [收藏库] | Saved code, figures, highlights; search and kind filter | Done: a page of its own; saved snippets cannot be edited into versions | store |
 | Command palette [搜索, ⌘K] | Projects, files, conversations, commands | Partial: finds projects, files and conversations in every project and runs GPUI's own commands; no open-in-new-window or attach-from-result, and the commands for features not ported yet are absent | served + ui |
@@ -183,7 +183,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 
 | Feature | WebView | GPUI | Host |
 | --- | --- | --- | --- |
-| Research journey [研究历程]: by day, relation graph, search, add record, recap, artifact sources | Yes | Partial: a month at a time by day, a filter, and adding a record of your own; no relation graph, recap or artifact sources | store |
+| Research journey [研究历程]: by day, relation graph, search, add record, recap, artifact sources | Yes | Partial: a month at a time by day, a filter, adding a record of your own, and a day's recap drafted by the model, confirmed or dismissed; no relation graph, recap edits or artifact sources | store |
 | Paper evidence [论文证据]: papers, versions, figures and tables with their sources | Yes | Partial: a page of papers with their versions, and figures, tables and claims bound to project results and runs with a reason; readiness check, waivers, finalizing and new versions are there; no capsules or reproduction, and no conversation passages as evidence | store |
 
 ## 8. Settings
@@ -273,7 +273,7 @@ row says what is there.
 | Agents | Swarm progress, agent workflow runs (draft, approve, run, cancel, retry), method-search runs — an Agents tab lists a conversation's helpers, workflows run as one conversation (section 8), and the agent's delegated batches run with a plan card for approval and are listed there with Stop and Run again, in the turn or in the background; drafts, budget edits and method-search runs are Missing | store |
 | Library | Versions of saved code, edit code, insert into chat | store |
 | Publication | Revisions, manuscript items, evidence binding, readiness waivers, reproduction check, capsule — papers, items, evidence from results and runs, new revisions, the readiness check with waivers and finalizing are there (section 7); reproduction and capsules are Missing | store |
-| Assistant | Assistant chat, saved plans, scheduled tasks, daily recap, weekly memory tidy, research mandates, WeChat binding — scheduled tasks are there (section 1); the rest is Missing | store |
+| Assistant | Assistant chat, saved plans, scheduled tasks, daily recap, weekly memory tidy, research mandates, WeChat binding — scheduled tasks, the daily recap and the WeChat binding (Chat apps) are there; the rest is Missing | store |
 | App | Onboarding wizard, toolchain installer (uv, Python, R, Node, pixi), local tool detection — the toolchain installer is **Done** on Settings → Environments (Tools on this computer), and the onboarding wizard is **Done** as a first-run guide (welcome, features, DeepSeek key, install Python); detection of tools installed elsewhere is Missing | tauri |
 | App | Action palette (⌘P), privacy mode (⌘⇧H), application and native menus | ui |
 | App | Browser automation prompts (tab cleanup, needs a human), browser-extension update banner — Missing; the Browser page says when the extension has to be reloaded | tauri |

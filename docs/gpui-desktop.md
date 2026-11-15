@@ -174,7 +174,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Research calendar | A page across every project: a month as a grid with how many records each day holds, and the chosen day's records; projects can be left out |
 | Scheduled tasks | A page across projects (the clock on the home page, or the command palette): a prompt is sent into a new conversation of its project every few hours, daily or weekly at a time, while the app is open; each task can be run now, switched off or deleted, and its latest firing opens the conversation it made |
 | Paper evidence | A page for the open project (Papers in the sidebar, or the command palette): the papers it is writing, each with its versions and, in a draft version, figures, tables and claims with the project results and runs they rest on and why each was chosen. Finalize… checks a draft for whom the evidence is for (private, restricted or public, with the reviews public needs) and lists what stands in the way, warnings and what the record leaves out; a finding that may stand is kept with a reason; when nothing is left in the way the version is locked under a SHA-256 fingerprint. New version starts a draft from any version with its items and evidence |
-| Research journey | A page for the open project: one month of what happened, by day (what you asked, runs, files, decisions, your own records), a filter, and a form to add a record of your own |
+| Research journey | A page for the open project: one month of what happened, by day (what you asked, runs, files, decisions, your own records), a filter, and a form to add a record of your own. Each day can have a recap the model drafts from its records, with what was done, found, went wrong and comes next, which you confirm or dismiss; Scheduled tasks drafts the last days' recaps each morning |
 | Outline | A button in the conversation's header lists what you asked, in order; choosing one scrolls to it |
 | Find in conversation | Cmd/Ctrl+F, or the command palette: a bar over the transcript marks every message, and every tool call, that contains the words; Return and the arrows move between them |
 | Help | Documentation (home page, Settings, palette) and Report a problem (Settings, palette) open the tutorials and the issue tracker in the system's browser |
@@ -1006,9 +1006,9 @@ Limits of this slice:
   fetched. A picture that only a tool wrote, or that the answer mentions
   without image syntax, is not shown; it is in the Artifacts tab and the
   Files panel. There is no zoom and no click to open.
-- Scheduled tasks are the only part of the WebView's research assistant
-  that is ported: there is no plan for the day, daily recap, memory
-  tidy or mandate. Tasks fire only while the app is open, looked for
+- Scheduled tasks and the daily recap are the parts of the WebView's
+  research assistant that are ported: there is no plan for the day,
+  memory tidy or mandate. Tasks fire only while the app is open, looked for
   every 30 seconds; a time that was missed fires once at the next look
   and the cadence keeps its place on the clock. A fired task is an
   ordinary turn in a new conversation named after the task: it uses
@@ -1041,9 +1041,22 @@ Limits of this slice:
   A record of your own is progress, a finding, a decision or what comes
   next, and is dated when you save it; it cannot be dated otherwise, changed
   or removed here. A row that came from a conversation opens it. The
-  relation graph, the daily recap the model drafts, the sources of a file,
-  and the history of an exploration branch are not ported, and neither is
-  the calendar across projects, which is a page of its own.
+  relation graph, the sources of a file, and the history of an
+  exploration branch are not ported, and neither is the calendar across
+  projects, which is a page of its own.
+- Daily recaps follow the WebView's `research_recap.rs`: a day's records
+  (runs with their errors, files, decisions and notes, what was asked in
+  conversations) go to the default model as a bounded digest whose
+  records have short handles, and the draft it returns keeps only the
+  handles that exist, as sources. Draft a recap (or Draft again) on a
+  day of the journey replaces that day's recap; Confirm and Dismiss
+  review it, and a dismissed day can be drafted again. The daily run,
+  on the Scheduled tasks page (on at 09:00 at first, like the WebView),
+  drafts each project's last three complete days that have records and
+  no recap, never replacing one, while the app is open; Run now starts
+  it at once. Recaps are not edited item by item here, their sources are
+  not opened from the card, and the WebView's Recap specialist model is
+  not ported: the default model drafts them.
 - The research calendar reads the same history as the journey for every
   project at once, a month at a time, in your computer's local days. It
   opens on today; another month opens on its last day with something on
@@ -1790,6 +1803,11 @@ days, newest first. Type a word in the filter and confirm the count says
 how many of them are shown. Go to an earlier month and back with the
 arrows; the later arrow is off in the present month. Press Add a record,
 choose Finding, give it a line and save: it is the newest record of today.
+With a model set, press Draft a recap on today: a Draft card appears under
+the day with the finding; Confirm turns it Confirmed, Dismiss removes it
+and the day offers Draft a recap again. On the Scheduled tasks page the
+Daily recap card shows On at 09:00; set 25:00 and Save: it is refused;
+set 07:30 and Save: the field keeps 07:30 after the page is opened again.
 Save one without a title and confirm it is refused and the form stays.
 Press a row that came from a conversation and confirm that conversation
 opens. Open Journey again and press Escape: the page closes.

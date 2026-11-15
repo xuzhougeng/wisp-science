@@ -134,6 +134,27 @@ where
     }
 }
 
+/// How the daily recap run last went.
+pub fn recap_line<Tz: TimeZone>(daily: &wisp_dto::DailyRecapAutomation, zone: &Tz) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    if daily.running {
+        return tr("Drafting recaps now…").to_owned();
+    }
+    match (daily.last_run_at, &daily.error) {
+        (None, _) => tr("Not run yet").to_owned(),
+        (Some(at), Some(error)) => fill(
+            tr("Failed {}: {}"),
+            &[&stamp(at, zone), &error.lines().next().unwrap_or_default()],
+        ),
+        (Some(at), None) => fill(
+            tr("Last run: {} · {} drafted"),
+            &[&stamp(at, zone), &daily.drafted],
+        ),
+    }
+}
+
 /// Prompts to start a task from: a name and what is sent.
 pub const TEMPLATES: [(&str, &str); 3] = [
     (
@@ -163,6 +184,26 @@ mod tests {
 
     fn zone() -> FixedOffset {
         FixedOffset::east_opt(8 * 3_600).unwrap()
+    }
+
+    #[test]
+    fn the_daily_recap_says_how_it_last_went() {
+        let mut daily = wisp_dto::DailyRecapAutomation::default();
+        assert_eq!(recap_line(&daily, &zone()), "Not run yet");
+        let at = wednesday(9, 5).timestamp();
+        daily.last_run_at = Some(at);
+        daily.drafted = 2;
+        assert_eq!(
+            recap_line(&daily, &zone()),
+            "Last run: 2026-11-11 09:05 · 2 drafted"
+        );
+        daily.error = Some("Root: model unreachable\nmore".into());
+        assert_eq!(
+            recap_line(&daily, &zone()),
+            "Failed 2026-11-11 09:05: Root: model unreachable"
+        );
+        daily.running = true;
+        assert_eq!(recap_line(&daily, &zone()), "Drafting recaps now…");
     }
 
     /// 2026-11-11 is a Wednesday.

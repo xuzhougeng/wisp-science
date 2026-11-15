@@ -4,7 +4,7 @@ use crate::i18n::tr;
 use chrono::Local;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Selectable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     input::Input,
 };
@@ -28,6 +28,137 @@ impl Workspace {
         self.error = None;
         self.schedule_note = None;
         self.load_schedules(window, cx);
+        self.load_daily_recap(window, cx);
+    }
+
+    fn load_daily_recap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let reply = self.backend.daily_recap();
+        self.show_daily_recap(reply, true, window, cx);
+    }
+
+    /// Shows how the daily recap run stands once `reply` comes; `fill`
+    /// puts its time in the field.
+    fn show_daily_recap(
+        &mut self,
+        reply: Reply<wisp_dto::DailyRecapAutomation>,
+        fill: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(daily) => {
+                        if fill {
+                            let time = daily.time.clone();
+                            this.recap_time
+                                .update(cx, |input, cx| input.set_value(time, window, cx));
+                        }
+                        // While it drafts, look again shortly.
+                        if daily.running && this.layers.contains(Layer::Schedules) {
+                            cx.spawn_in(window, async move |this, cx| {
+                                cx.background_executor()
+                                    .timer(std::time::Duration::from_secs(3))
+                                    .await;
+                                let _ = this.update_in(cx, |this, window, cx| {
+                                    let reply = this.backend.daily_recap();
+                                    this.show_daily_recap(reply, false, window, cx);
+                                });
+                            })
+                            .detach();
+                        }
+                        this.daily_recap = Some(daily);
+                    }
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Saves the daily run's switch and the time in the field.
+    fn save_daily_recap(&mut self, enabled: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let time = self.recap_time.read(cx).value().to_string();
+        self.error = None;
+        let reply = self.backend.set_daily_recap(enabled, time);
+        self.show_daily_recap(reply, true, window, cx);
+    }
+
+    /// The built-in daily recap: on or off, when, and how it last went.
+    fn daily_recap_card(&self, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let mut card = div()
+            .v_flex()
+            .gap_2()
+            .p_3()
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(cx.theme().border)
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(tr("Daily recap")),
+            )
+            .child(div().text_xs().text_color(muted).child(tr(
+                "Each day after this time, a recap is drafted from the records of each \
+                 project's last three days that have none yet. Drafts wait on the project's \
+                 research journey for you to confirm or dismiss.",
+            )));
+        let Some(daily) = &self.daily_recap else {
+            return card.child(div().text_xs().text_color(muted).child(tr("Loading…")));
+        };
+        let enabled = daily.enabled;
+        let running = daily.running;
+        card = card
+            .child(
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("daily-recap-enabled")
+                            .label(if enabled { tr("On") } else { tr("Off") })
+                            .small()
+                            .selected(enabled)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.save_daily_recap(!enabled, window, cx)
+                            })),
+                    )
+                    .child(div().w(px(80.)).child(Input::new(&self.recap_time).small()))
+                    .child(
+                        Button::new("daily-recap-time")
+                            .label(tr("Save"))
+                            .small()
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.save_daily_recap(enabled, window, cx)
+                            })),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        Button::new("daily-recap-now")
+                            .label(tr("Run now"))
+                            .small()
+                            .ghost()
+                            .disabled(running)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                let reply = this.backend.run_daily_recap_now();
+                                this.show_daily_recap(reply, false, window, cx);
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(if daily.error.is_some() && !running {
+                        cx.theme().danger
+                    } else {
+                        muted
+                    })
+                    .child(schedules::recap_line(daily, &Local)),
+            );
+        card
     }
 
     pub(super) fn close_schedules(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -483,6 +614,7 @@ impl Workspace {
         if self.layers.contains(Layer::ScheduleForm) {
             body = body.child(self.schedule_form(cx));
         }
+        body = body.child(self.daily_recap_card(cx));
         let Some(rows) = &self.schedules else {
             return div().h_flex().size_full().child(side).child(
                 body.child(
