@@ -170,10 +170,7 @@ impl Workspace {
     fn use_saved(&mut self, body: &str, window: &mut Window, cx: &mut Context<Self>) {
         let text = memos::insert(&self.composer.read(cx).value(), body);
         self.state.save_draft(text.clone());
-        self.composer.update(cx, |input, cx| {
-            input.set_value(text, window, cx);
-            input.focus(window, cx);
-        });
+        self.fill_composer(text, window, cx);
         cx.notify();
     }
 

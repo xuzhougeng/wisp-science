@@ -169,8 +169,7 @@ impl Workspace {
         };
         let text = review::with_correction(&self.composer.read(cx).value(), found);
         self.state.save_draft(text.clone());
-        self.composer
-            .update(cx, |input, cx| input.set_value(text, window, cx));
+        self.fill_composer(text, window, cx);
         self.close_review(window, cx);
     }
 

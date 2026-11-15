@@ -66,16 +66,7 @@ impl Workspace {
         }
         let text = crate::compose::with_skill_prompt(&self.composer.read(cx).value());
         self.state.save_draft(text.clone());
-        self.composer.update(cx, |input, cx| {
-            let (line, character) = crate::compose::end_of(&text);
-            input.set_value(text, window, cx);
-            // At the end, where the request leaves off.
-            input.set_cursor_position(
-                gpui_component::input::Position { line, character },
-                window,
-                cx,
-            );
-        });
+        self.fill_composer(text, window, cx);
         cx.notify();
     }
 
@@ -270,15 +261,7 @@ impl Workspace {
                         this.notice = files.as_ref().and_then(crate::compose::undo_note);
                         this.reload_conversation(window, cx);
                         this.state.save_draft(text.clone());
-                        this.composer.update(cx, |input, cx| {
-                            let (line, character) = crate::compose::end_of(&text);
-                            input.set_value(text, window, cx);
-                            input.set_cursor_position(
-                                gpui_component::input::Position { line, character },
-                                window,
-                                cx,
-                            );
-                        });
+                        this.fill_composer(text, window, cx);
                         this.refresh_lists(window, cx);
                     }
                     Ok(_) => this.refresh_lists(window, cx),

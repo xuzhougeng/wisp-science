@@ -41,10 +41,7 @@ impl Workspace {
 
     fn use_follow_up(&mut self, question: String, window: &mut Window, cx: &mut Context<Self>) {
         self.state.save_draft(question.clone());
-        self.composer.update(cx, |input, cx| {
-            input.set_value(question, window, cx);
-            input.focus(window, cx);
-        });
+        self.fill_composer(question, window, cx);
         cx.notify();
     }
 

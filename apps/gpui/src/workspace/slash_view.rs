@@ -102,8 +102,7 @@ impl Workspace {
                 // What was typed comes back, to be corrected.
                 let typed = format!("/timer {rest}");
                 self.state.save_draft(typed.clone());
-                self.composer
-                    .update(cx, |input, cx| input.set_value(typed, window, cx));
+                self.fill_composer(typed, window, cx);
                 self.error = Some(problem.to_owned());
                 return;
             }

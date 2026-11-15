@@ -1662,10 +1662,7 @@ impl Workspace {
         self.choose(self.state.project.clone(), Some(id));
         self.clear_transcript();
         let draft = self.state.draft();
-        self.composer.update(cx, |input, cx| {
-            input.set_value(draft, window, cx);
-            input.focus(window, cx);
-        });
+        self.fill_composer(draft, window, cx);
         self.start_poll(window, cx);
         self.load_status(window, cx);
         self.load_saved(window, cx);
@@ -2355,17 +2352,29 @@ impl Workspace {
         self.layers.close(Layer::QuickMenu);
         let text = crate::compose::with_quick_action(&self.composer.read(cx).value(), &prompt);
         self.state.save_draft(text.clone());
+        self.fill_composer(text, window, cx);
+        cx.notify();
+    }
+
+    /// Sets the composer's text with the caret at its end, where writing
+    /// goes on, and gives it the keyboard. Every fill goes through here, so
+    /// none leaves the caret at the start of what it put in.
+    pub(crate) fn fill_composer(
+        &mut self,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.composer.update(cx, |input, cx| {
             let (line, character) = crate::compose::end_of(&text);
             input.set_value(text, window, cx);
-            // At the end, where the request leaves off.
             input.set_cursor_position(
                 gpui_component::input::Position { line, character },
                 window,
                 cx,
             );
+            input.focus(window, cx);
         });
-        cx.notify();
     }
 
     /// Starts this conversation as `expert`, or as none with an empty id.
