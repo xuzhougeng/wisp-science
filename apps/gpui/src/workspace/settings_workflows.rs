@@ -9,7 +9,8 @@ use gpui_component::{
     input::{Input, InputState},
 };
 use wisp_server::desktop::{
-    WORKFLOW_CAPABILITIES, WORKFLOW_TASK_LIMIT, Workflow, WorkflowApproval, WorkflowTask,
+    ModelTier, WORKFLOW_CAPABILITIES, WORKFLOW_TASK_LIMIT, Workflow, WorkflowAgentSettings,
+    WorkflowApproval, WorkflowTask,
 };
 
 use super::Workspace;
@@ -28,6 +29,14 @@ pub(super) struct TaskDraft {
     after: Vec<usize>,
     /// What its agent may do when the workflow runs as agents.
     capabilities: Vec<String>,
+    /// The rest of how its agent works; the typed parts are the fields
+    /// below, read when the form is saved.
+    agent: WorkflowAgentSettings,
+    tokens: Entity<InputState>,
+    seconds: Entity<InputState>,
+    shape: Entity<InputState>,
+    /// The agent settings are open.
+    open: bool,
 }
 
 impl Workspace {
@@ -89,11 +98,34 @@ impl Workspace {
                 input
             })
         };
+        let agent = &task.agent;
+        let number = |value: Option<String>| value.unwrap_or_default();
+        let shape = agent
+            .output_schema
+            .as_ref()
+            .and_then(|schema| serde_json::to_string_pretty(schema).ok())
+            .unwrap_or_default();
         TaskDraft {
             title: field(&task.title, false, window, cx),
             instructions: field(&task.instructions, true, window, cx),
             after: task.after.clone(),
             capabilities: task.capabilities.clone(),
+            tokens: field(
+                &number(agent.max_tokens.map(|n| n.to_string())),
+                false,
+                window,
+                cx,
+            ),
+            seconds: field(
+                &number(agent.timeout_secs.map(|n| n.to_string())),
+                false,
+                window,
+                cx,
+            ),
+            shape: field(&shape, true, window, cx),
+            // Open when anything in it is set.
+            open: *agent != WorkflowAgentSettings::default(),
+            agent: agent.clone(),
         }
     }
 
@@ -122,6 +154,8 @@ impl Workspace {
             .map(|task| self.task_draft(task, window, cx))
             .collect();
         self.workflow_approval = shown.approval;
+        // The experts a task can be done as.
+        self.load_experts(window, cx);
         self.workflow_fields[0].update(cx, |input, cx| input.focus(window, cx));
         cx.notify();
     }
@@ -131,16 +165,38 @@ impl Workspace {
             return;
         };
         let [name, goal] = [0, 1].map(|at| self.workflow_fields[at].read(cx).value().to_string());
-        let tasks = self
-            .workflow_tasks
-            .iter()
-            .map(|draft| WorkflowTask {
+        let mut tasks = Vec::with_capacity(self.workflow_tasks.len());
+        for (index, draft) in self.workflow_tasks.iter().enumerate() {
+            let typed = workflows::agent_fields(
+                &draft.tokens.read(cx).value(),
+                &draft.seconds.read(cx).value(),
+                &draft.shape.read(cx).value(),
+            );
+            let (max_tokens, timeout_secs, output_schema) = match typed {
+                Ok(typed) => typed,
+                Err(problem) => {
+                    // The form stays open with what was typed.
+                    self.settings_error = Some(crate::i18n::fill(
+                        tr("Task {}: {}"),
+                        &[&(index + 1), &problem],
+                    ));
+                    cx.notify();
+                    return;
+                }
+            };
+            tasks.push(WorkflowTask {
                 title: draft.title.read(cx).value().to_string(),
                 instructions: draft.instructions.read(cx).value().to_string(),
                 after: draft.after.clone(),
                 capabilities: draft.capabilities.clone(),
-            })
-            .collect();
+                agent: WorkflowAgentSettings {
+                    max_tokens,
+                    timeout_secs,
+                    output_schema,
+                    ..draft.agent.clone()
+                },
+            });
+        }
         let reply = self.backend.save_workflow(Workflow {
             id,
             name,
@@ -341,7 +397,8 @@ impl Workspace {
                             .child(Input::new(&draft.instructions).h_full()),
                     )
                     .child(needs)
-                    .child(allowed),
+                    .child(allowed)
+                    .child(self.agent_settings(index, draft, cx)),
             );
         }
         form.child(
@@ -382,6 +439,124 @@ impl Workspace {
                         })),
                 ),
         )
+    }
+
+    /// How one task's agent works, as the WebView's Workflow Studio sets
+    /// it: the expert it works as, its model, a worktree of its own, a
+    /// token budget, a time limit and the shape of its result. Folded
+    /// away until asked for or set.
+    fn agent_settings(&self, index: usize, draft: &TaskDraft, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let label = |text: &'static str| div().text_xs().text_color(muted).child(text);
+        let toggle = Button::new(("workflow-agent-open", index))
+            .label(if draft.open {
+                tr("Fewer agent settings")
+            } else {
+                tr("Agent settings")
+            })
+            .xsmall()
+            .ghost()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if let Some(draft) = this.workflow_tasks.get_mut(index) {
+                    draft.open = !draft.open;
+                    cx.notify();
+                }
+            }));
+        let mut section = div().v_flex().gap_1().child(div().h_flex().child(toggle));
+        if !draft.open {
+            return section;
+        }
+        // Which expert, if any.
+        let mut experts = div()
+            .h_flex()
+            .flex_wrap()
+            .items_center()
+            .gap_1()
+            .child(label(tr("Done as")));
+        let choices = std::iter::once((None, tr("No expert").to_owned())).chain(
+            self.experts
+                .iter()
+                .map(|expert| (Some(expert.id.clone()), expert.name.clone())),
+        );
+        for (number, (id, name)) in choices.enumerate() {
+            let selected = draft.agent.expert == id;
+            experts = experts.child(
+                Button::new(("workflow-expert", index * 1000 + number))
+                    .label(name)
+                    .xsmall()
+                    .selected(selected)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(draft) = this.workflow_tasks.get_mut(index) {
+                            draft.agent.expert = id.clone();
+                            cx.notify();
+                        }
+                    })),
+            );
+        }
+        // An expert the list no longer has is still named, so it is seen.
+        if let Some(gone) = draft
+            .agent
+            .expert
+            .as_ref()
+            .filter(|id| !self.experts.iter().any(|expert| &expert.id == *id))
+        {
+            experts = experts.child(label(tr("(an expert that is gone)")).child(gone.clone()));
+        }
+        let mut models = div()
+            .h_flex()
+            .flex_wrap()
+            .items_center()
+            .gap_1()
+            .child(label(tr("Model")));
+        for (number, model) in [None, Some(ModelTier::Fast), Some(ModelTier::Inherit)]
+            .into_iter()
+            .enumerate()
+        {
+            models = models.child(
+                Button::new(("workflow-model", index * 10 + number))
+                    .label(workflows::model_label(model))
+                    .xsmall()
+                    .selected(draft.agent.model == model)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(draft) = this.workflow_tasks.get_mut(index) {
+                            draft.agent.model = model;
+                            cx.notify();
+                        }
+                    })),
+            );
+        }
+        models = models.child(
+            Button::new(("workflow-isolated", index))
+                .label(tr("Own worktree"))
+                .xsmall()
+                .selected(draft.agent.isolated)
+                .tooltip(tr(
+                    "Works in a Git worktree of its own; its changes are merged back when it succeeds",
+                ))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if let Some(draft) = this.workflow_tasks.get_mut(index) {
+                        draft.agent.isolated = !draft.agent.isolated;
+                        cx.notify();
+                    }
+                })),
+        );
+        let limits = div()
+            .h_flex()
+            .items_center()
+            .gap_2()
+            .child(label(tr("Token budget")))
+            .child(div().w(px(110.)).child(Input::new(&draft.tokens).xsmall()))
+            .child(label(tr("Time limit (seconds, 0 for none)")))
+            .child(div().w(px(90.)).child(Input::new(&draft.seconds).xsmall()));
+        section = section
+            .child(experts)
+            .child(models)
+            .child(limits)
+            .child(label(tr(
+                "Result shape: a JSON object (a JSON Schema) its result must match; empty for none",
+            )))
+            .child(div().h(px(70.)).child(Input::new(&draft.shape).h_full()));
+        section
     }
 
     fn workflow_row(&self, workflow: &Workflow, cx: &mut Context<Self>) -> Div {

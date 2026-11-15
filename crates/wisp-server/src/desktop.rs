@@ -5407,9 +5407,12 @@ pub use crate::subscriptions::{
 pub use crate::turn_undo::TurnFiles;
 pub use crate::updates::UpdateCheck;
 pub use crate::workflows::{
-    DraftedWorkflow, Workflow, WorkflowApproval, WorkflowInput, WorkflowTask,
-    CAPABILITIES as WORKFLOW_CAPABILITIES, TASK_LIMIT as WORKFLOW_TASK_LIMIT,
+    AgentSettings as WorkflowAgentSettings, DraftedWorkflow, Workflow, WorkflowApproval,
+    WorkflowInput, WorkflowTask, CAPABILITIES as WORKFLOW_CAPABILITIES,
+    TASK_LIMIT as WORKFLOW_TASK_LIMIT,
 };
+/// Which model a task's agent works on.
+pub use wisp_core::ModelTier;
 /// The most tasks a workflow run as agents takes.
 pub use wisp_core::MAX_DELEGATION_TASKS as WORKFLOW_AGENT_LIMIT;
 pub use wisp_dto::{ArchiveScript, ResearchArchive};

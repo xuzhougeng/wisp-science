@@ -839,7 +839,10 @@ Limits of this slice:
   approvals. Run as agents follows the WebView's Workflow Studio: each
   task is its own agent, given only the capabilities the template grants
   it (think only, read the project, change it, run code, review work;
-  none given is reading the project), and the tasks are drafted as a
+  none given is reading the project) and, under Agent settings, the
+  expert it works as, the sub-agent model or the conversation's own, a
+  Git worktree of its own, a token budget, a time limit and the JSON
+  Schema its result must match; and the tasks are drafted as a
   delegated batch in a new conversation named after the workflow. The
   batch waits in that conversation's Agents tab, with what each task may
   do, for Approve and run or Discard; under the approval policy "Start at
@@ -847,9 +850,11 @@ Limits of this slice:
   nothing and runs no code starts at once. It then runs in the background
   like a delegated batch (Stop and Run again included) and its result is
   delivered to the conversation, whose model sums it up. Run as agents
-  takes at most 8 tasks, the delegation limit. Not ported: executors or
-  per-task models, output contracts per task, a graph editor, converting
-  skills into a workflow, and literature and web research capabilities.
+  takes at most 8 tasks, the delegation limit. Not ported: ACP executors
+  and a named model profile per task (a task picks the sub-agent model or
+  the conversation's), tool-call and cost budgets, a graph editor,
+  converting skills into a workflow, and literature and web research
+  capabilities.
   A task can only need tasks listed before it. The two libraries are
   separate: this desktop keeps its own under `desktop.workflows` and
   neither reads nor changes the WebView's `workflow_templates`. It starts

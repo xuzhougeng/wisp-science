@@ -54,7 +54,43 @@ pub struct WorkflowTask {
     /// from [`CAPABILITIES`]; none is reading the project.
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// The rest of how the task's agent works, as the WebView's Workflow
+    /// Studio sets it per task.
+    #[serde(default, skip_serializing_if = "AgentSettings::is_default")]
+    pub agent: AgentSettings,
 }
+
+/// How one task's agent works when the workflow runs as agents; each
+/// left unset follows the delegation defaults.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentSettings {
+    /// One of the researcher's experts, by id, to do the task as.
+    #[serde(default)]
+    pub expert: Option<String>,
+    /// The sub-agent model (`fast`) or the conversation's own (`inherit`).
+    #[serde(default)]
+    pub model: Option<wisp_core::ModelTier>,
+    /// The shape its result must take: a JSON Schema object.
+    #[serde(default)]
+    pub output_schema: Option<Value>,
+    /// Works in a Git worktree of its own, merged back when it succeeds.
+    #[serde(default)]
+    pub isolated: bool,
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+    /// Seconds before it is stopped; zero is no limit.
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+}
+
+impl AgentSettings {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// The longest a task's agent may be given, a week.
+const TIMEOUT_LIMIT: u64 = 7 * 24 * 60 * 60;
 
 /// How a workflow run as agents is approved, as the WebView's
 /// `AgentApprovalPolicy`.
@@ -182,12 +218,32 @@ impl Workflow {
                 } else {
                     task.capabilities.clone()
                 };
-                json!({
+                let mut args = json!({
                     "id": ids[index],
                     "instruction": instruction,
                     "depends_on": task.after.iter().map(|needed| &ids[*needed]).collect::<Vec<_>>(),
                     "capabilities": capabilities,
-                })
+                });
+                let agent = &task.agent;
+                if let Some(expert) = &agent.expert {
+                    args["specialist_id"] = json!(expert);
+                }
+                if let Some(model) = agent.model {
+                    args["model_tier"] = json!(model);
+                }
+                if let Some(schema) = &agent.output_schema {
+                    args["output_schema"] = schema.clone();
+                }
+                if agent.isolated {
+                    args["isolated"] = json!(true);
+                }
+                if let Some(tokens) = agent.max_tokens {
+                    args["budget"] = json!({"max_tokens": tokens});
+                }
+                if let Some(seconds) = agent.timeout_secs {
+                    args["timeout_secs"] = json!(seconds);
+                }
+                args
             })
             .collect();
         json!({
@@ -235,6 +291,7 @@ fn starters() -> Vec<Workflow> {
         instructions: instructions.into(),
         after: after.to_vec(),
         capabilities: Vec::new(),
+        agent: AgentSettings::default(),
     };
     vec![
         Workflow {
@@ -371,11 +428,35 @@ fn checked(input: &WorkflowInput) -> Result<Workflow> {
                 capabilities.push(capability.into());
             }
         }
+        let mut agent = task.agent.clone();
+        agent.expert = agent
+            .expert
+            .map(|expert| expert.trim().to_owned())
+            .filter(|expert| !expert.is_empty());
+        if let Some(schema) = &agent.output_schema {
+            ensure!(
+                schema.is_object()
+                    && serde_json::to_vec(schema)?.len()
+                        <= wisp_core::MAX_AGENT_OUTPUT_SCHEMA_BYTES,
+                "The result shape of task {number} must be a JSON object of at most 32 KB"
+            );
+        }
+        ensure!(
+            agent.max_tokens != Some(0),
+            "Task {number} needs a token budget above zero, or none"
+        );
+        ensure!(
+            agent
+                .timeout_secs
+                .is_none_or(|seconds| seconds <= TIMEOUT_LIMIT),
+            "Task {number} can be given at most a week"
+        );
         tasks.push(WorkflowTask {
             title: title.into(),
             instructions: instructions.into(),
             after,
             capabilities,
+            agent,
         });
     }
     Ok(Workflow {
@@ -526,6 +607,7 @@ mod tests {
             instructions: format!("Do {title}."),
             after: after.to_vec(),
             capabilities: Vec::new(),
+            agent: AgentSettings::default(),
         }
     }
 
@@ -537,6 +619,72 @@ mod tests {
             tasks,
             approval: WorkflowApproval::ReviewAll,
         }
+    }
+
+    #[test]
+    fn a_task_carries_its_agent_settings_into_the_batch() {
+        let mut planned = task("Fit", &[]);
+        planned.agent = AgentSettings {
+            expert: Some(" statistician ".into()),
+            model: Some(wisp_core::ModelTier::Inherit),
+            output_schema: Some(json!({
+                "type": "object",
+                "properties": {"r2": {"type": "number"}},
+                "required": ["r2"],
+            })),
+            isolated: true,
+            max_tokens: Some(9_000),
+            timeout_secs: Some(600),
+        };
+        let made = checked(&workflow(vec![planned.clone()])).unwrap();
+        assert_eq!(made.tasks[0].agent.expert.as_deref(), Some("statistician"));
+        let batch = made.batch();
+        let args = &batch["tasks"][0];
+        assert_eq!(args["specialist_id"], "statistician");
+        assert_eq!(args["model_tier"], "inherit");
+        assert_eq!(args["output_schema"]["required"][0], "r2");
+        assert_eq!(args["isolated"], true);
+        assert_eq!(args["budget"]["max_tokens"], 9_000);
+        assert_eq!(args["timeout_secs"], 600);
+        // A plain task sends none of them.
+        let plain = checked(&workflow(vec![task("Plain", &[])]))
+            .unwrap()
+            .batch();
+        for field in [
+            "specialist_id",
+            "model_tier",
+            "output_schema",
+            "isolated",
+            "budget",
+        ] {
+            assert!(plain["tasks"][0].get(field).is_none(), "{field}");
+        }
+        // A result shape that is not an object, a zero budget or more than
+        // a week is refused.
+        for broken in [
+            AgentSettings {
+                output_schema: Some(json!(["r2"])),
+                ..AgentSettings::default()
+            },
+            AgentSettings {
+                max_tokens: Some(0),
+                ..AgentSettings::default()
+            },
+            AgentSettings {
+                timeout_secs: Some(TIMEOUT_LIMIT + 1),
+                ..AgentSettings::default()
+            },
+        ] {
+            let mut odd = task("Odd", &[]);
+            odd.agent = broken;
+            assert!(checked(&workflow(vec![odd])).is_err());
+        }
+        // A template kept before these existed reads as before, and is
+        // kept without them.
+        let old: WorkflowTask =
+            serde_json::from_value(json!({"title": "t", "instructions": "i"})).unwrap();
+        assert_eq!(old.agent, AgentSettings::default());
+        assert!(serde_json::to_value(&old).unwrap().get("agent").is_none());
     }
 
     #[test]

@@ -59,6 +59,55 @@ pub fn toggled_capability(capabilities: &[String], capability: &str) -> Vec<Stri
         .collect()
 }
 
+/// The typed fields of a task's agent settings: a token budget and a time
+/// limit in seconds (empty is none), and the shape its result must take,
+/// as JSON (empty is none).
+pub fn agent_fields(
+    tokens: &str,
+    seconds: &str,
+    shape: &str,
+) -> Result<(Option<u32>, Option<u64>, Option<serde_json::Value>), &'static str> {
+    let tokens = match tokens.trim() {
+        "" => None,
+        text => Some(
+            text.parse::<u32>()
+                .ok()
+                .filter(|tokens| *tokens > 0)
+                .ok_or(tr("A token budget is a whole number above zero."))?,
+        ),
+    };
+    let seconds = match seconds.trim() {
+        "" => None,
+        text => Some(
+            text.parse::<u64>()
+                .map_err(|_| tr("A time limit is a whole number of seconds."))?,
+        ),
+    };
+    let shape = match shape.trim() {
+        "" => None,
+        text => Some(
+            serde_json::from_str::<serde_json::Value>(text)
+                .ok()
+                .filter(serde_json::Value::is_object)
+                .ok_or(tr(
+                    "A result shape is a JSON object, such as a JSON Schema.",
+                ))?,
+        ),
+    };
+    Ok((tokens, seconds, shape))
+}
+
+/// The model a task's agent works on, in words: the delegation default,
+/// the sub-agent model, or the conversation's own.
+pub fn model_label(model: Option<wisp_server::desktop::ModelTier>) -> &'static str {
+    use wisp_server::desktop::ModelTier;
+    match model {
+        None => tr("Default model"),
+        Some(ModelTier::Fast) => tr("Sub-agent model"),
+        Some(ModelTier::Inherit) => tr("The conversation's model"),
+    }
+}
+
 /// How a run as agents is approved, in words.
 pub fn approval_label(approval: WorkflowApproval) -> &'static str {
     match approval {
@@ -115,6 +164,7 @@ mod tests {
             instructions: "i".into(),
             after: after.to_vec(),
             capabilities: Vec::new(),
+            agent: Default::default(),
         }
     }
 
@@ -136,6 +186,21 @@ mod tests {
         let on = toggled_capability(&["code_run".into()], "project_read");
         assert_eq!(on, ["project_read", "code_run"]);
         assert_eq!(toggled_capability(&on, "code_run"), ["project_read"]);
+    }
+
+    #[test]
+    fn a_tasks_agent_settings_are_read_from_their_fields() {
+        assert_eq!(agent_fields(" ", "", ""), Ok((None, None, None)));
+        let (tokens, seconds, shape) =
+            agent_fields("9000", " 600 ", r#"{"type": "object"}"#).unwrap();
+        assert_eq!((tokens, seconds), (Some(9000), Some(600)));
+        assert_eq!(shape.unwrap()["type"], "object");
+        assert!(agent_fields("0", "", "").is_err());
+        assert!(agent_fields("many", "", "").is_err());
+        assert!(agent_fields("", "-1", "").is_err());
+        assert!(agent_fields("", "", "[1]").is_err());
+        assert!(agent_fields("", "", "{not json").is_err());
+        assert_eq!(model_label(None), "Default model");
     }
 
     #[test]

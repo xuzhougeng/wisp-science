@@ -9997,6 +9997,7 @@ async fn a_workflow_runs_as_agents_once_it_is_approved() {
             instructions: instructions.into(),
             after: after.to_vec(),
             capabilities: capabilities.iter().map(|name| name.to_string()).collect(),
+            agent: Default::default(),
         }
     };
     let save = |name: &str, approval, capability: &'static str| {
@@ -10122,6 +10123,69 @@ async fn a_workflow_runs_as_agents_once_it_is_approved() {
     let risky = save("Run count", desktop::WorkflowApproval::AutoSafe, "code_run").await;
     let waiting = server.draft_workflow(PROJECT, &risky).await.unwrap();
     assert!(!waiting.started);
+
+    // A task can be done as one of the researcher's experts; one that is
+    // gone cannot, and leaves nothing behind.
+    let expert = server.experts().await.unwrap()[0].clone();
+    let mut tasks = vec![task(
+        "Count the reads",
+        "Count the reads",
+        &[],
+        &["project_read"],
+    )];
+    tasks[0].agent.expert = Some(expert.id.clone());
+    let saved = server
+        .save_workflow(desktop::WorkflowInput {
+            id: String::new(),
+            name: "As an expert".into(),
+            goal: "Count the reads".into(),
+            tasks: tasks.clone(),
+            approval: desktop::WorkflowApproval::ReviewAll,
+        })
+        .await
+        .unwrap();
+    let as_expert = server
+        .draft_workflow(PROJECT, &saved.last().unwrap().id)
+        .await
+        .unwrap();
+    let drafted = server
+        .delegated_batches(PROJECT, &as_expert.session)
+        .await
+        .unwrap();
+    assert_eq!(
+        drafted[0].tasks[0].expert.as_deref(),
+        Some(expert.name.as_str())
+    );
+    tasks[0].agent.expert = Some("nobody".into());
+    let saved = server
+        .save_workflow(desktop::WorkflowInput {
+            id: String::new(),
+            name: "Without the expert".into(),
+            goal: "Count the reads".into(),
+            tasks,
+            approval: desktop::WorkflowApproval::ReviewAll,
+        })
+        .await
+        .unwrap();
+    let before = server
+        .conversations(PROJECT, "", false)
+        .await
+        .unwrap()
+        .rows
+        .len();
+    assert!(server
+        .draft_workflow(PROJECT, &saved.last().unwrap().id)
+        .await
+        .is_err());
+    assert_eq!(
+        server
+            .conversations(PROJECT, "", false)
+            .await
+            .unwrap()
+            .rows
+            .len(),
+        before
+    );
     server.shutdown().await;
 }
 
