@@ -1041,6 +1041,11 @@ impl Backend {
         self.local(move |host| async move { host.run_workflow(&project, &id).await })
     }
 
+    /// Keeps a pasted picture in the project's `uploads` as `name`.
+    pub fn import_pasted(&self, project: String, name: String, bytes: Vec<u8>) -> Reply<String> {
+        self.local(move |host| async move { host.import_pasted(&project, &name, &bytes).await })
+    }
+
     /// Opens a terminal of `project`: this computer's shell, or one on an
     /// environment such as `ssh:alias`.
     pub fn open_terminal(

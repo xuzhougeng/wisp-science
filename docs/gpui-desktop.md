@@ -1352,9 +1352,12 @@ Limits of this slice:
   `src-tauri` still carries its own copy of the same text. Approving sends
   "Approve and execute", or whatever is typed in the composer.
 - Files dropped onto a conversation are attached the way picked ones are.
+  A picture pasted into the composer with Cmd+V (Ctrl+V elsewhere) is kept
+  as `uploads/pasted-<date>-<time>.<format>` and attached the same way;
+  when the clipboard also holds text, the text is what is pasted.
   A drop takes at most twenty files; folders are left out, and it says how
-  many items it did not attach. Pasting a file or a picture from the
-  clipboard is not ported.
+  many items it did not attach. Pasting a file (rather than a picture)
+  from the clipboard is not ported.
 - A file attached from outside the project is copied into the project's
   `uploads` folder (up to 100 MB, never overwriting); a file inside it is used
   where it is. The model receives project-relative paths and reads the files

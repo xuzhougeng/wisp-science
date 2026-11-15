@@ -103,7 +103,7 @@ to find in the running app.
 | Queue a message while a turn runs | Yes *(source)* | Partial: up to ten per conversation, sent in order as turns end, with take back, drop and a cut-in that gives one to the running turn now; kept in the window only | tauri |
 | Attach files, images, PDF [附加文件] | Yes | Partial: any file through the system dialog, copied into `uploads/` when it is outside the project; the model gets the paths, not the image pixels | served |
 | Browse project files to attach [你的文件] | Yes | Done: found by name in the add-context box | served |
-| Paste or drop files | Yes | Partial: files dropped onto the conversation are attached; no paste from the clipboard | tauri |
+| Paste or drop files | Yes | Done: files dropped onto the conversation are attached, and a picture pasted into the composer (a screenshot, say) is kept in `uploads/` and attached; text pastes as text | tauri |
 | `@` artifact, `#` conversation, `/` skill mentions | Yes | Partial: conversations and skills, picked from the add-context box rather than typed inline; a conversation is passed as a recent excerpt, not through the reader agent; no artifacts, environments, runtimes, workflows or memos | served |
 | Model picker per conversation | Yes | Done: saved API models, or follow the default | served |
 | Reasoning effort / fast mode | Yes | Partial: effort per conversation, kept across restarts; no fast mode | store |

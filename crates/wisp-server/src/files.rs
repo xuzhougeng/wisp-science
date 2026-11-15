@@ -224,6 +224,35 @@ pub async fn import(root: &Path, sources: &[PathBuf]) -> Result<Vec<String>> {
     Ok(imported)
 }
 
+/// Keeps pasted content as `uploads/<name>`, numbered when that name is
+/// taken, and gives its path for a message to carry.
+pub async fn import_bytes(root: &Path, name: &str, bytes: &[u8]) -> Result<String> {
+    const LIMIT: usize = 100 * 1024 * 1024;
+    ensure!(!bytes.is_empty(), "There is nothing to keep");
+    ensure!(
+        bytes.len() <= LIMIT,
+        "What was pasted is larger than 100 MB; save it in the project folder instead"
+    );
+    ensure!(
+        !name.is_empty() && !name.contains(['/', '\\']) && !name.starts_with('.'),
+        "'{name}' is not a file name"
+    );
+    let uploads = root.join("uploads");
+    tokio::fs::create_dir_all(&uploads).await?;
+    let (stem, extension) = match name.rsplit_once('.') {
+        Some((stem, extension)) if !stem.is_empty() => (stem, format!(".{extension}")),
+        _ => (name, String::new()),
+    };
+    let mut target = name.to_owned();
+    let mut copy = 1;
+    while tokio::fs::try_exists(uploads.join(&target)).await? {
+        copy += 1;
+        target = format!("{stem}-{copy}{extension}");
+    }
+    tokio::fs::write(uploads.join(&target), bytes).await?;
+    Ok(format!("uploads/{target}"))
+}
+
 /// Folders that hold tooling rather than research files. They stay
 /// browsable; a name search just does not descend into them.
 fn searchable(name: &str) -> bool {
@@ -552,6 +581,26 @@ mod tests {
             assert!(trash(root, "reads", 1702).await.is_ok());
             assert!(!root.join("reads").exists());
             assert_eq!(std::fs::read(&outside).unwrap(), b"reads");
+        }
+    }
+
+    #[tokio::test]
+    async fn pasted_content_is_kept_in_uploads_under_a_free_name() {
+        let project = tempfile::tempdir().unwrap();
+        let root = project.path();
+        let first = import_bytes(root, "pasted.png", b"one").await.unwrap();
+        assert_eq!(first, "uploads/pasted.png");
+        let second = import_bytes(root, "pasted.png", b"two").await.unwrap();
+        assert_eq!(second, "uploads/pasted-2.png");
+        assert_eq!(std::fs::read(root.join(&second)).unwrap(), b"two");
+        // Nothing, a path or a hidden name is not kept.
+        for (name, bytes) in [
+            ("empty.png", &b""[..]),
+            ("../out.png", b"x"),
+            ("a/b.png", b"x"),
+            (".hidden", b"x"),
+        ] {
+            assert!(import_bytes(root, name, bytes).await.is_err(), "{name}");
         }
     }
 

@@ -177,6 +177,17 @@ pub fn drop_note(left_out: usize) -> Option<String> {
     }
 }
 
+/// The name a pasted picture is kept under in `uploads`: when it was
+/// pasted, with the extension of its format.
+pub fn pasted_name(extension: &str, now: chrono::NaiveDateTime) -> String {
+    format!("pasted-{}.{extension}", now.format("%Y%m%d-%H%M%S"))
+}
+
+/// Whether Cmd+V (Ctrl+V off macOS) was pressed with nothing else held.
+pub fn is_paste(key: &str, primary: bool, shift: bool, others: bool) -> bool {
+    key == "v" && primary && !shift && !others
+}
+
 pub fn user_text(item: &Item) -> String {
     if item.attachments.is_empty() {
         return item.text.clone();
@@ -280,6 +291,19 @@ pub fn with_quote(typed: &str, message: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_pasted_picture_is_named_for_when_it_was_pasted() {
+        let at = chrono::NaiveDate::from_ymd_opt(2026, 11, 15)
+            .unwrap()
+            .and_hms_opt(9, 5, 7)
+            .unwrap();
+        assert_eq!(pasted_name("png", at), "pasted-20261115-090507.png");
+        assert!(is_paste("v", true, false, false));
+        assert!(!is_paste("v", false, false, false));
+        assert!(!is_paste("v", true, true, false));
+        assert!(!is_paste("c", true, false, false));
+    }
 
     #[test]
     fn the_skill_request_is_added_once_and_keeps_what_was_typed() {

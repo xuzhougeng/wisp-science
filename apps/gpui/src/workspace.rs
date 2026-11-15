@@ -1047,6 +1047,24 @@ impl Workspace {
                 {
                     return;
                 }
+                // A picture pasted into the composer is attached; text
+                // goes on to the composer as ever.
+                let others_held = held.alt
+                    || held.function
+                    || if cfg!(target_os = "macos") {
+                        held.control
+                    } else {
+                        held.platform
+                    };
+                if compose::is_paste(key, held.secondary(), held.shift, others_held) {
+                    if weak
+                        .update(cx, |this, cx| this.paste_picture(window, cx))
+                        .unwrap_or(false)
+                    {
+                        cx.stop_propagation();
+                    }
+                    return;
+                }
                 let handled = if is_escape(key, held.modified()) {
                     weak.update(cx, |this, cx| this.dismiss_top(window, cx))
                 } else if let Some(delta) = palette::step(key, held.modified()) {
@@ -2843,6 +2861,58 @@ impl Workspace {
         })
         .detach();
         cx.notify();
+    }
+
+    /// A picture on the clipboard, pasted while the composer has focus, is
+    /// kept in the project's `uploads` and put on the message being
+    /// written. Text on the clipboard is the composer's to paste, so a
+    /// picture that comes with text is left to it. Whether it took the
+    /// paste.
+    pub(super) fn paste_picture(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.composer.focus_handle(cx).is_focused(window) {
+            return false;
+        }
+        let Some(item) = cx.read_from_clipboard() else {
+            return false;
+        };
+        let has_text = item.entries().iter().any(
+            |entry| matches!(entry, ClipboardEntry::String(text) if !text.text().trim().is_empty()),
+        );
+        let Some(image) = item.entries().iter().find_map(|entry| match entry {
+            ClipboardEntry::Image(image) => Some(image),
+            _ => None,
+        }) else {
+            return false;
+        };
+        if has_text {
+            return false;
+        }
+        let selection = self.state.selection();
+        let (Some(project), Some(_)) = (selection.project.clone(), selection.session.clone())
+        else {
+            return false;
+        };
+        let extension = match image.format {
+            ImageFormat::Png => "png",
+            ImageFormat::Jpeg => "jpg",
+            ImageFormat::Webp => "webp",
+            ImageFormat::Gif => "gif",
+            ImageFormat::Svg => "svg",
+            ImageFormat::Bmp => "bmp",
+            ImageFormat::Tiff => "tiff",
+        };
+        let name = compose::pasted_name(extension, chrono::Local::now().naive_local());
+        let reply = self
+            .backend
+            .import_pasted(project, name, image.bytes.clone());
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await.map(|path| vec![path]);
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.attach_imported(&selection, result, window, cx)
+            });
+        })
+        .detach();
+        true
     }
 
     /// Puts imported files on the message being written.

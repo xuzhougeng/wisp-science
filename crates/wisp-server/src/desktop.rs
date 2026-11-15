@@ -2590,6 +2590,13 @@ impl Server {
         crate::files::import(std::path::Path::new(&root), sources).await
     }
 
+    /// Keeps something pasted (a picture, say) in the project's `uploads`
+    /// folder as `name`, for a message to carry.
+    pub async fn import_pasted(&self, project: &str, name: &str, bytes: &[u8]) -> Result<String> {
+        let root = self.project_root(project).await?;
+        crate::files::import_bytes(std::path::Path::new(&root), name, bytes).await
+    }
+
     /// Skills a conversation in this project can be pointed at, filtered by
     /// the words of `query`.
     pub async fn skill_options(
