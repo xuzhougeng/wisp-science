@@ -1146,6 +1146,53 @@ pub fn model_label(settings: Option<&ModelSettings>, choice: &str) -> String {
         .map_or_else(|| tr("No model").into(), |profile| profile.name.clone())
 }
 
+/// Where Wisp keeps its own data: the environment's choice, else the
+/// system's local data folder.
+pub fn data_dir() -> Result<std::path::PathBuf, String> {
+    if let Some(data) = std::env::var_os("WISP_GPUI_DATA") {
+        return Ok(data.into());
+    }
+    dirs::data_local_dir()
+        .map(|base| base.join("wisp-science-gpui"))
+        .ok_or_else(|| "Cannot locate the local data directory".into())
+}
+
+/// The file in the data folder that names the workspace folder chosen in
+/// Settings, read at the next start.
+pub const WORKSPACE_FILE: &str = "workspace-folder";
+
+/// The workspace folder used from the default when nothing else is chosen.
+pub fn default_workspace() -> Option<std::path::PathBuf> {
+    dirs::data_local_dir().map(|base| base.join("wisp-science-gpui-workspace"))
+}
+
+/// The folder the built-in project keeps its files in: the environment's
+/// choice wins, then the one chosen in Settings, then the default.
+pub fn workspace_folder(
+    from_environment: Option<std::path::PathBuf>,
+    chosen: Option<&str>,
+    fallback: std::path::PathBuf,
+) -> std::path::PathBuf {
+    from_environment
+        .or_else(|| {
+            chosen
+                .map(str::trim)
+                .filter(|chosen| !chosen.is_empty())
+                .map(std::path::PathBuf::from)
+        })
+        .unwrap_or(fallback)
+}
+
+/// A workspace folder as typed: empty goes back to the default; anything
+/// else must be a whole path.
+pub fn typed_workspace(text: &str) -> Result<Option<String>, &'static str> {
+    match text.trim() {
+        "" => Ok(None),
+        path if std::path::Path::new(path).is_absolute() => Ok(Some(path.to_owned())),
+        _ => Err("The workspace folder must be a whole path, from the top of the disk."),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1881,5 +1928,32 @@ mod tests {
         assert_eq!(lines[3].1, "2, all checked");
         assert_eq!(lines[4].1, "Off");
         assert_eq!(lines[0].1, "None found");
+    }
+
+    #[test]
+    fn the_workspace_folder_is_the_environments_then_the_chosen_one() {
+        use std::path::PathBuf;
+        let fallback = PathBuf::from("/data/workspace");
+        assert_eq!(workspace_folder(None, None, fallback.clone()), fallback);
+        assert_eq!(
+            workspace_folder(None, Some("  "), fallback.clone()),
+            fallback
+        );
+        assert_eq!(
+            workspace_folder(None, Some(" /research/lab \n"), fallback.clone()),
+            PathBuf::from("/research/lab")
+        );
+        assert_eq!(
+            workspace_folder(Some("/env".into()), Some("/research/lab"), fallback),
+            PathBuf::from("/env")
+        );
+        assert_eq!(typed_workspace("  "), Ok(None));
+        let whole = if cfg!(windows) {
+            "C:\\research"
+        } else {
+            "/research"
+        };
+        assert_eq!(typed_workspace(whole), Ok(Some(whole.to_owned())));
+        assert!(typed_workspace("research/lab").is_err());
     }
 }

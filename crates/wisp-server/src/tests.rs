@@ -12521,6 +12521,27 @@ async fn a_background_batch_is_delivered_later_and_resumes_its_conversation() {
 }
 
 #[tokio::test]
+async fn separate_project_storage_is_the_webviews_switch() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    assert!(!server.separate_project_storage().await.unwrap());
+    server.set_separate_project_storage(true).await.unwrap();
+    assert!(server.separate_project_storage().await.unwrap());
+    // The store reads it where projects are made.
+    assert!(server
+        .0
+        .store
+        .decentralized_project_storage()
+        .await
+        .unwrap());
+    server.set_separate_project_storage(false).await.unwrap();
+    assert!(!server.separate_project_storage().await.unwrap());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_quick_action_drafts_its_workflow_on_what_was_typed() {
     let temp = tempfile::tempdir().unwrap();
     let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))

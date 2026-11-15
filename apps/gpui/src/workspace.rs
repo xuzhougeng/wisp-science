@@ -491,6 +491,12 @@ pub struct Workspace {
     quick_fields: [Entity<InputState>; 2],
     /// The workflow the action being written starts; empty for none.
     quick_workflow: String,
+    /// The workspace folder for the next start, on the General page.
+    workspace_choice: Entity<InputState>,
+    /// Whether new projects keep their own database; `None` until read.
+    separate_storage: Option<bool>,
+    /// The workspace folder typed was kept for the next start.
+    workspace_saved: bool,
     /// Your command hooks, as saved.
     command_hooks: Vec<wisp_dto::CommandHook>,
     /// The open project's `.wisp/hooks.json`, when it has one.
@@ -1040,6 +1046,13 @@ impl Workspace {
             }),
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Branch, tag or commit"))),
         ];
+        let workspace_choice = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(
+                crate::settings::default_workspace()
+                    .map(|folder| folder.display().to_string())
+                    .unwrap_or_default(),
+            )
+        });
         let run_review_filter =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Names containing…")));
         let plugin_address = [
@@ -1508,6 +1521,9 @@ impl Workspace {
             quick_editing: None,
             quick_fields,
             quick_workflow: String::new(),
+            workspace_choice,
+            separate_storage: None,
+            workspace_saved: false,
             command_hooks: vec![],
             project_hook_file: None,
             hook_editing: None,

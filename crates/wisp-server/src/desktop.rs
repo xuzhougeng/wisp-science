@@ -5178,6 +5178,20 @@ impl Server {
         crate::pet::save(&self.0.store, enabled, directory).await
     }
 
+    /// Whether each project made from now on keeps its own database in its
+    /// folder, the WebView's decentralized project storage. Projects that
+    /// exist stay where they are.
+    pub async fn separate_project_storage(&self) -> Result<bool> {
+        self.0.store.decentralized_project_storage().await
+    }
+
+    pub async fn set_separate_project_storage(&self, on: bool) -> Result<()> {
+        self.0
+            .store
+            .set_setting("decentralized_project_storage", &on.to_string())
+            .await
+    }
+
     /// The requests kept as quick actions, in the order they were added.
     pub async fn quick_actions(&self) -> Result<Vec<QuickAction>> {
         Ok(crate::quick_actions::list(&self.0.store).await)

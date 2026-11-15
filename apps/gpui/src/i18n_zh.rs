@@ -480,6 +480,21 @@ pub const ZH: &[(&str, &str)] = &[
     ("Clean up", "清理"),
     ("Clean up anyway", "仍然清理"),
     ("Names containing…", "名称包含…"),
+    ("Workspace folder", "工作区文件夹"),
+    (
+        "Where the built-in project keeps its files. Empty uses the default shown in the field. Used from Wisp's next start; WISP_GPUI_WORKSPACE overrides it.",
+        "内置项目存放文件的位置。留空则使用输入框中显示的默认位置。从 Wisp 下次启动起生效；WISP_GPUI_WORKSPACE 会覆盖它。",
+    ),
+    ("Saved. Wisp uses that folder from its next start.", "已保存。Wisp 下次启动时使用该文件夹。"),
+    (
+        "The workspace folder must be a whole path, from the top of the disk.",
+        "工作区文件夹必须是从磁盘根开始的完整路径。",
+    ),
+    ("Each project its own database", "每个项目使用自己的数据库"),
+    (
+        "New projects keep their conversations in a database inside their own folder, so the folder can be moved or synced on its own. Projects that exist stay where they are.",
+        "新项目会把对话保存在自己文件夹内的数据库中，这样文件夹可以单独移动或同步。已有项目保持不变。",
+    ),
     (
         "Copying to {}; the Runs tab shows how far it has got.",
         "正在复制到 {}；运行标签页会显示进度。",

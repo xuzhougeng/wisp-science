@@ -55,13 +55,17 @@ impl Backend {
     pub fn initialize(&self) -> Reply<()> {
         let host = self.host.clone();
         self.spawn(async move {
-            let base = dirs::data_local_dir().ok_or("Cannot locate the local data directory")?;
-            let data = std::env::var_os("WISP_GPUI_DATA")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| base.join("wisp-science-gpui"));
-            let workspace = std::env::var_os("WISP_GPUI_WORKSPACE")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| base.join("wisp-science-gpui-workspace"));
+            let data = crate::settings::data_dir()?;
+            let fallback = crate::settings::default_workspace()
+                .ok_or("Cannot locate the local data directory")?;
+            // A folder chosen in Settings, General, is used from the start
+            // after it was chosen; the environment's choice wins.
+            let chosen = std::fs::read_to_string(data.join(crate::settings::WORKSPACE_FILE)).ok();
+            let workspace = crate::settings::workspace_folder(
+                std::env::var_os("WISP_GPUI_WORKSPACE").map(PathBuf::from),
+                chosen.as_deref(),
+                fallback,
+            );
             host.get_or_try_init(|| async {
                 let config = Config::local(data, workspace).map_err(|e| format!("{e:#}"))?;
                 let server = Server::open(config).await.map_err(|e| format!("{e:#}"))?;
@@ -1358,6 +1362,47 @@ impl Backend {
         self.local(move |host| async move {
             host.workflow_from_skills(&project, &request, &skills).await
         })
+    }
+
+    /// The workspace folder chosen for the next start, if one is.
+    pub fn chosen_workspace(&self) -> Reply<Option<String>> {
+        self.spawn(async move {
+            let file = crate::settings::data_dir()?.join(crate::settings::WORKSPACE_FILE);
+            Ok(std::fs::read_to_string(file)
+                .ok()
+                .map(|chosen| chosen.trim().to_owned())
+                .filter(|chosen| !chosen.is_empty()))
+        })
+    }
+
+    /// Keeps `folder` as the workspace folder from the next start; `None`
+    /// goes back to the default.
+    pub fn choose_workspace(&self, folder: Option<String>) -> Reply<()> {
+        self.spawn(async move {
+            let data = crate::settings::data_dir()?;
+            let file = data.join(crate::settings::WORKSPACE_FILE);
+            match folder {
+                Some(folder) => {
+                    std::fs::create_dir_all(&data).map_err(|error| error.to_string())?;
+                    std::fs::write(file, folder).map_err(|error| error.to_string())
+                }
+                None => match std::fs::remove_file(file) {
+                    Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                        Err(error.to_string())
+                    }
+                    _ => Ok(()),
+                },
+            }
+        })
+    }
+
+    /// Whether each new project keeps its own database in its folder.
+    pub fn separate_project_storage(&self) -> Reply<bool> {
+        self.local(|host| async move { host.separate_project_storage().await })
+    }
+
+    pub fn set_separate_project_storage(&self, on: bool) -> Reply<()> {
+        self.local(move |host| async move { host.set_separate_project_storage(on).await })
     }
 
     /// Starts a quick action's workflow as agents on `input`.

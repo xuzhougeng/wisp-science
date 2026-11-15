@@ -97,7 +97,7 @@ impl Workspace {
         self.settings_error = None;
         match section {
             Section::Models => self.load_subscriptions(window, cx),
-            Section::General => {}
+            Section::General => self.load_storage_choices(window, cx),
             Section::Skills => {
                 self.load_skills(window, cx);
                 if self.community_skills.is_none() {
@@ -1263,6 +1263,98 @@ impl Workspace {
         self.save_general(FILES_VIEW, value.into(), window, cx);
     }
 
+    /// Reads the workspace folder chosen for the next start and whether new
+    /// projects keep their own database.
+    fn load_storage_choices(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (chosen, separate) = (
+            self.backend.chosen_workspace(),
+            self.backend.separate_project_storage(),
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            let (chosen, separate) = (receive(chosen).await, receive(separate).await);
+            let _ = this.update_in(cx, |this, window, cx| {
+                let chosen = chosen.ok().flatten().unwrap_or_default();
+                this.workspace_choice
+                    .update(cx, |input, cx| input.set_value(chosen, window, cx));
+                match separate {
+                    Ok(on) => this.separate_storage = Some(on),
+                    Err(error) => this.settings_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Keeps the typed workspace folder for the next start.
+    fn save_workspace_choice(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let typed = self.workspace_choice.read(cx).value().to_string();
+        self.settings_error = None;
+        self.workspace_saved = false;
+        let folder = match settings::typed_workspace(&typed) {
+            Ok(folder) => folder,
+            Err(problem) => {
+                self.settings_error = Some(tr(problem).into());
+                cx.notify();
+                return;
+            }
+        };
+        let reply = self.backend.choose_workspace(folder);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(()) => this.workspace_saved = true,
+                    Err(error) => this.settings_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Asks for the workspace folder with the system's folder picker.
+    fn pick_workspace_choice(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let picker = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some(tr("Choose").into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = picker.await else {
+                return;
+            };
+            let Some(folder) = paths.into_iter().next() else {
+                return;
+            };
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.workspace_choice.update(cx, |input, cx| {
+                    input.set_value(folder.display().to_string(), window, cx)
+                });
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn set_separate_storage(&mut self, on: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let reply = self.backend.set_separate_project_storage(on);
+        self.separate_storage = Some(on);
+        cx.spawn_in(window, async move |this, cx| {
+            if let Err(error) = receive(reply).await {
+                let _ = this.update(cx, |this, cx| {
+                    this.separate_storage = Some(!on);
+                    this.settings_error = Some(error);
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+
     /// Remembers which of the side panel's tabs are kept, for the next start.
     pub(super) fn save_panel_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let value = crate::panel::encode_tabs(&self.kept_tabs);
@@ -1398,6 +1490,67 @@ impl Workspace {
                 cx,
             ))
             .child(setting(tr("Send with"), settings::send_key_note(), sends, cx))
+            .child(setting(
+                tr("Workspace folder"),
+                tr(
+                    "Where the built-in project keeps its files. Empty uses the default shown in \
+                     the field. Used from Wisp's next start; WISP_GPUI_WORKSPACE overrides it.",
+                ),
+                div()
+                    .v_flex()
+                    .gap_1()
+                    .w(px(320.))
+                    .child(Input::new(&self.workspace_choice).small())
+                    .children(self.workspace_saved.then(|| {
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().success)
+                            .child(tr("Saved. Wisp uses that folder from its next start."))
+                    }))
+                    .child(
+                        div()
+                            .h_flex()
+                            .gap_1()
+                            .child(
+                                Button::new("workspace-pick")
+                                    .label(tr("Choose…"))
+                                    .small()
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.pick_workspace_choice(window, cx)
+                                    })),
+                            )
+                            .child(
+                                Button::new("workspace-save")
+                                    .label(tr("Save"))
+                                    .small()
+                                    .primary()
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.save_workspace_choice(window, cx)
+                                    })),
+                            ),
+                    ),
+                cx,
+            ))
+            .child({
+                let on = self.separate_storage.unwrap_or(false);
+                setting(
+                    tr("Each project its own database"),
+                    tr(
+                        "New projects keep their conversations in a database inside their own \
+                         folder, so the folder can be moved or synced on its own. Projects that \
+                         exist stay where they are.",
+                    ),
+                    Button::new("separate-storage")
+                        .label(if on { tr("On") } else { tr("Off") })
+                        .small()
+                        .selected(on)
+                        .disabled(self.separate_storage.is_none())
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.set_separate_storage(!on, window, cx)
+                        })),
+                    cx,
+                )
+            })
             .child(setting(
                 tr("Notify me"),
                 tr(
