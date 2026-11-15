@@ -5700,9 +5700,21 @@ async fn a_conversation_is_read_back_as_a_trajectory() {
     // Two model calls: the one that asked for the tool and the one that answered.
     assert_eq!(cells("usage").len(), 2, "{turn:?}");
     assert_eq!((trajectory.stats.turns, trajectory.stats.steps), (1, 2));
+    // The turn's calls added up, for the line under its answer.
+    let tokens = server.turn_tokens(PROJECT, &session).await.unwrap();
+    assert_eq!(tokens.len(), 1);
+    assert_eq!(
+        (tokens[0].from_end, tokens[0].text.as_str(), tokens[0].calls),
+        (0, "write the file", 2)
+    );
+    assert_eq!(
+        tokens[0].input + tokens[0].output,
+        (trajectory.stats.input_tokens + trajectory.stats.output_tokens) as u64
+    );
 
     // Only the conversation's own project may read it.
     assert!(server.trajectory("missing", &session).await.is_err());
+    assert!(server.turn_tokens("missing", &session).await.is_err());
     assert!(server.trajectory(PROJECT, "missing").await.is_err());
     server.shutdown().await;
 }

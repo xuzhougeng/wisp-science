@@ -3,7 +3,7 @@
 use crate::i18n::tr;
 use wisp_dto::{PendingToolApproval, native_conversations::Item};
 use wisp_server::desktop::{
-    RuntimeLanguage, RuntimeRow, RuntimeState, TokenUsage, TurnRef, tool_question,
+    RuntimeLanguage, RuntimeRow, RuntimeState, TokenUsage, TurnRef, TurnTokens, tool_question,
 };
 
 /// An interpreter the conversation keeps, as its chip reads: the language,
@@ -127,6 +127,42 @@ pub fn usage_line(usage: &TokenUsage) -> String {
         ));
     }
     crate::i18n::fill(tr("{} tokens"), &[&parts.join(" · ")])
+}
+
+/// What the turn an answer closes used, once the turn is saved: shown
+/// under the turn's last answer only, and only when the turn is still the
+/// one the numbers were read for.
+pub fn turn_tokens_at<'a>(
+    rows: &[Item],
+    index: usize,
+    tokens: &'a [TurnTokens],
+) -> Option<&'a TurnTokens> {
+    let row = rows.get(index)?;
+    if row.role != "assistant" || row.text.trim().is_empty() {
+        return None;
+    }
+    let answered_later = rows[index + 1..]
+        .iter()
+        .take_while(|row| row.role != "user")
+        .any(|row| row.role == "assistant" && !row.text.trim().is_empty());
+    if answered_later {
+        return None;
+    }
+    let turn = turn_of(rows, index)?;
+    tokens
+        .iter()
+        .find(|tokens| tokens.from_end == turn.from_end && tokens.text == turn.text)
+}
+
+/// A saved turn's usage in the words of the latest turn's line.
+pub fn turn_tokens_line(tokens: &TurnTokens) -> String {
+    usage_line(&TokenUsage {
+        input: tokens.input,
+        output: tokens.output,
+        reasoning: tokens.reasoning,
+        cached: tokens.cached,
+        ..TokenUsage::default()
+    })
 }
 
 /// How full the model's context is, as a whole percentage. A context that
@@ -413,6 +449,50 @@ mod tests {
             "ok": ok, "status": null
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn a_saved_turns_usage_is_under_its_last_answer_while_it_is_that_turn() {
+        let rows = [
+            item("user", None, "first", None),
+            item("assistant", None, "looking", None),
+            item("tool", Some("shell"), "ls", Some(true)),
+            item("assistant", None, "answer one", None),
+            item("user", None, "second", None),
+            item("assistant", None, "answer two", None),
+            item("assistant", None, " ", None),
+        ];
+        let tokens = [
+            TurnTokens {
+                from_end: 1,
+                text: "first".into(),
+                input: 19_800,
+                output: 35,
+                calls: 2,
+                ..TurnTokens::default()
+            },
+            // Read before a new message was sent: now another turn's place.
+            TurnTokens {
+                from_end: 0,
+                text: "earlier".into(),
+                input: 5,
+                output: 5,
+                calls: 1,
+                ..TurnTokens::default()
+            },
+        ];
+        let at = |index| turn_tokens_at(&rows, index, &tokens).map(|tokens| tokens.input);
+        // The turn's last answer, not the one before it or the question.
+        assert_eq!(at(3), Some(19_800));
+        assert_eq!(at(1), None);
+        assert_eq!(at(0), None);
+        // A blank answer after it does not take its place.
+        assert_eq!(at(5), None);
+        assert_eq!(at(6), None);
+        assert_eq!(
+            turn_tokens_line(&tokens[0]),
+            "Input 19.8k · output 35 tokens"
+        );
     }
 
     #[test]

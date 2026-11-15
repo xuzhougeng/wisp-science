@@ -519,6 +519,28 @@ impl Workspace {
         let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
         let archived = self.current_row().is_none_or(|row| row.shelved);
         let idle = !running && !self.pending;
+        // What the turn cost, after its last answer.
+        let actions = match controls::turn_tokens_at(&self.rows, index, &self.turn_tokens) {
+            Some(tokens) => {
+                let calls = tokens.calls;
+                actions.child(
+                    div()
+                        .id(("turn-tokens", index))
+                        .ml_2()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(controls::turn_tokens_line(tokens))
+                        .tooltip(move |window, cx| {
+                            gpui_component::tooltip::Tooltip::new(crate::i18n::fill(
+                                tr("This turn, over {} model calls"),
+                                &[&calls],
+                            ))
+                            .build(window, cx)
+                        }),
+                )
+            }
+            None => actions,
+        };
         match self.rows.get(index).map(|row| row.role.as_str()) {
             Some("user") if !archived => actions.child(
                 icon_button(("edit-row", index), "edit", tr("Edit and send again"))

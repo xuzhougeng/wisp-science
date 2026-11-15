@@ -136,6 +136,9 @@ pub struct Workspace {
     status: Option<ConversationStatus>,
     /// Counts snapshot polls, so the status is refreshed about once a second.
     status_tick: u8,
+    /// What each saved turn of the open conversation used, read when it
+    /// opens and when a turn ends.
+    turn_tokens: Vec<wisp_server::desktop::TurnTokens>,
     /// Transcript row whose text was just copied, for a moment of feedback.
     copied: Option<usize>,
     palette: PaletteState,
@@ -1127,6 +1130,7 @@ impl Workspace {
             queue: Default::default(),
             status: None,
             status_tick: 0,
+            turn_tokens: Vec::new(),
             copied: None,
             palette: PaletteState::default(),
             palette_input,
@@ -2238,6 +2242,7 @@ impl Workspace {
     fn clear_transcript(&mut self) {
         self.poll = None;
         self.rows.clear();
+        self.turn_tokens.clear();
         self.batches.clear();
         self.swarm = None;
         self.history.clear();
@@ -2473,6 +2478,7 @@ impl Workspace {
         {
             self.load_assistant_plan(window, cx);
         }
+        self.load_turn_tokens(window, cx);
         let backend = self.backend.clone();
         self.poll = Some(cx.spawn_in(window, async move |this, cx| {
             loop {
@@ -2531,6 +2537,7 @@ impl Workspace {
                                         }
                                     } else if was_running {
                                         this.load_status(window, cx);
+                                        this.load_turn_tokens(window, cx);
                                         // The turn may have written files and
                                         // changed what needs attention.
                                         this.refresh_lists(window, cx);
@@ -2982,6 +2989,28 @@ impl Workspace {
                     Ok(status) => this.status = Some(status),
                     Err(error) => this.error = Some(error),
                 }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Reads what each saved turn of the open conversation used. Nothing is
+    /// said when it cannot be read: the line under an answer is left out.
+    fn load_turn_tokens(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let selection = self.state.selection();
+        let (Some(project), Some(session)) = (selection.project.clone(), selection.session.clone())
+        else {
+            return;
+        };
+        let reply = self.backend.turn_tokens(project, session);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                if !this.state.current(&selection) {
+                    return;
+                }
+                this.turn_tokens = result.unwrap_or_default();
                 cx.notify();
             });
         })

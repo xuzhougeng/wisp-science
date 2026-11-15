@@ -289,6 +289,55 @@ fn preview(text: &str) -> String {
     }
 }
 
+/// What one saved turn's model calls used, for the line under its answer.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TurnTokens {
+    /// Which turn, the way a `TurnRef` names it: 0 is the last user message.
+    pub from_end: usize,
+    /// Its user message as the transcript shows it, so a turn that has
+    /// moved since this was read is not given another's numbers.
+    pub text: String,
+    pub input: u64,
+    pub output: u64,
+    pub reasoning: u64,
+    pub cached: u64,
+    /// The model calls it made.
+    pub calls: usize,
+}
+
+/// Each turn a user message opened, with what its model calls used; turns
+/// that made no call are left out.
+pub(crate) fn turn_tokens(snapshot: &TrajectorySnapshotDto) -> Vec<TurnTokens> {
+    let opened: Vec<_> = snapshot
+        .turns
+        .iter()
+        .filter_map(|turn| {
+            let user = turn.cells.iter().find(|cell| cell.kind == "user")?;
+            Some((turn, user))
+        })
+        .collect();
+    let total = opened.len();
+    opened
+        .into_iter()
+        .enumerate()
+        .filter_map(|(n, (turn, user))| {
+            let mut tokens = TurnTokens {
+                from_end: total - 1 - n,
+                text: crate::runtime::bounded(user.detail_output.as_deref().unwrap_or_default()),
+                ..TurnTokens::default()
+            };
+            for usage in turn.cells.iter().filter_map(|cell| cell.usage.as_ref()) {
+                tokens.input += usage.input_tokens.max(0) as u64;
+                tokens.output += usage.output_tokens.max(0) as u64;
+                tokens.reasoning += usage.reasoning_tokens.max(0) as u64;
+                tokens.cached += usage.cached_input_tokens.max(0) as u64;
+                tokens.calls += 1;
+            }
+            (tokens.calls > 0).then_some(tokens)
+        })
+        .collect()
+}
+
 fn tool_summary(name: &str, arguments: Option<&str>, result: Option<&str>) -> String {
     let mut summary = match arguments {
         Some(arguments) if !arguments.trim().is_empty() => format!("{name} {}", preview(arguments)),
@@ -408,6 +457,33 @@ mod tests {
         let kinds: Vec<_> = second.cells.iter().map(|cell| cell.kind.as_str()).collect();
         assert_eq!(kinds, ["user", "assistant", "usage"]);
 
+        // What each turn used, named from the end the way the transcript
+        // names turns.
+        let tokens = turn_tokens(&snapshot);
+        assert_eq!(
+            tokens,
+            [
+                TurnTokens {
+                    from_end: 1,
+                    text: "count the reads\nin sample A".into(),
+                    input: 1_300,
+                    output: 100,
+                    reasoning: 0,
+                    cached: 900,
+                    calls: 2,
+                },
+                TurnTokens {
+                    from_end: 0,
+                    text: "thanks".into(),
+                    input: 100,
+                    output: 10,
+                    reasoning: 0,
+                    cached: 1_200,
+                    calls: 1,
+                },
+            ]
+        );
+
         let stats = &snapshot.stats;
         assert_eq!((stats.turns, stats.steps), (2, 3));
         // 100→102, 103→105 and 200→201.
@@ -515,5 +591,7 @@ mod tests {
         assert_eq!(snapshot.stats.llm_ms, 0);
         assert_eq!(snapshot.stats.tokens_per_sec, None);
         assert_eq!(snapshot.stats.cache_hit_pct, Some(0.0));
+        // No user message opened it, so no turn of the transcript is named.
+        assert!(turn_tokens(&snapshot).is_empty());
     }
 }

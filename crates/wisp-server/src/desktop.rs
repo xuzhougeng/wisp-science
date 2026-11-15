@@ -1228,6 +1228,13 @@ impl Server {
         Ok(crate::trajectory::fold(session, &messages, &events))
     }
 
+    /// What each saved turn of a conversation used, for the line under its
+    /// answer; turns that made no model call are left out.
+    pub async fn turn_tokens(&self, project: &str, session: &str) -> Result<Vec<TurnTokens>> {
+        let trajectory = self.trajectory(project, session).await?;
+        Ok(crate::trajectory::turn_tokens(&trajectory))
+    }
+
     /// Every saved message of a conversation, oldest first.
     pub(crate) async fn whole_transcript(&self, session: &str) -> Result<Vec<wisp_llm::Message>> {
         Ok(self
@@ -5574,6 +5581,7 @@ pub use crate::schedules::{ScheduleInput, ScheduleRow, ScheduleRun, MIN_INTERVAL
 pub use crate::subscriptions::{
     CodexAccount, CodexUsage, SignInChallenge, SignInState, SignInStatus, Subscription, UsageWindow,
 };
+pub use crate::trajectory::TurnTokens;
 pub use crate::turn_memory::MemorySuggestion;
 pub use crate::turn_undo::TurnFiles;
 pub use crate::updates::UpdateCheck;

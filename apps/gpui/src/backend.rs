@@ -239,6 +239,15 @@ impl Backend {
         self.local(move |host| async move { host.capabilities(&project).await })
     }
 
+    /// What each saved turn of a conversation used.
+    pub fn turn_tokens(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<Vec<wisp_server::desktop::TurnTokens>> {
+        self.local(move |host| async move { host.turn_tokens(&project, &session).await })
+    }
+
     /// A conversation as a trajectory: its turns, their steps and totals.
     pub fn trajectory(
         &self,
