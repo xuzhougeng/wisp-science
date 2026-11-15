@@ -1612,6 +1612,141 @@ async fn a_stop_hook_keeps_the_turn_going_once() {
     server.shutdown().await;
 }
 
+/// Browses the connector tools and loads the skill called "other", then
+/// records both results.
+struct ToolLister(Arc<std::sync::Mutex<Vec<(String, String)>>>);
+#[async_trait]
+impl Provider for ToolLister {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+        Ok(Completion {
+            content: "noted".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        let result = |tool: &str| {
+            messages
+                .iter()
+                .rev()
+                .find(|message| message.tool_name.as_deref() == Some(tool))
+                .map(|message| message.content.as_text())
+        };
+        let (Some(found), Some(skills)) = (result("search_mcp_tools"), result("use_skill")) else {
+            let call = |id: &str, name: &str, arguments: serde_json::Value| ToolCall {
+                id: id.into(),
+                kind: "function".into(),
+                function: wisp_llm::FunctionCall {
+                    name: name.into(),
+                    arguments: arguments.to_string(),
+                },
+            };
+            return Ok(Completion {
+                tool_calls: vec![
+                    call("browse-1", "search_mcp_tools", json!({"query": "*"})),
+                    call("skills-1", "use_skill", json!({"name": "other"})),
+                ],
+                finish_reason: Some("tool_calls".into()),
+                ..Default::default()
+            });
+        };
+        self.0.lock().unwrap().push((found, skills));
+        sink.on_text("noted");
+        self.complete(messages, tools).await
+    }
+}
+
+#[tokio::test]
+async fn an_expert_keeps_to_the_skills_and_connectors_it_was_given() {
+    let temp = tempfile::tempdir().unwrap();
+    let seen: Arc<std::sync::Mutex<Vec<(String, String)>>> = Arc::default();
+    let record = seen.clone();
+    let factory: ModelFactory = Arc::new(move |_| Box::new(ToolLister(record.clone())));
+    let cfg = config(temp.path());
+    for (name, about) in [
+        ("demo", "Count reads the lab way"),
+        ("other", "Plot volcanoes the lab way"),
+    ] {
+        let folder = cfg.workspace.join("skills").join(name);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: {about}\n---\nDo it.\n"),
+        )
+        .unwrap();
+    }
+    let server = Server::open_with_models(cfg, factory).await.unwrap();
+    let experts = server
+        .save_expert(desktop::ExpertInput {
+            id: String::new(),
+            name: "Counter".into(),
+            description: String::new(),
+            instructions: "Count.".into(),
+            model: String::new(),
+            skills: Some(vec![" demo ".into(), "demo".into()]),
+            connectors: Some(vec![]),
+        })
+        .await
+        .unwrap();
+    let counter = experts
+        .iter()
+        .find(|e| e.name == "Counter")
+        .unwrap()
+        .clone();
+    // Kept trimmed and once each; no connector at all is not every one.
+    assert_eq!(counter.skills, Some(vec!["demo".to_owned()]));
+    assert_eq!(counter.connectors, Some(vec![]));
+    let last = || seen.lock().unwrap().last().cloned().unwrap();
+    // Whether browsing the connector tools found any.
+    let bundled = |found: &str| found.contains("\"tool_name\"");
+
+    // Without an expert: every skill and the bundled connectors.
+    let plain = create(&server).await;
+    send(&server, &plain, "hello").await.unwrap();
+    wait_for(&server, &plain, |s| !s.running).await;
+    let (found, skills) = last();
+    assert!(bundled(&found), "{found}");
+    // Its instructions, when the skill can be used.
+    let loaded = |skills: &str| skills.contains("Do it.");
+    assert!(loaded(&skills), "{skills}");
+
+    // As the expert: its skill only, and no connector.
+    let session = create(&server).await;
+    let options = server
+        .conversation_status(PROJECT, &session)
+        .await
+        .unwrap()
+        .options;
+    server
+        .set_conversation_options(
+            PROJECT,
+            &session,
+            desktop::ConversationOptions {
+                expert: counter.id.clone(),
+                ..options
+            },
+        )
+        .await
+        .unwrap();
+    send(&server, &session, "hello").await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    let (found, skills) = last();
+    assert!(!bundled(&found), "{found}");
+    assert!(!loaded(&skills), "{skills}");
+    server.shutdown().await;
+}
+
 #[tokio::test]
 async fn guidance_is_read_by_the_running_turn_and_refused_when_none_runs() {
     let tmp = tempfile::tempdir().unwrap();
@@ -2811,6 +2946,8 @@ async fn desktop_model_profiles_are_validated_saved_and_chosen_per_conversation(
         description: String::new(),
         instructions: "Think it through.".into(),
         model: deep.id.clone(),
+        skills: None,
+        connectors: None,
     };
     assert!(server
         .save_expert(desktop::ExpertInput {
@@ -7911,6 +8048,8 @@ async fn a_conversation_started_as_an_expert_works_under_its_instructions() {
             description: "Numbers".into(),
             instructions: "Always report medians with the interquartile range.".into(),
             model: String::new(),
+            skills: None,
+            connectors: None,
         })
         .await
         .unwrap();

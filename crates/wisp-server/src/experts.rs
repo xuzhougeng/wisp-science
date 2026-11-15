@@ -3,9 +3,9 @@
 //!
 //! The list and each conversation's choice are kept where the WebView
 //! desktop keeps its specialists (`specialists`, `frame_specialist:<id>`),
-//! in its shape, so both read the same experts. Fields this host does not
-//! use (an expert's own model, its skill and connector lists, the
-//! reviewer's backend) are carried through untouched. The WebView's
+//! in its shape, so both read the same experts. An expert's own model and
+//! its skill and connector lists are the WebView's fields; what this host
+//! does not use (the reviewer's backend) is carried through untouched. The WebView's
 //! one-shot built-ins (reviewer, reader, archivist, recap) are not
 //! personas to converse as and are not offered here.
 
@@ -73,6 +73,11 @@ pub struct Expert {
     /// empty follows the conversation's own. Kept as the WebView's
     /// `model_id`.
     pub model: String,
+    /// The skills its conversations may use; `None` is every skill.
+    pub skills: Option<Vec<String>>,
+    /// The connectors its conversations may use: bundled connectors by
+    /// domain and your MCP servers by id; `None` is every one.
+    pub connectors: Option<Vec<String>>,
 }
 
 /// What the form sends: `id` empty adds an expert.
@@ -83,10 +88,43 @@ pub struct ExpertInput {
     pub description: String,
     pub instructions: String,
     pub model: String,
+    pub skills: Option<Vec<String>>,
+    pub connectors: Option<Vec<String>>,
 }
 
 /// Where the WebView desktop keeps a specialist's own model.
 const MODEL: &str = "model_id";
+/// And its skill and connector lists: `null` is every one.
+const SKILLS: &str = "skills";
+const CONNECTORS: &str = "connectors";
+
+/// A list kept on a row: `None` when it is absent or `null`.
+fn listed(rest: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<Vec<String>> {
+    rest.get(key)?.as_array().map(|items| {
+        items
+            .iter()
+            .filter_map(|item| item.as_str().map(str::to_owned))
+            .collect()
+    })
+}
+
+/// A list as a row keeps it, trimmed, without repeats, in its order.
+fn kept(list: &Option<Vec<String>>) -> serde_json::Value {
+    match list {
+        None => serde_json::Value::Null,
+        Some(items) => {
+            let mut seen = std::collections::HashSet::new();
+            serde_json::Value::Array(
+                items
+                    .iter()
+                    .map(|item| item.trim().to_owned())
+                    .filter(|item| !item.is_empty() && seen.insert(item.clone()))
+                    .map(serde_json::Value::String)
+                    .collect(),
+            )
+        }
+    }
+}
 
 fn illustrator() -> Row {
     Row {
@@ -139,6 +177,8 @@ fn shown(row: &Row) -> Option<Expert> {
             .unwrap_or_default()
             .trim()
             .to_owned(),
+        skills: listed(&row.rest, SKILLS),
+        connectors: listed(&row.rest, CONNECTORS),
     })
 }
 
@@ -188,7 +228,13 @@ pub(crate) async fn upsert(store: &Store, input: ExpertInput) -> Result<Vec<Expe
             description: description.into(),
             instructions: instructions.into(),
             builtin: false,
-            rest: [(MODEL.to_owned(), model)].into_iter().collect(),
+            rest: [
+                (MODEL.to_owned(), model),
+                (SKILLS.to_owned(), kept(&input.skills)),
+                (CONNECTORS.to_owned(), kept(&input.connectors)),
+            ]
+            .into_iter()
+            .collect(),
         });
     } else {
         let Some(row) = rows
@@ -200,6 +246,9 @@ pub(crate) async fn upsert(store: &Store, input: ExpertInput) -> Result<Vec<Expe
         row.name = name.into();
         row.description = description.into();
         row.rest.insert(MODEL.to_owned(), model);
+        row.rest.insert(SKILLS.to_owned(), kept(&input.skills));
+        row.rest
+            .insert(CONNECTORS.to_owned(), kept(&input.connectors));
         if !row.builtin {
             ensure!(
                 !instructions.is_empty(),
@@ -273,6 +322,8 @@ mod tests {
             description: "For the lab".into(),
             instructions: instructions.into(),
             model: String::new(),
+            skills: None,
+            connectors: None,
         }
     }
 
@@ -355,12 +406,19 @@ mod tests {
         assert_eq!(names, ["Scientific Illustrator", "Statistician"]);
         assert_eq!(get(&store, "sp-1").await.unwrap().model, "m9");
         assert_eq!(get(&store, ILLUSTRATOR).await.unwrap().model, "");
+        // Its skill list is read; no connector list is every connector.
+        let shown = get(&store, "sp-1").await.unwrap();
+        assert_eq!(shown.skills, Some(vec!["stats".to_owned()]));
+        assert_eq!(shown.connectors, None);
         assert!(upsert(&store, input("reviewer", "R", "x")).await.is_err());
 
+        // Changed as the form shows it, its lists go back as they were.
         upsert(
             &store,
             ExpertInput {
                 model: " m9 ".into(),
+                skills: shown.skills.clone(),
+                connectors: shown.connectors.clone(),
                 ..input("sp-1", "Statistician", "Report means.")
             },
         )
@@ -370,10 +428,11 @@ mod tests {
             serde_json::from_str(&store.get_setting(KEY).await.unwrap().unwrap()).unwrap();
         let rows = raw.as_array().unwrap();
         let row = |id: &str| rows.iter().find(|row| row["id"] == id).unwrap();
-        // Its model and skills, and the reviewer's backend, are as they were.
+        // Its model and lists, and the reviewer's backend, are as they were.
         assert_eq!(row("sp-1")["instructions"], "Report means.");
         assert_eq!(row("sp-1")["model_id"], "m9");
         assert_eq!(row("sp-1")["skills"], serde_json::json!(["stats"]));
+        assert_eq!(row("sp-1")["connectors"], serde_json::Value::Null);
         assert_eq!(row("sp-1")["icon"], "chart");
         assert_eq!(row("reviewer")["review_backend"]["profile_id"], "m2");
         // Following the conversation's model again is saved as the WebView
@@ -410,6 +469,8 @@ mod tests {
             instructions: " Report medians. ".into(),
             builtin: false,
             model: String::new(),
+            skills: None,
+            connectors: None,
         };
         let mut prompt = String::from("You are Wisp.");
         seed(&mut prompt, &expert);

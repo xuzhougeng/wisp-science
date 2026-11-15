@@ -812,8 +812,13 @@ Limits of this slice:
   WebView's `model_id`), chosen in its form: a conversation started as it
   runs on that model, and its header says so, as long as the model is
   still saved; otherwise it runs on the conversation's model. Its skill and
-  connector lists are left as the WebView keeps them but not applied here:
-  a conversation started as an expert has every enabled skill. The
+  connector lists are the WebView's (`skills`, `connectors`; absent is
+  every one, empty is none), set in its form with Every skill or Only
+  these, and the same for connectors: a conversation started as it can use
+  only those skills, and only those bundled connectors (by domain) and MCP
+  servers (by id), from every turn, as the WebView's specialists do. The
+  catalog the model browses still names every skill; one it was not given
+  cannot be used. The
   WebView's one-shot built-ins (reviewer, reader, archivist, recap) are
   not offered. The built-in Scientific Illustrator draws SVG; this host
   has no image-generation tool.
@@ -2134,6 +2139,11 @@ and the composer shows that a hook failed. In a project, write a
 trusted and a turn says it was not run; Trust it as it is now, and it
 runs; change the file and it reads as not trusted again. Press Add a hook,
 then Escape: only the form closes.
+In Settings, Experts, change an expert to Only these skills and pick one,
+and Only these connectors with none picked: its row says so. Start a
+conversation as it and ask for a skill it was not given and for a PubMed
+search: neither is available, while a conversation without the expert has
+both.
 Open Skills from the home page and from inside a project: the bundled skills
 are listed, and the project's own only in the second case. Search by a word
 from a description and by a tag. Turn one off, confirm the count says so and

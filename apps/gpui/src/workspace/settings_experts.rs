@@ -70,6 +70,8 @@ impl Workspace {
         let shown = expert.unwrap_or(&blank);
         self.expert_editing = Some(shown.id.clone());
         self.expert_model = shown.model.clone();
+        self.expert_skills = shown.skills.clone();
+        self.expert_connectors = shown.connectors.clone();
         self.layers.close(Layer::ConfirmRemoveExpert);
         self.layers.open(Layer::ExpertForm);
         self.settings_error = None;
@@ -93,6 +95,8 @@ impl Workspace {
             description,
             instructions,
             model: self.expert_model.clone(),
+            skills: self.expert_skills.clone(),
+            connectors: self.expert_connectors.clone(),
         });
         self.change_experts(reply, window, cx);
     }
@@ -162,6 +166,30 @@ impl Workspace {
                 "Model: a conversation started as this expert runs on it.",
             )))
             .child(models);
+        // What its conversations may use, as the WebView's specialists.
+        let skills: Vec<(String, String)> = self
+            .skills
+            .iter()
+            .flatten()
+            .map(|skill| (skill.name.clone(), skill.name.clone()))
+            .collect();
+        let mut connectors: Vec<(String, String)> = self
+            .connectors
+            .iter()
+            .flatten()
+            .map(|row| (row.domain.clone(), row.domain.clone()))
+            .collect();
+        connectors.extend(
+            self.mcp_servers
+                .iter()
+                .flatten()
+                .map(|row| (row.server.id.clone(), row.server.name.clone())),
+        );
+        let form = form
+            .child(label(tr("Skills its conversations may use")))
+            .child(self.expert_reach_choice(true, &skills, cx))
+            .child(label(tr("Connectors its conversations may use")))
+            .child(self.expert_reach_choice(false, &connectors, cx));
         form.child(
             div()
                 .h_flex()
@@ -187,6 +215,114 @@ impl Workspace {
         )
     }
 
+    /// Every one, or only those picked from `options` (id and label): the
+    /// skills (`skills`) or the connectors the expert in the form may use.
+    fn expert_reach_choice(
+        &self,
+        skills: bool,
+        options: &[(String, String)],
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let kind = if skills { "skills" } else { "connectors" };
+        let chosen = if skills {
+            &self.expert_skills
+        } else {
+            &self.expert_connectors
+        };
+        let set = move |this: &mut Self, list: Option<Vec<String>>| {
+            if skills {
+                this.expert_skills = list;
+            } else {
+                this.expert_connectors = list;
+            }
+        };
+        let mut choice = div()
+            .h_flex()
+            .gap_1()
+            .child(
+                Button::new(SharedString::from(format!("expert-{kind}-every")))
+                    .label(if skills {
+                        tr("Every skill")
+                    } else {
+                        tr("Every connector")
+                    })
+                    .small()
+                    .selected(chosen.is_none())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        set(this, None);
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Button::new(SharedString::from(format!("expert-{kind}-only")))
+                    .label(tr("Only these"))
+                    .small()
+                    .selected(chosen.is_some())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let current = if skills {
+                            &this.expert_skills
+                        } else {
+                            &this.expert_connectors
+                        };
+                        if current.is_none() {
+                            set(this, Some(Vec::new()));
+                        }
+                        cx.notify();
+                    })),
+            );
+        let Some(picked) = chosen else {
+            return choice;
+        };
+        let mut chips = div().h_flex().flex_wrap().gap_1();
+        for (index, (id, name)) in options.iter().enumerate() {
+            let on = picked.contains(id);
+            let id = id.clone();
+            chips = chips.child(
+                Button::new(SharedString::from(format!("expert-{kind}-{index}")))
+                    .label(name.clone())
+                    .xsmall()
+                    .selected(on)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let current = if skills {
+                            &this.expert_skills
+                        } else {
+                            &this.expert_connectors
+                        };
+                        let next = crate::settings::toggled(current, &id);
+                        set(this, next);
+                        cx.notify();
+                    })),
+            );
+        }
+        // Picked before but no longer there: shown, so it can be let go.
+        for (index, id) in picked
+            .iter()
+            .filter(|id| !options.iter().any(|(known, _)| known == *id))
+            .enumerate()
+        {
+            let gone = id.clone();
+            chips = chips.child(
+                Button::new(SharedString::from(format!("expert-{kind}-gone-{index}")))
+                    .label(id.clone())
+                    .xsmall()
+                    .selected(true)
+                    .tooltip(tr("Not found here any more"))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let current = if skills {
+                            &this.expert_skills
+                        } else {
+                            &this.expert_connectors
+                        };
+                        let next = crate::settings::toggled(current, &gone);
+                        set(this, next);
+                        cx.notify();
+                    })),
+            );
+        }
+        choice = div().v_flex().gap_1().child(choice).child(chips);
+        choice
+    }
+
     fn expert_row(&self, expert: &Expert, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
         let id = expert.id.clone();
@@ -207,6 +343,9 @@ impl Workspace {
             crate::settings::expert_model_note(self.settings.current(), &expert.model)
         {
             about = about.child(div().text_xs().text_color(muted).child(note));
+        }
+        if let Some(reach) = crate::settings::expert_reach(expert) {
+            about = about.child(div().text_xs().text_color(muted).child(reach));
         }
         if !description.is_empty() {
             about = about.child(div().text_xs().text_color(muted).child(description));

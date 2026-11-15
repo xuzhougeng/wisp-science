@@ -3958,6 +3958,8 @@ mod tests {
             instructions: "Report effect sizes with intervals.".into(),
             builtin: false,
             model: String::new(),
+            skills: None,
+            connectors: None,
         };
         let experts = [expert];
         let resolved = resolve(

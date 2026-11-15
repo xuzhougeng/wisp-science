@@ -373,7 +373,30 @@ pub async fn build(
     lab: LabTurn,
 ) -> Result<Agent> {
     let root = PathBuf::from(root);
-    let skills = Arc::new(skill_index(config, store, project, &root).await);
+    // A conversation started as an expert keeps to the skills and the
+    // connectors the expert was given, as the WebView's specialists do.
+    let as_expert = crate::experts::of_conversation(store, frame).await;
+    let index = skill_index(config, store, project, &root).await;
+    let skills = Arc::new(match as_expert.as_ref().and_then(|e| e.skills.as_ref()) {
+        Some(names) => index.filtered_by_names(Some(&names.iter().cloned().collect())),
+        None => index,
+    });
+    let connectors: Option<std::collections::HashSet<String>> = as_expert
+        .as_ref()
+        .and_then(|expert| expert.connectors.as_ref())
+        .map(|ids| ids.iter().cloned().collect());
+    // Your MCP servers' tools are named after the server.
+    let servers: Option<Vec<String>> = match &connectors {
+        Some(ids) => Some(
+            crate::mcp::load(store)
+                .await
+                .into_iter()
+                .filter(|server| ids.contains(&server.id))
+                .map(|server| format!("{}__", server.slug()))
+                .collect(),
+        ),
+        None => None,
+    };
     let mut cfg = model.provider.clone().with_session_id(frame);
     let network = crate::network::load(store).await;
     if let Some(route) = crate::network::route(&network.model_proxy_url) {
@@ -395,14 +418,21 @@ pub async fn build(
     // They only read, and a name a built-in tool already has stays the
     // built-in's.
     for tool in connector_tools(store, service_keys).await {
-        if tools.get(tool.name()).is_none() {
+        let domain = wisp_bio::domain_for_tool(tool.name()).unwrap_or_default();
+        let given = connectors.as_ref().is_none_or(|ids| ids.contains(domain));
+        if given && tools.get(tool.name()).is_none() {
             tools.add(tool);
         }
     }
     // What the user's own MCP servers offer; a name already taken stays
     // with the tool that had it.
     for tool in extra_tools {
-        if tools.get(tool.name()).is_none() {
+        let given = servers.as_ref().is_none_or(|prefixes| {
+            prefixes
+                .iter()
+                .any(|prefix| tool.name().starts_with(prefix.as_str()))
+        });
+        if given && tools.get(tool.name()).is_none() {
             tools.add(tool);
         }
     }
@@ -456,7 +486,7 @@ pub async fn build(
     // instructions with its first turn, and keeps them as they were then.
     let expert = match agent.ctx.messages.iter().any(|m| m.role != Role::System) {
         true => None,
-        false => crate::experts::of_conversation(store, frame).await,
+        false => as_expert.clone(),
     };
     // Plan mode is part of the system prompt, so switching it applies from
     // the next turn and the saved prompt always says which mode it was.

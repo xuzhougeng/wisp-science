@@ -557,6 +557,10 @@ pub struct Workspace {
     /// The model profile the expert in the form runs on; empty follows the
     /// conversation's.
     expert_model: String,
+    /// The skills and connectors the expert in the form may use; `None` is
+    /// every one.
+    expert_skills: Option<Vec<String>>,
+    expert_connectors: Option<Vec<String>>,
     /// The ACP agents, the one in the form or the remove question (empty
     /// is a new one), its name, program and arguments, the one being
     /// tested, and what each test found.
@@ -1476,6 +1480,8 @@ impl Workspace {
             experts: Vec::new(),
             expert_editing: None,
             expert_model: String::new(),
+            expert_skills: None,
+            expert_connectors: None,
             expert_fields,
             acp_agents: None,
             acp_editing: None,

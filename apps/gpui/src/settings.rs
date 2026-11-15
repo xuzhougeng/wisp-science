@@ -381,6 +381,38 @@ pub fn picture_choices<'a>(
     (seeing, first)
 }
 
+/// A limited list with `item` taken out if it is there, or put in.
+pub fn toggled(list: &Option<Vec<String>>, item: &str) -> Option<Vec<String>> {
+    let mut list = list.clone().unwrap_or_default();
+    match list.iter().position(|kept| kept == item) {
+        Some(at) => {
+            list.remove(at);
+        }
+        None => list.push(item.to_owned()),
+    }
+    Some(list)
+}
+
+/// What an expert's row says it may use, when it is limited.
+pub fn expert_reach(expert: &wisp_server::desktop::Expert) -> Option<String> {
+    fn said(list: &Option<Vec<String>>, none: &'static str) -> Option<String> {
+        match list {
+            None => None,
+            Some(items) if items.is_empty() => Some(tr(none).to_owned()),
+            Some(items) => Some(items.join(", ")),
+        }
+    }
+    let parts: Vec<String> = [
+        said(&expert.skills, "no skill").map(|said| crate::i18n::fill(tr("Skills: {}"), &[&said])),
+        said(&expert.connectors, "no connector")
+            .map(|said| crate::i18n::fill(tr("Connectors: {}"), &[&said])),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
 /// What an expert's row says about the model it runs on, when it has one
 /// of its own that is still saved.
 pub fn expert_model_note(settings: Option<&ModelSettings>, model: &str) -> Option<String> {
@@ -1382,6 +1414,21 @@ mod tests {
             problem: problem.map(str::to_owned),
             sees: false,
         }
+    }
+
+    #[test]
+    fn an_experts_lists_are_toggled_and_said() {
+        assert_eq!(toggled(&None, "stats"), Some(vec!["stats".to_owned()]));
+        let some = Some(vec!["stats".to_owned(), "deseq2".to_owned()]);
+        assert_eq!(toggled(&some, "stats"), Some(vec!["deseq2".to_owned()]));
+        let mut expert = wisp_server::desktop::Expert::default();
+        assert_eq!(expert_reach(&expert), None);
+        expert.skills = some;
+        expert.connectors = Some(vec![]);
+        assert_eq!(
+            expert_reach(&expert).unwrap(),
+            "Skills: stats, deseq2 · Connectors: no connector"
+        );
     }
 
     #[test]

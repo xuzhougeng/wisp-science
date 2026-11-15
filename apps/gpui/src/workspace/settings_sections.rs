@@ -102,7 +102,13 @@ impl Workspace {
             }
             Section::Credentials => self.load_credentials(window, cx),
             Section::Environments => self.load_environments(window, cx),
-            Section::Experts => self.load_experts(window, cx),
+            Section::Experts => {
+                self.load_experts(window, cx);
+                // What an expert can be limited to.
+                self.load_skills(window, cx);
+                self.load_connectors(window, cx);
+                self.load_mcp_servers(window, cx);
+            }
             Section::AcpAgents => self.load_acp_agents(window, cx),
             Section::QuickActions => self.load_quick_actions(window, cx),
             Section::Pet => self.load_pet(window, cx),
