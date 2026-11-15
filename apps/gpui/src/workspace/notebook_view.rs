@@ -103,7 +103,7 @@ impl Workspace {
                         )
                         .child(chip(cell.language.clone(), Tone::Neutral, cx))
                         .child(div().text_xs().text_color(muted).child(if cell.ran {
-                            "run"
+                            tr("run")
                         } else {
                             tr("shown, not run")
                         }))

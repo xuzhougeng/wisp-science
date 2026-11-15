@@ -282,7 +282,7 @@ impl Workspace {
                         div()
                             .text_xs()
                             .text_color(cx.theme().danger)
-                            .child(problem.clone()),
+                            .child(crate::i18n::host(problem)),
                     );
                 }
                 // The record keeps the last lines; the run's folder has all.

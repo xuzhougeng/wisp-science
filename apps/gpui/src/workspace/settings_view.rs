@@ -447,7 +447,7 @@ impl Workspace {
                 Some(problem) => div()
                     .text_xs()
                     .text_color(cx.theme().danger)
-                    .child(problem.clone()),
+                    .child(crate::i18n::host(problem)),
                 None => div()
                     .truncate()
                     .text_xs()

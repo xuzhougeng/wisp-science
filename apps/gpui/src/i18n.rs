@@ -197,9 +197,15 @@ mod tests {
             host_in(Locale::Zh, refusal),
             "此决策模型服务需要 API 密钥。"
         );
+        assert_eq!(
+            host_in(Locale::Zh, "The model did not return a draft"),
+            "模型没有返回草稿"
+        );
         // One that carries a value is left as the host wrote it.
         let named = "not a host: host is not a valid domain or URL";
         assert_eq!(host_in(Locale::Zh, named), named);
+        // Text the app already put in Chinese goes through unchanged.
+        assert_eq!(host_in(Locale::Zh, "模型没有返回草稿"), "模型没有返回草稿");
     }
 
     #[test]

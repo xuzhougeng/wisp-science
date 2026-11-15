@@ -288,7 +288,7 @@ impl Workspace {
                     div()
                         .text_xs()
                         .text_color(cx.theme().danger)
-                        .child(error.clone()),
+                        .child(crate::i18n::host(error)),
                 );
             }
             (None, None) => {}

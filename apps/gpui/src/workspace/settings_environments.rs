@@ -359,7 +359,12 @@ impl Workspace {
             );
             if let Some(check) = check.filter(|_| !checking) {
                 if let Some(error) = &check.error {
-                    about = about.child(div().text_xs().text_color(muted).child(error.clone()));
+                    about = about.child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(crate::i18n::host(error)),
+                    );
                 }
                 for (label, value) in check.found.iter().flat_map(settings::check_facts) {
                     about = about.child(

@@ -121,7 +121,7 @@ impl Workspace {
                 div()
                     .text_xs()
                     .text_color(cx.theme().danger)
-                    .child(problem.clone()),
+                    .child(crate::i18n::host(problem)),
             );
         }
         let mut actions = div().h_flex().gap_1().flex_shrink_0();

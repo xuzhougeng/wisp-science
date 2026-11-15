@@ -440,7 +440,7 @@ impl Workspace {
                     .p_4()
                     .text_sm()
                     .text_color(cx.theme().danger)
-                    .child(error.clone())
+                    .child(crate::i18n::host(error))
                     .into_any_element(),
                 None => message(tr("Loading preview…")),
             };
@@ -452,7 +452,7 @@ impl Workspace {
                         .p_4()
                         .text_sm()
                         .text_color(cx.theme().danger)
-                        .child(problem.clone())
+                        .child(crate::i18n::host(problem))
                         .into_any_element(),
                     None => message(tr("Loading the picture…")),
                 }
@@ -605,7 +605,7 @@ impl Workspace {
                     div()
                         .text_xs()
                         .text_color(cx.theme().danger)
-                        .child(problem.clone()),
+                        .child(crate::i18n::host(problem)),
                 );
             }
             Ok(origin) => {
@@ -936,7 +936,7 @@ impl Workspace {
                     .p_3()
                     .text_sm()
                     .text_color(cx.theme().danger)
-                    .child(error.clone()),
+                    .child(crate::i18n::host(error)),
             );
         }
         let hint = if self.files.loading && self.files.entries.is_empty() {

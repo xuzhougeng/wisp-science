@@ -113,7 +113,7 @@ impl Workspace {
                     div()
                         .text_sm()
                         .text_color(cx.theme().danger)
-                        .child(problem.clone()),
+                        .child(crate::i18n::host(problem)),
                 ),
             };
             list = list.child(block.pb_2().border_b_1().border_color(border));
