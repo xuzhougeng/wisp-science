@@ -557,6 +557,8 @@ impl Server {
         {
             let mut live = session.live.lock().unwrap();
             live.running = true;
+            live.guidable = true;
+            session.guidance.lock().unwrap().clear();
             live.generation = live.generation.wrapping_add(1);
             live.error = None;
             live.usage = None;
@@ -614,6 +616,7 @@ impl Server {
             let ended = {
                 let mut live = session.live.lock().unwrap();
                 live.running = false;
+                live.guidable = false;
                 live.generation = live.generation.wrapping_add(1);
                 live.approvals.clear();
                 live.messages.clear();

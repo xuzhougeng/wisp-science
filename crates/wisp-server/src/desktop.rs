@@ -3523,6 +3523,24 @@ impl Server {
         (self.0.models)(model)
     }
 
+    /// Puts `text` into the conversation's running turn, which reads it at
+    /// its next step as a message from the user. False when no turn is
+    /// running or it has already stopped reading: the text is then the
+    /// caller's to send as a turn of its own.
+    pub async fn guide(&self, project: &str, session: &str, text: &str) -> Result<bool> {
+        let text = text.trim();
+        ensure!(!text.is_empty(), "Write a message first");
+        self.own_conversation(project, session).await?;
+        let running = self.session(session);
+        let live = running.live.lock().unwrap();
+        if !live.running || !live.guidable {
+            return Ok(false);
+        }
+        let id = running.guided.fetch_add(1, Ordering::Relaxed) + 1;
+        running.guidance.lock().unwrap().push((id, text.to_owned()));
+        Ok(true)
+    }
+
     /// Stops one of the conversation's interpreters, losing what it has in
     /// memory; files it wrote stay. Asked again of one that has stopped, it
     /// takes the row away, and the model's next call starts a fresh one.

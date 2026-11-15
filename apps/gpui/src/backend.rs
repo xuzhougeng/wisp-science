@@ -1130,6 +1130,12 @@ impl Backend {
 
     /// Stops one of a conversation's interpreters, or takes a stopped one
     /// off the list.
+    /// Puts a message into the running turn; false when it no longer reads
+    /// any, and the message is to be sent as a turn of its own.
+    pub fn guide(&self, project: String, session: String, text: String) -> Reply<bool> {
+        self.local(move |host| async move { host.guide(&project, &session, &text).await })
+    }
+
     pub fn stop_runtime(&self, project: String, session: String, id: String) -> Reply<()> {
         self.local(move |host| async move { host.stop_runtime(&project, &session, &id).await })
     }

@@ -9,7 +9,7 @@ use gpui_component::{
 };
 
 use super::{Workspace, shell::glyph};
-use crate::{assets::icon, controls, queue};
+use crate::{assets::icon, backend::receive, controls, queue};
 
 impl Workspace {
     /// Keeps what is typed, and what is attached to it, until the running
@@ -92,6 +92,41 @@ impl Workspace {
         }
     }
 
+    /// Gives a waiting message to the running turn now, which reads it at
+    /// its next step. If the turn has just stopped reading, the message
+    /// stays in line and goes as the next turn, as it would have anyway.
+    fn guide_with_queued(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(project), Some(session)) =
+            (self.state.project.clone(), self.state.session.clone())
+        else {
+            return;
+        };
+        let Some(text) = self
+            .queue
+            .list(&session)
+            .into_iter()
+            .find(|queued| queued.id == id && queued.carried.attachments().is_empty())
+            .map(|queued| queued.text.clone())
+        else {
+            return;
+        };
+        let reply = self.backend.guide(project, session.clone(), text);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(true) => {
+                        this.queue.remove(&session, id);
+                    }
+                    Ok(false) => this.drain_queue(window, cx),
+                    Err(problem) => this.error = Some(problem),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn remove_queued(&mut self, id: u64, cx: &mut Context<Self>) {
         if let Some(session) = self.state.session.clone() {
             self.queue.remove(&session, id);
@@ -145,7 +180,7 @@ impl Workspace {
                 .text_color(muted)
                 .child(match (waiting.len(), hold) {
                     (_, Some(why)) => why.to_owned(),
-                    (1, None) => "1 message waits for this turn to end".to_owned(),
+                    (1, None) => tr("1 message waits for this turn to end").to_owned(),
                     (n, None) => crate::i18n::fill(
                         tr("{} messages wait for this turn to end, in this order"),
                         &[&n],
@@ -163,6 +198,18 @@ impl Workspace {
         let mut strip = div().v_flex().gap_1().px_1().child(heading);
         for queued in waiting {
             let id = queued.id;
+            // Only words can be read mid-turn; attachments wait for a turn.
+            let guidable = queue::guidable(queued, running);
+            let guide = guidable.then(|| {
+                Button::new(SharedString::from(format!("queue-guide-{id}")))
+                    .icon(glyph("bolt"))
+                    .xsmall()
+                    .ghost()
+                    .tooltip(tr("Give it to the running turn now"))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.guide_with_queued(id, window, cx)
+                    }))
+            });
             strip = strip.child(
                 div()
                     .h_flex()
@@ -181,6 +228,7 @@ impl Workspace {
                             .truncate()
                             .child(queue::label(queued)),
                     )
+                    .children(guide)
                     .child(
                         Button::new(SharedString::from(format!("queue-up-{id}")))
                             .icon(glyph("arrow-up"))

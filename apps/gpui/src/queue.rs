@@ -117,6 +117,12 @@ pub fn hold(failed: bool, asking: bool) -> Option<&'static str> {
     }
 }
 
+/// Whether a waiting message can be given to the running turn now: only
+/// while one runs, and only words, since attachments go with a turn.
+pub fn guidable(queued: &Queued, running: bool) -> bool {
+    running && queued.carried.attachments().is_empty()
+}
+
 /// One line for a queued message in the strip above the composer.
 pub fn label(queued: &Queued) -> String {
     let first = queued.text.lines().next().unwrap_or_default().trim();
@@ -220,5 +226,18 @@ mod tests {
             carried: Pending::default(),
         };
         assert_eq!(label(&queued("first line\nsecond")), "first line");
+
+        // Words can go into a running turn; nothing can when none runs,
+        // and a message with a file waits for a turn of its own.
+        assert!(guidable(&queued("use GRCh38"), true));
+        assert!(!guidable(&queued("use GRCh38"), false));
+        let mut carried = Pending::default();
+        carried.add(crate::compose::Chip::File("data/qc.csv".into()));
+        let with_file = Queued {
+            id: 2,
+            text: "and this".into(),
+            carried,
+        };
+        assert!(!guidable(&with_file, true));
     }
 }

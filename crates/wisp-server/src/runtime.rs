@@ -708,9 +708,41 @@ pub async fn run(
             .into_iter()
             .collect(),
     };
-    let result = agent
-        .run(&request.message, &out, Some(&session.cancel))
+    let guidance = Some(&session.guidance);
+    let mut result = agent
+        .run_with_images(
+            &request.message,
+            &[],
+            false,
+            &out,
+            Some(&session.cancel),
+            guidance,
+        )
         .await;
+    // Guidance that arrived after the loop last looked is answered in the
+    // same turn. Once none is waiting the turn takes no more, under the same
+    // lock `guide` takes, so nothing put in is left unread.
+    loop {
+        let late = {
+            let mut live = session.live.lock().unwrap();
+            let late = std::mem::take(&mut *session.guidance.lock().unwrap());
+            if late.is_empty() || result.is_err() || session.cancel.load(Ordering::Relaxed) {
+                live.guidable = false;
+            }
+            late
+        };
+        if late.is_empty() || result.is_err() || session.cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        let text = late
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        result = agent
+            .run_with_images(&text, &[], false, &out, Some(&session.cancel), guidance)
+            .await;
+    }
     drop(out);
     wisp_store::join_or_abort_persist(persist, std::time::Duration::from_secs(10)).await??;
     // What the turn's model calls used, for the usage statistics. Written

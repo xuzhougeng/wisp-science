@@ -100,7 +100,7 @@ to find in the running app.
 | Multiline text, IME, drafts kept per conversation | Yes | Done | ui |
 | Send and stop | Yes | Done | served |
 | Send key choice (Enter or modifier+Enter) | Setting | Yes: Return or Cmd/Ctrl+Return in Settings, General, Return by default; the other key starts a new line | ui |
-| Queue a message while a turn runs | Yes *(source)* | Partial: up to ten per conversation, sent in order as turns end, with take back and drop; kept in the window only, and no cut-in that steers the running turn | tauri |
+| Queue a message while a turn runs | Yes *(source)* | Partial: up to ten per conversation, sent in order as turns end, with take back, drop and a cut-in that gives one to the running turn now; kept in the window only | tauri |
 | Attach files, images, PDF [附加文件] | Yes | Partial: any file through the system dialog, copied into `uploads/` when it is outside the project; the model gets the paths, not the image pixels | served |
 | Browse project files to attach [你的文件] | Yes | Done: found by name in the add-context box | served |
 | Paste or drop files | Yes | Partial: files dropped onto the conversation are attached; no paste from the clipboard | tauri |
@@ -244,7 +244,7 @@ row says what is there.
 | Sidebar | Update-available card; "done / failed in another project" notices (an update check is in Settings, General, and a turn that ends raises a system notification; there is no card in the sidebar) | tauri |
 | Composer | Slash commands: `/timer` `/archive` `/compact` `/fork` `/btw` `/rewind` `/review` `/remember` `/context` `/plan` `/permission` `/save-as-skill` `/skills` `/files` `/upload` `/share` `/trajectory` `/memo` — all eighteen run here and are listed under the composer's "/" button — **Done**; `/share` exports Markdown, and there is no list that narrows as you type | tauri |
 | Composer | Conversation timer: repeat a prompt on an interval, pause, resume, cancel — `/timer 30m <prompt>` and `/timer off` are there, each firing a new turn; no pause or resume, and the turn before is not replaced | store |
-| Composer | Queue panel: edit, remove, reorder, "guide now" — a waiting message can be taken back to change, removed and moved earlier; guiding the running turn with it is Missing | tauri |
+| Composer | Queue panel: edit, remove, reorder, "guide now" — a waiting message can be taken back to change, removed, moved earlier, and given to the running turn now | tauri |
 | Composer | Plan progress strip; read-only states (sample, archived notebook, sub-agent, frozen branch) | served |
 | Composer | ACP agent conversations and their mode / config options | tauri |
 | Transcript | Equations, table copy, internal file links, confirm before opening an external link | ui |

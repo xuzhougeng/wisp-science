@@ -82,6 +82,9 @@ pub fn tool_question(tool: &str) -> String {
 #[derive(Default)]
 pub struct Live {
     pub running: bool,
+    /// Whether the running turn still reads guidance. It stops once the turn
+    /// has looked for the last time, so nothing is put in after that.
+    pub guidable: bool,
     /// Changes when a turn starts or finishes, invalidating in-flight store reads.
     pub generation: u64,
     pub messages: Vec<Message>,
@@ -126,6 +129,11 @@ pub struct Session {
     /// Woken whenever `suggesting` or `reviewing` is cleared.
     pub suggested: tokio::sync::Notify,
     pub runtime: Mutex<Option<wisp_runtime::RuntimeManager>>,
+    /// What the user said while a turn ran, for the turn to read at its
+    /// next step instead of after it ends.
+    pub guidance: wisp_core::GuidanceQueue,
+    /// Numbers each piece of guidance.
+    pub guided: std::sync::atomic::AtomicU64,
     #[cfg(test)]
     pub snapshot_after_read: Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
 }
@@ -138,6 +146,8 @@ impl Default for Session {
             accept: Default::default(),
             suggested: Default::default(),
             runtime: Mutex::new(None),
+            guidance: Default::default(),
+            guided: Default::default(),
             #[cfg(test)]
             snapshot_after_read: Mutex::new(None),
         }

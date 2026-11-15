@@ -190,7 +190,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Memory | One switch; habits the model is shown in every project; this project's notes by day, which the model can search; add, edit and delete either, and save any message to one or the other |
 | Memos | Your own notes per project: add, edit, pin, copy, delete after a confirmation, and put one into the message box. The model is never shown them |
 | Files | Project file browser, available before the first conversation; read-only text and Markdown preview, and pictures (PNG, JPEG, GIF, WebP, SVG, BMP); new folder, new file, rename, and move to the project's trash; listed by name, newest first or largest first, folders first, in the order last chosen |
-| Composer | Native multiline input. Return sends and Shift+Return starts a new line, or, with the other choice in Settings, General, Return starts a new line and Cmd/Ctrl+Return sends; Cmd/Ctrl+Return always sends. While an input method is composing, Return goes to it. While a turn runs the same key queues the message: it is sent when the turn ends |
+| Composer | Native multiline input. Return sends and Shift+Return starts a new line, or, with the other choice in Settings, General, Return starts a new line and Cmd/Ctrl+Return sends; Cmd/Ctrl+Return always sends. While an input method is composing, Return goes to it. While a turn runs the same key queues the message: it is sent when the turn ends, or given to the running turn at once with the queue's lightning button |
 | Plan first | The model investigates and submits a plan as a card; nothing is changed until you approve it, which leaves plan mode and starts the work |
 | Thinking | What the model is thinking, above the composer, while it thinks; afterwards it stays in the transcript as a folded Thought ahead of the answer, to open when wanted |
 | Conversation options | Ask first or Full access, the model, reasoning effort, and where its work runs (the default, this computer or a saved SSH host), per conversation; all are kept across restarts and apply from the next message |
@@ -805,8 +805,11 @@ Limits of this slice:
   own answer, or with an error; "Send the next one" overrides that. The
   queue belongs to the window: it is not saved, so quitting drops it; it
   moves only while its conversation is the one that is open; and a paired
-  phone neither sees nor feeds it. Steering a running turn with a message
-  (the WebView's cut-in) is not ported.
+  phone neither sees nor feeds it. While the turn runs, the lightning button
+  on a waiting message without attachments gives it to the turn at once: the
+  turn reads it at its next step, as your message, and answers it before it
+  ends; one that arrives after the turn's last look is answered in the same
+  turn. If the turn has already ended the message simply stays in line.
 - Project settings saves the name and description in the database and the
   rules in the project's own `.wisp/WISP.md`, the file the WebView calls
   Agent Context. The file is the truth: it is read again at the start of
@@ -1375,7 +1378,10 @@ empty again. When the turn ends the first is sent by itself, and the second
 after that. Queue one more, take it back with the pencil and confirm it is in
 the composer again; queue it and drop it with the cross. Queue a message
 during a turn that ends with a question card and confirm it waits until you
-answer or press "Send the next one".
+answer or press "Send the next one". Start a turn that waits for an approval,
+queue a message and press its lightning button: it leaves the queue; approve,
+and the message shows after the tool's result with the answer to it below,
+in the same turn.
 On a project's card press Project settings: clear the name and Save (it is
 refused and the dialog stays), then give a name, a description and a rule
 and Save: the card and the recent conversations show the new name, and

@@ -229,6 +229,51 @@ async fn mobile_project_list_omits_a_missing_registered_database() {
 }
 
 #[tokio::test]
+async fn guidance_is_read_by_the_running_turn_and_refused_when_none_runs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = config(tmp.path());
+    let calls = Arc::new(AtomicUsize::new(0));
+    let server = Server::open_with_models(cfg.clone(), models(calls.clone(), true))
+        .await
+        .unwrap();
+    let id = create(&server).await;
+    // Nothing runs: the caller sends it as a turn of its own.
+    assert!(!server.guide(PROJECT, &id, "Use GRCh38").await.unwrap());
+    assert!(server.guide(PROJECT, &id, "  ").await.is_err());
+    send(&server, &id, "Write the result").await.unwrap();
+    let pending = wait_for(&server, &id, |s| !s.approvals.is_empty()).await;
+    assert!(server.guide(PROJECT, &id, "Use GRCh38").await.unwrap());
+    // Another project's conversation is not this one's.
+    assert!(server.guide("other", &id, "Use GRCh38").await.is_err());
+    call(
+        &server,
+        "native_conversation_approve",
+        PROJECT,
+        json!({"session_id": id, "approval_id": pending.approvals[0].approval_id, "approved": true}),
+    )
+    .await
+    .unwrap();
+    let finished = wait_for(&server, &id, |s| !s.running).await;
+    assert!(finished.error.is_none(), "{:?}", finished.error);
+    // Read in the same turn: after the tool it was waiting on, before the
+    // answer, with no turn of its own.
+    let at = |found: &dyn Fn(&dto::Item) -> bool| finished.items.iter().position(found).unwrap();
+    let tool = at(&|item| item.tool_name.as_deref() == Some("write"));
+    let guided = at(&|item| item.role == "user" && item.text == "Use GRCh38");
+    let answer = at(&|item| item.role == "assistant" && item.text == "Saved result");
+    assert!(tool < guided && guided < answer, "{tool} {guided} {answer}");
+    assert_eq!(calls.load(Ordering::Relaxed), 2);
+    // Once it is over, guidance is the caller's again.
+    assert!(!server.guide(PROJECT, &id, "Thanks").await.unwrap());
+    // A desktop call, not one a phone can make.
+    assert!(!server
+        .commands()
+        .iter()
+        .any(|command| command.contains("guid")));
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn mobile_turn_approval_persistence_and_restart_reuse_the_same_runtime() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = config(tmp.path());

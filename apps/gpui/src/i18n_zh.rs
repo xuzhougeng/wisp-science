@@ -1226,4 +1226,7 @@ pub const ZH: &[(&str, &str)] = &[
     ("Newest first", "最新在前"),
     ("Largest first", "最大在前"),
     ("Change the order", "更改排序"),
+    // Guiding a running turn.
+    ("1 message waits for this turn to end", "1 条消息正等待本轮结束"),
+    ("Give it to the running turn now", "现在就交给正在进行的这一轮"),
 ];
