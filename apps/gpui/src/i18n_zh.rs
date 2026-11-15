@@ -1201,4 +1201,9 @@ pub const ZH: &[(&str, &str)] = &[
     ("Could not reach the release page", "无法连接发布页面"),
     ("The release page answered with an error", "发布页面返回了错误"),
     ("The release page's answer could not be read", "无法读取发布页面的回答"),
+    // Interpreter states.
+    ("starting", "启动中"),
+    ("ready", "就绪"),
+    ("stopping", "正在停止"),
+    ("stopped", "已停止"),
 ];

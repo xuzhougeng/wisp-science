@@ -14,11 +14,11 @@ pub fn runtime_label(row: &RuntimeRow) -> String {
         RuntimeLanguage::R => "R",
     };
     let state = match row.state {
-        RuntimeState::Starting => "starting",
-        RuntimeState::Ready => "ready",
-        RuntimeState::Busy => "running",
-        RuntimeState::Stopping => "stopping",
-        RuntimeState::Stopped => "stopped",
+        RuntimeState::Starting => tr("starting"),
+        RuntimeState::Ready => tr("ready"),
+        RuntimeState::Busy => tr("running"),
+        RuntimeState::Stopping => tr("stopping"),
+        RuntimeState::Stopped => tr("stopped"),
     };
     match &row.version {
         Some(version) if !version.trim().is_empty() => {
