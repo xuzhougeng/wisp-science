@@ -1,6 +1,9 @@
 //! Pictures an answer points at. When the model writes a Markdown image
 //! whose target is a picture in the project, the picture is shown under
-//! the answer; this finds those targets.
+//! the answer; this finds those targets, and the pictures the turn's tools
+//! wrote that the answer does not show itself.
+
+use wisp_dto::native_conversations::Item;
 
 /// How many pictures one answer may show.
 pub const PER_MESSAGE: usize = 4;
@@ -43,6 +46,56 @@ pub fn pictures(text: &str) -> Vec<String> {
     found
 }
 
+/// The project pictures the turn that the answer at `index` closes wrote
+/// with `write` or `edit`, as the WebView shows a turn's files under its
+/// answer: only under the turn's last answer, leaving out those the answer
+/// shows itself, in order, without repeats, and no more than
+/// [`PER_MESSAGE`] together with those. A call that failed wrote nothing.
+pub fn written(rows: &[Item], index: usize) -> Vec<String> {
+    let Some(row) = rows.get(index) else {
+        return Vec::new();
+    };
+    if row.role != "assistant" || row.text.trim().is_empty() {
+        return Vec::new();
+    }
+    let answered_later = rows[index + 1..]
+        .iter()
+        .take_while(|row| row.role != "user")
+        .any(|row| row.role == "assistant" && !row.text.trim().is_empty());
+    if answered_later {
+        return Vec::new();
+    }
+    let start = rows[..index]
+        .iter()
+        .rposition(|row| row.role == "user")
+        .map_or(0, |at| at + 1);
+    let shown = pictures(&row.text);
+    let mut found: Vec<String> = Vec::new();
+    for tool in &rows[start..index] {
+        let writes = tool.role == "tool"
+            && matches!(tool.tool_name.as_deref(), Some("write" | "edit"))
+            && tool.ok != Some(false);
+        if !writes {
+            continue;
+        }
+        let path = tool
+            .input
+            .as_deref()
+            .and_then(|input| serde_json::from_str::<serde_json::Value>(input).ok())
+            .and_then(|input| input.get("path")?.as_str().map(str::to_owned))
+            .and_then(|path| project_picture(&path));
+        if let Some(path) = path {
+            if !shown.contains(&path)
+                && !found.contains(&path)
+                && shown.len() + found.len() < PER_MESSAGE
+            {
+                found.push(path);
+            }
+        }
+    }
+    found
+}
+
 /// A Markdown image target as a project-relative picture path, if it is one.
 fn project_picture(target: &str) -> Option<String> {
     // `path "title"` and `<path>` are both Markdown.
@@ -67,6 +120,81 @@ fn project_picture(target: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn row(
+        role: &str,
+        tool: Option<&str>,
+        input: Option<&str>,
+        text: &str,
+        ok: Option<bool>,
+    ) -> Item {
+        serde_json::from_value(serde_json::json!({
+            "role": role, "text": text, "tool_name": tool, "input": input,
+            "ok": ok, "status": null
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn the_pictures_a_turns_tools_wrote_go_under_its_last_answer() {
+        let rows = [
+            row("user", None, None, "plot it", None),
+            row(
+                "tool",
+                Some("write"),
+                Some(r#"{"path":"figs/a.png","content":"x"}"#),
+                "ok",
+                Some(true),
+            ),
+            row("assistant", None, None, "Writing the second one.", None),
+            row(
+                "tool",
+                Some("edit"),
+                Some(r#"{"path":"figs/b.svg"}"#),
+                "ok",
+                Some(true),
+            ),
+            row(
+                "tool",
+                Some("write"),
+                Some(r#"{"path":"figs/c.png"}"#),
+                "denied",
+                Some(false),
+            ),
+            row(
+                "tool",
+                Some("write"),
+                Some(r#"{"path":"notes.md"}"#),
+                "ok",
+                Some(true),
+            ),
+            row(
+                "tool",
+                Some("write"),
+                Some(r#"{"path":"/tmp/d.png"}"#),
+                "ok",
+                Some(true),
+            ),
+            row(
+                "tool",
+                Some("shell"),
+                Some(r#"{"path":"figs/e.png"}"#),
+                "ok",
+                Some(true),
+            ),
+            row("assistant", None, None, "Done: ![b](figs/b.svg)", None),
+            row("user", None, None, "thanks", None),
+            row("assistant", None, None, "Any time.", None),
+        ];
+        // Under the last answer: what was written, less what it shows.
+        assert_eq!(written(&rows, 8), ["figs/a.png"]);
+        // Not under an earlier answer of the same turn, a question, or a
+        // turn that wrote nothing.
+        assert!(written(&rows, 2).is_empty());
+        assert!(written(&rows, 0).is_empty());
+        assert!(written(&rows, 10).is_empty());
+        assert!(written(&rows, 99).is_empty());
+    }
 
     #[test]
     fn an_answer_shows_the_project_pictures_it_points_at() {

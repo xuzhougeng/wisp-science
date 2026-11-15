@@ -23,6 +23,7 @@ impl Workspace {
             .flat_map(|(index, item)| {
                 inline::pictures(&item.text)
                     .into_iter()
+                    .chain(inline::written(&self.rows, index))
                     .map(move |path| (index, path))
             })
             .filter(|(_, path)| !self.inline_images.contains_key(path))
@@ -52,8 +53,10 @@ impl Workspace {
                     );
                     // The rows that show it are taller now.
                     for (index, item) in this.rows.iter().enumerate() {
-                        if item.role == "assistant" && inline::pictures(&item.text).contains(&path)
-                        {
+                        let shows = item.role == "assistant"
+                            && (inline::pictures(&item.text).contains(&path)
+                                || inline::written(&this.rows, index).contains(&path));
+                        if shows {
                             this.list.splice(index..index + 1, 1);
                         }
                     }
@@ -64,10 +67,24 @@ impl Workspace {
         }
     }
 
+    /// The pictures the turn an answer closes wrote and the answer does not
+    /// show, under it, as the WebView shows a turn's files.
+    pub(super) fn written_pictures(
+        &self,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) -> Vec<Stateful<Div>> {
+        self.pictures(inline::written(&self.rows, index), cx)
+    }
+
     /// The pictures an answer points at that have been read, in order.
     /// Clicking one opens it in the Files tab, larger.
     pub(super) fn inline_pictures(&self, text: &str, cx: &mut Context<Self>) -> Vec<Stateful<Div>> {
-        inline::pictures(text)
+        self.pictures(inline::pictures(text), cx)
+    }
+
+    fn pictures(&self, paths: Vec<String>, cx: &mut Context<Self>) -> Vec<Stateful<Div>> {
+        paths
             .into_iter()
             .filter_map(|path| {
                 let image = self.inline_images.get(&path)?.clone()?;
