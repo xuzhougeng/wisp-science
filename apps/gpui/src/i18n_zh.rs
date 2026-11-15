@@ -57,6 +57,8 @@ pub const ZH: &[(&str, &str)] = &[
     ("Branch from here", "从这里分支"),
     ("Review this turn", "审查这一轮"),
     ("Open in a new window", "在新窗口打开"),
+    ("Load earlier", "加载更早的"),
+    ("Load the whole conversation, so all of it is listed", "加载整个对话，列出全部消息"),
     ("Search by name across the project…", "按文件名搜索整个项目…"),
     ("No file in this project has that name.", "这个项目里没有这个名字的文件。"),
     ("Searching…", "正在搜索…"),

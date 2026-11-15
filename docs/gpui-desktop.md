@@ -1332,8 +1332,10 @@ Limits of this slice:
   run or edited, and a run started with `run_in_context` is in the Runs
   tab, not here.
 - The outline lists your own messages in the part of the conversation that
-  is loaded, by their first line; earlier ones appear once they are loaded.
-  It has no headings from the answers and no search of its own.
+  is loaded, by their first line. While earlier messages are not loaded it
+  says so, and Load earlier loads every earlier page, so the whole
+  conversation is listed (and in the transcript). It has no headings from
+  the answers and no search of its own.
 - Find looks through the part of the conversation that is loaded, ignoring
   case, in messages and in what tools printed. It marks whole rows, not the
   words inside them, and does not open a folded tool row. Earlier messages
@@ -2140,7 +2142,9 @@ Favorites; press it again to take it out.
 In a conversation with several messages press the outline button in the
 header: your messages are listed in order; choose the first and confirm the
 transcript scrolls to it; open the outline again and press Escape, and
-confirm only the outline closes.
+confirm only the outline closes. In a conversation long enough that its
+start is not loaded, open the outline and press Load earlier: the first
+message you sent is listed as 1 and choosing it scrolls to it.
 In a conversation press Cmd/Ctrl+F and type a word that appears several
 times: the count is shown, the newest match is marked strongest, Return and
 the up arrow go to earlier ones and around again, and Escape closes the bar,

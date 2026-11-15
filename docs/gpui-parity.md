@@ -140,7 +140,7 @@ to find in the running app.
 | Review a turn [审查] | Yes | Partial: a review button under each answer reviews the conversation as it stood when that turn ended; the report is not kept with the turn | tauri |
 | Select text: add to chat, ask aside, highlight | Yes | Partial: per message rather than per selection — Quote puts a message in the composer, Ask aside opens the aside with it quoted, the star saves it; a selected passage can only be copied (the text view's selection is private to gpui-component) | store |
 | Full record / model view toggles [完整记录 / 模型视角] | Yes | Partial: the transcript is the full record; What the model is sent lists the model's working set in a dialog, with each message's share and the set by kind (tool definitions, made when a turn starts, not counted); no undo of a compaction | served |
-| Conversation outline [展开对话目录] | Yes | Partial: your messages in the loaded part of the conversation, to jump to | store |
+| Conversation outline [展开对话目录] | Yes | Yes: your messages, to jump to; while the start is not loaded, Load earlier in the outline loads the whole conversation so all of it is listed | store |
 | Find in conversation | Yes *(source)* | Done: Cmd/Ctrl+F over the loaded transcript, with a count and next and previous; marks rows, not words | ui |
 | Sub-agent and delegation cards | Yes *(source)* | Partial: an explore call is an ordinary tool row in the transcript and a card in the Agents tab; no delegation cards | store |
 

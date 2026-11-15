@@ -2677,6 +2677,58 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Loads every earlier page of the open conversation, so its outline
+    /// lists all of it.
+    fn load_whole_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.before.is_none() || self.loading_history {
+            return;
+        }
+        self.loading_history = true;
+        let selection = self.state.selection();
+        let backend = self.backend.clone();
+        let mut before = self.before;
+        cx.spawn_in(window, async move |this, cx| {
+            // Newest first, as they are asked for.
+            let mut pages: Vec<Vec<Item>> = Vec::new();
+            let mut failure = None;
+            while let Some(seq) = before {
+                let page = receive(backend.request::<Snapshot>(
+                    "native_conversation_snapshot",
+                    selection.project.clone(),
+                    json!({"session_id": selection.session, "before_seq": seq}),
+                ))
+                .await;
+                match page {
+                    Ok(page) => {
+                        // A page that moves no further back ends the walk.
+                        before = crate::outline::next_page(seq, page.next_before_seq);
+                        pages.push(page.items);
+                    }
+                    Err(error) => {
+                        failure = Some(error);
+                        break;
+                    }
+                }
+            }
+            let _ = this.update_in(cx, |this, window, cx| {
+                if !this.state.current(&selection) {
+                    return;
+                }
+                this.loading_history = false;
+                this.history = crate::outline::stitch(pages, std::mem::take(&mut this.history));
+                this.before = before;
+                this.update_rows();
+                this.load_inline_images(window, cx);
+                if let Some(error) = failure {
+                    this.error = Some(error);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn create_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.pending || self.state.project.is_none() {
             return;

@@ -1513,11 +1513,31 @@ impl Workspace {
         if self.before.is_some() {
             menu = menu.child(
                 div()
+                    .h_flex()
+                    .gap_2()
                     .px_2()
                     .py_1()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(tr("Earlier messages are listed once they are loaded.")),
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(tr("Earlier messages are listed once they are loaded.")),
+                    )
+                    .child(
+                        Button::new("outline-load-all")
+                            .label(if self.loading_history {
+                                tr("Loading…")
+                            } else {
+                                tr("Load earlier")
+                            })
+                            .xsmall()
+                            .disabled(self.loading_history)
+                            .tooltip(tr("Load the whole conversation, so all of it is listed"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.load_whole_history(window, cx)
+                            })),
+                    ),
             );
         }
         for entry in entries {

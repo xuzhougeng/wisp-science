@@ -1,6 +1,6 @@
 //! The outline of the open conversation: what the user asked, in order, as
-//! places to jump to. Only the part of the conversation that is loaded is
-//! listed.
+//! places to jump to. The part of the conversation that is loaded is
+//! listed; the rest can be loaded from the outline.
 use wisp_dto::native_conversations::Item;
 
 /// How much of a message's first line an entry shows.
@@ -30,6 +30,20 @@ pub fn entries(rows: &[Item]) -> Vec<Entry> {
         .collect()
 }
 
+/// The page to ask for after the one before `asked`: the host's next one,
+/// as long as it is further back, so a walk through the pages ends.
+pub fn next_page(asked: i64, next: Option<i64>) -> Option<i64> {
+    next.filter(|next| *next < asked)
+}
+
+/// Earlier pages, newest first as they were asked for, put in front of the
+/// rows already loaded, oldest first.
+pub fn stitch(pages: Vec<Vec<Item>>, loaded: Vec<Item>) -> Vec<Item> {
+    let mut rows: Vec<Item> = pages.into_iter().rev().flatten().collect();
+    rows.extend(loaded);
+    rows
+}
+
 fn title(item: &Item) -> String {
     let text = crate::compose::user_text(item);
     let line = text
@@ -55,6 +69,24 @@ fn title(item: &Item) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn earlier_pages_go_in_front_oldest_first_and_the_walk_ends() {
+        let texts = |rows: &[Item]| rows.iter().map(|row| row.text.clone()).collect::<Vec<_>>();
+        let rows = stitch(
+            vec![
+                vec![row("user", "3", &[]), row("assistant", "c", &[])],
+                vec![row("user", "1", &[]), row("user", "2", &[])],
+            ],
+            vec![row("user", "4", &[])],
+        );
+        assert_eq!(texts(&rows), ["1", "2", "3", "c", "4"]);
+        assert_eq!(next_page(40, Some(20)), Some(20));
+        assert_eq!(next_page(40, None), None);
+        // A host that answers with the same place again does not loop.
+        assert_eq!(next_page(40, Some(40)), None);
+        assert_eq!(next_page(40, Some(41)), None);
+    }
 
     fn row(role: &str, text: &str, attachments: &[&str]) -> Item {
         serde_json::from_value(json!({
