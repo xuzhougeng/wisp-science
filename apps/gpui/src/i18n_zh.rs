@@ -1240,4 +1240,10 @@ pub const ZH: &[(&str, &str)] = &[
     // Working plan.
     ("Plan", "计划"),
     ("Plan: {} of {} done", "计划：已完成 {}/{}"),
+    // Approving a plan.
+    ("Tell Wisp what to change in this plan.", "说明你希望如何修改这个计划。"),
+    ("Wisp proposes a plan — approve it to start", "Wisp 提出了一个计划，批准后开始"),
+    ("Approve", "批准"),
+    ("Send feedback", "发送反馈"),
+    ("Turn down", "拒绝"),
 ];

@@ -597,6 +597,20 @@ impl Backend {
         })
     }
 
+    /// Turns a waiting request down with what should change.
+    pub fn answer_with_feedback(
+        &self,
+        project: String,
+        session: String,
+        approval: String,
+        feedback: String,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.answer_with_feedback(&project, &session, &approval, &feedback)
+                .await
+        })
+    }
+
     pub fn answer_approval(
         &self,
         project: String,

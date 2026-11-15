@@ -3717,6 +3717,34 @@ impl Server {
             .map_err(|_| anyhow::anyhow!("Approval expired"))
     }
 
+    /// Turns a waiting request down with a word on why, which the model
+    /// reads with the refusal: how a proposed plan is sent back to be
+    /// changed.
+    pub async fn answer_with_feedback(
+        &self,
+        project: &str,
+        session: &str,
+        approval: &str,
+        feedback: &str,
+    ) -> Result<()> {
+        let feedback = feedback.trim();
+        ensure!(!feedback.is_empty(), "Write what should change first");
+        self.own_conversation(project, session).await?;
+        let live = self.session(session);
+        let (_, sender) = live
+            .live
+            .lock()
+            .unwrap()
+            .approvals
+            .remove(approval)
+            .context("Approval expired or already answered")?;
+        sender
+            .send(wisp_tools::ConfirmDecision::Denied {
+                feedback: Some(feedback.to_owned()),
+            })
+            .map_err(|_| anyhow::anyhow!("Approval expired"))
+    }
+
     /// Tools the user allowed for good, project by project. Projects with
     /// none are left out.
     pub async fn project_grants(&self) -> Result<Vec<ProjectGrants>> {

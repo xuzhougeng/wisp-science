@@ -192,6 +192,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Files | Project file browser, available before the first conversation; read-only text and Markdown preview, pictures (PNG, JPEG, GIF, WebP, SVG, BMP), and Jupyter notebooks as their cells with what each printed or returned (a figure is named, not drawn; Show as text gives the file itself); new folder, new file, rename, and move to the project's trash; listed by name, newest first or largest first, folders first, in the order last chosen |
 | Composer | Native multiline input. Return sends and Shift+Return starts a new line, or, with the other choice in Settings, General, Return starts a new line and Cmd/Ctrl+Return sends; Cmd/Ctrl+Return always sends. While an input method is composing, Return goes to it. While a turn runs the same key queues the message: it is sent when the turn ends, or given to the running turn at once with the queue's lightning button |
 | Plan first | The model investigates and submits a plan as a card; nothing is changed until you approve it, which leaves plan mode and starts the work |
+| Approving a plan | When the model sets out a new plan it waits for you: the plan's steps show above the composer with Approve, Turn down, and a box to say what should change; Send feedback (or Return in the box) turns the plan down with your words, which the model reads to revise it |
 | Working plan | When the model sets out or updates its plan for a long piece of work, the update is a checklist in the transcript (done, in progress, to do, dropped), and while steps remain a line above the composer says how many are done and which is next |
 | Thinking | What the model is thinking, above the composer, while it thinks; afterwards it stays in the transcript as a folded Thought ahead of the answer, to open when wanted |
 | Conversation options | Ask first or Full access, the model, reasoning effort, and where its work runs (the default, this computer or a saved SSH host), per conversation; all are kept across restarts and apply from the next message |
@@ -1055,6 +1056,10 @@ Start a slow turn, switch to another app and wait: a notification names
 the conversation when the turn ends, and another when a tool asks for
 approval. Stay in Wisp and confirm nothing is posted. Turn Notify me off
 and Play a sound on in Settings, General: only the sound comes.
+When the model proposes a new plan, its steps show above the composer: write
+what should change in the box and press Return; the plan call shows as
+refused and the model is told your words. Approve on another one and the
+work starts.
 Ask for a long piece of work that the model plans: its plan update shows as
 a checklist, and the line above the composer says how many steps are done
 and names the current one; it goes once every step is done.

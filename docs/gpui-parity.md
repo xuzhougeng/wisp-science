@@ -255,7 +255,7 @@ row says what is there.
 | Transcript | Quote a range of turns into another conversation; distill an experience | tauri |
 | Transcript | Explorations: start, diff, promote to mainline, discard, abandon | store |
 | Transcript | Branch cards and merge a branch back with a summary | store |
-| Transcript | Plan card: approve and run, or leave plan mode — **Done**. The execution plan — **Done**: each update the model makes is a checklist in the transcript, and a strip above the composer says how many steps are done and which is next. Plan review with per-step feedback — Missing | served |
+| Transcript | Plan card: approve and run, or leave plan mode — **Done**. The execution plan — **Done**: each update the model makes is a checklist in the transcript, and a strip above the composer says how many steps are done and which is next. Plan review with feedback — **Done**: a plan the model asks to start on shows its steps with Approve, Turn down, and a box for what should change, which goes back to the model with the refusal | served |
 | Transcript | Reviewer findings panel and the automatic correction pass — review on request, of one turn and after every turn are **Done**; the correction is put into the composer to send, not run by itself | tauri |
 | Transcript | MCP App previews; Motif DNA selection | tauri |
 | Context | Usage breakdown panel, compact dialog (regular / semantic), handoff note to a new conversation, too-long recovery — what the model is sent, message by message with token estimates, is **Done**, and `/compact` compacts on request without a choice of kind; the rest is Missing | tauri |

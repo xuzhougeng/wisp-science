@@ -910,6 +910,10 @@ impl Workspace {
             .overflow_y_scroll();
         for approval in &snapshot.approvals {
             let id = approval.approval_id.clone();
+            if let Some(steps) = controls::plan_approval(&approval.message) {
+                approvals = approvals.child(self.plan_approval_card(id, steps, cx));
+                continue;
+            }
             let answer = |label: &'static str, glyph_name: &'static str, approved, remember| {
                 let id = id.clone();
                 Button::new(SharedString::from(format!("{label}-{id}")))
@@ -985,6 +989,88 @@ impl Workspace {
                 );
         }
         Some(approvals)
+    }
+
+    /// A plan the model asks to start on: its steps, to approve, to turn
+    /// down, or to send back with what should change.
+    fn plan_approval_card(&self, id: String, steps: Vec<String>, cx: &mut Context<Self>) -> Div {
+        let attention = tone_color(Tone::Attention, cx);
+        let mut card = div()
+            .v_flex()
+            .gap_2()
+            .p_3()
+            .rounded(cx.theme().radius_lg)
+            .border_1()
+            .border_color(attention.opacity(0.5))
+            .bg(attention.opacity(0.06))
+            .child(
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .child(icon("plan").text_color(attention))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(tr("Wisp proposes a plan — approve it to start")),
+                    ),
+            );
+        for (number, step) in steps.iter().enumerate() {
+            card = card.child(div().text_sm().child(format!("{}. {step}", number + 1)));
+        }
+        let approve = id.clone();
+        let refuse = id.clone();
+        let feedback = id;
+        let ready = !self.plan_feedback.read(cx).value().trim().is_empty();
+        card.child(Input::new(&self.plan_feedback).small()).child(
+            div()
+                .h_flex()
+                .flex_wrap()
+                .gap_2()
+                .child(
+                    Button::new(SharedString::from(format!("plan-approve-{approve}")))
+                        .icon(glyph("check"))
+                        .label(tr("Approve"))
+                        .small()
+                        .primary()
+                        .disabled(self.pending)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.answer_approval(
+                                approve.clone(),
+                                true,
+                                wisp_server::desktop::Remember::No,
+                                window,
+                                cx,
+                            )
+                        })),
+                )
+                .child(
+                    Button::new(SharedString::from(format!("plan-feedback-{feedback}")))
+                        .icon(glyph("edit"))
+                        .label(tr("Send feedback"))
+                        .small()
+                        .disabled(self.pending || !ready)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.send_plan_feedback(feedback.clone(), window, cx)
+                        })),
+                )
+                .child(
+                    Button::new(SharedString::from(format!("plan-refuse-{refuse}")))
+                        .icon(glyph("ban"))
+                        .label(tr("Turn down"))
+                        .small()
+                        .ghost()
+                        .disabled(self.pending)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.answer_approval(
+                                refuse.clone(),
+                                false,
+                                wisp_server::desktop::Remember::No,
+                                window,
+                                cx,
+                            )
+                        })),
+                ),
+        )
     }
 
     /// The card a composer menu's rows sit in, drawn just above the button

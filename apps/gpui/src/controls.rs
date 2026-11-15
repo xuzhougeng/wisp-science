@@ -217,6 +217,22 @@ pub fn awaiting_answer(rows: &[Item], index: usize, running: bool) -> bool {
 /// What approving a plan sends when nothing else is typed. The WebView's.
 pub const APPROVE_PLAN: &str = "Approve and execute";
 
+/// How the plan tool's question to start a fresh plan begins. The same
+/// words as `wisp_tools::plan::PLAN_APPROVAL_PREFIX`.
+const PLAN_APPROVAL: &str = "[plan-approval]\n";
+
+/// The steps of a plan the model asks to start on, read from its approval
+/// question. `None` for any other question.
+pub fn plan_approval(message: &str) -> Option<Vec<String>> {
+    let payload = message.strip_prefix(PLAN_APPROVAL)?;
+    Some(
+        wisp_dto::execution_plan::parse_plan_steps(payload)
+            .into_iter()
+            .map(|step| step.content)
+            .collect(),
+    )
+}
+
 /// The steps of the working plan the model updated in this row.
 pub fn execution_steps(item: &Item) -> Option<&[wisp_dto::execution_plan::PlanStep]> {
     item.plan_steps.as_deref().filter(|steps| !steps.is_empty())
@@ -524,6 +540,25 @@ mod tests {
         // An empty trailing assistant row is not an answer.
         let trailing = [asked, item("assistant", None, " ", None)];
         assert!(awaiting_answer(&trailing, 0, false));
+    }
+
+    #[test]
+    fn a_plan_to_approve_is_read_from_its_question() {
+        let asked = format!(
+            "[plan-approval]\n{}",
+            json!({"v": 1, "steps": [
+                {"content": "Align the reads", "status": "pending"},
+                {"content": "Count and plot", "status": "pending"}
+            ]})
+        );
+        assert_eq!(
+            plan_approval(&asked),
+            Some(vec![
+                "Align the reads".to_owned(),
+                "Count and plot".to_owned()
+            ])
+        );
+        assert_eq!(plan_approval("Run tool 'shell'?"), None);
     }
 
     fn updated(steps: serde_json::Value) -> Item {

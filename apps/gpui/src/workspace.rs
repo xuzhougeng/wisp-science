@@ -211,6 +211,8 @@ pub struct Workspace {
     find: crate::find::Find,
     find_input: Entity<InputState>,
     aside_input: Entity<InputState>,
+    /// What should change in a plan the model asks to start on.
+    plan_feedback: Entity<InputState>,
     /// What was asked aside, by conversation. Kept until the app closes.
     asides: HashMap<String, crate::aside::Thread>,
     palette_scroll: ScrollHandle,
@@ -525,6 +527,9 @@ impl Workspace {
         let file_name_input = cx.new(|cx| InputState::new(window, cx));
         let aside_input = cx
             .new(|cx| InputState::new(window, cx).placeholder(tr("Ask about this conversation…")));
+        let plan_feedback = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(tr("Tell Wisp what to change in this plan."))
+        });
         let journey_search =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Filter this month…")));
         let journal_fields = [
@@ -641,6 +646,29 @@ impl Workspace {
                     this.ask_aside(window, cx);
                 }
             }),
+            // The feedback button follows what is written; Return sends it.
+            cx.subscribe_in(
+                &plan_feedback,
+                window,
+                |this, _, event, window, cx| match event {
+                    InputEvent::Change => cx.notify(),
+                    InputEvent::PressEnter { .. } => {
+                        let asking = this.state.snapshot.as_ref().and_then(|snapshot| {
+                            snapshot
+                                .approvals
+                                .iter()
+                                .find(|approval| {
+                                    controls::plan_approval(&approval.message).is_some()
+                                })
+                                .map(|approval| approval.approval_id.clone())
+                        });
+                        if let Some(approval) = asking {
+                            this.send_plan_feedback(approval, window, cx);
+                        }
+                    }
+                    _ => {}
+                },
+            ),
             cx.subscribe_in(&file_name_input, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::PressEnter { .. }) {
                     this.save_file_name(window, cx);
@@ -769,6 +797,7 @@ impl Workspace {
             find: Default::default(),
             find_input,
             aside_input,
+            plan_feedback,
             asides: HashMap::new(),
             capabilities: None,
             capabilities_error: None,
@@ -1210,6 +1239,10 @@ impl Workspace {
             ),
             (&self.find_input, tr("Find in this conversation…")),
             (&self.aside_input, tr("Ask about this conversation…")),
+            (
+                &self.plan_feedback,
+                tr("Tell Wisp what to change in this plan."),
+            ),
             (&self.journey_search, tr("Filter this month…")),
             (&self.journal_fields[0], tr("The reads are clean")),
             (&self.skills_search, tr("Find a skill…")),
@@ -2562,6 +2595,51 @@ impl Workspace {
                 }
                 if let Err(error) = result {
                     this.error = Some(error);
+                }
+                this.start_poll(window, cx);
+                this.load_status(window, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Sends a proposed plan back with what should change, which the
+    /// model reads with the refusal.
+    fn send_plan_feedback(
+        &mut self,
+        approval: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selection = self.state.selection();
+        let (Some(project), Some(session)) = (selection.project.clone(), selection.session.clone())
+        else {
+            return;
+        };
+        let feedback = self.plan_feedback.read(cx).value().trim().to_owned();
+        if self.pending || feedback.is_empty() {
+            return;
+        }
+        self.pending = true;
+        self.error = None;
+        let reply = self
+            .backend
+            .answer_with_feedback(project, session, approval, feedback);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.pending = false;
+                this.watch_activity(window, cx);
+                if !this.state.current(&selection) {
+                    return;
+                }
+                match result {
+                    Ok(()) => this
+                        .plan_feedback
+                        .update(cx, |input, cx| input.set_value("", window, cx)),
+                    Err(error) => this.error = Some(error),
                 }
                 this.start_poll(window, cx);
                 this.load_status(window, cx);

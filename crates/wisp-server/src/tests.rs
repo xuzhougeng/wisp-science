@@ -228,6 +228,104 @@ async fn mobile_project_list_omits_a_missing_registered_database() {
     server.shutdown().await;
 }
 
+/// Proposes a fresh plan, then answers whatever the plan tool said.
+struct Planner;
+#[async_trait]
+impl Provider for Planner {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+        Ok(Completion {
+            content: "Revised".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        if !messages
+            .iter()
+            .any(|message| message.role == wisp_llm::Role::Tool)
+        {
+            return Ok(Completion {
+                tool_calls: vec![ToolCall {
+                    id: "plan-1".into(),
+                    kind: "function".into(),
+                    function: wisp_llm::FunctionCall {
+                        name: "update_plan".into(),
+                        arguments: json!({"steps": [
+                            {"step": "Align the reads", "status": "pending"},
+                            {"step": "Count and plot", "status": "pending"}
+                        ]})
+                        .to_string(),
+                    },
+                }],
+                finish_reason: Some("tool_calls".into()),
+                ..Default::default()
+            });
+        }
+        sink.on_text("Revised");
+        self.complete(messages, tools).await
+    }
+}
+
+#[tokio::test]
+async fn a_proposed_plan_can_be_sent_back_with_what_should_change() {
+    let tmp = tempfile::tempdir().unwrap();
+    let factory: ModelFactory = Arc::new(|_| Box::new(Planner));
+    let server = Server::open_with_models(config(tmp.path()), factory)
+        .await
+        .unwrap();
+    let id = create(&server).await;
+    send(&server, &id, "Plan the analysis").await.unwrap();
+    let pending = wait_for(&server, &id, |s| !s.approvals.is_empty()).await;
+    let approval = &pending.approvals[0];
+    assert!(approval
+        .message
+        .starts_with(wisp_tools::plan::PLAN_APPROVAL_PREFIX));
+    assert!(server
+        .answer_with_feedback(PROJECT, &id, &approval.approval_id, "  ")
+        .await
+        .is_err());
+    assert!(server
+        .answer_with_feedback(PROJECT, &id, "missing", "Split it")
+        .await
+        .is_err());
+    server
+        .answer_with_feedback(
+            PROJECT,
+            &id,
+            &approval.approval_id,
+            "Split counting from plotting",
+        )
+        .await
+        .unwrap();
+    let finished = wait_for(&server, &id, |s| !s.running).await;
+    assert!(finished.error.is_none(), "{:?}", finished.error);
+    // The model is told the plan was turned down, and why.
+    let refused = finished
+        .items
+        .iter()
+        .find(|item| item.tool_name.as_deref() == Some("update_plan"))
+        .unwrap();
+    assert!(
+        refused
+            .text
+            .contains("User feedback: Split counting from plotting"),
+        "{}",
+        refused.text
+    );
+    server.shutdown().await;
+}
+
 #[tokio::test]
 async fn guidance_is_read_by_the_running_turn_and_refused_when_none_runs() {
     let tmp = tempfile::tempdir().unwrap();
