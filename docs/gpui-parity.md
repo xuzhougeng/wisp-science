@@ -183,7 +183,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 
 | Feature | WebView | GPUI | Host |
 | --- | --- | --- | --- |
-| Research journey [研究历程]: by day, relation graph, search, add record, recap, artifact sources | Yes | Partial: a month at a time by day, a filter, adding a record of your own, and a day's recap drafted by the model, confirmed or dismissed; no relation graph, recap edits or artifact sources | store |
+| Research journey [研究历程]: by day, relation graph, search, add record, recap, artifact sources | Yes | Partial: a month at a time by day, a filter, adding a record of your own, and a day's recap drafted by the model, changed (headline and each section, one item a line, an item left as it was keeping its sources), confirmed or dismissed; no relation graph or artifact sources | store |
 | Paper evidence [论文证据]: papers, versions, figures and tables with their sources | Yes | Partial: a page of papers with their versions, and figures, tables and claims bound to project results and runs with a reason; readiness check, waivers, finalizing and new versions are there; no capsules or reproduction, and no conversation passages as evidence | store |
 
 ## 8. Settings

@@ -178,7 +178,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Paper evidence | A page for the open project (Papers in the sidebar, or the command palette): the papers it is writing, each with its versions and, in a draft version, figures, tables and claims with the project results and runs they rest on and why each was chosen. Finalize… checks a draft for whom the evidence is for (private, restricted or public, with the reviews public needs) and lists what stands in the way, warnings and what the record leaves out; a finding that may stand is kept with a reason; when nothing is left in the way the version is locked under a SHA-256 fingerprint. New version starts a draft from any version with its items and evidence |
 | Research mandates | A page of standing goals (the gauge on the home page, or the command palette): each project's agent works on its mandate in rounds on a cadence in one conversation, asks you through the research assistant when it needs something only you can give, and writes reports; answer, run now, pause, report, edit, close or delete from its card |
 | Research assistant | One conversation of its own (the robot on the home page, or the command palette) that reads what was recorded across projects and each project's progress, keeps your dated plan, and hands work to a project conversation, whose outcome it reports back; a bar over it shows today's plan to tick off or drop |
-| Research journey | A page for the open project: one month of what happened, by day (what you asked, runs, files, decisions, your own records), a filter, and a form to add a record of your own. Each day can have a recap the model drafts from its records, with what was done, found, went wrong and comes next, which you confirm or dismiss; Scheduled tasks drafts the last days' recaps each morning |
+| Research journey | A page for the open project: one month of what happened, by day (what you asked, runs, files, decisions, your own records), a filter, and a form to add a record of your own. Each day can have a recap the model drafts from its records, with what was done, found, went wrong and comes next, which you change, confirm or dismiss; Scheduled tasks drafts the last days' recaps each morning |
 | Outline | A button in the conversation's header lists what you asked, in order; choosing one scrolls to it |
 | Find in conversation | Cmd/Ctrl+F, or the command palette: a bar over the transcript marks every message, and every tool call, that contains the words; Return and the arrows move between them |
 | Help | Documentation (home page, Settings, palette) opens the tutorials and Known problems (Settings) the issue tracker in the system's browser; Report a problem (Settings, palette) starts a conversation, in the open project or the built-in one, with the app's version, system and model in the composer, for the model to draft the report and a prefilled GitHub link |
@@ -1367,9 +1367,11 @@ Limits of this slice:
   on the Scheduled tasks page (on at 09:00 at first, like the WebView),
   drafts each project's last three complete days that have records and
   no recap, never replacing one, while the app is open; Run now starts
-  it at once. Recaps are not edited item by item here, their sources are
-  not opened from the card, and the WebView's Recap specialist model is
-  not ported: the default model drafts them.
+  it at once. Change on a recap opens its headline and its four sections,
+  one item a line, to edit; an item left as it was keeps its sources,
+  and Escape closes the form alone. Sources are not opened from the
+  card, and the WebView's Recap specialist model is not ported: the
+  default model drafts them.
 - The research calendar reads the same history as the journey for every
   project at once, a month at a time, in your computer's local days. It
   opens on today; another month opens on its last day with something on

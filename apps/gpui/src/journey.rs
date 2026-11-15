@@ -251,6 +251,41 @@ pub fn reviewed(recap: &ResearchRecap, status: &str) -> ResearchRecapEdit {
     }
 }
 
+/// A recap's list as the editor shows it: one item a line.
+pub fn as_lines(items: &[wisp_dto::ResearchRecapItem]) -> String {
+    items
+        .iter()
+        .map(|item| item.text.trim())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A list as edited: one item a non-empty line, a leading "- " or "• "
+/// dropped. A line left as it was keeps the sources it had.
+pub fn from_lines(
+    before: &[wisp_dto::ResearchRecapItem],
+    lines: &str,
+) -> Vec<wisp_dto::ResearchRecapItem> {
+    lines
+        .lines()
+        .map(|line| {
+            line.trim()
+                .trim_start_matches("- ")
+                .trim_start_matches("• ")
+                .trim()
+        })
+        .filter(|line| !line.is_empty())
+        .map(|line| wisp_dto::ResearchRecapItem {
+            text: line.to_owned(),
+            refs: before
+                .iter()
+                .find(|item| item.text.trim() == line)
+                .map(|item| item.refs.clone())
+                .unwrap_or_default(),
+        })
+        .collect()
+}
+
 fn day_label(date: NaiveDate) -> String {
     day_label_in(crate::i18n::current(), date)
 }
@@ -484,5 +519,37 @@ mod tests {
         file.source_discarded = true;
         assert_eq!(status_label(&file), Some("source discarded"));
         assert_eq!(status_label(&entry("finding", "x", 0)), None);
+    }
+
+    #[test]
+    fn an_edited_recap_list_keeps_the_sources_of_lines_left_alone() {
+        use wisp_dto::ResearchRecapItem;
+        let before = [
+            ResearchRecapItem {
+                text: "Aligned 12 samples".into(),
+                refs: vec![0, 2],
+            },
+            ResearchRecapItem {
+                text: "Counted reads".into(),
+                refs: vec![1],
+            },
+        ];
+        assert_eq!(as_lines(&before), "Aligned 12 samples\nCounted reads");
+        let after = from_lines(
+            &before,
+            "- Aligned 12 samples\n\n• Counted reads twice\n  Plotted PCA ",
+        );
+        assert_eq!(
+            after
+                .iter()
+                .map(|item| (item.text.as_str(), item.refs.clone()))
+                .collect::<Vec<_>>(),
+            [
+                ("Aligned 12 samples", vec![0, 2]),
+                ("Counted reads twice", vec![]),
+                ("Plotted PCA", vec![]),
+            ]
+        );
+        assert!(from_lines(&before, " \n").is_empty());
     }
 }

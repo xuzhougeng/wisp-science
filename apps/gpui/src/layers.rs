@@ -78,6 +78,8 @@ pub enum Layer {
     Journey,
     /// The form on the journey page for a record of the researcher's own.
     JournalForm,
+    /// A day's recap being changed, on the journey page.
+    RecapForm,
     /// The scheduled tasks of every project: a page of its own.
     Schedules,
     /// The form on that page for a new task.
@@ -297,7 +299,7 @@ impl Layer {
             | Layer::ConfirmRemoveQuickAction => Some(Layer::Settings),
             Layer::ConfirmRemoveFavorite => Some(Layer::Favorites),
             Layer::ConfirmSyncReplace => Some(Layer::ProjectSettings),
-            Layer::JournalForm => Some(Layer::Journey),
+            Layer::JournalForm | Layer::RecapForm => Some(Layer::Journey),
             Layer::ScheduleForm | Layer::ConfirmDeleteSchedule => Some(Layer::Schedules),
             Layer::MandateForm | Layer::ConfirmDeleteMandate => Some(Layer::Mandates),
             Layer::PaperForm
@@ -788,6 +790,12 @@ mod tests {
         stack.open(Layer::JournalForm);
         assert!(stack.close(Layer::Journey));
         assert!(!stack.contains(Layer::JournalForm));
+        // So is a recap being changed.
+        stack.open(Layer::Journey);
+        stack.open(Layer::RecapForm);
+        assert_eq!(stack.dismiss_top(), Some(Layer::RecapForm));
+        assert!(stack.contains(Layer::Journey));
+        stack.close(Layer::Journey);
         // The scheduled tasks page has a form and a question inside it.
         stack.open(Layer::Schedules);
         stack.open(Layer::ScheduleForm);

@@ -279,6 +279,11 @@ pub struct Workspace {
     paper_waiving: Option<String>,
     paper_waiver_field: Entity<InputState>,
     journal_fields: [Entity<InputState>; 2],
+    /// The recap being changed, by id.
+    recap_editing: Option<String>,
+    /// Its headline, then what was done, found, in the way and next, one
+    /// item a line.
+    recap_fields: [Entity<InputState>; 5],
     journal_category: &'static str,
     /// What the Files panel's name field is for, and the field; the entry
     /// the trash question is about; why the last change was refused; and
@@ -947,6 +952,13 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Papers filed, 5, per week"))),
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Your answer…"))),
         ];
+        let recap_fields = [
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx).multi_line(true)),
+            cx.new(|cx| InputState::new(window, cx).multi_line(true)),
+            cx.new(|cx| InputState::new(window, cx).multi_line(true)),
+            cx.new(|cx| InputState::new(window, cx).multi_line(true)),
+        ];
         let journal_fields = [
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("The reads are clean"))),
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
@@ -1450,6 +1462,8 @@ impl Workspace {
             paper_waiving: None,
             paper_waiver_field,
             journal_fields,
+            recap_editing: None,
+            recap_fields,
             journal_category: "progress",
             file_naming: None,
             file_name_input,
@@ -1914,6 +1928,7 @@ impl Workspace {
             }
             // The page stays open underneath.
             Some(Layer::JournalForm) => {}
+            Some(Layer::RecapForm) => self.recap_editing = None,
             Some(Layer::Schedules) => self.focus_composer(window, cx),
             Some(Layer::ScheduleForm) => {}
             Some(Layer::ConfirmDeleteSchedule) => self.schedule_deleting = None,

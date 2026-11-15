@@ -9,7 +9,7 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
+    input::{Input, InputState},
 };
 use wisp_dto::{ResearchJournalInput, ResearchRecap};
 
@@ -141,6 +141,106 @@ impl Workspace {
         .detach();
     }
 
+    /// Opens the form on a recap, filled with what it says now.
+    fn edit_recap(&mut self, recap: &ResearchRecap, window: &mut Window, cx: &mut Context<Self>) {
+        let values = [
+            recap.headline.clone(),
+            journey::as_lines(&recap.done),
+            journey::as_lines(&recap.findings),
+            journey::as_lines(&recap.issues),
+            journey::as_lines(&recap.next),
+        ];
+        for (field, value) in self.recap_fields.iter().zip(values) {
+            field.update(cx, |input, cx| input.set_value(value, window, cx));
+        }
+        self.recap_editing = Some(recap.id.clone());
+        self.layers.open(Layer::RecapForm);
+        self.recap_fields[0].update(cx, |input, cx| input.focus(window, cx));
+        cx.notify();
+    }
+
+    /// Keeps the changed recap, as it stands otherwise.
+    fn save_recap(&mut self, recap: &ResearchRecap, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        let [headline, done, findings, issues, next] =
+            [0, 1, 2, 3, 4].map(|at| self.recap_fields[at].read(cx).value().to_string());
+        let edit = wisp_dto::ResearchRecapEdit {
+            id: recap.id.clone(),
+            status: recap.status.clone(),
+            headline: headline.trim().to_owned(),
+            done: journey::from_lines(&recap.done, &done),
+            findings: journey::from_lines(&recap.findings, &findings),
+            issues: journey::from_lines(&recap.issues, &issues),
+            next: journey::from_lines(&recap.next, &next),
+        };
+        self.error = None;
+        let reply = self.backend.update_recap(project, edit);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(_) => {
+                        this.recap_editing = None;
+                        this.layers.close(Layer::RecapForm);
+                        this.reload_journey(window, cx);
+                    }
+                    // The form stays with what was typed.
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn recap_form(&self, recap: &ResearchRecap, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let label = |text: &'static str| div().text_xs().text_color(muted).child(text);
+        let list = |field: &Entity<InputState>| div().h(px(72.)).child(Input::new(field).h_full());
+        let saved = recap.clone();
+        div()
+            .v_flex()
+            .gap_1()
+            .child(label(tr("Headline")))
+            .child(Input::new(&self.recap_fields[0]).small())
+            .child(label(tr("Done, one a line")))
+            .child(list(&self.recap_fields[1]))
+            .child(label(tr("Found, one a line")))
+            .child(list(&self.recap_fields[2]))
+            .child(label(tr("In the way, one a line")))
+            .child(list(&self.recap_fields[3]))
+            .child(label(tr("Next, one a line")))
+            .child(list(&self.recap_fields[4]))
+            .child(
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .pt_1()
+                    .child(
+                        Button::new("recap-save")
+                            .label(tr("Save"))
+                            .xsmall()
+                            .primary()
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.save_recap(&saved, window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("recap-cancel")
+                            .label(tr("Cancel"))
+                            .xsmall()
+                            .ghost()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.recap_editing = None;
+                                this.layers.close(Layer::RecapForm);
+                                cx.notify();
+                            })),
+                    ),
+            )
+    }
+
     fn reload_journey(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(month) = self.journey_month {
             self.show_month(month, window, cx);
@@ -172,6 +272,16 @@ impl Workspace {
                     })),
             );
         }
+        let edited = recap.clone();
+        head = head.child(
+            Button::new(("recap-edit", index))
+                .label(tr("Change"))
+                .xsmall()
+                .ghost()
+                .on_click(
+                    cx.listener(move |this, _, window, cx| this.edit_recap(&edited, window, cx)),
+                ),
+        );
         let dismissed = recap.clone();
         head = head.child(
             Button::new(("recap-dismiss", index))
@@ -190,6 +300,11 @@ impl Workspace {
             .border_1()
             .border_color(cx.theme().border)
             .child(head);
+        if self.layers.contains(Layer::RecapForm)
+            && self.recap_editing.as_deref() == Some(recap.id.as_str())
+        {
+            return card.child(self.recap_form(recap, cx));
+        }
         for (label, items) in journey::recap_sections(recap) {
             let mut section = div()
                 .v_flex()
