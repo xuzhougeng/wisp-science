@@ -148,6 +148,9 @@ pub struct DelegatedBatch {
     pub created_at: i64,
     pub updated_at: i64,
     pub tasks: Vec<DelegatedTask>,
+    /// Started by a task of another batch: it runs again only with that
+    /// task.
+    pub nested: bool,
 }
 
 impl DelegatedBatch {
@@ -437,7 +440,12 @@ fn root_limits(plan: &DelegationPlan, host: &DelegationHostPolicy) -> AgentDeleg
             .saturating_mul(u64::from(MAX_ROOT_AGENT_TASKS))
     };
     AgentDelegationRootLimits {
-        max_depth: 1,
+        // A task granted delegation may start one batch of its own.
+        max_depth: if plan.steps.iter().any(|step| step.spec.allow_delegation) {
+            2
+        } else {
+            1
+        },
         max_tasks: MAX_ROOT_AGENT_TASKS,
         max_parallel: u32::try_from(plan.max_parallel).unwrap_or(2).clamp(1, 2),
         // Zero is the persisted unlimited value.
@@ -549,7 +557,11 @@ fn is_reviewer(spec: &AgentSpec) -> bool {
 /// What the task's conversation is told: its role, the task, what its
 /// dependencies returned, and how to answer.
 fn task_prompt(request: &AgentDelegationRequest) -> String {
-    let delegation = "Do not delegate further.";
+    let delegation = if request.spec.allow_delegation {
+        "You may delegate only through the advertised bounded delegation tool, and wait for its results."
+    } else {
+        "Do not delegate further."
+    };
     let contract = if request.spec.output_schema_source == AgentOutputSchemaSource::Task {
         format!(
             "Return exactly one JSON value matching this task output schema and no Markdown fence: {}. {delegation}",
@@ -1214,6 +1226,139 @@ impl Server {
     }
 }
 
+/// What a task's conversation delegates under: the task's running attempt,
+/// the task as it was resolved, the root batch's limits and the task's id.
+struct Nested {
+    attempt: AgentWorkflowAttempt,
+    parent_spec: AgentSpec,
+    limits: AgentDelegationRootLimits,
+    parent_display_id: String,
+}
+
+/// The policy a task's own batch is resolved under: within what the task
+/// was granted (its capabilities, model, permissions, context and budget),
+/// with delegation dropped at the last level; the WebView's
+/// `nested_delegation_policy`.
+fn nested_policy(
+    registry: &CapabilityRegistry,
+    host: &DelegationHostPolicy,
+    parent: &AgentSpec,
+    parent_depth: u8,
+    limits: &AgentDelegationRootLimits,
+) -> Result<(CapabilityRegistry, DelegationHostPolicy), String> {
+    if !parent.allow_delegation || parent_depth >= limits.max_depth {
+        return Err("This task may not delegate at its depth; do the work itself.".into());
+    }
+    let child_depth = parent_depth.saturating_add(1);
+    let enabled_capabilities: Vec<String> = parent
+        .capabilities
+        .iter()
+        .filter(|capability| capability.as_str() != "delegation" || child_depth < limits.max_depth)
+        .filter(|capability| host.enabled_capabilities.contains(capability))
+        .cloned()
+        .collect();
+    if enabled_capabilities.is_empty() {
+        return Err("This task has no capability left to give a task of its own.".into());
+    }
+    let executor = parent
+        .executor
+        .as_ref()
+        .ok_or("The delegating task has no executor.")?;
+    let executors: Vec<ExecutorProfilePolicy> = host
+        .executors
+        .iter()
+        .filter(|profile| profile.enabled && &profile.executor == executor)
+        .cloned()
+        .collect();
+    if executors.len() != 1 {
+        return Err("The delegating task's executor is no longer available.".into());
+    }
+    let model = parent
+        .model
+        .as_ref()
+        .ok_or("The delegating task has no model.")?;
+    let models: Vec<ModelProfilePolicy> = host
+        .models
+        .iter()
+        .filter(|profile| profile.enabled && &profile.id == model)
+        .cloned()
+        .collect();
+    if models.len() != 1 {
+        return Err("The delegating task's model is no longer available.".into());
+    }
+    let timeout = parent.timeout_secs.map(|seconds| {
+        seconds
+            .min(host.timeout_ceiling_secs.unwrap_or(seconds))
+            .min(limits.wall_time_secs.unwrap_or(seconds))
+    });
+    let source = serde_json::to_vec(&(
+        &host.revision,
+        parent
+            .authorization
+            .as_ref()
+            .map(|authorization| &authorization.integrity_hash),
+        parent_depth,
+        limits,
+    ))
+    .map_err(|error| error.to_string())?;
+    let hash = source
+        .into_iter()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+        });
+    Ok((
+        registry.clone(),
+        DelegationHostPolicy {
+            revision: format!("nested-agent-policy-v1:{hash:016x}"),
+            enabled_capabilities,
+            models,
+            executors,
+            default_model_id: Some(model.clone()),
+            // Pinned to the delegating task's one model.
+            inherit_model_id: None,
+            permission_ceiling: parent.permissions.intersect(&host.permission_ceiling),
+            context_ceiling: parent.context_policy.restrict(&host.context_ceiling),
+            budget_ceiling: parent.budget.restrict(&host.budget_ceiling),
+            default_timeout_secs: timeout,
+            timeout_ceiling_secs: timeout,
+            auto_safe: true,
+            ..host.clone()
+        },
+    ))
+}
+
+/// Takes the delegating task's place back once its own tasks are done,
+/// waiting for room; a task that stopped meanwhile has no place to take.
+async fn reacquire_slot(store: &Store, attempt: &str) -> Result<(), String> {
+    loop {
+        if store
+            .set_agent_workflow_attempt_delegation_slot_yielded(attempt, false)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            return Ok(());
+        }
+        let running = store
+            .get_agent_workflow_attempt(attempt)
+            .await
+            .map_err(|error| error.to_string())?
+            .is_some_and(|attempt| attempt.status == AgentWorkflowAttemptStatus::Running);
+        if !running {
+            return Err("The delegating task stopped while its own tasks ran.".into());
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// A task's own tasks read as `parent/child`, so results name both.
+fn namespace_display_ids(plan: &mut DelegationPlan, parent: &str) {
+    for step in &mut plan.steps {
+        if let Some(Value::String(id)) = step.input.get_mut("task_id") {
+            *id = format!("{parent}/{id}");
+        }
+    }
+}
+
 /// What this host offers delegated tasks, given its models (the worker
 /// first) and whether a Python runtime is installed.
 fn host_policy(models: Vec<ModelProfilePolicy>, python: bool) -> DelegationHostPolicy {
@@ -1229,6 +1374,7 @@ fn host_policy(models: Vec<ModelProfilePolicy>, python: bool) -> DelegationHostP
         ExecutorFeature::ProjectRead,
         ExecutorFeature::ProjectWrite,
         ExecutorFeature::CodeExecution,
+        ExecutorFeature::Delegation,
     ];
     let mut capabilities: Vec<String> = [
         "reasoning",
@@ -1236,6 +1382,7 @@ fn host_policy(models: Vec<ModelProfilePolicy>, python: bool) -> DelegationHostP
         "project_write",
         "code_run",
         "review",
+        "delegation",
     ]
     .map(String::from)
     .to_vec();
@@ -1249,6 +1396,8 @@ fn host_policy(models: Vec<ModelProfilePolicy>, python: bool) -> DelegationHostP
         "get_run",
         "cancel_run",
         "prepare_method_search",
+        DELEGATE,
+        RESULT,
     ]
     .map(String::from)
     .to_vec();
@@ -1667,6 +1816,58 @@ impl Server {
             .filter(|batch| !batch.is_empty())
     }
 
+    /// The authority a task's conversation delegates with: none unless its
+    /// task was granted delegation and the root batch still has room.
+    async fn nested_context(&self, frame: &str) -> Result<Option<Nested>, String> {
+        let store = &self.0.store;
+        let e = |error: anyhow::Error| error.to_string();
+        let Some(attempt) = store
+            .running_agent_workflow_attempt_for_child_frame(frame)
+            .await
+            .map_err(e)?
+        else {
+            return Ok(None);
+        };
+        if !attempt.allow_delegation
+            || !store
+                .agent_workflow_attempt_has_delegation_capacity(&attempt.id)
+                .await
+                .map_err(e)?
+        {
+            return Ok(None);
+        }
+        let step = store
+            .get_agent_workflow_step(&attempt.step_id)
+            .await
+            .map_err(e)?
+            .ok_or("The delegating task no longer exists.")?;
+        let parent_spec: AgentSpec = serde_json::from_str(&step.spec_json)
+            .map_err(|error| format!("The delegating task's record is invalid: {error}"))?;
+        if !parent_spec.allow_delegation {
+            return Ok(None);
+        }
+        let root = store
+            .get_agent_workflow(&attempt.root_workflow_id)
+            .await
+            .map_err(e)?
+            .ok_or("The batch this task belongs to no longer exists.")?;
+        let limits: AgentDelegationRootLimits = serde_json::from_str(&root.root_limits_json)
+            .map_err(|error| format!("The batch's limits are invalid: {error}"))?;
+        let parent_display_id = store
+            .get_agent_workflow(&attempt.workflow_id)
+            .await
+            .map_err(e)?
+            .and_then(|workflow| serde_json::from_str::<DelegationPlan>(&workflow.plan_json).ok())
+            .and_then(|plan| display_task_ids(&plan).remove(&attempt.step_id))
+            .unwrap_or_else(|| attempt.step_id.clone());
+        Ok(Some(Nested {
+            attempt,
+            parent_spec,
+            limits,
+            parent_display_id,
+        }))
+    }
+
     /// Makes the conversation a task works in, under its parent.
     async fn task_conversation(
         &self,
@@ -1851,6 +2052,15 @@ impl Server {
             .map_err(e)?;
         let tools = std::mem::replace(&mut agent.tools, wisp_tools::Registry::builtins());
         agent.tools = tools.filtered(&allowed_tools(&request.spec));
+        // A task granted delegation may start one bounded batch of its own.
+        if request.spec.allow_delegation {
+            for tool in self
+                .delegation_tools(&delegator.project, &delegator.root, child)
+                .await
+            {
+                agent.add_tool(tool);
+            }
+        }
         let page = store
             .load_session_transcript_page(child, None, 20)
             .await
@@ -1949,11 +2159,36 @@ impl Server {
         if matches!(scope, wisp_store::StateScope::Exploration { .. }) {
             return Err("Delegated task batches are not available inside an exploration; do the work in this conversation.".into());
         }
-        let (registry, host) = self.delegation_policy(parent).await?;
-        let workflow = uuid::Uuid::new_v4().to_string();
+        // A task's conversation delegates only with what its task was
+        // granted, and waits for the results.
+        let nested = match self.delegated_batch_of(parent).await {
+            Some(_) => Some(self.nested_context(parent).await?.ok_or(
+                "This task may not delegate further, or its batch has no room left; do the work itself.",
+            )?),
+            None => None,
+        };
         let background = batch.background;
+        if background && nested.is_some() {
+            return Err("A delegated task cannot start a background batch; omit background to wait for the results.".into());
+        }
+        let (mut registry, mut host) = self.delegation_policy(parent).await?;
+        if let Some(context) = &nested {
+            let depth = u8::try_from(context.attempt.depth)
+                .map_err(|_| "The delegating task's depth is invalid.".to_string())?;
+            (registry, host) = nested_policy(
+                &registry,
+                &host,
+                &context.parent_spec,
+                depth,
+                &context.limits,
+            )?;
+        }
+        let workflow = uuid::Uuid::new_v4().to_string();
         let experts = crate::experts::list(store).await;
-        let plan = resolve(workflow.clone(), batch, &registry, &host, &experts)?;
+        let mut plan = resolve(workflow.clone(), batch, &registry, &host, &experts)?;
+        if let Some(context) = &nested {
+            namespace_display_ids(&mut plan, &context.parent_display_id);
+        }
         if env.project_write_locked()
             && plan
                 .steps
@@ -1963,13 +2198,39 @@ impl Server {
             return Err("The project is frozen while an exploration runs; only read-only tasks can be delegated.".into());
         }
         let display = display_task_ids(&plan);
-        let (record, steps) =
+        let (mut record, steps) =
             records(&plan, project, root, parent, &host).map_err(|error| error.to_string())?;
+        let mut lineage = None;
+        if let Some(context) = &nested {
+            // Recorded under the root batch, one level below the task.
+            let root_batch = store
+                .get_agent_workflow(&context.attempt.root_workflow_id)
+                .await
+                .map_err(|error| error.to_string())?
+                .ok_or("The batch this task belongs to no longer exists.")?;
+            record.workspace_id = root_batch.workspace_id;
+            record
+                .root_workflow_id
+                .clone_from(&context.attempt.root_workflow_id);
+            record.parent_attempt_id = Some(context.attempt.id.clone());
+            record.depth = context.attempt.depth;
+            record.root_limits_json =
+                serde_json::to_string(&context.limits).map_err(|error| error.to_string())?;
+            record.requires_confirmation = false;
+            lineage = Some(AgentDelegationLineage {
+                root_workflow_id: context.attempt.root_workflow_id.clone(),
+                parent_attempt_id: Some(context.attempt.id.clone()),
+                depth: u8::try_from(context.attempt.depth + 1)
+                    .map_err(|_| "The nested batch is too deep.".to_string())?,
+            });
+        }
         store
             .create_agent_workflow_plan(&record, &steps)
             .await
             .map_err(|error| error.to_string())?;
-        if plan.requires_confirmation && !env.approval_bypass() {
+        // The researcher approved the task that delegates; its own batch
+        // asks no one.
+        if plan.requires_confirmation && nested.is_none() && !env.approval_bypass() {
             if let ConfirmDecision::Denied { feedback } = env
                 .confirm_decision(&approval_prompt(&plan, &display))
                 .await
@@ -2007,8 +2268,9 @@ impl Server {
                 "message": "The turn was stopped before any delegated Agent started.",
             }));
         }
-        let (delegator, recorder, executor) =
-            self.batch_executor(project, root, parent, &workflow, registry, host, None);
+        let (delegator, recorder, executor) = self.batch_executor(
+            project, root, parent, &workflow, registry, host, None, lineage,
+        );
         if background {
             // The batch outlives the turn: stopping the turn leaves it
             // running, and its card's Stop ends it.
@@ -2019,6 +2281,24 @@ impl Server {
             let handle = background_handle(&workflow, &plan, &display);
             self.run_in_background(parent, delivery, display, executor, plan, None);
             return Ok(handle);
+        }
+        // The delegating task gives up its place among the batch's running
+        // tasks while its own run, and takes it back after.
+        if let Some(context) = &nested {
+            if !store
+                .set_agent_workflow_attempt_delegation_slot_yielded(&context.attempt.id, true)
+                .await
+                .map_err(|error| error.to_string())?
+            {
+                let _ = store
+                    .transition_agent_workflow_status(
+                        &workflow,
+                        AgentWorkflowStatus::Approved,
+                        AgentWorkflowStatus::Cancelled,
+                    )
+                    .await;
+                return Err("The delegating task could not make room for its own tasks.".into());
+            }
         }
         let execution = executor.execute(plan);
         tokio::pin!(execution);
@@ -2036,6 +2316,9 @@ impl Server {
                 }
             }
         };
+        if let Some(context) = &nested {
+            reacquire_slot(store, &context.attempt.id).await?;
+        }
         match result {
             Ok(execution) => Ok(compact(&execution, &display)),
             Err(error) => {
@@ -2061,6 +2344,7 @@ impl Server {
         registry: CapabilityRegistry,
         host: DelegationHostPolicy,
         generation: Option<i64>,
+        lineage: Option<AgentDelegationLineage>,
     ) -> (Arc<Delegator>, Arc<Recorder>, DelegationExecutor) {
         let delegator = Arc::new(Delegator {
             server: self.clone(),
@@ -2075,13 +2359,16 @@ impl Server {
             claimed: AtomicBool::new(false),
             generation,
         });
+        // A root batch's tasks are its first level; a task's own batch
+        // carries the root's lineage one level down.
+        let lineage = lineage.unwrap_or_else(|| AgentDelegationLineage {
+            root_workflow_id: workflow.into(),
+            parent_attempt_id: None,
+            depth: 1,
+        });
         let executor = DelegationExecutor::new(delegator.clone())
             .with_observer(recorder.clone())
-            .with_lineage(AgentDelegationLineage {
-                root_workflow_id: workflow.into(),
-                parent_attempt_id: None,
-                depth: 1,
-            })
+            .with_lineage(lineage)
             .with_dynamic_policy(registry, host);
         (delegator, recorder, executor)
     }
@@ -2144,6 +2431,10 @@ impl Server {
             ),
             "Only a batch that failed or was stopped can be run again"
         );
+        anyhow::ensure!(
+            workflow.depth == 0,
+            "A task's own batch runs again with the task that started it"
+        );
         let mut plan: DelegationPlan = serde_json::from_str(&workflow.plan_json)?;
         let (registry, host) = self
             .delegation_policy(session)
@@ -2204,6 +2495,7 @@ impl Server {
             registry,
             host,
             Some(delivery.generation),
+            None,
         );
         self.run_in_background(session, delivery, display, executor, plan, Some(completed));
         Ok(())
@@ -2272,7 +2564,7 @@ impl Server {
         let store = &self.0.store;
         let mut batches = Vec::new();
         for workflow in store.list_agent_workflows(project).await? {
-            if workflow.frame_id.as_deref() != Some(session) || workflow.depth > 0 {
+            if workflow.frame_id.as_deref() != Some(session) {
                 continue;
             }
             let Ok(plan) = serde_json::from_str::<DelegationPlan>(&workflow.plan_json) else {
@@ -2340,6 +2632,7 @@ impl Server {
                 created_at: workflow.created_at,
                 updated_at: workflow.updated_at,
                 tasks,
+                nested: workflow.depth > 0,
             });
         }
         batches.sort_by(|left, right| right.created_at.cmp(&left.created_at));
@@ -2401,6 +2694,7 @@ fn delegate_schema(experts: &[crate::experts::Expert]) -> ToolSchema {
         "review: an independent read-only reviewer that returns findings",
         "image_inspection: look at images, when a vision model is configured",
         "visualization: write files and run Python or R to make figures, when a runtime is installed",
+        "delegation: may hand part of its task to a batch of its own, one level down, within this batch's limits",
     ]
     .join("; ");
     let mut schema = ToolSchema::new(
@@ -2792,6 +3086,48 @@ mod tests {
         assert!(parse_result("Looks fine.", reviewer).is_err());
         assert!(parse_result("{\"summary\": \"ok\"}", reviewer).is_err());
         assert!(parse_result("{\"summary\": \"ok\", \"findings\": []}", reviewer).is_ok());
+    }
+
+    #[test]
+    fn a_task_delegates_within_what_it_was_granted_and_only_one_level_down() {
+        let registry = CapabilityRegistry::builtins();
+        let host = host_policy(vec![worker(false)], false);
+        let mut resolved = plan(
+            json!([
+                {"id": "lead", "instruction": "Lead", "capabilities": ["reasoning", "delegation"]},
+                {"id": "read", "instruction": "Read", "capabilities": ["project_read"]},
+            ]),
+            false,
+        )
+        .unwrap();
+        let lead = resolved.steps[0].spec.clone();
+        assert!(lead.allow_delegation);
+        assert!(!resolved.steps[1].spec.allow_delegation);
+        // Granting delegation is approved first and allows one more level.
+        assert!(resolved.requires_confirmation);
+        let limits = root_limits(&resolved, &host);
+        assert_eq!(limits.max_depth, 2);
+        let (_, nested) = nested_policy(&registry, &host, &lead, 1, &limits).unwrap();
+        // Its own tasks get what it had, without delegating again.
+        assert_eq!(nested.enabled_capabilities, ["reasoning"]);
+        assert_eq!(nested.default_model_id, lead.model);
+        assert_eq!(nested.models.len(), 1);
+        assert!(nested_policy(&registry, &host, &lead, 2, &limits).is_err());
+        let reader = resolved.steps[1].spec.clone();
+        assert!(nested_policy(&registry, &host, &reader, 1, &limits).is_err());
+        // A batch of reading tasks only stays at one level.
+        let flat = plan(
+            json!([{"id": "read", "instruction": "Read", "capabilities": ["project_read"]}]),
+            false,
+        )
+        .unwrap();
+        assert_eq!(root_limits(&flat, &host).max_depth, 1);
+        // Its tasks are named after the task that started them.
+        namespace_display_ids(&mut resolved, "lead");
+        let display = display_task_ids(&resolved);
+        let mut names: Vec<_> = display.values().cloned().collect();
+        names.sort();
+        assert_eq!(names, ["lead/lead", "lead/read"]);
     }
 
     #[test]

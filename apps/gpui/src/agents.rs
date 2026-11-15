@@ -144,7 +144,8 @@ pub fn swarm_line(progress: &wisp_dto::SwarmProgress) -> String {
 
 /// Whether a batch can be run again: one that failed or was stopped.
 pub fn can_retry(batch: &wisp_server::desktop::DelegatedBatch) -> bool {
-    matches!(batch.status.as_str(), "failed" | "cancelled")
+    // A task's own batch runs again with that task, not on its own.
+    !batch.nested && matches!(batch.status.as_str(), "failed" | "cancelled")
 }
 
 /// Whether a task's token budget can be changed: before its batch runs
@@ -287,6 +288,7 @@ mod tests {
                 task("b", "running"),
                 task("c", "queued"),
             ],
+            nested: false,
         };
         assert!(batch.running());
         assert!(!can_retry(&batch));
@@ -296,6 +298,11 @@ mod tests {
                 ..batch.clone()
             };
             assert_eq!(can_retry(&ended), again, "{status}");
+            let nested = DelegatedBatch {
+                nested: true,
+                ..ended
+            };
+            assert!(!can_retry(&nested), "{status}");
         }
         assert_eq!(batch_progress(&batch), "1 of 3 tasks done");
         assert_eq!(batch_status("running"), ("Running", Tone::Active));

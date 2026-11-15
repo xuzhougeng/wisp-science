@@ -274,6 +274,7 @@ impl Workspace {
             .h_flex()
             .gap_2()
             .child(chip(status, tone, cx))
+            .children(batch.nested.then(|| chip(tr("Nested"), Tone::Neutral, cx)))
             .child(
                 div()
                     .text_xs()

@@ -1821,4 +1821,5 @@ pub const ZH: &[(&str, &str)] = &[
         "为这个任务的下一次运行设定新的 token 预算",
     ),
     ("Tokens", "Token 数"),
+    ("Nested", "嵌套"),
 ];

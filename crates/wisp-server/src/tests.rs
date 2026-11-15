@@ -221,6 +221,102 @@ impl Provider for DelegatingModel {
     }
 }
 
+/// Delegates a task that may delegate: the task hands the count to a task
+/// of its own, which may not delegate again.
+struct NestingModel;
+
+#[async_trait]
+impl Provider for NestingModel {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+        Ok(Completion {
+            content: "ok".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        let said = |needle: &str| {
+            messages
+                .iter()
+                .any(|m| m.content.as_text().contains(needle))
+        };
+        let can_delegate = tools
+            .iter()
+            .any(|tool| tool.function.name == "delegate_tasks");
+        let delegate = |args: serde_json::Value| {
+            Ok(Completion {
+                tool_calls: vec![ToolCall {
+                    id: "delegate-1".into(),
+                    kind: "function".into(),
+                    function: wisp_llm::FunctionCall {
+                        name: "delegate_tasks".into(),
+                        arguments: args.to_string(),
+                    },
+                }],
+                finish_reason: Some("tool_calls".into()),
+                ..Default::default()
+            })
+        };
+        let last_tool = messages
+            .iter()
+            .rev()
+            .find(|m| m.role == wisp_llm::Role::Tool)
+            .map(|m| m.content.as_text());
+        let text = if said("Task: Count the reads in data.fastq") {
+            if can_delegate {
+                "{\"summary\": \"could delegate again\"}".to_owned()
+            } else {
+                "{\"summary\": \"42 reads\"}".to_owned()
+            }
+        } else if said("Task: Lead the read count") {
+            match last_tool {
+                None if can_delegate => {
+                    return delegate(json!({
+                        "goal": "Count the reads",
+                        "tasks": [{"id": "count", "instruction": "Count the reads in data.fastq", "capabilities": ["reasoning"]}],
+                    }));
+                }
+                None => "{\"summary\": \"no delegation tool\"}".to_owned(),
+                Some(result) if result.contains("42 reads") => {
+                    "{\"summary\": \"led: 42\"}".to_owned()
+                }
+                Some(result) => format!(
+                    "{{\"summary\": {}}}",
+                    serde_json::to_string(&format!("nested failed: {result}")).unwrap()
+                ),
+            }
+        } else {
+            match last_tool {
+                None => {
+                    return delegate(json!({
+                        "goal": "Lead the count",
+                        "tasks": [{"id": "lead", "instruction": "Lead the read count", "capabilities": ["reasoning", "delegation"]}],
+                    }));
+                }
+                Some(result) if result.contains("led: 42") => "Done: led 42".to_owned(),
+                Some(result) => format!("The batch failed: {result}"),
+            }
+        };
+        sink.on_text(&text);
+        Ok(Completion {
+            content: text,
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+}
+
 /// The research assistant's model: lists the projects, dispatches a count to
 /// one, and says it started; in the project, counts; asked to review the
 /// outcome, reports it.
@@ -9109,6 +9205,76 @@ async fn a_subagent_works_in_its_own_conversation_and_reports_back() {
     assert!(status.contains(&child) && status.contains("Counting"));
     assert!(server
         .subagent_status(&project, &child, Some(&parent))
+        .await
+        .is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_task_granted_delegation_runs_a_batch_of_its_own_one_level_down() {
+    let temp = tempfile::tempdir().unwrap();
+    let factory: ModelFactory = Arc::new(|_| Box::new(NestingModel));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let parent = create(&server).await;
+    send(&server, &parent, "lead the count").await.unwrap();
+    // Granting a task delegation is approved first, on the plan card.
+    let pending = wait_for(&server, &parent, |s| !s.approvals.is_empty()).await;
+    let card = &pending.approvals[0];
+    assert!(
+        card.message.contains("[ ] lead: Lead the read count"),
+        "{}",
+        card.message
+    );
+    server
+        .answer_approval(
+            PROJECT,
+            &parent,
+            &card.approval_id,
+            true,
+            desktop::Remember::No,
+        )
+        .await
+        .unwrap();
+    turn_done(&server, &parent).await;
+    let texts = texts_of(&server, &parent).await;
+    assert!(texts.iter().any(|text| text == "Done: led 42"), "{texts:?}");
+
+    let batches = server.delegated_batches(PROJECT, &parent).await.unwrap();
+    assert_eq!(batches.len(), 1);
+    let root = &batches[0];
+    assert!(!root.nested);
+    assert_eq!(root.status, "succeeded");
+    assert_eq!(root.tasks[0].summary.as_deref(), Some("led: 42"));
+
+    // The leading task's own batch is listed in its conversation, one
+    // level down and named after it; its task could not delegate again.
+    let lead = root.tasks[0].conversation.clone().unwrap();
+    let own = server.delegated_batches(PROJECT, &lead).await.unwrap();
+    assert_eq!(own.len(), 1);
+    let nested = &own[0];
+    assert!(nested.nested);
+    assert_eq!(nested.status, "succeeded");
+    assert_eq!(nested.tasks[0].id, "lead/count");
+    assert_eq!(nested.tasks[0].summary.as_deref(), Some("42 reads"));
+    let workflow = server
+        .0
+        .store
+        .get_agent_workflow(&nested.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(workflow.depth, 1);
+    assert_eq!(workflow.root_workflow_id, root.id);
+    assert!(workflow.parent_attempt_id.is_some());
+    // Its task's conversation is under the leading task's.
+    let counting = nested.tasks[0].conversation.clone().unwrap();
+    let list = server.conversations(PROJECT, "", false).await.unwrap();
+    assert_eq!(list.dispatched.get(&counting), Some(&lead));
+    // Only a root batch runs again on its own.
+    assert!(server
+        .retry_delegated_batch(&lead, &nested.id, &std::collections::HashMap::new())
         .await
         .is_err());
     server.shutdown().await;

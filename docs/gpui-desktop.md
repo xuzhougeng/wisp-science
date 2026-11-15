@@ -353,7 +353,16 @@ Limits of this slice:
   not finish shows its token budget with Change: the number typed there
   (0 for no limit) is the task's budget for the rerun, resolved again as
   if the task had asked for it, as the WebView's retry budget is; nothing
-  else of the plan changes. Not ported: nested delegation, an expert's own
+  else of the plan changes. A task granted the `delegation` capability
+  (approved on the plan card like other grants) may start one batch of
+  its own from its conversation, as the WebView's nested delegation does:
+  that batch is resolved within what the task was granted (its other
+  capabilities, model, permissions, context and budget, never delegation
+  again), counts against the root batch's limits, runs while the task
+  waits (never in the background, and asking no one), and its tasks are
+  named `task/subtask`, work in conversations under the task's, and are
+  listed, marked Nested, in the task conversation's Agents tab; it runs
+  again only with the task that started it. Not ported: an expert's own
   model, isolated worktrees, the other budget limits (tool calls, cost),
   ACP executors, literature and web research capabilities, and
   method-search run activities.
@@ -2018,6 +2027,11 @@ tokens. Type `lots` instead: an error asks for a whole number. Press Run
 again: its tasks that had finished stay Done, the others run, the changed
 task's line reads Up to 50000 tokens, and its result arrives in the
 conversation the same way.
+With a real model, ask for a batch in which one task leads the work and
+may hand parts of it on (the `delegation` capability): the plan card lists
+it; approve. Open that task's conversation from its card: its Agents tab
+lists a batch marked Nested whose tasks are named after it, and each of
+those opened shows no further delegation.
 In a project with a file `notes.txt`, ask something and wait for the
 answer; on it press Start an exploration from here, keep the offered
 name and Start: a conversation opens with the same history and a bar
