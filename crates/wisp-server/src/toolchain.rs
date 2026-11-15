@@ -190,6 +190,13 @@ impl Layout {
             .collect()
     }
 
+    /// The `Rscript` of the R installed here, when there is one.
+    pub(crate) fn rscript(&self) -> Option<PathBuf> {
+        self.has_env(Tool::R)
+            .then(|| rscript_in(&self.env(Tool::R)))
+            .flatten()
+    }
+
     /// Directories put ahead of `PATH` for locally launched code, most
     /// preferred first: Wisp's Python environment (so `python` and `pip` mean
     /// it, not the bare base interpreter), pixi's exposed tools, then the
@@ -1341,6 +1348,13 @@ mod tests {
             layout.installed(),
             [Tool::Uv, Tool::Python, Tool::R, Tool::Node]
         );
+        // Conversations start R from here, ahead of the system's.
+        assert_eq!(
+            layout
+                .rscript()
+                .map(|path| path.to_string_lossy().into_owned()),
+            Some(paths["rscript_executable"].clone())
+        );
         let dirs = layout.path_dirs();
         assert_eq!(dirs[0], layout.venv_python().parent().unwrap());
         assert_eq!(dirs[1], layout.root.join("bin"));
@@ -1396,6 +1410,7 @@ mod tests {
 
         // The real archive's checksum does not match the fixture: refused
         // before anything lands in the toolchain.
+        assert_eq!(layout.rscript(), None);
         let error = run(pixi_asset("macos", "aarch64")).await.unwrap_err();
         assert!(error.contains("verification"), "{error}");
         assert!(!layout.pixi().exists());

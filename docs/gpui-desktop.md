@@ -359,9 +359,9 @@ Limits of this slice:
   index and the CA bundle from Network. When it ends the paths are saved
   on the Local environment the WebView reads, the managed folders lead
   `PATH` for shell commands and runs, and conversations start Python from
-  the managed environment first. The R interpreter of a conversation still
-  looks for `Rscript` on the system `PATH` only, so an R installed here is
-  used by shell commands and runs but not by that interpreter. There is no
+  the managed environment first; a conversation's R interpreter likewise
+  starts the R installed here before one on `PATH`, checked each time it
+  starts, so an install takes effect without a restart. There is no
   first-run wizard and no detection of tools installed elsewhere; one
   install runs at a time and the page follows it while it is open.
 - A conversation may run its work somewhere other than the default: the

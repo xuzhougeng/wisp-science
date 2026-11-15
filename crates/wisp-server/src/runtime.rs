@@ -453,12 +453,17 @@ pub async fn build(
         .unwrap()
         .get_or_insert_with(|| {
             // The data directory, where the managed Python environment
-            // is looked for first, as in the WebView desktop.
-            wisp_runtime::RuntimeManager::local(
+            // is looked for first, as in the WebView desktop; and the R it
+            // installed, looked for each time R starts.
+            let data = config.data.clone();
+            wisp_runtime::RuntimeManager::local_with_rscript(
                 config.data.clone(),
                 worker.clone(),
                 Some(r_worker.clone()),
                 vec![],
+                Some(Arc::new(move || {
+                    crate::toolchain::Layout::new(&data).rscript()
+                })),
             )
         })
         .clone();
