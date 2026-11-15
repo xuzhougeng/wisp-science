@@ -4602,6 +4602,8 @@ impl Server {
             max_iterations: turns.max_iterations,
             auto_compact: turns.auto_compact,
             auto_compact_percent: turns.auto_compact_percent,
+            auto_continue: turns.auto_continue,
+            auto_continue_limit: turns.auto_continue_limit,
             compact_range: (*range.start(), *range.end()),
             full_access: self
                 .0
@@ -4752,7 +4754,10 @@ impl Server {
     /// Saves them. They apply from the next turn, and to conversations made
     /// from now on.
     pub async fn set_turn_defaults(&self, defaults: TurnDefaults) -> Result<TurnDefaults> {
-        use crate::runtime::{AUTO_COMPACT, AUTO_COMPACT_PERCENT, ITERATION_RANGE, MAX_ITERATIONS};
+        use crate::runtime::{
+            AUTO_COMPACT, AUTO_COMPACT_PERCENT, AUTO_CONTINUE, AUTO_CONTINUE_LIMIT,
+            AUTO_CONTINUE_RANGE, ITERATION_RANGE, MAX_ITERATIONS,
+        };
         ensure!(
             ITERATION_RANGE.contains(&defaults.max_iterations),
             "Steps per turn are between {} and {}",
@@ -4766,9 +4771,24 @@ impl Server {
             range.start(),
             range.end()
         );
+        ensure!(
+            AUTO_CONTINUE_RANGE.contains(&defaults.auto_continue_limit),
+            "A turn carries on by itself between {} and {} times",
+            AUTO_CONTINUE_RANGE.start(),
+            AUTO_CONTINUE_RANGE.end()
+        );
         let store = &self.0.store;
         store
             .set_setting(MAX_ITERATIONS, &defaults.max_iterations.to_string())
+            .await?;
+        store
+            .set_setting(AUTO_CONTINUE, &defaults.auto_continue.to_string())
+            .await?;
+        store
+            .set_setting(
+                AUTO_CONTINUE_LIMIT,
+                &defaults.auto_continue_limit.to_string(),
+            )
             .await?;
         store
             .set_setting(AUTO_COMPACT, &defaults.auto_compact.to_string())
@@ -5406,6 +5426,8 @@ pub use crate::remote_dir::RemoteDirectory;
 pub use crate::research_archive::ArchiveDraft;
 pub use crate::review::{Finding as ReviewFinding, Outcome as ReviewOutcome, Review};
 pub use crate::run_log::RunLog;
+/// How many times a turn may carry on by itself after a cut answer.
+pub use crate::runtime::AUTO_CONTINUE_RANGE;
 pub use crate::runtimes::{RuntimeObject, RuntimeObjectList, RuntimeOutput};
 pub use crate::schedules::{ScheduleInput, ScheduleRow, ScheduleRun, MIN_INTERVAL_SECS};
 pub use crate::subscriptions::{
@@ -5459,6 +5481,10 @@ pub struct TurnDefaults {
     pub auto_compact_percent: u8,
     /// The lowest and highest percent that can be chosen.
     pub compact_range: (u8, u8),
+    /// Carry on by itself when an answer is cut at the model's output
+    /// limit, at most this many times a turn.
+    pub auto_continue: bool,
+    pub auto_continue_limit: usize,
     /// New conversations run tools that change things without asking.
     pub full_access: bool,
     /// After an answer, ask the model for questions that could come next.

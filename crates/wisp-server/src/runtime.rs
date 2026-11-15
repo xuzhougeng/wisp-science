@@ -142,6 +142,10 @@ pub struct TurnSettings {
     pub auto_compact: bool,
     /// How full the context must be, in percent, for that to happen.
     pub auto_compact_percent: u8,
+    /// Carry on by itself when the model's answer was cut at its output
+    /// limit, at most `auto_continue_limit` times a turn.
+    pub auto_continue: bool,
+    pub auto_continue_limit: usize,
 }
 
 pub(crate) const MAX_ITERATIONS: &str = "desktop.turn.max_iterations";
@@ -149,6 +153,12 @@ pub(crate) const MAX_ITERATIONS: &str = "desktop.turn.max_iterations";
 pub(crate) const AUTO_COMPACT: &str = "auto_compact";
 pub(crate) const AUTO_COMPACT_PERCENT: &str = "auto_compact_percent";
 pub const ITERATION_RANGE: std::ops::RangeInclusive<usize> = 1..=1_000;
+/// The WebView desktop keeps these under the same keys, with a limit of
+/// ten by default.
+pub(crate) const AUTO_CONTINUE: &str = "auto_continue";
+pub(crate) const AUTO_CONTINUE_LIMIT: &str = "auto_continue_limit";
+pub const AUTO_CONTINUE_RANGE: std::ops::RangeInclusive<usize> = 1..=100;
+const DEFAULT_AUTO_CONTINUE_LIMIT: usize = 10;
 
 /// The saved turn settings, each falling back to what the host was started
 /// with or to the agent's own default.
@@ -167,6 +177,12 @@ pub(crate) async fn turn_settings(config: &Config, store: &Store) -> TurnSetting
             .and_then(|value| value.parse::<u8>().ok())
             .unwrap_or(wisp_core::context::DEFAULT_AUTO_COMPACT_PERCENT)
             .clamp(*range.start(), *range.end()),
+        auto_continue: saved(AUTO_CONTINUE).await.as_deref() == Some("true"),
+        auto_continue_limit: saved(AUTO_CONTINUE_LIMIT)
+            .await
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_AUTO_CONTINUE_LIMIT)
+            .clamp(*AUTO_CONTINUE_RANGE.start(), *AUTO_CONTINUE_RANGE.end()),
     }
 }
 
@@ -352,6 +368,9 @@ pub async fn build(
     );
     agent.set_auto_compact(turns.auto_compact);
     agent.set_auto_compact_percent(turns.auto_compact_percent);
+    agent
+        .ctx
+        .set_auto_continue(turns.auto_continue, turns.auto_continue_limit);
     agent.ctx.messages = store.load_messages(frame).await?;
     agent.ctx.supports_vision = model.supports_vision;
     let repaired = wisp_core::repair_unpaired_tool_calls(&mut agent.ctx.messages);

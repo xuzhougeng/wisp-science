@@ -3741,7 +3741,17 @@ async fn turn_defaults_and_project_grants_apply_from_the_next_turn() {
     assert!(start.auto_compact && !start.full_access);
     assert_eq!(start.auto_compact_percent, 80);
     assert_eq!(start.compact_range, (10, 95));
+    assert!(!start.auto_continue);
+    assert_eq!(start.auto_continue_limit, 10);
     for wrong in [
+        desktop::TurnDefaults {
+            auto_continue_limit: 0,
+            ..start
+        },
+        desktop::TurnDefaults {
+            auto_continue_limit: 101,
+            ..start
+        },
         desktop::TurnDefaults {
             max_iterations: 0,
             ..start
@@ -3768,10 +3778,14 @@ async fn turn_defaults_and_project_grants_apply_from_the_next_turn() {
             auto_compact: false,
             auto_compact_percent: 60,
             full_access: true,
+            auto_continue: true,
+            auto_continue_limit: 3,
             ..start
         })
         .await
         .unwrap();
+    assert!(saved.auto_continue);
+    assert_eq!(saved.auto_continue_limit, 3);
     assert_eq!(saved.max_iterations, 7);
     assert!(!saved.auto_compact && saved.full_access);
     assert_eq!(saved.auto_compact_percent, 60);
@@ -11890,5 +11904,93 @@ async fn a_terminal_runs_in_the_app_and_answers_what_is_typed() {
         .open_terminal(PROJECT, None, Some("missing"))
         .await
         .is_err());
+    server.shutdown().await;
+}
+
+/// Answers in two halves: the first cut at the output limit.
+struct TruncatingModel(Arc<AtomicUsize>);
+
+#[async_trait]
+impl Provider for TruncatingModel {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+        Ok(Completion {
+            content: "{}".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        messages: &[Message],
+        _: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        let asked = messages
+            .iter()
+            .rev()
+            .find(|m| m.role == wisp_llm::Role::User)
+            .map(|m| m.content.as_text())
+            .unwrap_or_default();
+        let call = self.0.fetch_add(1, Ordering::SeqCst);
+        let (text, finish) = if call == 0 || asked.contains("write it out") {
+            ("The first half, cut", "length")
+        } else {
+            ("and the second half.", "stop")
+        };
+        sink.on_text(text);
+        Ok(Completion {
+            content: text.into(),
+            finish_reason: Some(finish.into()),
+            ..Default::default()
+        })
+    }
+}
+
+#[tokio::test]
+async fn an_answer_cut_at_the_output_limit_carries_on_when_asked_to() {
+    let temp = tempfile::tempdir().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counted = calls.clone();
+    let factory: ModelFactory = Arc::new(move |_| Box::new(TruncatingModel(counted.clone())));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let start = server.turn_defaults().await.unwrap();
+    server
+        .set_turn_defaults(desktop::TurnDefaults {
+            auto_continue: true,
+            ..start
+        })
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    send(&server, &session, "Tell me").await.unwrap();
+    turn_done(&server, &session).await;
+    // It was cut once, and the turn went on by itself to the end.
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert!(texts_of(&server, &session)
+        .await
+        .iter()
+        .any(|text| text.contains("and the second half.")));
+
+    // Off, the cut answer is where the turn stops.
+    server
+        .set_turn_defaults(desktop::TurnDefaults {
+            auto_continue: false,
+            ..start
+        })
+        .await
+        .unwrap();
+    calls.store(0, Ordering::SeqCst);
+    let other = create(&server).await;
+    send(&server, &other, "Tell me").await.unwrap();
+    turn_done(&server, &other).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
     server.shutdown().await;
 }

@@ -1178,6 +1178,64 @@ impl Workspace {
                 })),
             cx,
         ))
+        .child({
+            let limit = defaults.auto_continue_limit;
+            let step = |id: &'static str, name: &'static str, tip: &'static str, up: bool| {
+                let next = settings::step_continues(limit, up);
+                icon_button(id, name, tip)
+                    .disabled(!defaults.auto_continue || next == limit)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.save_turn_defaults(
+                            TurnDefaults {
+                                auto_continue_limit: next,
+                                ..defaults
+                            },
+                            window,
+                            cx,
+                        )
+                    }))
+            };
+            setting(
+                tr("Continue cut-off answers"),
+                tr(
+                    "When an answer stops at the model's output limit, the turn carries on by \
+                 itself, at most this many times. Off, a cut answer ends the turn.",
+                ),
+                div()
+                    .h_flex()
+                    .gap_1()
+                    .child(
+                        Button::new("auto-continue")
+                            .label(if defaults.auto_continue {
+                                tr("On")
+                            } else {
+                                tr("Off")
+                            })
+                            .small()
+                            .selected(defaults.auto_continue)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.save_turn_defaults(
+                                    TurnDefaults {
+                                        auto_continue: !defaults.auto_continue,
+                                        ..defaults
+                                    },
+                                    window,
+                                    cx,
+                                )
+                            })),
+                    )
+                    .child(step("continue-down", "minus", tr("Fewer times"), false))
+                    .child(
+                        div()
+                            .w(px(36.))
+                            .text_center()
+                            .text_sm()
+                            .child(limit.to_string()),
+                    )
+                    .child(step("continue-up", "plus", tr("More times"), true)),
+                cx,
+            )
+        })
         .child(setting(
             tr("Compact at"),
             crate::i18n::fill(

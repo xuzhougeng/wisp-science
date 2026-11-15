@@ -769,6 +769,18 @@ pub fn step_percent(current: u8, up: bool, range: (u8, u8)) -> u8 {
     next.clamp(range.0, range.1)
 }
 
+/// How many times a turn may carry on by itself after one step down or
+/// up, within the host's range.
+pub fn step_continues(current: usize, up: bool) -> usize {
+    let range = wisp_server::desktop::AUTO_CONTINUE_RANGE;
+    let next = if up {
+        current.saturating_add(1)
+    } else {
+        current.saturating_sub(1)
+    };
+    next.clamp(*range.start(), *range.end())
+}
+
 /// Providers the embedded host can run, with the label shown for each.
 pub const PROVIDERS: [(&str, &str); 3] = [
     ("openai", "OpenAI-compatible"),
@@ -1147,6 +1159,9 @@ mod tests {
         assert_eq!(step_percent(10, false, range), 10);
         assert_eq!(step_percent(12, false, range), 10);
         assert_eq!(step_percent(255, true, range), 95);
+        assert_eq!(step_continues(10, true), 11);
+        assert_eq!(step_continues(1, false), 1);
+        assert_eq!(step_continues(100, true), 100);
     }
     use wisp_server::desktop::ModelFields;
 
