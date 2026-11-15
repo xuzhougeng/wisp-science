@@ -723,16 +723,16 @@ impl Workspace {
                     // Arrow keys belong to the palette only while it is open.
                     weak.update(cx, |this, cx| this.step_palette(delta, cx))
                 } else {
-                    // Whatever is held besides the platform's command key.
-                    let others = held.shift
-                        || held.alt
+                    // Whatever is held besides the platform's command key
+                    // and Shift.
+                    let others = held.alt
                         || held.function
                         || if cfg!(target_os = "macos") {
                             held.control
                         } else {
                             held.platform
                         };
-                    match shortcut(key, held.secondary(), others) {
+                    match shortcut(key, held.secondary(), held.shift, others) {
                         Some(command) => {
                             weak.update(cx, |this, cx| this.run_shortcut(command, window, cx))
                         }
@@ -1163,6 +1163,19 @@ impl Workspace {
                     return false;
                 }
                 self.toggle_sidebar(window, cx);
+                true
+            }
+            Shortcut::SearchHistory => {
+                // The sidebar's search reads titles and messages alike.
+                if self.screen != Screen::Project || self.layers.contains(Layer::Settings) {
+                    return false;
+                }
+                self.layers.close(Layer::Palette);
+                if self.sidebar_hidden {
+                    self.toggle_sidebar(window, cx);
+                }
+                self.search.update(cx, |input, cx| input.focus(window, cx));
+                cx.notify();
                 true
             }
         }

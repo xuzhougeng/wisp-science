@@ -264,13 +264,19 @@ pub enum Shortcut {
     Palette,
     Find,
     Sidebar,
+    /// Search the project's conversations, their messages included.
+    SearchHistory,
 }
 
-/// `primary` is Cmd on macOS and Ctrl elsewhere, held alone: adding Shift,
-/// Alt or the other platform key leaves the chord to whoever else wants it.
-pub fn shortcut(key: &str, primary: bool, others: bool) -> Option<Shortcut> {
+/// `primary` is Cmd on macOS and Ctrl elsewhere. Shift makes a chord of its
+/// own; Alt or the other platform key leave the chord to whoever else
+/// wants it.
+pub fn shortcut(key: &str, primary: bool, shift: bool, others: bool) -> Option<Shortcut> {
     if !primary || others {
         return None;
+    }
+    if shift {
+        return (key == "f").then_some(Shortcut::SearchHistory);
     }
     match key {
         "n" => Some(Shortcut::NewConversation),
@@ -343,18 +349,28 @@ mod tests {
 
     #[test]
     fn shortcuts_need_exactly_the_platform_modifier() {
-        assert_eq!(shortcut("n", true, false), Some(Shortcut::NewConversation));
-        assert_eq!(shortcut(",", true, false), Some(Shortcut::Settings));
+        assert_eq!(
+            shortcut("n", true, false, false),
+            Some(Shortcut::NewConversation)
+        );
+        assert_eq!(shortcut(",", true, false, false), Some(Shortcut::Settings));
         // Typing the letter, or a longer chord, is not the command.
-        assert_eq!(shortcut("n", false, false), None);
-        assert_eq!(shortcut("n", true, true), None);
-        assert_eq!(shortcut("k", true, false), Some(Shortcut::Palette));
-        assert_eq!(shortcut("f", true, false), Some(Shortcut::Find));
-        assert_eq!(shortcut("b", true, false), Some(Shortcut::Sidebar));
-        assert_eq!(shortcut("b", false, false), None);
-        // With Shift it is someone else's chord.
-        assert_eq!(shortcut("f", true, true), None);
-        assert_eq!(shortcut("j", true, false), None);
+        assert_eq!(shortcut("n", false, false, false), None);
+        assert_eq!(shortcut("n", true, false, true), None);
+        assert_eq!(shortcut("k", true, false, false), Some(Shortcut::Palette));
+        assert_eq!(shortcut("f", true, false, false), Some(Shortcut::Find));
+        assert_eq!(shortcut("b", true, false, false), Some(Shortcut::Sidebar));
+        assert_eq!(shortcut("b", false, false, false), None);
+        // With Shift, F searches the project's history; the rest are
+        // someone else's chords.
+        assert_eq!(
+            shortcut("f", true, true, false),
+            Some(Shortcut::SearchHistory)
+        );
+        assert_eq!(shortcut("n", true, true, false), None);
+        assert_eq!(shortcut("f", false, true, false), None);
+        assert_eq!(shortcut("f", true, true, true), None);
+        assert_eq!(shortcut("j", true, false, false), None);
     }
 
     #[test]

@@ -226,7 +226,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Desktop notifications and sound | Yes | Partial: for the open conversation, when a turn ends or a tool waits for approval while the window is in the background; one fixed sound; no notification on Windows, none for conversations that are not open | ui |
 | Update check and install | Yes | Partial: Check for updates in Settings says whether a newer release exists and opens the release page; no automatic check and no in-app install | tauri |
 | Several windows | Yes | Partial: any number on the same host, each with its own page and conversation; not restored at the next start | ui |
-| Keyboard shortcuts (⌘N, ⌘K, ⌘B, ⌘F, ⌘⇧F, ⌘P, ⌘,) | Yes | Partial: ⌘N, ⌘K, ⌘B, ⌘F and ⌘, (Ctrl off macOS); no ⌘⇧F or ⌘P | ui |
+| Keyboard shortcuts (⌘N, ⌘K, ⌘B, ⌘F, ⌘⇧F, ⌘P, ⌘,) | Yes | Partial: ⌘N, ⌘K, ⌘B, ⌘F, ⌘⇧F and ⌘, (Ctrl off macOS); no ⌘P | ui |
 | Import existing WebView data | n/a | Partial: project by project, by exporting an archive there and importing it here; settings, keys and favorites are not carried over | store |
 
 ## 10. Also in the WebView
@@ -259,7 +259,7 @@ row says what is there.
 | Transcript | Reviewer findings panel and the automatic correction pass — review on request, of one turn and after every turn are **Done**; the correction is put into the composer to send, not run by itself | tauri |
 | Transcript | MCP App previews; Motif DNA selection | tauri |
 | Context | Usage breakdown panel, compact dialog (regular / semantic), handoff note to a new conversation, too-long recovery — what the model is sent, message by message with token estimates, is **Done**, and `/compact` compacts on request without a choice of kind; the rest is Missing | tauri |
-| Top bar | Find in conversation (⌘F) — **Done**; search the project's chat history (⌘⇧F) — Missing | store |
+| Top bar | Find in conversation (⌘F) — **Done**; search the project's chat history (⌘⇧F) — **Done**: it opens the sidebar's search, which reads titles and messages | store |
 | Top bar | Import Codex and Claude Code conversations; import a conversation archive | tauri |
 | Centre | Open a file as a centre tab, split chat beside a document, snapshot, open in an external editor | ui |
 | Files | Copy path, attach to chat, register as an artifact, reveal in the file manager, open with the default app — all **Done** from a file's preview except registering as an artifact, which is Missing | tauri |
