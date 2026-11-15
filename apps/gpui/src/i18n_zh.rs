@@ -1780,4 +1780,6 @@ pub const ZH: &[(&str, &str)] = &[
     (" · {} failed", " · {} 项失败"),
     ("Keep as an artifact of this conversation", "保存为本会话的产物"),
     ("Kept as an artifact of this conversation.", "已保存为本会话的产物。"),
+    ("Copy title", "复制标题"),
+    ("Title copied.", "已复制标题。"),
 ];

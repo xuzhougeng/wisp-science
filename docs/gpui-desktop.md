@@ -124,7 +124,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Projects | Persisted list, native folder picker, reopen registered roots, running and waiting counts, star to keep first, remove from Wisp (files stay); Project settings for the name, a description, and the rules the model follows in the project |
 | Look | Wisp's light and dark palettes, following the system or fixed to one in Settings; the shared icon set |
 | Conversations | Create, select, restore messages, running / needs-you status |
-| Conversation management | Rename, pin (shown first), archive and restore, delete with confirmation |
+| Conversation management | Rename, copy the title, pin (shown first), archive and restore, delete with confirmation |
 | Groups | Named groups per project: create, rename, reorder, delete (conversations stay); put a conversation in one from its bar; fold a section |
 | Sort and group | The list by groups, by last activity or flat, newest first or by name; remembered across launches |
 | Select mode | Pick conversations by click, Shift-click for a range, or all; move them to a group, archive or restore them, or delete them after one confirmation; a line reports what changed and why anything was left |

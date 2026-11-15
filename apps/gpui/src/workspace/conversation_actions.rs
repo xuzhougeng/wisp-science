@@ -477,6 +477,18 @@ impl Workspace {
                     .disabled(busy)
                     .on_click(cx.listener(|this, _, window, cx| this.begin_rename(window, cx))),
             )
+            .child({
+                let title = crate::present::one_line(&row.title);
+                Button::new("conversation-copy-title")
+                    .label(tr("Copy title"))
+                    .small()
+                    .ghost()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(title.clone()));
+                        this.notice = Some(tr("Title copied.").into());
+                        cx.notify();
+                    }))
+            })
             .child(
                 Button::new("conversation-pin")
                     .label(if pinned { tr("Unpin") } else { tr("Pin") })
