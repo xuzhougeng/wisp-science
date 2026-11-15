@@ -83,6 +83,7 @@ pub enum Command {
     LargerCode,
     SmallerCode,
     Setup,
+    PrivacyMode,
 }
 
 impl Command {
@@ -143,6 +144,7 @@ impl Command {
             Command::LargerCode => tr("Larger code"),
             Command::SmallerCode => tr("Smaller code"),
             Command::Setup => tr("Show the first-run guide"),
+            Command::PrivacyMode => tr("Privacy mode"),
         }
     }
 
@@ -202,6 +204,7 @@ impl Command {
             Command::LargerCode => "code-increase",
             Command::SmallerCode => "code-decrease",
             Command::Setup => "compass",
+            Command::PrivacyMode => "eye-off",
         }
     }
 
@@ -262,11 +265,12 @@ impl Command {
             | Command::SmallerText
             | Command::LargerCode
             | Command::SmallerCode
-            | Command::Setup => true,
+            | Command::Setup
+            | Command::PrivacyMode => true,
         }
     }
 
-    const ALL: [Command; 55] = [
+    const ALL: [Command; 56] = [
         Command::NewConversation,
         Command::OpenFolder,
         Command::Home,
@@ -322,6 +326,7 @@ impl Command {
         Command::LargerCode,
         Command::SmallerCode,
         Command::Setup,
+        Command::PrivacyMode,
     ];
 }
 

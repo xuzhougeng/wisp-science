@@ -5302,6 +5302,38 @@ impl Server {
         crate::pet::save(&self.0.store, enabled, directory).await
     }
 
+    /// Which projects are hidden while recording, and whether that is on:
+    /// the WebView's privacy mode, kept where both desktops read it.
+    pub async fn privacy_mode(&self) -> Result<wisp_dto::project_browser::PrivacyMode> {
+        self.0.store.project_privacy().await
+    }
+
+    /// Hides `projects` while recording, or with `active` off shows all
+    /// again. Only projects that are here can be hidden.
+    pub async fn set_privacy_mode(&self, active: bool, projects: Vec<String>) -> Result<()> {
+        let known = self.0.store.list_projects().await?;
+        let mut kept: Vec<String> = projects
+            .into_iter()
+            .filter(|id| known.iter().any(|project| &project.0 == id))
+            .collect();
+        kept.sort();
+        kept.dedup();
+        ensure!(
+            !active || !kept.is_empty(),
+            "Choose the projects to hide while recording"
+        );
+        self.0
+            .store
+            .write_project_privacy(
+                wisp_dto::project_browser::PrivacyMode {
+                    active,
+                    project_ids: kept,
+                },
+                false,
+            )
+            .await
+    }
+
     /// Whether each project made from now on keeps its own database in its
     /// folder, the WebView's decentralized project storage. Projects that
     /// exist stay where they are.

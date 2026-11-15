@@ -12633,6 +12633,43 @@ async fn a_background_batch_is_delivered_later_and_resumes_its_conversation() {
 }
 
 #[tokio::test]
+async fn privacy_mode_hides_chosen_projects_where_the_webview_reads_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let start = server.privacy_mode().await.unwrap();
+    assert!(!start.active && start.project_ids.is_empty());
+    // Nothing chosen is nothing to hide; a project that is not here is
+    // left out.
+    assert!(server.set_privacy_mode(true, vec![]).await.is_err());
+    server
+        .set_privacy_mode(
+            true,
+            vec![PROJECT.into(), "elsewhere".into(), PROJECT.into()],
+        )
+        .await
+        .unwrap();
+    let on = server.privacy_mode().await.unwrap();
+    assert!(on.active);
+    assert_eq!(on.project_ids, [PROJECT]);
+    // The store keeps it under the WebView's keys.
+    assert_eq!(
+        server
+            .0
+            .store
+            .get_setting("wisp-privacy-mode-active")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("1")
+    );
+    server.set_privacy_mode(false, vec![]).await.unwrap();
+    assert!(!server.privacy_mode().await.unwrap().active);
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn separate_project_storage_is_the_webviews_switch() {
     let temp = tempfile::tempdir().unwrap();
     let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))

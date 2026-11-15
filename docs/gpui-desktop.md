@@ -133,6 +133,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Branch | Under a reply: a new conversation holding everything through that turn, opened at once and listed under the one it came from |
 | Search | Titles and message text across the project, archived conversations included |
 | Command palette | One box over everything: projects, files by name in every project, conversations by title or message text, and the window's commands, the WebView's among them (appearance, text and code size, the side panel's tabs, import and export, skills, updates, the first-run guide); arrow keys, Return, Escape |
+| Privacy mode | ⌘⇧H (or the palette's Privacy mode) chooses projects to hide while the screen is recorded or shared: their cards, their conversations in the recent list and their rows in the palette are left out until Restore all. The choice is the WebView's, kept in the store, so both desktops honour it |
 | Pictures in answers | When an answer shows a picture of the project with Markdown image syntax, the picture is drawn under the answer, and so are the pictures its turn wrote with `write` or `edit` that it does not show (under the turn's last answer); clicking one opens it in the Files tab |
 | Project archives | Export on a project's card writes the project, its records and its files, as one zip; its folder-package button writes them as a folder another computer opens in place, in a new folder named after the project. Import on the home page takes either: a zip is put in a folder you choose, a folder package is opened where it is. While either runs, a line on the home page says the step, the files and bytes done of all, and the file it is at |
 | Project sync | Project settings, Sync: Sync now publishes the project through a relay or a shared folder (set in Settings, Remote access) or brings in another device's changes, Copy device code, and after a conflict Use the other device's copy or Keep this device's copy, each asked first; a project in a cloud-drive folder can save itself there instead. Join a project from another device on the home page takes a device code and a folder |
@@ -2519,6 +2520,11 @@ start; quit and start again (without `WISP_GPUI_WORKSPACE`): the built-in
 project's Files tab shows that folder. Clear the field and Save to go back.
 Turn Each project its own database on, make a new project: its folder
 holds `.wisp/project.sqlite`; turn it off and the next one does not.
+Press ⌘⇧H: the privacy dialog lists the projects; press Escape and it
+closes. Open it again, tick one and Hide selected: its card and its recent
+conversations leave the home page, and the palette no longer finds it.
+Restore all brings them back. Turn it on here and open the WebView
+desktop: the same project is hidden there.
 In the command palette type "dark": Dark appearance switches the window;
 type "larger": Larger text grows the text and is kept; type "environments"
 inside a project: the side panel opens on that tab; "first-run" shows the

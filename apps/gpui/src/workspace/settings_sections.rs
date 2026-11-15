@@ -1120,6 +1120,7 @@ impl Workspace {
         );
         let files_view = self.backend.preference(FILES_VIEW);
         let panel_tabs = self.backend.preference(PANEL_TABS);
+        self.load_privacy(window, cx);
         let look = [
             LIGHT_PALETTE,
             DARK_PALETTE,

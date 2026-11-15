@@ -28,6 +28,7 @@ mod palette_view;
 mod panel_tabs;
 mod papers_view;
 mod pet_view;
+mod privacy_view;
 mod project_settings;
 mod project_sync_view;
 mod queue_view;
@@ -499,6 +500,10 @@ pub struct Workspace {
     workspace_choice: Entity<InputState>,
     /// Whether new projects keep their own database; `None` until read.
     separate_storage: Option<bool>,
+    /// The projects hidden while recording, and whether that is on.
+    privacy: wisp_dto::project_browser::PrivacyMode,
+    /// The projects ticked in the privacy dialog.
+    privacy_picks: HashSet<String>,
     /// The workspace folder typed was kept for the next start.
     workspace_saved: bool,
     /// Your command hooks, as saved.
@@ -1551,6 +1556,8 @@ impl Workspace {
             quick_workflow: String::new(),
             workspace_choice,
             separate_storage: None,
+            privacy: Default::default(),
+            privacy_picks: HashSet::new(),
             workspace_saved: false,
             command_hooks: vec![],
             project_hook_file: None,
@@ -1754,6 +1761,7 @@ impl Workspace {
             Some(Layer::ConfirmCleanRun) => self.run_cleaning = None,
             Some(Layer::HostStorageForm) => self.storage_host = None,
             Some(Layer::RunReview) => self.run_review = None,
+            Some(Layer::PrivacyMode) => self.privacy_picks.clear(),
             Some(Layer::ConfirmRunFilesDelete) => {
                 if let Some(review) = &mut self.run_review {
                     review.asking = None;
@@ -2012,6 +2020,10 @@ impl Workspace {
                     return false;
                 }
                 self.create_session(window, cx);
+                true
+            }
+            Shortcut::Privacy => {
+                self.toggle_privacy(window, cx);
                 true
             }
             Shortcut::Sidebar => {
@@ -4209,6 +4221,11 @@ impl Render for Workspace {
         };
         let root = if self.layers.contains(Layer::Capabilities) {
             root.child(self.render_capabilities(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::PrivacyMode) {
+            root.child(self.render_privacy(cx))
         } else {
             root
         };

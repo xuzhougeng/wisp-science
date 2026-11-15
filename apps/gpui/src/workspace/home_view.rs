@@ -619,7 +619,12 @@ impl Workspace {
             .flex_1()
             .min_w_0()
             .child(section(tr("Projects"), cx));
-        for project in &self.projects {
+        // Privacy mode hides the chosen projects while recording.
+        for project in self
+            .projects
+            .iter()
+            .filter(|project| !home::concealed(&self.privacy, &project.id))
+        {
             projects = projects.child(self.project_card(project, now, home_dir.as_deref(), cx));
         }
 
@@ -638,7 +643,11 @@ impl Workspace {
                     .child(tr("Conversations you start will appear here.")),
             );
         }
-        for row in &self.recent {
+        for row in self
+            .recent
+            .iter()
+            .filter(|row| !home::concealed(&self.privacy, &row.project_id))
+        {
             let project = row.project_id.clone();
             let session = row.id.clone();
             let age = home::age(now, row.activity_at);

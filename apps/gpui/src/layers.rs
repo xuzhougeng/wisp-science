@@ -18,6 +18,8 @@ pub enum Layer {
     HostStorageForm,
     /// What a finished run left on its SSH host: a dialog over everything.
     RunReview,
+    /// The projects to hide while recording: a dialog over everything.
+    PrivacyMode,
     /// Question in that dialog before files there are deleted.
     ConfirmRunFilesDelete,
     /// Settings, shown in place of the transcript.
@@ -384,6 +386,8 @@ pub enum Shortcut {
     SearchHistory,
     /// The palette with only its commands.
     Commands,
+    /// The projects hidden while recording.
+    Privacy,
 }
 
 /// `primary` is Cmd on macOS and Ctrl elsewhere. Shift makes a chord of its
@@ -394,7 +398,11 @@ pub fn shortcut(key: &str, primary: bool, shift: bool, others: bool) -> Option<S
         return None;
     }
     if shift {
-        return (key == "f").then_some(Shortcut::SearchHistory);
+        return match key {
+            "f" => Some(Shortcut::SearchHistory),
+            "h" => Some(Shortcut::Privacy),
+            _ => None,
+        };
     }
     match key {
         "n" => Some(Shortcut::NewConversation),
@@ -523,6 +531,9 @@ mod tests {
             Some(Shortcut::SearchHistory)
         );
         assert_eq!(shortcut("n", true, true, false), None);
+        // With Shift, H is privacy mode, as in the WebView.
+        assert_eq!(shortcut("h", true, true, false), Some(Shortcut::Privacy));
+        assert_eq!(shortcut("h", true, false, false), None);
         assert_eq!(shortcut("f", false, true, false), None);
         assert_eq!(shortcut("f", true, true, true), None);
         assert_eq!(shortcut("j", true, false, false), None);

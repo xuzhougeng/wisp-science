@@ -64,6 +64,16 @@ impl Workspace {
         let mut entries = self
             .palette
             .entries(&self.projects, &self.recent, self.screen);
+        // Privacy mode hides the chosen projects' rows while recording.
+        entries.retain(|entry| {
+            let project = match entry {
+                Entry::Project { id, .. } => id.as_str(),
+                Entry::File(found) => found.project_id.as_str(),
+                Entry::Conversation { project, .. } => project.as_str(),
+                Entry::Skill { .. } | Entry::Command(_) => return true,
+            };
+            !crate::home::concealed(&self.privacy, project)
+        });
         if self.palette.mode == Mode::Attach {
             // A conversation is not context for itself.
             entries.retain(|entry| {
@@ -307,6 +317,10 @@ impl Workspace {
                 return self.show_settings_section(crate::settings::Section::Skills, window, cx);
             }
             Command::NewProject => return self.open_new_project(window, cx),
+            Command::PrivacyMode => {
+                self.layers.close(Layer::Palette);
+                return self.toggle_privacy(window, cx);
+            }
             Command::Setup => {
                 self.layers.close(Layer::Palette);
                 return self.open_onboarding(cx);

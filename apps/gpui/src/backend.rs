@@ -1432,6 +1432,15 @@ impl Backend {
         })
     }
 
+    /// The projects hidden while recording, and whether that is on.
+    pub fn privacy_mode(&self) -> Reply<wisp_dto::project_browser::PrivacyMode> {
+        self.local(|host| async move { host.privacy_mode().await })
+    }
+
+    pub fn set_privacy_mode(&self, active: bool, projects: Vec<String>) -> Reply<()> {
+        self.local(move |host| async move { host.set_privacy_mode(active, projects).await })
+    }
+
     /// Whether each new project keeps its own database in its folder.
     pub fn separate_project_storage(&self) -> Reply<bool> {
         self.local(|host| async move { host.separate_project_storage().await })

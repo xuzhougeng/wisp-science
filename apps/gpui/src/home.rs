@@ -208,6 +208,12 @@ pub fn days_typed(text: &str) -> Result<Option<i64>, String> {
     }
 }
 
+/// Whether privacy mode hides `project` now: only while it is on, and only
+/// the projects chosen for it.
+pub fn concealed(mode: &wisp_dto::project_browser::PrivacyMode, project: &str) -> bool {
+    mode.active && mode.project_ids.iter().any(|id| id == project)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,5 +408,18 @@ mod tests {
         );
         assert_eq!(short_path("/data/lab", None), "/data/lab");
         assert_eq!(short_path("/data/lab", Some("")), "/data/lab");
+    }
+
+    #[test]
+    fn privacy_mode_hides_only_the_chosen_projects_while_it_is_on() {
+        use wisp_dto::project_browser::PrivacyMode;
+        let mut mode = PrivacyMode {
+            active: true,
+            project_ids: vec!["lab".into()],
+        };
+        assert!(concealed(&mode, "lab"));
+        assert!(!concealed(&mode, "field"));
+        mode.active = false;
+        assert!(!concealed(&mode, "lab"));
     }
 }
