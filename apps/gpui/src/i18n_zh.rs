@@ -1801,4 +1801,8 @@ pub const ZH: &[(&str, &str)] = &[
     ("{} in all", "共 {} 个"),
     ("Running…", "运行中…"),
     ("Close the console", "关闭控制台"),
+    (
+        "The assistant keeps one conversation, the one open.",
+        "科研助理只有一个会话，就是当前打开的这个。",
+    ),
 ];

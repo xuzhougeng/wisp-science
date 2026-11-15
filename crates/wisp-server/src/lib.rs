@@ -764,8 +764,10 @@ impl Server {
             tracing::warn!(%error, "Could not record the latest conversation");
         }
         // A conversation a lab member's mail or a parent's dispatch opened
-        // keeps the name it was given.
-        let keep_name = lab_mail || matches!(origin, channels::TurnOrigin::Subagent { .. });
+        // keeps the name it was given, and so does the research assistant's.
+        let keep_name = lab_mail
+            || matches!(origin, channels::TurnOrigin::Subagent { .. })
+            || assistant::is_assistant(&request.session_id);
         if !keep_name && self.0.store.max_message_seq(&request.session_id).await? == 0
             || !keep_name
                 && matches!(&engine, Engine::Wisp(agent, _) if !agent

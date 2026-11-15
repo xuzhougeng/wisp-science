@@ -410,6 +410,11 @@ impl Server {
                     "Research assistant",
                 )
                 .await?;
+            // Its instructions come first, before any notice a mandate
+            // announces ahead of the researcher's first message.
+            store
+                .append_message(ASSISTANT_FRAME_ID, 1, &Message::system(ASSISTANT_SYSTEM))
+                .await?;
             // Like any new conversation, it starts with the turn defaults.
             if self.turn_defaults().await?.full_access {
                 store
@@ -477,17 +482,25 @@ impl Server {
             tools.add(tool);
         }
         agent.tools = tools;
-        if let Some(system) = agent
+        match agent
             .ctx
             .messages
             .iter_mut()
             .find(|message| message.role == Role::System)
         {
-            *system = Message::system(ASSISTANT_SYSTEM);
-            self.0
-                .store
-                .replace_system_message(ASSISTANT_FRAME_ID, system)
-                .await?;
+            Some(system) => {
+                *system = Message::system(ASSISTANT_SYSTEM);
+                self.0
+                    .store
+                    .replace_system_message(ASSISTANT_FRAME_ID, system)
+                    .await?;
+            }
+            // A conversation made before its instructions were saved with
+            // it, whose first rows are notices: it is still told them.
+            None => agent
+                .ctx
+                .messages
+                .insert(0, Message::system(ASSISTANT_SYSTEM)),
         }
         Ok(())
     }

@@ -305,6 +305,48 @@ impl Provider for AssistingModel {
     }
 }
 
+/// Says whether the request led with the research assistant's
+/// instructions.
+struct InstructionsCheckingModel;
+
+#[async_trait]
+impl Provider for InstructionsCheckingModel {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+        Ok(Completion {
+            content: "[]".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        messages: &[Message],
+        _: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        let told = messages.first().is_some_and(|message| {
+            message.role == wisp_llm::Role::System
+                && message
+                    .content
+                    .as_text()
+                    .contains("research assistant in Wisp Science")
+        });
+        let text = if told { "told" } else { "not told" };
+        sink.on_text(text);
+        Ok(Completion {
+            content: text.into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+}
+
 /// Answers at once, but takes its time over a side question such as what
 /// could be asked next.
 struct SlowAfterwardsModel;
@@ -9317,6 +9359,45 @@ async fn the_research_assistant_dispatches_to_a_project_and_gets_the_report() {
         "done"
     );
     assert!(server.assistant_plan("not a day").await.is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_research_assistant_keeps_its_instructions_and_name_when_told_something_first() {
+    let temp = tempfile::tempdir().unwrap();
+    let factory: ModelFactory = Arc::new(|_| Box::new(InstructionsCheckingModel));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    // A mandate's notice can reach it before the researcher's first message.
+    server
+        .announce("职责需要你 / A mandate needs you")
+        .await
+        .unwrap();
+    let (project, frame) = server.open_assistant().await.unwrap();
+    server
+        .send(&project, send_text(&frame, "a1", "what needs me?"))
+        .await
+        .unwrap();
+    turn_done(&server, &frame).await;
+    let texts = texts_of(&server, &frame).await;
+    assert!(
+        texts[0].starts_with("You are the researcher's research assistant"),
+        "{texts:?}"
+    );
+    assert_eq!(texts[1], "职责需要你 / A mandate needs you");
+    assert_eq!(texts.last().map(String::as_str), Some("told"), "{texts:?}");
+    // The first message does not rename it.
+    assert_eq!(
+        server
+            .0
+            .store
+            .session_title(&frame)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("Research assistant")
+    );
     server.shutdown().await;
 }
 

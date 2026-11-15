@@ -989,6 +989,18 @@ impl Workspace {
         if self.layers.contains(Layer::FolderName) && self.folder_target.is_none() {
             list = list.child(self.folder_name_row(cx));
         }
+        // The assistant's project is not listed: its one conversation is
+        // the one open.
+        if crate::assistant::is_assistant_project(self.state.project.as_deref()) {
+            return list.child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(tr("The assistant keeps one conversation, the one open.")),
+            );
+        }
         if rows.is_empty() && self.state.project.is_some() {
             list = list.child(div().px_2().py_1().text_xs().text_color(muted).child(
                 match self.listing(cx) {

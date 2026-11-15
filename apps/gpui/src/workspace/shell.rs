@@ -339,7 +339,19 @@ impl Workspace {
         let title = self
             .current_row()
             .map(|row| present::one_line(&row.title))
-            .unwrap_or_else(|| tr("New research").into());
+            .unwrap_or_else(|| {
+                // The assistant's conversation is not among the listed ones.
+                if self
+                    .state
+                    .session
+                    .as_deref()
+                    .is_some_and(wisp_server::desktop::is_assistant)
+                {
+                    tr("Research assistant").into()
+                } else {
+                    tr("New research").into()
+                }
+            });
         let mut heading = div().v_flex().flex_1().min_w_0().child(
             div()
                 .truncate()
