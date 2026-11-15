@@ -1251,6 +1251,10 @@ impl Workspace {
             self.memory = None;
             self.memory_target = None;
         }
+        // A note about the conversation being left is not about the next.
+        if self.state.session != session {
+            self.notice = None;
+        }
         // These act on the conversation that is being left.
         for layer in [
             Layer::Rename,

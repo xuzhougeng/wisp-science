@@ -4582,6 +4582,17 @@ async fn an_answer_is_followed_by_questions_to_ask_next() {
     hold.store(false, Ordering::Relaxed);
     wait_for(&server, &session, |s| !s.follow_ups.is_empty()).await;
 
+    // Going back removes the answer they were about, and them with it.
+    let latest = desktop::TurnRef {
+        from_end: 0,
+        text: "two".into(),
+    };
+    server
+        .rewind_conversation(PROJECT, &session, &latest)
+        .await
+        .unwrap();
+    assert!(snapshot(&server, &session).await.follow_ups.is_empty());
+
     // Put away, they stay away; only the conversation's project may.
     assert!(server
         .dismiss_follow_ups("missing", &session)

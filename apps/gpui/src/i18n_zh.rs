@@ -999,4 +999,5 @@ pub const ZH: &[(&str, &str)] = &[
     ("Choose the folder of a plugin", "请选择一个插件的文件夹"),
     ("plugin installation not found", "未找到该插件的安装"),
     ("at most 200 hosts per list", "每个列表最多 200 个站点"),
+    ("Go back to this message? It and everything after it leave the conversation, and its text returns to the composer to be changed. Files it wrote stay as they are unless you undo them too.", "回到这条消息吗？它和之后的所有内容会从会话中移除，其文字回到输入框以便修改。它写入的文件保持不变，除非你一并撤销。"),
 ];

@@ -421,11 +421,18 @@ impl Workspace {
         }
         if self.layers.contains(Layer::ConfirmRewind) {
             return Some(
-                bar.child(div().flex_1().min_w_0().text_sm().child(tr(
-                    "Go back to this message? It and everything after it leave the \
-                     conversation, and its text returns to the composer to be \
-                     changed. Files already written stay as they are.",
-                )))
+                bar.child(div().flex_1().min_w_0().text_sm().child(
+                    // Only the latest turn's files can be put back.
+                    if self.rewind_turn.as_ref().is_some_and(|turn| turn.from_end == 0) {
+                        tr("Go back to this message? It and everything after it leave the \
+                            conversation, and its text returns to the composer to be \
+                            changed. Files it wrote stay as they are unless you undo them too.")
+                    } else {
+                        tr("Go back to this message? It and everything after it leave the \
+                            conversation, and its text returns to the composer to be \
+                            changed. Files already written stay as they are.")
+                    },
+                ))
                 .child(
                     Button::new("rewind-confirm")
                         .label(tr("Go back and edit"))

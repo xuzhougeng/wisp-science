@@ -1739,7 +1739,8 @@ impl Workspace {
             content = content.child(self.render_find_bar(cx));
         }
         let weak = cx.entity().downgrade();
-        // The pet stands in the transcript's lower right corner.
+        // The pet stands in the transcript's lower right corner, in a margin
+        // of its own so it never covers a message.
         let pet = self
             .pet
             .as_ref()
@@ -1751,6 +1752,11 @@ impl Workspace {
                     .bottom_2()
                     .child(self.pet_view.clone())
             });
+        let margin = if pet.is_some() {
+            px(crate::pet::CELL.0 + 24.)
+        } else {
+            px(0.)
+        };
         content = content.child(
             div()
                 .relative()
@@ -1758,6 +1764,7 @@ impl Workspace {
                 .min_h_0()
                 .flex()
                 .flex_col()
+                .pr(margin)
                 .child(
                     list(self.list.clone(), move |index, window, cx| {
                         weak.update(cx, |this, cx| this.found_row(index, window, cx))

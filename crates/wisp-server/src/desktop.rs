@@ -1956,6 +1956,9 @@ impl Server {
             live.outcomes.clear();
             live.usage = None;
             live.error = None;
+            // So do the questions and the review that followed it.
+            live.follow_ups.clear();
+            live.review = None;
         }
         Ok(message_body(&turn.text).to_owned())
     }
