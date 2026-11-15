@@ -508,6 +508,9 @@ pub struct Workspace {
     /// bring in, the question asked before one is given up, and how the
     /// last action went.
     explorations: Vec<wisp_dto::ExplorationSummary>,
+    /// The task batches the open conversation's agent delegated.
+    batches: Vec<wisp_server::desktop::DelegatedBatch>,
+    batches_request: u64,
     explore_name: Entity<InputState>,
     explore_from: Option<TurnRef>,
     explore_preview: Option<(String, wisp_server::desktop::PromotionPreview)>,
@@ -1184,6 +1187,8 @@ impl Workspace {
             join_busy: false,
             join_note: None,
             explorations: Vec::new(),
+            batches: Vec::new(),
+            batches_request: 0,
             explore_name,
             explore_from: None,
             explore_preview: None,
@@ -1990,6 +1995,7 @@ impl Workspace {
     fn clear_transcript(&mut self) {
         self.poll = None;
         self.rows.clear();
+        self.batches.clear();
         self.history.clear();
         self.before = None;
         self.loading_history = false;
@@ -2202,6 +2208,9 @@ impl Workspace {
         if selection.session.is_none() {
             return;
         }
+        if self.agents_visible() {
+            self.load_batches(window, cx);
+        }
         let backend = self.backend.clone();
         self.poll = Some(cx.spawn_in(window, async move |this, cx| {
             loop {
@@ -2251,6 +2260,11 @@ impl Workspace {
                                         if this.status_tick % 7 == 0 {
                                             this.load_status(window, cx);
                                         }
+                                        // A delegated batch moves on while
+                                        // the turn waits for it.
+                                        if this.agents_visible() && this.status_tick % 3 == 0 {
+                                            this.load_batches(window, cx);
+                                        }
                                     } else if was_running {
                                         this.load_status(window, cx);
                                         // The turn may have written files and
@@ -2258,6 +2272,9 @@ impl Workspace {
                                         this.refresh_lists(window, cx);
                                         this.reload_files(window, cx);
                                         this.reload_artifacts(window, cx);
+                                        if this.agents_visible() {
+                                            this.load_batches(window, cx);
+                                        }
                                         // What could be asked next arrives
                                         // a little after the answer.
                                         this.await_after_turn(window, cx);

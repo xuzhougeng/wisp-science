@@ -71,6 +71,57 @@ pub fn summary(helpers: &[Helper], has_conversation: bool) -> String {
     }
 }
 
+/// How a delegated batch stands, as its card's chip says.
+pub fn batch_status(status: &str) -> (&'static str, Tone) {
+    use crate::i18n::tr;
+    match status {
+        "draft" => (tr("Waiting for approval"), Tone::Attention),
+        "approved" | "running" => (tr("Running"), Tone::Active),
+        "succeeded" => (tr("Done"), Tone::Success),
+        "failed" => (tr("Failed"), Tone::Danger),
+        "cancelled" => (tr("Stopped"), Tone::Neutral),
+        _ => (tr("Unknown"), Tone::Neutral),
+    }
+}
+
+/// How one task of a batch stands.
+pub fn task_status(status: &str) -> (&'static str, Tone) {
+    use crate::i18n::tr;
+    match status {
+        "queued" => (tr("Waiting"), Tone::Neutral),
+        "running" | "waiting_run" => (tr("Running"), Tone::Active),
+        "succeeded" => (tr("Done"), Tone::Success),
+        "failed" => (tr("Failed"), Tone::Danger),
+        "blocked" => (tr("Blocked"), Tone::Attention),
+        "cancelled" => (tr("Stopped"), Tone::Neutral),
+        _ => (tr("Unknown"), Tone::Neutral),
+    }
+}
+
+/// How far a batch has come: its tasks that finished, of all of them.
+pub fn batch_progress(batch: &wisp_server::desktop::DelegatedBatch) -> String {
+    let done = batch
+        .tasks
+        .iter()
+        .filter(|task| task.status == "succeeded")
+        .count();
+    crate::i18n::fill(
+        crate::i18n::tr("{} of {} tasks done"),
+        &[&done, &batch.tasks.len()],
+    )
+}
+
+/// What a task used, when it used anything.
+pub fn task_usage(task: &wisp_server::desktop::DelegatedTask) -> Option<String> {
+    let tokens = task.input_tokens + task.output_tokens;
+    (tokens > 0 || task.tool_calls > 0).then(|| {
+        crate::i18n::fill(
+            crate::i18n::tr("{} tokens · {} tool calls"),
+            &[&tokens, &task.tool_calls],
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,6 +133,53 @@ mod tests {
             whole[key] = changed.clone();
         }
         serde_json::from_value(whole).unwrap()
+    }
+
+    #[test]
+    fn a_delegated_batch_reads_as_its_status_and_how_far_it_came() {
+        use wisp_server::desktop::{DelegatedBatch, DelegatedTask};
+        let task = |id: &str, status: &str| DelegatedTask {
+            id: id.into(),
+            instruction: format!("Do {id}"),
+            depends_on: vec![],
+            capabilities: vec!["project_read".into()],
+            status: status.into(),
+            summary: None,
+            error: None,
+            conversation: None,
+            input_tokens: 0,
+            output_tokens: 0,
+            tool_calls: 0,
+        };
+        let batch = DelegatedBatch {
+            id: "b".into(),
+            goal: "Count".into(),
+            status: "running".into(),
+            created_at: 1,
+            updated_at: 2,
+            tasks: vec![
+                task("a", "succeeded"),
+                task("b", "running"),
+                task("c", "queued"),
+            ],
+        };
+        assert!(batch.running());
+        assert_eq!(batch_progress(&batch), "1 of 3 tasks done");
+        assert_eq!(batch_status("running"), ("Running", Tone::Active));
+        assert_eq!(batch_status("cancelled"), ("Stopped", Tone::Neutral));
+        assert_eq!(task_status("blocked"), ("Blocked", Tone::Attention));
+        assert_eq!(task_status("failed"), ("Failed", Tone::Danger));
+        assert_eq!(task_usage(&batch.tasks[0]), None);
+        let used = DelegatedTask {
+            input_tokens: 1200,
+            output_tokens: 300,
+            tool_calls: 4,
+            ..task("d", "succeeded")
+        };
+        assert_eq!(
+            task_usage(&used).as_deref(),
+            Some("1500 tokens · 4 tool calls")
+        );
     }
 
     #[test]

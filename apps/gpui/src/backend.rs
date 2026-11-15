@@ -1499,6 +1499,20 @@ impl Backend {
         self.local(move |host| async move { host.join_lab_knowledge_base(&parent).await })
     }
 
+    /// The task batches the conversation's agent delegated, newest first.
+    pub fn delegated_batches(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<Vec<wisp_server::desktop::DelegatedBatch>> {
+        self.local(move |host| async move { host.delegated_batches(&project, &session).await })
+    }
+
+    /// Stops a running batch of the conversation and the tasks in it.
+    pub fn cancel_delegated_batch(&self, session: String, batch: String) -> Reply<()> {
+        self.local(move |host| async move { host.cancel_delegated_batch(&session, &batch).await })
+    }
+
     pub fn explorations(&self, project: String) -> Reply<Vec<wisp_dto::ExplorationSummary>> {
         self.local(move |host| async move { host.explorations(&project).await })
     }

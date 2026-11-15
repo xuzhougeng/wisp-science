@@ -197,6 +197,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Plan first | The model investigates and submits a plan as a card; nothing is changed until you approve it, which leaves plan mode and starts the work |
 | First-run guide | On a first run a dialog walks through four steps: welcome, what Wisp can do, a model (a DeepSeek key sets up deepseek-v4-flash as the default and deepseek-v4-pro beside it, or a link to Settings, Models for another provider), and the tools on this computer (install Python with uv). Get started or Escape puts it away for good, in this desktop and the WebView one |
 | Import from Codex or Claude Code | The import button in the conversation list's header lists the conversations Codex CLI (`~/.codex/sessions`) and Claude Code (`~/.claude/projects`) keep on this computer, newest first, with the first thing asked and the folder it was had in. Import brings one into the project in a group named `codex` or `claude`, with its messages and tool calls; importing it again brings in only what was added since, and leaves a conversation continued here alone. Only this computer is looked at, not SSH or WSL hosts |
+| Delegated tasks | The model can hand a batch of dependent tasks to temporary agents and wait for their results; a plan card asks first when a task can change files, run code or use a remote model. Each task works in a watch-only conversation under the one that started it. The Agents tab lists the batches with each task's status, summary and conversation, and stops a running one |
 | Subagents | The model can start a subagent: a conversation of its own for one focused task, listed under the conversation that started it, with a bar saying it is watched and Open the parent; its composer is closed. When it ends, a report is added to the parent, whose agent goes on to handle it |
 | Explorations | On an answer, Start an exploration from here names one and continues the conversation in its own copy of the project; more candidates of the same round start from the same answer. The source shows a bar with each candidate and Abandon the round; a candidate shows its status, View changes and keep (what it changed, what the mainline changed meanwhile, why it cannot be kept), Discard, Back to the mainline and Abandon the round; when it cannot be kept, Show both folders and Finish by hand |
 | Bringing a branch back | In a branch, Bring back in the conversation's toolbar has the model summarise what the branch did since it split off; you read and change the summary, and Bring it back adds it to the conversation the branch came from, which reads it from then on, and opens that conversation. A branch is brought back once |
@@ -333,8 +334,7 @@ Limits of this slice:
   lets only read-only tasks run. Not ported: background batches and
   their delivery, nested delegation, specialists, isolated worktrees,
   retrying a batch, ACP executors, literature and web research
-  capabilities, and method-search run activities. The window does not
-  list batches yet.
+  capabilities, and method-search run activities.
 - Explorations follow the WebView's `exploration_commands.rs`,
   `exploration_promotion.rs` and `exploration_workspace.rs`, whose
   services and tests are carried over. The first candidate of a round
@@ -590,11 +590,16 @@ Limits of this slice:
   a new one. There is no list of variables, no restart button and no
   memory limit; interpreters are also stopped when the conversation or
   its project is removed and when the app quits.
-- The Agents tab is a reading of the loaded transcript, like the
-  Notebook: it lists `explore` calls, the only kind of sub-agent this
-  host runs, from the messages that are loaded, and shows a helper's
-  findings once it has reported back, not its steps along the way.
-  Delegated task batches run (see above) but are not listed here yet.
+- The Agents tab lists the open conversation's delegated batches first,
+  newest first, from the host's records: each with its status, how many
+  tasks are done, its goal, and per task its status, instruction, what
+  it waits for, its summary or error, what it used, and a button that
+  opens the conversation it worked in. A running batch has Stop, which
+  stops it and its tasks; the list refreshes while the conversation's
+  turn runs and when it ends. Below them come the helpers, a reading of
+  the loaded transcript like the Notebook: the `explore` calls from the
+  messages that are loaded, with a helper's findings once it has
+  reported back, not its steps along the way.
 - The sub-agent model is the model the `explore` helper works on, the
   only sub-agent this host has. The order is the WebView's: a
   conversation's own choice for its sub-agents (its `frames` column,
@@ -1840,6 +1845,15 @@ named after the task appears under it, with the instruction and a bar
 saying it is watched; its composer does not send. When it ends, the
 parent shows a report and its agent answers it without a new message of
 yours.
+With such a model and without full access, ask it to have two temporary
+agents read the project, one after the other: a plan card lists the
+tasks; approve it (a batch that only reads with a local model is not
+asked about). Open the side panel's Agents tab while it runs: the batch
+shows Running, one task after the other turns Done with its summary,
+and each task's chat button opens a conversation named after the task
+whose composer does not send. The answer sums up both. Ask for another
+batch and press Stop on its card: the batch and its running task show
+Stopped.
 In a project with a file `notes.txt`, ask something and wait for the
 answer; on it press Start an exploration from here, keep the offered
 name and Start: a conversation opens with the same history and a bar

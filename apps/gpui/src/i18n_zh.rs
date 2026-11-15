@@ -1701,4 +1701,13 @@ pub const ZH: &[(&str, &str)] = &[
     ("A subagent of “{}”. Its agent takes instructions only from there; you can watch it here.", "“{}”的子智能体。它只接受那个会话的指令；你可以在这里查看。"),
     ("Open the parent", "打开父会话"),
     ("This subagent conversation only takes instructions from the conversation that started it.", "这个子智能体会话只接受启动它的会话的指令。"),
+    ("Stopped", "已停止"),
+    ("Unknown", "未知"),
+    ("Waiting", "等待中"),
+    ("Blocked", "受阻"),
+    ("{} of {} tasks done", "已完成 {} / {} 个任务"),
+    ("{} tokens · {} tool calls", "{} 个 token · {} 次工具调用"),
+    ("After {}", "在 {} 之后"),
+    ("Delegated tasks", "委派的任务"),
+    ("Open its conversation", "打开它的会话"),
 ];

@@ -45,7 +45,8 @@ impl Workspace {
             PanelTab::Memory => self.load_memory(window, cx),
             // Cells show whether their code is saved.
             PanelTab::Highlights | PanelTab::Notebook => self.load_saved(window, cx),
-            PanelTab::Runs | PanelTab::Aside | PanelTab::Agents => {}
+            PanelTab::Agents => self.load_batches(window, cx),
+            PanelTab::Runs | PanelTab::Aside => {}
         }
         cx.notify();
     }
