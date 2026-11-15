@@ -93,6 +93,9 @@ struct TaskArgs {
     capabilities: Vec<String>,
     #[serde(default)]
     output_schema: Option<Value>,
+    /// One of the researcher's experts to do the task as.
+    #[serde(default)]
+    specialist_id: Option<String>,
     #[serde(default)]
     model_tier: Option<ModelTier>,
     #[serde(default)]
@@ -120,6 +123,8 @@ pub struct DelegatedTask {
     pub instruction: String,
     pub depends_on: Vec<String>,
     pub capabilities: Vec<String>,
+    /// The expert it was done as, if any.
+    pub expert: Option<String>,
     /// queued, running, succeeded, failed, blocked or cancelled.
     pub status: String,
     pub summary: Option<String>,
@@ -260,12 +265,32 @@ fn resolve(
     batch: BatchArgs,
     registry: &CapabilityRegistry,
     host: &DelegationHostPolicy,
+    experts: &[crate::experts::Expert],
 ) -> Result<DelegationPlan, String> {
     validate(&batch)?;
     let context = batch.context.trim().to_owned();
     let mut steps = Vec::with_capacity(batch.tasks.len());
     for task in batch.tasks {
         let stored = stored_task_id(&workflow, &task.id);
+        // The expert's name and instructions go with the task; this host
+        // runs it on the task's own model.
+        let specialist = match task.specialist_id.as_deref().map(str::trim) {
+            None | Some("") => None,
+            Some(id) => {
+                let expert = experts
+                    .iter()
+                    .find(|expert| expert.id == id)
+                    .ok_or_else(|| format!("unknown expert: {id}"))?;
+                Some(wisp_core::SpecialistSnapshot {
+                    id: expert.id.clone(),
+                    name: expert.name.clone(),
+                    instructions: expert.instructions.clone(),
+                    model_id: None,
+                    skills: None,
+                    connectors: None,
+                })
+            }
+        };
         let resolved = registry
             .resolve_task(
                 DelegatedTaskProposal {
@@ -279,7 +304,7 @@ fn resolve(
                         .collect(),
                     capabilities: task.capabilities,
                     skill_bindings: vec![],
-                    specialist: None,
+                    specialist,
                     output_schema: task.output_schema,
                     isolated: false,
                     model_id: None,
@@ -1882,7 +1907,8 @@ impl Server {
         let (registry, host) = self.delegation_policy(parent).await?;
         let workflow = uuid::Uuid::new_v4().to_string();
         let background = batch.background;
-        let plan = resolve(workflow.clone(), batch, &registry, &host)?;
+        let experts = crate::experts::list(store).await;
+        let plan = resolve(workflow.clone(), batch, &registry, &host, &experts)?;
         if env.project_write_locked()
             && plan
                 .steps
@@ -2212,6 +2238,10 @@ impl Server {
                             })
                             .collect(),
                         capabilities: step.spec.capabilities.clone(),
+                        expert: match &step.spec.origin {
+                            wisp_core::AgentOrigin::Specialist(expert) => Some(expert.name.clone()),
+                            _ => None,
+                        },
                         status: latest
                             .map(|attempt| attempt_status_name(attempt.status))
                             .unwrap_or_else(|| "queued".into()),
@@ -2260,18 +2290,20 @@ impl Server {
     }
 
     /// The tools a conversation delegates task batches with.
-    pub(crate) fn delegation_tools(
+    pub(crate) async fn delegation_tools(
         &self,
         project: &str,
         root: &str,
         parent: &str,
     ) -> Vec<Box<dyn Tool>> {
+        let experts = crate::experts::list(&self.0.store).await;
         vec![
             Box::new(DelegateTasksTool {
                 server: self.clone(),
                 project: project.into(),
                 root: root.into(),
                 parent: parent.into(),
+                schema: delegate_schema(&experts),
             }),
             Box::new(DelegatedResultTool {
                 server: self.clone(),
@@ -2281,7 +2313,7 @@ impl Server {
     }
 }
 
-fn delegate_schema() -> ToolSchema {
+fn delegate_schema(experts: &[crate::experts::Expert]) -> ToolSchema {
     let capabilities = [
         "reasoning: think and write without tools",
         "project_read: read, search and grep the project",
@@ -2374,6 +2406,22 @@ fn delegate_schema() -> ToolSchema {
             "required": ["goal", "tasks"]
         }),
     );
+    // The researcher's experts, when there are any, as personas for a task.
+    if !experts.is_empty() {
+        let help = experts
+            .iter()
+            .map(|expert| match expert.description.trim() {
+                "" => format!("{}: {}", expert.id, expert.name),
+                description => format!("{}: {} — {description}", expert.id, expert.name),
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        schema.function.parameters["properties"]["tasks"]["items"]["properties"]["specialist_id"] = json!({
+            "type": "string",
+            "enum": experts.iter().map(|expert| expert.id.clone()).collect::<Vec<_>>(),
+            "description": format!("Optional: one of the researcher's experts to do the task as, with its instructions. Omit for a temporary generic Agent. {help}"),
+        });
+    }
     schema.function.parameters["properties"]["background"] = json!({
         "type": "boolean",
         "description": "Run the batch without blocking this turn, only for long work such as analyses expected to take many minutes. The call returns a handle at once; the result is delivered to this conversation when the batch ends and you are resumed to synthesize it. Do not poll it or claim it finished. Omit to wait for the results in this turn."
@@ -2386,6 +2434,7 @@ struct DelegateTasksTool {
     project: String,
     root: String,
     parent: String,
+    schema: ToolSchema,
 }
 
 #[async_trait]
@@ -2395,7 +2444,7 @@ impl Tool for DelegateTasksTool {
     }
 
     fn schema(&self) -> ToolSchema {
-        delegate_schema()
+        self.schema.clone()
     }
 
     fn preview(&self, args: &Value) -> String {
@@ -2533,6 +2582,7 @@ mod tests {
             batch(tasks),
             &CapabilityRegistry::builtins(),
             &host_policy(vec![worker(external)], false),
+            &[],
         )
     }
 
@@ -2587,6 +2637,57 @@ mod tests {
     }
 
     #[test]
+    fn a_task_can_be_done_as_one_of_the_researchers_experts() {
+        let expert = crate::experts::Expert {
+            id: "statistician".into(),
+            name: "Statistician".into(),
+            description: "Checks the tests".into(),
+            instructions: "Report effect sizes with intervals.".into(),
+            builtin: false,
+        };
+        let experts = [expert];
+        let resolved = resolve(
+            "wf".into(),
+            batch(json!([
+                {"id": "check", "instruction": "Check the tests", "capabilities": ["reasoning"], "specialist_id": "statistician"},
+            ])),
+            &CapabilityRegistry::builtins(),
+            &host_policy(vec![worker(false)], false),
+            &experts,
+        )
+        .unwrap();
+        let spec = &resolved.steps[0].spec;
+        assert!(spec
+            .prompt_template
+            .contains("Report effect sizes with intervals."));
+        assert!(
+            matches!(&spec.origin, wisp_core::AgentOrigin::Specialist(found) if found.id == "statistician")
+        );
+        // An expert that is not there is refused, not ignored.
+        assert!(resolve(
+            "wf".into(),
+            batch(json!([
+                {"id": "check", "instruction": "Check", "capabilities": ["reasoning"], "specialist_id": "ghost"},
+            ])),
+            &CapabilityRegistry::builtins(),
+            &host_policy(vec![worker(false)], false),
+            &experts,
+        )
+        .unwrap_err()
+        .contains("unknown expert"));
+        // The schema offers them by id, and offers none when there are none.
+        let schema = delegate_schema(&experts);
+        let items = &schema.function.parameters["properties"]["tasks"]["items"]["properties"];
+        assert_eq!(items["specialist_id"]["enum"], json!(["statistician"]));
+        let bare = delegate_schema(&[]);
+        assert!(
+            bare.function.parameters["properties"]["tasks"]["items"]["properties"]
+                .get("specialist_id")
+                .is_none()
+        );
+    }
+
+    #[test]
     fn a_result_is_read_from_the_json_in_the_final_answer_or_kept_as_text() {
         let resolved = plan(
             json!([
@@ -2631,6 +2732,7 @@ mod tests {
             batch(json!([{"id": "read", "instruction": "Read", "capabilities": ["project_read"]}])),
             &registry,
             &host,
+            &[],
         )
         .unwrap();
         let (record, steps) = records(&plan, crate::PROJECT, &root, &parent, &host).unwrap();

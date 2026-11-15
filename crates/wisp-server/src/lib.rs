@@ -939,7 +939,10 @@ impl Server {
                     agent.add_tool(tool);
                 }
                 // And hand bounded work to temporary agents.
-                for tool in self.delegation_tools(project, root, &request.session_id) {
+                for tool in self
+                    .delegation_tools(project, root, &request.session_id)
+                    .await
+                {
                     agent.add_tool(tool);
                 }
             }

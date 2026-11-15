@@ -217,6 +217,7 @@ mod tests {
             instruction: format!("Do {id}"),
             depends_on: vec![],
             capabilities: vec!["project_read".into()],
+            expert: None,
             status: status.into(),
             summary: None,
             error: None,

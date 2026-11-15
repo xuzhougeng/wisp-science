@@ -211,6 +211,11 @@ impl Workspace {
                 .gap_2()
                 .child(div().text_xs().font_semibold().child(task.id.clone()))
                 .child(chip(status, tone, cx))
+                .children(
+                    task.expert
+                        .clone()
+                        .map(|expert| chip(expert, Tone::Neutral, cx)),
+                )
                 .child(div().flex_1());
             if let Some(conversation) = task.conversation.clone() {
                 line = line.child(
