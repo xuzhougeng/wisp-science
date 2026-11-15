@@ -3505,11 +3505,14 @@ impl Server {
         if servers.is_empty() {
             return vec![];
         }
+        let decision = self.decision_model_in_use().await;
         self.0
             .mcp
-            .tools(&servers, |id| {
-                credentials.get(id).cloned().unwrap_or_default()
-            })
+            .tools(
+                &servers,
+                |id| credentials.get(id).cloned().unwrap_or_default(),
+                decision,
+            )
             .await
     }
 
@@ -3532,11 +3535,14 @@ impl Server {
         for server in &servers {
             credentials.insert(server.id.clone(), self.mcp_credentials(server).await);
         }
+        let decision = self.decision_model_in_use().await;
         self.0
             .mcp
-            .tools(&servers, |id| {
-                credentials.get(id).cloned().unwrap_or_default()
-            })
+            .tools(
+                &servers,
+                |id| credentials.get(id).cloned().unwrap_or_default(),
+                decision,
+            )
             .await
     }
 

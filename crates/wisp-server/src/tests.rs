@@ -12633,6 +12633,88 @@ async fn a_background_batch_is_delivered_later_and_resumes_its_conversation() {
 }
 
 #[tokio::test]
+async fn a_cua_driver_server_gets_the_autopilot_once_a_decision_model_is_set() {
+    use axum::{response::IntoResponse, routing::post, Json, Router};
+    use desktop::McpTransport;
+    // A server whose tools look like Cua Driver's.
+    let app = Router::new().route(
+        "/mcp",
+        post(|Json(body): Json<Value>| async move {
+            let Some(id) = body.get("id").cloned() else {
+                return axum::http::StatusCode::ACCEPTED.into_response();
+            };
+            let result = match body["method"].as_str().unwrap_or_default() {
+                "initialize" => json!({
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "cua", "version": "1"}
+                }),
+                "tools/list" => json!({"tools": [
+                    {"name": "get_window_state", "description": "State",
+                     "inputSchema": {"type": "object"}},
+                    {"name": "click", "description": "Click",
+                     "inputSchema": {"type": "object", "properties": {
+                        "element_token": {"type": "string"},
+                        "target": {"type": "string"}}}}
+                ]}),
+                _ => json!({}),
+            };
+            Json(json!({"jsonrpc": "2.0", "id": id, "result": result})).into_response()
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await });
+
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    server
+        .save_mcp_server(desktop::McpServerInput {
+            id: None,
+            name: "Cua".into(),
+            transport: McpTransport::Http { url },
+            token: None,
+            env: None,
+            headers: None,
+            proxy: None,
+        })
+        .await
+        .unwrap();
+    let names = |tools: Vec<Box<dyn wisp_tools::Tool>>| {
+        tools
+            .iter()
+            .map(|tool| tool.name().to_owned())
+            .collect::<Vec<_>>()
+    };
+    // Without a decision model the agent drives the driver itself.
+    let plain = names(server.mcp_tools().await);
+    assert!(
+        plain.iter().any(|name| name.ends_with("click")),
+        "{plain:?}"
+    );
+    assert!(!plain.iter().any(|name| name == "desktop_autopilot"));
+    let local = wisp_dto::DecisionModelSettings {
+        enabled: true,
+        ..wisp_dto::DecisionModelSettings::from_preset(
+            wisp_dto::DecisionPreset::find("startlux_local").unwrap(),
+        )
+    };
+    server.save_decision_model(local, None).await.unwrap();
+    let piloted = names(server.mcp_tools().await);
+    assert_eq!(
+        piloted
+            .iter()
+            .filter(|name| *name == "desktop_autopilot")
+            .count(),
+        1,
+        "{piloted:?}"
+    );
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn privacy_mode_hides_chosen_projects_where_the_webview_reads_it() {
     let temp = tempfile::tempdir().unwrap();
     let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))

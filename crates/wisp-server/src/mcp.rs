@@ -359,11 +359,14 @@ impl Connections {
 
     /// The tools the enabled servers give a turn. Each asks before it runs:
     /// what a server the user added does is not known to Wisp. A server
-    /// that fails is skipped.
+    /// that fails is skipped. With a decision model, a Cua Driver server
+    /// also gives `desktop_autopilot`, which drives it step by step with
+    /// that model, as in the WebView; it asks before it runs too.
     pub(crate) async fn tools(
         &self,
         servers: &[McpServer],
         credentials: impl Fn(&str) -> Credentials,
+        decision: Option<wisp_llm::systemone::DecisionModel>,
     ) -> Vec<Box<dyn wisp_tools::Tool>> {
         let mut tools: Vec<Box<dyn wisp_tools::Tool>> = Vec::new();
         for server in servers.iter().filter(|server| server.enabled) {
@@ -375,6 +378,7 @@ impl Connections {
                 continue;
             };
             let catalog = Arc::new(listed.clone());
+            let pilot = autopilot(&tools, &catalog, &client, decision.clone());
             for tool in listed {
                 if !tool.visible_to_model() {
                     continue;
@@ -390,9 +394,33 @@ impl Connections {
                     .renamed(name),
                 ));
             }
+            tools.extend(pilot);
         }
         tools
     }
+}
+
+/// `desktop_autopilot` for a server whose tools are Cua Driver's, when a
+/// decision model is set and no server gave it yet.
+fn autopilot(
+    given: &[Box<dyn wisp_tools::Tool>],
+    catalog: &[wisp_mcp::RemoteTool],
+    client: &Arc<wisp_mcp::McpClient>,
+    decision: Option<wisp_llm::systemone::DecisionModel>,
+) -> Option<Box<dyn wisp_tools::Tool>> {
+    if given
+        .iter()
+        .any(|tool| tool.name() == wisp_mcp::desktop_autopilot::NAME)
+    {
+        return None;
+    }
+    wisp_mcp::desktop_autopilot::DesktopAutopilot::for_catalog(
+        catalog,
+        client.clone(),
+        decision,
+        true,
+    )
+    .map(|pilot| Box::new(pilot) as Box<dyn wisp_tools::Tool>)
 }
 
 #[cfg(test)]
