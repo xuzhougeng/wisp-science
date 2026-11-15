@@ -97,6 +97,9 @@ pub struct FilesState {
     pub sort: FileSort,
     /// Files found by name across the project, while a name is typed.
     pub search: NameSearch,
+    /// The folder is shown as tiles, pictures as small copies of
+    /// themselves, instead of rows.
+    pub grid: bool,
 }
 
 /// What an upload did, in a line: how many files were copied in, and the
@@ -722,8 +725,37 @@ pub fn on_disk(root: &std::path::Path, relative: &str) -> Option<std::path::Path
     inside.then(|| root.join(path))
 }
 
+/// At most this many entries are drawn as tiles; the list shows them all.
+pub const GRID_LIMIT: usize = 400;
+
+/// A picture larger than this is drawn as its kind, not as itself.
+const THUMBNAIL_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Whether a tile shows the file itself: a picture the app can draw, not
+/// too large to read for a tile.
+pub fn thumbnail(name: &str, size: u64) -> bool {
+    let extension = name
+        .rsplit_once('.')
+        .map(|(_, extension)| extension.to_ascii_lowercase())
+        .unwrap_or_default();
+    matches!(
+        extension.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp"
+    ) && size <= THUMBNAIL_BYTES
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_tile_shows_pictures_it_can_draw_and_not_too_large() {
+        assert!(thumbnail("volcano.PNG", 2_000));
+        assert!(thumbnail("figure.svg", 10));
+        assert!(!thumbnail("counts.csv", 10));
+        assert!(!thumbnail("scan.tiff", 10));
+        assert!(!thumbnail("noextension", 10));
+        assert!(!thumbnail("huge.jpg", THUMBNAIL_BYTES + 1));
+    }
+
     use super::*;
 
     #[test]

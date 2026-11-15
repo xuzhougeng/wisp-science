@@ -785,6 +785,9 @@ pub const ZH: &[(&str, &str)] = &[
     ("It read:", "它读取了："),
     // Sample project.
     ("Make a sample project to try Wisp on", "创建一个示例项目来试用 Wisp"),
+    ("Show as tiles", "以图块显示"),
+    ("Show as a list", "以列表显示"),
+    ("{} more are not shown as tiles; the list shows every entry.", "另有 {} 项未以图块显示；列表视图会显示全部。"),
     ("Not found here any more", "这里已找不到它"),
     ("Only these", "仅以下"),
     ("Every connector", "所有连接器"),

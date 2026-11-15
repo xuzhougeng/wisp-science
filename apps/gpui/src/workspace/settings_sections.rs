@@ -27,6 +27,8 @@ const LAUNCH: &str = "launch";
 const SEND_KEY: &str = "send_key";
 const SIDEBAR: &str = "sidebar";
 const FILES_SORT: &str = "files_sort";
+/// The Files tab as tiles (`grid`) or rows.
+const FILES_VIEW: &str = "files_view";
 const NOTIFY: &str = "notifications";
 const NOTIFY_SOUND: &str = "notification_sound";
 const LAST_OPEN: &str = "last_open";
@@ -1098,6 +1100,7 @@ impl Workspace {
             self.backend.preference(SIDEBAR),
             self.backend.preference(FILES_SORT),
         );
+        let files_view = self.backend.preference(FILES_VIEW);
         cx.spawn_in(window, async move |this, cx| {
             let saved = |reply| async move { receive(reply).await.ok().flatten() };
             let (appearance, launch, place, send_key, sidebar, files_sort) = (
@@ -1108,6 +1111,7 @@ impl Workspace {
                 saved(sidebar).await,
                 saved(files_sort).await,
             );
+            let files_view = saved(files_view).await;
             let _ = this.update_in(cx, |this, window, cx| {
                 this.send_key =
                     settings::SendKey::from_key(send_key.as_deref().unwrap_or_default());
@@ -1115,6 +1119,7 @@ impl Workspace {
                 this.files.set_sort(crate::files::FileSort::from_key(
                     files_sort.as_deref().unwrap_or_default(),
                 ));
+                this.files.grid = files_view.as_deref() == Some("grid");
                 this.word_fields(window, cx);
                 this.appearance =
                     crate::theme::Appearance::from_key(appearance.as_deref().unwrap_or_default());
@@ -1238,6 +1243,12 @@ impl Workspace {
 
     /// Saves one choice of the General page; a failure is shown there.
     /// Remembers how the Files tab lists a folder, for the next start.
+    /// Remembers whether the Files tab shows tiles, for the next start.
+    pub(super) fn save_files_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let value = if self.files.grid { "grid" } else { "list" };
+        self.save_general(FILES_VIEW, value.into(), window, cx);
+    }
+
     pub(super) fn save_files_sort(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let value = self.files.sort.key().to_owned();
         self.save_general(FILES_SORT, value, window, cx);

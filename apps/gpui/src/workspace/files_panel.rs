@@ -1850,6 +1850,24 @@ impl Workspace {
                                 ),
                         )
                         .child(
+                            icon_button(
+                                "files-view",
+                                if self.files.grid { "list" } else { "grid" },
+                                if self.files.grid {
+                                    tr("Show as a list")
+                                } else {
+                                    tr("Show as tiles")
+                                },
+                            )
+                            .on_click(cx.listener(
+                                |this, _, window, cx| {
+                                    this.files.grid = !this.files.grid;
+                                    this.save_files_view(window, cx);
+                                    cx.notify();
+                                },
+                            )),
+                        )
+                        .child(
                             Button::new("files-sort")
                                 .icon(glyph("sort"))
                                 .label(self.files.sort.label())
@@ -2046,6 +2064,9 @@ impl Workspace {
                 .child(div().p_3().text_sm().text_color(muted).child(hint))
                 .into_any_element();
         }
+        if self.files.grid {
+            return panel.child(self.file_grid(cx)).into_any_element();
+        }
         panel
             .child(
                 uniform_list(
@@ -2061,5 +2082,112 @@ impl Workspace {
                 .min_h_0(),
             )
             .into_any_element()
+    }
+
+    /// The folder as tiles: a picture as itself, anything else as its kind,
+    /// with its name under it. A click opens it as a row's does.
+    fn file_grid(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let muted = cx.theme().muted_foreground;
+        let hover = cx.theme().list_hover;
+        let root = self
+            .state
+            .project
+            .as_ref()
+            .and_then(|id| self.projects.iter().find(|project| &project.id == id))
+            .map(|project| std::path::PathBuf::from(&project.workspace_dir))
+            .filter(|root| !root.as_os_str().is_empty());
+        let mut tiles = div().flex().flex_wrap().gap_2().p_2();
+        for (index, entry) in self
+            .files
+            .entries
+            .iter()
+            .enumerate()
+            .take(files::GRID_LIMIT)
+        {
+            let path = files::join(&self.files.path, &entry.name);
+            let is_dir = entry.is_dir;
+            let picture = (!is_dir && files::thumbnail(&entry.name, entry.size))
+                .then(|| root.as_ref().and_then(|root| files::on_disk(root, &path)))
+                .flatten();
+            let face = match picture {
+                Some(file) => div()
+                    .size(px(72.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .overflow_hidden()
+                    .rounded(cx.theme().radius)
+                    .bg(cx.theme().muted)
+                    .child(
+                        img(file)
+                            .max_w_full()
+                            .max_h_full()
+                            .object_fit(ObjectFit::Contain),
+                    ),
+                None => div()
+                    .size(px(72.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(cx.theme().radius)
+                    .bg(cx.theme().muted)
+                    .child(
+                        crate::assets::icon(if is_dir { "folder" } else { "doc" })
+                            .size_8()
+                            .text_color(muted),
+                    ),
+            };
+            let name = if is_dir {
+                format!("{}/", entry.name)
+            } else {
+                entry.name.clone()
+            };
+            tiles = tiles.child(
+                div()
+                    .id(("file-tile", index))
+                    .v_flex()
+                    .items_center()
+                    .gap_1()
+                    .w(px(96.))
+                    .p_1()
+                    .rounded(cx.theme().radius)
+                    .cursor_pointer()
+                    .hover(move |style| style.bg(hover))
+                    .child(face)
+                    .child(
+                        div()
+                            .w_full()
+                            .truncate()
+                            .text_center()
+                            .text_xs()
+                            .child(name),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.file_notice = None;
+                        this.file_problem = None;
+                        if is_dir {
+                            this.load_directory(path.clone(), window, cx);
+                        } else {
+                            this.open_file(path.clone(), window, cx);
+                        }
+                    })),
+            );
+        }
+        let mut grid = div()
+            .id("file-grid")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .child(tiles);
+        let more = self.files.entries.len().saturating_sub(files::GRID_LIMIT);
+        if more > 0 {
+            grid = grid.child(div().px_3().pb_3().text_xs().text_color(muted).child(
+                crate::i18n::fill(
+                    tr("{} more are not shown as tiles; the list shows every entry."),
+                    &[&more],
+                ),
+            ));
+        }
+        grid
     }
 }
