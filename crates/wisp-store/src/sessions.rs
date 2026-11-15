@@ -4119,6 +4119,57 @@ impl Store {
             .collect()
     }
 
+    /// How often each tool was called, from the model's own messages in
+    /// every project but the research assistant's: `(tool, skill, calls)`,
+    /// where `skill` is the skill a `use_skill` call named. For hosts that
+    /// keep no `ToolCall` events, as the embedded desktop host does not.
+    pub async fn tool_call_counts(&self) -> Result<Vec<(String, Option<String>, i64)>> {
+        if let Some(stores) = self.available_projects().await? {
+            let mut merged = std::collections::BTreeMap::<(String, Option<String>), i64>::new();
+            for store in stores {
+                for (tool, skill, calls) in Box::pin(store.tool_call_counts()).await? {
+                    *merged.entry((tool, skill)).or_default() += calls;
+                }
+            }
+            return Ok(merged
+                .into_iter()
+                .map(|((tool, skill), calls)| (tool, skill, calls))
+                .collect());
+        }
+        let rows = sqlx::query(
+            "SELECT json_extract(call.value,'$.function.name') AS tool, \
+                    CASE WHEN json_extract(call.value,'$.function.name') = 'use_skill' \
+                         AND json_valid(json_extract(call.value,'$.function.arguments')) \
+                    THEN NULLIF(TRIM(json_extract(\
+                            json_extract(call.value,'$.function.arguments'),'$.name')),'') \
+                    END AS skill, \
+                    COUNT(*) AS calls \
+             FROM messages m \
+             JOIN frames f ON f.id=m.frame_id \
+             JOIN frames r ON r.id=COALESCE(f.root_frame_id,f.id) \
+             JOIN projects p ON p.id=r.project_id, \
+                  json_each(m.tool_calls) AS call \
+             WHERE m.role='assistant' AND m.tool_calls IS NOT NULL \
+               AND json_valid(m.tool_calls) AND p.id NOT LIKE 'assistant:%' \
+             GROUP BY tool, skill",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok((
+                    row.try_get::<Option<String>, _>("tool")?
+                        .unwrap_or_default(),
+                    row.try_get("skill")?,
+                    row.try_get("calls")?,
+                ))
+            })
+            .filter(|row: &Result<(String, Option<String>, i64)>| {
+                row.as_ref().map_or(true, |(tool, _, _)| !tool.is_empty())
+            })
+            .collect()
+    }
+
     /// One project workspace's session usage, newest first. Sub-agent frames
     /// fold into their root session. Serde tags internally-tagged enums first,
     /// so the LIKE prefix is a cheap exact filter for `Usage` events.

@@ -26,6 +26,26 @@ pub fn totals(view: &UsageView) -> Totals {
         })
 }
 
+/// Rows the skill and MCP ranking shows; past that, the rest are one row.
+pub const TOOL_ROWS: usize = 10;
+
+/// The skill and MCP ranking as the WebView shows it: `(kind, name,
+/// calls)`, most calls first, and when there are more than [`TOOL_ROWS`],
+/// the first nine and the rest together as one row of kind `other`.
+pub fn tool_rows(view: &UsageView) -> Vec<(String, String, i64)> {
+    let mut rows: Vec<(String, String, i64)> = view
+        .tools
+        .iter()
+        .filter(|tool| tool.calls > 0)
+        .map(|tool| (tool.kind.clone(), tool.name.clone(), tool.calls))
+        .collect();
+    if rows.len() > TOOL_ROWS {
+        let rest: i64 = rows.drain(TOOL_ROWS - 1..).map(|(_, _, calls)| calls).sum();
+        rows.push(("other".into(), crate::i18n::tr("Other").into(), rest));
+    }
+    rows
+}
+
 /// The last `count` days of the calendar, oldest first.
 pub fn recent(days: &[(String, u64)], count: usize) -> &[(String, u64)] {
     &days[days.len().saturating_sub(count)..]
@@ -86,6 +106,26 @@ fn day_label_in(locale: crate::i18n::Locale, date: &str) -> String {
 mod tests {
     use super::*;
     use wisp_server::desktop::ProjectUsage;
+
+    #[test]
+    fn the_tool_ranking_keeps_nine_and_counts_the_rest_together() {
+        let view = |count: i64| UsageView {
+            tools: (0..count)
+                .map(|n| wisp_server::desktop::ToolUsage {
+                    kind: "skill".into(),
+                    name: format!("s{n}"),
+                    calls: 100 - n,
+                })
+                .collect(),
+            ..UsageView::default()
+        };
+        assert_eq!(tool_rows(&view(3)).len(), 3);
+        let many = tool_rows(&view(12));
+        assert_eq!(many.len(), TOOL_ROWS);
+        assert_eq!(many[8].1, "s8");
+        // s9, s10 and s11: 91 + 90 + 89.
+        assert_eq!(many[9], ("other".into(), "Other".into(), 270));
+    }
 
     fn days(tokens: &[u64]) -> Vec<(String, u64)> {
         tokens

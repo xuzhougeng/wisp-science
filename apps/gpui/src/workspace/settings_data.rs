@@ -189,6 +189,55 @@ impl Workspace {
             );
         }
 
+        // What the model reached for: skills and MCP tools, by calls.
+        let tools = usage::tool_rows(view);
+        page = page.child(heading(tr("SKILL / MCP calls")));
+        if tools.is_empty() {
+            page = page.child(
+                div()
+                    .py_2()
+                    .text_sm()
+                    .text_color(muted)
+                    .child(tr("No SKILL or MCP calls recorded yet.")),
+            );
+        }
+        let most = tools.first().map_or(1, |(_, _, calls)| (*calls).max(1));
+        for (kind, name, calls) in &tools {
+            let kind = match kind.as_str() {
+                "skill" => tr("Skill"),
+                "mcp" => "MCP",
+                _ => tr("Other"),
+            };
+            page = page.child(
+                div()
+                    .v_flex()
+                    .gap_1()
+                    .py_2()
+                    .child(
+                        div()
+                            .h_flex()
+                            .gap_3()
+                            .text_sm()
+                            .child(div().w(px(44.)).text_xs().text_color(muted).child(kind))
+                            .child(div().flex_1().min_w_0().truncate().child(name.clone()))
+                            .child(
+                                div()
+                                    .text_color(muted)
+                                    .child(crate::i18n::fill(tr("{} calls"), &[calls])),
+                            ),
+                    )
+                    .child(
+                        div().h(px(4.)).rounded(px(2.)).bg(cx.theme().muted).child(
+                            div()
+                                .h_full()
+                                .w(relative(*calls as f32 / most as f32))
+                                .rounded(px(2.))
+                                .bg(cx.theme().primary),
+                        ),
+                    ),
+            );
+        }
+
         page = page.child(heading(tr("By project")));
         for row in &view.projects {
             page =

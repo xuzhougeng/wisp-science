@@ -11994,3 +11994,79 @@ async fn an_answer_cut_at_the_output_limit_carries_on_when_asked_to() {
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn usage_ranks_the_skills_and_mcp_tools_the_model_called() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let store = &server.0.store;
+    crate::mcp::save(
+        store,
+        &[crate::mcp::McpServer {
+            id: "lab".into(),
+            name: "Lab".into(),
+            enabled: true,
+            transport: crate::mcp::McpTransport::Http {
+                url: "https://lab.example/mcp".into(),
+            },
+        }],
+    )
+    .await
+    .unwrap();
+    let calls = |names: &[(&str, &str)]| {
+        let mut message = Message::assistant("");
+        message.tool_calls = names
+            .iter()
+            .enumerate()
+            .map(|(index, (name, arguments))| ToolCall {
+                id: format!("call-{index}"),
+                kind: "function".into(),
+                function: wisp_llm::FunctionCall {
+                    name: (*name).into(),
+                    arguments: (*arguments).into(),
+                },
+            })
+            .collect();
+        message
+    };
+    let session = create(&server).await;
+    store
+        .append_message(
+            &session,
+            1,
+            &calls(&[
+                ("use_skill", r#"{"name": "read-counting"}"#),
+                ("lab__search", "{}"),
+                ("read", r#"{"path": "a.txt"}"#),
+            ]),
+        )
+        .await
+        .unwrap();
+    store
+        .append_message(
+            &session,
+            2,
+            &calls(&[
+                ("use_skill", r#"{"name": "read-counting"}"#),
+                ("use_skill", "not json"),
+                ("gone__tool", "{}"),
+            ]),
+        )
+        .await
+        .unwrap();
+    let usage = server.usage().await.unwrap();
+    let ranked: Vec<(&str, &str, i64)> = usage
+        .tools
+        .iter()
+        .map(|tool| (tool.kind.as_str(), tool.name.as_str(), tool.calls))
+        .collect();
+    // This host's own tools, a skill call that named none and a server
+    // that is no longer set up are left out.
+    assert_eq!(
+        ranked,
+        [("skill", "read-counting", 2), ("mcp", "Lab/search", 1)]
+    );
+    server.shutdown().await;
+}

@@ -3118,6 +3118,10 @@ impl Server {
                 .filter(|day| !day.future)
                 .map(|day| (day.date, day.tokens.max(0) as u64))
                 .collect(),
+            tools: rank_tool_calls(
+                store.tool_call_counts().await?,
+                &crate::mcp::load(store).await,
+            ),
         })
     }
 
@@ -5287,6 +5291,52 @@ pub struct UsageView {
     pub models: Vec<(String, u64)>,
     /// `(YYYY-MM-DD, input + output)` for each day up to today, oldest first.
     pub days: Vec<(String, u64)>,
+    /// Skills used and MCP tools called, most calls first, as the
+    /// WebView's usage ranking counts them.
+    pub tools: Vec<ToolUsage>,
+}
+
+/// A skill or an MCP server's tool, and how many times it was called.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolUsage {
+    /// `skill` or `mcp`.
+    pub kind: String,
+    pub name: String,
+    pub calls: i64,
+}
+
+/// The skills used (`use_skill` with the skill it named) and the tools of
+/// MCP servers called (named `server/tool`), from how often each tool was
+/// called; this host's own tools are left out. Most calls first.
+pub(crate) fn rank_tool_calls(
+    counts: Vec<(String, Option<String>, i64)>,
+    servers: &[crate::mcp::McpServer],
+) -> Vec<ToolUsage> {
+    let mut ranked: std::collections::BTreeMap<(String, String), i64> = Default::default();
+    for (tool, skill, calls) in counts {
+        let named = if tool == "use_skill" {
+            skill.map(|skill| ("skill".to_owned(), skill))
+        } else {
+            servers.iter().find_map(|server| {
+                tool.strip_prefix(&format!("{}__", server.slug()))
+                    .map(|rest| ("mcp".to_owned(), format!("{}/{rest}", server.name.trim())))
+            })
+        };
+        if let Some(key) = named {
+            *ranked.entry(key).or_default() += calls;
+        }
+    }
+    let mut ranked: Vec<ToolUsage> = ranked
+        .into_iter()
+        .map(|((kind, name), calls)| ToolUsage { kind, name, calls })
+        .collect();
+    ranked.sort_by(|a, b| {
+        b.calls
+            .cmp(&a.calls)
+            .then_with(|| a.kind.cmp(&b.kind))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    ranked
 }
 
 /// What Wisp keeps for one project.
