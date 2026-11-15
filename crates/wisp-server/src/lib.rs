@@ -1583,6 +1583,8 @@ impl Server {
         if !use_live {
             runtime::place_reviews(&mut items, &seqs, &saved, &page.reviews);
         }
+        // A branch's summary brought back here shows as a card of its own.
+        runtime::mark_branch_merges(&mut items, &page.branch_merges);
         if use_live && !live.draft.is_empty() {
             items.push(runtime::item("assistant", &live.draft));
         }

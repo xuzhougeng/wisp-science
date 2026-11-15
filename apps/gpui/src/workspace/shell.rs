@@ -1034,6 +1034,82 @@ impl Workspace {
                     div().w_full().px_6().py_1().child(line).into_any_element()
                 }
             },
+            // A branch's summary brought back here: a card naming the
+            // branch, opening to what was brought back, as in the WebView.
+            "branch_merge" => {
+                let key = present::tool_key(item, index);
+                let open = self.open_tools.contains(&key);
+                let muted = cx.theme().muted_foreground;
+                let title = item.tool_name.clone().unwrap_or_default();
+                let header = div()
+                    .id(SharedString::from(format!("merged-{key}")))
+                    .h_flex()
+                    .gap_2()
+                    .px_3()
+                    .py_2()
+                    .cursor_pointer()
+                    .child(icon("branch").text_color(cx.theme().primary))
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(tr("Merged branch result")),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_sm()
+                            .text_color(muted)
+                            .child(title),
+                    )
+                    .child(
+                        icon(if open {
+                            "chevron-down"
+                        } else {
+                            "chevron-right"
+                        })
+                        .text_color(muted),
+                    )
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.toggle_tool(key.clone(), index, cx)),
+                    );
+                let mut card = div()
+                    .v_flex()
+                    .rounded(cx.theme().radius_lg)
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .child(header);
+                if open {
+                    card = card.child(div().px_3().pb_2().text_sm().child(
+                        TextView::markdown(id, item.text.clone(), window, cx).selectable(true),
+                    ));
+                    if let (Some(project), Some(branch)) =
+                        (self.state.project.clone(), item.input.clone())
+                    {
+                        card = card.child(
+                            div().h_flex().px_3().pb_2().child(
+                                Button::new(SharedString::from(format!("merged-open-{index}")))
+                                    .icon(glyph("branch"))
+                                    .label(tr("Open the branch"))
+                                    .xsmall()
+                                    .ghost()
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.open_session(
+                                            project.clone(),
+                                            branch.clone(),
+                                            window,
+                                            cx,
+                                        )
+                                    })),
+                            ),
+                        );
+                    }
+                }
+                div().w_full().px_6().py_1().child(card).into_any_element()
+            }
             _ if item.text.is_empty() => div().into_any_element(),
             _ => div()
                 .w_full()

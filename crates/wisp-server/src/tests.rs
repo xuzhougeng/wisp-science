@@ -1205,6 +1205,12 @@ async fn a_branch_is_brought_back_as_a_summary_the_user_approved() {
         merged.last().unwrap().content.as_text(),
         "Log scale shows the outlier."
     );
+    // The conversation shows it as the branch's card, not as an answer.
+    let shown = snapshot(&server, &main).await;
+    let card = shown.items.last().unwrap();
+    assert_eq!(card.role, "branch_merge");
+    assert_eq!(card.text.trim(), "Log scale shows the outlier.");
+    assert_eq!(card.input.as_deref(), Some(branch.as_str()));
     // Once only, and none of it is a phone's to do.
     assert!(server
         .merge_branch(PROJECT, &branch, &ready.guard, "Again")

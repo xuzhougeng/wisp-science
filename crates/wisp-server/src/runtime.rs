@@ -1352,6 +1352,31 @@ pub(crate) fn place_reviews(
     }
 }
 
+/// Marks each branch summary brought back into the conversation as the
+/// WebView shows it: not as an answer but as a `branch_merge` row naming
+/// the branch (`tool_name`) and holding its id (`input`), found by its
+/// text among the answers, the latest first.
+pub(crate) fn mark_branch_merges(
+    items: &mut [Item],
+    merges: &[wisp_store::SessionBranchMergeCard],
+) {
+    for merge in merges {
+        let summary = merge.summary.trim();
+        if summary.is_empty() {
+            continue;
+        }
+        if let Some(row) = items
+            .iter_mut()
+            .rev()
+            .find(|row| row.role == "assistant" && row.text.trim() == summary)
+        {
+            row.role = "branch_merge".into();
+            row.tool_name = Some(merge.branch_title.clone());
+            row.input = Some(merge.branch_session_id.clone());
+        }
+    }
+}
+
 pub fn items(messages: &[Message]) -> Vec<Item> {
     let mut items = Vec::new();
     for message in messages {
@@ -1449,6 +1474,37 @@ pub fn items(messages: &[Message]) -> Vec<Item> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_branch_summary_brought_back_is_marked_as_a_card() {
+        let mut items = vec![
+            item("user", "plot it"),
+            item("assistant", "Log scale shows the outlier."),
+            item("assistant", "Done."),
+            item("assistant", " Log scale shows the outlier. "),
+        ];
+        let merge = wisp_store::SessionBranchMergeCard {
+            summary_message_seq: 9,
+            branch_session_id: "branch-1".into(),
+            branch_title: "Try log scale".into(),
+            checkpoint_user_index: 0,
+            checkpoint_kind: "turn".into(),
+            summary: "Log scale shows the outlier.".into(),
+        };
+        mark_branch_merges(&mut items, &[merge]);
+        // The latest answer with that text is the summary; an earlier one
+        // that says the same stays an answer.
+        assert_eq!(items[1].role, "assistant");
+        assert_eq!(items[3].role, "branch_merge");
+        assert_eq!(items[3].tool_name.as_deref(), Some("Try log scale"));
+        assert_eq!(items[3].input.as_deref(), Some("branch-1"));
+        assert_eq!(items[2].role, "assistant");
+        // Nothing to mark leaves the rows alone.
+        let roles = |items: &[Item]| items.iter().map(|row| row.role.clone()).collect::<Vec<_>>();
+        let before = roles(&items);
+        mark_branch_merges(&mut items, &[]);
+        assert_eq!(roles(&items), before);
+    }
 
     #[test]
     fn a_kept_review_goes_after_the_last_message_it_read() {

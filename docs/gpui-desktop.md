@@ -204,7 +204,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Delegated tasks | The model can hand a batch of dependent tasks to temporary agents and wait for their results; a plan card asks first when a task can change files, run code or use a remote model. Each task works in a watch-only conversation under the one that started it. The Agents tab lists the batches with each task's status, summary and conversation, and stops a running one |
 | Subagents | The model can start a subagent: a conversation of its own for one focused task, listed under the conversation that started it, with a bar saying it is watched and Open the parent; its composer is closed. When it ends, a report is added to the parent, whose agent goes on to handle it |
 | Explorations | On an answer, Start an exploration from here names one and continues the conversation in its own copy of the project; more candidates of the same round start from the same answer. The source shows a bar with each candidate and Abandon the round; a candidate shows its status, View changes and keep (what it changed, what the mainline changed meanwhile, why it cannot be kept), Discard, Back to the mainline and Abandon the round; when it cannot be kept, Show both folders and Finish by hand |
-| Bringing a branch back | In a branch, Bring back in the conversation's toolbar has the model summarise what the branch did since it split off; you read and change the summary, and Bring it back adds it to the conversation the branch came from, which reads it from then on, and opens that conversation. A branch is brought back once |
+| Bringing a branch back | In a branch, Bring back in the conversation's toolbar has the model summarise what the branch did since it split off; you read and change the summary, and Bring it back adds it to the conversation the branch came from, which reads it from then on, and opens that conversation, where it shows as a Merged branch result card naming the branch: press it for the summary and Open the branch. A branch is brought back once |
 | Approving a plan | When the model sets out a new plan it waits for you: the plan's steps show above the composer with Approve, Turn down, and a box to say what should change; Send feedback (or Return in the box) turns the plan down with your words, which the model reads to revise it |
 | Working plan | When the model sets out or updates its plan for a long piece of work, the update is a checklist in the transcript (done, in progress, to do, dropped), and while steps remain a line above the composer says how many are done and which is next |
 | Thinking | What the model is thinking, above the composer, while it thinks; afterwards it stays in the transcript as a folded Thought ahead of the answer, to open when wanted |
@@ -1840,8 +1840,10 @@ Branch a conversation from an answer, send a message in the branch, then
 press Bring back: the dialog says how many messages the branch added; Write
 the summary fills the field with the model's summary, which can be changed;
 Bring it back opens the source conversation with the summary as its last
-message. Press Bring back in the branch again: it says it was brought back
-already. Escape closes the dialog at any step.
+row, a Merged branch result card with the branch's title; press it to read
+the summary and Open the branch to go there. Press Bring back in the branch
+again: it says it was brought back already. Escape closes the dialog at any
+step.
 When the model proposes a new plan, its steps show above the composer: write
 what should change in the box and press Return; the plan call shows as
 refused and the model is told your words. Approve on another one and the
