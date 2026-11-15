@@ -221,6 +221,88 @@ impl Provider for DelegatingModel {
     }
 }
 
+/// Delegates one isolated task that writes a note in its worktree.
+struct IsolatingModel;
+
+#[async_trait]
+impl Provider for IsolatingModel {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+        Ok(Completion {
+            content: "ok".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        messages: &[Message],
+        _: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        let said = |needle: &str| {
+            messages
+                .iter()
+                .any(|m| m.content.as_text().contains(needle))
+        };
+        let call = |name: &str, args: serde_json::Value| {
+            Ok(Completion {
+                tool_calls: vec![ToolCall {
+                    id: format!("{name}-1"),
+                    kind: "function".into(),
+                    function: wisp_llm::FunctionCall {
+                        name: name.into(),
+                        arguments: args.to_string(),
+                    },
+                }],
+                finish_reason: Some("tool_calls".into()),
+                ..Default::default()
+            })
+        };
+        let last_tool = messages
+            .iter()
+            .rev()
+            .find(|m| m.role == wisp_llm::Role::Tool)
+            .map(|m| m.content.as_text());
+        let text = if said("Task: Write the note") {
+            match last_tool {
+                None => {
+                    return call(
+                        "write",
+                        json!({"path": "note.md", "content": "written in a worktree\n"}),
+                    )
+                }
+                Some(_) => "{\"summary\": \"wrote the note\"}".to_owned(),
+            }
+        } else {
+            match last_tool {
+                None => {
+                    return call(
+                        "delegate_tasks",
+                        json!({
+                            "goal": "Write the note",
+                            "tasks": [{"id": "note", "instruction": "Write the note", "capabilities": ["project_write"], "isolated": true}],
+                        }),
+                    )
+                }
+                Some(result) if result.contains("wrote the note") => "Merged.".to_owned(),
+                Some(result) => format!("Failed: {result}"),
+            }
+        };
+        sink.on_text(&text);
+        Ok(Completion {
+            content: text,
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+}
+
 /// Delegates a task that may delegate: the task hands the count to a task
 /// of its own, which may not delegate again.
 struct NestingModel;
@@ -9207,6 +9289,84 @@ async fn a_subagent_works_in_its_own_conversation_and_reports_back() {
         .subagent_status(&project, &child, Some(&parent))
         .await
         .is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_isolated_task_works_in_a_worktree_and_its_changes_are_merged() {
+    let temp = tempfile::tempdir().unwrap();
+    let factory: ModelFactory = Arc::new(|_| Box::new(IsolatingModel));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    // A clean Git project, so a task can have a worktree of its own.
+    let root = std::path::PathBuf::from(server.project_root(PROJECT).await.unwrap());
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{args:?}: {output:?}");
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    git(&["init"]);
+    git(&["config", "core.autocrlf", "false"]);
+    std::fs::write(root.join(".gitignore"), ".wisp/\n").unwrap();
+    std::fs::write(root.join("README.md"), "project\n").unwrap();
+    git(&["add", "-A"]);
+    git(&[
+        "-c",
+        "user.name=Wisp Test",
+        "-c",
+        "user.email=wisp-test@localhost",
+        "commit",
+        "-m",
+        "base",
+    ]);
+    let before = git(&["rev-list", "--count", "HEAD"]);
+
+    let parent = create(&server).await;
+    send(&server, &parent, "write the note in isolation")
+        .await
+        .unwrap();
+    // A task that changes the project is approved first.
+    let pending = wait_for(&server, &parent, |s| !s.approvals.is_empty()).await;
+    server
+        .answer_approval(
+            PROJECT,
+            &parent,
+            &pending.approvals[0].approval_id,
+            true,
+            desktop::Remember::No,
+        )
+        .await
+        .unwrap();
+    turn_done(&server, &parent).await;
+    let texts = texts_of(&server, &parent).await;
+    assert!(texts.iter().any(|text| text == "Merged."), "{texts:?}");
+
+    // The note was written in the worktree and cherry-picked into the
+    // project as a commit of its own; the worktree is gone.
+    assert_eq!(
+        std::fs::read_to_string(root.join("note.md")).unwrap(),
+        "written in a worktree\n"
+    );
+    assert_ne!(git(&["rev-list", "--count", "HEAD"]), before);
+    let worktrees = server.0.config.data.join("agent-worktrees");
+    assert!(std::fs::read_dir(&worktrees)
+        .map(|mut entries| entries.next().is_none())
+        .unwrap_or(true));
+    let batch = &server.delegated_batches(PROJECT, &parent).await.unwrap()[0];
+    let full = server
+        .delegated_result(
+            &parent,
+            &json!({"workflow_id": batch.id, "task_id": "note"}),
+        )
+        .await
+        .unwrap();
+    let evidence = full["response"]["evidence"].to_string();
+    assert!(evidence.contains("workspace_merge"), "{evidence}");
     server.shutdown().await;
 }
 

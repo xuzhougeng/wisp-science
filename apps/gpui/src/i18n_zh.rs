@@ -1822,4 +1822,5 @@ pub const ZH: &[(&str, &str)] = &[
     ),
     ("Tokens", "Token 数"),
     ("Nested", "嵌套"),
+    ("Own worktree", "独立工作树"),
 ];

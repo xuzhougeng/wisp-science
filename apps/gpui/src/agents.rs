@@ -276,6 +276,7 @@ mod tests {
             output_tokens: 0,
             tool_calls: 0,
             max_tokens: None,
+            isolated: false,
         };
         let batch = DelegatedBatch {
             id: "b".into(),

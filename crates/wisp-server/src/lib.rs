@@ -12,6 +12,7 @@ pub mod config;
 mod debug_request;
 mod decision_model;
 mod delegation;
+mod delegation_isolation;
 pub mod desktop;
 mod device_bridge;
 mod excerpt;

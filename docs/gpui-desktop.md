@@ -362,10 +362,17 @@ Limits of this slice:
   waits (never in the background, and asking no one), and its tasks are
   named `task/subtask`, work in conversations under the task's, and are
   listed, marked Nested, in the task conversation's Agents tab; it runs
-  again only with the task that started it. Not ported: an expert's own
-  model, isolated worktrees, the other budget limits (tool calls, cost),
-  ACP executors, literature and web research capabilities, and
-  method-search run activities.
+  again only with the task that started it. In a clean Git project a task
+  can be `isolated`, as in the WebView: it works in a temporary Git
+  worktree of its own (its card says Own worktree); what it leaves running
+  there is stopped, the artifacts it recorded are kept with the project,
+  and when it succeeds its changes are cherry-picked into the project
+  after a conflict preflight, otherwise (or on a conflict) they are kept
+  as a patch artifact of its conversation and the project is left as it
+  was; the worktree is removed either way. Not ported: an expert's own
+  model, the other budget limits (tool calls, cost), ACP executors,
+  literature and web research capabilities, and method-search run
+  activities.
 - Explorations follow the WebView's `exploration_commands.rs`,
   `exploration_promotion.rs` and `exploration_workspace.rs`, whose
   services and tests are carried over. The first candidate of a round
@@ -2032,6 +2039,12 @@ may hand parts of it on (the `delegation` capability): the plan card lists
 it; approve. Open that task's conversation from its card: its Agents tab
 lists a batch marked Nested whose tasks are named after it, and each of
 those opened shows no further delegation.
+In a project that is a clean Git checkout, ask for a task that changes a
+file to run isolated: its card shows Own worktree, and once it is Done
+the file is changed in the project and `git log` shows a new commit by
+Wisp Science Agent. Change the same line yourself before such a task
+ends: the task fails, the project keeps your line, and its conversation
+has an `isolated-agent-….patch` artifact.
 In a project with a file `notes.txt`, ask something and wait for the
 answer; on it press Start an exploration from here, keep the offered
 name and Start: a conversation opens with the same history and a bar

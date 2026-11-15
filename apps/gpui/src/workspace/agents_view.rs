@@ -327,6 +327,10 @@ impl Workspace {
                         .clone()
                         .map(|expert| chip(expert, Tone::Neutral, cx)),
                 )
+                .children(
+                    task.isolated
+                        .then(|| chip(tr("Own worktree"), Tone::Neutral, cx)),
+                )
                 .child(div().flex_1());
             if let Some(conversation) = task.conversation.clone() {
                 line = line.child(

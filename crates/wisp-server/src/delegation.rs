@@ -15,7 +15,7 @@
 //! isolated worktrees and retrying a batch.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -102,6 +102,9 @@ struct TaskArgs {
     budget: Option<BudgetArgs>,
     #[serde(default)]
     timeout_secs: Option<u64>,
+    /// Work in a temporary Git worktree, merged back when the task succeeds.
+    #[serde(default)]
+    isolated: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -136,6 +139,8 @@ pub struct DelegatedTask {
     pub tool_calls: i64,
     /// The most tokens it may use; none (or zero) for no limit.
     pub max_tokens: Option<u32>,
+    /// It works in a Git worktree of its own.
+    pub isolated: bool,
 }
 
 /// A delegated batch as the window lists it.
@@ -311,7 +316,7 @@ fn resolve(
                     skill_bindings: vec![],
                     specialist,
                     output_schema: task.output_schema,
-                    isolated: false,
+                    isolated: task.isolated,
                     model_id: None,
                     model_tier: task.model_tier,
                     executor: None,
@@ -1222,7 +1227,20 @@ impl Server {
             .map(PathBuf::from)
             .or_else(wisp_runtime::bundled_worker_path)
             .is_some_and(|worker| worker.is_file());
-        Ok((CapabilityRegistry::builtins(), host_policy(models, python)))
+        // A task can work in a worktree of its own only in a Git project.
+        let git = match store.frame_project_id(parent).await.map_err(e)? {
+            Some(project) => match self.project_root(&project).await {
+                Ok(root) => {
+                    crate::delegation_isolation::git_worktree_available(Path::new(&root)).await
+                }
+                Err(_) => false,
+            },
+            None => false,
+        };
+        Ok((
+            CapabilityRegistry::builtins(),
+            host_policy(models, python, git),
+        ))
     }
 }
 
@@ -1350,6 +1368,50 @@ async fn reacquire_slot(store: &Store, attempt: &str) -> Result<(), String> {
     }
 }
 
+/// Copies the snapshots an isolated task recorded in its worktree into the
+/// project's own store; they are named by their content, so the paths kept
+/// with its artifacts stay right, and one already there is left alone.
+async fn keep_snapshots(worktree: &Path, project: &Path) -> std::io::Result<()> {
+    let from = worktree.join(".wisp").join("artifacts").join("sha256");
+    let to = project.join(".wisp").join("artifacts").join("sha256");
+    tokio::task::spawn_blocking(move || {
+        let Ok(shards) = std::fs::read_dir(&from) else {
+            // It recorded nothing.
+            return Ok(());
+        };
+        for shard in shards {
+            let shard = shard?;
+            if !shard.file_type()?.is_dir() {
+                continue;
+            }
+            let target = to.join(shard.file_name());
+            std::fs::create_dir_all(&target)?;
+            for file in std::fs::read_dir(shard.path())? {
+                let file = file?;
+                if !file.file_type()?.is_file() {
+                    continue;
+                }
+                let kept = target.join(file.file_name());
+                if !kept.exists() {
+                    std::fs::copy(file.path(), kept)?;
+                }
+            }
+        }
+        Ok(())
+    })
+    .await
+    .map_err(std::io::Error::other)?
+}
+
+/// A few of the files a merge changed, for its evidence line.
+fn summarize_files(files: &[String]) -> String {
+    let mut shown = files.iter().take(5).cloned().collect::<Vec<_>>().join(", ");
+    if files.len() > 5 {
+        shown.push_str(&format!(" and {} more", files.len() - 5));
+    }
+    shown
+}
+
 /// A task's own tasks read as `parent/child`, so results name both.
 fn namespace_display_ids(plan: &mut DelegationPlan, parent: &str) {
     for step in &mut plan.steps {
@@ -1361,7 +1423,7 @@ fn namespace_display_ids(plan: &mut DelegationPlan, parent: &str) {
 
 /// What this host offers delegated tasks, given its models (the worker
 /// first) and whether a Python runtime is installed.
-fn host_policy(models: Vec<ModelProfilePolicy>, python: bool) -> DelegationHostPolicy {
+fn host_policy(models: Vec<ModelProfilePolicy>, python: bool, git: bool) -> DelegationHostPolicy {
     let enabled: Vec<String> = models
         .iter()
         .filter(|model| model.enabled)
@@ -1376,6 +1438,9 @@ fn host_policy(models: Vec<ModelProfilePolicy>, python: bool) -> DelegationHostP
         ExecutorFeature::CodeExecution,
         ExecutorFeature::Delegation,
     ];
+    if git {
+        features.push(ExecutorFeature::Isolation);
+    }
     let mut capabilities: Vec<String> = [
         "reasoning",
         "project_read",
@@ -1905,6 +1970,270 @@ impl Server {
         delegator: &Delegator,
         request: &AgentDelegationRequest,
     ) -> AgentDelegationResponse {
+        if request.spec.workspace_policy == Some(wisp_core::AgentWorkspacePolicy::Isolated) {
+            return self.run_isolated(delegator, request).await;
+        }
+        self.run_task_in(delegator, request, &delegator.root).await
+    }
+
+    /// An isolated task: in a Git worktree of its own, whose changes are
+    /// cherry-picked into the project when it succeeds and the preflight
+    /// finds no conflict, and are otherwise kept as a patch artifact; the
+    /// WebView's `delegate_isolated`.
+    async fn run_isolated(
+        &self,
+        delegator: &Delegator,
+        request: &AgentDelegationRequest,
+    ) -> AgentDelegationResponse {
+        use crate::delegation_isolation::{
+            GitWorktreeIsolation, IsolationDisposition, IsolationFinish,
+        };
+        let id = request.request_id.as_str();
+        let isolation = GitWorktreeIsolation::new(self.0.config.data.join("agent-worktrees"));
+        let workspace = match isolation.create(Path::new(&delegator.root)).await {
+            Ok(workspace) => workspace,
+            Err(error) => {
+                return failed(
+                    id,
+                    format!("The task could not get a worktree of its own: {error:#}"),
+                    None,
+                    AgentUsage::default(),
+                )
+            }
+        };
+        let root = workspace.project_root.to_string_lossy().into_owned();
+        let mut response = self.run_task_in(delegator, request, &root).await;
+        if let Some(child) = response.child_frame_id.clone() {
+            if let Err(error) = self
+                .settle_isolated(&delegator.project, &child, response.status)
+                .await
+            {
+                response.status = DelegationStatus::Failed;
+                response.output = json!({});
+                response.error = Some(error);
+            }
+        }
+        // What it recorded was snapshotted in the worktree; the snapshots
+        // are named by their content, so they move to the project as they
+        // are.
+        if let Err(error) =
+            keep_snapshots(&workspace.project_root, Path::new(&delegator.root)).await
+        {
+            response.evidence.push(AgentEvidence {
+                kind: "artifact_retention_warning".into(),
+                summary: format!("Some of the task's artifacts could not be kept: {error}"),
+                reference: None,
+            });
+            if response.status == DelegationStatus::Succeeded {
+                response.status = DelegationStatus::Failed;
+                response.output = json!({});
+                response.error = Some(
+                    "The task's artifacts could not be kept, so its changes were not merged".into(),
+                );
+            }
+        }
+        let finish = if response.status == DelegationStatus::Succeeded {
+            IsolationFinish::Merge
+        } else {
+            IsolationFinish::Preserve {
+                reason: format!(
+                    "the task ended as {}",
+                    format!("{:?}", response.status).to_lowercase()
+                ),
+            }
+        };
+        let result = match isolation.finish(&workspace, finish).await {
+            Ok(result) => result,
+            Err(error) => {
+                response.status = DelegationStatus::Failed;
+                response.output = json!({});
+                response.error = Some(format!(
+                    "The task's worktree could not be settled: {error:#}"
+                ));
+                return response;
+            }
+        };
+        let changed = result.changed_files.len();
+        match &result.disposition {
+            IsolationDisposition::NoChanges => response.evidence.push(AgentEvidence {
+                kind: "workspace_isolation".into(),
+                summary: "The task ran in a temporary Git worktree and changed nothing in the project."
+                    .into(),
+                reference: None,
+            }),
+            IsolationDisposition::Applied { commit } => response.evidence.push(AgentEvidence {
+                kind: "workspace_merge".into(),
+                summary: format!(
+                    "No conflict was found and its {changed} change(s) were cherry-picked into the project: {}",
+                    summarize_files(&result.changed_files)
+                ),
+                reference: Some(commit.clone()),
+            }),
+            IsolationDisposition::Preserved { reason } => {
+                if !result.patch.is_empty() {
+                    self.keep_patch(request, &mut response, &result.patch, reason)
+                        .await;
+                }
+                response.evidence.push(AgentEvidence {
+                    kind: "workspace_isolation".into(),
+                    summary: format!(
+                        "The project was left as it was; the task's {changed} change(s) were kept because {reason}."
+                    ),
+                    reference: None,
+                });
+            }
+            IsolationDisposition::Rejected { reason } => {
+                if !result.patch.is_empty() {
+                    self.keep_patch(request, &mut response, &result.patch, reason)
+                        .await;
+                }
+                response.status = DelegationStatus::Failed;
+                response.output = json!({});
+                response.error = Some(reason.clone());
+                response.evidence.push(AgentEvidence {
+                    kind: "workspace_merge_rejected".into(),
+                    summary: format!(
+                        "The project was left as it was and the task's {changed} change(s) were kept as a patch artifact."
+                    ),
+                    reference: None,
+                });
+            }
+        }
+        if let Some(warning) = result.cleanup_warning {
+            response.evidence.push(AgentEvidence {
+                kind: "workspace_cleanup_warning".into(),
+                summary: warning,
+                reference: None,
+            });
+        }
+        response
+    }
+
+    /// Ends what an isolated task left running: its interpreters always,
+    /// its Runs when it did not succeed. A task that succeeded waits for its
+    /// Runs, and fails if one did not succeed; the WebView's
+    /// `settle_isolated_resources`.
+    async fn settle_isolated(
+        &self,
+        project: &str,
+        child: &str,
+        status: DelegationStatus,
+    ) -> Result<(), String> {
+        let store = &self.0.store;
+        crate::runtime::session_runtimes(&self.0.config, &self.session(child))
+            .shutdown_all()
+            .await;
+        let cancel = status != DelegationStatus::Succeeded;
+        let mut sent = HashSet::new();
+        loop {
+            let active: Vec<_> = store
+                .list_active_runs()
+                .await
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .filter(|run| run.project_id == project && run.frame_id.as_deref() == Some(child))
+                .collect();
+            if active.is_empty() {
+                break;
+            }
+            if cancel {
+                for run in active {
+                    if sent.insert(run.id.clone()) {
+                        let _ = self.0.runs.cancel(store, &run.id).await;
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        if status == DelegationStatus::Succeeded {
+            let unfinished = store
+                .list_runs_by_project(project)
+                .await
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .filter(|run| run.frame_id.as_deref() == Some(child))
+                .find(|run| run.status != wisp_store::RunStatus::Succeeded);
+            if let Some(run) = unfinished {
+                return Err(format!(
+                    "The task's Run {} ended as {}, so its changes were not merged",
+                    run.id,
+                    run.status.as_str()
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Keeps the changes of an isolated task that were not merged as a
+    /// patch artifact of its conversation.
+    async fn keep_patch(
+        &self,
+        request: &AgentDelegationRequest,
+        response: &mut AgentDelegationResponse,
+        patch: &[u8],
+        reason: &str,
+    ) {
+        let kept = async {
+            let directory = self.0.config.data.join("agent-patches");
+            tokio::fs::create_dir_all(&directory).await?;
+            let artifact = uuid::Uuid::new_v4().to_string();
+            let name = format!("isolated-agent-{artifact}.patch");
+            let path = directory.join(&name);
+            tokio::fs::write(&path, patch).await?;
+            let frame = match response.child_frame_id.clone() {
+                Some(frame) => frame,
+                None => self
+                    .0
+                    .store
+                    .get_agent_workflow(&request.workflow_id)
+                    .await?
+                    .and_then(|workflow| workflow.frame_id)
+                    .ok_or_else(|| anyhow::anyhow!("the patch has no conversation to belong to"))?,
+            };
+            let project = self
+                .0
+                .store
+                .frame_project_id(&frame)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("the patch's conversation is gone"))?;
+            let storage = path.to_string_lossy().into_owned();
+            self.0
+                .store
+                .save_artifact(&artifact, &project, &frame, &name, "text/x-diff", &storage)
+                .await?;
+            anyhow::Ok((artifact, name, storage))
+        }
+        .await;
+        match kept {
+            Ok((artifact, name, storage)) => {
+                response.artifact_ids.push(artifact.clone());
+                response.artifacts.push(AgentArtifact {
+                    id: artifact.clone(),
+                    name,
+                    kind: "text/x-diff".into(),
+                    path: Some(storage),
+                });
+                response.evidence.push(AgentEvidence {
+                    kind: "workspace_patch".into(),
+                    summary: format!("The task's changes were kept as a patch because {reason}."),
+                    reference: Some(artifact),
+                });
+            }
+            Err(error) => response.evidence.push(AgentEvidence {
+                kind: "workspace_patch_warning".into(),
+                summary: format!("The task's changes could not be kept as a patch: {error:#}"),
+                reference: None,
+            }),
+        }
+    }
+
+    /// One task in its own conversation, working in `root`.
+    async fn run_task_in(
+        &self,
+        delegator: &Delegator,
+        request: &AgentDelegationRequest,
+        root: &str,
+    ) -> AgentDelegationResponse {
         let id = request.request_id.as_str();
         let store = &self.0.store;
         let child = match self.task_conversation(delegator, request).await {
@@ -1929,7 +2258,7 @@ impl Server {
         let outcome = if cancelled {
             Err(String::new())
         } else {
-            self.task_turn(delegator, request, &child).await
+            self.task_turn(delegator, request, &child, root).await
         };
         delegator.active.lock().unwrap().remove(id);
         let session = self.session(&child);
@@ -2008,6 +2337,7 @@ impl Server {
         delegator: &Delegator,
         request: &AgentDelegationRequest,
         child: &str,
+        root: &str,
     ) -> Result<(), String> {
         let e = |error: anyhow::Error| format!("{error:#}");
         let store = &self.0.store;
@@ -2039,7 +2369,7 @@ impl Server {
         let mut agent = self
             .wisp_agent(
                 &delegator.project,
-                &delegator.root,
+                root,
                 &send,
                 &session,
                 &options,
@@ -2054,10 +2384,7 @@ impl Server {
         agent.tools = tools.filtered(&allowed_tools(&request.spec));
         // A task granted delegation may start one bounded batch of its own.
         if request.spec.allow_delegation {
-            for tool in self
-                .delegation_tools(&delegator.project, &delegator.root, child)
-                .await
-            {
+            for tool in self.delegation_tools(&delegator.project, root, child).await {
                 agent.add_tool(tool);
             }
         }
@@ -2079,7 +2406,7 @@ impl Server {
             send.clone(),
             true,
             false,
-            PathBuf::from(&delegator.root),
+            PathBuf::from(root),
             crate::runtime::TurnScope {
                 lab_mail: false,
                 write_locked: false,
@@ -2622,6 +2949,8 @@ impl Server {
                         output_tokens: latest.map_or(0, |attempt| attempt.output_tokens),
                         tool_calls: latest.map_or(0, |attempt| attempt.tool_calls),
                         max_tokens: step.spec.budget.max_tokens,
+                        isolated: step.spec.workspace_policy
+                            == Some(wisp_core::AgentWorkspacePolicy::Isolated),
                     }
                 })
                 .collect();
@@ -2770,6 +3099,10 @@ fn delegate_schema(experts: &[crate::experts::Expert]) -> ToolSchema {
                                 "type": "integer",
                                 "minimum": 0,
                                 "description": "Optional wall-clock limit in seconds; omit or 0 for none"
+                            },
+                            "isolated": {
+                                "type": "boolean",
+                                "description": "Work in a temporary Git worktree (Git projects only): its changes are cherry-picked into the project when it succeeds without conflict, otherwise kept as a patch artifact"
                             }
                         },
                         "required": ["id", "instruction", "capabilities"]
@@ -2935,9 +3268,25 @@ mod tests {
         // A field this host does not honour is refused, not ignored.
         assert!(serde_json::from_value::<BatchArgs>(json!({
             "goal": "g",
-            "tasks": [{"id": "a", "instruction": "A", "capabilities": ["reasoning"], "isolated": true}],
+            "tasks": [{"id": "a", "instruction": "A", "capabilities": ["reasoning"], "skill_ids": ["x"]}],
         }))
         .is_err());
+        // Working in a worktree of its own needs a Git project.
+        let isolated = json!([{"id": "a", "instruction": "A", "capabilities": ["project_write"], "isolated": true}]);
+        let refused = plan(isolated.clone(), false).unwrap_err();
+        assert!(!refused.is_empty());
+        let git = resolve(
+            "wf".into(),
+            batch(isolated),
+            &CapabilityRegistry::builtins(),
+            &host_policy(vec![worker(false)], false, true),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            git.steps[0].spec.workspace_policy,
+            Some(wisp_core::AgentWorkspacePolicy::Isolated)
+        );
     }
 
     fn worker(external: bool) -> ModelProfilePolicy {
@@ -2954,7 +3303,7 @@ mod tests {
             "wf".into(),
             batch(tasks),
             &CapabilityRegistry::builtins(),
-            &host_policy(vec![worker(external)], false),
+            &host_policy(vec![worker(external)], false, false),
             &[],
         )
     }
@@ -3004,7 +3353,7 @@ mod tests {
             false,
         )
         .is_err());
-        let limits = root_limits(&local, &host_policy(vec![worker(false)], false));
+        let limits = root_limits(&local, &host_policy(vec![worker(false)], false, false));
         assert_eq!(limits.wall_time_secs, None);
         assert_eq!(limits.max_tokens, 0);
     }
@@ -3025,7 +3374,7 @@ mod tests {
                 {"id": "check", "instruction": "Check the tests", "capabilities": ["reasoning"], "specialist_id": "statistician"},
             ])),
             &CapabilityRegistry::builtins(),
-            &host_policy(vec![worker(false)], false),
+            &host_policy(vec![worker(false)], false, false),
             &experts,
         )
         .unwrap();
@@ -3043,7 +3392,7 @@ mod tests {
                 {"id": "check", "instruction": "Check", "capabilities": ["reasoning"], "specialist_id": "ghost"},
             ])),
             &CapabilityRegistry::builtins(),
-            &host_policy(vec![worker(false)], false),
+            &host_policy(vec![worker(false)], false, false),
             &experts,
         )
         .unwrap_err()
@@ -3091,7 +3440,7 @@ mod tests {
     #[test]
     fn a_task_delegates_within_what_it_was_granted_and_only_one_level_down() {
         let registry = CapabilityRegistry::builtins();
-        let host = host_policy(vec![worker(false)], false);
+        let host = host_policy(vec![worker(false)], false, false);
         let mut resolved = plan(
             json!([
                 {"id": "lead", "instruction": "Lead", "capabilities": ["reasoning", "delegation"]},
@@ -3133,7 +3482,7 @@ mod tests {
     #[test]
     fn only_a_task_that_did_not_finish_is_given_another_budget() {
         let registry = CapabilityRegistry::builtins();
-        let host = host_policy(vec![worker(false)], false);
+        let host = host_policy(vec![worker(false)], false, false);
         let mut resolved = plan(
             json!([
                 {"id": "read", "instruction": "Read", "capabilities": ["project_read"]},
