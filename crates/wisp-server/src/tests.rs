@@ -6750,9 +6750,10 @@ while IFS= read -r line; do
   method=$(printf '%s\n' "$line" | grep -o '"method":"[^"]*"' | head -n 1 | cut -d'"' -f4)
   case "$method" in
     initialize)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[],"agentInfo":{"name":"fake-agent","version":"0.1.0"}}}\n' "$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{"mcpCapabilities":{"http":true}},"authMethods":[],"agentInfo":{"name":"fake-agent","version":"0.1.0"}}}\n' "$id"
       ;;
     session/new)
+      mcp=$(printf '%s\n' "$line" | grep -o '"url":"[^"]*"' | head -n 1 | cut -d'"' -f4)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"s1","modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default"},{"id":"plan","name":"Plan","description":"Plan before changing anything"}]},"configOptions":[{"id":"model","name":"Model","type":"select","currentValue":"fast","options":[{"value":"fast","name":"Fast"},{"value":"deep","name":"Deep"}]}]}}\n' "$id"
       ;;
     session/set_mode)
@@ -6769,6 +6770,9 @@ while IFS= read -r line; do
           done
           printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"cancelled"}}\n' "$id"
           continue
+          ;;
+        *tools*)
+          say "{\"sessionUpdate\":\"agent_message_chunk\",\"content\":{\"type\":\"text\",\"text\":\"$mcp\"}}"
           ;;
         *ask*)
           printf '{"jsonrpc":"2.0","id":900,"method":"session/request_permission","params":{"sessionId":"s1","toolCall":{"toolCallId":"t2","title":"Write notes.txt","rawInput":{"path":"notes.txt"}},"options":[{"optionId":"yes","name":"Allow","kind":"allow_once"},{"optionId":"no","name":"Reject","kind":"reject_once"}]}}\n'
@@ -6954,6 +6958,32 @@ async fn a_conversation_given_to_an_acp_agent_streams_asks_and_stops_through_it(
     .unwrap();
     let stopped = wait_for(&server, &id, |s| !s.running).await;
     assert!(stopped.error.is_some());
+    // The agent was handed Wisp's tools over MCP at a loopback address.
+    send(&server, &id, "which tools").await.unwrap();
+    let told = wait_for(&server, &id, |s| !s.running).await;
+    let url = told.items.last().unwrap().text.clone();
+    assert!(
+        url.starts_with("http://127.0.0.1:") && url.contains("/mcp/"),
+        "{url}"
+    );
+    let listed: Value = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .unwrap()
+        .post(&url)
+        .json(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool["name"] == "run_in_context"));
+
     // Nothing is saved for the stopped answer.
     assert_eq!(stopped.items.last().unwrap().role, "user");
     assert_eq!(stopped.model_id, "Fake agent");
@@ -7018,6 +7048,126 @@ async fn the_first_run_guide_sets_up_deepseek_and_is_shown_once() {
         .await
         .unwrap();
     assert!(server.set_up_deepseek("sk-test-key").await.is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_bridge_offers_wisps_science_tools_over_mcp_and_a_relay_carries_stdio() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    assert!(!server
+        .commands()
+        .iter()
+        .any(|command| command.contains("bridge") || command.contains("mcp_relay")));
+    let id = create(&server).await;
+    let root = server.project_root(PROJECT).await.unwrap();
+    let offered = server.bridge_offer(PROJECT, &root, &id).await.unwrap();
+    let bridge = offered.bridge.clone();
+    bridge.offer("token-1", std::path::Path::new(&root), offered.tools);
+    let url = bridge.url("token-1");
+    assert!(url.starts_with("http://127.0.0.1:"));
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let ask = |body: Value| {
+        let (client, url) = (client.clone(), url.clone());
+        async move { client.post(&url).json(&body).send().await.unwrap() }
+    };
+
+    let hello: Value = ask(json!({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(hello["result"]["serverInfo"]["name"], "wisp-science");
+    assert_eq!(hello["result"]["protocolVersion"], "2025-06-18");
+    // A notification is taken without an answer.
+    let noted = ask(json!({"jsonrpc": "2.0", "method": "notifications/initialized"})).await;
+    assert_eq!(noted.status(), reqwest::StatusCode::ACCEPTED);
+
+    let listed: Value = ask(json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let names: Vec<String> = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap().to_owned())
+        .collect();
+    for wanted in [
+        "use_skill",
+        "list_skill_catalog",
+        "run_in_context",
+        "get_run",
+    ] {
+        assert!(
+            names.iter().any(|name| name == wanted),
+            "{wanted} in {names:?}"
+        );
+    }
+    // The agent has its own file and shell tools.
+    for kept_out in ["shell", "write", "edit", "read"] {
+        assert!(!names.iter().any(|name| name == kept_out), "{kept_out}");
+    }
+    let called: Value = ask(json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+        "params": {"name": "list_skill_catalog", "arguments": {}}}))
+    .await
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(called["result"]["isError"], false, "{called}");
+    assert_eq!(called["result"]["content"][0]["type"], "text");
+    let unknown: Value = ask(json!({"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+        "params": {"name": "nope", "arguments": {}}}))
+    .await
+    .json()
+    .await
+    .unwrap();
+    assert!(unknown["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("nope"));
+    // Another path offers nothing, and a withdrawn one stops.
+    let stranger = client
+        .post(bridge.url("guess"))
+        .json(&json!({"jsonrpc": "2.0", "id": 5, "method": "tools/list"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stranger.status(), reqwest::StatusCode::NOT_FOUND);
+
+    // The relay carries newline-delimited messages both ways and passes
+    // nothing back for a notification.
+    let input = "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"ping\"}\n\n\
+                 {\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n\
+                 {\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"tools/list\"}\n";
+    let mut output = Vec::new();
+    crate::acp_bridge::carry(
+        &url,
+        tokio::io::BufReader::new(input.as_bytes()),
+        &mut output,
+    )
+    .await
+    .unwrap();
+    let lines: Vec<Value> = String::from_utf8(output)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0]["id"], 7);
+    assert_eq!(lines[1]["id"], 8);
+    bridge.withdraw("token-1");
+    let gone = client
+        .post(&url)
+        .json(&json!({"jsonrpc": "2.0", "id": 9, "method": "ping"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(gone.status(), reqwest::StatusCode::NOT_FOUND);
     server.shutdown().await;
 }
 

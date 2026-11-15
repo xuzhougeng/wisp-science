@@ -706,6 +706,70 @@ pub(crate) async fn persisting(
     Ok((tx, persist))
 }
 
+/// The tools an ACP agent is offered through the bridge: what is Wisp's
+/// own science rather than what the agent has itself (files, the shell).
+/// Skills, memory while it is on, the switched-on connectors, the user's
+/// MCP servers, and runs.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn bridge_tools(
+    config: &Config,
+    store: &Store,
+    runs: wisp_runs::RunManager,
+    project: &str,
+    root: &std::path::Path,
+    frame: &str,
+    service_keys: &[(String, String)],
+    extra_tools: Vec<Box<dyn wisp_tools::Tool>>,
+) -> Vec<Box<dyn wisp_tools::Tool>> {
+    let skills = Arc::new(skill_index(config, store, project, root).await);
+    let mut tools: Vec<Box<dyn wisp_tools::Tool>> = vec![
+        Box::new(wisp_skills::ListSkillCatalogTool::new(skills.clone())),
+        Box::new(wisp_skills::SearchSkillsTool::new(skills.clone())),
+        Box::new(wisp_skills::UseSkillTool::new(skills)),
+    ];
+    if memory_enabled(store).await {
+        tools.push(Box::new(wisp_core::SearchMemoryTool::new(Arc::new(
+            MemoryManager::new(root),
+        ))));
+    }
+    let scope = wisp_store::StateScope::mainline(project.to_string());
+    tools.push(Box::new(RunInContextTool::new(
+        store.clone(),
+        runs.clone(),
+        project.into(),
+        Some(frame.into()),
+    )));
+    tools.push(Box::new(MonitorRunTool::new_in_scope(
+        store.clone(),
+        scope.clone(),
+    )));
+    tools.push(Box::new(GetRunTool::new_in_scope(
+        store.clone(),
+        scope.clone(),
+    )));
+    tools.push(Box::new(CancelRunTool::new_in_scope(
+        store.clone(),
+        runs.clone(),
+        scope.clone(),
+    )));
+    tools.push(Box::new(HarvestRunTool::new_in_scope(
+        store.clone(),
+        runs,
+        scope,
+    )));
+    // A name already taken stays with the tool that had it.
+    for tool in connector_tools(store, service_keys)
+        .await
+        .into_iter()
+        .chain(extra_tools)
+    {
+        if !tools.iter().any(|kept| kept.name() == tool.name()) {
+            tools.push(tool);
+        }
+    }
+    tools
+}
+
 pub async fn run(
     store: Store,
     mut agent: Agent,

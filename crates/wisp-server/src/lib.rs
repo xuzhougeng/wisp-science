@@ -1,4 +1,5 @@
 mod acp_agents;
+pub mod acp_bridge;
 mod acp_turn;
 mod aside;
 mod branch_merge;
@@ -120,13 +121,15 @@ struct Inner {
     mcp: mcp::Connections,
     /// The install of Python, R and Node under the data directory.
     toolchain: toolchain::Slot,
+    /// Wisp's tools for ACP agents, served once the first one starts.
+    bridge: tokio::sync::OnceCell<Arc<acp_bridge::Bridge>>,
 }
 
 /// What runs a turn: Wisp's own agent (with the model its side requests
 /// use), or the ACP agent the conversation was given.
 enum Engine {
     Wisp(Box<wisp_core::Agent>, wisp_llm::ProviderConfig),
-    Acp(desktop::AcpAgent),
+    Acp(desktop::AcpAgent, acp_turn::Offered),
 }
 
 type ModelFactory =
@@ -247,6 +250,7 @@ impl Server {
             library: Default::default(),
             mcp,
             toolchain: Default::default(),
+            bridge: Default::default(),
         })))
     }
 
@@ -533,7 +537,11 @@ impl Server {
         let auto_review = options.auto_review;
         let plan_mode = options.plan_first;
         let engine = match (acp, model) {
-            (Some(agent), _) => Engine::Acp(agent),
+            (Some(agent), _) => Engine::Acp(
+                agent,
+                self.bridge_offer(project, root, &request.session_id)
+                    .await?,
+            ),
             (None, Some(model)) => {
                 let agent = self
                     .wisp_agent(project, root, &request, &session, &options, &model)
@@ -594,7 +602,7 @@ impl Server {
                     }),
                     Some(side_model),
                 ),
-                Engine::Acp(agent) => (
+                Engine::Acp(agent, offered) => (
                     tokio::spawn(async move {
                         acp_turn::run(
                             inner.0.store.clone(),
@@ -604,6 +612,7 @@ impl Server {
                             full_access,
                             root,
                             agent,
+                            offered,
                         )
                         .await
                     }),
@@ -615,6 +624,40 @@ impl Server {
                 .await;
         });
         Ok(reply)
+    }
+
+    /// The bridge, started the first time an ACP agent needs it.
+    async fn bridge(&self) -> Result<Arc<acp_bridge::Bridge>> {
+        self.0
+            .bridge
+            .get_or_try_init(acp_bridge::Bridge::start)
+            .await
+            .cloned()
+    }
+
+    /// Wisp's science tools for the ACP agent of a conversation, as of
+    /// this turn: what the bridge is to offer it.
+    pub(crate) async fn bridge_offer(
+        &self,
+        project: &str,
+        root: &str,
+        frame: &str,
+    ) -> Result<acp_turn::Offered> {
+        let tools = runtime::bridge_tools(
+            &self.0.config,
+            &self.0.store,
+            self.0.runs.clone(),
+            project,
+            std::path::Path::new(root),
+            frame,
+            &self.service_keys().await,
+            self.mcp_tools().await,
+        )
+        .await;
+        Ok(acp_turn::Offered {
+            bridge: self.bridge().await?,
+            tools,
+        })
     }
 
     /// The Wisp agent that runs a turn, with its model, tools and context.

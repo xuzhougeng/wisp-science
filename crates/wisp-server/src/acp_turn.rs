@@ -17,7 +17,9 @@ use std::{
     time::Duration,
 };
 use wisp_acp::{
-    acp::schema::v1::{ContentBlock, SessionId, TextContent},
+    acp::schema::v1::{
+        ContentBlock, McpServer, McpServerHttp, McpServerStdio, SessionId, TextContent,
+    },
     AcpError, AcpPermissionKind, AcpPermissionRequest, AcpSessionEvent, AcpSessionHandle,
     AcpUpdateKind,
 };
@@ -36,9 +38,42 @@ const LAUNCH_TIMEOUT: Duration = Duration::from_secs(60);
 pub(crate) const PLAN_TOOL_NAME: &str = "wisp:plan";
 const TOOL_PREFIX: &str = "acp:";
 
+/// Wisp's tools for the agent this turn, and the bridge that serves them.
+pub(crate) struct Offered {
+    pub bridge: Arc<crate::acp_bridge::Bridge>,
+    pub tools: Vec<Box<dyn wisp_tools::Tool>>,
+}
+
+/// How the agent reaches the bridge: over HTTP when it can, through the
+/// desktop's relay when it only starts programs, or not at all.
+fn bridge_server(handle: &AcpSessionHandle, url: &str) -> Vec<McpServer> {
+    let http = handle
+        .info()
+        .capabilities
+        .pointer("/mcpCapabilities/http")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if http {
+        return vec![McpServer::Http(McpServerHttp::new(
+            crate::acp_bridge::NAME,
+            url,
+        ))];
+    }
+    match crate::acp_bridge::relay() {
+        Some(relay) => vec![McpServer::Stdio(
+            McpServerStdio::new(crate::acp_bridge::NAME, relay.clone())
+                .args(vec![crate::acp_bridge::RELAY_FLAG.into(), url.into()]),
+        )],
+        None => vec![],
+    }
+}
+
 /// The agent process a conversation is talking to, kept between turns,
 /// with the modes and options the agent last reported.
 pub(crate) struct AcpLive {
+    /// Where the bridge offers Wisp's tools to this agent.
+    token: String,
+    bridge: Arc<crate::acp_bridge::Bridge>,
     agent: String,
     fingerprint: String,
     cwd: PathBuf,
@@ -344,6 +379,7 @@ async fn connect(
     frame: &str,
     agent: &AcpAgent,
     cwd: &Path,
+    offered: Offered,
 ) -> Result<(Arc<AcpSessionHandle>, SessionId)> {
     let fingerprint = fingerprint(agent);
     let mut slot = session.acp.lock().await;
@@ -353,11 +389,14 @@ async fn connect(
             && live.fingerprint == fingerprint
             && live.cwd == cwd
         {
+            // The same address, with the tools as they are now.
+            live.bridge.offer(&live.token, cwd, offered.tools);
             return Ok((live.handle.clone(), live.session.clone()));
         }
     }
     // A dead process or a changed agent: start again from the binding.
     if let Some(live) = slot.take() {
+        live.bridge.withdraw(&live.token);
         live.handle.shutdown(Duration::from_secs(2)).await;
     }
     let binding = store.get_acp_session(frame).await?;
@@ -385,13 +424,19 @@ async fn connect(
     .context("The agent did not start within a minute")?
     .map_err(|error| anyhow::anyhow!("The agent could not be started: {error}"))?;
     let handle = Arc::new(handle);
+    let token = uuid::Uuid::new_v4().simple().to_string();
+    offered.bridge.offer(&token, cwd, offered.tools);
+    let servers = bridge_server(&handle, &offered.bridge.url(&token));
     let (id, state) = match &binding {
         Some(binding) => {
             let id = SessionId::new(binding.agent_session_id.clone());
-            match handle.resume_session(id.clone(), cwd, vec![]).await {
+            match handle
+                .resume_session(id.clone(), cwd, servers.clone())
+                .await
+            {
                 Ok(state) => (id, state),
                 Err(AcpError::Unsupported(_)) => {
-                    match handle.load_session(id.clone(), cwd, vec![]).await {
+                    match handle.load_session(id.clone(), cwd, servers).await {
                         Ok(state) => (id, state),
                         Err(AcpError::Unsupported(_)) => {
                             bail!("This ACP agent cannot pick up its earlier session")
@@ -404,7 +449,7 @@ async fn connect(
         }
         None => {
             let started = handle
-                .new_session(cwd, vec![])
+                .new_session(cwd, servers)
                 .await
                 .map_err(|error| anyhow::anyhow!("{error}"))?;
             let info = handle.info();
@@ -436,6 +481,8 @@ async fn connect(
         }
     };
     *slot = Some(AcpLive {
+        token,
+        bridge: offered.bridge,
         agent: agent.id.clone(),
         fingerprint,
         cwd: cwd.to_path_buf(),
@@ -652,9 +699,10 @@ pub(crate) async fn run(
     full_access: bool,
     root: PathBuf,
     agent: AcpAgent,
+    offered: Offered,
 ) -> Result<()> {
     let frame = request.session_id.clone();
-    let (handle, id) = connect(&store, &session, &frame, &agent, &root).await?;
+    let (handle, id) = connect(&store, &session, &frame, &agent, &root, offered).await?;
     let always = crate::runtime::project_grants(&store, &project)
         .await
         .into_iter()

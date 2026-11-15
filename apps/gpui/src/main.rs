@@ -93,6 +93,22 @@ pub fn open_window(backend: backend::Backend, cx: &mut App) -> bool {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Started by an ACP agent as its MCP server: carry its stdio to the
+    // host's bridge and nothing else; no window opens.
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some(wisp_server::acp_bridge::RELAY_FLAG) {
+        let code = wisp_server::acp_bridge::relay_main(args.get(2).map_or("", String::as_str));
+        std::process::exit(if code == std::process::ExitCode::SUCCESS {
+            0
+        } else {
+            1
+        });
+    }
+    // Agents that only start programs reach Wisp's tools through this
+    // same executable in relay mode.
+    if let Ok(program) = std::env::current_exe() {
+        wisp_server::acp_bridge::set_relay(program);
+    }
     let runtime = Arc::new(tokio::runtime::Runtime::new()?);
     let backend = backend::Backend::new(runtime.clone());
     let ui_backend = backend.clone();

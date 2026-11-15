@@ -2242,7 +2242,7 @@ impl Server {
             .await
     }
 
-    async fn project_root(&self, project: &str) -> Result<String> {
+    pub(crate) async fn project_root(&self, project: &str) -> Result<String> {
         ensure!(
             !self.0.shutting_down.load(Ordering::Relaxed),
             "Host is shutting down"

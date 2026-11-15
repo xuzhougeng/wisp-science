@@ -529,8 +529,21 @@ Limits of this slice:
   access they are allowed without asking. Stop cancels the prompt and the
   conversation goes on with the same process. Wisp's model, effort, plan
   first, expert, where work runs and turn review do not apply and are not
-  shown; follow-up questions and reviews are not asked for. Not ported
-  from the WebView: the MCP bridge that gives the agent Wisp's tools,
+  shown; follow-up questions and reviews are not asked for. The agent
+  is also given Wisp's own science tools over MCP, under the name
+  `wisp-science`: the skill catalog and skills, memory search while
+  memory is on, runs (`run_in_context` and the tools that follow a run),
+  the switched-on literature and biology connectors and the user's MCP
+  servers; not files or the shell, which the agent has itself. The host
+  serves them on a loopback address with an unguessable path per
+  conversation (offered again each turn, so switching a connector applies
+  from the next message); an agent that speaks MCP over HTTP is given the
+  address, and one that only starts programs is given the desktop's own
+  executable in relay mode (`--wisp-mcp-relay <address>`), which carries
+  stdio to it. Calls run in the project folder without a question of
+  Wisp's (the agent asks its own), and what would need one is refused.
+  Not ported from the WebView: the bridge's tool search, capabilities,
+  artifact, research graph and delegation tools,
   questions it asks the user, file and conversation
   references sent as resource links, and a conversation run by an agent
   inside an exploration.
