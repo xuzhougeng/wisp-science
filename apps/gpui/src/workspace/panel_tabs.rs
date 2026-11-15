@@ -957,6 +957,100 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Shows which tool call wrote an artifact, or hides it when it shows.
+    fn toggle_artifact_origin(
+        &mut self,
+        artifact: String,
+        session: String,
+        path: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .artifact_origin
+            .as_ref()
+            .is_some_and(|(shown, _)| *shown == artifact)
+        {
+            self.artifact_origin = None;
+            cx.notify();
+            return;
+        }
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        self.artifact_origin = None;
+        let reply = self.backend.file_origin(project, Some(session), path);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                this.artifact_origin = Some((artifact, result));
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Where an artifact came from, under its row.
+    fn artifact_origin_block(
+        &self,
+        found: &Result<Option<wisp_server::desktop::FileOrigin>, String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let mut block = div().v_flex().gap_1().pl(px(36.)).pr_3().pb_2();
+        match found {
+            Err(problem) => {
+                return block.child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().danger)
+                        .child(crate::i18n::host(problem)),
+                );
+            }
+            Ok(origin) => {
+                block = block.child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(crate::files::origin_line(origin.as_ref())),
+                );
+                if let Some(origin) = origin {
+                    let detail = crate::files::origin_detail(origin);
+                    if !detail.is_empty() {
+                        block = block.child(
+                            div().max_h(px(200.)).overflow_hidden().child(
+                                TextView::markdown("artifact-origin-detail", detail, window, cx)
+                                    .selectable(true),
+                            ),
+                        );
+                    }
+                    if let Some(project) = self.state.project.clone() {
+                        let session = origin.session.clone();
+                        block = block.child(
+                            div().h_flex().child(
+                                Button::new("artifact-origin-open")
+                                    .label(tr("Open the conversation"))
+                                    .xsmall()
+                                    .ghost()
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.open_session(
+                                            project.clone(),
+                                            session.clone(),
+                                            window,
+                                            cx,
+                                        )
+                                    })),
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+        block
+    }
+
     /// Asks where to save a copy of one version, under the artifact's own
     /// name, and saves it from its snapshot.
     fn save_artifact_copy(
@@ -1002,7 +1096,11 @@ impl Workspace {
         .detach();
     }
 
-    pub(super) fn render_artifacts_tab(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_artifacts_tab(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let muted = cx.theme().muted_foreground;
         let hover = cx.theme().list_hover;
         let now = SystemTime::now()
@@ -1030,6 +1128,18 @@ impl Workspace {
             .child(scope("artifacts-all", tr("Whole project"), true))
             .child(div().flex_1())
             .child(
+                Button::new("artifacts-by-folder")
+                    .icon(glyph("folder"))
+                    .label(tr("By folder"))
+                    .xsmall()
+                    .ghost()
+                    .selected(self.artifacts_by_folder)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.artifacts_by_folder = !this.artifacts_by_folder;
+                        cx.notify();
+                    })),
+            )
+            .child(
                 icon_button("artifacts-reload", "refresh", tr("Reload"))
                     .xsmall()
                     .on_click(cx.listener(|this, _, window, cx| this.load_artifacts(window, cx))),
@@ -1051,7 +1161,30 @@ impl Workspace {
                 },
             ));
         }
-        for (index, artifact) in self.artifacts.iter().enumerate() {
+        let shown = if self.artifacts_by_folder {
+            panel::by_folder(&self.artifacts)
+        } else {
+            (0..self.artifacts.len())
+                .map(|index| (None, index))
+                .collect()
+        };
+        for (heading, index) in shown {
+            let artifact = &self.artifacts[index];
+            if let Some(heading) = heading {
+                list = list.child(
+                    div()
+                        .h_flex()
+                        .gap_2()
+                        .px_3()
+                        .pt_3()
+                        .pb_1()
+                        .text_xs()
+                        .font_semibold()
+                        .text_color(muted)
+                        .child(icon("folder").text_color(muted))
+                        .child(heading),
+                );
+            }
             let mut name =
                 div()
                     .id(SharedString::from(format!("artifact-{}", artifact.id)))
@@ -1107,6 +1240,31 @@ impl Workspace {
                     })),
                 );
             }
+            if let Some(path) = artifact.path.clone() {
+                let (id, session) = (artifact.id.clone(), artifact.session_id.clone());
+                let asked = self
+                    .artifact_origin
+                    .as_ref()
+                    .is_some_and(|(shown, _)| *shown == artifact.id);
+                row = row.child(
+                    icon_button(
+                        ("artifact-origin", index),
+                        "research-trail",
+                        tr("Which tool call wrote it"),
+                    )
+                    .xsmall()
+                    .selected(asked)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.toggle_artifact_origin(
+                            id.clone(),
+                            session.clone(),
+                            path.clone(),
+                            window,
+                            cx,
+                        )
+                    })),
+                );
+            }
             let id = artifact.id.clone();
             let open = self.artifact_open.as_deref() == Some(artifact.id.as_str());
             row = row.child(
@@ -1122,6 +1280,13 @@ impl Workspace {
                 })),
             );
             list = list.child(row);
+            if let Some((_, found)) = self
+                .artifact_origin
+                .as_ref()
+                .filter(|(shown, _)| *shown == artifact.id)
+            {
+                list = list.child(self.artifact_origin_block(found, window, cx));
+            }
             if open {
                 match self.artifact_versions.get(&artifact.id) {
                     None => {

@@ -1775,7 +1775,7 @@ impl Workspace {
             }
             PanelTab::Artifacts => {
                 return panel
-                    .child(self.render_artifacts_tab(cx))
+                    .child(self.render_artifacts_tab(window, cx))
                     .into_any_element();
             }
             PanelTab::Memos => {

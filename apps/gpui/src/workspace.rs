@@ -800,6 +800,14 @@ pub struct Workspace {
     artifacts: Vec<ArtifactRow>,
     /// The Artifacts tab lists the whole project instead of the conversation.
     artifacts_all: bool,
+    /// The Artifacts tab shows its files under their folders.
+    artifacts_by_folder: bool,
+    /// Which tool call wrote an artifact, once asked: its id and what the
+    /// host found.
+    artifact_origin: Option<(
+        String,
+        Result<Option<wisp_server::desktop::FileOrigin>, String>,
+    )>,
     /// Only the latest artifact request may fill the list.
     artifacts_request: u64,
     ready: bool,
@@ -1690,6 +1698,8 @@ impl Workspace {
             hosts_busy: false,
             artifacts: vec![],
             artifacts_all: false,
+            artifacts_by_folder: false,
+            artifact_origin: None,
             artifacts_request: 0,
             ready: false,
             pending: false,

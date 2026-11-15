@@ -228,6 +228,36 @@ pub fn poll_delay(turn_running: bool, active_runs: usize) -> Option<std::time::D
     }))
 }
 
+/// The artifacts in the order the tab shows them by folder: each folder's
+/// heading before its first file, the folders in name order with the top
+/// of the project first and files that are not the project's last, and
+/// each folder's files in the order they were listed.
+pub fn by_folder(artifacts: &[ArtifactRow]) -> Vec<(Option<String>, usize)> {
+    // The top of the project sorts first, files outside it last.
+    let key = |artifact: &ArtifactRow| match artifact.path.as_deref() {
+        None => (2, String::new()),
+        Some(path) => match path.rsplit_once('/') {
+            Some((folder, _)) => (1, folder.to_owned()),
+            None => (0, String::new()),
+        },
+    };
+    let mut order: Vec<usize> = (0..artifacts.len()).collect();
+    order.sort_by_key(|&index| key(&artifacts[index]));
+    let mut shown = Vec::with_capacity(order.len());
+    let mut last = None;
+    for index in order {
+        let group = key(&artifacts[index]);
+        let heading = (last.as_ref() != Some(&group)).then(|| match &group {
+            (0, _) => tr("Top of the project").to_owned(),
+            (2, _) => tr("Not a project file").to_owned(),
+            (_, folder) => format!("{folder}/"),
+        });
+        last = Some(group);
+        shown.push((heading, index));
+    }
+    shown
+}
+
 /// The line under an artifact's name: where it is, how big, how old, and
 /// which conversation made it when the list spans the project.
 pub fn artifact_detail(artifact: &ArtifactRow, now: i64, name_conversation: bool) -> String {
@@ -438,5 +468,46 @@ mod tests {
         for tab in PanelTab::ALL {
             assert_eq!(PanelTab::from_key(tab.key()), Some(tab));
         }
+    }
+
+    #[test]
+    fn artifacts_are_shown_by_folder_with_a_heading_before_each() {
+        let artifact = |name: &str, path: Option<&str>| ArtifactRow {
+            id: name.into(),
+            name: name.into(),
+            kind: "text/plain".into(),
+            path: path.map(str::to_owned),
+            created_at: 0,
+            size_bytes: None,
+            session_id: "s".into(),
+            session_title: String::new(),
+        };
+        let rows = [
+            artifact("b.png", Some("figures/b.png")),
+            artifact("notes", None),
+            artifact("readme.md", Some("readme.md")),
+            artifact("a.png", Some("figures/a.png")),
+            artifact("t.csv", Some("data/t.csv")),
+        ];
+        let shown = by_folder(&rows);
+        let order: Vec<usize> = shown.iter().map(|(_, index)| *index).collect();
+        // Top first, then folders by name, then what is not the project's;
+        // within a folder, as listed.
+        assert_eq!(order, [2, 4, 0, 3, 1]);
+        let headings: Vec<Option<&str>> = shown
+            .iter()
+            .map(|(heading, _)| heading.as_deref())
+            .collect();
+        assert_eq!(
+            headings,
+            [
+                Some("Top of the project"),
+                Some("data/"),
+                Some("figures/"),
+                None,
+                Some("Not a project file"),
+            ]
+        );
+        assert!(by_folder(&[]).is_empty());
     }
 }
