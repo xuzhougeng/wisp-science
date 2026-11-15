@@ -97,6 +97,44 @@ impl Workspace {
                         .text_color(muted)
                         .child(model_view::summary(view)),
                 );
+                // What it is made of, as the WebView's context usage shows.
+                let kinds = model_view::by_kind(view);
+                if !kinds.is_empty() {
+                    let mut split = div().v_flex().gap_1().pb_3();
+                    for (name, tokens, percent) in kinds {
+                        split = split.child(
+                            div()
+                                .h_flex()
+                                .gap_2()
+                                .text_xs()
+                                .child(div().w(px(150.)).flex_shrink_0().child(name))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .h(px(4.))
+                                        .rounded(px(2.))
+                                        .bg(cx.theme().muted)
+                                        .child(
+                                            div()
+                                                .h_full()
+                                                .w(relative(percent as f32 / 100.))
+                                                .rounded(px(2.))
+                                                .bg(cx.theme().primary),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .w(px(96.))
+                                        .flex_shrink_0()
+                                        .text_color(muted)
+                                        .child(format!("≈{tokens} · {percent}%")),
+                                ),
+                        );
+                    }
+                    card = card.child(split.child(div().text_xs().text_color(muted).child(tr(
+                        "Tool definitions are made when a turn starts and are not counted here.",
+                    ))));
+                }
                 for (index, row) in view.rows.iter().enumerate() {
                     let opens = model_view::opens(row);
                     let open = opens && self.model_view_open.contains(&index);

@@ -72,6 +72,26 @@ pub fn line(row: &ModelViewRow) -> String {
 }
 
 /// A row's share: about how many tokens, and how much of the whole.
+/// The working set by kind, as the WebView's context usage names them, in
+/// its order: each kind that holds anything, with its estimated tokens and
+/// its share of them all.
+pub fn by_kind(view: &ModelView) -> Vec<(&'static str, usize, usize)> {
+    let split = &view.breakdown;
+    let kinds = [
+        (tr("System prompt"), split.system_prompt),
+        (tr("Rules"), split.rules),
+        (tr("Skills"), split.skills),
+        (tr("Sub-agent definitions"), split.subagent_definitions),
+        (tr("Conversation"), split.conversation),
+    ];
+    let all: usize = kinds.iter().map(|(_, tokens)| tokens).sum();
+    kinds
+        .into_iter()
+        .filter(|(_, tokens)| *tokens > 0)
+        .map(|(name, tokens)| (name, tokens, (tokens * 100 + all / 2) / all.max(1)))
+        .collect()
+}
+
 pub fn share(row: &ModelViewRow, view: &ModelView) -> String {
     let percent = if view.chars == 0 {
         0
@@ -127,6 +147,34 @@ mod tests {
     }
 
     #[test]
+    fn the_working_set_is_listed_by_kind_with_shares() {
+        let view = ModelView {
+            rows: vec![],
+            chars: 0,
+            compacted: false,
+            breakdown: wisp_server::desktop::ContextUsage {
+                system_prompt: 300,
+                skills: 100,
+                conversation: 600,
+                ..Default::default()
+            },
+        };
+        assert_eq!(
+            by_kind(&view),
+            [
+                ("System prompt", 300, 30),
+                ("Skills", 100, 10),
+                ("Conversation", 600, 60)
+            ]
+        );
+        let empty = ModelView {
+            breakdown: Default::default(),
+            ..view
+        };
+        assert!(by_kind(&empty).is_empty());
+    }
+
+    #[test]
     fn a_row_is_labelled_summarised_and_weighed() {
         let mut tool = row(ModelRowKind::Tool, "\n  400 reads.fq\nmore", 3_000);
         tool.tool = Some("shell".into());
@@ -137,6 +185,7 @@ mod tests {
             rows: vec![],
             chars: 12_000,
             compacted: false,
+            breakdown: Default::default(),
         };
         assert_eq!(share(&tool, &view), "≈750 · 25%");
 

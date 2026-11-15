@@ -5522,6 +5522,8 @@ pub use crate::workflows::{
     WorkflowInput, WorkflowTask, CAPABILITIES as WORKFLOW_CAPABILITIES,
     TASK_LIMIT as WORKFLOW_TASK_LIMIT,
 };
+/// A working set's estimated tokens by kind.
+pub use wisp_core::ContextUsage;
 /// Which model a task's agent works on.
 pub use wisp_core::ModelTier;
 /// The most tasks a workflow run as agents takes.

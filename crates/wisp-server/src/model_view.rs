@@ -19,6 +19,10 @@ pub struct ModelView {
     pub chars: usize,
     /// Older turns have been replaced by a summary.
     pub compacted: bool,
+    /// The working set's estimated tokens by kind, as the WebView's
+    /// context usage splits them. Tool definitions are made when a turn
+    /// starts and are not saved, so they are not counted here.
+    pub breakdown: wisp_core::ContextUsage,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -45,8 +49,20 @@ pub enum ModelRowKind {
     Tool,
 }
 
+/// Splits the saved working set into the kinds the WebView counts: the
+/// system prompt, rules and sub-agent definitions in it, skills given to
+/// the model, and the conversation.
+pub(crate) fn breakdown(messages: &[Message]) -> wisp_core::ContextUsage {
+    let mut context = wisp_core::ContextManager::new(usize::MAX / 4);
+    context.messages = messages.to_vec();
+    context.context_usage(&[], &[])
+}
+
 pub(crate) fn fold(messages: &[Message]) -> ModelView {
-    let mut view = ModelView::default();
+    let mut view = ModelView {
+        breakdown: breakdown(messages),
+        ..ModelView::default()
+    };
     for message in messages {
         let text = message.content.as_text();
         let calls: Vec<String> = message
@@ -101,6 +117,23 @@ fn clipped(text: &str) -> String {
 mod tests {
     use super::*;
     use wisp_llm::{FunctionCall, ToolCall};
+
+    #[test]
+    fn the_working_set_is_split_by_kind_without_tool_definitions() {
+        let messages = [
+            Message::system("You are Wisp. ".repeat(40)),
+            Message::user("count the reads ".repeat(20)),
+            Message::assistant("Counted."),
+        ];
+        let split = breakdown(&messages);
+        assert!(split.system_prompt > 0);
+        assert!(split.conversation > 0);
+        // Made when a turn starts, so not in what is saved.
+        assert_eq!(split.tool_definitions, 0);
+        assert_eq!(split.mcp_dynamic_tools, 0);
+        assert_eq!(fold(&messages).breakdown, split);
+        assert_eq!(breakdown(&[]), wisp_core::ContextUsage::default());
+    }
 
     #[test]
     fn the_working_set_is_rows_with_their_sizes() {
