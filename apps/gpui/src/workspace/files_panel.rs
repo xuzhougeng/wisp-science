@@ -128,8 +128,12 @@ impl Workspace {
             let _ = this.update_in(cx, |this, window, cx| {
                 match result {
                     Ok(()) => {
-                        this.file_notice =
-                            Some(tr("Kept as an artifact of this conversation.").to_owned());
+                        // An unchanged file is the same version as before,
+                        // listed under the conversation that first kept it.
+                        this.file_notice = Some(
+                            tr("Kept as an artifact. If it is unchanged since it was first kept, it stays under that conversation.")
+                                .to_owned(),
+                        );
                         this.reload_artifacts(window, cx);
                     }
                     Err(error) => this.file_notice = Some(error),

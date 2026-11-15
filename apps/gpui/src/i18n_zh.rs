@@ -1779,7 +1779,10 @@ pub const ZH: &[(&str, &str)] = &[
     ("{} of {} items done", "已完成 {} / {} 项"),
     (" · {} failed", " · {} 项失败"),
     ("Keep as an artifact of this conversation", "保存为本会话的产物"),
-    ("Kept as an artifact of this conversation.", "已保存为本会话的产物。"),
+    (
+        "Kept as an artifact. If it is unchanged since it was first kept, it stays under that conversation.",
+        "已保存为产物。若内容自最初保存后未变，它仍归在最初保存它的会话下。",
+    ),
     ("Copy title", "复制标题"),
     ("Title copied.", "已复制标题。"),
     ("Debug request", "调试请求"),
