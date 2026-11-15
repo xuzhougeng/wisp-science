@@ -1354,6 +1354,50 @@ impl Backend {
         self.local(|host| async move { host.reject_feishu_owner().await })
     }
 
+    /// The Wisp Lab this computer belongs to, as its relay sees it.
+    pub fn lab_status(&self) -> Reply<wisp_server::desktop::LabStatus> {
+        self.local(|host| async move { Ok(host.lab_status().await) })
+    }
+
+    /// Founds the relay's lab, or asks to join it with an invite code.
+    pub fn join_lab(
+        &self,
+        relay: String,
+        token: Option<String>,
+        name: String,
+        lab_name: String,
+        invite: String,
+    ) -> Reply<wisp_server::desktop::LabStatus> {
+        self.local(move |host| async move {
+            host.join_lab(&relay, token, &name, &lab_name, &invite)
+                .await
+        })
+    }
+
+    pub fn set_lab_relay_token(&self, token: String) -> Reply<()> {
+        self.local(move |host| async move { host.set_lab_relay_token(&token).await })
+    }
+
+    pub fn leave_lab(&self, forget: bool) -> Reply<()> {
+        self.local(move |host| async move { host.leave_lab(forget).await })
+    }
+
+    pub fn set_lab_inbox_project(&self, project: String) -> Reply<()> {
+        self.local(move |host| async move { host.set_lab_inbox_project(&project).await })
+    }
+
+    pub fn create_lab_invite(&self) -> Reply<String> {
+        self.local(|host| async move { host.create_lab_invite().await })
+    }
+
+    pub fn approve_lab_member(&self, member: String) -> Reply<()> {
+        self.local(move |host| async move { host.approve_lab_member(&member).await })
+    }
+
+    pub fn remove_lab_member(&self, member: String) -> Reply<()> {
+        self.local(move |host| async move { host.remove_lab_member(&member).await })
+    }
+
     pub fn onboarding_done(&self) -> Reply<bool> {
         self.local(|host| async move { host.onboarding_done().await })
     }

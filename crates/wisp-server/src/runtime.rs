@@ -243,6 +243,14 @@ fn sync_compute_contexts(prompt: &mut String, compute: &str) {
     };
 }
 
+/// What a turn of a lab member's agent is told, and whether another
+/// member's mail started it.
+#[derive(Default)]
+pub struct LabTurn {
+    pub context: Option<String>,
+    pub mail: bool,
+}
+
 pub async fn build(
     config: &Config,
     model: &ModelConfig,
@@ -261,6 +269,7 @@ pub async fn build(
     subagent: &ModelConfig,
     decision: Option<wisp_llm::systemone::DecisionModel>,
     browser: Option<Arc<crate::browser::Bridge>>,
+    lab: LabTurn,
 ) -> Result<Agent> {
     let root = PathBuf::from(root);
     let skills = Arc::new(skill_index(config, store, project, &root).await);
@@ -405,8 +414,13 @@ pub async fn build(
     for injection in reference_context(store, &skills, references).await? {
         agent.ctx.inject_user(injection);
     }
-    // The user's habits, for this turn only, like the references above.
-    if remembering {
+    // A lab member's agent is told about the lab every turn.
+    if let Some(context) = lab.context {
+        agent.ctx.inject_user(context);
+    }
+    // The user's habits, for this turn only, like the references above. A
+    // turn another member's mail started is not the user's and gets none.
+    if remembering && !lab.mail {
         let habits = store.list_global_memories(100).await?;
         let habits = habits.iter().map(|habit| habit.content.as_str());
         if let Some(block) = wisp_core::global_memory_block(habits) {
@@ -787,6 +801,7 @@ pub async fn run(
     full_access: bool,
     plan_mode: bool,
     root: PathBuf,
+    lab_mail: bool,
 ) -> Result<()> {
     let start_seq = store.max_message_seq(&request.session_id).await?;
     let (tx, persist) = persisting(&store, &request.session_id, &session).await?;
@@ -803,6 +818,7 @@ pub async fn run(
             .await
             .into_iter()
             .collect(),
+        lab_mail,
     };
     let guidance = Some(&session.guidance);
     let mut result = agent

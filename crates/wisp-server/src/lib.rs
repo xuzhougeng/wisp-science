@@ -464,17 +464,19 @@ impl Server {
     }
 
     async fn start(&self, project: &str, root: &str, request: dto::SendRequest) -> Result<Value> {
-        self.start_turn(project, root, request, false).await
+        self.start_turn(project, root, request, channels::TurnOrigin::Desktop)
+            .await
     }
 
-    /// Starts a turn. With `ask` every tool that changes something asks
-    /// first, whatever the conversation allows: a chat app's turn.
+    /// Starts a turn. One a chat app or a lab member's mail started asks
+    /// before every tool that changes something, whatever the conversation
+    /// allows.
     async fn start_turn(
         &self,
         project: &str,
         root: &str,
         mut request: dto::SendRequest,
-        ask: bool,
+        origin: channels::TurnOrigin,
     ) -> Result<Value> {
         ensure!(
             request.attachments.len() <= 20 && request.references.len() <= 20,
@@ -554,7 +556,8 @@ impl Server {
             .clone()
             .try_acquire_owned()
             .context("Server is busy; at most four turns can run concurrently")?;
-        let full_access = options.full_access && !ask;
+        let full_access = options.full_access && origin == channels::TurnOrigin::Desktop;
+        let lab_mail = origin == channels::TurnOrigin::LabMail;
         let auto_review = options.auto_review;
         let plan_mode = options.plan_first;
         let engine = match (acp, model) {
@@ -565,7 +568,9 @@ impl Server {
             ),
             (None, Some(model)) => {
                 let agent = self
-                    .wisp_agent(project, root, &request, &session, &options, &model)
+                    .wisp_agent(
+                        project, root, &request, &session, &options, &model, lab_mail,
+                    )
                     .await?;
                 Engine::Wisp(Box::new(agent), model.provider.clone())
             }
@@ -584,8 +589,10 @@ impl Server {
         if let Err(error) = self.record_last_message_session(&request.session_id).await {
             tracing::warn!(%error, "Could not record the latest conversation");
         }
-        if self.0.store.max_message_seq(&request.session_id).await? == 0
-            || matches!(&engine, Engine::Wisp(agent, _) if !agent
+        // A conversation a lab member's mail opened keeps its sender's name.
+        if !lab_mail && self.0.store.max_message_seq(&request.session_id).await? == 0
+            || !lab_mail
+                && matches!(&engine, Engine::Wisp(agent, _) if !agent
                 .ctx
                 .messages
                 .iter()
@@ -622,6 +629,7 @@ impl Server {
                             full_access,
                             plan_mode,
                             root,
+                            lab_mail,
                         )
                         .await
                     }),
@@ -695,9 +703,16 @@ impl Server {
         session: &Arc<Session>,
         options: &desktop::ConversationOptions,
         model: &config::ModelConfig,
+        lab_mail: bool,
     ) -> Result<wisp_core::Agent> {
         let subagent = self.subagent_model_for(&request.session_id, model).await;
-        runtime::build(
+        // A lab member's agent can list the lab and write to its members.
+        let member = self.is_lab_member().await;
+        let lab = runtime::LabTurn {
+            context: member.then(channels::lab_mail::turn_context),
+            mail: lab_mail,
+        };
+        let mut agent = runtime::build(
             &self.0.config,
             model,
             &self.0.store,
@@ -715,8 +730,19 @@ impl Server {
             &subagent,
             self.decision_model_in_use().await,
             self.0.browser.bridge(),
+            lab,
         )
-        .await
+        .await?;
+        if member {
+            agent.add_tool(Box::new(channels::lab_mail::LabMembersTool {
+                server: self.clone(),
+            }));
+            agent.add_tool(Box::new(channels::lab_mail::LabSendTool {
+                server: self.clone(),
+                frame: request.session_id.clone(),
+            }));
+        }
+        Ok(agent)
     }
 
     /// Marks the conversation's turn as running, with what it had so far.

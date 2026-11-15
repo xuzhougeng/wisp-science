@@ -4,7 +4,9 @@ use crate::{
     i18n::{fill, host, tr},
     present::Tone,
 };
-use wisp_server::desktop::{ChannelState, FeishuStatus, WeixinScan, WeixinStatus};
+use wisp_server::desktop::{
+    ChannelState, FeishuStatus, LabMemberInfo, LabStatus, WeixinScan, WeixinStatus,
+};
 
 /// The line under WeChat's name, and its colour.
 pub fn weixin_line(status: &WeixinStatus) -> (String, Tone) {
@@ -58,6 +60,51 @@ pub fn scan_note(scan: Option<WeixinScan>) -> &'static str {
 /// Whether the scan is still worth asking about.
 pub fn scanning(scan: Option<WeixinScan>) -> bool {
     matches!(scan, None | Some(WeixinScan::Waiting | WeixinScan::Scanned))
+}
+
+/// The line under the lab's name, and its colour.
+pub fn lab_line(status: &LabStatus) -> (String, Tone) {
+    match status.state.as_str() {
+        "active" if status.leader => (
+            fill(tr("{} · you lead it"), &[&status.lab_name]),
+            Tone::Success,
+        ),
+        "active" => (fill(tr("{} · member"), &[&status.lab_name]), Tone::Success),
+        "pending" => (
+            fill(
+                tr("{} · waiting for the leader's approval"),
+                &[&status.lab_name],
+            ),
+            Tone::Attention,
+        ),
+        "removed" => (
+            tr("The leader removed this computer from the lab").to_owned(),
+            Tone::Danger,
+        ),
+        "error" if status.detail.trim().is_empty() => {
+            (tr("The lab could not be reached").to_owned(), Tone::Danger)
+        }
+        "error" => (
+            fill(
+                tr("The lab could not be reached: {}"),
+                &[&host(status.detail.trim())],
+            ),
+            Tone::Danger,
+        ),
+        _ => (tr("Not in a lab").to_owned(), Tone::Neutral),
+    }
+}
+
+/// A member as the list names them.
+pub fn member_label(member: &LabMemberInfo, me: &str) -> String {
+    let mut label = member.name.clone();
+    if member.leader {
+        label.push_str(&format!(" · {}", tr("leader")));
+    }
+    if member.id == me {
+        label.push_str(&format!(" · {}", tr("this computer")));
+    }
+    label
 }
 
 /// The commands a chat can send, as the page lists them.
@@ -129,6 +176,38 @@ mod tests {
         assert!(feishu_changed(&status, "cli_2", "", false));
         assert!(feishu_changed(&status, "cli_1", "secret", false));
         assert!(feishu_changed(&status, "cli_1", "", true));
+    }
+
+    #[test]
+    fn the_lab_line_says_where_this_computer_stands() {
+        let mut status = LabStatus {
+            state: "none".into(),
+            lab_name: "Genomics".into(),
+            ..Default::default()
+        };
+        assert_eq!(lab_line(&status).0, "Not in a lab");
+        status.state = "pending".into();
+        assert_eq!(
+            lab_line(&status).0,
+            "Genomics · waiting for the leader's approval"
+        );
+        status.state = "active".into();
+        status.leader = true;
+        assert_eq!(lab_line(&status).0, "Genomics · you lead it");
+        status.state = "error".into();
+        status.detail = "connection refused".into();
+        assert_eq!(
+            lab_line(&status).0,
+            "The lab could not be reached: connection refused"
+        );
+        let member = LabMemberInfo {
+            id: "m1".into(),
+            name: "Ada".into(),
+            leader: true,
+            pending: false,
+        };
+        assert_eq!(member_label(&member, "m1"), "Ada · leader · this computer");
+        assert_eq!(member_label(&member, "m2"), "Ada · leader");
     }
 
     #[test]

@@ -46,6 +46,7 @@ impl Workspace {
         self.receive_weixin(reply, window, cx);
         let reply = self.backend.feishu_status();
         self.receive_feishu(reply, true, window, cx);
+        self.load_lab(window, cx);
     }
 
     /// Takes the host's answer about Feishu. `fill` writes the App ID and
@@ -812,6 +813,19 @@ impl Workspace {
             )))
             .child(div().pt_4().child(self.weixin_card(cx)))
             .child(div().pt_6().child(self.feishu_card(cx)))
+            .child(
+                div()
+                    .v_flex()
+                    .gap_2()
+                    .pt_6()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child("Wisp Lab"),
+                    )
+                    .child(self.lab_card(cx)),
+            )
             .child(
                 div()
                     .v_flex()

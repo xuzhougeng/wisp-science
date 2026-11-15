@@ -157,7 +157,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Slash commands | A message that is only a command does something instead of being sent: `/review`, `/trajectory`, `/context`, `/btw <question>`, `/plan`, `/save-as-skill`, `/skills`, `/files`, `/upload`, `/memo`, `/remember`, `/archive`, `/compact`, `/timer 30m <prompt>`, `/fork`, `/rewind`, `/permission`, `/share`, `/help`; the composer's "/" button lists them |
 | Browser | Settings, Browser, switches on a bridge to the Wisp extension in your own Chrome or Chromium; conversations can then open a tab, read it and run a script in it, only in tabs they opened themselves, and hosts can be blocked or preferred |
 | Workflows | Settings, Workflows, keeps templates of a goal broken into tasks, each saying which earlier tasks it needs; Run starts a conversation in the open project and gives the model the tasks stage by stage |
-| Chat apps | Settings, Chat apps, binds a WeChat bot by scanning a QR code, and a Feishu (or Lark) bot by scanning to make its app or by entering an App ID and App Secret, with its owner confirmed here; the owner's messages then run in the project chats go to and the answer comes back (on Feishu as a card that shows the turn's progress), with `/project`, `/session`, `/new`, `/status`, `/stop` and, in WeChat, approvals answered by code (`/approve`, `/reject`) |
+| Chat apps | Settings, Chat apps, binds a WeChat bot by scanning a QR code, and a Feishu (or Lark) bot by scanning to make its app or by entering an App ID and App Secret, with its owner confirmed here; the owner's messages then run in the project chats go to and the answer comes back (on Feishu as a card that shows the turn's progress), with `/project`, `/session`, `/new`, `/status`, `/stop` and, in WeChat, approvals answered by code (`/approve`, `/reject`); and Wisp Lab: found a lab on a wisp-relay or ask to join one with an invite code, see the members (the leader approves, refuses or removes them and makes invite codes), choose the project that answers other members' agents, replace the relay token, leave |
 | Remote web access | Settings, Remote access, opens this desktop's projects in a phone or a browser through a wisp-relay of your own: it dials out (no inbound port), shows whether the tunnel is up and how many browsers are connected, and gives a link and a code that can be copied or replaced |
 | Plugins | Settings, Plugins, installs a plugin from a folder in the Claude plugin layout (`.claude-plugin/plugin.json`, `skills/*/SKILL.md`) into the app's data without running anything in it, lists what each brings, switches one on for the open project, whose conversations then have its skills, and removes it |
 | Decision model | Settings, Decision model, sets up one fast endpoint (TypeSafe Jev, StartLux-Decision hosted or self-hosted, or a custom System One server) with its key, thinking mode and timeout, and tests it; while one is in use the model's `map_items` tool, which runs one step over many items, also offers its `decide` step |
@@ -702,6 +702,25 @@ Limits of this slice:
   WeChat, `/mandates`, notices to the owner of work that finished
   unasked, and Feishu's interactive approval cards (the WebView has none
   either).
+- Wisp Lab follows `lab.rs` and `lab_mail.rs` (docs/wisp-lab.md): the
+  identity (relay, member key, lab key, name) is one keychain secret,
+  `lab_identity`, and the relay token `lab_relay_token`, both under the
+  WebView's names. A member computer's agents get `lab_members` and
+  `lab_send` and are told about the lab every turn; a question is sealed
+  with the lab key, waits in the recipient's mailbox on the relay, and
+  the mailbox is looked at every 15 seconds while the app is open. A
+  received question runs one turn in a conversation kept per sender
+  (`Lab: <name>`) in the project chosen for lab mail and is answered by
+  mail; the answer arrives in the asking conversation as a new message
+  and runs a turn there. With no project chosen a question is answered
+  at once that this computer does not take lab mail. A turn a mail
+  started asks before every tool but reading this project's files,
+  skills, the plan, `lab_members` and finishing; it reads only inside its
+  project and leaves the user's memory out. At most four mails follow
+  one another without a person writing. Up to four project files of 32
+  MiB each travel along, encrypted, and arrive under `uploads/lab/`. Not
+  ported: the lab's knowledge base, a project shared through project
+  sync (its name shows when the leader published one).
 - Remote web access is the only tunnel ported: there is no project
   sync through the relay, StickS3 or Wisp-Lab. A browser
   gets the commands a headless `wisp-server` offers (projects,
@@ -1432,6 +1451,20 @@ and Refuse; press Make owner and write again: it answers. From another
 account write to the bot: it says it answers only its owner. Unbind,
 then Escape: only the question closes; Unbind and answer it: the line
 reads Not bound and the App ID field is empty.
+Under Wisp Lab, with a wisp-relay of your own started with `WISP_LAB=1`,
+leave the invite code empty, give the relay's address, its token, your
+name and a lab name, and press Found the lab: the line says you lead it
+and you are listed. Make an invite code and copy it. On a second
+computer (or a second data folder) paste the code, the token and a name
+and press Ask to join: it waits for approval, and the first computer
+lists it as waiting; Approve it. On the second computer choose a project
+under Answer lab mail in. On the first, ask a conversation to send Lin a
+question with `lab_send`: within a quarter minute the second computer
+has a conversation named Lab: and the answer comes back into the asking
+conversation. Choose None and ask again: the answer says that computer
+takes no lab mail. Remove the member, then Escape: only the question
+closes; remove it: the second computer reads removed and offers Forget
+the lab.
 In Settings, Remote access, switch it on with nothing filled in: it is
 refused. Give a relay address that is plain http on another machine: it
 is refused. With a relay of your own running, give its https address

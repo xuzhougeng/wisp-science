@@ -19,6 +19,8 @@
 pub(crate) mod feishu;
 mod feishu_card;
 pub(crate) mod feishu_registration;
+pub(crate) mod lab;
+pub(crate) mod lab_mail;
 pub(crate) mod pbbp2;
 pub(crate) mod weixin;
 
@@ -49,6 +51,16 @@ pub enum ChannelState {
     Connecting,
     Running,
     Error,
+}
+
+/// Who started a turn: the desktop, a chat app, or another lab member's
+/// mail. Only the desktop's turns may run with the conversation's full
+/// access.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TurnOrigin {
+    Desktop,
+    Chat,
+    LabMail,
 }
 
 /// Which chat app a text came from. Approvals are answered by text only
@@ -114,6 +126,12 @@ pub(crate) struct Channels {
         tokio::sync::Mutex<HashMap<String, feishu_registration::RegistrationFlow>>,
     /// Where Feishu's services are; tests point them at a fake.
     pub(crate) feishu_hosts: Mutex<feishu::Hosts>,
+    /// The lab mailbox poller, running while this computer is a member.
+    pub(crate) lab: Worker,
+    /// Serializes the lab's two small routing settings.
+    pub(crate) lab_routes: tokio::sync::Mutex<()>,
+    /// The hop of the lab mail whose turn runs in a conversation.
+    pub(crate) lab_hops: Mutex<HashMap<String, u32>>,
     /// Serializes binding, enabling and unbinding WeChat.
     pub(crate) weixin_config: tokio::sync::Mutex<()>,
     /// Serializes reading and changing the shared target.
@@ -131,6 +149,9 @@ impl Default for Channels {
             feishu: Worker::default(),
             feishu_flows: Default::default(),
             feishu_hosts: Default::default(),
+            lab: Worker::default(),
+            lab_routes: Default::default(),
+            lab_hops: Default::default(),
             weixin_config: Default::default(),
             route: Default::default(),
             chats: Default::default(),
@@ -143,9 +164,10 @@ impl Channels {
     pub(crate) fn stop_all(&self) {
         self.weixin.stop();
         self.feishu.stop();
+        self.lab.stop();
     }
 
-    fn chat_lock(&self, key: &str) -> Arc<tokio::sync::Mutex<()>> {
+    pub(crate) fn chat_lock(&self, key: &str) -> Arc<tokio::sync::Mutex<()>> {
         self.chats
             .lock()
             .unwrap()
@@ -844,19 +866,23 @@ impl Server {
         };
         // The long turn runs without the chat's lock, so /stop gets through.
         drop(guard);
-        match self.chat_turn(&project, &session, text, events).await {
+        match self
+            .chat_turn(&project, &session, text, events, TurnOrigin::Chat)
+            .await
+        {
             Ok(reply) => reply,
             Err(error) => format!("处理失败:{error:#}"),
         }
     }
 
-    /// Runs one turn for a chat and returns its answer.
-    async fn chat_turn(
+    /// Runs one turn for a chat or a lab mail and returns its answer.
+    pub(crate) async fn chat_turn(
         &self,
         project: &str,
         session: &str,
         text: &str,
         events: Option<mpsc::UnboundedSender<ChatEvent>>,
+        origin: TurnOrigin,
     ) -> Result<String> {
         let root = self.project_root(project).await?;
         let request = wisp_dto::native_conversations::SendRequest {
@@ -870,7 +896,7 @@ impl Server {
             acp_agent_id: None,
         };
         let live = self.session(session);
-        self.start_turn(project, &root, request, true).await?;
+        self.start_turn(project, &root, request, origin).await?;
         // The history the turn started from; what follows is this turn's.
         let from = live.live.lock().unwrap().messages.len();
         let mut told = std::collections::HashSet::new();
@@ -927,6 +953,9 @@ impl Server {
     pub async fn start_channels(&self) {
         if get_setting(&self.0.store, feishu::ENABLED).await == "true" {
             self.start_feishu().await;
+        }
+        if self.is_lab_member().await {
+            self.start_lab();
         }
         if get_setting(&self.0.store, weixin::ENABLED).await == "true" {
             let _config = self.0.channels.weixin_config.lock().await;

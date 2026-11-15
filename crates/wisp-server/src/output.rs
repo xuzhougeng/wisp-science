@@ -182,6 +182,9 @@ pub struct ServerOutput {
     /// Tools the user allowed for good in this project, as of the turn's
     /// start. They answer the standard tool question only.
     pub always: HashSet<String>,
+    /// Another lab member's mail started the turn: it asks before every
+    /// tool outside a short list and reads only inside the project.
+    pub lab_mail: bool,
 }
 
 impl Output for ServerOutput {
@@ -290,7 +293,14 @@ impl Output for ServerOutput {
         Approval::Allow
     }
     fn force_ask_mutations(&self) -> bool {
-        !self.full_access
+        !self.full_access || self.lab_mail
+    }
+    fn unattended_tools(&self) -> Option<&'static [&'static str]> {
+        self.lab_mail
+            .then_some(crate::channels::lab_mail::UNATTENDED_TOOLS)
+    }
+    fn restrict_read_paths_to_project(&self) -> bool {
+        self.lab_mail
     }
     fn approval_bypass(&self) -> bool {
         // Dangerous shell commands keep their own question either way.
@@ -370,6 +380,7 @@ mod tests {
             full_access: false,
             plan_mode: false,
             always: Default::default(),
+            lab_mail: false,
         };
         assert!(out.force_ask_mutations());
         assert!(!out.approval_bypass());
@@ -395,6 +406,7 @@ mod tests {
             full_access,
             plan_mode: false,
             always: Default::default(),
+            lab_mail: false,
         }
     }
 

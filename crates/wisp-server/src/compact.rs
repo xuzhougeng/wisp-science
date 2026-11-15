@@ -69,6 +69,7 @@ impl Server {
             &subagent,
             None,
             None,
+            runtime::LabTurn::default(),
         )
         .await?;
         ensure!(

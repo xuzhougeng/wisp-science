@@ -5228,6 +5228,7 @@ pub use crate::workflows::{
     Workflow, WorkflowInput, WorkflowTask, TASK_LIMIT as WORKFLOW_TASK_LIMIT,
 };
 pub use wisp_dto::{ArchiveScript, ResearchArchive};
+pub use wisp_dto::{LabKnowledgeBaseInfo, LabMemberInfo, LabStatus};
 
 /// A project's folder, as the question before it is deleted describes it.
 #[derive(Clone, Debug, PartialEq, Eq)]

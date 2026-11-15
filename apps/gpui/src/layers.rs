@@ -153,6 +153,10 @@ pub enum Layer {
     ConfirmUnbindWeixin,
     /// Question before Feishu is unbound, on the same page.
     ConfirmUnbindFeishu,
+    /// Question before this computer leaves its Wisp Lab.
+    ConfirmLeaveLab,
+    /// Question before the leader removes a lab member.
+    ConfirmRemoveLabMember,
     /// Question before an expert is removed.
     ConfirmRemoveExpert,
     /// The form for an SSH host, on the Environments page of Settings.
@@ -217,6 +221,8 @@ impl Layer {
             | Layer::ConfirmRemoveCodexAccount
             | Layer::ConfirmUnbindWeixin
             | Layer::ConfirmUnbindFeishu
+            | Layer::ConfirmLeaveLab
+            | Layer::ConfirmRemoveLabMember
             | Layer::QuickActionForm
             | Layer::WorkflowForm
             | Layer::ConfirmRemoveWorkflow
@@ -551,7 +557,12 @@ mod tests {
         assert!(stack.close(Layer::Settings));
         assert!(!stack.contains(Layer::AcpAgentForm));
         // So are the questions before WeChat and Feishu are unbound.
-        for question in [Layer::ConfirmUnbindWeixin, Layer::ConfirmUnbindFeishu] {
+        for question in [
+            Layer::ConfirmUnbindWeixin,
+            Layer::ConfirmUnbindFeishu,
+            Layer::ConfirmLeaveLab,
+            Layer::ConfirmRemoveLabMember,
+        ] {
             stack.open(Layer::Settings);
             stack.open(question);
             assert_eq!(stack.dismiss_top(), Some(question));

@@ -35,6 +35,7 @@ mod settings_data;
 mod settings_decision;
 mod settings_environments;
 mod settings_experts;
+mod settings_lab;
 mod settings_mcp;
 mod settings_network;
 mod settings_plugins;
@@ -463,6 +464,16 @@ pub struct Workspace {
     feishu_qr: Option<wisp_server::desktop::FeishuBind>,
     feishu_bind_id: u64,
     feishu_note: Option<Result<String, String>>,
+    /// Wisp Lab on the same page: where this computer stands, the join form
+    /// (relay, token, name, lab name, invite, and a replacement token), the
+    /// latest invite code made, the member a remove question is about, and
+    /// how the last change went.
+    lab: Option<wisp_server::desktop::LabStatus>,
+    lab_fields: [Entity<InputState>; 6],
+    lab_invite: Option<String>,
+    lab_removing: Option<String>,
+    lab_busy: bool,
+    lab_note: Option<Result<String, String>>,
     acp_reports:
         std::collections::HashMap<String, Result<wisp_server::desktop::AcpAgentReport, String>>,
     mcp_servers: Option<Vec<wisp_server::desktop::McpServerRow>>,
@@ -651,6 +662,14 @@ impl Workspace {
         let workflow_fields = [
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
+        ];
+        let lab_fields = [
+            cx.new(|cx| InputState::new(window, cx).placeholder("https://relay.example")),
+            cx.new(|cx| InputState::new(window, cx).masked(true)),
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx).masked(true)),
         ];
         let feishu_fields = [
             cx.new(|cx| InputState::new(window, cx).placeholder("cli_…")),
@@ -1090,6 +1109,12 @@ impl Workspace {
             feishu_qr: None,
             feishu_bind_id: 0,
             feishu_note: None,
+            lab: None,
+            lab_fields,
+            lab_invite: None,
+            lab_removing: None,
+            lab_busy: false,
+            lab_note: None,
             acp_reports: Default::default(),
             mcp_servers: None,
             mcp_editing: None,
@@ -1208,7 +1233,10 @@ impl Workspace {
             Some(Layer::ExpertForm | Layer::ConfirmRemoveExpert) => self.expert_editing = None,
             Some(Layer::AcpAgentForm | Layer::ConfirmRemoveAcpAgent) => self.acp_editing = None,
             Some(Layer::ConfirmRemoveCodexAccount) => self.codex_removing = None,
-            Some(Layer::ConfirmUnbindWeixin | Layer::ConfirmUnbindFeishu) => {}
+            Some(
+                Layer::ConfirmUnbindWeixin | Layer::ConfirmUnbindFeishu | Layer::ConfirmLeaveLab,
+            ) => {}
+            Some(Layer::ConfirmRemoveLabMember) => self.lab_removing = None,
             Some(Layer::ConfirmRemovePlugin) => self.plugin_removing = None,
             Some(Layer::ConfirmResetRemoteCode) => {}
             Some(Layer::WorkflowForm) => {

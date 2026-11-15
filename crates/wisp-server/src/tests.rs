@@ -7857,6 +7857,211 @@ async fn feishu_makes_its_app_by_scan_and_answers_only_its_owner() {
     server.shutdown().await;
 }
 
+/// A relay hosting a lab, on loopback.
+async fn lab_relay(root: &Path) -> String {
+    let relay = wisp_sync::FileRelay::open(root.join("relay"))
+        .await
+        .unwrap();
+    let state = wisp_sync::RelayHttpState::new(relay, "test-relay-token")
+        .unwrap()
+        .with_lab(
+            wisp_sync::Lab::open(root.join("relay").join("lab"))
+                .await
+                .unwrap(),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, wisp_sync::relay_router(state)).await });
+    url
+}
+
+/// Looks in a computer's lab mailbox once and waits for the turns it
+/// started.
+async fn deliver_lab_mail(server: &Server) {
+    let identity = server.lab_identity().unwrap();
+    let client = server.lab_client(&identity).unwrap();
+    let seen = crate::channels::lab_mail::SeenMails::default();
+    for turn in server
+        .poll_lab_mail(&identity, &client, &seen)
+        .await
+        .unwrap()
+    {
+        turn.await.unwrap();
+    }
+}
+
+async fn texts_of(server: &Server, frame: &str) -> Vec<String> {
+    server
+        .0
+        .store
+        .load_messages(frame)
+        .await
+        .unwrap()
+        .iter()
+        .map(|message| message.content.as_text())
+        .collect()
+}
+
+#[tokio::test]
+async fn lab_members_join_by_invite_and_their_agents_mail_each_other() {
+    let temp = tempfile::tempdir().unwrap();
+    let url = lab_relay(temp.path()).await;
+    let computer = |name: &str| {
+        let root = temp.path().join(name);
+        async move {
+            Server::open_with(
+                config(&root),
+                models(Arc::default(), false),
+                Arc::new(desktop::MemorySecrets::default()),
+            )
+            .await
+            .unwrap()
+        }
+    };
+    let ada = computer("ada").await;
+    let lin = computer("lin").await;
+    assert!(!ada.commands().iter().any(|command| command.contains("lab")));
+    assert_eq!(ada.lab_status().await.state, "none");
+    // A name is needed, and a token.
+    assert!(ada
+        .join_lab(&url, None, "Ada", "Genomics", "")
+        .await
+        .is_err());
+    assert!(ada
+        .join_lab(&url, Some("test-relay-token".into()), " ", "", "")
+        .await
+        .is_err());
+
+    // The first computer founds the lab and leads it.
+    let status = ada
+        .join_lab(&url, Some("test-relay-token".into()), "Ada", "Genomics", "")
+        .await
+        .unwrap();
+    assert_eq!(status.state, "active");
+    assert!(status.leader && status.lab_name == "Genomics");
+    // The mailbox is looked at by hand below.
+    ada.0.channels.lab.stop();
+    assert!(ada
+        .join_lab(&url, Some("test-relay-token".into()), "Ada", "", "")
+        .await
+        .is_err());
+
+    // Another joins with an invite and waits for the leader.
+    let invite = ada.create_lab_invite().await.unwrap();
+    assert!(lin
+        .join_lab(
+            "",
+            Some("test-relay-token".into()),
+            "Lin",
+            "",
+            "not-an-invite"
+        )
+        .await
+        .is_err());
+    let status = lin
+        .join_lab("", Some("test-relay-token".into()), "Lin", "", &invite)
+        .await
+        .unwrap();
+    lin.0.channels.lab.stop();
+    assert_eq!(status.state, "pending");
+    assert!(!status.leader);
+    let waiting = ada
+        .lab_status()
+        .await
+        .members
+        .into_iter()
+        .find(|member| member.pending)
+        .unwrap();
+    assert_eq!(waiting.name, "Lin");
+    // Only the leader approves.
+    assert!(lin.approve_lab_member(&waiting.id).await.is_err());
+    ada.approve_lab_member(&waiting.id).await.unwrap();
+    let status = lin.lab_status().await;
+    assert_eq!(status.state, "active");
+    assert_eq!(status.members.len(), 2);
+
+    // Lin's computer answers lab mail from one of its projects.
+    let lin_folder = temp.path().join("lin-project");
+    std::fs::create_dir(&lin_folder).unwrap();
+    let lin_project = lin.register_local_project(&lin_folder).await.unwrap();
+    assert!(lin.set_lab_inbox_project("missing").await.is_err());
+    lin.set_lab_inbox_project(&lin_project).await.unwrap();
+    assert_eq!(lin.lab_status().await.inbox_project_id, lin_project);
+
+    // Ada's agent asks; Lin's agent answers in a conversation kept for Ada,
+    // and the answer comes back to the conversation that asked.
+    let ada_folder = temp.path().join("ada-project");
+    std::fs::create_dir(&ada_folder).unwrap();
+    let ada_project = ada.register_local_project(&ada_folder).await.unwrap();
+    let asking = ada.create_conversation(&ada_project).await.unwrap();
+    let sent = ada
+        .lab_send(
+            &asking,
+            &json!({"to": "lin", "message": "Which reference genome?"}),
+            &ada_folder,
+        )
+        .await
+        .unwrap();
+    assert!(sent.starts_with("Sent to Lin."));
+    // Only the project's own files leave the computer.
+    assert!(ada
+        .lab_send(
+            &asking,
+            &json!({"to": "Lin", "message": "see this", "files": ["../secret.txt"]}),
+            &ada_folder,
+        )
+        .await
+        .is_err());
+    deliver_lab_mail(&lin).await;
+    let kept = lin
+        .0
+        .store
+        .list_sessions_page(&lin_project, None, 10)
+        .await
+        .unwrap();
+    let (lab_frame, title, ..) = kept.first().unwrap().clone();
+    assert_eq!(title, "Lab: Ada");
+    let asked = texts_of(&lin, &lab_frame).await;
+    assert!(asked.iter().any(|text| text.starts_with(
+        "[Lab message from Ada (lab leader)]
+Which reference genome?"
+    )));
+    deliver_lab_mail(&ada).await;
+    let answered = texts_of(&ada, &asking).await;
+    assert!(
+        answered.iter().any(|text| text.starts_with(
+            "[Lab reply from Lin]
+Saved result"
+        )),
+        "{answered:?}"
+    );
+
+    // With no project for lab mail, a question is told so at once.
+    lin.set_lab_inbox_project("").await.unwrap();
+    ada.lab_send(
+        &asking,
+        &json!({"to": "Lin", "message": "And the annotation?"}),
+        &ada_folder,
+    )
+    .await
+    .unwrap();
+    deliver_lab_mail(&lin).await;
+    deliver_lab_mail(&ada).await;
+    assert!(texts_of(&ada, &asking)
+        .await
+        .iter()
+        .any(|text| text.contains("does not answer lab messages")));
+
+    // Removed by the leader, Lin's computer can only forget the lab.
+    ada.remove_lab_member(&waiting.id).await.unwrap();
+    assert_eq!(lin.lab_status().await.state, "removed");
+    lin.leave_lab(true).await.unwrap();
+    assert_eq!(lin.lab_status().await.state, "none");
+    assert!(!lin.is_lab_member().await);
+    ada.shutdown().await;
+    lin.shutdown().await;
+}
+
 /// A ChatGPT access token as Codex CLI keeps it (unsigned; claims only).
 fn chatgpt_token(account: &str, exp: i64, email: &str) -> String {
     use base64::Engine;
