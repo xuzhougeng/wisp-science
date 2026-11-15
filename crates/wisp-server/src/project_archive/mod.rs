@@ -16,7 +16,7 @@ use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 
 mod workspace_manifest;
-mod workspace_scan;
+pub(crate) mod workspace_scan;
 
 const ARCHIVE_KIND: &str = "wisp-project";
 const ARCHIVE_VERSION: u32 = 1;

@@ -13,6 +13,9 @@ pub mod desktop;
 mod device_bridge;
 mod excerpt;
 mod experts;
+// Used by the explorations service that comes with the next step.
+#[allow(dead_code)]
+mod exploration_workspace;
 mod export;
 mod files;
 mod follow_ups;
