@@ -251,6 +251,32 @@ impl Workspace {
                     .child(actions),
                 cx,
             ));
+            // For a phone: the same link to scan. As secret as the link, so
+            // it is shown only when asked for.
+            let shown = self.remote_qr_shown;
+            let mut scan = div().v_flex().items_end().gap_2().child(
+                Button::new("remote-qr")
+                    .label(if shown {
+                        tr("Hide the QR code")
+                    } else {
+                        tr("Show the QR code")
+                    })
+                    .small()
+                    .selected(shown)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.remote_qr_shown = !this.remote_qr_shown;
+                        cx.notify();
+                    })),
+            );
+            if let (true, Some(matrix)) = (shown, &access.qr) {
+                scan = scan.child(super::settings_channels::qr_code(matrix));
+            }
+            page = page.child(setting(
+                tr("Open on a phone"),
+                tr("Scan the link with the phone's camera instead of typing it."),
+                scan,
+                cx,
+            ));
         }
         page.child(
             div()

@@ -1874,7 +1874,8 @@ refused. Give a relay address that is plain http on another machine: it
 is refused. With a relay of your own running, give its https address
 and token and switch it on: the line reads Connecting, then Connected,
 and a code shows. Copy the link and open it in a browser: the projects
-are listed and the line counts one browser. Press Reset code, then
+are listed and the line counts one browser. Press Show the QR code and
+scan it with a phone: the same page opens there. Press Reset code, then
 Escape: only the question closes. Reset it: the browser is dropped and
 the old link no longer works. Under StickS3 desk display give 0.0.0.0
 and turn it on: it is refused. Give this computer's LAN address and turn

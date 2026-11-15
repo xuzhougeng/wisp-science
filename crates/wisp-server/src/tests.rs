@@ -11359,6 +11359,14 @@ async fn remote_access_dials_a_relay_and_answers_a_browser_that_holds_the_code()
         on.link.as_deref(),
         Some(format!("{url}/remote#{shown}").as_str())
     );
+    // The link as a QR code for a phone: a square of modules.
+    let qr = on.qr.clone().expect("the link comes as a QR code too");
+    assert!(qr.width >= 21);
+    assert_eq!(qr.dark.len(), qr.width * qr.width);
+    assert_eq!(
+        Some(qr),
+        crate::channels::weixin::QrMatrix::of(on.link.as_deref().unwrap()).ok()
+    );
     state_is(RemoteState::Connected).await;
     // The token and the code are in the secret store only.
     for key in ["remote_relay_token", "remote_access_code"] {

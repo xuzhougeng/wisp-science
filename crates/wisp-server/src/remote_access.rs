@@ -68,6 +68,8 @@ pub struct RemoteAccess {
     pub code: Option<String>,
     /// Browsers connected right now.
     pub clients: u32,
+    /// The link as a QR code, for a phone to scan; as secret as the link.
+    pub qr: Option<crate::channels::weixin::QrMatrix>,
 }
 
 /// The running tunnel, when there is one.
@@ -346,15 +348,19 @@ impl Server {
             None => false,
         };
         let (state, detail) = self.0.remote.status.lock().unwrap().clone();
+        let link = code
+            .as_ref()
+            .and_then(|code| wisp_sync::remote_endpoints(&relay_url, code).ok())
+            .map(|(_, link)| link);
         Ok(RemoteAccess {
             enabled: self.remote_setting(ENABLED_KEY).await == "true",
             has_token,
             state,
             detail,
-            link: code
-                .as_ref()
-                .and_then(|code| wisp_sync::remote_endpoints(&relay_url, code).ok())
-                .map(|(_, link)| link),
+            qr: link
+                .as_deref()
+                .and_then(|link| crate::channels::weixin::QrMatrix::of(link).ok()),
+            link,
             code: code.map(|code| code.display()),
             relay_url,
             clients: self.0.remote.clients.load(Ordering::Relaxed),

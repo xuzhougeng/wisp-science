@@ -26,7 +26,7 @@ use crate::{
 const MODULE: f32 = 4.;
 
 /// A QR code drawn as squares, with the light margin scanners need.
-fn qr_code(matrix: &QrMatrix) -> Div {
+pub(super) fn qr_code(matrix: &QrMatrix) -> Div {
     let mut rows = div().v_flex().p(px(MODULE * 4.)).bg(gpui::white());
     for row in matrix.dark.chunks(matrix.width.max(1)) {
         let mut line = div().flex();

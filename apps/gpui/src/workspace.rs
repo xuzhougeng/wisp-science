@@ -463,6 +463,8 @@ pub struct Workspace {
     workflow_pick: Option<usize>,
     /// Remote web access as the host has it; `None` until it answered.
     remote_access: Option<wisp_server::desktop::RemoteAccess>,
+    /// The web access link is shown as a QR code.
+    remote_qr_shown: bool,
     /// Relay address, relay token.
     remote_fields: [Entity<InputState>; 2],
     /// Names the latest round of looks at the tunnel.
@@ -1302,6 +1304,7 @@ impl Workspace {
             workflow_approval: Default::default(),
             workflow_pick: None,
             remote_access: None,
+            remote_qr_shown: false,
             remote_fields,
             remote_watch: 0,
             device: None,
