@@ -142,7 +142,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Host folders | With an SSH host saved, the Files tab offers it beside the project: its folders are listed, to walk through and see what is there |
 | File origin | A file's preview has Origin: which tool call last wrote it, with the code it ran, the project files it read and the conversation, which it can open |
 | Terminal | Terminals drawn in the window, in a dock at the foot of the conversation (Terminals in the top bar shows or hides it; hidden, they keep running): the Files tab's terminal button (or the command palette) opens one in the folder being browsed, + one in the project's folder, the host button one on a saved SSH host, and Terminal on a host's row in Environments or over a host's folder in Files one there; several at once as tabs, each closed with its ×; the dock's last button opens the system's terminal instead |
-| Updates | Settings, General, has Check for updates: it says whether a newer release has been published and opens the release page |
+| Updates | Wisp looks for a newer release when it starts (unless turned off) and shows a note only when there is one; Settings, General, has Check for updates and the At start switch, says whether a newer release has been published and opens the release page |
 | Tabs | The conversations you open in a window line up as tabs above the conversation, across projects; click one to go back to it, close one to drop it from the strip |
 | Sidebar | The project's sidebar hides for more room and comes back with the button left of the conversation's title or Cmd/Ctrl+B; it stays as it was left, across restarts. Cmd/Ctrl+Shift+F brings it back if hidden and puts you in its search, which finds conversations by their title or by any word in their messages |
 | Notifications | When a turn ends or a tool waits for approval while Wisp is in the background, a system notification is posted and, if chosen, a sound is played (Settings, General) |
@@ -626,8 +626,12 @@ Limits of this slice:
   it again to see more. Only runs on this computer have it: a run on an
   SSH host keeps its log on that host, and its last lines are what the
   Output shows. Once a run's folder is gone, so is its whole log.
-- The update check runs only when its button is pressed: nothing is
-  checked at start or in the background. It asks GitHub for the latest
+- The update check runs once when the app starts, unless At start is
+  turned off in Settings, General, or Don't check at start is pressed on
+  the note it shows (the WebView's `update_check_enabled`, so either
+  desktop honours it), and whenever its button is pressed; nothing is
+  checked in the background. At start it says something only when a
+  newer release exists, in a note in the window's corner. It asks GitHub for the latest
   release of the project (the WebView's request, with a generic client
   name and nothing about you or your work), over the system's proxy
   settings, and gives up after eight seconds. Nothing is downloaded or
@@ -1616,7 +1620,10 @@ long run is still writing and confirm more appears.
 In Settings, General, press Check for updates: it reads Checking… and
 then says this is the latest version or names a newer one, with Open
 releases opening the project's release page. Without a network it says
-it could not check.
+it could not check. Turn At start off, quit and start again: no check is
+made; turn it on and start a build older than the latest release: a note
+in the corner names the newer version, and Don't check at start turns
+the switch off.
 Open three conversations, one of them in another project: tabs appear
 above the conversation from the second on. Click a tab of the other
 project: its project and conversation open. Close the tab in view: its

@@ -79,6 +79,34 @@ fn compare(current: &str, release: Release) -> Result<UpdateCheck> {
     })
 }
 
+/// The WebView desktop's switch for looking when the app starts, saved as
+/// `true` or `false`.
+const AT_START: &str = "update_check_enabled";
+
+/// Whether a saved switch is on. Nothing saved, or something that is not
+/// a switch, is on, as the WebView reads it.
+fn at_start(saved: Option<&str>) -> bool {
+    saved
+        .and_then(|saved| serde_json::from_str::<bool>(saved.trim()).ok())
+        .unwrap_or(true)
+}
+
+impl crate::Server {
+    /// Whether to look for a newer version when the app starts.
+    pub async fn update_check_at_start(&self) -> Result<bool> {
+        Ok(at_start(
+            self.0.store.get_setting(AT_START).await?.as_deref(),
+        ))
+    }
+
+    pub async fn set_update_check_at_start(&self, enabled: bool) -> Result<()> {
+        self.0
+            .store
+            .set_setting(AT_START, &enabled.to_string())
+            .await
+    }
+}
+
 /// Asks the release page which version is the latest.
 pub(crate) async fn check() -> Result<UpdateCheck> {
     let release = reqwest::Client::builder()
@@ -127,6 +155,15 @@ mod tests {
         // pre-release of what is running is not.
         assert!(compare("1.25.0-rc.1", release("v1.25.0")).unwrap().newer);
         assert!(!compare("1.25.0", release("v1.25.0-rc.2")).unwrap().newer);
+    }
+
+    #[test]
+    fn looking_at_start_is_on_unless_it_was_turned_off() {
+        assert!(at_start(None));
+        assert!(at_start(Some("true")));
+        assert!(!at_start(Some("false")));
+        assert!(!at_start(Some(" false\n")));
+        assert!(at_start(Some("maybe")));
     }
 
     #[test]

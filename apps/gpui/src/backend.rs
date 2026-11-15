@@ -1002,6 +1002,14 @@ impl Backend {
     }
 
     /// Asks the release page whether a newer version has been published.
+    pub fn update_check_at_start(&self) -> Reply<bool> {
+        self.local(|host| async move { host.update_check_at_start().await })
+    }
+
+    pub fn set_update_check_at_start(&self, enabled: bool) -> Reply<()> {
+        self.local(move |host| async move { host.set_update_check_at_start(enabled).await })
+    }
+
     pub fn check_for_update(&self) -> Reply<wisp_server::desktop::UpdateCheck> {
         self.local(|host| async move { host.check_for_update().await })
     }

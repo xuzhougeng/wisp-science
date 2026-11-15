@@ -218,8 +218,14 @@ pub enum Update {
 }
 
 /// What the Updates row says, and whether there is a release to open.
-pub fn update_note(update: Option<&Update>) -> (String, bool) {
+/// `at_start` is whether Wisp also looks each time it starts.
+pub fn update_note(update: Option<&Update>, at_start: bool) -> (String, bool) {
     match update {
+        None if at_start => (
+            tr("Wisp looks for a newer version when it starts and when you ask; nothing is downloaded.")
+                .to_owned(),
+            false,
+        ),
         None => (
             tr("Wisp looks for a newer version only when you ask.").to_owned(),
             false,
@@ -924,26 +930,27 @@ mod tests {
             })
         };
         assert_eq!(
-            update_note(None),
+            update_note(None, false),
             (
                 "Wisp looks for a newer version only when you ask.".into(),
                 false
             )
         );
+        assert!(update_note(None, true).0.contains("when it starts"));
         assert_eq!(
-            update_note(Some(&Update::Checking)),
+            update_note(Some(&Update::Checking), true),
             ("Checking…".into(), false)
         );
         assert_eq!(
-            update_note(Some(&found(true))),
+            update_note(Some(&found(true)), true),
             ("Version 1.25.0 is available; this is 1.24.0.".into(), true)
         );
         assert_eq!(
-            update_note(Some(&found(false))),
+            update_note(Some(&found(false)), true),
             ("This is the latest version, 1.24.0.".into(), false)
         );
         assert_eq!(
-            update_note(Some(&Update::Failed("no network".into()))),
+            update_note(Some(&Update::Failed("no network".into())), true),
             ("Could not check: no network".into(), false)
         );
     }

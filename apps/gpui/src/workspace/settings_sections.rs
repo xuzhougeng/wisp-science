@@ -31,6 +31,10 @@ const NOTIFY: &str = "notifications";
 const NOTIFY_SOUND: &str = "notification_sound";
 const LAST_OPEN: &str = "last_open";
 
+/// Set once the check at start has been made, so a second window does not
+/// make it again.
+static CHECKED_AT_START: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// How wide a setting's name and note are, and the page that holds them.
 const NOTE_WIDTH: f32 = 460.;
 const PAGE_WIDTH: f32 = 720.;
@@ -756,6 +760,29 @@ impl Workspace {
             });
         })
         .detach();
+        // A newer version is looked for once, when the app starts, unless
+        // that was turned off; only one that is newer is shown.
+        let at_start = self.backend.update_check_at_start();
+        let backend = self.backend.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let enabled = receive(at_start).await.unwrap_or(true);
+            let _ = this.update(cx, |this, cx| {
+                this.update_at_start = enabled;
+                cx.notify();
+            });
+            if !enabled || CHECKED_AT_START.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                return;
+            }
+            if let Ok(found) = receive(backend.check_for_update()).await {
+                let _ = this.update(cx, |this, cx| {
+                    if found.newer {
+                        this.update_banner = Some(found);
+                    }
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
         // The composer offers them from the start.
         self.load_experts(window, cx);
         self.load_acp_agents(window, cx);
@@ -815,6 +842,91 @@ impl Workspace {
             });
         })
         .detach();
+    }
+
+    /// Looks for a newer version when the app starts, or stops doing so.
+    fn set_update_at_start(&mut self, enabled: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_at_start = enabled;
+        if !enabled {
+            self.update_banner = None;
+        }
+        let reply = self.backend.set_update_check_at_start(enabled);
+        cx.spawn_in(window, async move |this, cx| {
+            if let Err(error) = receive(reply).await {
+                let _ = this.update(cx, |this, cx| {
+                    this.settings_error = Some(error);
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// The newer version found at start: where to get it, and how to stop
+    /// being told.
+    pub(super) fn render_update_banner(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let found = self.update_banner.as_ref()?;
+        let url = found.url.clone();
+        Some(
+            div()
+                .absolute()
+                .bottom_4()
+                .left_4()
+                .w(px(320.))
+                .v_flex()
+                .gap_2()
+                .p_3()
+                .rounded(cx.theme().radius_lg)
+                .border_1()
+                .border_color(cx.theme().border)
+                .bg(cx.theme().popover)
+                .shadow_lg()
+                .text_sm()
+                .child(crate::i18n::fill(
+                    tr("Wisp {} is available; this is {}."),
+                    &[&found.latest, &found.current],
+                ))
+                .child(
+                    div()
+                        .h_flex()
+                        .gap_1()
+                        .child(
+                            Button::new("update-banner-open")
+                                .label(tr("Open releases"))
+                                .small()
+                                .primary()
+                                .tooltip(tr("Open the release page in your browser"))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.open_url(&url);
+                                    this.update_banner = None;
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            Button::new("update-banner-never")
+                                .label(tr("Don't check at start"))
+                                .small()
+                                .ghost()
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.set_update_at_start(false, window, cx)
+                                })),
+                        )
+                        .child(div().flex_1())
+                        .child(
+                            super::shell::icon_button(
+                                "update-banner-close",
+                                "close",
+                                tr("Not now"),
+                            )
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.update_banner = None;
+                                cx.notify();
+                            })),
+                        ),
+                ),
+        )
     }
 
     /// Asks the release page whether a newer version has been published.
@@ -997,7 +1109,8 @@ impl Workspace {
                 cx,
             ))
             .child({
-                let (note, available) = settings::update_note(self.update.as_ref());
+                let (note, available) =
+                    settings::update_note(self.update.as_ref(), self.update_at_start);
                 let mut actions = div().h_flex().gap_1().child(
                     Button::new("update-check")
                         .label(tr("Check for updates"))
@@ -1006,6 +1119,21 @@ impl Workspace {
                         .on_click(
                             cx.listener(|this, _, window, cx| this.check_for_update(window, cx)),
                         ),
+                );
+                let at_start = self.update_at_start;
+                actions = actions.child(
+                    Button::new("update-at-start")
+                        .label(if at_start {
+                            tr("At start: on")
+                        } else {
+                            tr("At start: off")
+                        })
+                        .small()
+                        .selected(at_start)
+                        .tooltip(tr("Also look for a newer version each time Wisp starts"))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.set_update_at_start(!at_start, window, cx)
+                        })),
                 );
                 if let (true, Some(settings::Update::Found(found))) = (available, &self.update) {
                     let url = found.url.clone();

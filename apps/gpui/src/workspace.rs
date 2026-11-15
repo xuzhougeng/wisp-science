@@ -360,6 +360,10 @@ pub struct Workspace {
     notify: crate::notify::Choice,
     /// The check for a newer version, once one was asked for.
     update: Option<crate::settings::Update>,
+    /// Look for a newer version when the app starts.
+    update_at_start: bool,
+    /// A newer version the check at start found, until it is put away.
+    update_banner: Option<wisp_server::desktop::UpdateCheck>,
     /// What the app opens on.
     launch: crate::settings::Launch,
     /// Which key sends the composer's text.
@@ -1261,6 +1265,8 @@ impl Workspace {
             language: Default::default(),
             notify: Default::default(),
             update: None,
+            update_at_start: true,
+            update_banner: None,
             launch: Default::default(),
             send_key: Default::default(),
             sidebar_hidden: false,
@@ -3679,6 +3685,8 @@ impl Render for Workspace {
                 }
             }
         };
+        // A newer version found at start, in a corner until it is put away.
+        let root = root.children(self.render_update_banner(cx));
         // Last, so they are drawn over whichever screen or layer is showing.
         let root = if self.layers.contains(Layer::ProjectSettings) {
             root.child(self.render_project_settings(cx))

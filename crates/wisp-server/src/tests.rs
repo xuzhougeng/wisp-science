@@ -2802,6 +2802,31 @@ async fn desktop_search_and_project_files_need_no_conversation() {
 }
 
 #[tokio::test]
+async fn looking_for_a_newer_version_at_start_can_be_turned_off() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    assert!(server.update_check_at_start().await.unwrap());
+    server.set_update_check_at_start(false).await.unwrap();
+    assert!(!server.update_check_at_start().await.unwrap());
+    // Under the WebView desktop's name, so either desktop honours it.
+    assert_eq!(
+        server
+            .0
+            .store
+            .get_setting("update_check_enabled")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("false")
+    );
+    server.set_update_check_at_start(true).await.unwrap();
+    assert!(server.update_check_at_start().await.unwrap());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn fast_mode_is_asked_for_only_where_the_model_offers_it() {
     let temp = tempfile::tempdir().unwrap();
     let mut cfg = config(temp.path());
