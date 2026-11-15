@@ -653,21 +653,22 @@ async fn reference_context(
     Ok(conversations)
 }
 
-pub async fn run(
-    store: Store,
-    mut agent: Agent,
-    session: Arc<Session>,
-    project: String,
-    request: SendRequest,
-    full_access: bool,
-    plan_mode: bool,
-    root: PathBuf,
-) -> Result<()> {
-    let start_seq = store.max_message_seq(&request.session_id).await?;
-    let mut next_event = store.next_session_ui_event_seq(&request.session_id).await?;
+/// Saves what a turn hands its output, in order, after the conversation's
+/// last message; a tool's outcome is kept as an event beside it. A failed
+/// save stops the turn.
+pub(crate) async fn persisting(
+    store: &Store,
+    frame: &str,
+    session: &Arc<Session>,
+) -> Result<(
+    tokio::sync::mpsc::UnboundedSender<PersistedMessage>,
+    tokio::task::JoinHandle<Result<i64>>,
+)> {
+    let start_seq = store.max_message_seq(frame).await?;
+    let mut next_event = store.next_session_ui_event_seq(frame).await?;
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let writer = store.clone();
-    let frame = request.session_id.clone();
+    let frame = frame.to_owned();
     let persist_session = session.clone();
     let persist = tokio::spawn(async move {
         let result = wisp_store::persist_seq_loop(start_seq, rx, |seq, entry: PersistedMessage| {
@@ -697,6 +698,21 @@ pub async fn run(
         }
         result
     });
+    Ok((tx, persist))
+}
+
+pub async fn run(
+    store: Store,
+    mut agent: Agent,
+    session: Arc<Session>,
+    project: String,
+    request: SendRequest,
+    full_access: bool,
+    plan_mode: bool,
+    root: PathBuf,
+) -> Result<()> {
+    let start_seq = store.max_message_seq(&request.session_id).await?;
+    let (tx, persist) = persisting(&store, &request.session_id, &session).await?;
     let artifact_project = project.clone();
     let out = ServerOutput {
         session: session.clone(),
@@ -972,6 +988,17 @@ pub(crate) fn annotate_plans(items: &mut [Item]) {
             && item.ok == Some(true)
         {
             item.plan_steps = Some(wisp_dto::execution_plan::parse_plan_steps(&item.text));
+        } else if item.role == "tool"
+            && item.tool_name.as_deref() == Some(crate::acp_turn::PLAN_TOOL_NAME)
+        {
+            // An ACP agent's plan, saved as the WebView saves it.
+            let entries = serde_json::from_str::<serde_json::Value>(&item.text)
+                .ok()
+                .and_then(|plan| plan.get("entries").cloned());
+            if let Some(entries) = entries {
+                let steps = serde_json::json!({ "v": 1, "steps": entries }).to_string();
+                item.plan_steps = Some(wisp_dto::execution_plan::parse_plan_steps(&steps));
+            }
         }
     }
 }
@@ -1012,6 +1039,26 @@ pub fn items(messages: &[Message]) -> Vec<Item> {
                 }
             }
             Role::Tool => {
+                // A tool call an ACP agent made is saved whole in one row of
+                // its own; agents may use the same id in another turn.
+                if let Some(call) = crate::acp_turn::ToolEnvelope::of(
+                    message.tool_name.as_deref(),
+                    &message.content.as_text(),
+                ) {
+                    let mut row = item("tool", "");
+                    row.call_id = message.tool_call_id.clone();
+                    row.tool_name = Some(call.title.clone());
+                    row.input = (!call.raw_input.is_empty()).then(|| bounded(&call.raw_input));
+                    row.text = bounded(if call.content.is_empty() {
+                        &call.raw_output
+                    } else {
+                        &call.content
+                    });
+                    row.status = Some("complete".into());
+                    row.ok = Some(call.status != "failed");
+                    items.push(row);
+                    continue;
+                }
                 let index = items
                     .iter()
                     .rposition(|item| item.role == "tool" && item.call_id == message.tool_call_id);

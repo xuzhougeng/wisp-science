@@ -230,8 +230,9 @@ conversation and now matches none.
 
 Limits of this slice:
 
-- Models are API models only. ACP agents, subscription accounts, the decision
-  model and image or video models are not ported. A broken model chosen for a
+- Models are API models, or an ACP agent for a whole conversation (see
+  ACP agents). Subscription accounts and image or video models are not
+  ported. A broken model chosen for a
   conversation is reported when a message is sent, not replaced silently.
 - Deleting removes the conversation and its messages; files it wrote stay in the
   project. A running conversation must be stopped before it can be archived,
@@ -488,10 +489,26 @@ Limits of this slice:
   shape), so an agent added in either desktop is in both. A program is
   shown as not found when it is neither a path to a file nor a name on
   `PATH`. Test starts the program with its arguments through `wisp-acp`,
-  waits up to 30 seconds for it to introduce itself, and stops it; nothing
-  else starts it yet. A conversation cannot be run by an ACP agent from
-  here, an agent cannot be signed in to from here, and environment
-  variables for the program are not set from the form.
+  waits up to 30 seconds for it to introduce itself, and stops it.
+- A conversation is given to an ACP agent from the composer's agent
+  button before its first message, for good (the store refuses another
+  choice; Wisp needs a new conversation). Its first message starts the
+  program in the project folder and opens a session with it; the binding
+  (`acp_sessions`) is the WebView's, and after a restart the session is
+  resumed, or loaded when the agent cannot resume. Each message is one
+  prompt: the agent's text and thoughts stream in, its tool calls are
+  saved as `acp:<title>` rows and its last plan as a `wisp:plan` row (the
+  WebView's shapes), and its permission questions are the usual approval
+  card, answered with its allow-once or reject-once option; with Full
+  access they are allowed without asking. Stop cancels the prompt and the
+  conversation goes on with the same process. Wisp's model, effort, plan
+  first, expert, where work runs and turn review do not apply and are not
+  shown; follow-up questions and reviews are not asked for. Not ported
+  from the WebView: the MCP bridge that gives the agent Wisp's tools,
+  the agent's modes and configuration options, its slash commands,
+  questions it asks the user, signing in to it, file and conversation
+  references sent as resource links, and a conversation run by an agent
+  inside an exploration.
 - An expert is chosen before a conversation's first message and cannot
   be changed afterwards: its instructions are written into the system
   prompt with the first turn and stay as they were then, also if the
@@ -1155,6 +1172,17 @@ running while code runs. Point at it for its path and memory. Press
 Stop: it reads stopped; ask the model to use the variable it had set and
 confirm the reply says the interpreter was stopped. Press Dismiss: the
 chip goes, and the next code call starts a fresh interpreter.
+Point an ACP agent at a program that speaks ACP. In a new conversation
+press the composer's Wisp button: Wisp and the agent are listed; press
+Escape (only the menu closes), open it again and choose the agent. The
+button names the agent and is fixed, and the model, effort, plan first,
+expert and review buttons are gone. Send a message: the agent's answer
+streams in with its thoughts folded, its tool calls as rows and its plan
+as a checklist with the plan line above the composer, and the title bar
+names the agent. Ask it to do something that needs permission: the
+approval card shows its tool and input; Reject, and the agent is told so.
+Send something long and press Stop: it stops and nothing is added; send
+again and it answers in the same session.
 In Settings, ACP agents, add an agent with a name and a program that is
 not installed: it is listed with Program not found, and Test says its
 program was not found on this computer. Change it to an installed ACP agent (or adapter)

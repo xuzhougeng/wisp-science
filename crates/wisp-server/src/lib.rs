@@ -1,4 +1,5 @@
 mod acp_agents;
+mod acp_turn;
 mod aside;
 mod branch_merge;
 mod browser;
@@ -119,6 +120,13 @@ struct Inner {
     mcp: mcp::Connections,
     /// The install of Python, R and Node under the data directory.
     toolchain: toolchain::Slot,
+}
+
+/// What runs a turn: Wisp's own agent (with the model its side requests
+/// use), or the ACP agent the conversation was given.
+enum Engine {
+    Wisp(Box<wisp_core::Agent>, wisp_llm::ProviderConfig),
+    Acp(desktop::AcpAgent),
 }
 
 type ModelFactory =
@@ -487,7 +495,12 @@ impl Server {
         );
         // Read once here: a change made while the turn runs applies to the next.
         let options = self.stored_options(&request.session_id).await?;
-        let model = self.0.model.read().unwrap().pick(&options.model)?;
+        // A conversation an ACP agent runs needs no model of Wisp's.
+        let acp = acp_turn::agent_of(&self.0.store, &request.session_id).await?;
+        let model = match &acp {
+            Some(_) => None,
+            None => Some(self.0.model.read().unwrap().pick(&options.model)?),
+        };
         let request_json = serde_json::to_string(&request)?;
         let reply = serde_json::to_value(dto::SendAccepted {
             request_id: request.request_id.clone(),
@@ -519,27 +532,16 @@ impl Server {
         let full_access = options.full_access;
         let auto_review = options.auto_review;
         let plan_mode = options.plan_first;
-        let subagent = self.subagent_model_for(&request.session_id, &model).await;
-        let agent = runtime::build(
-            &self.0.config,
-            &model,
-            &self.0.store,
-            self.0.runs.clone(),
-            project,
-            root,
-            &request.session_id,
-            &session,
-            &self.0.models,
-            (!options.reasoning_effort.is_empty()).then_some(options.reasoning_effort),
-            &request.references,
-            options.plan_first,
-            &self.service_keys().await,
-            self.mcp_tools().await,
-            &subagent,
-            self.decision_model_in_use().await,
-            self.0.browser.bridge(),
-        )
-        .await?;
+        let engine = match (acp, model) {
+            (Some(agent), _) => Engine::Acp(agent),
+            (None, Some(model)) => {
+                let agent = self
+                    .wisp_agent(project, root, &request, &session, &options, &model)
+                    .await?;
+                Engine::Wisp(Box::new(agent), model.provider.clone())
+            }
+            (None, None) => unreachable!("a model is picked when no ACP agent runs"),
+        };
         let page = self
             .0
             .store
@@ -549,11 +551,12 @@ impl Server {
             .store
             .accept_server_turn(&request.session_id, &request.request_id, &request_json)
             .await?;
-        if !agent
-            .ctx
-            .messages
-            .iter()
-            .any(|msg| msg.role == wisp_llm::Role::User)
+        if self.0.store.max_message_seq(&request.session_id).await? == 0
+            || matches!(&engine, Engine::Wisp(agent, _) if !agent
+                .ctx
+                .messages
+                .iter()
+                .any(|msg| msg.role == wisp_llm::Role::User))
         {
             let title = title_of(&subject);
             if let Err(error) = self
@@ -565,92 +568,163 @@ impl Server {
                 tracing::warn!(%error, "Could not name the new conversation");
             }
         }
-        {
-            let mut live = session.live.lock().unwrap();
-            live.running = true;
-            live.guidable = true;
-            session.guidance.lock().unwrap().clear();
-            live.generation = live.generation.wrapping_add(1);
-            live.error = None;
-            live.usage = None;
-            // They were about the answer before this turn.
-            live.follow_ups.clear();
-            live.suggesting = false;
-            live.review = None;
-            live.reviewing = false;
-            session.suggested.notify_waiters();
-            live.calls.clear();
-            live.provenance.clear();
-            live.reasoning.clear();
-            live.written.clear();
-            live.draft.clear();
-            live.messages = page.messages.into_iter().map(|(_, msg)| msg).collect();
-            live.next_before_seq = page.next_before_seq;
-            session.cancel.store(false, Ordering::Relaxed);
-        }
+        self.begin_turn(&session, page);
         let server = self.clone();
         let session = session.clone();
         let project = project.to_string();
         let root = std::path::PathBuf::from(root);
-        let side_model = model.provider.clone();
         tokio::spawn(async move {
             let inner = server.clone();
             let running = session.clone();
             let input = request.clone();
-            let task = tokio::spawn(async move {
-                runtime::run(
-                    inner.0.store.clone(),
-                    agent,
-                    running,
-                    project,
-                    input,
-                    full_access,
-                    plan_mode,
-                    root,
-                )
-                .await
-            });
-            let mut error = match task.await {
-                Ok(Ok(())) => None,
-                Ok(Err(e)) => Some(network::explain(&server.0.store, &format!("{e:#}")).await),
-                Err(_) => Some("Agent task stopped unexpectedly".into()),
+            let (task, side_model) = match engine {
+                Engine::Wisp(agent, side_model) => (
+                    tokio::spawn(async move {
+                        runtime::run(
+                            inner.0.store.clone(),
+                            *agent,
+                            running,
+                            project,
+                            input,
+                            full_access,
+                            plan_mode,
+                            root,
+                        )
+                        .await
+                    }),
+                    Some(side_model),
+                ),
+                Engine::Acp(agent) => (
+                    tokio::spawn(async move {
+                        acp_turn::run(
+                            inner.0.store.clone(),
+                            running,
+                            project,
+                            input,
+                            full_access,
+                            root,
+                            agent,
+                        )
+                        .await
+                    }),
+                    None,
+                ),
             };
-            if let Err(e) = server
-                .0
-                .store
-                .finish_server_turn(&request.session_id, &request.request_id, error.as_deref())
-                .await
-            {
-                error = Some(format!("Could not save turn completion: {e}"));
-            }
-            let answered = error.is_none();
-            let ended = {
-                let mut live = session.live.lock().unwrap();
-                live.running = false;
-                live.guidable = false;
-                live.generation = live.generation.wrapping_add(1);
-                live.approvals.clear();
-                live.messages.clear();
-                live.draft.clear();
-                live.reasoning.clear();
-                live.error = error;
-                // Set with the turn's end, so whoever sees the turn over
-                // can wait for the questions without missing them.
-                live.suggesting = answered;
-                live.reviewing = answered && auto_review;
-                live.generation
-            };
-            // The turn is over: what follows is not one of the four.
-            drop(permit);
-            if answered {
-                let frame = &request.session_id;
-                tokio::join!(
-                    server.suggest_follow_ups(frame, &session, side_model.clone(), ended),
-                    server.review_after_turn(frame, &session, side_model, ended, auto_review),
-                );
-            }
+            server
+                .end_turn(&request, &session, task, permit, side_model, auto_review)
+                .await;
         });
         Ok(reply)
+    }
+
+    /// The Wisp agent that runs a turn, with its model, tools and context.
+    async fn wisp_agent(
+        &self,
+        project: &str,
+        root: &str,
+        request: &dto::SendRequest,
+        session: &Arc<Session>,
+        options: &desktop::ConversationOptions,
+        model: &config::ModelConfig,
+    ) -> Result<wisp_core::Agent> {
+        let subagent = self.subagent_model_for(&request.session_id, model).await;
+        runtime::build(
+            &self.0.config,
+            model,
+            &self.0.store,
+            self.0.runs.clone(),
+            project,
+            root,
+            &request.session_id,
+            &session,
+            &self.0.models,
+            (!options.reasoning_effort.is_empty()).then(|| options.reasoning_effort.clone()),
+            &request.references,
+            options.plan_first,
+            &self.service_keys().await,
+            self.mcp_tools().await,
+            &subagent,
+            self.decision_model_in_use().await,
+            self.0.browser.bridge(),
+        )
+        .await
+    }
+
+    /// Marks the conversation's turn as running, with what it had so far.
+    fn begin_turn(&self, session: &Session, page: wisp_store::SessionTranscriptPage) {
+        let mut live = session.live.lock().unwrap();
+        live.running = true;
+        live.guidable = true;
+        session.guidance.lock().unwrap().clear();
+        live.generation = live.generation.wrapping_add(1);
+        live.error = None;
+        live.usage = None;
+        // They were about the answer before this turn.
+        live.follow_ups.clear();
+        live.suggesting = false;
+        live.review = None;
+        live.reviewing = false;
+        session.suggested.notify_waiters();
+        live.calls.clear();
+        live.provenance.clear();
+        live.reasoning.clear();
+        live.written.clear();
+        live.draft.clear();
+        live.messages = page.messages.into_iter().map(|(_, msg)| msg).collect();
+        live.next_before_seq = page.next_before_seq;
+        session.cancel.store(false, Ordering::Relaxed);
+    }
+
+    /// Records how a turn ended and frees its place; after a Wisp turn
+    /// that answered, asks what could come next and reviews it.
+    async fn end_turn(
+        &self,
+        request: &dto::SendRequest,
+        session: &Arc<Session>,
+        task: tokio::task::JoinHandle<Result<()>>,
+        permit: tokio::sync::OwnedSemaphorePermit,
+        side_model: Option<wisp_llm::ProviderConfig>,
+        auto_review: bool,
+    ) {
+        let mut error = match task.await {
+            Ok(Ok(())) => None,
+            Ok(Err(e)) => Some(network::explain(&self.0.store, &format!("{e:#}")).await),
+            Err(_) => Some("Agent task stopped unexpectedly".into()),
+        };
+        if let Err(e) = self
+            .0
+            .store
+            .finish_server_turn(&request.session_id, &request.request_id, error.as_deref())
+            .await
+        {
+            error = Some(format!("Could not save turn completion: {e}"));
+        }
+        let answered = error.is_none() && side_model.is_some();
+        let ended = {
+            let mut live = session.live.lock().unwrap();
+            live.running = false;
+            live.guidable = false;
+            live.generation = live.generation.wrapping_add(1);
+            live.approvals.clear();
+            live.messages.clear();
+            live.draft.clear();
+            live.reasoning.clear();
+            live.error = error;
+            // Set with the turn's end, so whoever sees the turn over
+            // can wait for the questions without missing them.
+            live.suggesting = answered;
+            live.reviewing = answered && auto_review;
+            live.generation
+        };
+        // The turn is over: what follows is not one of the four.
+        drop(permit);
+        if let (true, Some(side_model)) = (answered, side_model) {
+            let frame = &request.session_id;
+            tokio::join!(
+                self.suggest_follow_ups(frame, session, side_model.clone(), ended),
+                self.review_after_turn(frame, session, side_model, ended, auto_review),
+            );
+        }
     }
 
     /// Has the turn that just ended reviewed, when its conversation asks
@@ -798,6 +872,16 @@ impl Server {
             .filter(|event| event.kind == "ServerToolResult")
             .map(|event| (event.outcome.call_id.clone(), event.outcome))
             .collect();
+        // The agent that runs the conversation, when one does.
+        let model_id = match options.acp_agent.as_str() {
+            "" => self.model_id(&profile),
+            id => acp_agents::list(&self.0.store)
+                .await
+                .into_iter()
+                .find(|agent| agent.id == id)
+                .map(|agent| agent.label)
+                .unwrap_or_else(|| "ACP agent".into()),
+        };
         let live = session.live.lock().unwrap();
         // Completion clears the live transcript only after persisting it. If it
         // crossed these store reads, reload instead of returning an old page as
@@ -846,7 +930,7 @@ impl Server {
             stopping: live.running && session.cancel.load(Ordering::Relaxed),
             activity_status: None,
             read_only: archived,
-            model_id: self.model_id(&profile),
+            model_id,
             composer_references: Some(false),
             context_view: Some(false),
             file_browser: Some(true),
@@ -854,7 +938,7 @@ impl Server {
             follow_ups: live.follow_ups.clone(),
             plan_mode: Some(options.plan_first),
             fast_mode: None,
-            acp_agent_id: None,
+            acp_agent_id: (!options.acp_agent.is_empty()).then(|| options.acp_agent.clone()),
             acp: None,
             acp_state: None,
             history_state: None,

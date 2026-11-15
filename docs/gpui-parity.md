@@ -196,7 +196,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Appearance [外观]: system/light/dark, theme, accent, fonts and sizes, live preview | Yes | Partial: system, light or dark with the Wisp palettes, applied at once; no other themes, accent, fonts or sizes | ui |
 | Pet [宠物] | Yes | Partial: a Pet page turns it on and chooses its folder, and it shows the conversation's state in the transcript's corner; no desktop pet window, no walking or looking at the pointer | ui |
 | Models [模型]: API models with provider, URL, key, limits, effort | Several profiles, presets, default | Done: any number of models, the six presets, a default, a connection test | served |
-| Models: ACP agents, subscription accounts, decision model | Yes | Partial: a Decision model page with the four services, key, thinking mode, timeout and Test connection, used by `map_items`; an ACP agents page (add, change, remove, test, shared list); no conversations run by an ACP agent yet, no subscription accounts, no `desktop_autopilot` | tauri |
+| Models: ACP agents, subscription accounts, decision model | Yes | Partial: a Decision model page with the four services, key, thinking mode, timeout and Test connection, used by `map_items`; an ACP agents page (add, change, remove, test, shared list) and conversations run by an ACP agent; no subscription accounts, no `desktop_autopilot` | tauri |
 | Quick actions [快捷动作] | Yes | Partial: named requests kept in Settings and put into the composer from its quick actions menu; they start no workflow, and the WebView's own list is not read | store |
 | Workflows [工作流]: library, graph editor, approval policy | Yes | Partial: a library of templates (goal, tasks, which earlier tasks each needs) with stages worked out by the host, run as one conversation of the open project; no separate agents, executors or per-task permissions, no approval policy, no graph editor, no conversion from skills, and the WebView's own templates are not read | store |
 | Experts [专家]: built-in and custom, default sub-agent model | Yes | Partial: an Experts page lists the built-in illustrator and your own, with add, change and remove; no model per expert, no skill or connector lists, no sub-agent model | tauri |
@@ -246,7 +246,7 @@ row says what is there.
 | Composer | Conversation timer: repeat a prompt on an interval, pause, resume, cancel — `/timer 30m <prompt>` and `/timer off` are there, each firing a new turn; no pause or resume, and the turn before is not replaced | store |
 | Composer | Queue panel: edit, remove, reorder, "guide now" — a waiting message can be taken back to change, removed, moved earlier, and given to the running turn now | tauri |
 | Composer | Plan progress strip; read-only states (sample, archived notebook, sub-agent, frozen branch) | served |
-| Composer | ACP agent conversations and their mode / config options | tauri |
+| Composer | ACP agent conversations and their mode / config options — conversations run by an ACP agent are **Done** (text, thoughts, tool calls, plan, permission questions, stop); the MCP bridge, modes, config options, slash commands and sign-in are Missing | tauri |
 | Transcript | Equations, table copy, internal file links, confirm before opening an external link | ui |
 | Transcript | Generated-artifact strip (the files are in the Artifacts tab, not yet under the message); image and video generation cards | store |
 | Transcript | Run cards: send to background, cancel, harvest outputs, details — a call that started or watched a run shows the run's state under it and opens its output in the Runs tab, where it can be cancelled; no send to background or harvest | shared |
@@ -338,8 +338,8 @@ before the things that hang in it.
     relay; relay sync and the messaging channels remain)*
 12. **Experts, workflows, quick actions, ACP, accounts, plugins, browser.**
     *(done in a first phase: experts, quick actions, the decision model,
-    plugins, workflows and the browser bridge; ACP agents and subscription
-    accounts remain)*
+    plugins, workflows and the browser bridge; ACP agents and conversations
+    run by them in a second; subscription accounts remain)*
 13. **Finish** — localization, notifications, several windows, updates,
     data import from the WebView desktop, installers. *(done: the Chinese
     interface, notifications, several windows, the update check and the pet;

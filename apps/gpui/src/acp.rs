@@ -1,6 +1,6 @@
 //! ACP agents: how an agent's arguments are typed on one line, and how what
 //! it said about itself reads.
-use wisp_server::desktop::AcpAgentReport;
+use wisp_server::desktop::{AcpAgentReport, AcpAgentRow};
 
 use crate::i18n::{fill, tr};
 
@@ -58,6 +58,15 @@ pub fn command_line(command: &str, args: &[String]) -> String {
     }
 }
 
+/// The name of the agent `id` names, as the composer shows it.
+pub fn agent_label(agents: &[AcpAgentRow], id: &str) -> String {
+    agents
+        .iter()
+        .find(|row| row.agent.id == id)
+        .map(|row| row.agent.label.clone())
+        .unwrap_or_else(|| tr("ACP agent").to_owned())
+}
+
 /// What a test found: its name and version, the protocol, and how it signs
 /// in.
 pub fn report_line(report: &AcpAgentReport) -> String {
@@ -97,6 +106,21 @@ mod tests {
             command_line("agent", &args),
             r#"agent --name "two words" end"#
         );
+    }
+
+    #[test]
+    fn the_composer_names_the_agent_or_says_it_is_one() {
+        let rows = vec![AcpAgentRow {
+            agent: wisp_server::desktop::AcpAgent {
+                id: "a".into(),
+                label: "Fake agent".into(),
+                command: "agent".into(),
+                args: vec![],
+            },
+            found: true,
+        }];
+        assert_eq!(agent_label(&rows, "a"), "Fake agent");
+        assert_eq!(agent_label(&rows, "gone"), "ACP agent");
     }
 
     #[test]

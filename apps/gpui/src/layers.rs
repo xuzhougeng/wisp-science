@@ -29,6 +29,9 @@ pub enum Layer {
     RunsOnMenu,
     /// The expert a new conversation is started as, above the composer.
     ExpertMenu,
+    /// The composer's choice of who runs a new conversation: Wisp or an
+    /// ACP agent.
+    AgentMenu,
     /// The slash commands, above the composer.
     SlashMenu,
     /// The quick actions, above the composer.
@@ -150,11 +153,12 @@ pub enum Layer {
 
 impl Layer {
     /// Menus that open above the composer; only one shows at a time.
-    pub const COMPOSER_MENUS: [Layer; 6] = [
+    pub const COMPOSER_MENUS: [Layer; 7] = [
         Layer::EffortMenu,
         Layer::ModelMenu,
         Layer::RunsOnMenu,
         Layer::ExpertMenu,
+        Layer::AgentMenu,
         Layer::QuickMenu,
         Layer::SlashMenu,
     ];

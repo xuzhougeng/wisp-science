@@ -129,6 +129,8 @@ pub struct Session {
     /// Woken whenever `suggesting` or `reviewing` is cleared.
     pub suggested: tokio::sync::Notify,
     pub runtime: Mutex<Option<wisp_runtime::RuntimeManager>>,
+    /// The ACP agent this conversation talks to, kept between its turns.
+    pub acp: tokio::sync::Mutex<Option<crate::acp_turn::AcpLive>>,
     /// What the user said while a turn ran, for the turn to read at its
     /// next step instead of after it ends.
     pub guidance: wisp_core::GuidanceQueue,
@@ -146,6 +148,7 @@ impl Default for Session {
             accept: Default::default(),
             suggested: Default::default(),
             runtime: Mutex::new(None),
+            acp: Default::default(),
             guidance: Default::default(),
             guided: Default::default(),
             #[cfg(test)]

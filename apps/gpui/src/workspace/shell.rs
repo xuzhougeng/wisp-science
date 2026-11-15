@@ -1191,6 +1191,43 @@ impl Workspace {
         menu
     }
 
+    /// Wisp, then the ACP agents that could run a new conversation.
+    fn agent_menu(&self, cx: &mut Context<Self>) -> Div {
+        let mut menu = Self::composer_menu(320., cx).child(
+            Self::menu_row(
+                "agent-wisp".into(),
+                "Wisp",
+                tr("Wisp's own model, tools and skills"),
+                true,
+                cx,
+            )
+            .on_click(
+                cx.listener(|this, _, window, cx| this.choose_acp_agent(String::new(), window, cx)),
+            ),
+        );
+        for row in self.acp_agents.iter().flatten() {
+            let id = row.agent.id.clone();
+            let detail = if row.found {
+                crate::acp::command_line(&row.agent.command, &row.agent.args)
+            } else {
+                tr("Program not found").to_owned()
+            };
+            menu = menu.child(
+                Self::menu_row(
+                    SharedString::from(format!("agent-choice-{id}")),
+                    row.agent.label.clone(),
+                    detail,
+                    false,
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.choose_acp_agent(id.clone(), window, cx)
+                })),
+            );
+        }
+        menu
+    }
+
     /// The saved models, with "follow the default" first.
     fn model_menu(&self, current: &str, cx: &mut Context<Self>) -> Div {
         let mut menu = Self::composer_menu(300., cx);
@@ -1512,9 +1549,42 @@ impl Workspace {
             }
         });
 
-        // Who the conversation is started as. It is chosen before the
-        // first message and only named afterwards.
+        // Who runs the conversation: Wisp, or an ACP agent chosen before
+        // the first message and named for good afterwards.
         let started = !self.rows.is_empty() || running;
+        let by_agent = !options.acp_agent.is_empty();
+        let agents = self.acp_agents.as_deref().unwrap_or_default();
+        let agent = (by_agent || (!agents.is_empty() && !started)).then(|| {
+            let open = self.layers.contains(Layer::AgentMenu);
+            let button = div().relative().child(
+                Button::new("acp-agent")
+                    .icon(glyph("terminal"))
+                    .label(if by_agent {
+                        crate::acp::agent_label(agents, &options.acp_agent)
+                    } else {
+                        "Wisp".to_owned()
+                    })
+                    .small()
+                    .ghost()
+                    .selected(open || by_agent)
+                    .disabled(by_agent || started)
+                    .tooltip(if by_agent {
+                        tr("An ACP agent runs this conversation; start a new one for Wisp")
+                    } else {
+                        tr("Who runs this conversation: Wisp or an ACP agent")
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        // One may have been added or removed since.
+                        this.load_acp_agents(window, cx);
+                        this.toggle_composer_menu(Layer::AgentMenu, window, cx)
+                    })),
+            );
+            if open {
+                button.child(deferred(self.agent_menu(cx)))
+            } else {
+                button
+            }
+        });
         let expert =
             (!self.experts.is_empty() && (!started || !options.expert.is_empty())).then(|| {
                 let open = self.layers.contains(Layer::ExpertMenu);
@@ -1866,13 +1936,16 @@ impl Workspace {
                                 .child(attach)
                                 .children(quick)
                                 .child(self.slash_button(cx))
-                                .child(plan)
+                                .children(agent)
+                                .when(!by_agent, |row| row.child(plan))
                                 .child(access)
-                                .child(model)
-                                .child(effort)
-                                .children(runs_on)
-                                .children(expert)
-                                .child(
+                                .when(!by_agent, |row| {
+                                    row.child(model)
+                                        .child(effort)
+                                        .children(runs_on)
+                                        .children(expert)
+                                })
+                                .when(!by_agent, |row| row.child(
                                     Button::new("auto-review")
                                         .icon(glyph("review"))
                                         .label(if options.auto_review {
@@ -1891,7 +1964,7 @@ impl Workspace {
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.toggle_auto_review(window, cx)
                                         })),
-                                ),
+                                )),
                         )
                         .child(actions),
                 ),

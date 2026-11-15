@@ -656,6 +656,7 @@ impl Workspace {
         .detach();
         // The composer offers them from the start.
         self.load_experts(window, cx);
+        self.load_acp_agents(window, cx);
         self.load_quick_actions(window, cx);
         self.load_pet(window, cx);
         let language = self.backend.preference(LANGUAGE);

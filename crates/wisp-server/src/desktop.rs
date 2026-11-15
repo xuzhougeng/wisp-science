@@ -3001,6 +3001,9 @@ impl Server {
                 )
                 .await,
             ),
+            acp_agent: crate::acp_turn::chosen(&self.0.store, session)
+                .await?
+                .unwrap_or_default(),
         })
     }
 
@@ -4004,6 +4007,7 @@ impl Server {
                 .await?;
         }
         self.store_runs_on(session, &options.runs_on).await?;
+        crate::acp_turn::choose(&self.0.store, project, session, &options.acp_agent).await?;
         self.stored_options(session).await
     }
 
@@ -4464,6 +4468,10 @@ pub struct ConversationOptions {
     /// otherwise: empty follows the default in Settings, [`RUNS_LOCALLY`]
     /// is this computer, anything else is the name of an SSH host.
     pub runs_on: String,
+    /// Id of the ACP agent that runs this conversation instead of Wisp's
+    /// own model; empty is Wisp. It can only be chosen before the first
+    /// message.
+    pub acp_agent: String,
 }
 
 /// The [`ConversationOptions::runs_on`] value for this computer.

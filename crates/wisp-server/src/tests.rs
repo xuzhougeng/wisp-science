@@ -6735,6 +6735,174 @@ pub(crate) fn fake_acp_agent(dir: &Path, body: &str) -> std::path::PathBuf {
     script
 }
 
+/// A stand-in ACP agent that holds one session. A prompt is answered with
+/// a thought, a tool call that completes, a plan and a line of text; one
+/// that says "ask" first asks permission and says how it was answered; one
+/// that says "wait" answers only once it is cancelled.
+#[cfg(unix)]
+const FAKE_ACP_CONVERSATION: &str = r#"#!/bin/sh
+say() { printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":%s}}\n' "$1"; }
+while IFS= read -r line; do
+  id=$(printf '%s\n' "$line" | grep -o '"id":[^,}]*' | head -n 1 | cut -d: -f2-)
+  method=$(printf '%s\n' "$line" | grep -o '"method":"[^"]*"' | head -n 1 | cut -d'"' -f4)
+  case "$method" in
+    initialize)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[],"agentInfo":{"name":"fake-agent","version":"0.1.0"}}}\n' "$id"
+      ;;
+    session/new)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"s1"}}\n' "$id"
+      ;;
+    session/prompt)
+      case "$line" in
+        *wait*)
+          while IFS= read -r next; do
+            case "$next" in *session/cancel*) break ;; esac
+          done
+          printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"cancelled"}}\n' "$id"
+          continue
+          ;;
+        *ask*)
+          printf '{"jsonrpc":"2.0","id":900,"method":"session/request_permission","params":{"sessionId":"s1","toolCall":{"toolCallId":"t2","title":"Write notes.txt","rawInput":{"path":"notes.txt"}},"options":[{"optionId":"yes","name":"Allow","kind":"allow_once"},{"optionId":"no","name":"Reject","kind":"reject_once"}]}}\n'
+          IFS= read -r answer
+          case "$answer" in
+            *'"yes"'*) say '{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"You allowed it."}}' ;;
+            *) say '{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"You turned it down."}}' ;;
+          esac
+          ;;
+        *)
+          say '{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"Looking at the data"}}'
+          say '{"sessionUpdate":"tool_call","toolCallId":"t1","title":"Read data.csv","kind":"read","status":"in_progress","rawInput":{"path":"data.csv"}}'
+          say '{"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"completed","rawOutput":"3 rows"}'
+          say '{"sessionUpdate":"plan","entries":[{"content":"Read the data","priority":"high","status":"completed"},{"content":"Fit the model","priority":"medium","status":"in_progress"}]}'
+          say '{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Hello from the agent."}}'
+          ;;
+      esac
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id"
+      ;;
+  esac
+done
+"#;
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_conversation_given_to_an_acp_agent_streams_asks_and_stops_through_it() {
+    use desktop::{AcpAgent, ConversationOptions};
+    let temp = tempfile::tempdir().unwrap();
+    let calls: Arc<AtomicUsize> = Arc::default();
+    let server = Server::open_with_models(config(temp.path()), models(calls.clone(), false))
+        .await
+        .unwrap();
+    let script = fake_acp_agent(temp.path(), FAKE_ACP_CONVERSATION);
+    let agent = server
+        .save_acp_agent(AcpAgent {
+            label: "Fake agent".into(),
+            command: script.to_string_lossy().into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let id = create(&server).await;
+    let give = |acp_agent: &str| ConversationOptions {
+        acp_agent: acp_agent.into(),
+        ..Default::default()
+    };
+    assert!(server
+        .set_conversation_options(PROJECT, &id, give("missing"))
+        .await
+        .is_err());
+    let options = server
+        .set_conversation_options(PROJECT, &id, give(&agent))
+        .await
+        .unwrap();
+    assert_eq!(options.acp_agent, agent);
+    // The choice is for good: neither Wisp nor another agent takes over.
+    assert!(server
+        .set_conversation_options(PROJECT, &id, give(""))
+        .await
+        .is_err());
+
+    send(&server, &id, "look at the data").await.unwrap();
+    let done = wait_for(&server, &id, |s| !s.running).await;
+    assert!(done.error.is_none(), "{:?}", done.error);
+    assert_eq!(done.acp_agent_id.as_deref(), Some(agent.as_str()));
+    let roles: Vec<_> = done.items.iter().map(|item| item.role.as_str()).collect();
+    assert_eq!(
+        roles,
+        ["user", "tool", "tool", "reasoning", "assistant"],
+        "{:?}",
+        done.items
+    );
+    let read = &done.items[1];
+    assert_eq!(read.tool_name.as_deref(), Some("Read data.csv"));
+    assert!(read
+        .input
+        .as_deref()
+        .unwrap_or_default()
+        .contains("data.csv"));
+    assert_eq!(read.text, "3 rows");
+    assert_eq!(read.ok, Some(true));
+    let steps = done.items[2]
+        .plan_steps
+        .as_ref()
+        .expect("the plan is a checklist");
+    assert_eq!(steps.len(), 2);
+    assert_eq!(steps[1].content, "Fit the model");
+    assert_eq!(done.items[3].text, "Looking at the data");
+    assert_eq!(done.items[4].text, "Hello from the agent.");
+    let binding = server.0.store.get_acp_session(&id).await.unwrap().unwrap();
+    assert_eq!(binding.agent_profile_id, agent);
+    assert_eq!(binding.agent_session_id, "s1");
+    // Wisp's own model was never asked.
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+
+    // A permission question waits for the user, as a tool approval does.
+    send(&server, &id, "ask before writing").await.unwrap();
+    let asking = wait_for(&server, &id, |s| !s.approvals.is_empty()).await;
+    assert_eq!(asking.approvals[0].tool, "Write notes.txt");
+    assert!(asking.approvals[0].preview.contains("notes.txt"));
+    call(
+        &server,
+        "native_conversation_approve",
+        PROJECT,
+        json!({"session_id": id, "approval_id": asking.approvals[0].approval_id, "approved": false}),
+    )
+    .await
+    .unwrap();
+    let answered = wait_for(&server, &id, |s| !s.running).await;
+    assert!(answered.error.is_none(), "{:?}", answered.error);
+    assert_eq!(answered.items.last().unwrap().text, "You turned it down.");
+
+    // Stop reaches the agent, and the conversation goes on afterwards.
+    send(&server, &id, "wait for me").await.unwrap();
+    wait_for(&server, &id, |s| s.running).await;
+    call(
+        &server,
+        "native_conversation_stop",
+        PROJECT,
+        json!({"session_id": id}),
+    )
+    .await
+    .unwrap();
+    let stopped = wait_for(&server, &id, |s| !s.running).await;
+    assert!(stopped.error.is_some());
+    // Nothing is saved for the stopped answer.
+    assert_eq!(stopped.items.last().unwrap().role, "user");
+    assert_eq!(stopped.model_id, "Fake agent");
+    send(&server, &id, "look again").await.unwrap();
+    let again = wait_for(&server, &id, |s| !s.running).await;
+    assert!(again.error.is_none(), "{:?}", again.error);
+    assert_eq!(again.items.last().unwrap().text, "Hello from the agent.");
+    // The agent used the same call id again: each turn keeps its own row.
+    let reads = again
+        .items
+        .iter()
+        .filter(|item| item.tool_name.as_deref() == Some("Read data.csv"))
+        .count();
+    assert_eq!(reads, 2);
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+    server.shutdown().await;
+}
+
 #[tokio::test]
 async fn acp_agents_are_kept_in_the_shared_list_tested_and_removed() {
     use desktop::AcpAgent;

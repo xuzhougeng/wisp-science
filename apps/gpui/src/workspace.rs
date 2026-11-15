@@ -1082,6 +1082,7 @@ impl Workspace {
                 | Layer::ModelMenu
                 | Layer::RunsOnMenu
                 | Layer::ExpertMenu
+                | Layer::AgentMenu
                 | Layer::QuickMenu
                 | Layer::SlashMenu,
             ) => self.focus_composer(window, cx),
@@ -1422,6 +1423,7 @@ impl Workspace {
             Layer::ModelMenu,
             Layer::RunsOnMenu,
             Layer::ExpertMenu,
+            Layer::AgentMenu,
             Layer::QuickMenu,
             Layer::SlashMenu,
             Layer::Find,
@@ -2542,6 +2544,21 @@ impl Workspace {
             ..self.options()
         };
         self.set_options(options, window, cx);
+        self.focus_composer(window, cx);
+        cx.notify();
+    }
+
+    /// Gives this conversation, before its first message, to an ACP agent.
+    /// The choice is for good; Wisp needs a new conversation.
+    fn choose_acp_agent(&mut self, agent: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.layers.close(Layer::AgentMenu);
+        if agent != self.options().acp_agent {
+            let options = ConversationOptions {
+                acp_agent: agent,
+                ..self.options()
+            };
+            self.set_options(options, window, cx);
+        }
         self.focus_composer(window, cx);
         cx.notify();
     }
