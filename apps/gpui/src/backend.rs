@@ -774,6 +774,40 @@ impl Backend {
     }
 
     /// Has the model draft an archive of a conversation; nothing is saved.
+    /// Where a branch stands for being brought back into its source.
+    pub fn branch_merge(
+        &self,
+        project: String,
+        branch: String,
+    ) -> Reply<wisp_server::desktop::BranchMerge> {
+        self.local(move |host| async move { host.branch_merge(&project, &branch).await })
+    }
+
+    /// Has the model summarise what a branch did after it split off.
+    pub fn draft_branch_summary(
+        &self,
+        project: String,
+        branch: String,
+        guard: String,
+    ) -> Reply<String> {
+        self.local(
+            move |host| async move { host.draft_branch_summary(&project, &branch, &guard).await },
+        )
+    }
+
+    /// Adds a branch's summary to its source; returns the source.
+    pub fn merge_branch(
+        &self,
+        project: String,
+        branch: String,
+        guard: String,
+        summary: String,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.merge_branch(&project, &branch, &guard, &summary).await
+        })
+    }
+
     pub fn draft_research_archive(
         &self,
         project: String,

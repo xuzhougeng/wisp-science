@@ -228,6 +228,72 @@ async fn mobile_project_list_omits_a_missing_registered_database() {
     server.shutdown().await;
 }
 
+#[tokio::test]
+async fn a_branch_is_brought_back_as_a_summary_the_user_approved() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = config(tmp.path());
+    let calls = Arc::new(AtomicUsize::new(0));
+    let server = Server::open_with_models(cfg, models(calls, false))
+        .await
+        .unwrap();
+    let main = create(&server).await;
+    send(&server, &main, "Look at the counts").await.unwrap();
+    wait_for(&server, &main, |s| !s.running && !s.items.is_empty()).await;
+    // Not a branch: nothing to bring back.
+    assert!(server.branch_merge(PROJECT, &main).await.is_err());
+    let branch = server
+        .branch_conversation(PROJECT, &main, None)
+        .await
+        .unwrap();
+    // Nothing done in it yet: nothing to summarise.
+    let fresh = server.branch_merge(PROJECT, &branch).await.unwrap();
+    assert_eq!(fresh.source, main);
+    assert!(server
+        .draft_branch_summary(PROJECT, &branch, &fresh.guard)
+        .await
+        .is_err());
+    send(&server, &branch, "Try a log scale").await.unwrap();
+    wait_for(&server, &branch, |s| !s.running && s.items.len() >= 4).await;
+    let ready = server.branch_merge(PROJECT, &branch).await.unwrap();
+    assert!(ready.new_messages >= 2, "{ready:?}");
+    // A stale guard is refused before the model is asked.
+    assert!(server
+        .draft_branch_summary(PROJECT, &branch, &fresh.guard)
+        .await
+        .is_err());
+    let draft = server
+        .draft_branch_summary(PROJECT, &branch, &ready.guard)
+        .await
+        .unwrap();
+    assert_eq!(draft, "Saved result");
+    let into = server
+        .merge_branch(
+            PROJECT,
+            &branch,
+            &ready.guard,
+            "Log scale shows the outlier.",
+        )
+        .await
+        .unwrap();
+    assert_eq!(into, main);
+    let merged = server.whole_transcript(&main).await.unwrap();
+    assert_eq!(
+        merged.last().unwrap().content.as_text(),
+        "Log scale shows the outlier."
+    );
+    // Once only, and none of it is a phone's to do.
+    assert!(server
+        .merge_branch(PROJECT, &branch, &ready.guard, "Again")
+        .await
+        .is_err());
+    assert!(server.branch_merge("other", &branch).await.is_err());
+    assert!(!server
+        .commands()
+        .iter()
+        .any(|command| command.contains("merge")));
+    server.shutdown().await;
+}
+
 /// Proposes a fresh plan, then answers whatever the plan tool said.
 struct Planner;
 #[async_trait]

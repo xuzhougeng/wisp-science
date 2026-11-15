@@ -1,4 +1,5 @@
 mod aside;
+mod branch_merge;
 mod browser;
 mod browser_filters;
 mod compact;

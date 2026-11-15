@@ -2029,6 +2029,15 @@ impl Server {
                 .rename_session(&id, project, &branch_title(&title))
                 .await?;
             store.set_session_branched_from(&id, session).await?;
+            // Where it split off, as the WebView records it: after the reply
+            // to the last turn it kept. That is what lets it be brought back.
+            let kept = messages
+                .iter()
+                .filter(|message| message.role == wisp_llm::Role::User)
+                .count();
+            store
+                .set_session_branch_point(&id, session, kept - 1, "after_response")
+                .await?;
             if let Some(folder) = &folder {
                 store
                     .move_session_to_folder(&id, project, Some(folder))
@@ -3081,6 +3090,76 @@ impl Server {
         }
     }
 
+    /// Where a branch stands for being brought back into the conversation
+    /// it came from. Refused for a conversation that is not a branch or has
+    /// been brought back already.
+    pub async fn branch_merge(&self, project: &str, branch: &str) -> Result<BranchMerge> {
+        self.own_conversation(project, branch).await?;
+        let preview = self
+            .0
+            .store
+            .preview_session_branch_merge(branch, project)
+            .await?;
+        Ok(BranchMerge {
+            source: preview.main_session_id,
+            new_messages: preview.new_message_count,
+            guard: preview.guard_hash,
+        })
+    }
+
+    /// Has the branch's model summarise what the branch did after it split
+    /// off. `guard` is the one [`Self::branch_merge`] gave: a branch that
+    /// changed since is summarised again first. Nothing is saved.
+    pub async fn draft_branch_summary(
+        &self,
+        project: &str,
+        branch: &str,
+        guard: &str,
+    ) -> Result<String> {
+        self.own_conversation(project, branch).await?;
+        let store = &self.0.store;
+        let preview = store.preview_session_branch_merge(branch, project).await?;
+        ensure!(
+            preview.guard_hash == guard,
+            "The branch changed before it could be summarized. Summarize it again."
+        );
+        let payload = crate::branch_merge::payload(&preview)?;
+        let options = self.stored_options(branch).await?;
+        let mut model = self.0.model.read().unwrap().pick(&options.model)?.provider;
+        let routes = crate::network::load(store).await;
+        if let Some(route) = crate::network::route(&routes.model_proxy_url) {
+            model.proxy = Some(route);
+        }
+        model.reasoning_effort = None;
+        let provider = (self.0.models)(model);
+        match crate::branch_merge::summarize(provider.as_ref(), payload).await {
+            Ok(summary) => Ok(summary),
+            Err(error) => bail!(
+                "{}",
+                crate::network::explain(store, &format!("{error:#}")).await
+            ),
+        }
+    }
+
+    /// Adds `summary` to the end of the conversation the branch came from,
+    /// as one message the model reads from then on, and marks the branch
+    /// brought back. Returns that conversation.
+    pub async fn merge_branch(
+        &self,
+        project: &str,
+        branch: &str,
+        guard: &str,
+        summary: &str,
+    ) -> Result<String> {
+        self.own_conversation(project, branch).await?;
+        let merged = self
+            .0
+            .store
+            .merge_session_branch_summary(branch, project, guard, summary)
+            .await?;
+        Ok(merged.main_session_id)
+    }
+
     /// Freezes `draft` as the conversation's research archive: the report
     /// and scripts are written under `.wisp/research-archives/` in the
     /// project and the record is kept. From then on the conversation is
@@ -4031,6 +4110,17 @@ impl Server {
         self.0.store.delete_session(session, project).await?;
         self.forget(session, &live).await
     }
+}
+
+/// A branch as it stands for being brought back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BranchMerge {
+    /// The conversation it came from.
+    pub source: String,
+    /// Messages since it split off.
+    pub new_messages: usize,
+    /// What the summary is checked against before it is added.
+    pub guard: String,
 }
 
 /// A file a conversation produced, as the Artifacts list shows it.

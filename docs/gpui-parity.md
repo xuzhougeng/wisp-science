@@ -135,7 +135,7 @@ to find in the running app.
 | Skill and attachment chips on the user message | Yes | Partial: file chips; references are context for that turn only and are not shown afterwards | served |
 | Copy message [复制] | Yes | Done: copies the message as Markdown | ui |
 | Rewind to a message [回溯 / 撤销] | Yes | Yes: goes back and returns the text to the composer, and the latest turn can be undone with the files it wrote | store |
-| Branch from a message [分支] | Yes | Partial: a copy through that turn, nested under its source; no branch card or merge back | store |
+| Branch from a message [分支] | Yes | Partial: a copy through that turn, nested under its source, that can be brought back: Bring back has the model summarise what the branch did, you read and change the summary, and it is added to the source conversation; no branch card | store |
 | Save to memory [记忆] | Yes | Partial: the message is opened for trimming and saved for the project or as a habit; no model-written suggestion | store |
 | Review a turn [审查] | Yes | Partial: a review button under each answer reviews the conversation as it stood when that turn ended; the report is not kept with the turn | tauri |
 | Select text: add to chat, ask aside, highlight | Yes | Partial: a whole message is saved with its star; a selected passage cannot be, and there is no add-to-chat or ask-aside | store |

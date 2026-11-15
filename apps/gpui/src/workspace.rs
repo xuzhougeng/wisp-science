@@ -13,6 +13,7 @@ mod inline_view;
 mod journey_view;
 mod memory_view;
 mod memos_view;
+mod merge_view;
 mod model_view_dialog;
 mod notebook_view;
 mod organise_view;
@@ -134,6 +135,10 @@ pub struct Workspace {
     /// Where the research archive dialog stands.
     archive: Option<archive_view::ArchiveView>,
     archive_error: Option<String>,
+    /// Bringing the open branch back, and its summary's field.
+    merge: Option<merge_view::MergeView>,
+    merge_error: Option<String>,
+    merge_summary: Entity<InputState>,
     /// Title, report.
     archive_fields: [Entity<InputState>; 2],
     model_view: Option<wisp_server::desktop::ModelView>,
@@ -590,6 +595,7 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
         ];
+        let merge_summary = cx.new(|cx| InputState::new(window, cx).multi_line(true));
         let expert_fields = [
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx)),
@@ -644,6 +650,12 @@ impl Workspace {
             cx.subscribe_in(&aside_input, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::PressEnter { .. }) {
                     this.ask_aside(window, cx);
+                }
+            }),
+            // The merge button follows whether a summary is written.
+            cx.subscribe_in(&merge_summary, window, |_, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
                 }
             }),
             // The feedback button follows what is written; Return sends it.
@@ -803,6 +815,9 @@ impl Workspace {
             capabilities_error: None,
             archive: None,
             archive_error: None,
+            merge: None,
+            merge_error: None,
+            merge_summary,
             archive_fields,
             model_view: None,
             model_view_error: None,
@@ -1100,6 +1115,11 @@ impl Workspace {
                 self.archive_error = None;
                 self.focus_composer(window, cx);
             }
+            Some(Layer::BranchMerge) => {
+                self.merge = None;
+                self.merge_error = None;
+                self.focus_composer(window, cx);
+            }
             // The page stays open underneath.
             Some(Layer::JournalForm) => {}
             Some(Layer::Schedules) => self.focus_composer(window, cx),
@@ -1346,10 +1366,12 @@ impl Workspace {
             Layer::Review,
             Layer::ModelView,
             Layer::ResearchArchive,
+            Layer::BranchMerge,
         ] {
             self.layers.close(layer);
         }
         self.archive = None;
+        self.merge = None;
         self.clear_trajectory();
         self.clear_model_view();
         self.review = None;
@@ -2872,6 +2894,11 @@ impl Render for Workspace {
         };
         let root = if self.layers.contains(Layer::ResearchArchive) {
             root.child(self.render_research_archive(window, cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::BranchMerge) {
+            root.child(self.render_branch_merge(cx))
         } else {
             root
         };

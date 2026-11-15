@@ -517,6 +517,21 @@ impl Workspace {
                     .disabled(running)
                     .on_click(cx.listener(|this, _, window, cx| this.open_review(window, cx))),
             )
+            .when(self.open_is_branch(), |bar| {
+                bar.child(
+                    Button::new("conversation-merge-branch")
+                        .label(tr("Bring back"))
+                        .small()
+                        .ghost()
+                        .tooltip(tr(
+                            "Add a summary of what this branch did to the conversation it came from",
+                        ))
+                        .disabled(running)
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.open_branch_merge(window, cx)),
+                        ),
+                )
+            })
             .child(
                 Button::new("conversation-research-archive")
                     .label(tr("Research archive"))
