@@ -637,7 +637,7 @@ pub const ZH: &[(&str, &str)] = &[
     ("High", "高"),
     ("Extra high", "很高"),
     ("Max", "最高"),
-    ("Figure", "图片"),
+    ("Figure", "图"),
     ("No output captured yet.", "尚未捕获到输出。"),
     // Journey records.
     ("Run", "运行"),
@@ -802,7 +802,8 @@ pub const ZH: &[(&str, &str)] = &[
     ("Rename the paper", "重命名论文"),
     ("New paper", "新建论文"),
     ("Description, if any", "描述（可选）"),
-    ("What its first version is called. Empty: Initial submission", "第一个版本的名称。留空则为 Initial submission"),
+    ("What its first version is called. Empty: {}", "第一个版本的名称。留空则为“{}”"),
+    ("Initial submission", "初次投稿"),
     ("Add a figure, table or claim", "添加图、表或论点"),
     ("Change this item", "修改此条目"),
     ("What it is called in the paper", "它在论文中的名称"),

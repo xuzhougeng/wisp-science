@@ -1095,7 +1095,7 @@ time in a new form: it is refused. Press Escape with the form open:
 only the form closes. Delete the task: the question has to be answered.
 In a project press Papers: the page says there is no paper yet. Press
 New paper, give a title and save: it shows with the version "v1 ·
-Initial submission". Add a figure: it is listed with "No source yet".
+Initial submission" (初次投稿 in the Chinese interface). Add a figure: it is listed with "No source yet".
 Press Add evidence, choose Runs or Project results, type why and click
 one: it appears under the figure with the reason, and the summary line
 counts it. Remove the evidence, change the figure's title, remove the

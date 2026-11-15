@@ -196,7 +196,11 @@ impl Workspace {
             PaperInput {
                 title,
                 description,
-                version,
+                // The first version's usual name, in the language in use.
+                version: match version.trim() {
+                    "" => tr("Initial submission").to_owned(),
+                    typed => typed.to_owned(),
+                },
             },
         );
         cx.spawn_in(window, async move |this, cx| {
@@ -403,8 +407,9 @@ impl Workspace {
             .child(Input::new(&self.paper_fields[1]).small());
         if !self.paper_renaming {
             form = form
-                .child(label(tr(
-                    "What its first version is called. Empty: Initial submission",
+                .child(div().text_xs().text_color(muted).child(crate::i18n::fill(
+                    tr("What its first version is called. Empty: {}"),
+                    &[&tr("Initial submission")],
                 )))
                 .child(Input::new(&self.paper_fields[2]).small());
         }
