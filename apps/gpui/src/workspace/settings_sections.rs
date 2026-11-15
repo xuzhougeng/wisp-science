@@ -31,6 +31,13 @@ const FILES_SORT: &str = "files_sort";
 const FILES_VIEW: &str = "files_view";
 /// The side panel's tabs that have not been taken away.
 const PANEL_TABS: &str = "panel_tabs";
+/// The palette of each kind, and the text's sizes and faces.
+const LIGHT_PALETTE: &str = "light_palette";
+const DARK_PALETTE: &str = "dark_palette";
+const TEXT_SIZE: &str = "text_size";
+const CODE_SIZE: &str = "code_size";
+const TEXT_FONT: &str = "text_font";
+const CODE_FONT: &str = "code_font";
 const NOTIFY: &str = "notifications";
 const NOTIFY_SOUND: &str = "notification_sound";
 const LAST_OPEN: &str = "last_open";
@@ -1113,6 +1120,15 @@ impl Workspace {
         );
         let files_view = self.backend.preference(FILES_VIEW);
         let panel_tabs = self.backend.preference(PANEL_TABS);
+        let look = [
+            LIGHT_PALETTE,
+            DARK_PALETTE,
+            TEXT_SIZE,
+            CODE_SIZE,
+            TEXT_FONT,
+            CODE_FONT,
+        ]
+        .map(|name| self.backend.preference(name));
         cx.spawn_in(window, async move |this, cx| {
             let saved = |reply| async move { receive(reply).await.ok().flatten() };
             let (appearance, launch, place, send_key, sidebar, files_sort) = (
@@ -1125,7 +1141,22 @@ impl Workspace {
             );
             let files_view = saved(files_view).await;
             let panel_tabs = saved(panel_tabs).await;
+            let mut kept = Vec::new();
+            for reply in look {
+                kept.push(saved(reply).await.unwrap_or_default());
+            }
             let _ = this.update_in(cx, |this, window, cx| {
+                this.look = crate::theme::Look {
+                    light: crate::theme::palette_of(false, &kept[0]),
+                    dark: crate::theme::palette_of(true, &kept[1]),
+                    text_size: kept[2].parse().unwrap_or(0.),
+                    code_size: kept[3].parse().unwrap_or(0.),
+                    text_font: kept[4].clone(),
+                    code_font: kept[5].clone(),
+                };
+                for (field, value) in this.font_fields.iter().zip([&kept[4], &kept[5]]) {
+                    field.update(cx, |input, cx| input.set_value(value.clone(), window, cx));
+                }
                 this.send_key =
                     settings::SendKey::from_key(send_key.as_deref().unwrap_or_default());
                 this.sidebar_hidden = sidebar.as_deref() == Some("hidden");
@@ -1138,7 +1169,7 @@ impl Workspace {
                 this.appearance =
                     crate::theme::Appearance::from_key(appearance.as_deref().unwrap_or_default());
                 this.launch = settings::Launch::from_key(launch.as_deref().unwrap_or_default());
-                crate::theme::apply(this.appearance, window, cx);
+                crate::theme::restyle(&this.look, this.appearance, window, cx);
                 let place = place.as_deref().and_then(settings::decode_place);
                 if let (settings::Launch::Resume, Some((project, session))) = (this.launch, place) {
                     // Only on a fresh start: the user may already be somewhere.
@@ -1355,6 +1386,169 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Wears `look` at once and keeps it for the next start.
+    fn change_look(
+        &mut self,
+        look: crate::theme::Look,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let before = std::mem::replace(&mut self.look, look);
+        crate::theme::restyle(&self.look, self.appearance, window, cx);
+        let now = self.look.clone();
+        for (name, old, new) in [
+            (
+                LIGHT_PALETTE,
+                before.light.key.to_owned(),
+                now.light.key.to_owned(),
+            ),
+            (
+                DARK_PALETTE,
+                before.dark.key.to_owned(),
+                now.dark.key.to_owned(),
+            ),
+            (
+                TEXT_SIZE,
+                before.text_size.to_string(),
+                now.text_size.to_string(),
+            ),
+            (
+                CODE_SIZE,
+                before.code_size.to_string(),
+                now.code_size.to_string(),
+            ),
+            (TEXT_FONT, before.text_font, now.text_font),
+            (CODE_FONT, before.code_font, now.code_font),
+        ] {
+            if old != new {
+                self.save_general(name, new, window, cx);
+            }
+        }
+        cx.refresh_windows();
+        cx.notify();
+    }
+
+    /// Makes a text size a pixel smaller or larger, starting from 14 when
+    /// it was Wisp's own; `by` 0 goes back to Wisp's own.
+    fn step_size(
+        &mut self,
+        size: f32,
+        by: f32,
+        change: fn(&mut crate::theme::Look, f32),
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut look = self.look.clone();
+        let from = if size == 0. { 14. } else { size };
+        let next = (from + by).clamp(
+            *crate::theme::TEXT_SIZES.start(),
+            *crate::theme::TEXT_SIZES.end(),
+        );
+        change(&mut look, if by == 0. { 0. } else { next });
+        self.change_look(look, window, cx)
+    }
+
+    /// One size of text, with buttons that make it smaller or larger and
+    /// one that goes back to Wisp's own.
+    fn size_choice(
+        &self,
+        id: &'static str,
+        size: f32,
+        change: fn(&mut crate::theme::Look, f32),
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let smaller = cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.step_size(size, -1., change, window, cx)
+        });
+        let larger = cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.step_size(size, 1., change, window, cx)
+        });
+        let reset = cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.step_size(size, 0., change, window, cx)
+        });
+        div()
+            .h_flex()
+            .gap_1()
+            .child(
+                Button::new(SharedString::from(format!("{id}-smaller")))
+                    .icon(glyph("minus"))
+                    .small()
+                    .on_click(smaller),
+            )
+            .child(
+                div()
+                    .w(px(64.))
+                    .text_sm()
+                    .text_center()
+                    .child(if size == 0. {
+                        tr("Wisp's own").to_owned()
+                    } else {
+                        format!("{size} px")
+                    }),
+            )
+            .child(
+                Button::new(SharedString::from(format!("{id}-larger")))
+                    .icon(glyph("plus"))
+                    .small()
+                    .on_click(larger),
+            )
+            .child(
+                Button::new(SharedString::from(format!("{id}-reset")))
+                    .label(tr("Reset"))
+                    .small()
+                    .ghost()
+                    .disabled(size == 0.)
+                    .on_click(reset),
+            )
+    }
+
+    /// The palettes of one kind, the chosen one marked.
+    fn palette_choice(&self, dark: bool, cx: &mut Context<Self>) -> Div {
+        let chosen = if dark {
+            self.look.dark
+        } else {
+            self.look.light
+        };
+        let mut row = div().h_flex().flex_wrap().gap_1().max_w(px(360.));
+        for palette in crate::theme::palettes(dark) {
+            row = row.child(
+                Button::new(SharedString::from(format!(
+                    "palette-{}-{}",
+                    if dark { "dark" } else { "light" },
+                    palette.key
+                )))
+                .child(
+                    div()
+                        .h_flex()
+                        .gap_1()
+                        .child(
+                            div()
+                                .size(px(10.))
+                                .rounded_full()
+                                .border_1()
+                                .border_color(cx.theme().border)
+                                .bg(gpui::Rgba::try_from(palette.accent)
+                                    .map(Hsla::from)
+                                    .unwrap_or(cx.theme().primary)),
+                        )
+                        .child(palette.name),
+                )
+                .small()
+                .selected(palette == chosen)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    let mut look = this.look.clone();
+                    if dark {
+                        look.dark = palette;
+                    } else {
+                        look.light = palette;
+                    }
+                    this.change_look(look, window, cx)
+                })),
+            );
+        }
+        row
+    }
+
     /// Remembers which of the side panel's tabs are kept, for the next start.
     pub(super) fn save_panel_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let value = crate::panel::encode_tabs(&self.kept_tabs);
@@ -1487,6 +1681,72 @@ impl Workspace {
                 tr("Appearance"),
                 tr("System follows your computer's light or dark setting and changes with it."),
                 looks,
+                cx,
+            ))
+            .child(setting(
+                tr("Light palette"),
+                tr("The colours worn in light appearance. Wisp Paper is Wisp's own."),
+                self.palette_choice(false, cx),
+                cx,
+            ))
+            .child(setting(
+                tr("Dark palette"),
+                tr("The colours worn in dark appearance. Wisp Charcoal is Wisp's own."),
+                self.palette_choice(true, cx),
+                cx,
+            ))
+            .child(setting(
+                tr("Text size"),
+                tr("The size of the interface's text, from 10 to 24 pixels."),
+                self.size_choice(
+                    "text-size",
+                    self.look.text_size,
+                    |look, size| look.text_size = size,
+                    cx,
+                ),
+                cx,
+            ))
+            .child(setting(
+                tr("Code size"),
+                tr("The size of code and other fixed-width text."),
+                self.size_choice(
+                    "code-size",
+                    self.look.code_size,
+                    |look, size| look.code_size = size,
+                    cx,
+                ),
+                cx,
+            ))
+            .child(setting(
+                tr("Fonts"),
+                tr(
+                    "A font installed on this computer for the interface, and one for code, \
+                     by name. Empty keeps Wisp's own.",
+                ),
+                div()
+                    .v_flex()
+                    .gap_1()
+                    .w(px(280.))
+                    .child(Input::new(&self.font_fields[0]).small())
+                    .child(Input::new(&self.font_fields[1]).small())
+                    .child(
+                        div().h_flex().child(
+                            Button::new("fonts-apply")
+                                .label(tr("Apply"))
+                                .small()
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    let [text, code] = [0, 1].map(|at| {
+                                        this.font_fields[at].read(cx).value().trim().to_owned()
+                                    });
+                                    let look = crate::theme::Look {
+                                        text_font: text,
+                                        code_font: code,
+                                        ..this.look.clone()
+                                    };
+                                    this.change_look(look, window, cx)
+                                })),
+                        ),
+                    ),
                 cx,
             ))
             .child(setting(tr("Send with"), settings::send_key_note(), sends, cx))

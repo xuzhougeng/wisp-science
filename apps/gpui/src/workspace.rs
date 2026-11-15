@@ -386,6 +386,10 @@ pub struct Workspace {
     memory_text: Entity<InputState>,
     /// Which palette the window wears.
     appearance: crate::theme::Appearance,
+    /// Palettes and text sizes and faces, over light or dark.
+    look: crate::theme::Look,
+    /// Text face and code face being typed on the General page.
+    font_fields: [Entity<InputState>; 2],
     language: crate::i18n::Language,
     /// How the user is told that a conversation needs them.
     notify: crate::notify::Choice,
@@ -1071,6 +1075,10 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx).placeholder(".wisp-science/runs")),
             cx.new(|cx| InputState::new(window, cx).placeholder("remote/host")),
         ];
+        let font_fields = [
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Wisp's own"))),
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Wisp's own"))),
+        ];
         let run_review_filter =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Names containing…")));
         let plugin_address = [
@@ -1485,6 +1493,8 @@ impl Workspace {
             memory_suggested: None,
             memory_text,
             appearance: Default::default(),
+            look: Default::default(),
+            font_fields,
             language: Default::default(),
             notify: Default::default(),
             update: None,
