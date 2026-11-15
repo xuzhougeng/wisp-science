@@ -1517,6 +1517,62 @@ impl Server {
         Ok(())
     }
 
+    /// Keeps a file of the project as an artifact of the conversation, as
+    /// the WebView's Register as an artifact does: a new version when it was
+    /// kept before. Not for Wisp's or git's own files, or while the project
+    /// is frozen for an exploration.
+    pub async fn register_artifact(&self, project: &str, session: &str, path: &str) -> Result<()> {
+        self.own_conversation(project, session).await?;
+        let store = &self.0.store;
+        let (working, scope) =
+            crate::explorations::service::working_project_in(store, &self.0.config.data, session)
+                .await
+                .map_err(anyhow::Error::msg)?;
+        ensure!(
+            !crate::explorations::service::conversation_project_write_locked(
+                store,
+                &scope,
+                Some(session)
+            )
+            .await
+            .map_err(anyhow::Error::msg)?,
+            "The project is frozen while an exploration runs; keep the file once it ends."
+        );
+        let root = tokio::fs::canonicalize(&working.root).await?;
+        let source = std::path::PathBuf::from(path);
+        let source = if source.is_absolute() {
+            source
+        } else {
+            root.join(source)
+        };
+        let real = tokio::fs::canonicalize(&source)
+            .await
+            .context("That file no longer exists")?;
+        let inside = real
+            .strip_prefix(&root)
+            .ok()
+            .filter(|inside| {
+                !inside
+                    .components()
+                    .any(|part| matches!(part.as_os_str().to_str(), Some(".wisp" | ".git")))
+            })
+            .filter(|_| real.is_file());
+        ensure!(
+            inside.is_some(),
+            "Only a file of the project can be kept as an artifact"
+        );
+        crate::runtime::record_artifacts(
+            store,
+            project,
+            scope.scope_key(),
+            &root,
+            session,
+            vec![real.to_string_lossy().into_owned()],
+        )
+        .await;
+        Ok(())
+    }
+
     pub(crate) async fn own_conversation(&self, project: &str, session: &str) -> Result<()> {
         ensure!(
             !self.0.shutting_down.load(Ordering::Relaxed),

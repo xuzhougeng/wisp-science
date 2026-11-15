@@ -1563,6 +1563,13 @@ impl Backend {
         self.local(move |host| async move { host.join_lab_knowledge_base(&parent).await })
     }
 
+    /// Keeps a project file as an artifact of the conversation.
+    pub fn register_artifact(&self, project: String, session: String, path: String) -> Reply<()> {
+        self.local(
+            move |host| async move { host.register_artifact(&project, &session, &path).await },
+        )
+    }
+
     pub fn mandates(&self) -> Reply<Vec<wisp_dto::MandateOverview>> {
         self.local(move |host| async move { host.mandates().await })
     }

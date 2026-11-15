@@ -1621,7 +1621,9 @@ Preview a `.csv` file: it shows as a grid with its header in bold, and
 Show as text switches to the file's text and back.
 Preview a file in Files: Copy path puts its full path on the clipboard,
 Attach adds it to the message as a chip, Show in the file manager and
-Open with the system's application do what they say.
+Open with the system's application do what they say, and Keep as an
+artifact of this conversation lists it in the Artifacts tab (again: a new
+version of it).
 In a conversation type `/trajectory` and send: the trajectory opens and
 nothing is added to the transcript. Send `/btw why did that fail?`: the
 Aside tab opens and the question is asked there. Send `/fork`: a

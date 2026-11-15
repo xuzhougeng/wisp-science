@@ -9470,6 +9470,53 @@ async fn a_mandate_asks_for_what_it_needs_and_goes_on_once_answered() {
     server.shutdown().await;
 }
 
+#[tokio::test]
+async fn a_project_file_is_kept_as_an_artifact_of_the_conversation() {
+    let temp = tempfile::tempdir().unwrap();
+    let cfg = config(temp.path());
+    let server = Server::open_with_models(cfg.clone(), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    std::fs::create_dir_all(cfg.workspace.join("figures")).unwrap();
+    std::fs::write(cfg.workspace.join("figures/umap.svg"), "<svg/>").unwrap();
+    server
+        .register_artifact(PROJECT, &session, "figures/umap.svg")
+        .await
+        .unwrap();
+    // Kept again, it is a new version of the same artifact.
+    std::fs::write(cfg.workspace.join("figures/umap.svg"), "<svg></svg>").unwrap();
+    server
+        .register_artifact(PROJECT, &session, "figures/umap.svg")
+        .await
+        .unwrap();
+    let kept = server.0.store.list_artifacts(&session).await.unwrap();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].1, "umap.svg");
+    // Nothing outside the project, nothing missing, nothing of Wisp's own.
+    let outside = temp.path().join("secret.txt");
+    std::fs::write(&outside, "x").unwrap();
+    assert!(server
+        .register_artifact(PROJECT, &session, &outside.to_string_lossy())
+        .await
+        .is_err());
+    assert!(server
+        .register_artifact(PROJECT, &session, "figures/gone.svg")
+        .await
+        .is_err());
+    std::fs::create_dir_all(cfg.workspace.join(".wisp")).unwrap();
+    std::fs::write(cfg.workspace.join(".wisp/state.json"), "{}").unwrap();
+    assert!(server
+        .register_artifact(PROJECT, &session, ".wisp/state.json")
+        .await
+        .is_err());
+    assert!(server
+        .register_artifact(PROJECT, "missing", "figures/umap.svg")
+        .await
+        .is_err());
+    server.shutdown().await;
+}
+
 /// A ChatGPT access token as Codex CLI keeps it (unsigned; claims only).
 fn chatgpt_token(account: &str, exp: i64, email: &str) -> String {
     use base64::Engine;

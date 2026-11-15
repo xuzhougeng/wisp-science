@@ -75,16 +75,28 @@ impl Workspace {
                 },
             )),
         );
-        // Attaching needs a conversation to attach to.
+        // Attaching and keeping need a conversation to belong to.
         if self.state.session.is_some() {
-            actions = actions.child(
-                icon_button("file-attach", "attach", "Attach to the message").on_click(
-                    cx.listener(move |this, _, _, cx| {
-                        this.attach(crate::compose::Chip::File(relative.clone()), cx);
-                        this.file_notice = Some(tr("Attached to the message.").to_owned());
-                    }),
-                ),
-            );
+            let kept = relative.clone();
+            actions = actions
+                .child(
+                    icon_button("file-attach", "attach", "Attach to the message").on_click(
+                        cx.listener(move |this, _, _, cx| {
+                            this.attach(crate::compose::Chip::File(relative.clone()), cx);
+                            this.file_notice = Some(tr("Attached to the message.").to_owned());
+                        }),
+                    ),
+                )
+                .child(
+                    icon_button(
+                        "file-keep-artifact",
+                        "layers",
+                        "Keep as an artifact of this conversation",
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.keep_as_artifact(kept.clone(), window, cx)
+                    })),
+                );
         }
         Some(
             actions
@@ -101,6 +113,31 @@ impl Workspace {
                     .on_click(cx.listener(move |_, _, _, cx| cx.open_with_system(&opened))),
                 ),
         )
+    }
+
+    /// Keeps the previewed file as an artifact of the open conversation.
+    fn keep_as_artifact(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(project), Some(session)) =
+            (self.state.project.clone(), self.state.session.clone())
+        else {
+            return;
+        };
+        let reply = self.backend.register_artifact(project, session, path);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = crate::backend::receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(()) => {
+                        this.file_notice =
+                            Some(tr("Kept as an artifact of this conversation.").to_owned());
+                        this.reload_artifacts(window, cx);
+                    }
+                    Err(error) => this.file_notice = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub(super) fn reveal_file(

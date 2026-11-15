@@ -262,7 +262,7 @@ row says what is there.
 | Top bar | Find in conversation (⌘F) — **Done**; search the project's chat history (⌘⇧F) — **Done**: it opens the sidebar's search, which reads titles and messages | store |
 | Top bar | Import Codex and Claude Code conversations — **Done** for this computer: the conversation list's import button lists what `~/.codex/sessions` and `~/.claude/projects` hold and brings one in, in a group named after the tool; importing again brings in only what was added. From SSH or WSL hosts, and importing a conversation archive — Missing | tauri |
 | Centre | Open a file as a centre tab, split chat beside a document, snapshot, open in an external editor | ui |
-| Files | Copy path, attach to chat, register as an artifact, reveal in the file manager, open with the default app — all **Done** from a file's preview except registering as an artifact, which is Missing | tauri |
+| Files | Copy path, attach to chat, register as an artifact, reveal in the file manager, open with the default app — all **Done** from a file's preview, registering as an artifact of the open conversation included | tauri |
 | Previews | PDF, images with zoom and region pins, CSV/TSV, DOCX/XLSX/PPTX, LaTeX, HTML, notebooks, structures, molecules, alignments, FASTA, trees — text, Markdown, pictures and CSV/TSV as a grid are there; the rest is Missing | ui |
 | Previews | Code editor: save, run the selection or the script in a runtime | shared |
 | Previews | DOCX review: accept or reject tracked changes | tauri |

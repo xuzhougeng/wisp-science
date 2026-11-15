@@ -513,7 +513,7 @@ pub async fn build(
 /// artifact per project path, with a new version each time it is rewritten.
 /// The same identity and snapshot rules as the WebView desktop. A file that
 /// cannot be recorded is skipped; it never fails the turn.
-async fn record_artifacts(
+pub(crate) async fn record_artifacts(
     store: &Store,
     project: &str,
     scope_key: &str,
