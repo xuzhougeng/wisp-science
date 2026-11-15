@@ -163,6 +163,8 @@ pub enum Layer {
     WorkflowFromSkills,
     /// The SSH hosts a terminal can be opened on, over the terminal dock.
     TerminalHosts,
+    /// A skill's tags being changed, on the Skills page of Settings.
+    SkillTags,
     /// The form for a quick action, on its page of Settings.
     QuickActionForm,
     /// Question before a quick action is removed.
@@ -257,6 +259,7 @@ impl Layer {
             | Layer::WorkflowForm
             | Layer::ConfirmRemoveWorkflow
             | Layer::WorkflowFromSkills
+            | Layer::SkillTags
             | Layer::ConfirmRemovePlugin
             | Layer::ConfirmResetRemoteCode
             | Layer::ConfirmRemoveQuickAction => Some(Layer::Settings),
@@ -657,6 +660,12 @@ mod tests {
         stack.open(Layer::WorkflowFromSkills);
         assert!(stack.close(Layer::Settings));
         assert!(!stack.contains(Layer::WorkflowFromSkills));
+        // A skill's tag editor is inside Settings.
+        stack.open(Layer::Settings);
+        stack.open(Layer::SkillTags);
+        assert_eq!(stack.dismiss_top(), Some(Layer::SkillTags));
+        assert!(stack.contains(Layer::Settings));
+        assert!(stack.close(Layer::Settings));
         // The terminal's host menu stands on its own: Escape closes it.
         stack.open(Layer::TerminalHosts);
         assert_eq!(stack.dismiss_top(), Some(Layer::TerminalHosts));

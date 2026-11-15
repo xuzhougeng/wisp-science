@@ -344,6 +344,15 @@ pub fn skill_matches(row: &SkillRow, query: &str) -> bool {
         .all(|word| text.contains(&word.to_lowercase()))
 }
 
+/// Tags as typed, comma-separated: trimmed, without empty ones.
+pub fn parse_tags(text: &str) -> Vec<String> {
+    text.split([',', '，'])
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
 /// One line saying how many connectors there are and how many are off.
 pub fn connectors_summary(rows: &[ConnectorRow]) -> String {
     let tools: usize = rows
@@ -1007,6 +1016,11 @@ mod tests {
         assert!(skill_matches(&row, "QUALITY scrna"));
         assert!(skill_matches(&row, "singlecell"));
         assert!(!skill_matches(&row, "quality proteomics"));
+        assert_eq!(
+            parse_tags(" rna, , single cell，qc "),
+            ["rna", "single cell", "qc"]
+        );
+        assert!(parse_tags(" , ").is_empty());
         assert_eq!(skill_source("bundled"), "Ships with Wisp");
         assert_eq!(skill_source("project"), "This project");
         assert_eq!(skill_source("extra"), "Added folder");

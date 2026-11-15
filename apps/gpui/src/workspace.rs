@@ -376,6 +376,9 @@ pub struct Workspace {
     /// Every skill there is, as the Skills page lists them; `None` until read.
     skills: Option<Vec<wisp_server::desktop::SkillRow>>,
     skills_search: Entity<InputState>,
+    /// The skill whose tags are being changed, and the field they are typed in.
+    skill_tags_editing: Option<String>,
+    skill_tags_input: Entity<InputState>,
     /// The field that narrows the list of Settings pages.
     settings_search: Entity<InputState>,
     /// The bundled connectors, as the Connections page lists them.
@@ -877,6 +880,8 @@ impl Workspace {
         });
         let skills_search =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Find a skill…")));
+        let skill_tags_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Tags, separated by commas")));
         let settings_search =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Search settings…")));
         let connectors_search =
@@ -1251,6 +1256,8 @@ impl Workspace {
             settings_error: None,
             skills: None,
             skills_search,
+            skill_tags_editing: None,
+            skill_tags_input,
             settings_search,
             connectors: None,
             connectors_search,
@@ -1505,6 +1512,7 @@ impl Workspace {
             Some(Layer::ConfirmRemoveWorkflow) => self.workflow_editing = None,
             Some(Layer::WorkflowFromSkills) => self.workflow_skill_picks.clear(),
             Some(Layer::TerminalHosts) => {}
+            Some(Layer::SkillTags) => self.skill_tags_editing = None,
             Some(Layer::QuickActionForm | Layer::ConfirmRemoveQuickAction) => {
                 self.quick_editing = None
             }

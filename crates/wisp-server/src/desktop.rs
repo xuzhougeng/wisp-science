@@ -3235,6 +3235,7 @@ impl Server {
         };
         let config = self.0.config.clone();
         let disabled = crate::runtime::disabled_skills(&self.0.store).await;
+        let own_tags = skill_tags(&self.0.store).await;
         Ok(tokio::task::spawn_blocking(move || {
             let index = crate::runtime::all_skills(&config, root.as_deref());
             let mut rows: Vec<SkillRow> = index
@@ -3243,7 +3244,11 @@ impl Server {
                 .map(|skill| SkillRow {
                     name: skill.name.clone(),
                     description: skill.description.clone(),
-                    tags: skill.tags.clone(),
+                    // The researcher's tags take the place of the skill's own.
+                    tags: own_tags
+                        .get(&skill.name)
+                        .cloned()
+                        .unwrap_or_else(|| skill.tags.clone()),
                     source: index
                         .source(&skill.name)
                         .map_or("extra", wisp_skills::SkillSource::as_str),
@@ -3254,6 +3259,29 @@ impl Server {
             rows
         })
         .await?)
+    }
+
+    /// Gives a skill the researcher's own tags in place of those it came
+    /// with; none puts its own back. Kept, as the WebView keeps them, under
+    /// `skill_tags`.
+    pub async fn set_skill_tags(&self, name: &str, tags: Vec<String>) -> Result<()> {
+        let name = name.trim();
+        ensure!(!name.is_empty(), "Which skill?");
+        let mut all = skill_tags(&self.0.store).await;
+        let tags = normalize_tags(tags);
+        ensure!(
+            tags.iter().all(|tag| tag.chars().count() <= 40),
+            "A tag is at most 40 characters"
+        );
+        if tags.is_empty() {
+            all.remove(name);
+        } else {
+            all.insert(name.to_owned(), tags);
+        }
+        self.0
+            .store
+            .set_setting(SKILL_TAGS, &serde_json::to_string(&all)?)
+            .await
     }
 
     /// Turns a skill off or on for every project, from the next turn. Off,
@@ -5544,6 +5572,35 @@ pub struct TurnDefaults {
 }
 
 const DEFAULT_FULL_ACCESS: &str = "desktop.conversation.default_full_access";
+/// The WebView's key for the tags the researcher gave skills.
+const SKILL_TAGS: &str = "skill_tags";
+
+/// Tags trimmed, without empty ones or repeats, in order.
+fn normalize_tags(tags: Vec<String>) -> Vec<String> {
+    tags.into_iter()
+        .map(|tag| tag.trim().to_owned())
+        .filter(|tag| !tag.is_empty())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// The researcher's tags, by skill.
+async fn skill_tags(store: &wisp_store::Store) -> std::collections::BTreeMap<String, Vec<String>> {
+    store
+        .get_setting(SKILL_TAGS)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|raw| {
+            serde_json::from_str::<std::collections::BTreeMap<String, Vec<String>>>(&raw).ok()
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(name, tags)| (name, normalize_tags(tags)))
+        .filter(|(_, tags)| !tags.is_empty())
+        .collect()
+}
 /// The WebView desktop's key for the model sub-agents work on.
 pub(crate) const SUBAGENT_MODEL: &str = "subagent_model_id";
 

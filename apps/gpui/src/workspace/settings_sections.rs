@@ -336,6 +336,50 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Opens the field for a skill's tags, with the ones it has now.
+    fn edit_skill_tags(
+        &mut self,
+        name: String,
+        tags: &[String],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let value = tags.join(", ");
+        self.skill_tags_input.update(cx, |input, cx| {
+            input.set_value(value, window, cx);
+            input.focus(window, cx);
+        });
+        self.skill_tags_editing = Some(name);
+        self.layers.open(Layer::SkillTags);
+        cx.notify();
+    }
+
+    /// Keeps the tags typed for the skill being changed.
+    fn save_skill_tags(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(name) = self.skill_tags_editing.clone() else {
+            return;
+        };
+        let tags = settings::parse_tags(&self.skill_tags_input.read(cx).value());
+        self.settings_error = None;
+        let reply = self.backend.set_skill_tags(name, tags);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(()) => {
+                        this.skill_tags_editing = None;
+                        this.layers.close(Layer::SkillTags);
+                        this.load_skills(window, cx);
+                    }
+                    // The field stays open with what was typed.
+                    Err(error) => this.settings_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     pub(super) fn render_skill_settings(&self, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
         let page = self.settings_page(cx);
@@ -397,6 +441,9 @@ impl Workspace {
         for row in shown {
             let name = row.name.clone();
             let enabled = row.enabled;
+            let editing = self.layers.contains(Layer::SkillTags)
+                && self.skill_tags_editing.as_deref() == Some(row.name.as_str());
+            let (tagged, current) = (row.name.clone(), row.tags.clone());
             let mut about = settings::skill_source(row.source).to_owned();
             if !row.tags.is_empty() {
                 about = format!("{about} · {}", row.tags.join(", "));
@@ -429,17 +476,66 @@ impl Workspace {
                                     .text_color(muted)
                                     .child(row.description.clone()),
                             )
-                            .child(div().text_xs().text_color(muted).child(about)),
+                            .child(div().text_xs().text_color(muted).child(about))
+                            .when(editing, |about| {
+                                about.child(
+                                    div()
+                                        .h_flex()
+                                        .gap_1()
+                                        .pt_1()
+                                        .child(
+                                            div()
+                                                .w(px(260.))
+                                                .child(Input::new(&self.skill_tags_input).small()),
+                                        )
+                                        .child(
+                                            Button::new("skill-tags-save")
+                                                .label(tr("Save"))
+                                                .small()
+                                                .primary()
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.save_skill_tags(window, cx)
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new("skill-tags-cancel")
+                                                .label(tr("Cancel"))
+                                                .small()
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.skill_tags_editing = None;
+                                                    this.layers.close(Layer::SkillTags);
+                                                    cx.notify();
+                                                })),
+                                        ),
+                                )
+                            }),
                     )
                     .child(
-                        Button::new(SharedString::from(format!("skill-{}", row.name)))
-                            .label(if enabled { tr("On") } else { tr("Off") })
-                            .small()
-                            .selected(enabled)
+                        div()
+                            .h_flex()
+                            .gap_1()
                             .flex_shrink_0()
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.set_skill_enabled(name.clone(), !enabled, window, cx)
-                            })),
+                            .child(
+                                Button::new(SharedString::from(format!("skill-tags-{}", row.name)))
+                                    .label(tr("Tags"))
+                                    .small()
+                                    .ghost()
+                                    .tooltip(tr(
+                                        "Give it your own tags in place of the ones it came with",
+                                    ))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.edit_skill_tags(tagged.clone(), &current, window, cx)
+                                    })),
+                            )
+                            .child(
+                                Button::new(SharedString::from(format!("skill-{}", row.name)))
+                                    .label(if enabled { tr("On") } else { tr("Off") })
+                                    .small()
+                                    .selected(enabled)
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.set_skill_enabled(name.clone(), !enabled, window, cx)
+                                    })),
+                            ),
                     ),
             );
         }

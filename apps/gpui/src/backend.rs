@@ -834,6 +834,11 @@ impl Backend {
         self.local(move |host| async move { host.skills(project.as_deref()).await })
     }
 
+    /// Gives a skill the researcher's own tags; none puts its own back.
+    pub fn set_skill_tags(&self, name: String, tags: Vec<String>) -> Reply<()> {
+        self.local(move |host| async move { host.set_skill_tags(&name, tags).await })
+    }
+
     pub fn set_skill_enabled(&self, name: String, enabled: bool) -> Reply<()> {
         self.local(move |host| async move { host.set_skill_enabled(&name, enabled).await })
     }

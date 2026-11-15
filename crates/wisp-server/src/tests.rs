@@ -3040,6 +3040,45 @@ async fn a_skill_that_is_turned_off_is_not_offered_to_the_model_or_the_composer(
     server.set_skill_enabled("zebra-count", true).await.unwrap();
     assert_eq!(offered("zebra").await, ["zebra-count"]);
     assert_eq!(for_turns().await, ["Alpha-fold-check", "zebra-count"]);
+
+    // The researcher's tags take the place of a skill's own, trimmed and
+    // once each; none puts its own back.
+    let tags = |name: &'static str| {
+        let (server, lab) = (&server, &lab);
+        async move {
+            server
+                .skills(Some(lab))
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|row| row.name == name)
+                .unwrap()
+                .tags
+        }
+    };
+    server
+        .set_skill_tags(
+            "Alpha-fold-check",
+            vec![
+                " structure ".into(),
+                "".into(),
+                "protein".into(),
+                "structure".into(),
+            ],
+        )
+        .await
+        .unwrap();
+    assert_eq!(tags("Alpha-fold-check").await, ["protein", "structure"]);
+    server
+        .set_skill_tags("Alpha-fold-check", vec![" ".into()])
+        .await
+        .unwrap();
+    assert_eq!(tags("Alpha-fold-check").await, ["lab"]);
+    assert!(server.set_skill_tags(" ", vec!["x".into()]).await.is_err());
+    assert!(server
+        .set_skill_tags("zebra-count", vec!["x".repeat(41)])
+        .await
+        .is_err());
     server.shutdown().await;
 }
 
