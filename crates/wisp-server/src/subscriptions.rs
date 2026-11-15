@@ -6,8 +6,13 @@
 //! the signed-in credentials are kept in the system keychain under the
 //! same names, so a sign-in made in either desktop serves both. A
 //! subscription model's access token is refreshed before each turn when it
-//! is about to expire, and the rotated token is written back. Not ported:
-//! the WebView's pool of several Codex accounts and its usage meter.
+//! is about to expire, and the rotated token is written back.
+//!
+//! ChatGPT through Codex keeps a pool of accounts, as the WebView's
+//! `codex_accounts.rs` does: each under `codex_account:<id>`, their order
+//! under `codex_accounts`, one of them active (the subscription's own
+//! sign-in). Switching makes another active; each has a usage meter; and
+//! sign-ins of Codex CLI and CLIProxyAPI on this computer can be imported.
 
 use anyhow::{bail, Context, Result};
 use std::{
@@ -157,12 +162,248 @@ pub(crate) fn load(secrets: &dyn SecretStore, subscription: Subscription) -> Opt
 }
 
 pub(crate) fn store(secrets: &dyn SecretStore, creds: &Credentials) -> Result<()> {
-    secrets.set(creds.subscription().secret(), &creds.to_json())
+    secrets.set(creds.subscription().secret(), &creds.to_json())?;
+    // Every write of a Codex account lands in the pool too, so switching
+    // back never restores a refresh token that rotation already spent.
+    if let Credentials::Codex(creds) = creds {
+        keep_account(secrets, creds)?;
+    }
+    Ok(())
 }
 
 /// Forgets the sign-in; the keychain has no delete, and empty reads as none.
 pub(crate) fn forget(secrets: &dyn SecretStore, subscription: Subscription) -> Result<()> {
     secrets.set(subscription.secret(), "")
+}
+
+/// The WebView's names for the Codex account pool.
+const ACCOUNTS: &str = "codex_accounts";
+
+fn account_secret(id: &str) -> String {
+    format!("codex_account:{id}")
+}
+
+fn account_ids(secrets: &dyn SecretStore) -> Vec<String> {
+    secrets
+        .get(ACCOUNTS)
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+fn pooled(secrets: &dyn SecretStore, id: &str) -> Option<CodexCredentials> {
+    CodexCredentials::from_json(&secrets.get(&account_secret(id))?)
+}
+
+fn keep_account(secrets: &dyn SecretStore, creds: &CodexCredentials) -> Result<()> {
+    secrets.set(&account_secret(&creds.account_id), &creds.to_json())?;
+    let mut ids = account_ids(secrets);
+    if !ids.contains(&creds.account_id) {
+        ids.push(creds.account_id.clone());
+        secrets.set(ACCOUNTS, &serde_json::to_string(&ids)?)?;
+    }
+    Ok(())
+}
+
+/// Of two copies of one account, the later expiry was refreshed last and
+/// holds the live refresh token.
+fn fresher(a: CodexCredentials, b: Option<CodexCredentials>) -> CodexCredentials {
+    b.filter(|b| b.account_id == a.account_id && b.expires_at_ms > a.expires_at_ms)
+        .unwrap_or(a)
+}
+
+/// A Codex account in the pool.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CodexAccount {
+    pub id: String,
+    pub email: String,
+    pub plan: String,
+    /// The one ChatGPT (Codex) models run on.
+    pub active: bool,
+}
+
+/// The pool, the active account taken in when it is not there yet (a
+/// sign-in saved before the pool, or by the command line).
+pub(crate) fn codex_accounts(secrets: &dyn SecretStore) -> Result<Vec<CodexAccount>> {
+    let active = match load(secrets, Subscription::Codex) {
+        Some(Credentials::Codex(creds)) => {
+            if !account_ids(secrets).contains(&creds.account_id) {
+                keep_account(secrets, &creds)?;
+            }
+            creds.account_id
+        }
+        _ => String::new(),
+    };
+    Ok(account_ids(secrets)
+        .iter()
+        .filter_map(|id| pooled(secrets, id))
+        .map(|creds| CodexAccount {
+            email: codex_auth::account_email_from_access_token(&creds.access_token)
+                .unwrap_or_default(),
+            plan: codex_auth::plan_type_from_access_token(&creds.access_token).unwrap_or_default(),
+            active: creds.account_id == active,
+            id: creds.account_id,
+        })
+        .collect())
+}
+
+fn is_active(secrets: &dyn SecretStore, id: &str) -> bool {
+    matches!(load(secrets, Subscription::Codex), Some(Credentials::Codex(creds)) if creds.account_id == id)
+}
+
+/// Makes another account of the pool the one Codex models run on.
+pub(crate) fn switch_codex_account(secrets: &dyn SecretStore, id: &str) -> Result<()> {
+    let creds = pooled(secrets, id).context("That account is no longer saved; sign in again")?;
+    store(secrets, &Credentials::Codex(creds))
+}
+
+/// Takes an account out of the pool; when it was the active one, the
+/// next is made active, or the sign-in is forgotten when none is left.
+pub(crate) fn remove_codex_account(secrets: &dyn SecretStore, id: &str) -> Result<()> {
+    let active = is_active(secrets, id);
+    let ids: Vec<String> = account_ids(secrets)
+        .into_iter()
+        .filter(|kept| kept != id)
+        .collect();
+    secrets.set(ACCOUNTS, &serde_json::to_string(&ids)?)?;
+    secrets.set(&account_secret(id), "")?;
+    if active {
+        match ids.iter().find_map(|next| pooled(secrets, next)) {
+            Some(next) => store(secrets, &Credentials::Codex(next))?,
+            None => forget(secrets, Subscription::Codex)?,
+        }
+    }
+    Ok(())
+}
+
+/// How much of an account's allowance is used, in its short and weekly
+/// windows.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CodexUsage {
+    pub plan: String,
+    pub limit_reached: bool,
+    pub short: Option<UsageWindow>,
+    pub weekly: Option<UsageWindow>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UsageWindow {
+    /// 0–100.
+    pub used_percent: f64,
+    pub window_seconds: i64,
+    /// Unix seconds; 0 when the service did not say.
+    pub reset_at: i64,
+}
+
+/// Asks ChatGPT how much of an account's allowance is used, refreshing
+/// its token first when it is about to expire.
+pub(crate) async fn codex_usage(
+    secrets: &dyn SecretStore,
+    client: &reqwest::Client,
+    id: &str,
+) -> Result<CodexUsage> {
+    let saved = pooled(secrets, id).context("That account is no longer saved; sign in again")?;
+    let creds = codex_auth::refresh_if_due(client, saved.clone(), codex_auth::now_ms())
+        .await
+        .map_err(anyhow::Error::msg)?;
+    if creds != saved {
+        persist(secrets, &creds)?;
+    }
+    let usage = codex_auth::fetch_usage(client, &creds)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    let window = |window: codex_auth::UsageWindow| UsageWindow {
+        used_percent: window.used_percent,
+        window_seconds: window.window_seconds,
+        reset_at: window.reset_at,
+    };
+    Ok(CodexUsage {
+        plan: usage.plan_type,
+        limit_reached: usage.limit_reached,
+        short: usage.primary.map(window),
+        weekly: usage.secondary.map(window),
+    })
+}
+
+/// Refreshed tokens of the active account are its sign-in too.
+fn persist(secrets: &dyn SecretStore, creds: &CodexCredentials) -> Result<()> {
+    if is_active(secrets, &creds.account_id) {
+        store(secrets, &Credentials::Codex(creds.clone()))
+    } else {
+        keep_account(secrets, creds)
+    }
+}
+
+/// Codex CLI keeps one sign-in in `$CODEX_HOME/auth.json`; CLIProxyAPI
+/// one `codex-*.json` per account.
+fn local_sign_ins(
+    home: &std::path::Path,
+    codex_home: Option<std::path::PathBuf>,
+) -> Vec<std::path::PathBuf> {
+    let cli = codex_home
+        .unwrap_or_else(|| home.join(".codex"))
+        .join("auth.json");
+    let mut proxy: Vec<_> = std::fs::read_dir(home.join(".cli-proxy-api"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("codex-") && name.ends_with(".json"))
+        })
+        .collect();
+    proxy.sort();
+    std::iter::once(cli)
+        .chain(proxy)
+        .filter(|path| path.is_file())
+        .collect()
+}
+
+/// Brings the ChatGPT sign-ins Codex CLI and CLIProxyAPI keep on this
+/// computer into the pool, the newest copy of each account; the first
+/// becomes active when none is. Returns how many accounts were found.
+pub(crate) fn import_codex_accounts(
+    secrets: &dyn SecretStore,
+    home: &std::path::Path,
+    codex_home: Option<std::path::PathBuf>,
+) -> Result<usize> {
+    let files = local_sign_ins(home, codex_home);
+    if files.is_empty() {
+        bail!("No ChatGPT sign-in was found in ~/.codex/auth.json or ~/.cli-proxy-api; run `codex login` first, or sign in here");
+    }
+    let mut found: Vec<CodexCredentials> = Vec::new();
+    let mut problem = None;
+    for file in &files {
+        let read = std::fs::read_to_string(file)
+            .map_err(|_| "Could not read a ChatGPT sign-in file".to_string())
+            .and_then(|raw| codex_auth::credentials_from_local_auth(&raw));
+        match read {
+            Ok(creds) => match found
+                .iter_mut()
+                .find(|seen| seen.account_id == creds.account_id)
+            {
+                Some(seen) if creds.expires_at_ms > seen.expires_at_ms => *seen = creds,
+                Some(_) => {}
+                None => found.push(creds),
+            },
+            Err(error) => problem = problem.or(Some(error)),
+        }
+    }
+    if found.is_empty() {
+        bail!(problem.unwrap_or_else(|| "No ChatGPT sign-in could be imported".into()));
+    }
+    for creds in &found {
+        if pooled(secrets, &creds.account_id)
+            .is_none_or(|kept| creds.expires_at_ms > kept.expires_at_ms)
+        {
+            persist(secrets, creds)?;
+        }
+    }
+    if load(secrets, Subscription::Codex).is_none() {
+        store(secrets, &Credentials::Codex(found[0].clone()))?;
+    }
+    Ok(found.len())
 }
 
 /// The access token for a turn, refreshed first when it is about to
@@ -172,12 +413,20 @@ pub(crate) async fn fresh_access(
     subscription: Subscription,
     client: &reqwest::Client,
 ) -> Result<String> {
-    let saved = load(secrets, subscription).with_context(|| {
+    let loaded = load(secrets, subscription).with_context(|| {
         format!(
             "Sign in to {} again in Settings, Models",
             name(subscription)
         )
     })?;
+    // Another copy of the account may have been refreshed since.
+    let saved = match loaded.clone() {
+        Credentials::Codex(creds) => {
+            let copy = pooled(secrets, &creds.account_id);
+            Credentials::Codex(fresher(creds, copy))
+        }
+        other => other,
+    };
     let now = codex_auth::now_ms();
     let fresh = match saved.clone() {
         Credentials::ChatGpt(creds) => chatgpt_auth::refresh_if_due(client, creds, now)
@@ -191,7 +440,7 @@ pub(crate) async fn fresh_access(
             .map(Credentials::Xai),
     }
     .map_err(anyhow::Error::msg)?;
-    if fresh.access() != saved.access() {
+    if fresh.access() != loaded.access() {
         store(secrets, &fresh)?;
     }
     Ok(fresh.access().to_owned())

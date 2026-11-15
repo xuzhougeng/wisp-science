@@ -248,9 +248,17 @@ Limits of this slice:
   when nothing else is); the model can be changed in the form without a
   key. Before each turn the access token is refreshed when it is within
   minutes of expiring, and the rotated token is written back. Signing out
-  keeps the models, marked as waiting for a sign-in. Not ported: the
-  WebView's pool of several Codex accounts, switching between them, and
-  the usage meter; nothing is offered while models come from `WISP_*`
+  keeps the models, marked as waiting for a sign-in. ChatGPT through
+  Codex keeps a pool of accounts as the WebView's `codex_accounts.rs`
+  does (each under `codex_account:<id>`, their order under
+  `codex_accounts`): every sign-in joins it, one account is in use for all
+  Codex models, Use switches, Remove asks first and hands over to the next
+  account (or signs out when none is left), Check usage asks ChatGPT for
+  each account's short and weekly windows, and Import from Codex CLI
+  brings in `$CODEX_HOME/auth.json` (else `~/.codex/auth.json`) and
+  CLIProxyAPI's `~/.cli-proxy-api/codex-*.json`, the newest copy of each
+  account. Usage is asked for on request rather than whenever the page
+  opens. Nothing is offered while models come from `WISP_*`
   variables. A broken model chosen for a
   conversation is reported when a message is sent, not replaced silently.
 - Deleting removes the conversation and its messages; files it wrote stay in the
@@ -1256,6 +1264,14 @@ there was none). Send a message on it. Press Sign in with a code for
 ChatGPT (Codex): a code shows with Open the sign-in page. Sign out: the
 model stays, marked as not signed in. Started with `WISP_*` model
 variables, the list says so and offers nothing.
+With `codex login` done on this computer, press Import from Codex CLI
+under ChatGPT (Codex): the account is listed with its plan and In use,
+and the row says Signed in. Sign in with a second account: both are
+listed; press Use on the other and send a message on a Codex model.
+Press Check usage: each account shows its short and weekly windows with
+the part used and when it resets. Press Remove, then Escape: the question
+closes and Settings stays; Remove again and answer it: the next account
+is in use.
 In Settings, ACP agents, add an agent with a name and a program that is
 not installed: it is listed with Program not found, and Test says its
 program was not found on this computer. Change it to an installed ACP agent (or adapter)

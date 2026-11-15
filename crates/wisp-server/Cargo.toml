@@ -47,4 +47,5 @@ wisp-sync = { workspace = true }
 wisp-tools = { workspace = true }
 
 [dev-dependencies]
+base64 = { workspace = true }
 tempfile = "3"

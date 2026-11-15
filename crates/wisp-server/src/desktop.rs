@@ -688,6 +688,47 @@ impl Server {
         self.store_models(&saved).await
     }
 
+    /// The ChatGPT (Codex) accounts kept on this computer, one active.
+    pub fn codex_accounts(&self) -> Result<Vec<CodexAccount>> {
+        crate::subscriptions::codex_accounts(self.0.secrets.as_ref())
+    }
+
+    /// Runs ChatGPT (Codex) models on another kept account.
+    pub async fn switch_codex_account(&self, id: &str) -> Result<ModelSettings> {
+        crate::subscriptions::switch_codex_account(self.0.secrets.as_ref(), id)?;
+        let saved = saved_models(&self.0.store).await?;
+        self.store_models(&saved).await
+    }
+
+    pub async fn remove_codex_account(&self, id: &str) -> Result<ModelSettings> {
+        crate::subscriptions::remove_codex_account(self.0.secrets.as_ref(), id)?;
+        let saved = saved_models(&self.0.store).await?;
+        self.store_models(&saved).await
+    }
+
+    /// How much of an account's allowance is used; asks ChatGPT.
+    pub async fn codex_account_usage(&self, id: &str) -> Result<CodexUsage> {
+        let client = self.subscription_client().await?;
+        crate::subscriptions::codex_usage(self.0.secrets.as_ref(), &client, id).await
+    }
+
+    /// Brings the sign-ins of Codex CLI and CLIProxyAPI on this computer
+    /// into the pool; returns how many accounts were found.
+    pub async fn import_codex_accounts(&self) -> Result<usize> {
+        let home = crate::session_import::home().context("Could not find the home folder")?;
+        let codex_home = std::env::var_os("CODEX_HOME")
+            .filter(|value| !value.is_empty())
+            .map(std::path::PathBuf::from);
+        let found = crate::subscriptions::import_codex_accounts(
+            self.0.secrets.as_ref(),
+            &home,
+            codex_home,
+        )?;
+        let saved = saved_models(&self.0.store).await?;
+        self.store_models(&saved).await?;
+        Ok(found)
+    }
+
     /// A subscription model's token, refreshed when it is about to expire.
     pub(crate) async fn fresh_subscription(
         &self,
@@ -5173,7 +5214,9 @@ pub use crate::research_archive::ArchiveDraft;
 pub use crate::review::{Finding as ReviewFinding, Outcome as ReviewOutcome, Review};
 pub use crate::run_log::RunLog;
 pub use crate::schedules::{ScheduleInput, ScheduleRow, ScheduleRun, MIN_INTERVAL_SECS};
-pub use crate::subscriptions::{SignInChallenge, SignInState, SignInStatus, Subscription};
+pub use crate::subscriptions::{
+    CodexAccount, CodexUsage, SignInChallenge, SignInState, SignInStatus, Subscription, UsageWindow,
+};
 pub use crate::turn_undo::TurnFiles;
 pub use crate::updates::UpdateCheck;
 pub use crate::workflows::{

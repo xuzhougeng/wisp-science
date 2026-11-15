@@ -147,6 +147,8 @@ pub enum Layer {
     AcpAgentForm,
     /// Question before an ACP agent is removed from the list.
     ConfirmRemoveAcpAgent,
+    /// Question before a ChatGPT (Codex) account is removed from the pool.
+    ConfirmRemoveCodexAccount,
     /// Question before an expert is removed.
     ConfirmRemoveExpert,
     /// The form for an SSH host, on the Environments page of Settings.
@@ -208,6 +210,7 @@ impl Layer {
             | Layer::ConfirmRemoveExpert
             | Layer::AcpAgentForm
             | Layer::ConfirmRemoveAcpAgent
+            | Layer::ConfirmRemoveCodexAccount
             | Layer::QuickActionForm
             | Layer::WorkflowForm
             | Layer::ConfirmRemoveWorkflow
@@ -541,6 +544,14 @@ mod tests {
         stack.open(Layer::AcpAgentForm);
         assert!(stack.close(Layer::Settings));
         assert!(!stack.contains(Layer::AcpAgentForm));
+        // So is the question before a Codex account is removed.
+        stack.open(Layer::Settings);
+        stack.open(Layer::ConfirmRemoveCodexAccount);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmRemoveCodexAccount));
+        assert!(stack.contains(Layer::Settings));
+        stack.open(Layer::ConfirmRemoveCodexAccount);
+        assert!(stack.close(Layer::Settings));
+        assert!(!stack.contains(Layer::ConfirmRemoveCodexAccount));
         // And the question before the remote access code is replaced.
         stack.open(Layer::Settings);
         stack.open(Layer::ConfirmResetRemoteCode);

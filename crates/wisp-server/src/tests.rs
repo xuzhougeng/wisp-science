@@ -7320,6 +7320,142 @@ async fn a_subscription_sign_in_is_kept_in_the_keychain_and_runs_its_models() {
     server.shutdown().await;
 }
 
+/// A ChatGPT access token as Codex CLI keeps it (unsigned; claims only).
+fn chatgpt_token(account: &str, exp: i64, email: &str) -> String {
+    use base64::Engine;
+    let encode = |value: String| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(value);
+    let claims = serde_json::json!({
+        "exp": exp,
+        "https://api.openai.com/profile": {"email": email},
+        "https://api.openai.com/auth": {"chatgpt_account_id": account, "chatgpt_plan_type": "plus"},
+    });
+    format!("{}.{}.sig", encode("{}".into()), encode(claims.to_string()))
+}
+
+#[tokio::test]
+async fn codex_accounts_are_pooled_imported_switched_and_removed() {
+    use desktop::{SecretStore, Subscription};
+    let temp = tempfile::tempdir().unwrap();
+    let mut cfg = config(temp.path());
+    cfg.model = None;
+    let secrets = Arc::new(desktop::MemorySecrets::default());
+    let server = Server::open_with(cfg, models(Arc::default(), false), secrets.clone())
+        .await
+        .unwrap();
+    assert!(!server
+        .commands()
+        .iter()
+        .any(|command| command.contains("codex")));
+    assert!(server.codex_accounts().unwrap().is_empty());
+
+    // Sign-ins of Codex CLI and CLIProxyAPI on this computer.
+    let home = temp.path().join("home");
+    let exp = wisp_llm::codex_auth::now_ms() / 1000 + 3600;
+    let cli = |account: &str, exp: i64, email: &str| {
+        serde_json::json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": chatgpt_token(account, exp, email),
+                "refresh_token": format!("refresh-{account}-{exp}"),
+                "id_token": "id",
+            },
+        })
+        .to_string()
+    };
+    std::fs::create_dir_all(home.join(".codex")).unwrap();
+    std::fs::write(
+        home.join(".codex/auth.json"),
+        cli("acct-a", exp, "a@example.test"),
+    )
+    .unwrap();
+    let proxy = home.join(".cli-proxy-api");
+    std::fs::create_dir_all(&proxy).unwrap();
+    // A newer copy of the same account, and a second account.
+    std::fs::write(
+        proxy.join("codex-a.json"),
+        cli("acct-a", exp + 60, "a@example.test"),
+    )
+    .unwrap();
+    std::fs::write(
+        proxy.join("codex-b.json"),
+        cli("acct-b", exp, "b@example.test"),
+    )
+    .unwrap();
+    std::fs::write(
+        proxy.join("claude-c.json"),
+        cli("acct-c", exp, "c@example.test"),
+    )
+    .unwrap();
+    let found = crate::subscriptions::import_codex_accounts(secrets.as_ref(), &home, None).unwrap();
+    assert_eq!(found, 2);
+    let accounts = server.codex_accounts().unwrap();
+    let ids: Vec<&str> = accounts.iter().map(|account| account.id.as_str()).collect();
+    assert_eq!(ids, ["acct-a", "acct-b"]);
+    assert_eq!(accounts[0].email, "a@example.test");
+    assert_eq!(accounts[0].plan, "plus");
+    assert!(accounts[0].active && !accounts[1].active);
+    // The newest copy of an account is the one kept.
+    assert!(secrets
+        .get("codex_subscription")
+        .unwrap()
+        .contains(&format!("refresh-acct-a-{}", exp + 60)));
+    // A copy in the pool refreshed later (by the WebView, say) is the one
+    // a turn runs on, and it becomes the sign-in again.
+    let later = wisp_llm::codex_auth::CodexCredentials {
+        access_token: chatgpt_token("acct-a", exp + 600, "a@example.test"),
+        refresh_token: "refresh-acct-a-later".into(),
+        expires_at_ms: (exp + 600) * 1000,
+        account_id: "acct-a".into(),
+    };
+    secrets
+        .set("codex_account:acct-a", &later.to_json())
+        .unwrap();
+    let access = crate::subscriptions::fresh_access(
+        secrets.as_ref(),
+        Subscription::Codex,
+        &reqwest::Client::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(access, later.access_token);
+    assert!(secrets
+        .get("codex_subscription")
+        .unwrap()
+        .contains("refresh-acct-a-later"));
+    // Nothing to import is said plainly.
+    let empty = temp.path().join("empty-home");
+    assert!(crate::subscriptions::import_codex_accounts(secrets.as_ref(), &empty, None).is_err());
+
+    // Switching makes another account the subscription's sign-in.
+    server.switch_codex_account("acct-b").await.unwrap();
+    assert!(secrets
+        .get("codex_subscription")
+        .unwrap()
+        .contains("refresh-acct-b"));
+    assert!(server.codex_accounts().unwrap()[1].active);
+    assert!(server.switch_codex_account("acct-missing").await.is_err());
+    let row = server
+        .subscriptions()
+        .into_iter()
+        .find(|row| row.subscription == Subscription::Codex)
+        .unwrap();
+    assert_eq!(row.account.as_deref(), Some("acct-b"));
+
+    // Removing the active account hands over to the next one.
+    server.remove_codex_account("acct-b").await.unwrap();
+    let accounts = server.codex_accounts().unwrap();
+    assert_eq!(accounts.len(), 1);
+    assert!(accounts[0].active && accounts[0].id == "acct-a");
+    // Removing the last signs out.
+    server.remove_codex_account("acct-a").await.unwrap();
+    assert!(server.codex_accounts().unwrap().is_empty());
+    assert!(server
+        .subscriptions()
+        .into_iter()
+        .all(|row| row.account.is_none()));
+    server.shutdown().await;
+}
+
 #[tokio::test]
 async fn acp_agents_are_kept_in_the_shared_list_tested_and_removed() {
     use desktop::AcpAgent;

@@ -437,6 +437,14 @@ pub struct Workspace {
     sign_in_state: Option<wisp_server::desktop::SignInState>,
     sign_in_redirect: Entity<InputState>,
     sign_in_note: Option<Result<String, String>>,
+    /// The ChatGPT (Codex) accounts kept, each one's usage once asked for,
+    /// whether it is being asked for, and the account a remove question
+    /// is about.
+    codex_accounts: Vec<wisp_server::desktop::CodexAccount>,
+    codex_usage:
+        std::collections::HashMap<String, Result<wisp_server::desktop::CodexUsage, String>>,
+    codex_usage_checking: bool,
+    codex_removing: Option<String>,
     acp_reports:
         std::collections::HashMap<String, Result<wisp_server::desktop::AcpAgentReport, String>>,
     mcp_servers: Option<Vec<wisp_server::desktop::McpServerRow>>,
@@ -1044,6 +1052,10 @@ impl Workspace {
             sign_in_state: None,
             sign_in_redirect,
             sign_in_note: None,
+            codex_accounts: Vec::new(),
+            codex_usage: std::collections::HashMap::new(),
+            codex_usage_checking: false,
+            codex_removing: None,
             acp_reports: Default::default(),
             mcp_servers: None,
             mcp_editing: None,
@@ -1161,6 +1173,7 @@ impl Workspace {
             Some(Layer::McpForm | Layer::ConfirmRemoveMcp) => self.mcp_editing = None,
             Some(Layer::ExpertForm | Layer::ConfirmRemoveExpert) => self.expert_editing = None,
             Some(Layer::AcpAgentForm | Layer::ConfirmRemoveAcpAgent) => self.acp_editing = None,
+            Some(Layer::ConfirmRemoveCodexAccount) => self.codex_removing = None,
             Some(Layer::ConfirmRemovePlugin) => self.plugin_removing = None,
             Some(Layer::ConfirmResetRemoteCode) => {}
             Some(Layer::WorkflowForm) => {

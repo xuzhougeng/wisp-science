@@ -1257,6 +1257,33 @@ impl Backend {
         self.local(move |host| async move { host.sign_out_subscription(subscription).await })
     }
 
+    /// The ChatGPT (Codex) accounts kept on this computer, one active.
+    pub fn codex_accounts(&self) -> Reply<Vec<wisp_server::desktop::CodexAccount>> {
+        self.local(|host| async move { host.codex_accounts() })
+    }
+
+    pub fn switch_codex_account(&self, id: String) -> Reply<wisp_server::desktop::ModelSettings> {
+        self.local(move |host| async move { host.switch_codex_account(&id).await })
+    }
+
+    pub fn remove_codex_account(&self, id: String) -> Reply<wisp_server::desktop::ModelSettings> {
+        self.local(move |host| async move { host.remove_codex_account(&id).await })
+    }
+
+    /// Asks ChatGPT how much of the account's allowance is used.
+    pub fn codex_account_usage(&self, id: String) -> Reply<wisp_server::desktop::CodexUsage> {
+        self.local(move |host| async move { host.codex_account_usage(&id).await })
+    }
+
+    /// Brings in the sign-ins of Codex CLI and CLIProxyAPI; how many
+    /// accounts were found, and the models afterwards.
+    pub fn import_codex_accounts(&self) -> Reply<(usize, wisp_server::desktop::ModelSettings)> {
+        self.local(|host| async move {
+            let found = host.import_codex_accounts().await?;
+            Ok((found, host.model_settings().await?))
+        })
+    }
+
     pub fn onboarding_done(&self) -> Reply<bool> {
         self.local(|host| async move { host.onboarding_done().await })
     }
