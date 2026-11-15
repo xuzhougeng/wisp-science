@@ -161,6 +161,12 @@ struct Inner {
     subagent_resumes: std::sync::Mutex<HashMap<String, (String, bool, String)>>,
     /// Conversations a background batch's result is being delivered to.
     delivering: std::sync::Mutex<HashSet<String>>,
+    /// Conversations whose running turn corrects what an automatic review
+    /// found; the review after it is not corrected again.
+    corrections: std::sync::Mutex<HashSet<String>>,
+    /// Corrections to start, for the worker that starts them: a turn's
+    /// end cannot start the next turn itself.
+    to_correct: tokio::sync::mpsc::UnboundedSender<Correction>,
     sweeping_deliveries: AtomicBool,
     /// The daily recap run is going.
     recapping: AtomicBool,
@@ -174,6 +180,24 @@ struct Inner {
         std::sync::RwLock<Option<Arc<dyn method_search::prepare::MethodSearchEvaluator>>>,
     /// Terminals drawn in the window.
     terminals: terminals::Terminals,
+}
+
+/// Where a turn ran and who started it, for what follows it.
+#[derive(Clone, Copy)]
+struct TurnPlace<'a> {
+    project: &'a str,
+    root: &'a str,
+    origin: channels::TurnOrigin,
+}
+
+/// A correction an automatic review asked for: the conversation, what it
+/// is told, and where and by whom its turn was started.
+struct Correction {
+    frame: String,
+    prompt: String,
+    project: String,
+    root: String,
+    origin: channels::TurnOrigin,
 }
 
 /// What runs a turn: Wisp's own agent (with the model its side requests
@@ -359,7 +383,8 @@ impl Server {
             Some(model) => desktop::ModelState::environment(model),
             None => desktop::ModelState::saved(&store, secrets.as_ref()).await,
         };
-        Ok(Self(Arc::new(Inner {
+        let (to_correct, corrections_asked) = tokio::sync::mpsc::unbounded_channel();
+        let server = Self(Arc::new(Inner {
             config,
             store,
             sessions: Default::default(),
@@ -386,13 +411,67 @@ impl Server {
             project_locks: Default::default(),
             subagent_resumes: Default::default(),
             delivering: Default::default(),
+            corrections: Default::default(),
+            to_correct,
             sweeping_deliveries: AtomicBool::new(false),
             recapping: AtomicBool::new(false),
             tidying: AtomicBool::new(false),
             assistant_lock: Default::default(),
             method_search_evaluator: Default::default(),
             terminals: Default::default(),
-        })))
+        }));
+        server.start_corrections(corrections_asked);
+        Ok(server)
+    }
+
+    /// Starts the corrections automatic reviews ask for, one after another,
+    /// for as long as the host is there.
+    fn start_corrections(&self, mut asked: tokio::sync::mpsc::UnboundedReceiver<Correction>) {
+        let host = Arc::downgrade(&self.0);
+        tokio::spawn(async move {
+            while let Some(correction) = asked.recv().await {
+                let Some(inner) = host.upgrade() else {
+                    break;
+                };
+                Self(inner).correct(correction).await;
+            }
+        });
+    }
+
+    /// Resumes a conversation to correct what its automatic review found.
+    /// The findings are told to that turn only, as the WebView injects
+    /// them; nothing is added to the conversation as said by the user.
+    async fn correct(&self, correction: Correction) {
+        let frame = correction.frame;
+        self.0
+            .subagent_resumes
+            .lock()
+            .unwrap()
+            .insert(frame.clone(), (correction.prompt, false, String::new()));
+        self.0.corrections.lock().unwrap().insert(frame.clone());
+        let request = dto::SendRequest {
+            session_id: frame.clone(),
+            request_id: uuid::Uuid::new_v4().to_string(),
+            message: String::new(),
+            resume: true,
+            resume_after: None,
+            attachments: Vec::new(),
+            references: Vec::new(),
+            acp_agent_id: None,
+        };
+        if let Err(error) = self
+            .start_turn(
+                &correction.project,
+                &correction.root,
+                request,
+                correction.origin,
+            )
+            .await
+        {
+            self.0.subagent_resumes.lock().unwrap().remove(&frame);
+            self.0.corrections.lock().unwrap().remove(&frame);
+            tracing::warn!(%error, "Could not correct what the review found");
+        }
     }
 
     /// Model a conversation that chose `profile` runs on (an empty id is the
@@ -870,6 +949,7 @@ impl Server {
         }
         self.begin_turn(&session, page);
         let server = self.clone();
+        let (project_of_turn, root_of_turn) = (project.to_owned(), root.to_owned());
         let session = session.clone();
         let project = project.to_string();
         let root = std::path::PathBuf::from(root);
@@ -926,6 +1006,11 @@ impl Server {
                     activity,
                     side_model,
                     auto_review,
+                    TurnPlace {
+                        project: &project_of_turn,
+                        root: &root_of_turn,
+                        origin,
+                    },
                 )
                 .await;
         });
@@ -1096,6 +1181,7 @@ impl Server {
         activity: tokio::sync::OwnedRwLockReadGuard<()>,
         side_model: Option<wisp_llm::ProviderConfig>,
         auto_review: bool,
+        place: TurnPlace<'_>,
     ) {
         let mut error = match task.await {
             Ok(Ok(())) => None,
@@ -1137,7 +1223,7 @@ impl Server {
             let frame = &request.session_id;
             tokio::join!(
                 self.suggest_follow_ups(frame, session, side_model.clone(), ended),
-                self.review_after_turn(frame, session, side_model, ended, auto_review),
+                self.review_after_turn(frame, session, side_model, ended, auto_review, place),
             );
         }
     }
@@ -1152,7 +1238,11 @@ impl Server {
         model: wisp_llm::ProviderConfig,
         ended: u64,
         wanted: bool,
+        place: TurnPlace<'_>,
     ) {
+        // The turn that ended corrected an earlier review: this one only
+        // checks the correction.
+        let follow_up = self.0.corrections.lock().unwrap().remove(frame);
         if !wanted {
             return;
         }
@@ -1180,14 +1270,33 @@ impl Server {
                 Some(Err(said))
             }
         };
-        {
+        // What was found is corrected once, as the WebView does: the turn
+        // is resumed with the findings, and what it then says is reviewed.
+        let to_correct = match &found {
+            Some(Ok(review)) if !review.findings.is_empty() && !follow_up => Some(review.clone()),
+            _ => None,
+        };
+        let current = {
             let mut live = session.live.lock().unwrap();
-            if live.generation == ended {
+            let current = live.generation == ended;
+            if current {
                 live.review = found;
                 live.reviewing = false;
             }
-        }
+            current
+        };
         session.suggested.notify_waiters();
+        if let (true, Some(review)) = (current, to_correct) {
+            if !self.0.shutting_down.load(Ordering::Relaxed) {
+                let _ = self.0.to_correct.send(Correction {
+                    frame: frame.to_owned(),
+                    prompt: review.correction(),
+                    project: place.project.to_owned(),
+                    root: place.root.to_owned(),
+                    origin: place.origin,
+                });
+            }
+        }
     }
 
     /// Whether a conversation's research has been frozen as an archive.

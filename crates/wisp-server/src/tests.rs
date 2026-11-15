@@ -6746,6 +6746,7 @@ async fn a_conversation_that_asks_for_it_is_reviewed_after_each_turn_worth_it() 
     // reports one finding whenever it is asked to review.
     struct Checked {
         reviews: Arc<AtomicUsize>,
+        corrected: Arc<AtomicBool>,
     }
     #[async_trait]
     impl Provider for Checked {
@@ -6783,6 +6784,14 @@ async fn a_conversation_that_asks_for_it_is_reviewed_after_each_turn_worth_it() 
             _: &[ToolSchema],
             sink: &mut dyn StreamSink,
         ) -> wisp_llm::Result<Completion> {
+            if messages.iter().any(|message| {
+                message
+                    .content
+                    .as_text()
+                    .starts_with("An independent reviewer found")
+            }) {
+                self.corrected.store(true, Ordering::Relaxed);
+            }
             if !messages
                 .iter()
                 .any(|message| message.role == wisp_llm::Role::Tool)
@@ -6811,11 +6820,13 @@ async fn a_conversation_that_asks_for_it_is_reviewed_after_each_turn_worth_it() 
     }
     let temp = tempfile::tempdir().unwrap();
     let reviews = Arc::new(AtomicUsize::new(0));
+    let corrected = Arc::new(AtomicBool::new(false));
     let factory: ModelFactory = {
-        let reviews = reviews.clone();
+        let (reviews, corrected) = (reviews.clone(), corrected.clone());
         Arc::new(move |_| {
             Box::new(Checked {
                 reviews: reviews.clone(),
+                corrected: corrected.clone(),
             })
         })
     };
@@ -6840,6 +6851,22 @@ async fn a_conversation_that_asks_for_it_is_reviewed_after_each_turn_worth_it() 
                     .await
                     .unwrap();
             }
+            wait_for(server, &session, |s| !s.running).await;
+            server.after_turn_settled(PROJECT, &session).await.unwrap();
+            server.conversation_status(PROJECT, &session).await.unwrap()
+        }
+    };
+    // Once `count` reviews were asked for and what follows them settled.
+    let settled = |session: String, count: usize| {
+        let (server, reviews) = (&server, reviews.clone());
+        async move {
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                while reviews.load(Ordering::Relaxed) < count {
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .expect("the reviews must be asked for");
             wait_for(server, &session, |s| !s.running).await;
             server.after_turn_settled(PROJECT, &session).await.unwrap();
             server.conversation_status(PROJECT, &session).await.unwrap()
@@ -6877,21 +6904,31 @@ async fn a_conversation_that_asks_for_it_is_reviewed_after_each_turn_worth_it() 
     assert_eq!(status.review, None);
     assert_eq!(reviews.load(Ordering::Relaxed), 0);
 
-    // Asked for in one conversation: its tool turn is reviewed.
+    // Asked for in one conversation: its tool turn is reviewed, and what
+    // the review found is corrected once, as the WebView does: the turn is
+    // resumed with the findings, nobody says anything new, and the
+    // correction is reviewed in its turn without a second correction.
     let checked = create(&server).await;
     assert!(choose(checked.clone(), true).await);
-    let status = turn(checked.clone(), "write the file").await;
+    turn(checked.clone(), "write the file").await;
+    let status = settled(checked.clone(), 2).await;
     let Some(desktop::ReviewOutcome::Done(review)) = status.review else {
         panic!("no review: {:?}", status.review);
     };
     assert_eq!(review.findings.len(), 1);
     assert_eq!(review.findings[0].verdict, "fail");
-    assert_eq!(reviews.load(Ordering::Relaxed), 1);
+    assert!(corrected.load(Ordering::Relaxed));
+    let rows = snapshot(&server, &checked).await.items;
+    let count = |role: &str| rows.iter().filter(|row| row.role == role).count();
+    assert_eq!(count("user"), 1, "{rows:?}");
+    assert_eq!(count("review"), 2, "{rows:?}");
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(reviews.load(Ordering::Relaxed), 2);
     // A short answer without tools is not worth a review, and the last
     // turn's review does not linger over it.
     let status = turn(checked.clone(), "thanks").await;
     assert_eq!(status.review, None);
-    assert_eq!(reviews.load(Ordering::Relaxed), 1);
+    assert_eq!(reviews.load(Ordering::Relaxed), 2);
     // The other conversation was not switched on by this one.
     assert!(
         !server
@@ -6918,13 +6955,13 @@ async fn a_conversation_that_asks_for_it_is_reviewed_after_each_turn_worth_it() 
         .unwrap();
     assert!(saved.auto_review);
     let fresh = create(&server).await;
-    let status = turn(fresh.clone(), "write the file").await;
+    turn(fresh.clone(), "write the file").await;
+    let status = settled(fresh.clone(), 4).await;
     assert!(status.options.auto_review);
     assert!(matches!(
         status.review,
         Some(desktop::ReviewOutcome::Done(_))
     ));
-    assert_eq!(reviews.load(Ordering::Relaxed), 2);
     assert!(
         !server
             .conversation_status(PROJECT, &quiet)

@@ -1074,9 +1074,12 @@ Limits of this slice:
   Conversation, sets what conversations start with (the WebView's keys,
   `frame_auto_review:<id>` and `auto_review_default_enabled`). A
   conversation that was never switched follows the default; one that was
-  keeps its choice. Unlike the WebView, a review that finds problems does
-  not hold the turn open or correct it: the turn is over, the result is
-  shown, and corrections are asked for with Ask Wisp to correct. A turn
+  keeps its choice. A review that finds problems has them corrected once,
+  as the WebView does: the conversation is resumed with the findings, told
+  to that turn only (nothing is added as said by you), and what it then
+  says is reviewed again without a second correction. Unlike the WebView,
+  the first turn has ended by then, so the correction is a turn of its
+  own; one started meanwhile by you takes its place. A turn
   that failed, was stopped, ended on a question to you, or only said a
   little without tools is not reviewed. The line above the composer
   stays until the next turn starts; the report is also kept with the
