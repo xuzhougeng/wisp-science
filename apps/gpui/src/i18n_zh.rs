@@ -1235,4 +1235,6 @@ pub const ZH: &[(&str, &str)] = &[
     ("Show as a notebook", "以笔记本显示"),
     // Run rows.
     ("Show in Runs", "在运行中查看"),
+    // Inline pictures.
+    ("Open it in Files", "在文件中打开"),
 ];

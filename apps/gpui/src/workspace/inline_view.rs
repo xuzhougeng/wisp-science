@@ -5,7 +5,7 @@ use std::sync::Arc;
 use gpui::{prelude::*, *};
 
 use super::{Workspace, favorites_view::image_format};
-use crate::{backend::receive, inline};
+use crate::{backend::receive, i18n::tr, inline};
 
 impl Workspace {
     /// Reads the pictures the loaded answers point at and that are not
@@ -65,18 +65,31 @@ impl Workspace {
     }
 
     /// The pictures an answer points at that have been read, in order.
-    pub(super) fn inline_pictures(&self, text: &str) -> Vec<Div> {
+    /// Clicking one opens it in the Files tab, larger.
+    pub(super) fn inline_pictures(&self, text: &str, cx: &mut Context<Self>) -> Vec<Stateful<Div>> {
         inline::pictures(text)
             .into_iter()
             .filter_map(|path| {
                 let image = self.inline_images.get(&path)?.clone()?;
+                let opened = path.clone();
                 Some(
-                    div().py_1().child(
-                        img(image)
-                            .max_w(px(640.))
-                            .max_h(px(420.))
-                            .object_fit(ObjectFit::Contain),
-                    ),
+                    div()
+                        .id(SharedString::from(format!("inline-picture-{path}")))
+                        .py_1()
+                        .cursor_pointer()
+                        .tooltip(|window, cx| {
+                            gpui_component::tooltip::Tooltip::new(tr("Open it in Files"))
+                                .build(window, cx)
+                        })
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.reveal_file(opened.clone(), window, cx)
+                        }))
+                        .child(
+                            img(image)
+                                .max_w(px(640.))
+                                .max_h(px(420.))
+                                .object_fit(ObjectFit::Contain),
+                        ),
                 )
             })
             .collect()

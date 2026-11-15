@@ -130,7 +130,7 @@ to find in the running app.
 | Agent question card with free-text answer [Agent 需要你的决定] | Yes | Done: options answer with one click, or type the answer | served |
 | Follow-up suggestions | Yes | Done: up to three questions above the composer after an answer; picking one puts it in the composer | served |
 | Thinking blocks | Yes | Yes: shown above the composer while the model thinks, and kept in the transcript as a folded Thought ahead of its answer | served |
-| Images and figures inline | Yes | Partial: project pictures an answer shows with Markdown image syntax, drawn under the answer; not pictures only a tool wrote, and no zoom | served |
+| Images and figures inline | Yes | Partial: project pictures an answer shows with Markdown image syntax, drawn under the answer, and opened in the Files tab with a click; not pictures only a tool wrote | served |
 | Token usage per turn | Yes | Partial: the running or latest turn only, and not after a restart | served |
 | Skill and attachment chips on the user message | Yes | Partial: file chips; references are context for that turn only and are not shown afterwards | served |
 | Copy message [复制] | Yes | Done: copies the message as Markdown | ui |

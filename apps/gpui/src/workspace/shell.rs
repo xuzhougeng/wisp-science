@@ -834,7 +834,7 @@ impl Workspace {
                 .px_6()
                 .py_2()
                 .child(TextView::markdown(id, item.text.clone(), window, cx).selectable(true))
-                .children(self.inline_pictures(&item.text))
+                .children(self.inline_pictures(&item.text, cx))
                 .child(self.message_actions(index, cx))
                 .into_any_element(),
         }
