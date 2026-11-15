@@ -274,7 +274,7 @@ row says what is there.
 | Library | Versions of saved code, edit code, insert into chat | store |
 | Publication | Revisions, manuscript items, evidence binding, readiness waivers, reproduction check, capsule — papers, items, evidence from results and runs, new revisions, the readiness check with waivers and finalizing are there (section 7); reproduction and capsules are Missing | store |
 | Assistant | Assistant chat, saved plans, scheduled tasks, daily recap, weekly memory tidy, research mandates, WeChat binding — scheduled tasks are there (section 1); the rest is Missing | store |
-| App | Onboarding wizard, toolchain installer (uv, Python, R, Node, pixi), local tool detection | tauri |
+| App | Onboarding wizard, toolchain installer (uv, Python, R, Node, pixi), local tool detection — the toolchain installer is **Done** on Settings → Environments (Tools on this computer); the wizard and detection of tools installed elsewhere are Missing | tauri |
 | App | Action palette (⌘P), privacy mode (⌘⇧H), application and native menus | ui |
 | App | Browser automation prompts (tab cleanup, needs a human), browser-extension update banner — Missing; the Browser page says when the extension has to be reloaded | tauri |
 | App | SSH connectivity check — **Done** in Settings, Environments; generic confirmation dialogs | shared |

@@ -452,8 +452,10 @@ pub async fn build(
         .lock()
         .unwrap()
         .get_or_insert_with(|| {
+            // The data directory, where the managed Python environment
+            // is looked for first, as in the WebView desktop.
             wisp_runtime::RuntimeManager::local(
-                config.data.join("runtimes").join(frame),
+                config.data.clone(),
                 worker.clone(),
                 Some(r_worker.clone()),
                 vec![],

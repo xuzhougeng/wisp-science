@@ -331,6 +331,11 @@ pub struct Workspace {
     open_connector: Option<String>,
     /// The SSH hosts and the default place for new work; `None` until read.
     environments: Option<wisp_server::desktop::EnvironmentsView>,
+    /// Python, R and Node under the data folder: their state, the tools
+    /// chosen to install, and whether the page is following an install.
+    toolchain: Option<wisp_dto::ToolchainStatus>,
+    toolchain_choice: Vec<&'static str>,
+    toolchain_following: bool,
     /// What the Network page last read from the host, its fields, and
     /// whether the last Save was kept.
     network: Option<wisp_dto::NetworkSettings>,
@@ -939,6 +944,9 @@ impl Workspace {
             connectors_search,
             open_connector: None,
             environments: None,
+            toolchain: None,
+            toolchain_choice: vec!["python"],
+            toolchain_following: false,
             network: None,
             network_fields,
             network_saved: false,

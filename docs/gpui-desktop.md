@@ -176,7 +176,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Outline | A button in the conversation's header lists what you asked, in order; choosing one scrolls to it |
 | Find in conversation | Cmd/Ctrl+F, or the command palette: a bar over the transcript marks every message, and every tool call, that contains the words; Return and the arrows move between them |
 | Help | Documentation (home page, Settings, palette) and Report a problem (Settings, palette) open the tutorials and the issue tracker in the system's browser |
-| Settings | A search field narrows the pages to those about what you type. Pages: General (language; appearance: system, light or dark; the send key; notifications and sound; update check; what the app opens on), Network (a route for model requests, for connectors and MCP servers, and for the code the model runs; a conda mirror, a Python package index and a CA bundle the model is told to use), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold, suggesting what to ask next, reviewing turns, the reviewer model and the sub-agent model), Skills (every skill with where it comes from, search, on or off), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Environments (the SSH hosts work can run on: add, change, remove, add from `~/.ssh/config`, check the connection and see what the host is, and which one new work goes to), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
+| Settings | A search field narrows the pages to those about what you type. Pages: General (language; appearance: system, light or dark; the send key; notifications and sound; update check; what the app opens on), Network (a route for model requests, for connectors and MCP servers, and for the code the model runs; a conda mirror, a Python package index and a CA bundle the model is told to use), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold, suggesting what to ask next, reviewing turns, the reviewer model and the sub-agent model), Skills (every skill with where it comes from, search, on or off), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Environments (Python, R and Node.js installed into Wisp's own data folder with progress, a log and Stop; the SSH hosts work can run on: add, change, remove, add from `~/.ssh/config`, check the connection and see what the host is, and which one new work goes to), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
 | Inbox | Conversations in any project that are waiting for you; opens across projects |
 | Read state | A finished answer is marked read once it is on screen in the active window |
 | Transcript | Virtualized Markdown, selectable text, paginated history |
@@ -338,6 +338,22 @@ Limits of this slice:
   scratch and storage locations are not ported. Removing a host keeps the
   records of runs made on it and puts new work back on this computer if it
   was the default.
+- Tools on this computer is the WebView's managed toolchain, ported into
+  the host (`src-tauri/src/toolchain.rs`): a checksum-pinned pixi installs
+  uv, Python 3.12, R (with jsonlite) and Node.js 24 from conda-forge under
+  `<data>/toolchain`, and uv makes Wisp's Python environment at
+  `<data>/python/.venv` with the bundled analysis packages. Nothing is
+  installed until Install is pressed, it needs no administrator rights,
+  and the user's own pixi, shell profile and `PATH` are left alone.
+  Downloads take the Code requests route, the conda mirror, the Python
+  index and the CA bundle from Network. When it ends the paths are saved
+  on the Local environment the WebView reads, the managed folders lead
+  `PATH` for shell commands and runs, and conversations start Python from
+  the managed environment first. The R interpreter of a conversation still
+  looks for `Rscript` on the system `PATH` only, so an R installed here is
+  used by shell commands and runs but not by that interpreter. There is no
+  first-run wizard and no detection of tools installed elsewhere; one
+  install runs at a time and the page follows it while it is open.
 - A conversation may run its work somewhere other than the default: the
   composer shows where once a host is saved. The choice is kept the way the
   WebView keeps it (`frame_default_execution_context:<conversation>`), is
@@ -1337,7 +1353,14 @@ listed, or the reason when it fails. Ask the model to use one of the tools:
 it asks first, then runs. Switch the server off and confirm the model no
 longer has the tool. Change its name and confirm Test lists the new names.
 Press Remove, then Escape (Settings stays), then remove it.
-Open Environments: add an SSH host with a name and an address and confirm it
+Open Environments: Tools on this computer says nothing is installed and
+names its folder under the data folder. Untick everything: Install is off.
+Tick R, press Install: the steps count up with a log (Getting pixi, then
+Installing R) while the page stays usable; press Stop: it reads Stopped
+and Install is back. With a network, install Python and wait: it reads
+Installed, Installed here lists uv and Python, and a conversation's
+Python interpreter starts without a system Python.
+Add an SSH host with a name and an address and confirm it
 is listed as `user@address`; press Add again, then Escape (the form closes,
 Settings stays). With hosts in `~/.ssh/config`, add one from the list and
 then the rest with Add all; a `Host *` pattern is not offered. Press Check on

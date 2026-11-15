@@ -12,6 +12,7 @@ axum = { workspace = true }
 futures-util = { workspace = true }
 chrono = { workspace = true }
 dunce = { workspace = true }
+flate2 = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
 hex = { workspace = true }
@@ -20,6 +21,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 semver = { workspace = true }
 sha2 = { workspace = true }
+tar = { workspace = true }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
 walkdir = { workspace = true }
 tokio = { workspace = true }

@@ -3532,6 +3532,40 @@ impl Server {
         crate::papers::open(&self.0.store, project, paper, Some(&created)).await
     }
 
+    /// Python, R and Node installed under the data directory, and how the
+    /// current or last install is going.
+    pub fn toolchain(&self) -> wisp_dto::ToolchainStatus {
+        crate::toolchain::snapshot(
+            &self.0.toolchain,
+            &crate::toolchain::Layout::new(&self.0.config.data),
+        )
+    }
+
+    /// Starts installing `tools` (`python`, `r`, `node`, `uv`) under the
+    /// data directory and returns at once; [`Self::toolchain`] follows it.
+    /// It downloads pixi and the tools on the Code requests route, and
+    /// changes nothing outside the data directory.
+    pub async fn install_toolchain(&self, tools: Vec<String>) -> Result<wisp_dto::ToolchainStatus> {
+        let network = crate::network::load(&self.0.store).await;
+        let setup = crate::toolchain::Setup::real(&self.0.config.data, network)
+            .map_err(anyhow::Error::msg)?;
+        self.start_toolchain(setup, tools)
+    }
+
+    pub(crate) fn start_toolchain(
+        &self,
+        setup: crate::toolchain::Setup,
+        tools: Vec<String>,
+    ) -> Result<wisp_dto::ToolchainStatus> {
+        crate::toolchain::start(&self.0.toolchain, self.0.store.clone(), setup, &tools)
+            .map_err(anyhow::Error::msg)
+    }
+
+    /// Stops the running install; what finished stays usable.
+    pub fn cancel_toolchain_install(&self) -> bool {
+        crate::toolchain::cancel(&self.0.toolchain)
+    }
+
     /// The installed plugins, and whether `project` has each switched on;
     /// with no project, none reads as on.
     pub async fn plugins(&self, project: Option<&str>) -> Result<Vec<PluginRow>> {

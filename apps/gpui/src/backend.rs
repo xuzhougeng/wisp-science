@@ -1149,6 +1149,19 @@ impl Backend {
         })
     }
 
+    /// What is installed under the data folder, and how an install goes.
+    pub fn toolchain(&self) -> Reply<wisp_dto::ToolchainStatus> {
+        self.local(|host| async move { Ok(host.toolchain()) })
+    }
+
+    pub fn install_toolchain(&self, tools: Vec<String>) -> Reply<wisp_dto::ToolchainStatus> {
+        self.local(move |host| async move { host.install_toolchain(tools).await })
+    }
+
+    pub fn cancel_toolchain_install(&self) -> Reply<bool> {
+        self.local(|host| async move { Ok(host.cancel_toolchain_install()) })
+    }
+
     /// The decision model as the form shows it; never its key.
     pub fn decision_model(&self) -> Reply<wisp_dto::DecisionModelSettings> {
         self.local(|host| async move { host.decision_model().await })

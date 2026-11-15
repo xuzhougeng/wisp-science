@@ -53,7 +53,7 @@ impl Provider for FakeModel {
     }
 }
 
-fn config(root: &Path) -> Config {
+pub(crate) fn config(root: &Path) -> Config {
     Config {
         data: root.join("data"),
         workspace: root.join("workspace"),
@@ -74,7 +74,7 @@ fn config(root: &Path) -> Config {
     }
 }
 
-fn models(calls: Arc<AtomicUsize>, write: bool) -> ModelFactory {
+pub(crate) fn models(calls: Arc<AtomicUsize>, write: bool) -> ModelFactory {
     Arc::new(move |_| {
         Box::new(FakeModel {
             calls: calls.clone(),

@@ -42,6 +42,7 @@ mod state;
 mod tabs;
 mod terminal;
 mod theme;
+mod toolchain;
 mod trajectory;
 mod usage;
 mod workflows;

@@ -34,6 +34,7 @@ mod schedules;
 mod session_import;
 #[cfg(test)]
 mod tests;
+mod toolchain;
 mod tools_found;
 mod trajectory;
 mod turn_undo;
@@ -115,6 +116,8 @@ struct Inner {
     library: tokio::sync::OnceCell<wisp_store::LibraryStore>,
     /// Connections to the MCP servers the user added.
     mcp: mcp::Connections,
+    /// The install of Python, R and Node under the data directory.
+    toolchain: toolchain::Slot,
 }
 
 type ModelFactory =
@@ -206,6 +209,9 @@ impl Server {
         // Programs the tools start take their route from here; the route is
         // one per process, as in the WebView desktop.
         wisp_tools::network::set_command_proxy(&routes.command_proxy_url);
+        // Tools installed under the data directory lead PATH for the
+        // commands and runs this host starts, as in the WebView desktop.
+        wisp_tools::local_env::set_managed_path(toolchain::Layout::new(&config.data).path_dirs());
         let mcp = mcp::Connections::default();
         mcp.set_proxy(&routes.mcp_proxy_url);
         let model = match config.model.take() {
@@ -231,6 +237,7 @@ impl Server {
             secrets,
             library: Default::default(),
             mcp,
+            toolchain: Default::default(),
         })))
     }
 

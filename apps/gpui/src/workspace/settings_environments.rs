@@ -14,11 +14,12 @@ use super::{Workspace, shell::glyph};
 use crate::{
     backend::{Reply, receive},
     layers::Layer,
-    settings,
+    settings, toolchain,
 };
 
 impl Workspace {
     pub(super) fn load_environments(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.follow_toolchain(window, cx);
         let reply = self.backend.environments();
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
@@ -31,6 +32,186 @@ impl Workspace {
             });
         })
         .detach();
+    }
+
+    /// Reads the managed tools' state, and keeps reading it every half
+    /// second while an install runs and the page is open.
+    fn follow_toolchain(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.toolchain_following {
+            return;
+        }
+        self.toolchain_following = true;
+        let backend = self.backend.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                let result = receive(backend.toolchain()).await;
+                let keep = this
+                    .update(cx, |this, cx| {
+                        let running = match result {
+                            Ok(status) => {
+                                let running = toolchain::running(&status);
+                                this.toolchain = Some(status);
+                                running
+                            }
+                            Err(error) => {
+                                this.settings_error = Some(error);
+                                false
+                            }
+                        };
+                        cx.notify();
+                        let open = this.layers.contains(Layer::Settings)
+                            && this.settings_section == settings::Section::Environments;
+                        let keep = running && open;
+                        if !keep {
+                            this.toolchain_following = false;
+                        }
+                        keep
+                    })
+                    .unwrap_or(false);
+                if !keep {
+                    break;
+                }
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(500))
+                    .await;
+            }
+        })
+        .detach();
+    }
+
+    fn install_toolchain(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let tools = self
+            .toolchain_choice
+            .iter()
+            .map(|id| (*id).to_owned())
+            .collect();
+        let reply = self.backend.install_toolchain(tools);
+        self.settings_error = None;
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(status) => {
+                        this.toolchain = Some(status);
+                        this.follow_toolchain(window, cx);
+                    }
+                    Err(error) => this.settings_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn cancel_toolchain(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let reply = self.backend.cancel_toolchain_install();
+        cx.spawn_in(window, async move |this, cx| {
+            let _ = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| this.follow_toolchain(window, cx));
+        })
+        .detach();
+    }
+
+    /// The card that installs Python, R and Node into Wisp's own folder.
+    fn toolchain_card(&self, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let mut card = div()
+            .v_flex()
+            .gap_2()
+            .pb_4()
+            .w(px(540.))
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(tr("Tools on this computer")),
+            )
+            .child(div().text_xs().text_color(muted).child(tr(
+                "Wisp can install Python, R and Node.js into its own data folder: no \
+                 administrator rights, and your shell and PATH are left alone. Downloads \
+                 follow the Code requests route and mirrors in Network.",
+            )));
+        let Some(status) = &self.toolchain else {
+            return card.child(div().text_xs().text_color(muted).child(tr("Loading…")));
+        };
+        card = card.child(div().text_xs().child(toolchain::installed_line(status)));
+        if toolchain::running(status) {
+            card =
+                card.child(
+                    div()
+                        .h_flex()
+                        .gap_2()
+                        .child(div().text_sm().child(toolchain::progress_line(status)))
+                        .child(
+                            Button::new("toolchain-cancel")
+                                .label(tr("Stop"))
+                                .small()
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.cancel_toolchain(window, cx)
+                                })),
+                        ),
+                );
+        } else {
+            let mut choices = div().h_flex().gap_1();
+            for id in toolchain::CHOICES {
+                let on = self.toolchain_choice.contains(&id);
+                choices = choices.child(
+                    Button::new(SharedString::from(format!("toolchain-choice-{id}")))
+                        .icon(glyph(if on { "check-square" } else { "square" }))
+                        .label(toolchain::tool_name(id))
+                        .small()
+                        .ghost()
+                        .selected(on)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(at) = this.toolchain_choice.iter().position(|c| *c == id) {
+                                this.toolchain_choice.remove(at);
+                            } else {
+                                this.toolchain_choice.push(id);
+                            }
+                            cx.notify();
+                        })),
+                );
+            }
+            card = card.child(
+                div().h_flex().gap_2().child(choices).child(
+                    Button::new("toolchain-install")
+                        .icon(glyph("download"))
+                        .label(tr("Install"))
+                        .small()
+                        .primary()
+                        .disabled(self.toolchain_choice.is_empty())
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.install_toolchain(window, cx)),
+                        ),
+                ),
+            );
+            if let Some((text, tone)) = toolchain::outcome(status) {
+                card = card.child(super::chip(text, tone, cx));
+            }
+        }
+        if !status.log.is_empty() {
+            let mut log = div()
+                .id("toolchain-log")
+                .v_flex()
+                .max_h(px(140.))
+                .overflow_y_scroll()
+                .p_2()
+                .rounded(cx.theme().radius)
+                .bg(cx.theme().muted)
+                .font_family("Menlo")
+                .text_xs()
+                .text_color(muted);
+            for line in status.log.iter().rev().take(8).rev() {
+                log = log.child(div().truncate().child(line.clone()));
+            }
+            card = card.child(log);
+        }
+        card.child(
+            div()
+                .text_xs()
+                .text_color(muted)
+                .child(crate::i18n::fill(tr("Folder: {}"), &[&status.root])),
+        )
     }
 
     /// Runs one change to the environments, then reads them again.
@@ -263,6 +444,7 @@ impl Workspace {
             ));
         }
         let mut page = page
+            .child(self.toolchain_card(cx))
             .child(
                 div()
                     .v_flex()
