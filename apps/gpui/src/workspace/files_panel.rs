@@ -760,7 +760,10 @@ impl Workspace {
                 // Bonds of one colour go in one path: a chain each when
                 // traced, all together for a small molecule.
                 let mut groups: Vec<(String, PathBuilder)> = Vec::new();
-                for &(first, second) in &shown.bonds {
+                // The inner line of an aromatic bond, drawn lighter.
+                let mut aromatic = PathBuilder::stroke(px(1.));
+                let mut any_aromatic = false;
+                for (bond, &(first, second)) in shown.bonds.iter().enumerate() {
                     let chain = if shown.trace {
                         shown.atoms[first].chain.clone()
                     } else {
@@ -777,8 +780,41 @@ impl Workspace {
                         }
                     };
                     let path = &mut groups[index].1;
-                    path.move_to(at(first));
-                    path.line_to(at(second));
+                    let (from, to) = (at(first), at(second));
+                    let order = match shown.trace {
+                        true => 1,
+                        false => shown.orders.get(bond).copied().unwrap_or(1),
+                    };
+                    // Across the bond, for the lines of a double or triple
+                    // one.
+                    let (dx, dy) = (f32::from(to.x - from.x), f32::from(to.y - from.y));
+                    let length = (dx * dx + dy * dy).sqrt().max(0.001);
+                    let (nx, ny) = (-dy / length, dx / length);
+                    let offsets: &[f32] = match order {
+                        2 => &[-1.8, 1.8],
+                        3 => &[-2.8, 0.0, 2.8],
+                        _ => &[0.0],
+                    };
+                    for offset in offsets {
+                        path.move_to(point(from.x + px(nx * offset), from.y + px(ny * offset)));
+                        path.line_to(point(to.x + px(nx * offset), to.y + px(ny * offset)));
+                    }
+                    if order == 4 {
+                        any_aromatic = true;
+                        let along = |part: f32| {
+                            point(
+                                from.x + px(dx * part + nx * 3.0),
+                                from.y + px(dy * part + ny * 3.0),
+                            )
+                        };
+                        aromatic.move_to(along(0.2));
+                        aromatic.line_to(along(0.8));
+                    }
+                }
+                if any_aromatic {
+                    if let Ok(path) = aromatic.build() {
+                        window.paint_path(path, bond_colour.opacity(0.5));
+                    }
                 }
                 for (number, (_, path)) in groups.into_iter().enumerate() {
                     let colour = if shown.trace {

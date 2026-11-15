@@ -1863,6 +1863,7 @@ pub const ZH: &[(&str, &str)] = &[
     ("{} chains · {} residues traced · drag to turn", "{} 条链 · 追踪 {} 个残基 · 拖动可旋转"),
     ("The first {} of {} atoms · drag to turn", "显示前 {} 个原子（共 {} 个）· 拖动可旋转"),
     ("{} atoms · {} bonds · drag to turn", "{} 个原子 · {} 个化学键 · 拖动可旋转"),
+    ("the first of {} molecules", "共 {} 个分子中的第一个"),
     // A method search's card in the Runs tab.
     ("Start the search", "开始搜索"),
     ("higher is better", "越高越好"),

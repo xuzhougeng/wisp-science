@@ -1,8 +1,9 @@
 //! Molecules and structures as the WebView's 3Dmol viewer shows them,
-//! drawn flat: a small molecule (MOL, SDF, MOL2, or a crystal's CIF) as its
-//! atoms and bonds, and a protein or nucleic acid (PDB or mmCIF) as the
-//! trace of its chains, turned by dragging. Reading and projecting are pure, so they are tested here;
-//! the Files preview draws the result.
+//! drawn flat: a small molecule (MOL, SDF, MOL2, a crystal's CIF, or SMILES
+//! laid out by `smiles`) as its atoms and bonds, and a protein or nucleic
+//! acid (PDB or mmCIF) as the trace of its chains, turned by dragging.
+//! Reading and projecting are pure, so they are tested here; the Files
+//! preview draws the result.
 use crate::i18n::{fill, tr};
 
 /// The most atoms read; a larger file shows its first ones and says so.
@@ -21,10 +22,36 @@ pub struct Structure {
     pub atoms: Vec<Atom>,
     /// Pairs of atom indexes.
     pub bonds: Vec<(usize, usize)>,
+    /// Each bond's order, beside it: 1, 2 or 3, and 4 for aromatic.
+    pub orders: Vec<u8>,
     /// Drawn as a chain trace rather than as atoms and bonds.
     pub trace: bool,
     /// Atoms in the file before it was cut at [`MAX_ATOMS`].
     pub total_atoms: usize,
+    /// What the file calls the molecule.
+    pub name: Option<String>,
+    /// Molecules in the file; the first is drawn.
+    pub records: usize,
+}
+
+impl Structure {
+    /// Atoms and single bonds, one molecule, no name.
+    fn plain(
+        atoms: Vec<Atom>,
+        bonds: Vec<(usize, usize)>,
+        trace: bool,
+        total_atoms: usize,
+    ) -> Self {
+        Self {
+            orders: vec![1; bonds.len()],
+            atoms,
+            bonds,
+            trace,
+            total_atoms,
+            name: None,
+            records: 1,
+        }
+    }
 }
 
 fn extension(path: &str) -> String {
@@ -34,14 +61,15 @@ fn extension(path: &str) -> String {
 }
 
 /// The molecule or structure in `text` (by the file's kind: MOL, SDF,
-/// MOL2 or PDB, as the WebView's `file_kind` names them), or `None` when it
-/// cannot be read.
+/// MOL2, PDB, CIF or SMILES, as the WebView's `file_kind` names them), or
+/// `None` when it cannot be read.
 pub fn parse(path: &str, text: &str) -> Option<Structure> {
     let read = match extension(path).as_str() {
         "sdf" | "mol" => molfile(text),
         "mol2" => mol2(text),
         "pdb" => pdb(text),
         "cif" | "mmcif" => cif(text),
+        "smi" | "smiles" => crate::smiles::parse(text),
         _ => None,
     }?;
     (!read.atoms.is_empty()).then_some(read)
@@ -72,19 +100,33 @@ fn molfile(text: &str) -> Option<Structure> {
         });
     }
     let mut bonds = Vec::new();
+    let mut orders = Vec::new();
     for line in lines.get(4 + atoms_count..4 + atoms_count + bonds_count)? {
         let index = |range| field(line, range).parse::<usize>().ok();
         let (first, second) = (index(0..3)?, index(3..6)?);
         if (1..=atoms.len()).contains(&first) && (1..=atoms.len()).contains(&second) {
             bonds.push((first - 1, second - 1));
+            orders.push(match index(6..9) {
+                Some(order @ 1..=4) => order as u8,
+                _ => 1,
+            });
         }
     }
     let total_atoms = atoms.len();
+    let name = lines[0].trim();
     Some(Structure {
         atoms,
         bonds,
+        orders,
         trace: false,
         total_atoms,
+        name: (!name.is_empty()).then(|| name.to_owned()),
+        // An SD file ends each record with `$$$$`.
+        records: lines
+            .iter()
+            .filter(|line| line.trim_end() == "$$$$")
+            .count()
+            .max(1),
     })
 }
 
@@ -94,6 +136,7 @@ fn mol2(text: &str) -> Option<Structure> {
     let mut atoms = Vec::new();
     let mut ids = std::collections::HashMap::new();
     let mut bonds = Vec::new();
+    let mut orders = Vec::new();
     for line in text.lines() {
         let line = line.trim();
         if let Some(name) = line.strip_prefix("@<TRIPOS>") {
@@ -123,18 +166,21 @@ fn mol2(text: &str) -> Option<Structure> {
             "bond" if parts.len() >= 3 => {
                 if let (Some(&first), Some(&second)) = (ids.get(parts[1]), ids.get(parts[2])) {
                     bonds.push((first, second));
+                    orders.push(match parts.get(3).copied() {
+                        Some("2") => 2,
+                        Some("3") => 3,
+                        Some("ar") => 4,
+                        _ => 1,
+                    });
                 }
             }
             _ => {}
         }
     }
     let total_atoms = atoms.len();
-    Some(Structure {
-        atoms,
-        bonds,
-        trace: false,
-        total_atoms,
-    })
+    let mut structure = Structure::plain(atoms, bonds, false, total_atoms);
+    structure.orders = orders;
+    Some(structure)
 }
 
 /// A PDB file: a polymer as the trace through each chain's Cα (or a
@@ -196,20 +242,11 @@ fn assemble(all: Vec<Atom>, backbone: Vec<(Atom, i64)>) -> Structure {
             .map(|(atom, _)| atom)
             .collect::<Vec<_>>();
         bonds.retain(|(first, second)| *first < atoms.len() && *second < atoms.len());
-        return Structure {
-            atoms,
-            bonds,
-            trace: true,
-            total_atoms,
-        };
+        return Structure::plain(atoms, bonds, true, total_atoms);
     }
     let atoms: Vec<Atom> = all.into_iter().take(BONDED_BY_DISTANCE).collect();
-    Structure {
-        bonds: by_distance(&atoms),
-        atoms,
-        trace: false,
-        total_atoms,
-    }
+    let bonds = by_distance(&atoms);
+    Structure::plain(atoms, bonds, false, total_atoms)
 }
 
 /// The most atoms whose bonds are worked out from their distances.
@@ -461,7 +498,7 @@ pub fn note(structure: &Structure) -> String {
         seen.dedup();
         seen.len()
     };
-    if structure.trace {
+    let counts = if structure.trace {
         fill(
             tr("{} chains · {} residues traced · drag to turn"),
             &[&chains, &structure.atoms.len()],
@@ -476,7 +513,13 @@ pub fn note(structure: &Structure) -> String {
             tr("{} atoms · {} bonds · drag to turn"),
             &[&structure.atoms.len(), &structure.bonds.len()],
         )
+    };
+    let mut parts: Vec<String> = structure.name.iter().cloned().collect();
+    if structure.records > 1 {
+        parts.push(fill(tr("the first of {} molecules"), &[&structure.records]));
     }
+    parts.push(counts);
+    parts.join(" · ")
 }
 
 #[cfg(test)]
@@ -502,7 +545,22 @@ mod tests {
         assert_eq!(read.bonds, [(0, 1), (1, 2)]);
         assert_eq!(read.atoms[2].position, [2.0, 1.4, 0.0]);
         assert!(!read.trace);
-        assert_eq!(note(&read), "3 atoms · 2 bonds · drag to turn");
+        assert_eq!(read.orders, [1, 1]);
+        assert_eq!(note(&read), "ethanol · 3 atoms · 2 bonds · drag to turn");
+        // An SD file with two records draws the first and says so; a
+        // double bond keeps its order.
+        let two = format!(
+            "{}{}",
+            ETHANOL.replace("  2  3  1  0", "  2  3  2  0"),
+            ETHANOL
+        );
+        let read = parse("two.sdf", &two).unwrap();
+        assert_eq!(read.records, 2);
+        assert_eq!(read.orders, [1, 2]);
+        assert_eq!(
+            note(&read),
+            "ethanol · the first of 2 molecules · 3 atoms · 2 bonds · drag to turn"
+        );
         assert_eq!(parse("ethanol.sdf", "not a molfile"), None);
         assert_eq!(parse("ethanol.txt", ETHANOL), None);
     }
@@ -517,6 +575,12 @@ mod tests {
         let read = parse("water.mol2", text).unwrap();
         assert_eq!(read.atoms[0].element, "O");
         assert_eq!(read.bonds, [(0, 1), (0, 2)]);
+        assert_eq!(read.orders, [1, 1]);
+        let aromatic = parse("water.mol2", &text.replace("2 1 3 1", "2 1 3 ar")).unwrap();
+        assert_eq!(aromatic.orders, [1, 4]);
+        // A SMILES file is laid out flat and read the same way.
+        let smiles = parse("ethanol.smi", "CCO ethanol\n").unwrap();
+        assert_eq!(note(&smiles), "ethanol · 3 atoms · 2 bonds · drag to turn");
     }
 
     #[test]

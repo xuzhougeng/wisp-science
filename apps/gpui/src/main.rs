@@ -51,6 +51,7 @@ mod schedules;
 mod sequences;
 mod settings;
 mod slash;
+mod smiles;
 mod state;
 mod sync;
 mod tabs;
