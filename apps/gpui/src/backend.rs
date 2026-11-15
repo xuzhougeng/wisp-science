@@ -2099,6 +2099,25 @@ impl Backend {
         self.local(move |host| async move { host.after_turn_settled(&project, &session).await })
     }
 
+    /// Puts away the memory drafted after the latest turn.
+    pub fn dismiss_memory_proposal(&self, project: String, session: String) -> Reply<()> {
+        self.local(
+            move |host| async move { host.dismiss_memory_proposal(&project, &session).await },
+        )
+    }
+
+    /// When a turn whose tools failed often has a memory drafted.
+    pub fn failure_analysis(&self) -> Reply<wisp_server::desktop::AutoFailureAnalysisSettings> {
+        self.local(|host| async move { host.failure_analysis().await })
+    }
+
+    pub fn set_failure_analysis(
+        &self,
+        settings: wisp_server::desktop::AutoFailureAnalysisSettings,
+    ) -> Reply<wisp_server::desktop::AutoFailureAnalysisSettings> {
+        self.local(move |host| async move { host.set_failure_analysis(settings).await })
+    }
+
     /// Puts away the review that followed the latest turn.
     pub fn dismiss_review(&self, project: String, session: String) -> Reply<()> {
         self.local(move |host| async move { host.dismiss_review(&project, &session).await })

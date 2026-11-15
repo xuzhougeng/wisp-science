@@ -814,6 +814,36 @@ pub fn step_continues(current: usize, up: bool) -> usize {
     next.clamp(*range.start(), *range.end())
 }
 
+/// The failure analysis settings one step on: the share of failed tool
+/// calls by 10 points, or the number of failures by one, within the
+/// WebView's bounds (1 to 100).
+pub fn step_failures(
+    settings: wisp_server::desktop::AutoFailureAnalysisSettings,
+    rate: bool,
+    up: bool,
+) -> wisp_server::desktop::AutoFailureAnalysisSettings {
+    let mut next = settings;
+    if rate {
+        let now = i32::from(settings.failure_rate_threshold);
+        // Off the tens to the next ten, then by tens.
+        let stepped = if up {
+            (now / 10 + 1) * 10
+        } else {
+            (now - 1) / 10 * 10
+        };
+        next.failure_rate_threshold = stepped.clamp(1, 100) as u8;
+    } else {
+        let now = settings.minimum_failures;
+        next.minimum_failures = if up {
+            now.saturating_add(1)
+        } else {
+            now.saturating_sub(1)
+        }
+        .clamp(1, 100);
+    }
+    next
+}
+
 /// Providers the embedded host can run, with the label shown for each.
 pub const PROVIDERS: [(&str, &str); 3] = [
     ("openai", "OpenAI-compatible"),
@@ -1231,6 +1261,34 @@ mod tests {
 
     fn settings(source: ModelSource, profiles: Vec<ModelProfile>) -> ModelSettings {
         ModelSettings { profiles, source }
+    }
+
+    #[test]
+    fn failure_thresholds_step_within_their_bounds() {
+        let start = wisp_server::desktop::AutoFailureAnalysisSettings::default();
+        assert_eq!(step_failures(start, true, true).failure_rate_threshold, 40);
+        assert_eq!(step_failures(start, true, false).failure_rate_threshold, 20);
+        let odd = wisp_server::desktop::AutoFailureAnalysisSettings {
+            failure_rate_threshold: 35,
+            ..start
+        };
+        assert_eq!(step_failures(odd, true, true).failure_rate_threshold, 40);
+        assert_eq!(step_failures(odd, true, false).failure_rate_threshold, 30);
+        let low = wisp_server::desktop::AutoFailureAnalysisSettings {
+            failure_rate_threshold: 1,
+            minimum_failures: 1,
+            ..start
+        };
+        assert_eq!(step_failures(low, true, false).failure_rate_threshold, 1);
+        assert_eq!(step_failures(low, false, false).minimum_failures, 1);
+        assert_eq!(step_failures(start, false, true).minimum_failures, 3);
+        let high = wisp_server::desktop::AutoFailureAnalysisSettings {
+            failure_rate_threshold: 100,
+            minimum_failures: 100,
+            ..start
+        };
+        assert_eq!(step_failures(high, true, true).failure_rate_threshold, 100);
+        assert_eq!(step_failures(high, false, true).minimum_failures, 100);
     }
 
     #[test]

@@ -167,6 +167,16 @@ impl Workspace {
     }
 
     fn load_turn_defaults(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let failures = self.backend.failure_analysis();
+        cx.spawn_in(window, async move |this, cx| {
+            if let Ok(failures) = receive(failures).await {
+                let _ = this.update(cx, |this, cx| {
+                    this.failure_analysis = Some(failures);
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
         let chosen = self.backend.review_model();
         cx.spawn_in(window, async move |this, cx| {
             if let Ok(chosen) = receive(chosen).await {
@@ -1537,6 +1547,10 @@ impl Workspace {
                 })),
             cx,
         ))
+        .children(
+            self.failure_analysis
+                .map(|failures| self.failure_analysis_setting(failures, cx)),
+        )
         .child(setting(
             tr("Reviewer model"),
             tr(
@@ -1555,6 +1569,127 @@ impl Workspace {
             self.subagent_model_choices(cx),
             cx,
         ))
+    }
+
+    /// The Conversation page's row for drafting a memory when tools fail:
+    /// on or off, the share of failed calls, and how many at least.
+    fn failure_analysis_setting(
+        &self,
+        failures: wisp_server::desktop::AutoFailureAnalysisSettings,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let value = |text: String| div().w(px(44.)).text_center().text_sm().child(text);
+        let controls = div()
+            .h_flex()
+            .gap_1()
+            .child(
+                Button::new("failure-analysis")
+                    .label(if failures.enabled {
+                        tr("On")
+                    } else {
+                        tr("Off")
+                    })
+                    .small()
+                    .selected(failures.enabled)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        let next = wisp_server::desktop::AutoFailureAnalysisSettings {
+                            enabled: !failures.enabled,
+                            ..failures
+                        };
+                        this.save_failure_analysis(next, window, cx)
+                    })),
+            )
+            .child(Self::failure_step(
+                "failure-rate-down",
+                "minus",
+                tr("A smaller share"),
+                failures,
+                true,
+                false,
+                cx,
+            ))
+            .child(value(format!("{}%", failures.failure_rate_threshold)))
+            .child(Self::failure_step(
+                "failure-rate-up",
+                "plus",
+                tr("A larger share"),
+                failures,
+                true,
+                true,
+                cx,
+            ))
+            .child(Self::failure_step(
+                "failure-count-down",
+                "minus",
+                tr("Fewer failures"),
+                failures,
+                false,
+                false,
+                cx,
+            ))
+            .child(value(failures.minimum_failures.to_string()))
+            .child(Self::failure_step(
+                "failure-count-up",
+                "plus",
+                tr("More failures"),
+                failures,
+                false,
+                true,
+                cx,
+            ));
+        setting(
+            tr("Draft a memory when tools fail"),
+            tr(
+                "When this share of a turn's tool calls failed, and at least this many, the \
+             model drafts what to remember about why, for you to confirm. A turn that asks \
+             Wisp to remember something has a draft either way.",
+            ),
+            controls,
+            cx,
+        )
+    }
+
+    /// One step of a failure threshold, off while the drafting is off.
+    fn failure_step(
+        id: &'static str,
+        name: &'static str,
+        tip: &'static str,
+        failures: wisp_server::desktop::AutoFailureAnalysisSettings,
+        rate: bool,
+        up: bool,
+        cx: &mut Context<Self>,
+    ) -> Button {
+        let next = settings::step_failures(failures, rate, up);
+        icon_button(id, name, tip)
+            .disabled(!failures.enabled || next == failures)
+            .on_click(
+                cx.listener(move |this, _, window, cx| {
+                    this.save_failure_analysis(next, window, cx)
+                }),
+            )
+    }
+
+    /// Saves when a turn whose tools failed often has a memory drafted.
+    fn save_failure_analysis(
+        &mut self,
+        next: wisp_server::desktop::AutoFailureAnalysisSettings,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.failure_analysis = Some(next);
+        let reply = self.backend.set_failure_analysis(next);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(saved) => this.failure_analysis = Some(saved),
+                    Err(error) => this.settings_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     /// The conversation's own model, or one of the saved ones.

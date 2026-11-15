@@ -65,6 +65,25 @@ pub fn suggested_scope(scope: &str) -> &'static str {
     }
 }
 
+/// The line above the composer about a memory drafted after a turn: why
+/// it was drafted, and its first line.
+pub fn proposal_line(proposal: &wisp_server::desktop::MemoryProposal) -> String {
+    let why = match proposal.trigger {
+        wisp_server::desktop::ProposalTrigger::ToolFailures => crate::i18n::fill(
+            tr("{} of {} tool calls failed; Wisp drafted what to remember"),
+            &[&proposal.failed_tool_calls, &proposal.tool_calls],
+        ),
+        _ => tr("Wisp drafted what you asked it to remember").to_owned(),
+    };
+    let first = proposal
+        .content
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or_default();
+    format!("{why}: {first}")
+}
+
 /// A note's file name without its extension: the day, for notes Wisp wrote.
 pub fn note_day(name: &str) -> &str {
     name.strip_suffix(".md").unwrap_or(name)
@@ -175,6 +194,24 @@ where
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_drafted_memory_says_why_and_how_it_begins() {
+        use wisp_server::desktop::{MemoryProposal, ProposalTrigger};
+        let mut proposal = MemoryProposal {
+            trigger: ProposalTrigger::ToolFailures,
+            scope: "project".into(),
+            content: "\n  Check the path before reading.\nIt was wrong twice.".into(),
+            tool_calls: 3,
+            failed_tool_calls: 2,
+        };
+        assert_eq!(
+            super::proposal_line(&proposal),
+            "2 of 3 tool calls failed; Wisp drafted what to remember: Check the path before reading."
+        );
+        proposal.trigger = ProposalTrigger::Explicit;
+        assert!(super::proposal_line(&proposal).starts_with("Wisp drafted what you asked"));
+    }
+
     #[test]
     fn the_tidy_says_how_it_last_went() {
         use chrono::{FixedOffset, TimeZone};

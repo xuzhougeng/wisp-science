@@ -316,6 +316,105 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Opens the editor on the memory the model drafted after the latest
+    /// turn, with the scope it suggested. Nothing is kept until it is saved.
+    pub(super) fn review_memory_proposal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(proposal) = self
+            .status
+            .as_ref()
+            .and_then(|status| status.memory_proposal.clone())
+        else {
+            return;
+        };
+        let session = self.state.session.clone();
+        self.show_panel_tab(PanelTab::Memory, window, cx);
+        self.open_memory_editor(
+            Target::Remember {
+                session,
+                turn: None,
+            },
+            proposal.content,
+            window,
+            cx,
+        );
+        self.memory_suggested = Some(proposal.scope);
+        // It is in the editor now; the line above the composer goes.
+        self.dismiss_memory_proposal(window, cx);
+    }
+
+    /// Puts away the memory drafted after the latest turn.
+    pub(super) fn dismiss_memory_proposal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let selection = self.state.selection();
+        let (Some(project), Some(session)) = (selection.project.clone(), selection.session.clone())
+        else {
+            return;
+        };
+        if let Some(status) = &mut self.status {
+            status.memory_proposal = None;
+        }
+        let reply = self.backend.dismiss_memory_proposal(project, session);
+        cx.spawn_in(window, async move |this, cx| {
+            if let Err(error) = receive(reply).await {
+                let _ = this.update(cx, |this, cx| {
+                    if this.state.current(&selection) {
+                        this.error = Some(error);
+                        cx.notify();
+                    }
+                });
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// The line above the composer about a memory drafted after the latest
+    /// turn.
+    pub(super) fn render_memory_proposal(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let proposal = self.status.as_ref()?.memory_proposal.as_ref()?;
+        Some(
+            div()
+                .h_flex()
+                .flex_shrink_0()
+                .gap_2()
+                .mx_4()
+                .mb_2()
+                .px_3()
+                .py_1p5()
+                .rounded(cx.theme().radius)
+                .border_1()
+                .border_color(cx.theme().border)
+                .child(icon("memory").text_color(cx.theme().muted_foreground))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_sm()
+                        .child(memory::proposal_line(proposal)),
+                )
+                .child(
+                    Button::new("memory-proposal-review")
+                        .label(tr("Review"))
+                        .small()
+                        .tooltip(tr("Read and change it before it is kept"))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.review_memory_proposal(window, cx)
+                        })),
+                )
+                .child(
+                    super::shell::icon_button(
+                        "memory-proposal-dismiss",
+                        "close",
+                        tr("Put this away"),
+                    )
+                    .xsmall()
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.dismiss_memory_proposal(window, cx)),
+                    ),
+                ),
+        )
+    }
+
     /// Opens the editor on `target` with `text` in it.
     fn open_memory_editor(
         &mut self,

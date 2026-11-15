@@ -376,6 +376,8 @@ pub struct Workspace {
     settings_section: crate::settings::Section,
     /// How turns run and new conversations start; `None` until read.
     turn_defaults: Option<wisp_server::desktop::TurnDefaults>,
+    /// When a turn whose tools failed often has a memory drafted.
+    failure_analysis: Option<wisp_server::desktop::AutoFailureAnalysisSettings>,
     /// The model profile reviews are made with; empty is the conversation's.
     review_model: String,
     /// The model profile sub-agents work on; empty is the conversation's.
@@ -1299,6 +1301,7 @@ impl Workspace {
             sidebar_hidden: false,
             settings_section: Default::default(),
             turn_defaults: None,
+            failure_analysis: None,
             review_model: String::new(),
             subagent_model: String::new(),
             steps_input,

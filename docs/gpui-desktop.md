@@ -1424,10 +1424,15 @@ Limits of this slice:
   host; `src-tauri` still carries its own copy. The switch applies to every
   turn this host runs, a paired phone's included: before, the search tool
   was always on and habits were never shown. Saving a message opens it for
-  trimming; nothing is suggested by a model, and nothing is saved until you
-  choose where. The WebView's automatic proposals after a turn, failure
-  analysis and "clear all notes" are not ported. One entry or habit holds
-  4,000 characters.
+  trimming, and Suggest has the model draft it; nothing is saved until you
+  choose where. After a turn that asked Wisp to remember something, or
+  whose tool calls failed often (Settings, Conversation, Draft a memory
+  when tools fail: off until turned on, at 30% and two failures, the
+  WebView's `auto_failure_analysis`), the reviewer model drafts a memory
+  with the WebView's prompts; a line above the composer says why, and
+  Review opens it in the editor with the scope it suggests. It is put away
+  when the next turn starts. "Clear all notes" is not ported. One entry or
+  habit holds 4,000 characters.
 - The habit tidy follows the WebView's `memory_tidy.rs` (its tests are
   carried over): once a week while memory is on (on at first, looked for
   with the scheduled tasks while the app is open), or with Run now, the
