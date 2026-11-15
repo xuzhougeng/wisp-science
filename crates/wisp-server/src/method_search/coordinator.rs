@@ -218,6 +218,10 @@ impl StoreWorkflowRunActivityDriver {
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| "Method-search activity has no approved model profile".to_string())?;
         let run_id = uuid::Uuid::new_v4().to_string();
+        // Held before the Run can be seen, so a Start that comes while its
+        // inputs are bound finds this driver waiting and leaves the search
+        // to it, rather than running a second coordinator.
+        let _active_guard = ActiveMethodSearchGuard::claim(&run_id)?;
         let state = method_state(&run_id, &spec_version_id, &spec_sha256)?;
         let (_, audit, audit_version_id) = load_method_search_review_contract(
             &self.store,
@@ -283,7 +287,6 @@ impl StoreWorkflowRunActivityDriver {
             let _ = self.store.fail_method_search_run(&run_id, &error).await;
             return terminal_activity_response(&self.store, &request.request_id, &run_id).await;
         }
-        let _active_guard = ActiveMethodSearchGuard::claim(&run_id)?;
         loop {
             let status = self
                 .store

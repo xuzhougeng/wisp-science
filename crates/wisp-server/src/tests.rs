@@ -9752,6 +9752,11 @@ async fn a_delegated_method_search_waits_for_start_then_runs_and_reports_back() 
     let details = server.method_search_run(PROJECT, &run_id).await.unwrap();
     assert_eq!(details.run.status, wisp_store::RunStatus::Draft);
     assert!(details.activity.is_some());
+    // Its step's driver holds it from the moment it can be seen, so Start
+    // leaves the search to that driver instead of running a second one.
+    assert!(crate::method_search::coordinator::method_search_is_active(
+        &run_id
+    ));
     assert_eq!(proposals.load(Ordering::SeqCst), 0);
     server.start_method_search(PROJECT, &run_id).await.unwrap();
 
