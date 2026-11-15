@@ -5085,6 +5085,9 @@ impl Server {
                     .await?;
             }
         }
+        if remember == Remember::Everywhere {
+            crate::runtime::set_global_grant(&self.0.store, &tool, true).await?;
+        }
         let mut live = live.live.lock().unwrap();
         let (_, sender) = live
             .approvals
@@ -5146,6 +5149,21 @@ impl Server {
             }
         }
         Ok(all)
+    }
+
+    /// Tools allowed in every project, sorted.
+    pub async fn global_grants(&self) -> Result<Vec<String>> {
+        Ok(crate::runtime::global_grants(&self.0.store).await)
+    }
+
+    /// Takes back "always allow" for a tool in every project. Turns that
+    /// start afterwards ask again.
+    pub async fn revoke_global_grant(&self, tool: &str) -> Result<()> {
+        ensure!(
+            crate::runtime::set_global_grant(&self.0.store, tool, false).await?,
+            "That tool is not allowed everywhere any more"
+        );
+        Ok(())
     }
 
     /// Takes back "always allow" for one tool in one project. Turns that
@@ -6267,6 +6285,9 @@ pub enum Remember {
     Conversation,
     /// For every conversation of the project, until it is taken back.
     Project,
+    /// In every project, until it is taken back. Kept in the WebView's
+    /// global grants.
+    Everywhere,
 }
 
 /// Tools one project runs without asking.

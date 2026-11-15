@@ -785,6 +785,8 @@ pub const ZH: &[(&str, &str)] = &[
     ("It read:", "它读取了："),
     // Sample project.
     ("Make a sample project to try Wisp on", "创建一个示例项目来试用 Wisp"),
+    ("Every project", "所有项目"),
+    ("Always, in every project", "所有项目中始终允许"),
     ("Its tools run without asking, whatever their rules", "它的工具不再询问，无论规则如何"),
     ("Skip approvals", "跳过审批"),
     ("Allow", "允许"),

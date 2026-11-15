@@ -707,10 +707,7 @@ pub(crate) async fn run(
 ) -> Result<()> {
     let frame = request.session_id.clone();
     let (handle, id) = connect(&store, &session, &frame, &agent, &root, offered).await?;
-    let always = crate::runtime::project_grants(&store, &project)
-        .await
-        .into_iter()
-        .collect();
+    let always = crate::runtime::always_allowed(&store, &project).await;
     let (persist, saved) = crate::runtime::persisting(&store, &frame, &session).await?;
     let out_project = project.clone();
     let out = ServerOutput {

@@ -965,6 +965,15 @@ impl Backend {
         self.local(move |host| async move { host.revoke_project_grant(&project, &tool).await })
     }
 
+    /// Tools allowed in every project.
+    pub fn global_grants(&self) -> Reply<Vec<String>> {
+        self.local(|host| async move { host.global_grants().await })
+    }
+
+    pub fn revoke_global_grant(&self, tool: String) -> Reply<()> {
+        self.local(move |host| async move { host.revoke_global_grant(&tool).await })
+    }
+
     /// What the model is sent for a conversation: its saved working set.
     /// Puts back what the compaction at `epoch` replaced.
     pub fn undo_compaction(&self, project: String, session: String, epoch: i64) -> Reply<()> {

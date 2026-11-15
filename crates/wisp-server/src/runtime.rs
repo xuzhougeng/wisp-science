@@ -190,6 +190,81 @@ pub(crate) fn project_grants_key(project: &str) -> String {
     format!("desktop.approvals.{project}")
 }
 
+/// The WebView's remembered approvals, whose `global` list holds the tools
+/// allowed in every project (`{"kind": "tool" | "command", "target": …}`).
+const WEBVIEW_GRANTS: &str = "approval_grants";
+
+async fn webview_grants(store: &Store) -> serde_json::Value {
+    store
+        .get_setting(WEBVIEW_GRANTS)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .filter(serde_json::Value::is_object)
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+/// Tools the user allowed in every project, sorted.
+pub(crate) async fn global_grants(store: &Store) -> Vec<String> {
+    let grants = webview_grants(store).await;
+    let mut tools: Vec<String> = grants
+        .get("global")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|grant| grant.get("target")?.as_str().map(str::to_owned))
+        .collect();
+    tools.sort();
+    tools.dedup();
+    tools
+}
+
+/// Allows `tool` in every project, or with `allowed` false takes that back,
+/// in the WebView's list; its other grants are kept as they are.
+pub(crate) async fn set_global_grant(
+    store: &Store,
+    tool: &str,
+    allowed: bool,
+) -> anyhow::Result<bool> {
+    let mut grants = webview_grants(store).await;
+    let mut global: Vec<serde_json::Value> = grants
+        .get("global")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let before = global.len();
+    let names =
+        |grant: &serde_json::Value| grant.get("target").and_then(|t| t.as_str()) == Some(tool);
+    match allowed {
+        true if !global.iter().any(names) => {
+            global.push(serde_json::json!({"kind": "tool", "target": tool}))
+        }
+        true => {}
+        false => global.retain(|grant| !names(grant)),
+    }
+    let changed = global.len() != before;
+    if changed {
+        grants["global"] = serde_json::Value::Array(global);
+        store
+            .set_setting(WEBVIEW_GRANTS, &serde_json::to_string(&grants)?)
+            .await?;
+    }
+    Ok(changed)
+}
+
+/// Tools allowed for good in a project: its own and those allowed in
+/// every project.
+pub(crate) async fn always_allowed(
+    store: &Store,
+    project: &str,
+) -> std::collections::HashSet<String> {
+    let mut tools: std::collections::HashSet<String> =
+        project_grants(store, project).await.into_iter().collect();
+    tools.extend(global_grants(store).await);
+    tools
+}
+
 /// Tools the user allowed for good in a project, sorted.
 pub(crate) async fn project_grants(store: &Store, project: &str) -> Vec<String> {
     let mut tools: Vec<String> = store
@@ -897,10 +972,7 @@ pub async fn run(
         persist: tx,
         full_access,
         plan_mode,
-        always: project_grants(&store, &artifact_project)
-            .await
-            .into_iter()
-            .collect(),
+        always: always_allowed(&store, &artifact_project).await,
         lab_mail: scope.lab_mail,
         write_locked: scope.write_locked,
         isolation: scope.isolation,

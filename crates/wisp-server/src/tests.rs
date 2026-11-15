@@ -4508,6 +4508,53 @@ async fn turn_defaults_and_project_grants_apply_from_the_next_turn() {
         .unwrap();
     wait_for(&server, &third, |s| !s.running).await;
 
+    // Allowed in every project, in the WebView's list, kept beside what is
+    // already there.
+    server
+        .0
+        .store
+        .set_setting(
+            "approval_grants",
+            r#"{"project":{"p":[{"kind":"tool","target":"read"}]}}"#,
+        )
+        .await
+        .unwrap();
+    let everywhere = server.create_conversation(PROJECT).await.unwrap();
+    send(&server, &everywhere, "write the answer")
+        .await
+        .unwrap();
+    let approval = wait_for(&server, &everywhere, |s| !s.approvals.is_empty())
+        .await
+        .approvals[0]
+        .approval_id
+        .clone();
+    server
+        .answer_approval(PROJECT, &everywhere, &approval, true, Remember::Everywhere)
+        .await
+        .unwrap();
+    wait_for(&server, &everywhere, |s| !s.running).await;
+    assert_eq!(server.global_grants().await.unwrap(), ["write"]);
+    let saved_grants: serde_json::Value = serde_json::from_str(
+        &server
+            .0
+            .store
+            .get_setting("approval_grants")
+            .await
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved_grants["project"]["p"][0]["target"], "read");
+    let fourth = server.create_conversation(PROJECT).await.unwrap();
+    send(&server, &fourth, "write the answer").await.unwrap();
+    assert!(wait_for(&server, &fourth, |s| !s.running)
+        .await
+        .approvals
+        .is_empty());
+    server.revoke_global_grant("write").await.unwrap();
+    assert!(server.revoke_global_grant("write").await.is_err());
+    assert!(server.global_grants().await.unwrap().is_empty());
+
     // The step limit is read at the start of each turn. Writing and then
     // answering takes two steps; with one, the turn runs out after the
     // write and the agent is asked for a last word without tools.

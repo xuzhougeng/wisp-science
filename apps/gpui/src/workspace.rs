@@ -412,6 +412,8 @@ pub struct Workspace {
     steps_input: Entity<InputState>,
     /// Tools that are always allowed, project by project.
     grants: Vec<wisp_server::desktop::ProjectGrants>,
+    /// Tools that are allowed in every project.
+    global_grants: Vec<String>,
     /// The open project's approval mode and tool rules, with the project
     /// they are for.
     approvals: Option<(String, wisp_server::desktop::ProjectApprovals)>,
@@ -1385,6 +1387,7 @@ impl Workspace {
             picture_model: String::new(),
             steps_input,
             grants: vec![],
+            global_grants: vec![],
             approvals: None,
             settings_error: None,
             skills: None,

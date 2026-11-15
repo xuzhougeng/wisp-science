@@ -513,6 +513,18 @@ impl Workspace {
     }
 
     fn load_grants(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let everywhere = self.backend.global_grants();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(everywhere).await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(tools) => this.global_grants = tools,
+                    Err(error) => this.settings_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
         let reply = self.backend.project_grants();
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
@@ -521,6 +533,22 @@ impl Workspace {
                     Ok(grants) => this.grants = grants,
                     Err(error) => this.settings_error = Some(error),
                 }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn revoke_global_grant(&mut self, tool: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings_error = None;
+        let reply = self.backend.revoke_global_grant(tool);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if let Err(error) = result {
+                    this.settings_error = Some(error);
+                }
+                this.load_grants(window, cx);
                 cx.notify();
             });
         })
@@ -2262,7 +2290,33 @@ impl Workspace {
                         )),
                 ),
         );
-        if self.grants.is_empty() {
+        if !self.global_grants.is_empty() {
+            let mut tools = div().h_flex().flex_wrap().gap_2();
+            for tool in &self.global_grants {
+                let name = tool.clone();
+                tools = tools.child(
+                    Button::new(SharedString::from(format!("revoke-everywhere-{tool}")))
+                        .icon(glyph("close"))
+                        .label(tool.clone())
+                        .small()
+                        .tooltip(tr("Ask again before this tool runs"))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.revoke_global_grant(name.clone(), window, cx)
+                        })),
+                );
+            }
+            page = page.child(
+                div()
+                    .v_flex()
+                    .gap_2()
+                    .py_3()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .child(div().text_sm().child(tr("Every project")))
+                    .child(tools),
+            );
+        }
+        if self.grants.is_empty() && self.global_grants.is_empty() {
             page = page.child(
                 div()
                     .pt_3()

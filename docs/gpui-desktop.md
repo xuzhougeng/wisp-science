@@ -1147,7 +1147,10 @@ Limits of this slice:
   every conversation of that project, in turns that start after it was given
   and for the rest of the one it was given in. It never answers the question
   a dangerous shell command asks. Taking it back in Settings applies to turns
-  that start afterwards. New conversations start in the mode Settings names
+  that start afterwards. "Always, in every project" does the same for every
+  project and is kept in the WebView's global grants (`approval_grants`,
+  its `global` list), whose other entries are left as they are; a tool the
+  WebView allowed there is allowed here too. New conversations start in the mode Settings names
   only when the desktop makes them; one a paired phone makes starts in Ask
   first.
 - A project's tool approval mode and its rules for single tools are the
@@ -1164,7 +1167,7 @@ Limits of this slice:
   mode is chosen on Permissions; both for the project that is open, from
   the next turn. A connector's Skip approvals (`skip_approval_connectors:
   <project>`) lets all its tools run whatever their rules, a denied one
-  included, as in the WebView. The WebView's global grants are not ported.
+  included, as in the WebView.
 - Full access stops the questions before tools that change files or run
   commands. It does not cover the separate question a dangerous shell command
   asks; that one always appears. "Allow for this conversation" is offered only
@@ -2092,7 +2095,9 @@ choose Full access and confirm a new conversation starts in it while an
 existing one keeps Ask first. Let a tool ask, answer Always in this project,
 and confirm a second conversation of the project is not asked, another
 project's is, and the tool is listed in Settings; take it back and confirm
-the next conversation is asked again. In a project, open Connections,
+the next conversation is asked again. Answer Always, in every project:
+another project's conversation is not asked, Settings lists the tool under
+Every project, and taking it back makes both ask again. In a project, open Connections,
 unfold PubMed and set one of its tools to Deny: ask for a search that needs
 it and confirm the call is blocked without a question; Permissions lists the
 rule, and pressing it allows the tool again. Set it to Deny again and press

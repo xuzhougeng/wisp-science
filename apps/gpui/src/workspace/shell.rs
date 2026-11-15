@@ -1102,6 +1102,15 @@ impl Workspace {
                             Remember::Project,
                         )
                         .tooltip(tr("Take it back in Settings, under Permissions")),
+                    )
+                    .child(
+                        answer(
+                            tr("Always, in every project"),
+                            "layers",
+                            true,
+                            Remember::Everywhere,
+                        )
+                        .tooltip(tr("Take it back in Settings, under Permissions")),
                     );
             }
             buttons = buttons.child(answer(tr("Deny"), "ban", false, Remember::No));
