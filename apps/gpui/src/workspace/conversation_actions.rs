@@ -67,8 +67,14 @@ impl Workspace {
         let text = crate::compose::with_skill_prompt(&self.composer.read(cx).value());
         self.state.save_draft(text.clone());
         self.composer.update(cx, |input, cx| {
+            let (line, character) = crate::compose::end_of(&text);
             input.set_value(text, window, cx);
-            input.focus(window, cx);
+            // At the end, where the request leaves off.
+            input.set_cursor_position(
+                gpui_component::input::Position { line, character },
+                window,
+                cx,
+            );
         });
         cx.notify();
     }
@@ -265,8 +271,13 @@ impl Workspace {
                         this.reload_conversation(window, cx);
                         this.state.save_draft(text.clone());
                         this.composer.update(cx, |input, cx| {
+                            let (line, character) = crate::compose::end_of(&text);
                             input.set_value(text, window, cx);
-                            input.focus(window, cx);
+                            input.set_cursor_position(
+                                gpui_component::input::Position { line, character },
+                                window,
+                                cx,
+                            );
                         });
                         this.refresh_lists(window, cx);
                     }

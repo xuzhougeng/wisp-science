@@ -213,6 +213,15 @@ pub fn undo_note(files: &wisp_server::desktop::TurnFiles) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join(" "))
 }
 
+/// Where the end of `text` is, as a line and a character on it (both
+/// from 0): where the caret goes when the composer is filled for you to
+/// go on typing.
+pub fn end_of(text: &str) -> (u32, u32) {
+    let line = text.matches('\n').count();
+    let last = text.rsplit('\n').next().unwrap_or_default();
+    (line as u32, last.chars().count() as u32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -249,6 +258,15 @@ mod tests {
             "Put back: fit.py. Moved to the project's trash: out.csv, plot.png. \
              Left as they are: notes.md (was changed again after this turn)."
         );
+    }
+
+    #[test]
+    fn the_end_of_a_text_is_its_last_line_and_its_length() {
+        assert_eq!(end_of(""), (0, 0));
+        assert_eq!(end_of("Result: "), (0, 8));
+        assert_eq!(end_of("Give three.\n\nResult: "), (2, 8));
+        assert_eq!(end_of("中文\n"), (1, 0));
+        assert_eq!(end_of("一\n二三"), (1, 2));
     }
 
     #[test]

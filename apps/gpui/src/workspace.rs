@@ -2356,8 +2356,14 @@ impl Workspace {
         let text = crate::compose::with_quick_action(&self.composer.read(cx).value(), &prompt);
         self.state.save_draft(text.clone());
         self.composer.update(cx, |input, cx| {
+            let (line, character) = crate::compose::end_of(&text);
             input.set_value(text, window, cx);
-            input.focus(window, cx);
+            // At the end, where the request leaves off.
+            input.set_cursor_position(
+                gpui_component::input::Position { line, character },
+                window,
+                cx,
+            );
         });
         cx.notify();
     }

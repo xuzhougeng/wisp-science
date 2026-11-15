@@ -110,7 +110,9 @@ impl Workspace {
     /// What the conversation on screen is doing, for the pet.
     pub(super) fn pet_activity(&self) -> Activity {
         let snapshot = self.state.snapshot.as_ref();
-        let running = snapshot.is_some_and(|s| s.running) || self.pending;
+        // Only a turn is work: waiting for the host to create, rename or
+        // rewind something is not, and would end in a jump.
+        let running = snapshot.is_some_and(|s| s.running);
         Activity {
             running,
             waiting: snapshot.is_some_and(|s| !s.approvals.is_empty()),
