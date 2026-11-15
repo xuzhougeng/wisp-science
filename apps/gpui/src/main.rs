@@ -56,6 +56,7 @@ mod state;
 mod sync;
 mod tabs;
 mod terminal;
+mod terminal_screen;
 mod theme;
 mod toolchain;
 mod trajectory;

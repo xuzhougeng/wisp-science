@@ -262,7 +262,7 @@ impl Workspace {
             Command::ResearchArchive => return self.open_research_archive(window, cx),
             Command::Terminal => {
                 self.layers.close(Layer::Palette);
-                return self.open_terminal(cx);
+                return self.open_terminal_here(window, cx);
             }
             Command::SaveAsSkill => {
                 self.layers.close(Layer::Palette);

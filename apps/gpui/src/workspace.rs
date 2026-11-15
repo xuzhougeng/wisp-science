@@ -53,6 +53,7 @@ mod settings_workflows;
 mod shell;
 mod slash_view;
 mod tabs_view;
+mod terminal_view;
 mod trajectory_view;
 mod transfer_view;
 
@@ -448,6 +449,8 @@ pub struct Workspace {
     workflow_skill_picks: Vec<String>,
     /// A workflow is being written from skills.
     workflow_converting: bool,
+    /// The terminals drawn at the foot of the conversation.
+    terminal: terminal_view::TerminalDock,
     /// The tasks of the workflow in the form.
     workflow_tasks: Vec<settings_workflows::TaskDraft>,
     /// How the workflow in the form is approved when it runs as agents.
@@ -1033,6 +1036,17 @@ impl Workspace {
                 }
                 let key = &event.keystroke.key;
                 let held = event.keystroke.modifiers;
+                // A terminal with focus keeps Escape, and Ctrl chords off
+                // macOS, for its shell: an inner surface consuming them
+                // before the window does.
+                let in_terminal = weak
+                    .read_with(cx, |this, _| this.terminal.focus.is_focused(window))
+                    .unwrap_or(false);
+                if in_terminal
+                    && crate::layers::terminal_keeps(key, held.control, cfg!(target_os = "macos"))
+                {
+                    return;
+                }
                 let handled = if is_escape(key, held.modified()) {
                     weak.update(cx, |this, cx| this.dismiss_top(window, cx))
                 } else if let Some(delta) = palette::step(key, held.modified()) {
@@ -1258,6 +1272,7 @@ impl Workspace {
             workflow_skills: Vec::new(),
             workflow_skill_picks: Vec::new(),
             workflow_converting: false,
+            terminal: terminal_view::TerminalDock::new(cx),
             workflow_tasks: Vec::new(),
             workflow_approval: Default::default(),
             workflow_pick: None,
@@ -1471,6 +1486,7 @@ impl Workspace {
             }
             Some(Layer::ConfirmRemoveWorkflow) => self.workflow_editing = None,
             Some(Layer::WorkflowFromSkills) => self.workflow_skill_picks.clear(),
+            Some(Layer::TerminalHosts) => {}
             Some(Layer::QuickActionForm | Layer::ConfirmRemoveQuickAction) => {
                 self.quick_editing = None
             }
@@ -1731,7 +1747,7 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Opens the system's terminal on an execution context (an SSH host,
+    /// Opens a terminal in the dock on an execution context (an SSH host,
     /// in `folder` there when given), as many times as asked.
     pub(super) fn open_host_terminal(
         &mut self,
@@ -1740,28 +1756,18 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let project = self
-            .state
-            .project
-            .clone()
-            .or_else(|| self.projects.first().map(|project| project.id.clone()))
-            .unwrap_or_default();
-        let reply = self.backend.terminal_launch(project, context, folder);
-        cx.spawn_in(window, async move |this, cx| {
-            let result = receive(reply).await;
-            let _ = this.update(cx, |this, cx| {
-                // Started from the home folder; the command goes on from there.
-                let here = dirs::home_dir().unwrap_or_else(std::env::temp_dir);
-                this.error = match result {
-                    Ok(launch) => {
-                        crate::terminal::run(&here, &launch.program, &launch.args, &[]).err()
-                    }
-                    Err(error) => Some(error),
-                };
-                cx.notify();
-            });
-        })
-        .detach();
+        self.open_terminal_in(Some(context), folder, window, cx);
+    }
+
+    /// Opens a terminal in the dock in the folder the Files tab is at, or
+    /// the project's own when it is at its root.
+    pub(super) fn open_terminal_here(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let browsed = std::path::Path::new(&self.files.path);
+        let inside = browsed
+            .components()
+            .all(|part| matches!(part, std::path::Component::Normal(_)));
+        let folder = (inside && !self.files.path.is_empty()).then(|| self.files.path.clone());
+        self.open_terminal_in(None, folder, window, cx);
     }
 
     /// Tells a user who is not looking at the window that the open

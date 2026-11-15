@@ -1041,6 +1041,58 @@ impl Backend {
         self.local(move |host| async move { host.run_workflow(&project, &id).await })
     }
 
+    /// Opens a terminal of `project`: this computer's shell, or one on an
+    /// environment such as `ssh:alias`.
+    pub fn open_terminal(
+        &self,
+        project: String,
+        context: Option<String>,
+        folder: Option<String>,
+    ) -> Reply<wisp_dto::native_conversations::TerminalInfo> {
+        self.local(move |host| async move {
+            host.open_terminal(&project, context.as_deref(), folder.as_deref())
+                .await
+        })
+    }
+
+    /// The project's open terminals.
+    pub fn terminals(
+        &self,
+        project: String,
+    ) -> Reply<Vec<wisp_dto::native_conversations::TerminalInfo>> {
+        self.local(move |host| async move { Ok(host.terminals(&project)) })
+    }
+
+    /// What a terminal wrote from `cursor` on, waiting a little for more.
+    pub fn read_terminal(
+        &self,
+        project: String,
+        id: String,
+        cursor: Option<u64>,
+    ) -> Reply<wisp_dto::native_conversations::TerminalOutput> {
+        self.local(move |host| async move {
+            host.read_terminal(
+                &project,
+                &id,
+                cursor,
+                std::time::Duration::from_millis(1500),
+            )
+            .await
+        })
+    }
+
+    pub fn write_terminal(&self, project: String, id: String, bytes: Vec<u8>) -> Reply<()> {
+        self.local(move |host| async move { host.write_terminal(&project, &id, &bytes) })
+    }
+
+    pub fn resize_terminal(&self, project: String, id: String, rows: u16, cols: u16) -> Reply<()> {
+        self.local(move |host| async move { host.resize_terminal(&project, &id, rows, cols) })
+    }
+
+    pub fn close_terminal(&self, project: String, id: String) -> Reply<()> {
+        self.local(move |host| async move { host.close_terminal(&project, &id) })
+    }
+
     /// Writes a workflow from skills' method documents, to review.
     pub fn workflow_from_skills(
         &self,

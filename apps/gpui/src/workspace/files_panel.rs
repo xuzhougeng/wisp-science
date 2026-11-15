@@ -1625,7 +1625,9 @@ impl Workspace {
                                 "terminal",
                                 "Open a terminal in this folder",
                             )
-                            .on_click(cx.listener(|this, _, _, cx| this.open_terminal(cx))),
+                            .on_click(cx.listener(
+                                |this, _, window, cx| this.open_terminal_here(window, cx),
+                            )),
                         )
                         .child(
                             icon_button("files-new-folder", "folder-plus", tr("New folder here"))

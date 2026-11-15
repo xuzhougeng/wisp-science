@@ -161,6 +161,8 @@ pub enum Layer {
     ConfirmRemoveWorkflow,
     /// Writing a workflow from skills, on the Workflows page of Settings.
     WorkflowFromSkills,
+    /// The SSH hosts a terminal can be opened on, over the terminal dock.
+    TerminalHosts,
     /// The form for a quick action, on its page of Settings.
     QuickActionForm,
     /// Question before a quick action is removed.
@@ -320,6 +322,14 @@ impl EscapeStack {
     pub fn contains(&self, layer: Layer) -> bool {
         self.0.contains(&layer)
     }
+}
+
+/// Whether a terminal that has focus keeps a key for its shell rather
+/// than the window taking it: Escape, which the programs in it read, and,
+/// off macOS, every Ctrl chord (Ctrl+C, Ctrl+K and the rest belong to the
+/// shell there). The window's Cmd shortcuts on macOS stay the window's.
+pub fn terminal_keeps(key: &str, control: bool, mac: bool) -> bool {
+    key == "escape" || (control && !mac)
 }
 
 /// A bare Escape press. Modified chords stay available to platform shortcuts.
@@ -643,6 +653,15 @@ mod tests {
         stack.open(Layer::WorkflowFromSkills);
         assert!(stack.close(Layer::Settings));
         assert!(!stack.contains(Layer::WorkflowFromSkills));
+        // The terminal's host menu stands on its own: Escape closes it.
+        stack.open(Layer::TerminalHosts);
+        assert_eq!(stack.dismiss_top(), Some(Layer::TerminalHosts));
+        // A terminal with focus keeps Escape and, off macOS, Ctrl chords;
+        // Cmd shortcuts on macOS stay the window's.
+        assert!(terminal_keeps("escape", false, true));
+        assert!(terminal_keeps("k", true, false));
+        assert!(!terminal_keeps("k", true, true));
+        assert!(!terminal_keeps("k", false, false));
         // So is the quick action form, and the question before removing one.
         stack.open(Layer::Settings);
         stack.open(Layer::QuickActionForm);

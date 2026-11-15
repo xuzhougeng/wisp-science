@@ -141,7 +141,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Sample project | The home page's flask button makes a small sample project in a folder you choose and opens it: made-up counts for twelve samples, a script, and a README of things to ask |
 | Host folders | With an SSH host saved, the Files tab offers it beside the project: its folders are listed, to walk through and see what is there |
 | File origin | A file's preview has Origin: which tool call last wrote it, with the code it ran, the project files it read and the conversation, which it can open |
-| Terminal | The Files tab's terminal button (or the command palette) opens the system's terminal in the folder being browsed; Terminal on an SSH host's row in Environments, or over a host's folder in Files, opens one on that host (in that folder), as many as wanted |
+| Terminal | Terminals drawn in the window, in a dock at the foot of the conversation (Terminals in the top bar shows or hides it; hidden, they keep running): the Files tab's terminal button (or the command palette) opens one in the folder being browsed, + one in the project's folder, the host button one on a saved SSH host, and Terminal on a host's row in Environments or over a host's folder in Files one there; several at once as tabs, each closed with its ×; the dock's last button opens the system's terminal instead |
 | Updates | Settings, General, has Check for updates: it says whether a newer release has been published and opens the release page |
 | Tabs | The conversations you open in a window line up as tabs above the conversation, across projects; click one to go back to it, close one to drop it from the strip |
 | Sidebar | The project's sidebar hides for more room and comes back with the button left of the conversation's title or Cmd/Ctrl+B; it stays as it was left, across restarts. Cmd/Ctrl+Shift+F brings it back if hidden and puts you in its search, which finds conversations by their title or by any word in their messages |
@@ -593,11 +593,25 @@ Limits of this slice:
   others; the latest call in the conversation it is found in is shown,
   not necessarily the latest overall. Deleting a conversation deletes
   what it knew.
-- The terminal is the system's, not one inside the app: Terminal on
-  macOS, `cmd.exe` on Windows, whatever `x-terminal-emulator` is on
-  Linux, and a message when there is none. It opens in the folder the
-  Files tab is showing, on this computer; what is typed there is yours,
-  the model does not see it, and there is no terminal on SSH hosts.
+- Terminals follow the WebView's `terminal_sessions.rs`: the host keeps
+  each as a PTY (ConPTY on Windows) running this computer's login shell
+  in the project's folder (`$SHELL -l`, PowerShell on Windows), or the
+  interactive `ssh` of a saved host (a stored password answered through
+  the one-shot askpass), or `wsl.exe -d` for a WSL distribution, with
+  `TERM=xterm-256color`. The window draws its screen with `vt100` (the
+  xterm colours, bold, italic, underline and inverse, the cursor, 5,000
+  lines to scroll back with the wheel) at the size that fits the dock,
+  and types into it while it has focus: Return, Backspace, Tab, arrows
+  (application mode included), Home, End, Page Up and Down, Delete, F1–F4,
+  Ctrl chords and Alt as Escape; Cmd+V (Ctrl+Shift+V elsewhere) pastes,
+  bracketed when the program asks, and Cmd+C (Ctrl+Shift+C) copies the
+  screen's text. While a terminal has focus it keeps Escape, and off
+  macOS every Ctrl chord, for its shell rather than the window. The host
+  keeps the last 4 MB each wrote, so a terminal shown again is redrawn;
+  closing a tab stops its terminal, and all stop when the app quits. What
+  is typed there is yours: the model does not see it. Not ported: input
+  through the system's input method (Chinese, Japanese) and selecting
+  part of the screen.
 - Whole log reads `stdout.log` and `stderr.log` from the run's own
   folder (`~/.wisp-science/runs/<id>`), the last 512 KB of each, when it
   is asked for; it does not follow a run that is still writing, so press
@@ -1206,12 +1220,10 @@ Limits of this slice:
   Evidence is not reviewed or marked from here, and items are flat:
   they are shown in the order they were added and cannot be nested or
   reordered.
-- Terminals open in the system's terminal rather than inside the app. On
-  an SSH host the command is the WebView's interactive `ssh` for that host
-  (port, key or password prompt, jump hosts), with the browsed folder as a
-  quoted `cd` when there is one; a WSL distribution would open with
-  `wsl.exe -d` in the project folder. Every press opens another one; they
-  are closed in the terminal itself.
+- On an SSH host a terminal runs the WebView's interactive `ssh` for that
+  host (port, key or password prompt, jump hosts), with the browsed
+  folder as a quoted `cd` when there is one; a WSL distribution opens with
+  `wsl.exe -d` in the project folder. Every press opens another tab.
 - Debug request follows the WebView's `debug_request.rs` in its
   stored-messages form (this host keeps no agent between turns): the saved
   working set with each message's size and token estimate, the system
@@ -1560,10 +1572,13 @@ Have a turn write a file, open the file in the Files tab and press
 Origin: the line names the tool and the conversation, the code is shown,
 and Open the conversation goes there. For a file you made yourself it
 says none is known.
-In the Files tab go into a folder and press the terminal button: the
-system's terminal opens in that folder. Do the same from the command
-palette. With the project's folder moved away, confirm a message says it
-is not there.
+In the Files tab go into a folder and press the terminal button: a
+terminal opens in the dock at the foot of the conversation, in that
+folder. Type `ls` and Return: the listing shows, coloured. Press Ctrl+C
+during `sleep 10`: it stops. Open a second one with +: two tabs. Hide the
+dock with Terminals in the top bar and show it again: both are still
+there with what they wrote. Close one with its ×. With the project's
+folder moved away, confirm a message says it is not there.
 In a conversation open the command palette and choose Python console:
 the console opens over the composer with an interpreter chip. Run
 `x = 41 + 1` and then `x`: it prints 42 and the variables list shows `x`.

@@ -8236,6 +8236,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "vt100"
+version = "0.18.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb05cdd19ae8707bf6a0a269972c07e6358103a7079faec749dec318a5b3dc23"
+dependencies = [
+ "itoa",
+ "unicode-width",
+ "vte",
+]
+
+[[package]]
+name = "vte"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5924018406ce0063cd67f8e008104968b74b563ee1b85dde3ed1f7cb87d3dbd"
+dependencies = [
+ "arrayvec",
+ "memchr",
+]
+
+[[package]]
 name = "waker-fn"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9161,6 +9182,7 @@ name = "wisp-gpui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "dirs 5.0.1",
  "gpui",
@@ -9170,6 +9192,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "uuid",
+ "vt100",
  "wisp-dto",
  "wisp-server",
  "wisp-sync",

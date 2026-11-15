@@ -397,6 +397,13 @@ impl Workspace {
                             cx.listener(|this, _, window, cx| this.toggle_palette(window, cx)),
                         ),
                     )
+                    .child(
+                        icon_button("terminal-toggle", "terminal", tr("Terminals"))
+                            .selected(self.terminal.open)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.toggle_terminal_dock(window, cx)
+                            })),
+                    )
                     .child({
                         let open = self.layers.contains(Layer::Outline);
                         let button = div().relative().child(
@@ -2270,6 +2277,8 @@ impl Workspace {
         if let Some(follow_ups) = self.render_follow_ups(cx) {
             content = content.child(follow_ups);
         }
-        content.child(self.render_composer(running, cx))
+        content
+            .child(self.render_composer(running, cx))
+            .children(self.render_terminal_dock(cx))
     }
 }
