@@ -2,6 +2,7 @@
 //! cells. It is a reading of the transcript, not something saved on its
 //! own: code the model ran with `python`, `r` or `shell`, with what came
 //! back, and code it only showed in an answer.
+use crate::i18n::tr;
 use wisp_dto::native_conversations::Item;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -157,11 +158,11 @@ pub fn output_preview(output: &str, lines: usize, bytes: usize) -> (String, bool
 pub fn summary(cells: &[Cell]) -> String {
     let ran = cells.iter().filter(|cell| cell.ran).count();
     match (cells.len(), ran) {
-        (0, _) => "No code in this conversation yet.".into(),
-        (1, 1) => "1 cell, run".into(),
-        (1, _) => "1 cell, shown but not run".into(),
-        (n, ran) if ran == n => format!("{n} cells, all run"),
-        (n, ran) => format!("{n} cells, {ran} run"),
+        (0, _) => tr("No code in this conversation yet.").into(),
+        (1, 1) => tr("1 cell, run").into(),
+        (1, _) => tr("1 cell, shown but not run").into(),
+        (n, ran) if ran == n => crate::i18n::fill(tr("{} cells, all run"), &[&n]),
+        (n, ran) => crate::i18n::fill(tr("{} cells, {} run"), &[&n, &ran]),
     }
 }
 

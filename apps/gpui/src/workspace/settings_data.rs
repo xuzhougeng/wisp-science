@@ -103,7 +103,10 @@ impl Workspace {
         for (index, (height, (date, tokens))) in
             usage::heights(days, BAR).into_iter().zip(days).enumerate()
         {
-            let label = format!("{}: {} tokens", usage::day_label(date), compact(*tokens));
+            let label = crate::i18n::fill(
+                tr("{}: {} tokens"),
+                &[&usage::day_label(date), &compact(*tokens)],
+            );
             // The whole column answers the pointer, not just the bar in it.
             strip = strip.child(
                 div()
@@ -123,9 +126,10 @@ impl Workspace {
             );
         }
         let range = match (days.first(), days.last()) {
-            (Some((first, _)), Some((last, _))) => {
-                format!("{} to {}", usage::day_label(first), usage::day_label(last))
-            }
+            (Some((first, _)), Some((last, _))) => crate::i18n::fill(
+                tr("{} to {}"),
+                &[&usage::day_label(first), &usage::day_label(last)],
+            ),
             _ => String::new(),
         };
         let busiest = usage::busiest(days).map_or_else(
@@ -144,7 +148,10 @@ impl Workspace {
                     .pb_2()
                     .text_xs()
                     .text_color(muted)
-                    .child(format!("{range}: {} tokens. {busiest}", compact(spent))),
+                    .child(crate::i18n::fill(
+                        tr("{}: {} tokens. {}"),
+                        &[&range, &compact(spent), &busiest],
+                    )),
             )
             .child(strip)
             .child(div().h(px(1.)).bg(cx.theme().border));
@@ -184,32 +191,30 @@ impl Workspace {
 
         page = page.child(heading(tr("By project")));
         for row in &view.projects {
-            page = page.child(
-                div()
-                    .h_flex()
-                    .gap_3()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
-                    .text_sm()
-                    .child(
-                        div()
-                            .v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .child(div().truncate().child(row.name.clone()))
-                            .child(div().text_xs().text_color(muted).child(
-                                match row.conversations {
-                                    1 => "1 conversation".to_owned(),
-                                    n => format!("{n} conversations"),
-                                },
-                            )),
-                    )
-                    .child(div().text_color(muted).child(crate::i18n::fill(
-                        tr("Input {} · output {}"),
-                        &[&compact(row.input), &compact(row.output)],
-                    ))),
-            );
+            page =
+                page.child(
+                    div()
+                        .h_flex()
+                        .gap_3()
+                        .py_2()
+                        .border_b_1()
+                        .border_color(cx.theme().border)
+                        .text_sm()
+                        .child(
+                            div()
+                                .v_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .child(div().truncate().child(row.name.clone()))
+                                .child(div().text_xs().text_color(muted).child(
+                                    crate::organise::conversations(row.conversations as usize),
+                                )),
+                        )
+                        .child(div().text_color(muted).child(crate::i18n::fill(
+                            tr("Input {} · output {}"),
+                            &[&compact(row.input), &compact(row.output)],
+                        ))),
+                );
         }
         page
     }
@@ -294,10 +299,9 @@ impl Workspace {
             let detail = if row.missing {
                 tr("The folder is not there.").to_owned()
             } else {
-                format!(
-                    ".wisp {} · uploads {}",
-                    size_label(row.wisp_bytes),
-                    size_label(row.uploads_bytes)
+                crate::i18n::fill(
+                    tr(".wisp {} · uploads {}"),
+                    &[&size_label(row.wisp_bytes), &size_label(row.uploads_bytes)],
                 )
             };
             page = page.child(
@@ -316,10 +320,7 @@ impl Workspace {
                             .child(div().truncate().text_xs().text_color(muted).child(format!(
                                 "{} · {}",
                                 home::short_path(&row.workspace_dir, home_dir.as_deref()),
-                                match row.conversations {
-                                    1 => "1 conversation".to_owned(),
-                                    n => format!("{n} conversations"),
-                                }
+                                crate::organise::conversations(row.conversations as usize)
                             ))),
                     )
                     .child(

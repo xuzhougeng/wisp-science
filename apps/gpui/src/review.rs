@@ -21,13 +21,20 @@ pub fn banner(outcome: &ReviewOutcome) -> (String, Tone, bool) {
     match outcome {
         ReviewOutcome::Reading => (tr("Reviewing the answer…").into(), Tone::Neutral, false),
         ReviewOutcome::Failed(problem) => (
-            format!("The answer was not reviewed: {problem}"),
+            crate::i18n::fill(
+                tr("The answer was not reviewed: {}"),
+                &[&crate::i18n::host(problem)],
+            ),
             Tone::Attention,
             false,
         ),
         ReviewOutcome::Done(found) => {
             let (said, tone) = outcome_of(found);
-            (format!("Review: {said}"), tone, !found.findings.is_empty())
+            (
+                crate::i18n::fill(tr("Review: {}"), &[&said]),
+                tone,
+                !found.findings.is_empty(),
+            )
         }
     }
 }
@@ -50,28 +57,34 @@ fn outcome_of(review: &Review) -> (String, Tone) {
             Tone::Success,
         ),
         (0, warned) => (
-            format!("{} to look at.", count(warned, "thing")),
+            crate::i18n::fill(tr("{} to look at."), &[&things(warned)]),
             Tone::Attention,
         ),
         (failed, 0) => (
-            format!("{} to correct.", count(failed, "problem")),
+            crate::i18n::fill(tr("{} to correct."), &[&problems(failed)]),
             Tone::Danger,
         ),
         (failed, warned) => (
-            format!(
-                "{} to correct, {} to look at.",
-                count(failed, "problem"),
-                count(warned, "thing")
+            crate::i18n::fill(
+                tr("{} to correct, {} to look at."),
+                &[&problems(failed), &things(warned)],
             ),
             Tone::Danger,
         ),
     }
 }
 
-fn count(number: usize, noun: &str) -> String {
-    match number {
-        1 => format!("1 {noun}"),
-        _ => format!("{number} {noun}s"),
+fn things(count: usize) -> String {
+    match count {
+        1 => tr("1 thing").into(),
+        n => crate::i18n::fill(tr("{} things"), &[&n]),
+    }
+}
+
+fn problems(count: usize) -> String {
+    match count {
+        1 => tr("1 problem").into(),
+        n => crate::i18n::fill(tr("{} problems"), &[&n]),
     }
 }
 
@@ -82,9 +95,9 @@ pub fn finding_heading(finding: &ReviewFinding) -> (String, Tone) {
         _ => (tr("Doubtful"), Tone::Attention),
     };
     let weight = match finding.severity.as_str() {
-        "high" => "matters a lot",
-        "medium" => "matters",
-        _ => "minor",
+        "high" => tr("matters a lot"),
+        "medium" => tr("matters"),
+        _ => tr("minor"),
     };
     (format!("{kind} · {weight}"), tone)
 }

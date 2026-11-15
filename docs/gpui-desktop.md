@@ -410,11 +410,13 @@ Limits of this slice:
 - The Chinese interface is not complete. Translated: the fixed text of
   the pages, panels and dialogs, the names of panel tabs, palette commands
   and settings sections, the placeholders of text fields, statuses,
-  project counts, ages and most sentences with a value set into them.
-  Dates read the Chinese way (2026年11月, 11月14日 星期六). Still
-  English: some figures of the trajectory, usage and storage pages,
-  units, and everything the host says (errors, tool questions, run
-  statuses). A text without a
+  counts, ages, durations, token figures, run statuses and the sentences
+  with a value set into them (the trajectory, usage, storage, review,
+  /context and Settings summaries among them). Dates read the Chinese
+  way (2026年11月, 11月14日 星期六). The host's refusals are translated
+  when they are fixed sentences; the ones that carry a value (a path, an
+  address), tool questions and the model's own words stay as written.
+  Short units (ms, s, KB, MB) are the same in both. A text without a
   translation shows in English rather than not at all. In Chinese the
   command palette matches the Chinese names of commands, not the English
   ones. The system's language is read from the macOS locale, or from
@@ -868,7 +870,6 @@ Limits of this slice:
   provenance are not ported.
 - Status refreshes every two seconds while any turn is running and once more
   when the last one stops; it is not pushed by the host.
-- The interface is English only; localization is still open (below).
 - General has two choices. The rest of the WebView's page (language, send
   key, workspace directory, notifications, sound, update check, tool paths) is
   not ported: in particular the composer always sends with Cmd/Ctrl+Enter,

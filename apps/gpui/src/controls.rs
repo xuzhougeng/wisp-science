@@ -36,7 +36,10 @@ pub fn runtime_detail(row: &RuntimeRow) -> String {
         parts.push(path.to_owned());
     }
     if let Some(bytes) = row.memory_bytes {
-        parts.push(format!("{} in memory", crate::files::size_label(bytes)));
+        parts.push(crate::i18n::fill(
+            tr("{} in memory"),
+            &[&crate::files::size_label(bytes)],
+        ));
     }
     if let Some(error) = row.last_error.as_deref().filter(|text| !text.is_empty()) {
         parts.push(error.to_owned());
@@ -94,16 +97,22 @@ pub fn compact(count: u64) -> String {
 /// What the latest turn cost, leaving out parts that were zero.
 pub fn usage_line(usage: &TokenUsage) -> String {
     let mut parts = vec![
-        format!("Input {}", compact(usage.input)),
-        format!("output {}", compact(usage.output)),
+        crate::i18n::fill(tr("Input {}"), &[&compact(usage.input)]),
+        crate::i18n::fill(tr("output {}"), &[&compact(usage.output)]),
     ];
     if usage.reasoning > 0 {
-        parts.push(format!("thinking {}", compact(usage.reasoning)));
+        parts.push(crate::i18n::fill(
+            tr("thinking {}"),
+            &[&compact(usage.reasoning)],
+        ));
     }
     if usage.cached > 0 {
-        parts.push(format!("cached {}", compact(usage.cached)));
+        parts.push(crate::i18n::fill(
+            tr("cached {}"),
+            &[&compact(usage.cached)],
+        ));
     }
-    format!("{} tokens", parts.join(" · "))
+    crate::i18n::fill(tr("{} tokens"), &[&parts.join(" · ")])
 }
 
 /// How full the model's context is, as a whole percentage. A context that

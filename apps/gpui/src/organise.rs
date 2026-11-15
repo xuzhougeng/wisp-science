@@ -422,25 +422,30 @@ pub fn archive_name(project: &str) -> String {
 /// One line saying how a batch went: `done` conversations were `verb`
 /// ("Archived", "Deleted"), and the first refusal says why the rest were not.
 pub fn report(verb: &str, done: usize, refused: &[(String, String)]) -> String {
-    let count = |n: usize| {
-        if n == 1 {
-            "1 conversation".to_string()
-        } else {
-            format!("{n} conversations")
-        }
-    };
     let Some((_, reason)) = refused.first() else {
-        return format!("{verb} {}.", count(done));
+        return crate::i18n::fill(tr("{} {}."), &[&verb, &conversations(done)]);
     };
+    let reason = crate::i18n::host(reason);
     let left = if refused.len() == 1 {
-        "1 was left as it is".to_string()
+        tr("1 was left as it is").to_string()
     } else {
-        format!("{} were left as they are", refused.len())
+        crate::i18n::fill(tr("{} were left as they are"), &[&refused.len()])
     };
     if done == 0 {
-        format!("Nothing changed: {reason}.")
+        crate::i18n::fill(tr("Nothing changed: {}."), &[&reason])
     } else {
-        format!("{verb} {}. {left}: {reason}.", count(done))
+        crate::i18n::fill(
+            tr("{} {}. {}: {}."),
+            &[&verb, &conversations(done), &left, &reason],
+        )
+    }
+}
+
+/// How many conversations, in words: 1 conversation, 3 conversations.
+pub fn conversations(count: usize) -> String {
+    match count {
+        1 => tr("1 conversation").into(),
+        n => crate::i18n::fill(tr("{} conversations"), &[&n]),
     }
 }
 

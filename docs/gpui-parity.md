@@ -222,7 +222,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Read state: answer marked read when on screen | Yes | Done | served |
 | Background status for conversations not on screen | Pushed | Done (2 s poll while a turn runs) | served |
 | Shared icon set | Lucide-style | Done (same drawings, `apps/gpui/assets/icons`) | ui |
-| Chinese and English | Yes | Partial: a Language choice in Settings (System, English, 中文); the fixed text of every page, panel and dialog, the names of tabs, commands and settings sections the placeholders of text fields, statuses, counts, ages, dates and most sentences with a value in them are in Chinese; a few figures (usage, storage, step notes) and what the host says are still English | ui |
+| Chinese and English | Yes | Partial: a Language choice in Settings (System, English, 中文); the fixed text of every page, panel and dialog, the names of tabs, commands and settings sections the placeholders of text fields, statuses, counts, ages, dates, token figures, run statuses and sentences with a value in them are in Chinese; host messages that carry a value (paths, addresses) and tool questions are still as the host wrote them | ui |
 | Desktop notifications and sound | Yes | Partial: for the open conversation, when a turn ends or a tool waits for approval while the window is in the background; one fixed sound; no notification on Windows, none for conversations that are not open | ui |
 | Update check and install | Yes | Partial: Check for updates in Settings says whether a newer release exists and opens the release page; no automatic check and no in-app install | tauri |
 | Several windows | Yes | Partial: any number on the same host, each with its own page and conversation; not restored at the next start | ui |

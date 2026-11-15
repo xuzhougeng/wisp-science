@@ -285,7 +285,7 @@ pub fn route_note(value: &str) -> String {
     match value.trim() {
         "" => tr("Follows the system").into(),
         "none" => tr("Connects directly").into(),
-        proxy => format!("Through {proxy}"),
+        proxy => crate::i18n::fill(tr("Through {}"), &[&proxy]),
     }
 }
 
@@ -303,12 +303,12 @@ pub fn skills_summary(rows: &[SkillRow]) -> String {
     let off = rows.iter().filter(|row| !row.enabled).count();
     let total = match rows.len() {
         0 => return tr("No skills were found.").into(),
-        1 => "1 skill".to_string(),
-        n => format!("{n} skills"),
+        1 => tr("1 skill").to_string(),
+        n => crate::i18n::fill(tr("{} skills"), &[&n]),
     };
     match off {
-        0 => format!("{total}, all on."),
-        n => format!("{total}, {n} off."),
+        0 => crate::i18n::fill(tr("{}, all on."), &[&total]),
+        n => crate::i18n::fill(tr("{}, {} off."), &[&total, &n]),
     }
 }
 
@@ -330,14 +330,17 @@ pub fn connectors_summary(rows: &[ConnectorRow]) -> String {
         .sum();
     let off = rows.iter().filter(|row| !row.enabled).count();
     let state = match off {
-        0 => "all on".to_string(),
-        n => format!("{n} off"),
+        0 => tr("all on").to_string(),
+        n => crate::i18n::fill(tr("{} off"), &[&n]),
     };
     let count = match rows.len() {
-        1 => "1 connector".to_string(),
-        n => format!("{n} connectors"),
+        1 => tr("1 connector").to_string(),
+        n => crate::i18n::fill(tr("{} connectors"), &[&n]),
     };
-    format!("{count}, {state}; {} for the model.", tool_count(tools))
+    crate::i18n::fill(
+        tr("{}, {}; {} for the model."),
+        &[&count, &state, &tool_count(tools)],
+    )
 }
 
 /// Whether a connector matches what was typed: every word, in its name,
@@ -352,8 +355,8 @@ pub fn connector_matches(row: &ConnectorRow, query: &str) -> bool {
 /// How many tools a connector brings, in words.
 pub fn tool_count(count: usize) -> String {
     match count {
-        1 => "1 tool".into(),
-        n => format!("{n} tools"),
+        1 => tr("1 tool").into(),
+        n => crate::i18n::fill(tr("{} tools"), &[&n]),
     }
 }
 
@@ -425,10 +428,10 @@ pub fn ssh_target(host: &SshHostRow) -> String {
         line.push_str(&format!(":{port}"));
     }
     if !host.identity_file.is_empty() {
-        line.push_str(&format!(" · key {}", host.identity_file));
+        line.push_str(&crate::i18n::fill(tr(" · key {}"), &[&host.identity_file]));
     }
     if !host.proxy_jump.is_empty() {
-        line.push_str(&format!(" · via {}", host.proxy_jump));
+        line.push_str(&crate::i18n::fill(tr(" · via {}"), &[&host.proxy_jump]));
     }
     line
 }
@@ -438,8 +441,8 @@ pub fn ssh_target(host: &SshHostRow) -> String {
 pub fn capability_lines(found: &Capabilities) -> Vec<(&'static str, String, Option<Section>)> {
     let of = |(on, total): (usize, usize), none: &str| match total {
         0 => none.to_owned(),
-        _ if on == total => format!("{total}, all on"),
-        _ => format!("{on} on of {total}"),
+        _ if on == total => crate::i18n::fill(tr("{}, all on"), &[&total]),
+        _ => crate::i18n::fill(tr("{} on of {}"), &[&on, &total]),
     };
     vec![
         (
@@ -461,18 +464,25 @@ pub fn capability_lines(found: &Capabilities) -> Vec<(&'static str, String, Opti
             tr("SSH hosts"),
             match found.hosts {
                 (_, 0) => tr("None added").to_owned(),
-                (ready, total) if ready == total => format!("{total}, all checked"),
-                (ready, total) => format!("{ready} checked of {total}"),
+                (ready, total) if ready == total => {
+                    crate::i18n::fill(tr("{}, all checked"), &[&total])
+                }
+                (ready, total) => crate::i18n::fill(tr("{} checked of {}"), &[&ready, &total]),
             },
             Some(Section::Environments),
         ),
         (
             tr("Memory"),
             if found.memory_on {
-                format!(
-                    "On · {} · {}",
-                    plural(found.memory_notes, "day of notes", "days of notes"),
-                    plural(found.habits, "habit", "habits")
+                crate::i18n::fill(
+                    tr("On · {} · {}"),
+                    &[
+                        &match found.memory_notes {
+                            1 => tr("1 day of notes").to_owned(),
+                            n => crate::i18n::fill(tr("{} days of notes"), &[&n]),
+                        },
+                        &crate::memory::habits(found.habits),
+                    ],
                 )
             } else {
                 tr("Off").to_owned()
@@ -480,13 +490,6 @@ pub fn capability_lines(found: &Capabilities) -> Vec<(&'static str, String, Opti
             None,
         ),
     ]
-}
-
-fn plural(count: usize, one: &str, many: &str) -> String {
-    match count {
-        1 => format!("1 {one}"),
-        n => format!("{n} {many}"),
-    }
 }
 
 /// What the composer says about where a conversation's work runs.
@@ -559,8 +562,8 @@ pub fn check_line(check: Option<&EnvironmentCheck>, checking: bool, now: i64) ->
         Some(check) => {
             let when = crate::home::age(now, check.at);
             match &check.error {
-                None => format!("Reachable · checked {when}"),
-                Some(_) => format!("Could not be used · checked {when}"),
+                None => crate::i18n::fill(tr("Reachable · checked {}"), &[&when]),
+                Some(_) => crate::i18n::fill(tr("Could not be used · checked {}"), &[&when]),
             }
         }
     }
@@ -641,10 +644,9 @@ pub fn credential_placeholder(saved: bool, secret: bool) -> &'static str {
 /// an obviously wrong entry from being sent.
 pub fn steps(text: &str, range: std::ops::RangeInclusive<usize>) -> Result<usize, String> {
     let wrong = || {
-        format!(
-            "Enter a whole number from {} to {}.",
-            range.start(),
-            range.end()
+        crate::i18n::fill(
+            tr("Enter a whole number from {} to {}."),
+            &[range.start(), range.end()],
         )
     };
     let steps: usize = text.trim().parse().map_err(|_| wrong())?;

@@ -67,7 +67,7 @@ pub fn duration_label(ms: u64) -> String {
     } else if ms < 60_000 {
         format!("{:.1} s", ms as f64 / 1000.0)
     } else {
-        format!("{} min {} s", ms / 60_000, ms % 60_000 / 1000)
+        crate::i18n::fill(tr("{} min {} s"), &[&(ms / 60_000), &(ms % 60_000 / 1000)])
     }
 }
 
@@ -147,9 +147,21 @@ pub fn run_status(run: &RunRecord) -> (String, Tone) {
         "paused" => Tone::Attention,
         _ => Tone::Neutral,
     };
-    let mut label = run.status.replace('_', " ");
+    let mut label = match run.status.as_str() {
+        "draft" => tr("draft").to_owned(),
+        "submitted" => tr("submitted").to_owned(),
+        "running" => tr("running").to_owned(),
+        "paused" => tr("paused").to_owned(),
+        "cancelling" => tr("cancelling").to_owned(),
+        "succeeded" => tr("succeeded").to_owned(),
+        "failed" => tr("failed").to_owned(),
+        "cancelled" => tr("cancelled").to_owned(),
+        "timed_out" => tr("timed out").to_owned(),
+        "lost" => tr("lost").to_owned(),
+        other => other.replace('_', " "),
+    };
     if let Some(code) = run.exit_code.filter(|code| *code != 0) {
-        label.push_str(&format!(" · exit {code}"));
+        label.push_str(&crate::i18n::fill(tr(" · exit {}"), &[&code]));
     }
     (label, tone)
 }

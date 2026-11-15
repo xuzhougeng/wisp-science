@@ -614,7 +614,7 @@ impl Workspace {
                         .flex_1()
                         .text_xs()
                         .text_color(muted)
-                        .child(format!("{} selected", self.picks.len())),
+                        .child(crate::i18n::fill(tr("{} selected"), &[&self.picks.len()])),
                 )
                 .child(
                     Button::new("select-all")

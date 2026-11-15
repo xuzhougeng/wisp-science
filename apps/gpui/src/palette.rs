@@ -385,7 +385,7 @@ impl PaletteState {
                     id: row.id.clone(),
                     title: crate::present::one_line(&row.title),
                     place: if row.shelved {
-                        format!("{} · Archived", row.project_name)
+                        crate::i18n::fill(tr("{} · Archived"), &[&row.project_name])
                     } else {
                         row.project_name.clone()
                     },

@@ -18,7 +18,10 @@ pub fn duration(ms: i64) -> String {
         1_000..=59_949 => format!("{:.1} s", ms as f64 / 1_000.0),
         _ => {
             let seconds = (ms + 500) / 1_000;
-            format!("{} min {:02} s", seconds / 60, seconds % 60)
+            crate::i18n::fill(
+                tr("{} min {} s"),
+                &[&(seconds / 60), &format!("{:02}", seconds % 60)],
+            )
         }
     }
 }
@@ -59,7 +62,7 @@ pub fn totals(stats: &TrajectoryStatsDto) -> Vec<(&'static str, String)> {
         } else {
             format!("{speed:.0}")
         };
-        totals.push((tr("Speed"), format!("{speed} tokens/s")));
+        totals.push((tr("Speed"), crate::i18n::fill(tr("{} tokens/s"), &[&speed])));
     }
     totals
 }
@@ -69,9 +72,9 @@ pub fn subtitle(snapshot: &TrajectorySnapshotDto) -> String {
     if snapshot.turns.is_empty() {
         return tr("Nothing has been asked in this conversation yet.").into();
     }
-    let steps = "Every turn's steps in the order they happened. Times are to the second.";
+    let steps = tr("Every turn's steps in the order they happened. Times are to the second.");
     match &snapshot.model {
-        Some(model) => format!("{steps} Latest model: {model}."),
+        Some(model) => crate::i18n::fill(tr("{} Latest model: {}."), &[&steps, model]),
         None => steps.into(),
     }
 }
@@ -161,8 +164,8 @@ pub fn step(cell: &TrajectoryCellDto) -> Step {
             let took = cell.duration_ms.map(duration);
             Step {
                 note: match (failed, took) {
-                    (true, Some(took)) => Some(format!("failed · {took}")),
-                    (true, None) => Some("failed".into()),
+                    (true, Some(took)) => Some(crate::i18n::fill(tr("failed · {}"), &[&took])),
+                    (true, None) => Some(tr("failed").into()),
                     (false, took) => took,
                 },
                 ..plain(tr("Tool"), if failed { Tone::Failed } else { Tone::Plain })
@@ -171,14 +174,20 @@ pub fn step(cell: &TrajectoryCellDto) -> Step {
         "usage" => match &cell.usage {
             Some(usage) => {
                 let mut parts = vec![
-                    format!("{} in", tokens(usage.input_tokens)),
-                    format!("{} out", tokens(usage.output_tokens)),
+                    crate::i18n::fill(tr("{} in"), &[&tokens(usage.input_tokens)]),
+                    crate::i18n::fill(tr("{} out"), &[&tokens(usage.output_tokens)]),
                 ];
                 if usage.reasoning_tokens > 0 {
-                    parts.push(format!("{} thinking", tokens(usage.reasoning_tokens)));
+                    parts.push(crate::i18n::fill(
+                        tr("{} thinking"),
+                        &[&tokens(usage.reasoning_tokens)],
+                    ));
                 }
                 if usage.cached_input_tokens > 0 {
-                    parts.push(format!("{} cached", tokens(usage.cached_input_tokens)));
+                    parts.push(crate::i18n::fill(
+                        tr("{} cached"),
+                        &[&tokens(usage.cached_input_tokens)],
+                    ));
                 }
                 Step {
                     label: tr("Model call"),
@@ -199,7 +208,7 @@ pub fn step(cell: &TrajectoryCellDto) -> Step {
 pub fn detail(cell: &TrajectoryCellDto) -> Option<String> {
     let mut parts = Vec::new();
     if let Some(input) = cell.detail_input.as_deref().filter(|text| !text.is_empty()) {
-        parts.push(format!("Input\n{}", clipped(input)));
+        parts.push(format!("{}\n{}", tr("Input"), clipped(input)));
     }
     if let Some(output) = cell
         .detail_output
@@ -207,7 +216,7 @@ pub fn detail(cell: &TrajectoryCellDto) -> Option<String> {
         .filter(|text| !text.is_empty())
     {
         parts.push(match cell.kind.as_str() {
-            "tool" => format!("Result\n{}", clipped(output)),
+            "tool" => format!("{}\n{}", tr("Result"), clipped(output)),
             _ => clipped(output),
         });
     }
@@ -221,7 +230,10 @@ fn clipped(text: &str) -> String {
     let kept: String = chars.by_ref().take(DETAIL_LIMIT).collect();
     match chars.count() {
         0 => kept,
-        more => format!("{kept}\n… {more} more characters"),
+        more => format!(
+            "{kept}\n{}",
+            crate::i18n::fill(tr("… {} more characters"), &[&more])
+        ),
     }
 }
 

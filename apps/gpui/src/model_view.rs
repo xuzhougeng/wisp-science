@@ -21,18 +21,22 @@ pub fn summary(view: &ModelView) -> String {
     if view.rows.is_empty() {
         return tr("Nothing has been sent in this conversation yet.").into();
     }
-    let size = format!(
-        "{} messages, about {} tokens by length.",
-        view.rows.len(),
-        tokens(view.chars)
+    let size = crate::i18n::fill(
+        tr("{} messages, about {} tokens by length."),
+        &[&view.rows.len(), &tokens(view.chars)],
     );
     if view.compacted {
-        format!(
-            "{size} Older turns have been replaced by a summary: the transcript still shows \
-             them, the model no longer reads them."
+        crate::i18n::fill(
+            tr(
+                "{} Older turns have been replaced by a summary: the transcript still shows them, the model no longer reads them.",
+            ),
+            &[&size],
         )
     } else {
-        format!("{size} Everything in the transcript is still sent.")
+        crate::i18n::fill(
+            tr("{} Everything in the transcript is still sent."),
+            &[&size],
+        )
     }
 }
 
@@ -62,7 +66,7 @@ pub fn line(row: &ModelViewRow) -> String {
     match (first.is_empty(), row.calls.is_empty()) {
         (false, true) => first.to_owned(),
         (false, false) => format!("{first} → {}", row.calls.join(", ")),
-        (true, false) => format!("Asks for {}", row.calls.join(", ")),
+        (true, false) => crate::i18n::fill(tr("Asks for {}"), &[&row.calls.join(", ")]),
         (true, true) => String::new(),
     }
 }

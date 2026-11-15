@@ -44,7 +44,7 @@ pub fn kind_label(kind: &str, language: Option<&str>) -> String {
             .map(str::trim)
             .filter(|language| !language.is_empty()),
     ) {
-        ("code", Some(language)) => format!("Code · {language}"),
+        ("code", Some(language)) => crate::i18n::fill(tr("Code · {}"), &[&language]),
         ("code", None) => tr("Code").into(),
         ("figure", _) => tr("Figure").into(),
         _ => tr("Text").into(),

@@ -266,6 +266,35 @@ mod tests {
     }
 
     #[test]
+    fn counts_and_sentences_with_values_read_in_chinese() {
+        let zh = |text| in_locale(Locale::Zh, text);
+        // A count says its number before the noun, whatever the English plural.
+        assert_eq!(fill(zh("1 file"), &[]), "1 个文件");
+        assert_eq!(fill(zh("{} files"), &[&4]), "4 个文件");
+        assert_eq!(fill(zh("{} min {} s"), &[&3, &"05"]), "3 分 05 秒");
+        // Where Chinese puts the whole first, the values go by position.
+        assert_eq!(fill(zh("{} on of {}"), &[&2, &3]), "共 3 个，2 个开启");
+        assert_eq!(
+            fill(zh("{} checked of {}"), &[&1, &2]),
+            "共 2 个，1 个已检查"
+        );
+        assert_eq!(
+            fill(
+                zh("{} is in {} in the project folder. Nothing was erased."),
+                &[&"a.txt", &".trash"]
+            ),
+            "a.txt 已在项目文件夹的 .trash 中。没有删除任何内容。"
+        );
+        assert_eq!(
+            fill(
+                zh("{} messages, about {} tokens by length."),
+                &[&13, &"4.3k"]
+            ),
+            "13 条消息，按长度估算约 4.3k 个 token。"
+        );
+    }
+
+    #[test]
     fn a_translated_sentence_takes_the_values_its_english_takes() {
         let places = |text: &str| text.matches('{').count();
         for (english, chinese) in ZH {

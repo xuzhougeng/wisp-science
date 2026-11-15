@@ -39,9 +39,8 @@ fn title(item: &Item) -> String {
         .unwrap_or_default();
     if line.is_empty() {
         return match item.attachments.len() {
-            0 => "(empty message)".into(),
-            1 => "1 file".into(),
-            n => format!("{n} files"),
+            0 => crate::i18n::tr("(empty message)").into(),
+            n => crate::files::count(n),
         };
     }
     if line.chars().count() <= WIDTH {

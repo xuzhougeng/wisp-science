@@ -34,8 +34,9 @@ impl Queue {
         }
         let waiting = self.waiting.entry(session.to_owned()).or_default();
         if waiting.len() >= LIMIT {
-            return Err(format!(
-                "{LIMIT} messages are already waiting; remove one or wait for the turn to end"
+            return Err(crate::i18n::fill(
+                tr("{} messages are already waiting; remove one or wait for the turn to end"),
+                &[&LIMIT],
             ));
         }
         self.next_id += 1;
@@ -121,11 +122,9 @@ pub fn label(queued: &Queued) -> String {
     let first = queued.text.lines().next().unwrap_or_default().trim();
     let attached = queued.carried.attachments().len();
     match (first.is_empty(), attached) {
-        (true, 1) => "1 file".into(),
-        (true, n) => format!("{n} files"),
+        (true, n) => crate::files::count(n),
         (false, 0) => first.to_owned(),
-        (false, 1) => format!("{first} · 1 file"),
-        (false, n) => format!("{first} · {n} files"),
+        (false, n) => format!("{first} · {}", crate::files::count(n)),
     }
 }
 

@@ -24,7 +24,7 @@ impl Target {
             Target::Remember { .. } => tr("Save to memory").into(),
             Target::Habit(None) => tr("New habit").into(),
             Target::Habit(Some(_)) => tr("Edit habit").into(),
-            Target::Note(name) => format!("Note {}", note_day(name)),
+            Target::Note(name) => crate::i18n::fill(tr("Note {}"), &[&note_day(name)]),
         }
     }
 
@@ -60,7 +60,7 @@ pub fn note_day(name: &str) -> &str {
 /// A note as the list names it.
 pub fn note_label(name: &str, today: &str) -> String {
     if name == today {
-        format!("Today · {}", note_day(name))
+        crate::i18n::fill(tr("Today · {}"), &[&note_day(name)])
     } else {
         note_day(name).to_owned()
     }
@@ -90,22 +90,34 @@ pub fn problem(target: &Target, text: &str) -> Option<String> {
     if length == 0 {
         return Some(tr("Write something first.").into());
     }
-    (target.limited() && length > LIMIT)
-        .then(|| format!("{length} characters; one entry holds at most {LIMIT}."))
+    (target.limited() && length > LIMIT).then(|| {
+        crate::i18n::fill(
+            tr("{} characters; one entry holds at most {}."),
+            &[&length, &LIMIT],
+        )
+    })
 }
 
 /// One line under the switch saying what there is.
 pub fn summary(view: &MemoryView) -> String {
-    let count = |n: usize, one: &str, many: &str| match n {
-        0 => format!("no {many}"),
-        1 => format!("1 {one}"),
-        n => format!("{n} {many}"),
+    let notes = match view.notes.len() {
+        0 => tr("no notes").to_owned(),
+        1 => tr("1 note").to_owned(),
+        n => crate::i18n::fill(tr("{} notes"), &[&n]),
     };
-    format!(
-        "{} here, {} everywhere.",
-        count(view.notes.len(), "note", "notes"),
-        count(view.habits.len(), "habit", "habits")
-    )
+    let habits = match view.habits.len() {
+        0 => tr("no habits").to_owned(),
+        n => habits(n),
+    };
+    crate::i18n::fill(tr("{} here, {} everywhere."), &[&notes, &habits])
+}
+
+/// How many habits, in words: 1 habit, 3 habits.
+pub fn habits(count: usize) -> String {
+    match count {
+        1 => tr("1 habit").into(),
+        n => crate::i18n::fill(tr("{} habits"), &[&n]),
+    }
 }
 
 #[cfg(test)]

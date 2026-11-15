@@ -3,7 +3,10 @@
 use wisp_dto::ProjectSummary;
 use wisp_server::desktop::{FolderContents, ProjectFolder};
 
-use crate::{i18n::Locale, present::Tone};
+use crate::{
+    i18n::{Locale, tr},
+    present::Tone,
+};
 
 /// Where the question about deleting a project's folder stands.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -19,22 +22,26 @@ pub enum FolderQuestion {
 /// What deleting the folder would do, said before it is done.
 pub fn folder_warning(folder: &ProjectFolder) -> String {
     match folder.contents {
-        FolderContents::Missing => format!(
-            "The folder of \"{}\" is already gone. Only its conversations and records are \
-             removed from Wisp.",
-            folder.name
+        FolderContents::Missing => crate::i18n::fill(
+            tr(
+                "The folder of \"{}\" is already gone. Only its conversations and records are removed from Wisp.",
+            ),
+            &[&folder.name],
         ),
-        FolderContents::Link => format!(
-            "{} is a link. The link is deleted; the folder it points at is kept.",
-            folder.path
+        FolderContents::Link => crate::i18n::fill(
+            tr("{} is a link. The link is deleted; the folder it points at is kept."),
+            &[&folder.path],
         ),
-        FolderContents::Files { files, bytes, more } => format!(
-            "This deletes {} for good, with {}{} ({}), and removes the project from Wisp. It \
-             cannot be undone and nothing goes to the Trash.",
-            folder.path,
-            if more { "at least " } else { "" },
-            plural(files as i64, "file", "files"),
-            crate::files::size_label(bytes),
+        FolderContents::Files { files, bytes, more } => crate::i18n::fill(
+            tr(
+                "This deletes {} for good, with {}{} ({}), and removes the project from Wisp. It cannot be undone and nothing goes to the Trash.",
+            ),
+            &[
+                &folder.path,
+                &if more { tr("at least ") } else { "" },
+                &crate::files::count(files as usize),
+                &crate::files::size_label(bytes),
+            ],
         ),
     }
 }

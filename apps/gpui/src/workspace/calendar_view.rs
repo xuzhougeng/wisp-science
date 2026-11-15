@@ -300,10 +300,7 @@ impl Workspace {
                     cell = cell.bg(accent.opacity(0.08));
                 }
                 if count > 0 {
-                    cell = cell.child(div().text_xs().text_color(accent).child(match count {
-                        1 => "1 record".to_owned(),
-                        n => format!("{n} records"),
-                    }));
+                    cell = cell.child(div().text_xs().text_color(accent).child(records(count)));
                 }
                 row = row.child(cell);
             }
@@ -328,12 +325,15 @@ impl Workspace {
                 .text_sm()
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(format!(
-                    "{day} {} · {}",
-                    month.label(),
+                    "{} · {}",
+                    if crate::i18n::current() == crate::i18n::Locale::Zh {
+                        format!("{}{day}日", month.label())
+                    } else {
+                        format!("{day} {}", month.label())
+                    },
                     match items.len() {
-                        0 => "nothing recorded".to_owned(),
-                        1 => "1 record".to_owned(),
-                        n => format!("{n} records"),
+                        0 => tr("nothing recorded").to_owned(),
+                        n => records(n),
                     }
                 )),
         );
@@ -397,5 +397,13 @@ impl Workspace {
             body = body.child(row);
         }
         div().h_flex().size_full().child(side).child(body)
+    }
+}
+
+/// How many records, in words: 1 record, 3 records.
+fn records(count: usize) -> String {
+    match count {
+        1 => tr("1 record").into(),
+        n => crate::i18n::fill(tr("{} records"), &[&n]),
     }
 }

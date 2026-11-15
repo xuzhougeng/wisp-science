@@ -162,9 +162,9 @@ impl Naming {
 /// went, relative to the project.
 pub fn trashed_note(to: &str) -> String {
     let folder = parent(to).unwrap_or_default();
-    format!(
-        "{} is in {folder} in the project folder. Nothing was erased.",
-        file_name(to)
+    crate::i18n::fill(
+        tr("{} is in {} in the project folder. Nothing was erased."),
+        &[&file_name(to), &folder],
     )
 }
 
@@ -223,10 +223,18 @@ pub fn preview_mode(content: &FileContent) -> PreviewMode {
 pub fn preview_note(content: &FileContent) -> String {
     let size = content.total_bytes.map(size_label);
     match (size, content.truncated) {
-        (Some(size), true) => format!("{size} · showing the first 1 MB"),
+        (Some(size), true) => crate::i18n::fill(tr("{} · showing the first 1 MB"), &[&size]),
         (Some(size), false) => size,
-        (None, true) => "Showing the first 1 MB".into(),
+        (None, true) => tr("Showing the first 1 MB").into(),
         (None, false) => String::new(),
+    }
+}
+
+/// How many files, in words: 1 file, 3 files.
+pub fn count(files: usize) -> String {
+    match files {
+        1 => tr("1 file").into(),
+        n => crate::i18n::fill(tr("{} files"), &[&n]),
     }
 }
 
