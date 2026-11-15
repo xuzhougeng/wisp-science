@@ -302,6 +302,7 @@ impl Workspace {
         self.file_image = None;
         self.file_document = None;
         self.file_pages = None;
+        self.file_sequences = None;
         self.file_problem = None;
         self.file_as_text = false;
         // A PDF's first pages are drawn, off the window's thread.
@@ -420,6 +421,11 @@ impl Workspace {
                 if let Some(content) = &this.files.preview {
                     if files::preview_mode(content) == PreviewMode::Text {
                         let text = content.text.clone().unwrap_or_default();
+                        // An alignment or FASTA file is read once, not at
+                        // every frame.
+                        this.file_sequences = crate::sequences::parse(&content.path, &text)
+                            .map(|read| (content.path.clone(), std::sync::Arc::new(read)));
+                        this.sequence_page = 0;
                         this.file_view
                             .update(cx, |input, cx| input.set_value(text, window, cx));
                     }
@@ -654,6 +660,13 @@ impl Workspace {
                 .into_any_element(),
             PreviewMode::Text => {
                 let text = content.text.as_deref().unwrap_or_default();
+                if let Some((_, read)) = self
+                    .file_sequences
+                    .as_ref()
+                    .filter(|(path, _)| *path == content.path)
+                {
+                    return self.render_sequences(read.clone(), cx);
+                }
                 if let Some(book) = files::notebook(&content.path, text) {
                     return self.render_notebook(&content.path, book, window, cx);
                 }
@@ -672,6 +685,149 @@ impl Workspace {
             .flex_1()
             .min_h_0()
             .child(Input::new(&self.file_view).disabled(true).h_full())
+            .into_any_element()
+    }
+
+    /// An alignment or FASTA file as rows of residues coloured by kind,
+    /// a hundred columns at a time, with a switch to its text.
+    fn render_sequences(
+        &self,
+        read: std::sync::Arc<crate::sequences::Alignment>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        use crate::sequences::{self, Residue};
+        const PAGE: usize = 100;
+        let muted = cx.theme().muted_foreground;
+        let switch = Button::new("file-sequences-switch")
+            .label(if self.file_as_text {
+                tr("Show as sequences")
+            } else {
+                tr("Show as text")
+            })
+            .xsmall()
+            .ghost()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.file_as_text = !this.file_as_text;
+                cx.notify();
+            }));
+        if self.file_as_text {
+            return div()
+                .v_flex()
+                .flex_1()
+                .min_h_0()
+                .child(div().h_flex().px_3().py_1().child(switch))
+                .child(self.render_text_preview())
+                .into_any_element();
+        }
+        let shown = read.rows.iter().map(String::len).max().unwrap_or(0);
+        let pages = shown.div_ceil(PAGE).max(1);
+        let page = self.sequence_page.min(pages - 1);
+        let (from, to) = (page * PAGE, ((page + 1) * PAGE).min(shown));
+        // Translucent, so the letters read on light and dark alike.
+        let colour = |kind: Residue| -> Option<Hsla> {
+            let hue = match kind {
+                Residue::Hydrophobic | Residue::Cytosine => 0.6,
+                Residue::Aromatic => 0.5,
+                Residue::Positive | Residue::Thymine => 0.0,
+                Residue::Negative => 0.83,
+                Residue::Polar | Residue::Adenine => 0.33,
+                Residue::Glycine | Residue::Guanine => 0.08,
+                Residue::Proline => 0.15,
+                Residue::Cysteine => 0.92,
+                Residue::Gap | Residue::Other => return None,
+            };
+            Some(hsla(hue, 0.65, 0.55, 0.35))
+        };
+        let mut bar = div()
+            .h_flex()
+            .gap_2()
+            .px_3()
+            .py_1()
+            .child(
+                div()
+                    .flex_1()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(sequences::note(&read)),
+            )
+            .child(switch);
+        if pages > 1 {
+            bar = bar
+                .child(
+                    icon_button("file-sequences-back", "chevron-left", "Earlier columns")
+                        .disabled(page == 0)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.sequence_page = this.sequence_page.saturating_sub(1);
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(crate::i18n::fill(tr("Columns {}–{}"), &[&(from + 1), &to])),
+                )
+                .child(
+                    icon_button("file-sequences-next", "chevron-right", "Later columns")
+                        .disabled(page + 1 >= pages)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.sequence_page = (page + 1).min(pages - 1);
+                            cx.notify();
+                        })),
+                );
+        }
+        let mut names = div().v_flex().flex_shrink_0().w(px(120.)).pr_2();
+        let mut rows = div().v_flex();
+        for (name, row) in read.names.iter().zip(&read.rows) {
+            names = names.child(
+                div()
+                    .h(px(18.))
+                    .truncate()
+                    .text_color(muted)
+                    .child(name.clone()),
+            );
+            let part = row
+                .get(from.min(row.len())..to.min(row.len()))
+                .unwrap_or_default()
+                .to_owned();
+            let highlights: Vec<_> = sequences::runs(&part, read.nucleic)
+                .into_iter()
+                .filter_map(|(range, kind)| {
+                    colour(kind).map(|background| {
+                        (
+                            range,
+                            HighlightStyle {
+                                background_color: Some(background),
+                                ..Default::default()
+                            },
+                        )
+                    })
+                })
+                .collect();
+            rows = rows.child(
+                div()
+                    .h(px(18.))
+                    .whitespace_nowrap()
+                    .child(StyledText::new(part).with_highlights(highlights)),
+            );
+        }
+        div()
+            .v_flex()
+            .flex_1()
+            .min_h_0()
+            .child(bar)
+            .child(
+                div()
+                    .id("file-sequences")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_scroll()
+                    .px_3()
+                    .py_2()
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_xs()
+                    .child(div().h_flex().items_start().child(names).child(rows)),
+            )
             .into_any_element()
     }
 

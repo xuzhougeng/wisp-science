@@ -45,6 +45,7 @@ mod queue;
 mod remote;
 mod review;
 mod schedules;
+mod sequences;
 mod settings;
 mod slash;
 mod state;

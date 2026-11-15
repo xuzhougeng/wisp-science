@@ -599,6 +599,10 @@ pub struct Workspace {
     /// The PDF being previewed, its first pages drawn, with its path and
     /// the line that says how many there are.
     file_pages: Option<(String, Result<(Vec<std::sync::Arc<Image>>, String), String>)>,
+    /// The alignment or FASTA file being previewed, read once, and the
+    /// page of columns shown.
+    file_sequences: Option<(String, std::sync::Arc<crate::sequences::Alignment>)>,
+    sequence_page: usize,
     favorite_request: u64,
     rename: Entity<InputState>,
     settings: settings_view::SettingsForm,
@@ -1300,6 +1304,8 @@ impl Workspace {
             file_image: None,
             file_document: None,
             file_pages: None,
+            file_sequences: None,
+            sequence_page: 0,
             inline_images: HashMap::new(),
             favorite_request: 0,
             rename,

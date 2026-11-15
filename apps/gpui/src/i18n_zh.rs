@@ -1850,4 +1850,12 @@ pub const ZH: &[(&str, &str)] = &[
     ("This PDF could not be read.", "无法读取这个 PDF。"),
     ("A page could not be drawn: {}", "有一页无法绘制：{}"),
     ("The PDF's text and tables, to read and copy.", "PDF 中的文字和表格，便于阅读和复制。"),
+    ("Show as sequences", "显示为序列"),
+    ("Earlier columns", "前面的列"),
+    ("Later columns", "后面的列"),
+    ("Columns {}–{}", "第 {}–{} 列"),
+    ("nucleotides", "核苷酸"),
+    ("amino acids", "氨基酸"),
+    ("{} sequences · {} columns · {}", "{} 条序列 · {} 列 · {}"),
+    (" · showing the first {} rows and {} columns", " · 显示前 {} 行、前 {} 列"),
 ];
