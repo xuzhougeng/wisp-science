@@ -14,6 +14,10 @@ pub struct Find {
 }
 
 fn matches(item: &Item, needle: &str) -> bool {
+    // A kept review's row holds its report as data, not words to find.
+    if item.role == "review" {
+        return false;
+    }
     item.text.to_lowercase().contains(needle)
         || item
             .tool_name
@@ -111,6 +115,19 @@ mod tests {
             "ok": null, "status": null, "seq": seq
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn a_kept_reviews_report_is_not_searched() {
+        let mut find = Find::default();
+        let rows = vec![
+            row("assistant", "The reads were mapped.", None, Some(1)),
+            row("review", "{\"summary\":\"reads checked\"}", None, Some(1)),
+        ];
+        find.search(&rows, "reads");
+        assert_eq!(find.hits.len(), 1);
+        find.search(&rows, "summary");
+        assert!(find.hits.is_empty());
     }
 
     fn rows() -> Vec<Item> {

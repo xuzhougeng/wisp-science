@@ -171,6 +171,45 @@ pub struct Finding {
 }
 
 impl Review {
+    /// The report as the WebView desktop keeps it with a conversation
+    /// (`session_reviews.report_json`), so either desktop shows it again.
+    pub(crate) fn report_json(&self, id: &str) -> String {
+        let findings: Vec<_> = self
+            .findings
+            .iter()
+            .map(|finding| {
+                serde_json::json!({
+                    "claim": finding.claim,
+                    "evidence": finding.evidence,
+                    "fix": finding.fix,
+                    "verdict": finding.verdict,
+                    "severity": finding.severity,
+                    "status": "open",
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "id": id,
+            "summary": self.summary,
+            "findings": findings,
+            "reviewer_model": self.model,
+            "review_status": if self.findings.is_empty() { "passed" } else { "failed" },
+        })
+        .to_string()
+    }
+
+    /// A kept report read back; the model that reviewed is in it too.
+    pub fn from_report_json(json: &str) -> Option<Review> {
+        let value: serde_json::Value = serde_json::from_str(json).ok()?;
+        let mut review: Review = serde_json::from_value(value.clone()).ok()?;
+        review.model = value
+            .get("reviewer_model")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        Some(review)
+    }
+
     /// The message that asks the agent to put right what was found. It is
     /// sent like any message, so the user can change it first.
     pub fn correction(&self) -> String {

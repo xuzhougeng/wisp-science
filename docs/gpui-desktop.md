@@ -1078,8 +1078,9 @@ Limits of this slice:
   not hold the turn open or correct it: the turn is over, the result is
   shown, and corrections are asked for with Ask Wisp to correct. A turn
   that failed, was stopped, ended on a question to you, or only said a
-  little without tools is not reviewed. The result is kept in memory
-  until the next turn starts. It applies to every turn this host runs,
+  little without tools is not reviewed. The line above the composer
+  stays until the next turn starts; the report is also kept with the
+  conversation (below). It applies to every turn this host runs,
   a paired phone's included, though a phone is not shown the result.
 - A review is one model request without tools, made by the reviewer model
   chosen in Settings, Conversation, or by the conversation's own model
@@ -1088,9 +1089,12 @@ Limits of this slice:
   leaving out what came after. It reads the
   conversation's latest messages up to 80,000 characters, with each
   tool's arguments and output cut at 4,000, so a claim that rests on
-  something older or longer cannot be traced and is not reported. The
-  report is shown once and not kept: closing the dialog, switching
-  conversations or restarting loses it. It is refused while a turn runs.
+  something older or longer cannot be traced and is not reported. Every
+  finished review, asked for or automatic, is kept with the conversation
+  in the WebView's `session_reviews`, in its report shape, and shown in the
+  transcript after the last message it read, with what it found and See
+  to open the report again; going back to an earlier message drops the
+  reviews of what came after. It is refused while a turn runs.
   Its tokens are not in the usage statistics or the trajectory. A model
   that does not reply with a report gives an error, not an empty review.
 - Save as skill writes nothing by itself: it only puts the request in the

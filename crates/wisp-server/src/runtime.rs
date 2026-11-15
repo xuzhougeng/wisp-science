@@ -1196,6 +1196,28 @@ pub(crate) fn annotate_plans(items: &mut [Item]) {
     }
 }
 
+/// Puts each kept review (`through`, the seq of the last message it read,
+/// and its report) after the rows of that message, as the WebView places
+/// them. `seqs` are the seqs of `messages`, in order; a review is a
+/// `review` row whose text is its report.
+pub(crate) fn place_reviews(
+    items: &mut Vec<Item>,
+    seqs: &[i64],
+    messages: &[Message],
+    reviews: &[(i64, String)],
+) {
+    let mut inserted = 0;
+    for (through, report) in reviews {
+        let read = seqs.iter().take_while(|seq| **seq <= *through).count();
+        let at =
+            (self::items(&messages[..read.min(messages.len())]).len() + inserted).min(items.len());
+        let mut row = item("review", report);
+        row.seq = Some(*through);
+        items.insert(at, row);
+        inserted += 1;
+    }
+}
+
 pub fn items(messages: &[Message]) -> Vec<Item> {
     let mut items = Vec::new();
     for message in messages {
@@ -1293,6 +1315,40 @@ pub fn items(messages: &[Message]) -> Vec<Item> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_kept_review_goes_after_the_last_message_it_read() {
+        let messages = [
+            Message::user("count the reads"),
+            Message::assistant("100"),
+            Message::user("and the adapters?"),
+            Message::assistant("none"),
+        ];
+        let seqs = [11, 12, 13, 14];
+        let mut rows = items(&messages);
+        place_reviews(
+            &mut rows,
+            &seqs,
+            &messages,
+            &[(12, "first".into()), (14, "second".into())],
+        );
+        let shape: Vec<_> = rows
+            .iter()
+            .map(|row| (row.role.as_str(), row.text.as_str()))
+            .collect();
+        assert_eq!(
+            shape,
+            [
+                ("user", "count the reads"),
+                ("assistant", "100"),
+                ("review", "first"),
+                ("user", "and the adapters?"),
+                ("assistant", "none"),
+                ("review", "second"),
+            ]
+        );
+        assert_eq!(rows[2].seq, Some(12));
+    }
 
     #[test]
     fn attached_pictures_are_read_and_other_files_left_to_their_paths() {

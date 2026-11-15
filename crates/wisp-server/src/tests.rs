@@ -6496,9 +6496,20 @@ async fn a_review_reports_what_the_tool_output_does_not_support() {
         transcript.contains("ASSISTANT]\nSaved result"),
         "{transcript}"
     );
-    // Nothing was added to the conversation.
+    // No message was added; the report is kept with the conversation, as
+    // a row after what it read, in the WebView's shape.
     let after = snapshot(&server, &session).await;
-    assert_eq!(after.items.len(), before.items.len());
+    assert_eq!(after.items.len(), before.items.len() + 1);
+    let kept = after.items.last().unwrap();
+    assert_eq!(kept.role, "review");
+    let report: serde_json::Value = serde_json::from_str(&kept.text).unwrap();
+    assert_eq!(report["summary"], "Checked the write.");
+    assert_eq!(report["review_status"], "failed");
+    assert_eq!(report["findings"][0]["claim"], "Saved result");
+    assert_eq!(
+        crate::review::Review::from_report_json(&kept.text).unwrap(),
+        review
+    );
 
     // One turn reviewed by itself: the reviewer reads up to its end and
     // nothing that came after.
@@ -6512,6 +6523,14 @@ async fn a_review_reports_what_the_tool_output_does_not_support() {
     let earlier = read.lock().unwrap().last().unwrap().clone();
     assert!(earlier.contains("write the file"), "{earlier}");
     assert!(!earlier.contains("and thanks"), "{earlier}");
+    // That review is kept after the first turn, before the next question.
+    let rows = snapshot(&server, &session).await.items;
+    let next = rows
+        .iter()
+        .position(|row| row.role == "user" && row.text == "and thanks")
+        .unwrap();
+    assert_eq!(rows[next - 1].role, "review");
+    assert_eq!(rows.iter().filter(|row| row.role == "review").count(), 2);
     server.review_conversation(PROJECT, &session).await.unwrap();
     assert!(read.lock().unwrap().last().unwrap().contains("and thanks"));
     // A turn that is not there is refused, and nobody is asked.

@@ -972,6 +972,50 @@ impl Workspace {
                 }
                 div().w_full().px_6().py_1().child(card).into_any_element()
             }
+            // A review kept with the conversation, after what it read: what
+            // it found in a line, and the whole report a click away.
+            "review" => match wisp_server::desktop::Review::from_report_json(&item.text) {
+                None => div().into_any_element(),
+                Some(found) => {
+                    let (said, tone) = crate::review::outcome(&found);
+                    let colour = tone_color(tone, cx);
+                    let summary = found.summary.clone();
+                    let line = div()
+                        .h_flex()
+                        .gap_2()
+                        .px_3()
+                        .py_1p5()
+                        .rounded(cx.theme().radius)
+                        .border_1()
+                        .border_color(cx.theme().border)
+                        .child(icon("review").text_color(colour))
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .text_sm()
+                                .text_color(colour)
+                                .child(said),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(summary),
+                        )
+                        .child(
+                            Button::new(("review-row-see", index))
+                                .label(tr("See"))
+                                .xsmall()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.see_review(found.clone(), cx)
+                                })),
+                        );
+                    div().w_full().px_6().py_1().child(line).into_any_element()
+                }
+            },
             _ if item.text.is_empty() => div().into_any_element(),
             _ => div()
                 .w_full()

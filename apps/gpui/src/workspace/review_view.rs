@@ -74,7 +74,11 @@ impl Workspace {
     }
 
     /// Opens the dialog on the review that followed the latest turn.
-    fn see_review(&mut self, found: wisp_server::desktop::Review, cx: &mut Context<Self>) {
+    pub(super) fn see_review(
+        &mut self,
+        found: wisp_server::desktop::Review,
+        cx: &mut Context<Self>,
+    ) {
         self.review = Some(Asked::Done(found));
         // Review again then reviews the conversation as it is now.
         self.review_turn = None;

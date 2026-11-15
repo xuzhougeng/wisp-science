@@ -4850,7 +4850,7 @@ impl Server {
     /// cannot be judged.
     pub async fn review_conversation(&self, project: &str, session: &str) -> Result<Review> {
         self.own_conversation(project, session).await?;
-        let messages = self.whole_transcript(session).await?;
+        let messages = self.numbered_transcript(session).await?;
         self.review_messages(session, messages).await
     }
 
@@ -4869,15 +4869,31 @@ impl Server {
         if let Some(next) = next {
             messages.retain(|(seq, _)| *seq < next);
         }
-        let messages = messages.into_iter().map(|(_, message)| message).collect();
         self.review_messages(session, messages).await
+    }
+
+    /// Keeps a review with the conversation, after the last message it
+    /// read, in the WebView's shape, so the transcript shows it again. A
+    /// review that cannot be kept is still shown now.
+    pub(crate) async fn keep_review(&self, session: &str, through: i64, review: &Review) {
+        let id = format!("review-{}", uuid::Uuid::new_v4().simple());
+        if let Err(error) = self
+            .0
+            .store
+            .upsert_session_review(session, &id, through, &review.report_json(&id))
+            .await
+        {
+            tracing::warn!(%error, "Could not keep a review with its conversation");
+        }
     }
 
     async fn review_messages(
         &self,
         session: &str,
-        messages: Vec<wisp_llm::Message>,
+        numbered: Vec<(i64, wisp_llm::Message)>,
     ) -> Result<Review> {
+        let through = numbered.last().map_or(0, |(seq, _)| *seq);
+        let messages: Vec<_> = numbered.into_iter().map(|(_, message)| message).collect();
         ensure!(
             !self.session(session).live.lock().unwrap().running,
             "Wait for the turn to end before you ask for a review"
@@ -4887,7 +4903,10 @@ impl Server {
         let own = self.0.model.read().unwrap().pick(&options.model)?.provider;
         let provider = self.reviewer(own).await;
         match crate::review::ask(provider.as_ref(), &messages).await {
-            Ok(review) => Ok(review),
+            Ok(review) => {
+                self.keep_review(session, through, &review).await;
+                Ok(review)
+            }
             Err(error) => bail!(
                 "{}",
                 crate::network::explain(store, &format!("{error:#}")).await

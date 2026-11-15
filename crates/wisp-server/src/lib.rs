@@ -1161,12 +1161,16 @@ impl Server {
                 !self.0.shutting_down.load(Ordering::Relaxed),
                 "The app is closing"
             );
-            let messages = self.whole_transcript(frame).await?;
+            let numbered = self.numbered_transcript(frame).await?;
+            let through = numbered.last().map_or(0, |(seq, _)| *seq);
+            let messages: Vec<_> = numbered.into_iter().map(|(_, message)| message).collect();
             if !review::worth_reviewing(&messages) {
                 return Ok(None);
             }
             let reviewer = self.reviewer(model).await;
-            review::ask(reviewer.as_ref(), &messages).await.map(Some)
+            let review = review::ask(reviewer.as_ref(), &messages).await?;
+            self.keep_review(frame, through, &review).await;
+            Ok(Some(review))
         }
         .await;
         let found = match found {
@@ -1307,6 +1311,7 @@ impl Server {
             return Ok(None);
         }
         let use_live = live.running && request.before_seq.is_none();
+        let seqs: Vec<i64> = page.messages.iter().map(|(seq, _)| *seq).collect();
         let saved: Vec<_> = page.messages.into_iter().map(|(_, msg)| msg).collect();
         let mut items = runtime::items(if use_live { &live.messages } else { &saved });
         outcomes.extend(live.outcomes.clone());
@@ -1319,6 +1324,10 @@ impl Server {
         let states: Vec<runtime::RunState> = runs.iter().map(Into::into).collect();
         runtime::annotate_runs(&mut items, &states, &request.session_id);
         runtime::annotate_plans(&mut items);
+        // Reviews kept with the conversation, after what each one read.
+        if !use_live {
+            runtime::place_reviews(&mut items, &seqs, &saved, &page.reviews);
+        }
         if use_live && !live.draft.is_empty() {
             items.push(runtime::item("assistant", &live.draft));
         }
