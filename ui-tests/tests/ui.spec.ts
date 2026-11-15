@@ -3328,6 +3328,35 @@ test("dismissing a session notice keeps the others (#1619)", async ({ page }) =>
   expect(await invokeCount(page, "open_project_window")).toBe(0);
 });
 
+test("a finished conversation's notice fades out on its own while a failure stays (#1717)", async ({ page }) => {
+  await enterApp(page);
+  const failed = { ...otherProjectNotice, session_id: "s-failed", session_title: "Failed", kind: "error" };
+  const done = { ...otherProjectNotice, session_id: "s-done", session_title: "Done" };
+  await emitSessionNotice(page, failed);
+  await emitSessionNotice(page, done);
+  const cards = page.getByTestId("session-notice");
+  await expect(cards).toHaveCount(2);
+  const animations = (session: string) => page
+    .locator(`[data-testid="session-notice"][data-session="${session}"]`)
+    .evaluate((el) => getComputedStyle(el).animationName);
+  // Only the finished card carries the fade; pointing at it drops the fade so
+  // it cannot vanish under the pointer, and leaving starts the wait over.
+  await expect.poll(() => animations("s-done")).toContain("session-notice-leave");
+  await expect.poll(() => animations("s-failed")).not.toContain("session-notice-leave");
+  await page.locator('[data-testid="session-notice"][data-session="s-done"]').hover();
+  await expect.poll(() => animations("s-done")).not.toContain("session-notice-leave");
+  await page.mouse.move(0, 0);
+  await expect.poll(() => animations("s-done")).toContain("session-notice-leave");
+
+  // Shorten the linger and let the conversation finish again: the replacement
+  // card runs the real fade and removes itself. The failure is still there.
+  await page.evaluate(() => document.documentElement.style.setProperty("--session-notice-linger", "0.2s"));
+  await emitSessionNotice(page, done);
+  await expect(cards).toHaveCount(1);
+  await expect(cards).toHaveAttribute("data-session", "s-failed");
+  expect(await invokeCount(page, "open_project_window")).toBe(0);
+});
+
 test("topbar groups chrome actions and hides an empty status hint", async ({ page }) => {
   await enterApp(page);
   const actions = page.locator(".topbar-actions");
@@ -9625,6 +9654,42 @@ test("PDF artifacts switch pages with toolbar buttons, arrow keys, and Page Up/D
   await page.keyboard.press("ArrowLeft");
   await expect(modal.locator('.rp-pdf[data-current-page="1"]')).toBeVisible();
   await expect(modal.locator('.rp-pdf-page[data-page="1"][data-rendered="true"]')).toBeVisible();
+});
+
+test("PDF preview returns to the page and zoom last used for that file", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("open paper.pdf");
+  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
+  const tile = page.locator('.rp-tile[data-artifact-name="paper.pdf"]');
+  await expect(tile).toBeVisible();
+  await tile.click({ button: "right" });
+  await page.locator(".ctx-menu").getByRole("button", { name: "Open in center" }).click();
+
+  const viewer = page.locator(".center-file-preview .rp-pdf");
+  await expect(viewer.locator('.rp-pdf-page[data-page="1"][data-rendered="true"]')).toBeVisible();
+  await page.getByRole("button", { name: "Next page" }).click();
+  await expect(viewer.locator('.rp-pdf-page[data-page="2"][data-rendered="true"]')).toBeVisible();
+  await page.getByRole("button", { name: "Zoom in" }).click();
+  await expect(page.getByRole("button", { name: "Reset zoom" })).toHaveText("125%");
+
+  // Leaving for the conversation tab unmounts the viewer, so coming back
+  // renders the file from scratch: it must not restart at page 1 (#1721).
+  await page.locator(".center-tabs > .center-tab").click();
+  await expect(viewer).toHaveCount(0);
+  await page.locator(".center-tab-wrap .center-tab").click();
+  await expect(page.locator('.center-file-preview .rp-pdf[data-page-count="2"][data-current-page="2"]')).toBeVisible();
+  await expect(viewer.locator('.rp-pdf-page[data-page="2"][data-rendered="true"]')).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reset zoom" })).toHaveText("125%");
+
+  // Back on page 1 nothing is remembered, so the next open starts there again.
+  await page.getByRole("button", { name: "Previous page" }).click();
+  await expect(viewer.locator('.rp-pdf-page[data-page="1"][data-rendered="true"]')).toBeVisible();
+  await page.locator(".center-tabs > .center-tab").click();
+  await expect(viewer).toHaveCount(0);
+  await page.locator(".center-tab-wrap .center-tab").click();
+  await expect(page.locator('.center-file-preview .rp-pdf[data-current-page="1"]')).toBeVisible();
 });
 
 test("PDF text can be selected and added to chat", async ({ page }) => {

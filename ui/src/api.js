@@ -1146,6 +1146,31 @@ function eventTargetsEditable(target) {
   return false;
 }
 
+// Last page viewed per PDF, keyed by the preview path (#1721). Switching to
+// another center tab or opening the modal unmounts the viewer and renders the
+// file again, which used to restart every PDF at page 1. Window-lifetime only:
+// reading position is not project data, so it is not persisted. Bounded,
+// oldest entry first, so a long session cannot grow it without limit.
+const PDF_LAST_PAGE_LIMIT = 200;
+const pdfLastPage = new Map();
+
+function rememberPdfPage(key, page) {
+  if (typeof key !== "string" || !key) return;
+  pdfLastPage.delete(key);
+  // Page 1 is where a PDF opens anyway; keeping no entry for it is the same.
+  if (!(page > 1)) return;
+  pdfLastPage.set(key, page);
+  if (pdfLastPage.size > PDF_LAST_PAGE_LIMIT) {
+    pdfLastPage.delete(pdfLastPage.keys().next().value);
+  }
+}
+
+// The file may have been regenerated with fewer pages since it was last read.
+function rememberedPdfPage(key, pageCount) {
+  const page = typeof key === "string" ? pdfLastPage.get(key) : undefined;
+  return Number.isInteger(page) ? Math.min(Math.max(page, 1), pageCount) : 1;
+}
+
 async function renderPdf(el, payload) {
   cleanupPreview(el);
   const renderToken = Symbol("pdf-preview");
@@ -1185,6 +1210,7 @@ async function renderPdf(el, payload) {
     if (!el.isConnected || el.__wispPreviewToken !== renderToken) {
       return;
     }
+    currentPage = rememberedPdfPage(payload.path, pdf.numPages);
 
     const root = document.createElement("div");
     root.className = "rp-pdf";
@@ -1362,6 +1388,7 @@ async function renderPdf(el, payload) {
         return;
       }
       currentPage = pageNumber;
+      rememberPdfPage(payload.path, pageNumber);
       void renderPage(pageNumber).catch(showPageError);
     };
 

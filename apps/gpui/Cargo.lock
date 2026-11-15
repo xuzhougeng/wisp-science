@@ -4043,9 +4043,9 @@ checksum = "7a79a3332a6609480d7d0c9eab957bca6b455b91bb84e66d19f5ff66294b85b8"
 
 [[package]]
 name = "libc"
-version = "0.2.191"
+version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
+checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
 name = "libdbus-sys"
@@ -9008,7 +9008,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-acp"
-version = "1.24.0"
+version = "1.25.0"
 dependencies = [
  "agent-client-protocol",
  "futures",
@@ -9020,7 +9020,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-app"
-version = "1.24.0"
+version = "1.25.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9036,7 +9036,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-bio"
-version = "1.24.0"
+version = "1.25.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9058,7 +9058,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-core"
-version = "1.24.0"
+version = "1.25.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9081,7 +9081,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-dto"
-version = "1.24.0"
+version = "1.25.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -9108,7 +9108,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-llm"
-version = "1.24.0"
+version = "1.25.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -9127,7 +9127,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-mcp"
-version = "1.24.0"
+version = "1.25.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9144,11 +9144,11 @@ dependencies = [
 
 [[package]]
 name = "wisp-paths"
-version = "1.24.0"
+version = "1.25.0"
 
 [[package]]
 name = "wisp-runs"
-version = "1.24.0"
+version = "1.25.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9175,7 +9175,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-runtime"
-version = "1.24.0"
+version = "1.25.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9194,7 +9194,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-server"
-version = "1.24.0"
+version = "1.25.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9242,7 +9242,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-skills"
-version = "1.24.0"
+version = "1.25.0"
 dependencies = [
  "async-trait",
  "hex",
@@ -9263,7 +9263,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-store"
-version = "1.24.0"
+version = "1.25.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -9287,7 +9287,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-sync"
-version = "1.24.0"
+version = "1.25.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9313,7 +9313,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-tools"
-version = "1.24.0"
+version = "1.25.0"
 dependencies = [
  "anydoc",
  "async-trait",

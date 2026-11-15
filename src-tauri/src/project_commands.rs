@@ -604,6 +604,33 @@ pub(super) fn centered_window_position(
     )
 }
 
+/// Which already-open window an "open this project" request reuses, out of
+/// the windows currently bound to that project.
+///
+/// A dedicated `proj-*` window always wins. A request that targets a
+/// conversation also reuses the main window or a File → New Window view that
+/// shows the project, so "Open conversation" from another project's window
+/// lands on the window the user already has instead of opening a second one
+/// for the same project (#1717). The requesting window is never that
+/// fallback: asking it for a new window must still produce one.
+fn reusable_project_window<'a>(
+    bound: &'a [String],
+    requester: Option<&str>,
+    targets_session: bool,
+) -> Option<&'a str> {
+    let mut labels = bound.iter().map(String::as_str);
+    if let Some(dedicated) = labels.clone().find(|label| label.starts_with("proj-")) {
+        return Some(dedicated);
+    }
+    if !targets_session {
+        return None;
+    }
+    labels.find(|label| {
+        Some(*label) != requester
+            && (*label == "main" || crate::app_state::is_blank_window_label(label))
+    })
+}
+
 /// Open a project in its own window (or focus the existing one), wiring up
 /// cleanup on close. Shared by the `open_project_window` command and the
 /// startup restore (#52). With `session`, the window opens straight into that
@@ -619,16 +646,18 @@ pub(super) async fn spawn_project_window(
 ) -> Result<String, String> {
     // A dedicated window can switch projects. Look up its current binding
     // before using a label that still names its original project.
-    let existing = state
+    let bound = state
         .session_surface_labels("", Some(id))
         .into_iter()
-        .find(|label| label.starts_with("proj-") && app.workspace_surface(label).is_some());
-    if let Some(w) = existing
-        .as_deref()
-        .and_then(|label| app.workspace_surface(label))
-    {
+        .filter(|label| app.workspace_surface(label).is_some())
+        .collect::<Vec<_>>();
+    let existing = reusable_project_window(&bound, anchor_label, session.is_some());
+    if let Some(w) = existing.and_then(|label| app.workspace_surface(label)) {
         let label = w.label().to_string();
-        let _ = w.set_focus();
+        // `set_focus` alone leaves a minimized window in the taskbar, so the
+        // conversation would open where the user cannot see it.
+        let _ = w.show();
+        let _ = w.unminimize();
         if let Some(sid) = session {
             let _ = app.emit_to(
                 label.as_str(),
@@ -636,6 +665,7 @@ pub(super) async fn spawn_project_window(
                 serde_json::json!({ "projectId": id, "sessionId": sid }),
             );
         }
+        let _ = w.set_focus();
         return Ok(label);
     }
     let mut label = project_window_label(id);
@@ -1182,10 +1212,49 @@ mod tests {
     use super::{
         app_window_title, blank_window_url, cascaded_window_position, load_window_active_projects,
         next_blank_window_label, read_project_agent_context, remember_window_project,
-        restored_window_projects, same_workspace_path, startup_main_project_id,
-        update_persisted_windows, validate_project_deletion, write_project_agent_context,
-        APP_WINDOW_TITLE,
+        restored_window_projects, reusable_project_window, same_workspace_path,
+        startup_main_project_id, update_persisted_windows, validate_project_deletion,
+        write_project_agent_context, APP_WINDOW_TITLE,
     };
+
+    #[test]
+    fn opening_a_conversation_reuses_any_window_already_showing_its_project() {
+        let labels = |items: &[&str]| items.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+
+        // A dedicated project window wins, with or without a target session.
+        let bound = labels(&["home-1", "main", "proj-b"]);
+        assert_eq!(
+            reusable_project_window(&bound, Some("proj-a"), true),
+            Some("proj-b")
+        );
+        assert_eq!(
+            reusable_project_window(&bound, Some("proj-a"), false),
+            Some("proj-b")
+        );
+
+        // The project is only open in the main window: a conversation target
+        // goes there instead of spawning a duplicate window (#1717).
+        let bound = labels(&["main"]);
+        assert_eq!(
+            reusable_project_window(&bound, Some("proj-a"), true),
+            Some("main")
+        );
+        // "Open project in a new window" still opens one.
+        assert_eq!(reusable_project_window(&bound, Some("proj-a"), false), None);
+        // The requester showing the project itself asked for a new window.
+        assert_eq!(reusable_project_window(&bound, Some("main"), true), None);
+
+        // A File → New Window view that later opened the project also counts.
+        let bound = labels(&["home-1", "main"]);
+        assert_eq!(
+            reusable_project_window(&bound, Some("main"), true),
+            Some("home-1")
+        );
+        // Only workspace windows qualify; other bound surfaces never do.
+        let bound = labels(&["terminal-1"]);
+        assert_eq!(reusable_project_window(&bound, Some("proj-a"), true), None);
+        assert_eq!(reusable_project_window(&[], Some("proj-a"), true), None);
+    }
 
     #[tokio::test]
     async fn project_storage_deletion_releases_open_database_before_removing_files() {

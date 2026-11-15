@@ -334,6 +334,17 @@
   min-width: 0; white-space: nowrap; font-variant-numeric: tabular-nums;
 }
 .context-compaction-reduction { color: var(--clay-strong); }
+/* After a turn stops at the iteration limit (#1723): says where the limit is set. */
+.iteration-limit-notice .context-compaction-mark {
+  border-color: color-mix(in srgb, var(--warn) 30%, var(--border));
+  color: var(--warn); background: var(--warn-soft);
+}
+.iteration-limit-open {
+  flex: 0 0 auto; padding: 4px 10px; border-radius: var(--radius-xs);
+  border: 1px solid var(--border-strong); background: transparent; color: var(--text);
+  font: inherit; font-size: calc(12px * var(--ui-font-scale, 1)); cursor: pointer;
+}
+.iteration-limit-open:hover { background: var(--surface-hover); }
 .context-compaction-rule {
   flex: 1; min-width: 16px; height: 1px; margin-left: 4px;
   background: linear-gradient(90deg, var(--border), transparent);
@@ -2263,6 +2274,20 @@ button.stop:disabled { opacity: .45; cursor: default; }
   border-radius: var(--radius-sm); box-shadow: 0 8px 28px rgba(0,0,0,.14);
   animation: motion-surface-in-soft var(--motion-duration-fast) var(--motion-ease-decelerate) both;
 }
+/* A finished conversation's card leaves by itself (#1717): after the linger it
+   fades, and the fade's animationend removes it. Pointing at the card or
+   focusing a button in it drops the fade, so the wait starts over on leaving
+   and the card never vanishes under the pointer. Failures have no fade. */
+.session-notice-autoclose {
+  animation-name: motion-surface-in-soft, session-notice-leave;
+  animation-duration: var(--motion-duration-fast), 1.2s;
+  animation-timing-function: var(--motion-ease-decelerate), ease-in;
+  animation-delay: 0s, var(--session-notice-linger, 15s);
+  animation-fill-mode: both, forwards;
+}
+.session-notice-autoclose:hover,
+.session-notice-autoclose:focus-within { animation-name: motion-surface-in-soft; }
+@keyframes session-notice-leave { to { opacity: 0; } }
 .session-notice-icon { flex: 0 0 auto; display: inline-flex; color: var(--ok); }
 .session-notice-error .session-notice-icon { color: var(--err); }
 .session-notice-icon svg { width: 18px; height: 18px; }
@@ -2296,6 +2321,8 @@ button.stop:disabled { opacity: .45; cursor: default; }
    manual accordion (open state via `.open`, not <details>) because the UA
    disclosure marker can't be portably removed from <summary>. */
 .steps-wrap { align-self: stretch; }
+/* Shown from send until the turn's first token, reasoning, or tool call (#1720). */
+.turn-pending { display: flex; align-items: center; gap: 8px; align-self: flex-start; padding: 2px 0; color: var(--text-muted); font-size: calc(13px * var(--ui-font-scale, 1)); }
 .steps { background: var(--bg-sunken); border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
 .steps.activity-summary { background: transparent; border-width: 0 0 1px; border-radius: 0; }
 .steps.activity-summary > .steps-head { padding: 8px 0 11px; }

@@ -319,13 +319,14 @@ pub(crate) async fn run_native_agent_with_approval(
         .max_tokens
         .or(request.spec.budget.max_tokens.filter(|limit| *limit > 0))
         .unwrap_or(32_000) as usize;
-    let max_iterations = request
-        .spec
-        .budget
-        .max_tool_calls
-        .filter(|limit| *limit > 0)
-        .map(|limit| limit as usize + 1)
-        .unwrap_or(100);
+    let configured_max_iter = store
+        .get_setting("max_iter")
+        .await
+        .ok()
+        .flatten()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(crate::DEFAULT_MAX_ITER);
+    let max_iterations = delegated_max_iterations(&request.spec.budget, configured_max_iter);
     let mut context = ContextManager::new(max_context.max(1));
     context.append_system(system);
     let run = agent_loop(
@@ -360,6 +361,20 @@ pub(crate) async fn run_native_agent_with_approval(
         usage: usage.snapshot(),
         tool_errors,
     })
+}
+
+/// Model/tool rounds one delegated agent may run. A tool-call budget bounds
+/// it. Without one, the user's "maximum agent iterations per turn" setting
+/// applies, as it does to a conversation's own turns; 0 means unlimited. This
+/// used to be a fixed 100 that no setting reached, so long delegated tasks
+/// stopped there even though unbudgeted tasks are documented as unlimited and
+/// the user had raised the setting (#1723).
+fn delegated_max_iterations(budget: &AgentBudget, configured_max_iter: usize) -> usize {
+    budget
+        .max_tool_calls
+        .filter(|limit| *limit > 0)
+        .map(|limit| limit as usize + 1)
+        .unwrap_or(configured_max_iter)
 }
 
 fn budget_violation(usage: &AgentUsage, budget: &AgentBudget) -> Option<String> {
@@ -631,6 +646,65 @@ mod tests {
         assert_eq!(conversation_scope(&store, "grandchild").await, "child");
         // Unknown frames fall back to themselves (still a stable scope).
         assert_eq!(conversation_scope(&store, "missing").await, "missing");
+        drop(store);
+        std::fs::remove_dir_all(base).ok();
+    }
+
+    #[test]
+    fn delegated_iterations_follow_the_setting_unless_a_tool_budget_bounds_them() {
+        let unbudgeted = AgentBudget::default();
+        assert_eq!(delegated_max_iterations(&unbudgeted, 100), 100);
+        assert_eq!(delegated_max_iterations(&unbudgeted, 500), 500);
+        // 0 is the setting's "unlimited" and stays unlimited for the agent loop.
+        assert_eq!(delegated_max_iterations(&unbudgeted, 0), 0);
+        let zero = AgentBudget {
+            max_tool_calls: Some(0),
+            ..AgentBudget::default()
+        };
+        assert_eq!(delegated_max_iterations(&zero, 500), 500);
+        // A tool-call budget wins in both directions: one round per call plus
+        // the round that writes the answer.
+        let budgeted = AgentBudget {
+            max_tool_calls: Some(10),
+            ..AgentBudget::default()
+        };
+        assert_eq!(delegated_max_iterations(&budgeted, 500), 11);
+        assert_eq!(delegated_max_iterations(&budgeted, 0), 11);
+        assert_eq!(delegated_max_iterations(&budgeted, 3), 11);
+    }
+
+    #[tokio::test]
+    async fn unbudgeted_native_agent_stops_at_the_configured_iteration_limit() {
+        let (store, base, workspace) = fixture().await;
+        std::fs::write(workspace.join("evidence.txt"), "verified evidence").unwrap();
+        store.set_setting("max_iter", "1").await.unwrap();
+        let provider = SequenceProvider::new(vec![
+            completion(
+                "",
+                vec![tool_call(
+                    "call-read",
+                    "read",
+                    serde_json::json!({"path": "evidence.txt"}),
+                )],
+                11,
+                3,
+            ),
+            completion("Stopped at the limit after one read.", vec![], 7, 2),
+        ]);
+        let tools = Registry::builtins().filtered(&["read".into()]);
+        let mut unbudgeted = request(100, 4);
+        unbudgeted.spec.budget = AgentBudget::default();
+
+        let run = run_sequence(&provider, &store, &workspace, &tools, &unbudgeted).await;
+
+        // One round with tools, then the tool-free summary the loop asks for at
+        // the limit. With the old fixed 100 the second request still had tools.
+        assert_eq!(
+            *provider.schemas.lock().unwrap(),
+            vec![vec!["read".to_string()], Vec::<String>::new()]
+        );
+        assert_eq!(run.result.unwrap(), "Stopped at the limit after one read.");
+        assert_eq!(run.usage.tool_calls, 1);
         drop(store);
         std::fs::remove_dir_all(base).ok();
     }

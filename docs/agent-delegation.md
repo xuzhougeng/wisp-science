@@ -242,7 +242,10 @@ and that one Escape closes only the overlaid exploration view.
    add an implicit 256,000-token batch cap or a 600-second task deadline.
    Explicit task limits and managed/nested host ceilings still apply. The
    activity card renders a zero aggregate limit as **unlimited**, while continuing
-   to count usage normally.
+   to count usage normally. A locally run task with no tool-call budget follows
+   the user's "Maximum agent iterations per turn" setting (default 100, `0` for
+   unlimited) for its model/tool rounds, like a conversation's own turns; a task
+   with a tool-call budget runs at most that many calls plus one closing round.
 4. Wisp resolves every capability through host policy into an exact model,
    executor, tool set, project scope, workspace policy, budget, and timeout.
    The model cannot grant raw tools or permissions to a child.

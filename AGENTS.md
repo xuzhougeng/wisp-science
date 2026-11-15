@@ -91,7 +91,7 @@ cargo run -p wisp-mcp --example smoke
 
 When asked to release, follow this section. Create the GitHub Release with `gh` **before** CI uploads installers, so platform jobs never write the title or notes.
 
-1. Bump `workspace.package.version` in `Cargo.toml`, `ui/Cargo.toml`, and `src-tauri/tauri.conf.json`. The Android APK reads its version from `Cargo.toml`; do not bump it separately. Update workspace package versions in `Cargo.lock` and `ui/Cargo.lock` (only `name = "wisp-*"` entries — do not bump third-party crates that happen to share the same version).
+1. Bump `workspace.package.version` in `Cargo.toml`, `ui/Cargo.toml`, and `src-tauri/tauri.conf.json`. The Android APK reads its version from `Cargo.toml`; do not bump it separately. Update workspace package versions in `Cargo.lock`, `ui/Cargo.lock`, and `apps/gpui/Cargo.lock` (only `name = "wisp-*"` entries — do not bump third-party crates that happen to share the same version). The GPUI workspace path-depends on the root crates and its CI runs `cargo check --locked`, so stale `wisp-*` versions there fail the GPUI desktop job; `wisp-gpui` keeps its own version. Afterwards no `wisp-*` entry in any of the three lockfiles should still carry the old version.
 2. Write bilingual notes at `.github/release-notes/vX.Y.Z.md`. Put the GitHub title in an HTML comment on the first line:
 
    ```markdown

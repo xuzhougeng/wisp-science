@@ -271,6 +271,20 @@ pub(crate) fn renders_nothing(item: &ChatItem) -> bool {
         || matches!(item, ChatItem::AppContextNotice(_))
 }
 
+/// True while the running turn has put nothing on screen yet: every row
+/// after its user message is one `renders_nothing` skips, the empty optimistic
+/// reply included. The thread then shows a waiting row, so the stretch before
+/// the first token, reasoning, or tool call is not a blank gap that reads as a
+/// stalled turn (#1720). Queued turns sit after the active one and are ignored.
+pub(crate) fn turn_awaits_first_output(items: &[ChatItem]) -> bool {
+    let active = &items[..trailing_queue_start(items)];
+    let turn_start = active
+        .iter()
+        .rposition(|item| matches!(item, ChatItem::User(_)))
+        .map_or(0, |index| index + 1);
+    active[turn_start..].iter().all(renders_nothing)
+}
+
 pub(crate) fn class_for(item: &ChatItem) -> &'static str {
     match item {
         ChatItem::User(_) => "msg user",
@@ -513,7 +527,7 @@ mod token_format_tests {
     use super::{
         context_percent, context_usage_percent_label, context_usage_rows, context_usage_tone,
         context_usage_tooltip, fmt_context_limit, fmt_context_tokens, fmt_tokens, renders_nothing,
-        ContextUsageTone,
+        turn_awaits_first_output, ContextUsageTone,
     };
     use crate::dto::{ContextUsage, ContextUsageSnapshot};
     use crate::i18n::Locale;
@@ -522,6 +536,48 @@ mod token_format_tests {
     fn small_counts_are_not_rounded_to_zero() {
         assert_eq!(fmt_tokens(81), "81");
         assert_eq!(fmt_tokens(136_286), "136.3k");
+    }
+
+    #[test]
+    fn a_running_turn_awaits_output_until_its_first_visible_row() {
+        use crate::dto::ChatItem;
+        let reply = |text: &str| ChatItem::Assistant {
+            text: text.into(),
+            model: None,
+            resources: Vec::new(),
+        };
+        let earlier = [ChatItem::User("first".into()), reply("answered")];
+        // Just sent: the user bubble and the empty optimistic reply.
+        let mut items = earlier.to_vec();
+        items.extend([ChatItem::User("second".into()), reply("")]);
+        assert!(turn_awaits_first_output(&items));
+        // A turn queued behind the running one does not count as its output.
+        items.push(ChatItem::QueuedUser {
+            id: 1,
+            text: "later".into(),
+        });
+        assert!(turn_awaits_first_output(&items));
+        // Reasoning, a tool call, or reply text each end the wait.
+        let mut thinking = items.clone();
+        thinking.insert(3, ChatItem::Reasoning("hmm".into()));
+        assert!(!turn_awaits_first_output(&thinking));
+        let mut calling = items.clone();
+        calling.insert(
+            3,
+            ChatItem::Tool {
+                name: "shell".into(),
+                ok: None,
+                input: "ls".into(),
+                output: String::new(),
+                started_at_ms: None,
+                duration_ms: None,
+            },
+        );
+        assert!(!turn_awaits_first_output(&calling));
+        items[3] = reply("streaming");
+        assert!(!turn_awaits_first_output(&items));
+        // An earlier, answered turn is not waiting.
+        assert!(!turn_awaits_first_output(&earlier));
     }
 
     #[test]
