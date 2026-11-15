@@ -134,10 +134,16 @@ pub struct Workspace {
     /// Per conversation, the messages sent from this window with
     /// references and what they carried, to show on them.
     sent_references: HashMap<String, Vec<(String, Vec<crate::compose::Chip>)>>,
-    /// Messages written while a turn runs, waiting for it to end.
     /// The composer's text before its latest change, to tell one character
     /// typed from the rest.
     composer_before: String,
+    /// What follows the `/` the composer ends in, while the `/` menu
+    /// follows it.
+    slash_typed: Option<String>,
+    /// Escape shut the `/` menu: it stays shut until that word is gone.
+    slash_quiet: bool,
+    /// The skills the `/` menu offers for what was typed.
+    slash_skills: Vec<wisp_dto::native_conversations::ReferenceOption>,
     /// Options, usage and remembered approvals of the open conversation.
     status: Option<ConversationStatus>,
     /// Counts snapshot polls, so the status is refreshed about once a second.
@@ -993,6 +999,7 @@ impl Workspace {
                         return;
                     }
                     this.composer_before = now.clone();
+                    this.follow_slash(&now, window, cx);
                     this.state.save_draft(now);
                     cx.notify();
                 }
@@ -1220,6 +1227,9 @@ impl Workspace {
             sent_references: HashMap::new(),
             status: None,
             composer_before: String::new(),
+            slash_typed: None,
+            slash_quiet: false,
+            slash_skills: Vec::new(),
             status_tick: 0,
             turn_tokens: Vec::new(),
             provenance_open: HashMap::new(),
@@ -1594,9 +1604,15 @@ impl Workspace {
                 | Layer::RunsOnMenu
                 | Layer::ExpertMenu
                 | Layer::AgentMenu
-                | Layer::QuickMenu
-                | Layer::SlashMenu,
+                | Layer::QuickMenu,
             ) => self.focus_composer(window, cx),
+            Some(Layer::SlashMenu) => {
+                // Shut while a word follows the `/`, it stays shut.
+                if self.slash_typed.take().is_some() {
+                    self.slash_quiet = true;
+                }
+                self.focus_composer(window, cx)
+            }
             Some(Layer::AcpSettingMenu) => {
                 self.acp_setting_open = None;
                 self.focus_composer(window, cx)

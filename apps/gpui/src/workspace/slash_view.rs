@@ -3,7 +3,7 @@
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Selectable, Sizable,
+    ActiveTheme, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
 };
 
@@ -187,6 +187,96 @@ impl Workspace {
         .detach();
     }
 
+    /// Opens the `/` menu on a `/` typed where a word starts, narrows it as
+    /// the word grows, and shuts it once the word is gone.
+    pub(super) fn follow_slash(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(word) = slash::typed(text).map(str::to_owned) else {
+            self.slash_quiet = false;
+            if self.slash_typed.take().is_some() {
+                self.layers.close(Layer::SlashMenu);
+            }
+            return;
+        };
+        if self.slash_quiet || self.state.session.is_none() {
+            return;
+        }
+        if !self.layers.contains(Layer::SlashMenu) {
+            for other in Layer::COMPOSER_MENUS {
+                self.layers.close(other);
+            }
+            self.layers.open(Layer::SlashMenu);
+        }
+        if self.slash_typed.as_deref() != Some(word.as_str()) {
+            self.slash_typed = Some(word.clone());
+            self.load_slash_skills(word, window, cx);
+        }
+    }
+
+    /// The skills the `/` menu offers for `word`.
+    fn load_slash_skills(&mut self, word: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        let reply = self.backend.skill_options(project, word.clone(), 8);
+        cx.spawn_in(window, async move |this, cx| {
+            let found = crate::backend::receive(reply).await.unwrap_or_default();
+            let _ = this.update(cx, |this, cx| {
+                // Only for the word the menu still follows.
+                if this.slash_typed.as_deref().unwrap_or_default() == word {
+                    this.slash_skills = found;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// What the composer keeps when something from the `/` menu takes the
+    /// place of the word typed after `/`.
+    fn slash_rest(&mut self, cx: &mut Context<Self>) -> String {
+        let text = self.composer.read(cx).value().to_string();
+        match self.slash_typed.take() {
+            Some(_) => slash::without_typed(&text),
+            None => text,
+        }
+    }
+
+    /// Runs a command picked from the `/` menu, or writes it out when it
+    /// needs words after it.
+    fn pick_slash(&mut self, command: Slash, window: &mut Window, cx: &mut Context<Self>) {
+        let typed = self.slash_typed.is_some();
+        let rest = self.slash_rest(cx);
+        self.layers.close(Layer::SlashMenu);
+        if slash::takes_words(command) {
+            let name = slash::COMMANDS
+                .iter()
+                .find(|(_, which, _)| *which == command)
+                .map_or("", |(name, ..)| *name);
+            let written = format!("{name} {}", rest.trim_start());
+            self.state.save_draft(written.clone());
+            self.fill_composer(written, window, cx);
+            return cx.notify();
+        }
+        if typed {
+            self.state.save_draft(rest.clone());
+            self.fill_composer(rest, window, cx);
+        }
+        self.run_slash(command, String::new(), window, cx);
+    }
+
+    /// Attaches a skill picked from the `/` menu to the message.
+    fn pick_slash_skill(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        let typed = self.slash_typed.is_some();
+        let rest = self.slash_rest(cx);
+        self.layers.close(Layer::SlashMenu);
+        if typed {
+            self.state.save_draft(rest.clone());
+            self.fill_composer(rest, window, cx);
+        }
+        self.attach(crate::compose::Chip::Skill(name), cx);
+        self.focus_composer(window, cx);
+    }
+
     /// The "/" button of the composer, with the list of commands above it
     /// while that is open.
     pub(super) fn slash_button(&self, cx: &mut Context<Self>) -> Div {
@@ -197,9 +287,13 @@ impl Workspace {
                 .small()
                 .ghost()
                 .selected(open)
-                .tooltip(tr("Commands: type one as a message, or pick it here"))
+                .tooltip(tr("Commands and skills: type / or pick one here"))
                 .on_click(cx.listener(|this, _, window, cx| {
-                    this.toggle_composer_menu(Layer::SlashMenu, window, cx)
+                    this.slash_typed = None;
+                    this.toggle_composer_menu(Layer::SlashMenu, window, cx);
+                    if this.layers.contains(Layer::SlashMenu) {
+                        this.load_slash_skills(String::new(), window, cx);
+                    }
                 })),
         );
         if !open {
@@ -225,7 +319,11 @@ impl Workspace {
                         .child(tr("The agent lists its commands once it has answered.")),
                 );
             }
-            for command in commands {
+            let word = self.slash_typed.clone().unwrap_or_default();
+            for command in commands
+                .into_iter()
+                .filter(|command| command.name.starts_with(&word))
+            {
                 let detail = match command.hint.trim() {
                     "" => command.description.clone(),
                     hint => format!("{} — {hint}", command.description),
@@ -240,30 +338,83 @@ impl Workspace {
                         cx,
                     )
                     .on_click(cx.listener(move |this, _, window, cx| {
+                        // Typed after other words, the command joins them.
+                        let rest = match this.slash_typed.is_some() {
+                            true => this.slash_rest(cx),
+                            false => String::new(),
+                        };
                         this.layers.close(Layer::SlashMenu);
-                        this.fill_composer(typed.clone(), window, cx);
+                        this.fill_composer(format!("{rest}{typed}"), window, cx);
                     })),
                 );
             }
             return button.child(deferred(menu));
         }
-        for (name, command, about) in slash::COMMANDS {
-            if command == Slash::Help {
-                continue;
-            }
-            menu = menu.child(
+        let word = self.slash_typed.clone().unwrap_or_default();
+        let muted = cx.theme().muted_foreground;
+        let mut rows = div()
+            .id("slash-rows")
+            .v_flex()
+            .max_h(px(380.))
+            .overflow_y_scroll();
+        let commands = slash::matching(&word);
+        for (name, command, about) in &commands {
+            let command = *command;
+            rows = rows.child(
                 Self::menu_row(
                     SharedString::from(format!("slash{name}")),
-                    name,
+                    *name,
                     tr(about),
                     false,
                     cx,
                 )
+                .on_click(
+                    cx.listener(move |this, _, window, cx| this.pick_slash(command, window, cx)),
+                ),
+            );
+        }
+        // The WebView's `/` lists skills: picking one attaches it.
+        let skills: Vec<_> = self
+            .slash_skills
+            .iter()
+            .filter_map(|option| match &option.reference {
+                wisp_dto::ComposerReferenceArg::Skill { name } => {
+                    Some((name.clone(), option.detail.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        if !skills.is_empty() {
+            rows = rows.child(
+                div()
+                    .px_2()
+                    .pt_2()
+                    .pb_1()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(tr("Skills, to attach")),
+            );
+        }
+        for (name, detail) in &skills {
+            let picked = name.clone();
+            rows = rows.child(
+                Self::menu_row(
+                    SharedString::from(format!("slash-skill-{name}")),
+                    format!("/{name}"),
+                    detail.clone(),
+                    false,
+                    cx,
+                )
                 .on_click(cx.listener(move |this, _, window, cx| {
-                    this.run_slash(command, String::new(), window, cx)
+                    this.pick_slash_skill(picked.clone(), window, cx)
                 })),
             );
         }
-        button.child(deferred(menu))
+        if commands.is_empty() && skills.is_empty() {
+            rows = rows.child(div().px_2().py_1().text_xs().text_color(muted).child(
+                crate::i18n::fill(tr("No command or skill begins with /{}"), &[&word]),
+            ));
+        }
+        button.child(deferred(menu.child(rows)))
     }
 }

@@ -99,6 +99,40 @@ pub fn parse(text: &str) -> Option<(Slash, String)> {
         .map(|(_, slash, _)| (*slash, rest.to_owned()))
 }
 
+/// What follows a `/` typed where a word starts at the end of `text`, the
+/// WebView's skill picker trigger: `None` when the text does not end in
+/// such a word, or the word is a path (it has another `/` in it).
+pub fn typed(text: &str) -> Option<&str> {
+    let at = text.rfind('/')?;
+    let word = &text[at + 1..];
+    let starts_word = text[..at].chars().last().is_none_or(char::is_whitespace);
+    (starts_word && !word.contains(char::is_whitespace)).then_some(word)
+}
+
+/// `text` without the `/word` it ends in, for what was picked to take its
+/// place.
+pub fn without_typed(text: &str) -> String {
+    match typed(text) {
+        Some(word) => text[..text.len() - word.len() - 1].to_owned(),
+        None => text.to_owned(),
+    }
+}
+
+/// The commands whose name begins with what was typed after `/`.
+pub fn matching(word: &str) -> Vec<(&'static str, Slash, &'static str)> {
+    let word = word.to_ascii_lowercase();
+    COMMANDS
+        .into_iter()
+        .filter(|(name, command, _)| *command != Slash::Help && name[1..].starts_with(&word))
+        .collect()
+}
+
+/// Whether a command is written out to be finished rather than run when
+/// it is picked: it needs words after it.
+pub fn takes_words(command: Slash) -> bool {
+    matches!(command, Slash::Timer | Slash::Btw)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,6 +156,38 @@ mod tests {
         ] {
             assert_eq!(parse(message), None, "{message}");
         }
+    }
+
+    #[test]
+    fn a_slash_where_a_word_starts_opens_the_picker_on_what_follows() {
+        assert_eq!(typed("/"), Some(""));
+        assert_eq!(typed("please /rev"), Some("rev"));
+        assert_eq!(typed("line one\n/sk"), Some("sk"));
+        // A path, a fraction, a slash inside a word, or a finished word is
+        // not a trigger.
+        for text in ["data/reads", "/data/reads", "1/2", "and/or", "/review ", ""] {
+            assert_eq!(typed(text), None, "{text}");
+        }
+        assert_eq!(without_typed("please /rev"), "please ");
+        assert_eq!(without_typed("/"), "");
+        assert_eq!(without_typed("no trigger"), "no trigger");
+    }
+
+    #[test]
+    fn the_menu_narrows_to_commands_that_begin_with_the_word() {
+        let names = |word: &str| {
+            matching(word)
+                .iter()
+                .map(|(name, ..)| *name)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names("re"), ["/review", "/remember", "/rewind"]);
+        assert_eq!(names("TIM"), ["/timer"]);
+        assert!(names("zzz").is_empty());
+        // Everything but help, which is what the menu is.
+        assert_eq!(matching("").len(), COMMANDS.len() - 1);
+        assert!(takes_words(Slash::Timer) && takes_words(Slash::Btw));
+        assert!(!takes_words(Slash::Review));
     }
 
     #[test]

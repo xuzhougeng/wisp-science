@@ -785,6 +785,9 @@ pub const ZH: &[(&str, &str)] = &[
     ("It read:", "它读取了："),
     // Sample project.
     ("Make a sample project to try Wisp on", "创建一个示例项目来试用 Wisp"),
+    ("Commands and skills: type / or pick one here", "命令和技能：输入 / 或在这里选择"),
+    ("Skills, to attach", "技能（附加到消息）"),
+    ("No command or skill begins with /{}", "没有以 /{} 开头的命令或技能"),
     ("Picture model", "看图模型"),
     ("When the conversation's model cannot see, this one looks at the pictures you attach and tells it what they show. Only models that can see are listed.", "对话所用模型看不了图片时，由这个模型查看你附加的图片并告诉它图里有什么。这里只列出能看图的模型。"),
     ("None can see", "没有能看图的模型"),

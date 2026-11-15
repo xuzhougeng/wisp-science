@@ -155,7 +155,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Undo a turn | Going back to the latest message can also undo its files: a file the turn edited gets its earlier content, a file it created goes to the project's trash, and a file changed again since is left and named |
 | Table preview | A `.csv` or `.tsv` file is previewed as a grid of its first 200 rows and 30 columns, with a switch to its text |
 | File actions | A previewed file's path can be copied, the file attached to the message, shown in the file manager or opened with the system's own application |
-| Slash commands | A message that is only a command does something instead of being sent: `/review`, `/trajectory`, `/context`, `/btw <question>`, `/plan`, `/save-as-skill`, `/skills`, `/files`, `/upload`, `/memo`, `/remember`, `/archive`, `/compact`, `/timer 30m <prompt>`, `/fork`, `/rewind`, `/permission`, `/share`, `/help`; the composer's "/" button lists them |
+| Slash commands | A message that is only a command does something instead of being sent: `/review`, `/trajectory`, `/context`, `/btw <question>`, `/plan`, `/save-as-skill`, `/skills`, `/files`, `/upload`, `/memo`, `/remember`, `/archive`, `/compact`, `/timer 30m <prompt>`, `/fork`, `/rewind`, `/permission`, `/share`, `/help`; typing "/" where a word starts, or the composer's "/" button, lists them with the project's skills, narrowing as you type |
 | Browser | Settings, Browser, switches on a bridge to the Wisp extension in your own Chrome or Chromium; conversations can then open a tab, read it and run a script in it, only in tabs they opened themselves, and hosts can be blocked or preferred |
 | Workflows | Settings, Workflows, keeps templates of a goal broken into tasks, each saying which earlier tasks it needs and what it may do as an agent, with an approval policy; Run starts a conversation in the open project and gives the model the tasks stage by stage, and Run as agents drafts them as a batch of agents in a new conversation, approved or discarded in its Agents tab |
 | Chat apps | Settings, Chat apps, binds a WeChat bot by scanning a QR code (and a second one for the research assistant), and a Feishu (or Lark) bot by scanning to make its app or by entering an App ID and App Secret, with its owner confirmed here; the owner's messages then run in the project chats go to and the answer comes back (on Feishu as a card that shows the turn's progress), with `/project`, `/session`, `/new`, `/status`, `/stop` and, in WeChat, approvals answered by code (`/approve`, `/reject`); and Wisp Lab: found a lab on a wisp-relay or ask to join one with an invite code, see the members (the leader approves, refuses or removes them and makes invite codes), choose the project that answers other members' agents, replace the relay token, leave |
@@ -1444,8 +1444,14 @@ Limits of this slice:
   is open, as in the WebView. Paste,
   drag and drop work, and typing `@` or `#` where a word starts opens the
   add-context picker (the character is taken back out). A slash command
-  runs when it is the whole message; the composer's `/` button lists them,
-  and typing `/` does not.
+  runs when it is the whole message. Typing `/` where a word starts opens
+  the composer's `/` menu, as the WebView's `/` opens its skill picker:
+  the commands and the project's skills that begin with what follows the
+  `/`, narrowing as you type. A command picked there runs, or is written
+  out when it needs words after it (`/btw`, `/timer`); a skill is attached
+  to the message; either way the typed word goes. A word with another `/`
+  in it is a path and opens nothing. Escape shuts the menu until that word
+  is gone. The `/` button opens the same menu.
 - Runs can be cancelled. Harvest, review of a remote workspace, transfers and
   the full log are not ported.
 - Favorites are the WebView's library: a database of their own
@@ -1900,7 +1906,12 @@ nothing is added to the transcript. Send `/btw why did that fail?`: the
 Aside tab opens and the question is asked there. Send `/fork`: a
 branch opens under the conversation. Send
 `/data/reads.fq looks odd`: it is sent as a message. Press the "/"
-button, then Escape: only the list closes.
+button, then Escape: only the list closes. Type `/re`: the menu lists
+`/review`, `/remember` and `/rewind` and the skills that begin with
+"re"; type `v`: only `/review` is left; press Escape and type more: the
+menu stays shut. Type `please /` and pick a skill: it is attached and
+"please " is left. Type `/tim` and pick `/timer`: the composer reads
+`/timer `.
 In Settings, Browser, the line reads Off. Switch it on: it reads
 "Waiting for the extension to connect" (or says the port is taken while
 another Wisp runs). Load the extension from the folder the page names:
