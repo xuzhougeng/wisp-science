@@ -850,6 +850,7 @@ impl Workspace {
             Section::Usage => self.render_usage_settings(cx),
             Section::Storage => self.render_storage_settings(cx),
             Section::Permissions => self.render_permission_settings(cx),
+            Section::Hooks => self.render_hook_settings(cx),
         };
         div().h_flex().size_full().child(nav).child(
             div()

@@ -174,6 +174,8 @@ pub enum Layer {
     SkillTags,
     /// The form for a quick action, on its page of Settings.
     QuickActionForm,
+    /// The form for a command hook, on the Hooks page of Settings.
+    HookForm,
     /// Question before a quick action is removed.
     ConfirmRemoveQuickAction,
     /// The form for an expert, on the Experts page of Settings.
@@ -263,6 +265,7 @@ impl Layer {
             | Layer::ConfirmLeaveLab
             | Layer::ConfirmRemoveLabMember
             | Layer::QuickActionForm
+            | Layer::HookForm
             | Layer::WorkflowForm
             | Layer::ConfirmRemoveWorkflow
             | Layer::WorkflowFromSkills
@@ -847,6 +850,18 @@ mod tests {
         stack.open(Layer::NewProject);
         assert_eq!(stack.dismiss_top(), Some(Layer::NewProject));
         assert_eq!(stack.dismiss_top(), None);
+    }
+
+    #[test]
+    fn the_hook_form_closes_before_settings() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::Settings);
+        stack.open(Layer::HookForm);
+        assert_eq!(stack.dismiss_top(), Some(Layer::HookForm));
+        assert!(stack.contains(Layer::Settings));
+        stack.open(Layer::HookForm);
+        assert!(stack.close(Layer::Settings));
+        assert!(!stack.contains(Layer::HookForm));
     }
 
     #[test]

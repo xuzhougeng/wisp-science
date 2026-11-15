@@ -2290,6 +2290,31 @@ impl Backend {
         self.local(move |host| async move { host.set_review_model(&profile).await })
     }
 
+    /// Your command hooks.
+    pub fn command_hooks(&self) -> Reply<Vec<wisp_dto::CommandHook>> {
+        self.local(|host| async move { host.command_hooks().await })
+    }
+
+    pub fn set_command_hooks(
+        &self,
+        hooks: Vec<wisp_dto::CommandHook>,
+    ) -> Reply<Vec<wisp_dto::CommandHook>> {
+        self.local(move |host| async move { host.set_command_hooks(hooks).await })
+    }
+
+    /// The project's `.wisp/hooks.json`, as it is now.
+    pub fn project_hooks(&self, project: String) -> Reply<Option<wisp_dto::ProjectHooks>> {
+        self.local(move |host| async move { host.project_hooks(&project).await })
+    }
+
+    pub fn set_project_hooks_trust(
+        &self,
+        project: String,
+        sha256: Option<String>,
+    ) -> Reply<Option<wisp_dto::ProjectHooks>> {
+        self.local(move |host| async move { host.set_project_hooks_trust(&project, sha256).await })
+    }
+
     /// How a project's tools are approved: its mode and rules for single
     /// tools, under the WebView's keys.
     pub fn project_approvals(

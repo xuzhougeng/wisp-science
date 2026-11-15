@@ -35,6 +35,8 @@ pub enum Section {
     Credentials,
     Environments,
     Permissions,
+    /// Shell commands run at points of a turn.
+    Hooks,
     Usage,
     Storage,
     General,
@@ -48,7 +50,7 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 21] = [
+    pub const ALL: [Section; 22] = [
         Section::General,
         Section::Network,
         Section::Remote,
@@ -68,6 +70,7 @@ impl Section {
         Section::Credentials,
         Section::Environments,
         Section::Permissions,
+        Section::Hooks,
         Section::Usage,
         Section::Storage,
     ];
@@ -93,6 +96,7 @@ impl Section {
             Section::Credentials => tr("Credentials"),
             Section::Environments => tr("Environments"),
             Section::Permissions => tr("Permissions"),
+            Section::Hooks => tr("Hooks"),
             Section::Usage => tr("Usage"),
             Section::Storage => tr("Storage"),
         }
@@ -119,6 +123,7 @@ impl Section {
             Section::Credentials => "lock",
             Section::Environments => "server",
             Section::Permissions => "shield",
+            Section::Hooks => "code",
             Section::Usage => "gauge",
             Section::Storage => "database",
         }
@@ -177,6 +182,10 @@ impl Section {
                  config default"
             }
             Section::Permissions => "approval ask full access allow always tool grant safety",
+            Section::Hooks => {
+                "hook command script shell event prompt tool stop pretooluse posttooluse \
+                 userpromptsubmit stdin json block policy 钩子"
+            }
             Section::Usage => "tokens cost spend usage chart day model project",
             Section::Storage => "disk space data folder database size files location",
         }
@@ -203,7 +212,7 @@ impl Section {
             | Section::Connections
             | Section::Credentials
             | Section::Environments => tr("Capabilities"),
-            Section::Permissions => tr("Safety"),
+            Section::Permissions | Section::Hooks => tr("Safety"),
             Section::Usage | Section::Storage => tr("Data"),
         }
     }
@@ -256,6 +265,58 @@ pub fn expert_label(experts: &[wisp_server::desktop::Expert], chosen: &str) -> S
         .iter()
         .find(|expert| expert.id == chosen)
         .map_or_else(|| tr("Expert").to_owned(), |expert| expert.name.clone())
+}
+
+/// The points of a turn a command hook runs at, in the order the Hooks
+/// page offers them, with what each is for.
+pub const HOOK_EVENTS: [(wisp_dto::HookEvent, &str); 5] = [
+    (
+        wisp_dto::HookEvent::UserPromptSubmit,
+        "Before a message is answered. Exit 2 refuses it; what the command prints is context for the turn.",
+    ),
+    (
+        wisp_dto::HookEvent::PreToolUse,
+        "Before a tool runs. Exit 2 or a deny blocks the call, ask asks you; a hook that fails blocks it.",
+    ),
+    (
+        wisp_dto::HookEvent::PostToolUse,
+        "After a tool succeeded. What it says goes back to the model with the result.",
+    ),
+    (
+        wisp_dto::HookEvent::PostToolUseFailure,
+        "After a tool failed. What it says goes back to the model with the result.",
+    ),
+    (
+        wisp_dto::HookEvent::Stop,
+        "When a turn ends. Exit 2 has the turn go on once with the reason it printed.",
+    ),
+];
+
+/// A hook's timeout as it was typed: empty is the default minute, a whole
+/// number of seconds up to an hour sets one.
+pub fn hook_timeout(text: &str) -> Result<Option<u64>, String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    match text.parse::<u64>() {
+        Ok(secs) if (1..=3_600).contains(&secs) => Ok(Some(secs)),
+        _ => Err(tr("Give the timeout in seconds, from 1 to 3600, or leave it empty").into()),
+    }
+}
+
+/// The line under a hook's command: the tools it is for and its timeout.
+pub fn hook_detail(hook: &wisp_dto::CommandHook) -> String {
+    let tools = match hook.matcher.trim() {
+        _ if !hook.event.matches_tools() => None,
+        "" | "*" => Some(tr("every tool").to_owned()),
+        matcher => Some(matcher.to_owned()),
+    };
+    let timeout = crate::i18n::fill(tr("{} s"), &[&hook.timeout.unwrap_or(60)]);
+    match tools {
+        Some(tools) => format!("{} · {tools} · {timeout}", hook.event.as_str()),
+        None => format!("{} · {timeout}", hook.event.as_str()),
+    }
 }
 
 /// A project's approval modes, in the order Permissions offers them, with
@@ -1099,6 +1160,7 @@ mod tests {
                 "Capabilities",
                 "Capabilities",
                 "Safety",
+                "Safety",
                 "Data",
                 "Data"
             ]
@@ -1319,6 +1381,33 @@ mod tests {
             is_default,
             problem: problem.map(str::to_owned),
             sees: false,
+        }
+    }
+
+    #[test]
+    fn hooks_read_as_their_event_tools_and_timeout() {
+        use wisp_dto::{CommandHook, HookEvent};
+        assert_eq!(HOOK_EVENTS.len(), HookEvent::ALL.len());
+        for event in HookEvent::ALL {
+            assert!(HOOK_EVENTS.iter().any(|(which, _)| *which == event));
+        }
+        let mut hook = CommandHook {
+            event: HookEvent::PreToolUse,
+            matcher: String::new(),
+            command: "./guard.sh".into(),
+            enabled: true,
+            timeout: None,
+        };
+        assert_eq!(hook_detail(&hook), "PreToolUse · every tool · 60 s");
+        hook.matcher = "write|edit".into();
+        hook.timeout = Some(5);
+        assert_eq!(hook_detail(&hook), "PreToolUse · write|edit · 5 s");
+        hook.event = HookEvent::Stop;
+        assert_eq!(hook_detail(&hook), "Stop · 5 s");
+        assert_eq!(hook_timeout(" "), Ok(None));
+        assert_eq!(hook_timeout("30"), Ok(Some(30)));
+        for wrong in ["0", "3601", "1.5", "soon"] {
+            assert!(hook_timeout(wrong).is_err(), "{wrong}");
         }
     }
 

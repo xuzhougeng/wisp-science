@@ -41,6 +41,7 @@ mod settings_data;
 mod settings_decision;
 mod settings_environments;
 mod settings_experts;
+mod settings_hooks;
 mod settings_lab;
 mod settings_mcp;
 mod settings_network;
@@ -479,6 +480,15 @@ pub struct Workspace {
     quick_editing: Option<String>,
     /// Name, request.
     quick_fields: [Entity<InputState>; 2],
+    /// Your command hooks, as saved.
+    command_hooks: Vec<wisp_dto::CommandHook>,
+    /// The open project's `.wisp/hooks.json`, when it has one.
+    project_hook_file: Option<wisp_dto::ProjectHooks>,
+    /// The hook being written: its place in the list (none for a new one)
+    /// and when it runs.
+    hook_editing: Option<(Option<usize>, wisp_dto::HookEvent)>,
+    /// Tools, command and timeout of the hook being written.
+    hook_fields: [Entity<InputState>; 3],
     /// The decision model as the host keeps it; `None` until it answered.
     decision: Option<wisp_dto::DecisionModelSettings>,
     /// The form's switches: on or off, the service, how it thinks.
@@ -955,6 +965,11 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
         ];
+        let hook_fields = [
+            cx.new(|cx| InputState::new(window, cx).placeholder("write|edit")),
+            cx.new(|cx| InputState::new(window, cx).placeholder("./.wisp/hooks/check.sh")),
+            cx.new(|cx| InputState::new(window, cx).placeholder("60")),
+        ];
         let archive_fields = [
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
@@ -1422,6 +1437,10 @@ impl Workspace {
             quick_actions: Vec::new(),
             quick_editing: None,
             quick_fields,
+            command_hooks: vec![],
+            project_hook_file: None,
+            hook_editing: None,
+            hook_fields,
             decision: None,
             decision_draft: Default::default(),
             decision_fields,
@@ -1671,6 +1690,7 @@ impl Workspace {
             Some(Layer::WorkflowFromSkills) => self.workflow_skill_picks.clear(),
             Some(Layer::TerminalHosts) => {}
             Some(Layer::SkillTags) => self.skill_tags_editing = None,
+            Some(Layer::HookForm) => self.hook_editing = None,
             Some(Layer::QuickActionForm | Layer::ConfirmRemoveQuickAction) => {
                 self.quick_editing = None
             }

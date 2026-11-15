@@ -2468,6 +2468,9 @@ impl Workspace {
         if let Some(review) = self.render_review_banner(cx) {
             content = content.child(review);
         }
+        if let Some(failures) = self.render_hook_failures(cx) {
+            content = content.child(failures);
+        }
         if let Some(proposal) = self.render_memory_proposal(cx) {
             content = content.child(proposal);
         }

@@ -120,6 +120,7 @@ impl Workspace {
             Section::Usage => self.load_usage(window, cx),
             Section::Storage => self.load_storage(window, cx),
             Section::Conversation => self.load_turn_defaults(window, cx),
+            Section::Hooks => self.load_hooks(window, cx),
             Section::Permissions => {
                 self.load_turn_defaults(window, cx);
                 self.load_grants(window, cx);
