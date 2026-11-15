@@ -52,7 +52,7 @@ to find in the running app.
 | Project list with conversation and artifact counts, last-used time [项目] | Yes | Done | served |
 | Open a project | Yes | Done | served |
 | Star a project so it stays first [星标项目并置顶] | Yes | Done | store |
-| New project [新建项目] | Name, folder | Partial: opens an existing folder; no name or description form | served |
+| New project [新建项目] | Name, folder | Yes: New project on the home page takes a name, a description and whether to lay the folder out in the standard research layout, then where to put it, and makes a folder named after the project there; Open folder opens an existing one. The rules for the model are set in Project settings afterwards | served |
 | Import project [导入项目] | Archive import | Partial: a zip archive, placed in a folder you choose; no folder packages and no progress display | tauri |
 | Export project [导出项目] | Archive export | Partial: as a zip archive in the WebView's format; no folder packages and no progress display | tauri |
 | Project settings [项目设置] | Name, description, sync | Partial: name, description and the rules for the model (`.wisp/WISP.md`), from the project's card and the command palette; Sync now, device code, conflict resolution and cloud-drive folder saving; no run retention | store |

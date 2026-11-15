@@ -844,6 +844,54 @@ pub(crate) fn models(calls: Arc<AtomicUsize>, write: bool) -> ModelFactory {
 }
 
 #[tokio::test]
+async fn a_new_project_gets_a_folder_named_after_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let parent = temp.path().join("research");
+    std::fs::create_dir_all(&parent).unwrap();
+    let id = server
+        .create_local_project(&parent, " RNA: day 3 ", "  Time course  ", true)
+        .await
+        .unwrap();
+    let root = std::fs::canonicalize(&parent).unwrap().join("RNA- day 3");
+    assert!(root.is_dir());
+    // The standard layout and its manifest, under the project's own name.
+    assert!(root.join("data/raw").is_dir());
+    assert!(root.join("results/tables").is_dir());
+    let manifest = std::fs::read_to_string(root.join(".wisp/project.toml")).unwrap();
+    assert!(manifest.contains("name = \"RNA: day 3\""), "{manifest}");
+    let settings = server.project_settings(&id).await.unwrap();
+    assert_eq!(settings.name, "RNA: day 3");
+    assert_eq!(settings.description, "Time course");
+
+    // The same folder again is refused; so is a name with no folder in it.
+    assert!(server
+        .create_local_project(&parent, "RNA: day 3", "", false)
+        .await
+        .is_err());
+    assert!(server
+        .create_local_project(&parent, " ... ", "", false)
+        .await
+        .is_err());
+    assert!(server
+        .create_local_project(&parent, "", "", false)
+        .await
+        .is_err());
+    // Without the layout, the folder is left empty.
+    let bare = server
+        .create_local_project(&parent, "Notes", "", false)
+        .await
+        .unwrap();
+    assert_ne!(bare, id);
+    let notes = std::fs::canonicalize(&parent).unwrap().join("Notes");
+    assert_eq!(std::fs::read_dir(&notes).unwrap().count(), 0);
+    assert_eq!(desktop::project_folder_name("a/b\\c?"), "a-b-c-");
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn local_project_registration_preserves_identity_and_is_not_remotely_exposed() {
     let temp = tempfile::tempdir().unwrap();
     let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))

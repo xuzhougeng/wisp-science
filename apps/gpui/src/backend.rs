@@ -125,6 +125,19 @@ impl Backend {
         })
     }
 
+    pub fn create_project(
+        &self,
+        parent: PathBuf,
+        name: String,
+        description: String,
+        standard_layout: bool,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.create_local_project(&parent, &name, &description, standard_layout)
+                .await
+        })
+    }
+
     pub fn register_project(&self, path: PathBuf) -> Reply<String> {
         self.local(move |host| async move { host.register_local_project(&path).await })
     }

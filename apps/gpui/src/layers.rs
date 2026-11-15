@@ -44,6 +44,8 @@ pub enum Layer {
     ConfirmSyncReplace,
     /// The dialog that joins a project from another device by its code.
     JoinSyncedProject,
+    /// The dialog that names a new project before its folder is made.
+    NewProject,
     /// The dialog that names an exploration before it starts.
     StartExploration,
     /// What keeping an exploration would bring in.
@@ -834,6 +836,10 @@ mod tests {
         // The join dialog is a layer of its own.
         stack.open(Layer::JoinSyncedProject);
         assert_eq!(stack.dismiss_top(), Some(Layer::JoinSyncedProject));
+        assert_eq!(stack.dismiss_top(), None);
+        // So is the dialog for a new project.
+        stack.open(Layer::NewProject);
+        assert_eq!(stack.dismiss_top(), Some(Layer::NewProject));
         assert_eq!(stack.dismiss_top(), None);
     }
 

@@ -583,6 +583,12 @@ pub struct Workspace {
     join_code: Entity<InputState>,
     join_busy: bool,
     join_note: Option<String>,
+    /// The New project dialog's name and description, whether the folder
+    /// gets the standard research layout, and why the last try failed.
+    new_project_name: Entity<InputState>,
+    new_project_description: Entity<InputState>,
+    new_project_layout: bool,
+    new_project_note: Option<String>,
     /// The open project's exploration round, the dialog that names a new
     /// exploration and the answer it starts from, what keeping one would
     /// bring in, the question asked before one is given up, and how the
@@ -839,6 +845,13 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx).placeholder("/Volumes/Shared/Wisp")),
         ];
         let join_code = cx.new(|cx| InputState::new(window, cx).placeholder("wisp-sync:…"));
+        let new_project_name =
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Project name")));
+        let new_project_description = cx.new(|cx| {
+            InputState::new(window, cx)
+                .multi_line(true)
+                .placeholder(tr("What the project is about (optional)"))
+        });
         let explore_name = cx.new(|cx| InputState::new(window, cx));
         let lab_fields = [
             cx.new(|cx| InputState::new(window, cx).placeholder("https://relay.example")),
@@ -1396,6 +1409,10 @@ impl Workspace {
             join_code,
             join_busy: false,
             join_note: None,
+            new_project_name,
+            new_project_description,
+            new_project_layout: true,
+            new_project_note: None,
             explorations: Vec::new(),
             batches: Vec::new(),
             swarm: None,
@@ -1561,7 +1578,7 @@ impl Workspace {
                 self.project_form = None;
                 self.project_form_error = None;
             }
-            Some(Layer::ConfirmSyncReplace | Layer::JoinSyncedProject) => {}
+            Some(Layer::ConfirmSyncReplace | Layer::JoinSyncedProject | Layer::NewProject) => {}
             Some(Layer::StartExploration) => self.explore_from = None,
             Some(Layer::ExplorationPreview) => self.explore_preview = None,
             Some(Layer::ConfirmExploration) => self.explore_question = None,
@@ -1699,6 +1716,7 @@ impl Workspace {
                     || self.layers.contains(Layer::Palette)
                     || self.layers.contains(Layer::ProjectSettings)
                     || self.layers.contains(Layer::JoinSyncedProject)
+                    || self.layers.contains(Layer::NewProject)
                     || self.layers.contains(Layer::StartExploration)
                     || self.layers.contains(Layer::ExplorationPreview)
                 {
@@ -3822,6 +3840,11 @@ impl Render for Workspace {
         };
         let root = if self.layers.contains(Layer::JoinSyncedProject) {
             root.child(self.render_join_synced(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::NewProject) {
+            root.child(self.render_new_project(cx))
         } else {
             root
         };

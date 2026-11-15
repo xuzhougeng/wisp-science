@@ -121,7 +121,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Surface | Behavior |
 | --- | --- |
 | Home | Opens first: every project and the newest conversations across them, with status |
-| Projects | Persisted list, native folder picker, reopen registered roots, running and waiting counts, star to keep first, remove from Wisp (files stay); Project settings for the name, a description, and the rules the model follows in the project |
+| Projects | Persisted list, New project (a name, a description and the standard research layout, then where its folder goes: a folder named after it is made there), native folder picker, reopen registered roots, running and waiting counts, star to keep first, remove from Wisp (files stay); Project settings for the name, a description, and the rules the model follows in the project |
 | Look | Wisp's light and dark palettes, following the system or fixed to one in Settings; the shared icon set |
 | Conversations | Create, select, restore messages, running / needs-you status |
 | Conversation management | Rename, copy the title, pin (shown first), archive and restore, delete with confirmation, and save what it sends the model as a JSON debug request |

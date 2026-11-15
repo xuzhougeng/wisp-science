@@ -15,7 +15,7 @@ use std::collections::HashSet;
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 
-mod workspace_manifest;
+pub(crate) mod workspace_manifest;
 pub(crate) mod workspace_scan;
 
 const ARCHIVE_KIND: &str = "wisp-project";

@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     input::Input,
 };
@@ -16,7 +16,9 @@ use super::{
     shell::{error_banner, glyph, icon_button},
 };
 use crate::{
+    backend::receive,
     home,
+    layers::Layer,
     present::{self, Tone},
 };
 
@@ -296,6 +298,168 @@ impl Workspace {
         )
     }
 
+    /// Opens the dialog that names a new project.
+    pub(super) fn open_new_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.new_project_note = None;
+        self.new_project_layout = true;
+        for field in [&self.new_project_name, &self.new_project_description] {
+            field.update(cx, |input, cx| input.set_value("", window, cx));
+        }
+        self.layers.open(Layer::NewProject);
+        self.new_project_name
+            .update(cx, |input, cx| input.focus(window, cx));
+        cx.notify();
+    }
+
+    /// Asks where the new project's folder goes, then makes it and opens
+    /// the project.
+    fn create_new_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let name = self.new_project_name.read(cx).value().trim().to_owned();
+        if name.is_empty() || self.pending {
+            return;
+        }
+        let description = self.new_project_description.read(cx).value().to_string();
+        let layout = self.new_project_layout;
+        self.new_project_note = None;
+        self.pending = true;
+        let picker = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some(tr("Make the project here").into()),
+        });
+        let backend = self.backend.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = async {
+                let place = picker
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .map_err(|error| error.to_string())?;
+                match place.and_then(|mut paths| paths.pop()) {
+                    Some(parent) => {
+                        receive(backend.create_project(parent, name, description, layout))
+                            .await
+                            .map(Some)
+                    }
+                    None => Ok(None),
+                }
+            }
+            .await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.pending = false;
+                match result {
+                    Ok(Some(id)) => {
+                        this.layers.close(Layer::NewProject);
+                        this.enter_project(id, window, cx);
+                        this.load_projects(window, cx);
+                    }
+                    // The folder was not chosen: the dialog stays as it was.
+                    Ok(None) => {}
+                    Err(error) => this.new_project_note = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// The dialog for a new project: its name and description, and whether
+    /// its folder gets the standard research layout.
+    pub(super) fn render_new_project(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let muted = cx.theme().muted_foreground;
+        let ready = !self.new_project_name.read(cx).value().trim().is_empty() && !self.pending;
+        let layout = self.new_project_layout;
+        let mut card = div()
+            .id("new-project")
+            .v_flex()
+            .gap_3()
+            .w(px(520.))
+            .p_5()
+            .rounded(cx.theme().radius_lg)
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().popover)
+            .shadow_lg()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                div()
+                    .text_lg()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(tr("New project")),
+            )
+            .child(div().text_xs().text_color(muted).child(tr(
+                "A folder with this name is made where you choose next, and the project opens in it.",
+            )))
+            .child(Input::new(&self.new_project_name).small())
+            .child(Input::new(&self.new_project_description).h(px(72.)))
+            .child(
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("new-project-layout")
+                            .label(if layout { tr("On") } else { tr("Off") })
+                            .small()
+                            .selected(layout)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.new_project_layout = !this.new_project_layout;
+                                cx.notify();
+                            })),
+                    )
+                    .child(div().text_sm().child(tr(
+                        "Standard layout: data, analysis, results, figures, literature and docs folders",
+                    ))),
+            );
+        if let Some(error) = &self.new_project_note {
+            card = card.child(chip(crate::i18n::host(error), Tone::Danger, cx));
+        }
+        card = card.child(
+            div()
+                .h_flex()
+                .justify_end()
+                .gap_2()
+                .child(
+                    Button::new("new-project-cancel")
+                        .label(tr("Cancel"))
+                        .small()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.layers.close(Layer::NewProject);
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new("new-project-create")
+                        .label(tr("Choose where and create"))
+                        .small()
+                        .primary()
+                        .disabled(!ready)
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.create_new_project(window, cx)),
+                        ),
+                ),
+        );
+        div()
+            .id("new-project-backdrop")
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .occlude()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(cx.theme().overlay)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.layers.close(Layer::NewProject);
+                    cx.notify();
+                }),
+            )
+            .child(card)
+    }
+
     pub(super) fn render_home(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
         let ring = cx.theme().ring;
@@ -406,6 +570,17 @@ impl Workspace {
                     .child(
                         icon_button("home-docs", "book", tr("Documentation, in your browser"))
                             .on_click(cx.listener(|_, _, _, cx| cx.open_url(crate::links::DOCS))),
+                    )
+                    .child(
+                        Button::new("new-project")
+                            .icon(glyph("plus"))
+                            .label(tr("New project"))
+                            .disabled(self.pending)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    this.open_new_project(window, cx)
+                                }),
+                            ),
                     )
                     .child(
                         Button::new("open-project")

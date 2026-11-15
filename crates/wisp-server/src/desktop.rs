@@ -5312,6 +5312,25 @@ pub const PROJECT_NAME_LIMIT: usize = 120;
 pub const PROJECT_DESCRIPTION_LIMIT: usize = 2_000;
 pub const PROJECT_RULES_LIMIT: usize = 20_000;
 
+/// The folder a new project called `name` is made in: its name with the
+/// characters no system allows in a folder name made dashes, at most 80
+/// characters, and no leading or trailing dots or spaces. Empty when
+/// nothing is left.
+pub fn project_folder_name(name: &str) -> String {
+    let cleaned: String = name
+        .trim()
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
+            c if c.is_control() => ' ',
+            c => c,
+        })
+        .collect();
+    let words: Vec<&str> = cleaned.split_whitespace().collect();
+    let joined: String = words.join(" ").chars().take(80).collect();
+    joined.trim().trim_matches('.').trim().to_owned()
+}
+
 fn rules_file(root: &str) -> std::path::PathBuf {
     std::path::Path::new(root).join(".wisp").join("WISP.md")
 }

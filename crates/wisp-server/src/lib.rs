@@ -225,6 +225,65 @@ impl Server {
         Ok(id)
     }
 
+    /// Makes a new project, as the WebView's New project does: a folder
+    /// named after it in `parent` (made when it is not there), registered
+    /// under `name` with its description, and, when asked for, the standard
+    /// research layout (data, analysis, results, figures and more) with
+    /// its manifest. A folder that is already a project is refused.
+    pub async fn create_local_project(
+        &self,
+        parent: &std::path::Path,
+        name: &str,
+        description: &str,
+        standard_layout: bool,
+    ) -> Result<String> {
+        let name = name.trim();
+        let description = description.trim();
+        ensure!(!name.is_empty(), "Give the project a name");
+        ensure!(
+            name.chars().count() <= desktop::PROJECT_NAME_LIMIT
+                && !name.chars().any(char::is_control),
+            "A project name is one line of at most {} characters",
+            desktop::PROJECT_NAME_LIMIT
+        );
+        ensure!(
+            description.chars().count() <= desktop::PROJECT_DESCRIPTION_LIMIT,
+            "Keep the description under {} characters",
+            desktop::PROJECT_DESCRIPTION_LIMIT
+        );
+        let folder = desktop::project_folder_name(name);
+        ensure!(
+            !folder.is_empty(),
+            "Give the project a name a folder can have"
+        );
+        let parent = tokio::fs::canonicalize(parent).await?;
+        let root = parent.join(&folder);
+        for (_, _, existing, ..) in self.0.store.list_projects().await? {
+            ensure!(
+                std::path::Path::new(&existing) != root,
+                "This folder is already registered as a project."
+            );
+        }
+        tokio::fs::create_dir_all(&root)
+            .await
+            .context("Could not make the project's folder")?;
+        let id = self.register_local_project(&root).await?;
+        if standard_layout {
+            let (folder, layout_id, layout_name) = (root.clone(), id.clone(), name.to_owned());
+            tokio::task::spawn_blocking(move || {
+                project_archive::workspace_manifest::init_workspace_layout(
+                    &folder,
+                    &layout_id,
+                    &layout_name,
+                )
+            })
+            .await?
+            .map_err(anyhow::Error::msg)?;
+        }
+        self.0.store.update_project(&id, name, description).await?;
+        Ok(id)
+    }
+
     #[cfg(test)]
     async fn open_with_models(config: Config, models: ModelFactory) -> Result<Self> {
         Self::open_with(config, models, Arc::new(desktop::MemorySecrets::default())).await
