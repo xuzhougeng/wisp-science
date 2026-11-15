@@ -232,6 +232,113 @@ impl Workspace {
             .into_any_element()
     }
 
+    /// The conversation's tool calls with how each went; a call opens to
+    /// what it was given and what it returned, and can be shown in the
+    /// conversation.
+    fn render_provenance_tab(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let muted = cx.theme().muted_foreground;
+        let mono = cx.theme().mono_font_family.clone();
+        let mut list = div()
+            .id("provenance-list")
+            .v_flex()
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .p_2()
+            .gap_1();
+        let calls = crate::panel::provenance(&self.rows);
+        if calls.is_empty() {
+            return list.child(div().p_2().text_sm().text_color(muted).child(tr(
+                "No tool has run in the loaded part of this conversation.",
+            )));
+        }
+        let block = |label: &'static str, text: &str| {
+            let shown: String = text.chars().take(4_000).collect();
+            div()
+                .v_flex()
+                .gap_1()
+                .child(div().text_xs().text_color(muted).child(label))
+                .child(
+                    div()
+                        .p_2()
+                        .rounded(cx.theme().radius)
+                        .bg(cx.theme().muted)
+                        .text_xs()
+                        .font_family(mono.clone())
+                        .child(shown),
+                )
+        };
+        for index in calls {
+            let row = &self.rows[index];
+            let key = crate::present::tool_key(row, index);
+            let open = self
+                .provenance_open
+                .get(&key)
+                .copied()
+                .unwrap_or_else(|| crate::panel::provenance_open(row));
+            let (mark, tone) = match row.ok {
+                Some(true) => ("check", crate::present::Tone::Success),
+                Some(false) => ("close", crate::present::Tone::Danger),
+                None => ("loader", crate::present::Tone::Active),
+            };
+            let toggled = key.clone();
+            let mut item = div().v_flex().gap_1().child(
+                div()
+                    .id(SharedString::from(format!("provenance-{key}")))
+                    .h_flex()
+                    .gap_2()
+                    .px_1()
+                    .h(px(26.))
+                    .cursor_pointer()
+                    .child(
+                        crate::assets::icon(if open {
+                            "chevron-down"
+                        } else {
+                            "chevron-right"
+                        })
+                        .text_color(muted),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_sm()
+                            .child(row.tool_name.clone().unwrap_or_default()),
+                    )
+                    .child(crate::assets::icon(mark).text_color(super::tone_color(tone, cx)))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.provenance_open.insert(toggled.clone(), !open);
+                        cx.notify();
+                    })),
+            );
+            if open {
+                if let Some(input) = row
+                    .input
+                    .as_deref()
+                    .filter(|input| !input.trim().is_empty())
+                {
+                    item = item.child(block(tr("Input"), input));
+                }
+                if !row.text.trim().is_empty() {
+                    item = item.child(block(tr("Output"), &row.text));
+                }
+                item = item.child(
+                    Button::new(SharedString::from(format!("provenance-show-{key}")))
+                        .label(tr("Show in the conversation"))
+                        .xsmall()
+                        .ghost()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.list.scroll_to_reveal_item(index);
+                            cx.notify();
+                        })),
+                );
+            }
+            list = list.child(item);
+        }
+        list
+    }
+
     pub(super) fn reveal_file(
         &mut self,
         path: String,
@@ -1645,6 +1752,11 @@ impl Workspace {
             PanelTab::Aside => {
                 return panel
                     .child(self.render_aside_tab(window, cx))
+                    .into_any_element();
+            }
+            PanelTab::Provenance => {
+                return panel
+                    .child(self.render_provenance_tab(cx))
                     .into_any_element();
             }
             PanelTab::Files => {}

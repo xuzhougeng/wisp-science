@@ -19,14 +19,17 @@ pub enum PanelTab {
     Aside,
     /// The helpers the conversation sent off.
     Agents,
+    /// The conversation's tool calls, the evidence behind its answers.
+    Provenance,
 }
 
 impl PanelTab {
-    pub const ALL: [PanelTab; 9] = [
+    pub const ALL: [PanelTab; 10] = [
         PanelTab::Files,
         PanelTab::Runs,
         PanelTab::Artifacts,
         PanelTab::Notebook,
+        PanelTab::Provenance,
         PanelTab::Agents,
         PanelTab::Highlights,
         PanelTab::Memos,
@@ -45,6 +48,7 @@ impl PanelTab {
             PanelTab::Notebook => tr("Notebook"),
             PanelTab::Aside => tr("Aside"),
             PanelTab::Agents => tr("Agents"),
+            PanelTab::Provenance => tr("Provenance"),
         }
     }
 
@@ -59,8 +63,25 @@ impl PanelTab {
             PanelTab::Notebook => "notebook",
             PanelTab::Aside => "circle-help",
             PanelTab::Agents => "swarm",
+            PanelTab::Provenance => "research-trail",
         }
     }
+}
+
+/// The transcript rows the Provenance tab lists: every tool call of the
+/// loaded part of the conversation, in order, as the WebView lists them.
+pub fn provenance(rows: &[wisp_dto::native_conversations::Item]) -> Vec<usize> {
+    rows.iter()
+        .enumerate()
+        .filter(|(_, row)| row.role == "tool" && row.tool_name.is_some())
+        .map(|(index, _)| index)
+        .collect()
+}
+
+/// Whether a call's evidence shows open before it is clicked: one that
+/// failed or has not finished does, as in the WebView.
+pub fn provenance_open(row: &wisp_dto::native_conversations::Item) -> bool {
+    row.ok != Some(true)
 }
 
 /// Whether a run can still be asked to stop. A run that is already stopping
@@ -119,6 +140,30 @@ pub fn artifact_detail(artifact: &ArtifactRow, now: i64, name_conversation: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_provenance_tab_lists_the_tool_calls_and_opens_the_ones_in_doubt() {
+        let row = |role: &str, tool: Option<&str>, ok: Option<bool>| {
+            serde_json::from_value::<wisp_dto::native_conversations::Item>(serde_json::json!({
+                "role": role, "text": "", "tool_name": tool, "input": null,
+                "ok": ok, "status": null
+            }))
+            .unwrap()
+        };
+        let rows = [
+            row("user", None, None),
+            row("tool", Some("read"), Some(true)),
+            row("assistant", None, None),
+            row("tool", Some("shell"), Some(false)),
+            row("tool", None, None),
+            row("tool", Some("python"), None),
+        ];
+        assert_eq!(provenance(&rows), [1, 3, 5]);
+        assert!(!provenance_open(&rows[1]));
+        assert!(provenance_open(&rows[3]));
+        assert!(provenance_open(&rows[5]));
+        assert!(PanelTab::ALL.contains(&PanelTab::Provenance));
+    }
     use serde_json::json;
 
     fn run(status: &str) -> RunRecord {

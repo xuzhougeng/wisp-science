@@ -139,6 +139,8 @@ pub struct Workspace {
     status: Option<ConversationStatus>,
     /// Counts snapshot polls, so the status is refreshed about once a second.
     status_tick: u8,
+    /// The Provenance tab's calls a click opened or closed, by their key.
+    provenance_open: HashMap<String, bool>,
     /// What each saved turn of the open conversation used, read when it
     /// opens and when a turn ends.
     turn_tokens: Vec<wisp_server::desktop::TurnTokens>,
@@ -1180,6 +1182,7 @@ impl Workspace {
             status: None,
             status_tick: 0,
             turn_tokens: Vec::new(),
+            provenance_open: HashMap::new(),
             copied: None,
             palette: PaletteState::default(),
             palette_input,

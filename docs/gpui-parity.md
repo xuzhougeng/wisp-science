@@ -154,7 +154,7 @@ to find in the running app.
 | Research archive [研究归档] | Yes | Partial: the model drafts a report and scripts, you edit title and report, and freezing writes them into the project and makes the conversation read-only; no choice of files to snapshot or delete, no script editing, no continuation link | store |
 | Pending decisions [N 个待处理] | Yes | Done (sidebar inbox) | served |
 | Terminal [打开终端] | Yes | Partial: terminals drawn in the app, in a dock under the conversation, in the project folder or the folder being browsed, on a saved SSH host or a WSL distribution, several at once as tabs, hidden and shown again, closed one by one; the system's terminal is one button away; no input through the system's input method, and no selecting part of the screen | tauri |
-| Toggle right panel [切换面板] | Yes | Partial: the panel opens and closes from the header and keeps Files, Runs, Artifacts, Notebook, Memos, Memory, Highlights, Aside and Agents tabs, one showing at a time; no Provenance tab (a file's preview shows which tool call wrote it) and no adding or closing tabs | ui |
+| Toggle right panel [切换面板] | Yes | Partial: the panel opens and closes from the header and keeps Files, Runs, Artifacts, Notebook, Provenance, Memos, Memory, Highlights, Aside and Agents tabs, one showing at a time; no adding or closing tabs | ui |
 
 ## 6. Right panel
 
@@ -175,7 +175,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Runs: harvest, transfer, full log, workspace review | Yes | Partial: the whole log of a run on this computer; no harvest, transfer or workspace review, and no whole log for runs on SSH hosts | shared |
 | Notebook [Notebook]: code cells and outputs | Yes | Done: a panel tab with the loaded conversation's cells and outputs, copy, save to favorites and show in the conversation | store |
 | Highlights [划线] | Yes | Done: lists what the conversation saved, with use, copy and remove | store |
-| Provenance [溯源]: tool evidence behind a claim | Yes | Partial: a file's preview shows which tool call wrote it, with the code, what it read and the conversation; no panel tab and no tracing of a claim in an answer | store |
+| Provenance [溯源]: tool evidence behind a claim | Yes | Partial: a Provenance tab lists the tool calls of the loaded conversation with how each went, opening to what each was given and returned, and a file's preview shows which tool call wrote it; no tracing of a claim in an answer to its evidence | store |
 | Side question [侧边问答]: ask without changing the main thread | Yes | Partial: an Aside tab where the conversation's model answers from its latest turns; no evidence list, no question scoped to a run or to selected text | tauri |
 | Memos [备忘录]: private notes the model cannot read | Yes | Done: no search, no `/memo` command | store |
 

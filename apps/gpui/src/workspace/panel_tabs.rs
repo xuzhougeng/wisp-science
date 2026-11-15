@@ -47,7 +47,8 @@ impl Workspace {
             // Cells show whether their code is saved.
             PanelTab::Highlights | PanelTab::Notebook => self.load_saved(window, cx),
             PanelTab::Agents => self.load_batches(window, cx),
-            PanelTab::Runs | PanelTab::Aside => {}
+            // Read from the transcript as it is.
+            PanelTab::Runs | PanelTab::Aside | PanelTab::Provenance => {}
         }
         cx.notify();
     }
