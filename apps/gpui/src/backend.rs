@@ -503,6 +503,32 @@ impl Backend {
         self.local(move |host| async move { host.memory(&project).await })
     }
 
+    pub fn memory_tidy(&self) -> Reply<wisp_dto::MemoryTidyAutomation> {
+        self.local(move |host| async move { Ok(host.memory_tidy().await) })
+    }
+
+    pub fn set_memory_tidy(&self, enabled: bool) -> Reply<wisp_dto::MemoryTidyAutomation> {
+        self.local(move |host| async move { host.set_memory_tidy(enabled).await })
+    }
+
+    pub fn run_memory_tidy_now(&self) -> Reply<wisp_dto::MemoryTidyAutomation> {
+        self.local(move |host| async move { Ok(host.run_memory_tidy_now().await) })
+    }
+
+    /// Applies (`true`) or dismisses one tidy proposal.
+    pub fn settle_memory_tidy(
+        &self,
+        id: String,
+        apply: bool,
+    ) -> Reply<wisp_dto::MemoryTidyAutomation> {
+        self.local(move |host| async move {
+            match apply {
+                true => host.apply_memory_tidy(&id).await,
+                false => host.dismiss_memory_tidy(&id).await,
+            }
+        })
+    }
+
     pub fn set_memory_enabled(&self, enabled: bool) -> Reply<()> {
         self.local(move |host| async move { host.set_memory_enabled(enabled).await })
     }

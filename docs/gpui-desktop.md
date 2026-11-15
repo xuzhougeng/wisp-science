@@ -191,7 +191,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Aside | The Aside tab (or the command palette) asks the conversation's model a question about the open conversation; the answer shows beside it and nothing is added to the conversation. Ask aside under a message opens it with that message quoted in the question |
 | Quoting | Quote under a message puts it in the message box as a quotation after what you were writing, ready to answer; a selected passage is copied with Cmd/Ctrl+C |
 | Favorites | A star under any message saves it as it reads now; an image in Artifacts can be saved as a figure. Highlights lists what this conversation saved; the Favorites page lists everything from every project, with search, a kind filter, the item in full, its source conversation and removal after a confirmation |
-| Memory | One switch; habits the model is shown in every project; this project's notes by day, which the model can search; add, edit and delete either, and save any message to one or the other |
+| Memory | One switch; habits the model is shown in every project; this project's notes by day, which the model can search; add, edit and delete either, and save any message to one or the other; a weekly tidy that proposes merging or retiring habits for you to apply or dismiss |
 | Memos | Your own notes per project: add, edit, pin, copy, delete after a confirmation, and put one into the message box. The model is never shown them |
 | Files | Project file browser, available before the first conversation; read-only text and Markdown preview, pictures (PNG, JPEG, GIF, WebP, SVG, BMP), and Jupyter notebooks as their cells with what each printed or returned (a figure is named, not drawn; Show as text gives the file itself); PDF, Word, Excel, PowerPoint, OpenDocument, RTF and EPUB documents as their text and tables, without their layout or pictures; new folder, new file, rename, and move to the project's trash; listed by name, newest first or largest first, folders first, in the order last chosen |
 | Composer | Native multiline input. Return sends and Shift+Return starts a new line, or, with the other choice in Settings, General, Return starts a new line and Cmd/Ctrl+Return sends; Cmd/Ctrl+Return always sends. While an input method is composing, Return goes to it. While a turn runs the same key queues the message: it is sent when the turn ends, or given to the running turn at once with the queue's lightning button |
@@ -1208,9 +1208,18 @@ Limits of this slice:
   turn this host runs, a paired phone's included: before, the search tool
   was always on and habits were never shown. Saving a message opens it for
   trimming; nothing is suggested by a model, and nothing is saved until you
-  choose where. The WebView's automatic proposals after a turn, the weekly
-  tidy, failure analysis and "clear all notes" are not ported. One entry or
-  habit holds 4,000 characters.
+  choose where. The WebView's automatic proposals after a turn, failure
+  analysis and "clear all notes" are not ported. One entry or habit holds
+  4,000 characters.
+- The habit tidy follows the WebView's `memory_tidy.rs` (its tests are
+  carried over): once a week while memory is on (on at first, looked for
+  with the scheduled tasks while the app is open), or with Run now, the
+  default model is shown the habits and proposes merges and retirements;
+  a proposal naming a habit it was not shown, or one an earlier proposal
+  took, is dropped. Nothing changes until a proposal is applied, and one
+  whose habits were edited since is no longer offered and cannot be
+  applied. A merge keeps the newest habit with the merged text. Project
+  notes are not tidied.
 - Memos use the WebView's table and limits (a body of 1 to 20,000 characters,
   a title of up to 200), so both desktops see the same notes on the same
   database. There is no search within memos and no `/memo` command in the
@@ -1361,7 +1370,9 @@ another as a habit and confirm it is listed under Habits in a second project
 too. Add a habit by hand, edit it, ask to delete it and press Escape. Open
 today's note, change it and save. Turn memory off and on. With a real model,
 ask something a habit should shape and confirm it does while memory is on and
-does not while it is off.
+does not while it is off. With two habits that say the same thing, press Run
+now under Tidy habits: after a moment a Merge proposal lists both with what
+they become; Apply leaves one habit with that text.
 Press the star under a reply: it fills; press it again: it empties. Save two
 messages, open Highlights and use one in the message box. Open Favorites from
 the sidebar, from the home page and from the palette; search for a word in one

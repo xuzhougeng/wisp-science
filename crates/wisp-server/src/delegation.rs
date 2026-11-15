@@ -512,7 +512,7 @@ fn task_prompt(request: &AgentDelegationRequest) -> String {
 
 /// Every JSON value in the final message; the WebView's
 /// `extract_json_candidates`.
-fn json_candidates(raw: &str) -> Vec<Value> {
+pub(crate) fn json_candidates(raw: &str) -> Vec<Value> {
     let trimmed = raw.trim();
     if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
         return vec![value];

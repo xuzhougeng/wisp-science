@@ -317,6 +317,8 @@ impl Server {
                     .await;
                 // The day's recaps are drafted once it is time.
                 server.daily_recap_tick().await;
+                // And the habits are looked over once a week.
+                server.memory_tidy_tick().await;
             }
         });
     }

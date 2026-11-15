@@ -1731,4 +1731,13 @@ pub const ZH: &[(&str, &str)] = &[
     ("Your research assistant keeps track of every project, remembers your plan and hands work to project conversations; it does no work itself.", "科研助理跟踪每个项目、记住你的计划，并把工作交给项目里的会话；它自己不做研究工作。"),
     ("Mark it done", "标记为完成"),
     ("Drop it", "放弃"),
+    ("Merge", "合并"),
+    ("Retire", "停用"),
+    ("Looking over the habits…", "正在检查习惯…"),
+    ("Looked over on {}: nothing to change", "{} 检查过：没有需要改的"),
+    ("Looked over on {}: {} to review", "{} 检查过：{} 项待处理"),
+    ("Tidy habits", "整理习惯"),
+    ("Once a week the model looks over the habits and proposes merging ones that say the same thing or retiring one a newer one replaces. Nothing changes until you apply a proposal.", "模型每周检查一次习惯，提议合并意思相同的条目，或停用被新条目取代的条目。在你采纳提议之前什么都不会改变。"),
+    ("Becomes: {}", "合并为：{}"),
+    ("Apply", "采纳"),
 ];

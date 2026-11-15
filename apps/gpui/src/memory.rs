@@ -120,8 +120,85 @@ pub fn habits(count: usize) -> String {
     }
 }
 
+/// What a tidy proposal does, in words.
+pub fn tidy_action(action: &str) -> &'static str {
+    match action {
+        "merge" => tr("Merge"),
+        _ => tr("Retire"),
+    }
+}
+
+/// How the weekly tidy last went.
+pub fn tidy_line<Tz: chrono::TimeZone>(tidy: &wisp_dto::MemoryTidyAutomation, zone: &Tz) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    use crate::i18n::fill;
+    if tidy.running {
+        return tr("Looking over the habits…").to_owned();
+    }
+    let Some(at) = tidy.last_run_at else {
+        return tr("Not run yet").to_owned();
+    };
+    let when = zone
+        .timestamp_opt(at, 0)
+        .earliest()
+        .map(|time| time.format("%Y-%m-%d").to_string())
+        .unwrap_or_default();
+    match &tidy.error {
+        Some(error) => fill(
+            tr("Failed {}: {}"),
+            &[&when, &error.lines().next().unwrap_or_default()],
+        ),
+        None if tidy.proposals.is_empty() => {
+            fill(tr("Looked over on {}: nothing to change"), &[&when])
+        }
+        None => fill(
+            tr("Looked over on {}: {} to review"),
+            &[&when, &tidy.proposals.len()],
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_tidy_says_how_it_last_went() {
+        use chrono::{FixedOffset, TimeZone};
+        let zone = FixedOffset::east_opt(8 * 3_600).unwrap();
+        let mut tidy = wisp_dto::MemoryTidyAutomation::default();
+        assert_eq!(tidy_line(&tidy, &zone), "Not run yet");
+        tidy.last_run_at = Some(
+            zone.with_ymd_and_hms(2026, 11, 15, 9, 0, 0)
+                .unwrap()
+                .timestamp(),
+        );
+        assert_eq!(
+            tidy_line(&tidy, &zone),
+            "Looked over on 2026-11-15: nothing to change"
+        );
+        tidy.proposals.push(wisp_dto::MemoryTidyProposal {
+            id: "p".into(),
+            action: "merge".into(),
+            memories: vec![],
+            text: "x".into(),
+            reason: String::new(),
+        });
+        assert_eq!(
+            tidy_line(&tidy, &zone),
+            "Looked over on 2026-11-15: 1 to review"
+        );
+        tidy.error = Some("model unreachable".into());
+        assert_eq!(
+            tidy_line(&tidy, &zone),
+            "Failed 2026-11-15: model unreachable"
+        );
+        tidy.running = true;
+        assert_eq!(tidy_line(&tidy, &zone), "Looking over the habits…");
+        assert_eq!(tidy_action("merge"), "Merge");
+        assert_eq!(tidy_action("retire"), "Retire");
+    }
+
     use super::*;
     use wisp_server::desktop::{GlobalMemory, MemoryNote};
 

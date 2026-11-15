@@ -21,6 +21,7 @@ mod export;
 mod files;
 mod follow_ups;
 pub mod mcp;
+mod memory_tidy;
 mod model_view;
 mod network;
 mod origin;
@@ -155,6 +156,8 @@ struct Inner {
     sweeping_deliveries: AtomicBool,
     /// The daily recap run is going.
     recapping: AtomicBool,
+    /// The memory tidy is running.
+    tidying: AtomicBool,
     /// Serializes making the research assistant's project.
     assistant_lock: tokio::sync::Mutex<()>,
 }
@@ -307,6 +310,7 @@ impl Server {
             delivering: Default::default(),
             sweeping_deliveries: AtomicBool::new(false),
             recapping: AtomicBool::new(false),
+            tidying: AtomicBool::new(false),
             assistant_lock: Default::default(),
         })))
     }

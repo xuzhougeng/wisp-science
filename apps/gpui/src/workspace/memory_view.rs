@@ -4,7 +4,7 @@
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     input::Input,
 };
@@ -32,6 +32,8 @@ impl Workspace {
         self.memory_request += 1;
         let request = self.memory_request;
         let reply = self.backend.memory(project.clone());
+        let tidy = self.backend.memory_tidy();
+        self.show_memory_tidy(tidy, window, cx);
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
             let _ = this.update(cx, |this, cx| {
@@ -46,6 +48,185 @@ impl Workspace {
             });
         })
         .detach();
+    }
+
+    /// Shows the weekly tidy once `reply` comes; while it runs, looks again
+    /// shortly, and reads the habits again once it has applied something.
+    fn show_memory_tidy(
+        &mut self,
+        reply: Reply<wisp_dto::MemoryTidyAutomation>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(tidy) => {
+                        if tidy.running && this.panel_tab == PanelTab::Memory {
+                            cx.spawn_in(window, async move |this, cx| {
+                                cx.background_executor()
+                                    .timer(std::time::Duration::from_secs(3))
+                                    .await;
+                                let _ = this.update_in(cx, |this, window, cx| {
+                                    let reply = this.backend.memory_tidy();
+                                    this.show_memory_tidy(reply, window, cx);
+                                });
+                            })
+                            .detach();
+                        }
+                        this.memory_tidy = Some(tidy);
+                    }
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Applies or dismisses one proposal, then reads the habits again.
+    fn settle_tidy(
+        &mut self,
+        id: String,
+        apply: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.error = None;
+        let reply = self.backend.settle_memory_tidy(id, apply);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(tidy) => this.memory_tidy = Some(tidy),
+                    Err(error) => this.error = Some(error),
+                }
+                this.load_memory(window, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// The weekly tidy: its switch, how it last went, and what it proposes.
+    fn tidy_card(&self, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let mut card = div()
+            .v_flex()
+            .gap_2()
+            .p_2()
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(cx.theme().border)
+            .child(div().text_sm().font_semibold().child(tr("Tidy habits")))
+            .child(div().text_xs().text_color(muted).child(tr(
+                "Once a week the model looks over the habits and proposes merging ones that say \
+                 the same thing or retiring one a newer one replaces. Nothing changes until you \
+                 apply a proposal.",
+            )));
+        let Some(tidy) = &self.memory_tidy else {
+            return card;
+        };
+        let enabled = tidy.enabled;
+        card = card
+            .child(
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("tidy-enabled")
+                            .label(if enabled { tr("On") } else { tr("Off") })
+                            .small()
+                            .selected(enabled)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                let reply = this.backend.set_memory_tidy(!enabled);
+                                this.show_memory_tidy(reply, window, cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("tidy-now")
+                            .label(tr("Run now"))
+                            .small()
+                            .ghost()
+                            .disabled(tidy.running)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                let reply = this.backend.run_memory_tidy_now();
+                                this.show_memory_tidy(reply, window, cx);
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(if tidy.error.is_some() && !tidy.running {
+                        cx.theme().danger
+                    } else {
+                        muted
+                    })
+                    .child(memory::tidy_line(tidy, &chrono::Local)),
+            );
+        for (index, proposal) in tidy.proposals.iter().enumerate() {
+            let mut entry = div()
+                .v_flex()
+                .gap_1()
+                .pl_2()
+                .border_l_2()
+                .border_color(cx.theme().border)
+                .child(
+                    div()
+                        .text_xs()
+                        .font_semibold()
+                        .child(memory::tidy_action(&proposal.action)),
+                );
+            for habit in &proposal.memories {
+                entry = entry.child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(format!("• {}", memory::preview(&habit.content, 160))),
+                );
+            }
+            if !proposal.text.is_empty() {
+                entry = entry.child(div().text_sm().child(crate::i18n::fill(
+                    tr("Becomes: {}"),
+                    &[&memory::preview(&proposal.text, 260)],
+                )));
+            }
+            if !proposal.reason.is_empty() {
+                entry = entry.child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(proposal.reason.clone()),
+                );
+            }
+            let (apply, dismiss) = (proposal.id.clone(), proposal.id.clone());
+            entry = entry.child(
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new(("tidy-apply", index))
+                            .label(tr("Apply"))
+                            .xsmall()
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.settle_tidy(apply.clone(), true, window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new(("tidy-dismiss", index))
+                            .label(tr("Dismiss"))
+                            .xsmall()
+                            .ghost()
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.settle_tidy(dismiss.clone(), false, window, cx)
+                            })),
+                    ),
+            );
+            card = card.child(entry);
+        }
+        card
     }
 
     /// Runs one change to memory and reads it again. `then` runs only if the
@@ -507,6 +688,7 @@ impl Workspace {
             ));
         }
 
+        list = list.child(self.tidy_card(cx));
         let today = view.today.clone();
         list = list.child(Self::memory_heading(
             tr("This project's notes"),

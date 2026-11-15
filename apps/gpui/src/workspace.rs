@@ -184,6 +184,8 @@ pub struct Workspace {
     recap_drafting: Option<i64>,
     /// The research assistant's plan for today.
     assistant_plan: Vec<wisp_dto::ResearchAssistantPlanItem>,
+    /// The weekly habit tidy, on the Memory tab.
+    memory_tidy: Option<wisp_dto::MemoryTidyAutomation>,
     /// The daily recap run, on the Scheduled tasks page.
     daily_recap: Option<wisp_dto::DailyRecapAutomation>,
     recap_time: Entity<InputState>,
@@ -1020,6 +1022,7 @@ impl Workspace {
             journey_search,
             recap_drafting: None,
             assistant_plan: Vec::new(),
+            memory_tidy: None,
             daily_recap: None,
             recap_time,
             schedules: None,
