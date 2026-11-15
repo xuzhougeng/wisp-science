@@ -104,10 +104,10 @@ impl Server {
     }
 
     /// Starts an interpreter afresh: what it held in memory is lost, files
-    /// it wrote stay.
-    pub async fn restart_runtime(&self, project: &str, session: &str, id: &str) -> Result<()> {
+    /// it wrote stay. Returns the new interpreter's id.
+    pub async fn restart_runtime(&self, project: &str, session: &str, id: &str) -> Result<String> {
         let (manager, info, root) = self.conversation_runtime(project, session, id).await?;
-        manager.restart(info.key, root.into()).await.map(drop)
+        Ok(manager.restart(info.key, root.into()).await?.runtime_id)
     }
 
     /// Runs code in an interpreter, as the researcher's own; returns what
@@ -301,6 +301,20 @@ mod tests {
                 .unwrap(),
             id
         );
+        // Restarted, it is a new interpreter, and the old one is gone.
+        let restarted = server
+            .restart_runtime(crate::PROJECT, &session, &id)
+            .await
+            .unwrap();
+        assert_ne!(restarted, id);
+        assert!(server
+            .runtime_objects(crate::PROJECT, &session, &id)
+            .await
+            .is_err());
+        assert!(server
+            .runtime_objects(crate::PROJECT, &session, &restarted)
+            .await
+            .is_ok());
         server.shutdown().await;
     }
 }

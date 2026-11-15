@@ -55,6 +55,7 @@ impl Workspace {
         }
         self.console_runtime = Some(id);
         self.console_objects = None;
+        self.console_scroll.scroll_to_bottom();
         self.layers.open(Layer::RuntimeConsole);
         self.console_input
             .update(cx, |input, cx| input.focus(window, cx));
@@ -84,7 +85,7 @@ impl Workspace {
             let _ = this.update(cx, |this, cx| {
                 if this.console_runtime.as_deref() == Some(id.as_str()) {
                     // An interpreter that cannot say lists nothing.
-                    this.console_objects = result.ok();
+                    this.console_objects = Some(result.unwrap_or_default());
                 }
                 cx.notify();
             });
@@ -119,6 +120,7 @@ impl Workspace {
                             &mut this.console_entries,
                             console::Entry::new(&code, output),
                         );
+                        this.console_scroll.scroll_to_bottom();
                         this.console_input
                             .update(cx, |input, cx| input.set_value("", window, cx));
                         this.load_console_objects(window, cx);
@@ -149,8 +151,11 @@ impl Workspace {
             let _ = this.update_in(cx, |this, window, cx| {
                 this.console_busy = false;
                 match result {
-                    Ok(()) => {
+                    // The new interpreter has an id of its own.
+                    Ok(id) => {
                         this.console_entries.clear();
+                        this.console_runtime = Some(id);
+                        this.console_objects = None;
                         this.load_console_objects(window, cx);
                         this.load_status(window, cx);
                     }
@@ -245,7 +250,8 @@ impl Workspace {
             .v_flex()
             .gap_2()
             .max_h(px(220.))
-            .overflow_y_scroll();
+            .overflow_y_scroll()
+            .track_scroll(&self.console_scroll);
         for entry in &self.console_entries {
             let mut shown = div().v_flex().gap_1().child(
                 div()

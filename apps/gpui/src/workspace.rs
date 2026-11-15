@@ -194,6 +194,8 @@ pub struct Workspace {
     console_entries: Vec<crate::console::Entry>,
     console_input: Entity<InputState>,
     console_busy: bool,
+    /// Kept at the newest run, so what was just run is what shows.
+    console_scroll: ScrollHandle,
     /// The research mandates page.
     mandates: Option<Vec<wisp_dto::MandateOverview>>,
     /// The mandate the form changes; none for a new one.
@@ -1062,6 +1064,7 @@ impl Workspace {
             console_entries: Vec::new(),
             console_input,
             console_busy: false,
+            console_scroll: ScrollHandle::new(),
             mandates: None,
             mandate_editing: None,
             mandate_project: None,

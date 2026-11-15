@@ -1584,7 +1584,7 @@ impl Backend {
         self.local(move |host| async move { host.runtime_objects(&project, &session, &id).await })
     }
 
-    pub fn restart_runtime(&self, project: String, session: String, id: String) -> Reply<()> {
+    pub fn restart_runtime(&self, project: String, session: String, id: String) -> Reply<String> {
         self.local(move |host| async move { host.restart_runtime(&project, &session, &id).await })
     }
 
