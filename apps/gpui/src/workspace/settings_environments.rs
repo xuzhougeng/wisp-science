@@ -614,6 +614,22 @@ impl Workspace {
                             },
                         )),
                     )
+                    .child({
+                        let context = format!("ssh:{}", host.alias);
+                        Button::new(SharedString::from(format!(
+                            "environment-terminal-{}",
+                            host.alias
+                        )))
+                        .label(tr("Terminal"))
+                        .xsmall()
+                        .ghost()
+                        .tooltip(tr("Open a terminal on this host in the system's terminal"))
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.open_host_terminal(context.clone(), None, window, cx)
+                            },
+                        ))
+                    })
                     .child(
                         Button::new(SharedString::from(format!(
                             "environment-edit-{}",

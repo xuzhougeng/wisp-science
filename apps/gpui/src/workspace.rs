@@ -1627,6 +1627,39 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Opens the system's terminal on an execution context (an SSH host,
+    /// in `folder` there when given), as many times as asked.
+    pub(super) fn open_host_terminal(
+        &mut self,
+        context: String,
+        folder: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let project = self
+            .state
+            .project
+            .clone()
+            .or_else(|| self.projects.first().map(|project| project.id.clone()))
+            .unwrap_or_default();
+        let reply = self.backend.terminal_launch(project, context, folder);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                // Started from the home folder; the command goes on from there.
+                let here = dirs::home_dir().unwrap_or_else(std::env::temp_dir);
+                this.error = match result {
+                    Ok(launch) => {
+                        crate::terminal::run(&here, &launch.program, &launch.args, &[]).err()
+                    }
+                    Err(error) => Some(error),
+                };
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Tells a user who is not looking at the window that the open
     /// conversation needs them, in the way they chose.
     fn tell_user(&self, event: crate::notify::Event, window: &Window) {

@@ -1784,4 +1784,7 @@ pub const ZH: &[(&str, &str)] = &[
     ("Title copied.", "已复制标题。"),
     ("Debug request", "调试请求"),
     ("Save what this conversation sends the model as a JSON file, with sizes", "把这个会话发给模型的内容连同大小保存为 JSON 文件"),
+    ("Terminal", "终端"),
+    ("Open a terminal on this host in the system's terminal", "在系统终端中打开这台主机的终端"),
+    ("Open a terminal on this host, in this folder", "在这台主机的这个文件夹打开终端"),
 ];

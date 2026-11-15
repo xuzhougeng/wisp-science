@@ -153,7 +153,7 @@ to find in the running app.
 | Trajectory [轨迹] | Yes | Done: a dialog with the totals and every turn's steps; a step opens to its whole text | store |
 | Research archive [研究归档] | Yes | Partial: the model drafts a report and scripts, you edit title and report, and freezing writes them into the project and makes the conversation read-only; no choice of files to snapshot or delete, no script editing, no continuation link | store |
 | Pending decisions [N 个待处理] | Yes | Done (sidebar inbox) | served |
-| Terminal [打开终端] | Yes | Partial: opens the system's terminal in the project folder or the folder being browsed; no terminal inside the app and none on SSH hosts | tauri |
+| Terminal [打开终端] | Yes | Partial: opens the system's terminal in the project folder or the folder being browsed, and on an SSH host (from its row in Environments, or in the host folder being browsed), as many as wanted; there is no terminal drawn inside the app | tauri |
 | Toggle right panel [切换面板] | Yes | Partial: Files, Runs and Artifacts tabs; the other tools are not ported | ui |
 
 ## 6. Right panel
@@ -269,7 +269,7 @@ row says what is there.
 | Runs | Review a remote run's workspace: download, delete, clean up; remote files pane — an SSH host's folders can be looked at from Files; the rest is Missing | shared |
 | Environments | Add or edit an SSH host (key or password, ProxyJump, test), import WSL, interpreter paths, storage locations | store + shared |
 | Runtimes | Python / R runtime cards: start, stop, restart, object inspector, console, plots — the interpreters a conversation keeps show above the composer and can be stopped; the rest is Missing | shared |
-| Terminal | Several terminals, choose the environment, collapse, close — one terminal in the project folder is there; the rest is Missing | tauri |
+| Terminal | Several terminals, choose the environment, collapse, close — terminals open in the system's terminal, any number of them, on this computer or an SSH host; one drawn inside the app is Missing | tauri |
 | Agents | Swarm progress, agent workflow runs (draft, approve, run, cancel, retry), method-search runs — swarm progress of `map_items` is shown in the Agents tab while the app runs; an Agents tab lists a conversation's helpers, workflows run as one conversation (section 8), and the agent's delegated batches run with a plan card for approval and are listed there with Stop and Run again, in the turn or in the background; drafts, budget edits and method-search runs are Missing | store |
 | Library | Versions of saved code, edit code, insert into chat | store |
 | Publication | Revisions, manuscript items, evidence binding, readiness waivers, reproduction check, capsule — papers, items, evidence from results and runs, new revisions, the readiness check with waivers and finalizing are there (section 7); reproduction and capsules are Missing | store |

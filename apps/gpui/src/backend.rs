@@ -1563,6 +1563,19 @@ impl Backend {
         self.local(move |host| async move { host.join_lab_knowledge_base(&parent).await })
     }
 
+    /// What the system's terminal runs to open a shell on a context.
+    pub fn terminal_launch(
+        &self,
+        project: String,
+        context: String,
+        folder: Option<String>,
+    ) -> Reply<wisp_server::desktop::TerminalLaunch> {
+        self.local(move |host| async move {
+            host.terminal_launch(&project, &context, folder.as_deref())
+                .await
+        })
+    }
+
     /// What the conversation sends the model, as JSON, and a file name.
     pub fn debug_request(&self, project: String, session: String) -> Reply<(String, String)> {
         self.local(move |host| async move { host.debug_request(&project, &session).await })

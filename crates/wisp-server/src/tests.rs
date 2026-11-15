@@ -9550,6 +9550,50 @@ async fn a_conversations_request_is_exported_as_json() {
     server.shutdown().await;
 }
 
+#[tokio::test]
+async fn a_terminal_on_an_ssh_host_opens_with_its_settings_and_folder() {
+    use desktop::SshHostRow;
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    server
+        .save_ssh_host(SshHostRow {
+            alias: "gpu".into(),
+            host_name: "10.0.0.8".into(),
+            user: "lab".into(),
+            port: Some(2222),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let launch = server
+        .terminal_launch(PROJECT, "ssh:gpu", None)
+        .await
+        .unwrap();
+    assert_eq!(launch.program, "ssh");
+    assert!(launch.args.windows(2).any(|pair| pair == ["-p", "2222"]));
+    assert_eq!(launch.args.last().unwrap(), "lab@10.0.0.8");
+    // In a folder: the folder is one quoted word of the remote command.
+    let launch = server
+        .terminal_launch(PROJECT, "ssh:gpu", Some("/data/it's; rm -rf ~"))
+        .await
+        .unwrap();
+    assert_eq!(
+        launch.args.last().unwrap(),
+        "cd '/data/it'\\''s; rm -rf ~' && exec \"${SHELL:-/bin/sh}\" -l"
+    );
+    assert!(server
+        .terminal_launch(PROJECT, "ssh:gone", None)
+        .await
+        .is_err());
+    assert!(server
+        .terminal_launch(PROJECT, "local", None)
+        .await
+        .is_err());
+    server.shutdown().await;
+}
+
 /// A ChatGPT access token as Codex CLI keeps it (unsigned; claims only).
 fn chatgpt_token(account: &str, exp: i64, email: &str) -> String {
     use base64::Engine;

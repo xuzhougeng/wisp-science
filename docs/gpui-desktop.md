@@ -141,7 +141,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Sample project | The home page's flask button makes a small sample project in a folder you choose and opens it: made-up counts for twelve samples, a script, and a README of things to ask |
 | Host folders | With an SSH host saved, the Files tab offers it beside the project: its folders are listed, to walk through and see what is there |
 | File origin | A file's preview has Origin: which tool call last wrote it, with the code it ran, the project files it read and the conversation, which it can open |
-| Terminal | The Files tab's terminal button (or the command palette) opens the system's terminal in the folder being browsed |
+| Terminal | The Files tab's terminal button (or the command palette) opens the system's terminal in the folder being browsed; Terminal on an SSH host's row in Environments, or over a host's folder in Files, opens one on that host (in that folder), as many as wanted |
 | Updates | Settings, General, has Check for updates: it says whether a newer release has been published and opens the release page |
 | Tabs | The conversations you open in a window line up as tabs above the conversation, across projects; click one to go back to it, close one to drop it from the strip |
 | Sidebar | The project's sidebar hides for more room and comes back with the button left of the conversation's title or Cmd/Ctrl+B; it stays as it was left, across restarts. Cmd/Ctrl+Shift+F brings it back if hidden and puts you in its search, which finds conversations by their title or by any word in their messages |
@@ -1094,6 +1094,12 @@ Limits of this slice:
   Evidence is not reviewed or marked from here, and items are flat:
   they are shown in the order they were added and cannot be nested or
   reordered.
+- Terminals open in the system's terminal rather than inside the app. On
+  an SSH host the command is the WebView's interactive `ssh` for that host
+  (port, key or password prompt, jump hosts), with the browsed folder as a
+  quoted `cd` when there is one; a WSL distribution would open with
+  `wsl.exe -d` in the project folder. Every press opens another one; they
+  are closed in the terminal itself.
 - Debug request follows the WebView's `debug_request.rs` in its
   stored-messages form (this host keeps no agent between turns): the saved
   working set with each message's size and token estimate, the system
@@ -1439,6 +1445,11 @@ In the Files tab go into a folder and press the terminal button: the
 system's terminal opens in that folder. Do the same from the command
 palette. With the project's folder moved away, confirm a message says it
 is not there.
+With an SSH host saved, press Terminal on its row in Settings,
+Environments: the system's terminal opens and connects to it (a password
+is asked there). Browse the host's folders in Files, go into one and press
+Terminal: the shell starts in that folder. Press it again: a second
+terminal opens.
 Have the model start a run on this computer that prints more than a
 screenful, open the Runs tab, press Output and then Whole log: everything
 the run wrote is shown, stdout and stderr apart. Press it again while a

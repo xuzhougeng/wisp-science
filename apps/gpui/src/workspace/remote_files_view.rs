@@ -126,6 +126,21 @@ impl Workspace {
                                     }
                                 })),
                         )
+                        .child({
+                            let (context, folder) = (format!("ssh:{alias}"), shown.to_owned());
+                            Button::new("remote-terminal")
+                                .label(tr("Terminal"))
+                                .small()
+                                .tooltip(tr("Open a terminal on this host, in this folder"))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.open_host_terminal(
+                                        context.clone(),
+                                        Some(folder.clone()),
+                                        window,
+                                        cx,
+                                    )
+                                }))
+                        })
                         .child(
                             Button::new("remote-reload")
                                 .label(tr("Reload"))

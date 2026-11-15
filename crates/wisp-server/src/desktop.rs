@@ -2726,6 +2726,62 @@ impl Server {
     /// One folder of a saved SSH host, to look at: `path` empty is the
     /// home folder. The host has to have passed a check, like for runs.
     /// Nothing on the host is changed.
+    /// What the system's terminal runs to open a shell on an execution
+    /// context, as the WebView's terminal launches it: `ssh` for an SSH
+    /// host, in `folder` on it when one is given, and `wsl.exe` for a WSL
+    /// distribution, in the project's folder. A password is typed in the
+    /// terminal; it is never put on the command line.
+    pub async fn terminal_launch(
+        &self,
+        project: &str,
+        context: &str,
+        folder: Option<&str>,
+    ) -> Result<TerminalLaunch> {
+        use wisp_runs::ssh_hosts;
+        let context = self
+            .0
+            .store
+            .get_execution_context(context)
+            .await?
+            .context("That environment is no longer saved")?;
+        match context.kind {
+            wisp_store::ExecutionContextKind::Ssh => {
+                let connection = ssh_hosts::SshConnection::from_execution_context(&context)
+                    .map_err(anyhow::Error::msg)?;
+                let mut args = connection
+                    .interactive_ssh_args()
+                    .map_err(anyhow::Error::msg)?;
+                if let Some(folder) = folder.map(str::trim).filter(|folder| !folder.is_empty()) {
+                    args.push(format!(
+                        "cd {} && exec \"${{SHELL:-/bin/sh}}\" -l",
+                        shell_quote(folder)
+                    ));
+                }
+                Ok(TerminalLaunch {
+                    program: "ssh".into(),
+                    args,
+                })
+            }
+            wisp_store::ExecutionContextKind::Wsl => {
+                let config: serde_json::Value =
+                    serde_json::from_str(&context.config_json).unwrap_or_default();
+                let distro = config
+                    .get("distro")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_else(|| context.id.strip_prefix("wsl:").unwrap_or(&context.id))
+                    .to_owned();
+                let root = self.project_root(project).await?;
+                Ok(TerminalLaunch {
+                    program: "wsl.exe".into(),
+                    args: vec!["-d".into(), distro, "--cd".into(), root],
+                })
+            }
+            wisp_store::ExecutionContextKind::Local => {
+                bail!("This computer's terminal opens in the project folder")
+            }
+        }
+    }
+
     pub async fn remote_directory(&self, alias: &str, path: &str) -> Result<RemoteDirectory> {
         self.remote_directory_with(alias, path, self.0.runs.runner_ref())
             .await
@@ -5528,6 +5584,18 @@ fn preference_key(name: &str) -> Result<String> {
 /// The key the WebView desktop uses for the same switch.
 fn plan_mode_key(session: &str) -> String {
     format!("frame_plan_mode:{session}")
+}
+
+/// A program and its arguments for the system's terminal to run.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalLaunch {
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+/// One word for a POSIX shell, whatever it holds.
+fn shell_quote(word: &str) -> String {
+    format!("'{}'", word.replace('\'', r"'\''"))
 }
 
 pub(crate) fn model_choice_key(session: &str) -> String {
