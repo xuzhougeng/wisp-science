@@ -83,14 +83,13 @@ impl Server {
                 RuntimeKey::r(root.clone(), LOCAL_CONTEXT_ID)
             }
         };
-        if let Some(running) = manager
-            .list()
-            .into_iter()
-            .find(|info| info.key == key && info.status != wisp_runtime::RuntimeStatus::Dead)
-        {
-            return Ok(running.runtime_id);
+        match manager.list().into_iter().find(|info| info.key == key) {
+            Some(info) if info.status != wisp_runtime::RuntimeStatus::Dead => Ok(info.runtime_id),
+            // One that stopped, or could not start (say Python was not
+            // there yet), is started afresh rather than reported dead.
+            Some(_) => Ok(manager.restart(key, root.into()).await?.runtime_id),
+            None => Ok(manager.start(key, root.into()).await?.runtime_id),
         }
-        Ok(manager.start(key, root.into()).await?.runtime_id)
     }
 
     /// The variables an interpreter holds, with their type and a summary.
@@ -222,6 +221,86 @@ mod tests {
             .runtime_objects("other", &session, "missing")
             .await
             .is_err());
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn an_interpreter_that_could_not_start_starts_once_it_can() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct Idle;
+        #[async_trait::async_trait]
+        impl wisp_runtime::RuntimeKernel for Idle {
+            async fn execute(
+                &mut self,
+                _: &str,
+                _: &str,
+                _: Option<&str>,
+                _: &[String],
+                _: &wisp_runtime::RuntimeOutput,
+            ) -> Result<wisp_runtime::KernelResp> {
+                Ok(Default::default())
+            }
+            async fn inspect(&mut self, _: &str) -> Result<RuntimeObjectList> {
+                Ok(Default::default())
+            }
+            async fn shutdown(&mut self) -> Result<()> {
+                Ok(())
+            }
+        }
+        /// Fails until Python is "installed".
+        struct Launcher(Arc<AtomicBool>);
+        #[async_trait::async_trait]
+        impl wisp_runtime::RuntimeLauncher for Launcher {
+            async fn launch(
+                &self,
+                _: &RuntimeKey,
+                _: &std::path::Path,
+            ) -> Result<wisp_runtime::LaunchedRuntime> {
+                ensure!(
+                    self.0.load(Ordering::SeqCst),
+                    "Python interpreter not found"
+                );
+                Ok(wisp_runtime::LaunchedRuntime::new(
+                    Box::new(Idle),
+                    wisp_runtime::RuntimeMetadata::default(),
+                ))
+            }
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let server = Server::open_with_models(
+            crate::tests::config(temp.path()),
+            crate::tests::models(Arc::default(), false),
+        )
+        .await
+        .unwrap();
+        let session = server.create_conversation(crate::PROJECT).await.unwrap();
+        let installed = Arc::new(AtomicBool::new(false));
+        let manager = RuntimeManager::new(Arc::new(Launcher(installed.clone())));
+        *server.session(&session).runtime.lock().unwrap() = Some(manager);
+        let missing = server
+            .start_runtime(crate::PROJECT, &session, RuntimeLanguage::Python)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            missing.contains("Python interpreter not found"),
+            "{missing}"
+        );
+        // Once Python is there, asking again starts it rather than saying
+        // the first try died.
+        installed.store(true, Ordering::SeqCst);
+        let id = server
+            .start_runtime(crate::PROJECT, &session, RuntimeLanguage::Python)
+            .await
+            .unwrap();
+        // And asking while it runs gives the same one.
+        assert_eq!(
+            server
+                .start_runtime(crate::PROJECT, &session, RuntimeLanguage::Python)
+                .await
+                .unwrap(),
+            id
+        );
         server.shutdown().await;
     }
 }
