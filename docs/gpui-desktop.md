@@ -370,9 +370,8 @@ Limits of this slice:
   after a conflict preflight, otherwise (or on a conflict) they are kept
   as a patch artifact of its conversation and the project is left as it
   was; the worktree is removed either way. Not ported: an expert's own
-  model, the other budget limits (tool calls, cost), ACP executors,
-  literature and web research capabilities, and method-search run
-  activities.
+  model, the other budget limits (tool calls, cost), ACP executors, and
+  literature and web research capabilities.
 - Method search follows the WebView's `method_search.rs`. Its first half
   is here: `prepare_method_search`, offered to a conversation's agent and
   to delegated tasks that may run code, freezes a Python target symbol,
@@ -393,8 +392,17 @@ Limits of this slice:
   boundary, Resume from the checkpoint, and Cancel (also the Runs tab's
   Cancel); candidates are proposed by the conversation's sub-agent model,
   or its own, capped at 8192 output tokens. A search the app closed on is
-  paused at the next start, and one running at shutdown pauses. Still to
-  port: the batch step that starts a search, and its GPUI run card.
+  paused at the next start, and one running at shutdown pauses. A
+  delegated batch starts a search as the WebView's run activity: a task of
+  `task_kind: "run_activity"` names a local `method_search`, the task that
+  prepares the contract (a direct dependency whose `output_schema`
+  requires `method_search_spec_artifact_version_id`) and bounded budgets
+  (1–50 candidates, at most a week of wall time, an evaluator of at most
+  300 s, a cost ceiling). The step is sealed to this computer's execution
+  context and the batch's default model, so such a batch is always
+  approved first; when the step is reached its Run waits in Draft until it
+  is started, and when the search ends the batch carries on from it and
+  its result reaches the conversation. Still to port: the GPUI run card.
 - Explorations follow the WebView's `exploration_commands.rs`,
   `exploration_promotion.rs` and `exploration_workspace.rs`, whose
   services and tests are carried over. The first candidate of a round

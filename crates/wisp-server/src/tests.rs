@@ -221,6 +221,110 @@ impl Provider for DelegatingModel {
     }
 }
 
+/// Delegates, in the background, a task that hands back a frozen method
+/// search contract and a search over it; proposes candidates when asked.
+struct SearchingModel {
+    spec: Arc<std::sync::Mutex<String>>,
+    proposals: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl Provider for SearchingModel {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _: &[ToolSchema],
+    ) -> wisp_llm::Result<Completion> {
+        // Side calls (a title, follow-ups) are not candidates.
+        let proposing = messages
+            .iter()
+            .any(|m| m.content.as_text().contains("frozen scientific evaluator"));
+        if !proposing {
+            return Ok(Completion {
+                content: "{}".into(),
+                finish_reason: Some("stop".into()),
+                ..Default::default()
+            });
+        }
+        let added = self.proposals.fetch_add(1, Ordering::SeqCst) + 1;
+        Ok(Completion {
+            content: json!({
+                "replacement": format!("def fit_model(rows):\n    return len(rows) + {added}\n"),
+                "rationale": format!("candidate {added}"),
+                "family": "linear",
+            })
+            .to_string(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        messages: &[Message],
+        _: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        let said = |needle: &str| {
+            messages
+                .iter()
+                .any(|m| m.content.as_text().contains(needle))
+        };
+        let last_tool = messages
+            .iter()
+            .rev()
+            .find(|m| m.role == wisp_llm::Role::Tool)
+            .map(|m| m.content.as_text());
+        let text = if said("Task: Freeze the contract") {
+            json!({"method_search_spec_artifact_version_id": *self.spec.lock().unwrap()})
+                .to_string()
+        } else if said("<background_agent_completions>") {
+            "Search reported.".to_owned()
+        } else if last_tool.is_none() {
+            return Ok(Completion {
+                tool_calls: vec![ToolCall {
+                    id: "delegate-1".into(),
+                    kind: "function".into(),
+                    function: wisp_llm::FunctionCall {
+                        name: "delegate_tasks".into(),
+                        arguments: json!({
+                            "goal": "Find a better fit",
+                            "background": true,
+                            "tasks": [
+                                {"id": "prep", "instruction": "Freeze the contract", "capabilities": ["reasoning"],
+                                 "output_schema": {"type": "object",
+                                    "properties": {"method_search_spec_artifact_version_id": {"type": "string"}},
+                                    "required": ["method_search_spec_artifact_version_id"]}},
+                                {"id": "search", "instruction": "Search for a better fit", "task_kind": "run_activity",
+                                 "depends_on": ["prep"],
+                                 "run_activity": {"activity": "method_search", "input_task_id": "prep",
+                                    "max_candidates": 3, "max_wall_seconds": 3600,
+                                    "max_evaluator_seconds": 30, "max_cost_microunits": 1000000}},
+                            ],
+                        })
+                        .to_string(),
+                    },
+                }],
+                finish_reason: Some("tool_calls".into()),
+                ..Default::default()
+            });
+        } else {
+            "Started in the background.".to_owned()
+        };
+        sink.on_text(&text);
+        Ok(Completion {
+            content: text,
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+}
+
 /// Delegates one isolated task that writes a note in its worktree.
 struct IsolatingModel;
 
@@ -9449,6 +9553,105 @@ async fn a_subagent_works_in_its_own_conversation_and_reports_back() {
         .subagent_status(&project, &child, Some(&parent))
         .await
         .is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_delegated_method_search_waits_for_start_then_runs_and_reports_back() {
+    use crate::method_search::control::testing::{prepare, ScriptedEvaluator};
+    let temp = tempfile::tempdir().unwrap();
+    let spec = Arc::new(std::sync::Mutex::new(String::new()));
+    let proposals = Arc::new(AtomicUsize::new(0));
+    let factory: ModelFactory = {
+        let (spec, proposals) = (spec.clone(), proposals.clone());
+        Arc::new(move |_| {
+            Box::new(SearchingModel {
+                spec: spec.clone(),
+                proposals: proposals.clone(),
+            })
+        })
+    };
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    server.set_method_search_evaluator(Arc::new(ScriptedEvaluator));
+    let root = std::path::PathBuf::from(server.project_root(PROJECT).await.unwrap());
+    let parent = create(&server).await;
+    // The contract the preparing task hands back, frozen beforehand.
+    let prepared = prepare(&server.0.store, PROJECT, &root, &parent, 3).await;
+    *spec.lock().unwrap() = prepared.method_search_spec_artifact_version_id.clone();
+
+    send(&server, &parent, "search for a better fit")
+        .await
+        .unwrap();
+    // A method search is always approved first.
+    let pending = wait_for(&server, &parent, |s| !s.approvals.is_empty()).await;
+    assert!(
+        pending.approvals[0].message.contains("search"),
+        "{}",
+        pending.approvals[0].message
+    );
+    server
+        .answer_approval(
+            PROJECT,
+            &parent,
+            &pending.approvals[0].approval_id,
+            true,
+            desktop::Remember::No,
+        )
+        .await
+        .unwrap();
+    turn_done(&server, &parent).await;
+
+    // The search waits in Draft, linked to its step, until it is started.
+    let store = &server.0.store;
+    let run_id = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        loop {
+            let found = store
+                .list_runs_by_project(PROJECT)
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|run| run.kind == "method_search");
+            if let Some(run) = found {
+                return run.id;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the batch must make the search's Run");
+    let details = server.method_search_run(PROJECT, &run_id).await.unwrap();
+    assert_eq!(details.run.status, wisp_store::RunStatus::Draft);
+    assert!(details.activity.is_some());
+    assert_eq!(proposals.load(Ordering::SeqCst), 0);
+    server.start_method_search(PROJECT, &run_id).await.unwrap();
+
+    // It proposes and scores its candidates, promotes the best, and the
+    // batch's result comes back to the conversation.
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let delivered = texts_of(&server, &parent)
+                .await
+                .iter()
+                .any(|text| text == "Search reported.");
+            if delivered && !server.session(&parent).live.lock().unwrap().running {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the search must end and its result be delivered");
+    let details = server.method_search_run(PROJECT, &run_id).await.unwrap();
+    assert_eq!(details.run.status, wisp_store::RunStatus::Succeeded);
+    assert!(proposals.load(Ordering::SeqCst) >= 1);
+    assert!(!details.candidates.is_empty());
+    assert!(!details.outputs.is_empty());
+    let batch = &server.delegated_batches(PROJECT, &parent).await.unwrap()[0];
+    assert_eq!(batch.status, "succeeded");
+    let search = batch.tasks.iter().find(|task| task.id == "search").unwrap();
+    assert_eq!(search.status, "succeeded");
     server.shutdown().await;
 }
 

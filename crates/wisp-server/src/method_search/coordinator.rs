@@ -89,6 +89,8 @@ pub(crate) struct StoreWorkflowRunActivityDriver {
     project_id: String,
     project_root: PathBuf,
     generators: Arc<dyn CandidateGeneratorSource>,
+    /// The local Python evaluator, or what a test puts in its place.
+    evaluator: Arc<dyn MethodSearchEvaluator>,
 }
 
 impl StoreWorkflowRunActivityDriver {
@@ -97,21 +99,31 @@ impl StoreWorkflowRunActivityDriver {
         project_id: String,
         project_root: PathBuf,
         generators: Arc<dyn CandidateGeneratorSource>,
+        evaluator: Arc<dyn MethodSearchEvaluator>,
     ) -> Self {
         Self {
             store,
             project_id,
             project_root,
             generators,
+            evaluator,
         }
     }
 
     fn spec_version_id(request: &wisp_core::WorkflowRunActivityRequest) -> Result<String, String> {
+        let pointer = &request.activity.spec_output_pointer;
         request
             .input
             .get("dependency_results")
             .and_then(|value| value.get(&request.activity.input_task_id))
-            .and_then(|value| value.get(&request.activity.spec_output_pointer))
+            // A task with its own output schema delivers inside the
+            // `data` envelope; a bare object is read as it is.
+            .and_then(|value| {
+                value
+                    .get("data")
+                    .and_then(|data| data.get(pointer))
+                    .or_else(|| value.get(pointer))
+            })
             .and_then(serde_json::Value::as_str)
             .filter(|value| !value.trim().is_empty())
             .map(str::to_string)
@@ -303,7 +315,6 @@ impl StoreWorkflowRunActivityDriver {
                 return terminal_activity_response(&self.store, &request.request_id, &run_id).await;
             }
         };
-        let evaluator = local_evaluator();
         loop {
             let status = self
                 .store
@@ -323,7 +334,7 @@ impl StoreWorkflowRunActivityDriver {
                 &self.project_root,
                 &run_id,
                 generator.as_ref(),
-                &evaluator,
+                self.evaluator.as_ref(),
             )
             .await
             {
@@ -2441,6 +2452,47 @@ mod tests {
         PrepareMethodSearchRequest,
     };
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+    fn activity_request(dependency: serde_json::Value) -> wisp_core::WorkflowRunActivityRequest {
+        wisp_core::WorkflowRunActivityRequest {
+            request_id: "request".into(),
+            workflow_id: "workflow".into(),
+            step_id: "workflow:search".into(),
+            activity: wisp_core::RunActivitySpec {
+                activity: "method_search".into(),
+                context_id: "local".into(),
+                context_revision: "revision".into(),
+                input_task_id: "workflow:prep".into(),
+                spec_output_pointer: "method_search_spec_artifact_version_id".into(),
+                max_candidates: 3,
+                max_wall_seconds: 60,
+                max_evaluator_seconds: 10,
+                max_cost_microunits: 1,
+                provider_profile_id: None,
+                model_profile_id: None,
+                approval_reasons: Vec::new(),
+                integrity_hash: String::new(),
+            },
+            input: serde_json::json!({"dependency_results": {"workflow:prep": dependency}}),
+        }
+    }
+
+    #[test]
+    fn the_frozen_contract_is_found_inside_or_outside_the_task_envelope() {
+        type Driver = StoreWorkflowRunActivityDriver;
+        let enveloped = activity_request(serde_json::json!({
+            "summary": "Structured task output is available in data.",
+            "data": {"method_search_spec_artifact_version_id": "spec-1"},
+            "artifacts": [],
+        }));
+        assert_eq!(Driver::spec_version_id(&enveloped).unwrap(), "spec-1");
+        let bare = activity_request(
+            serde_json::json!({"method_search_spec_artifact_version_id": "spec-2"}),
+        );
+        assert_eq!(Driver::spec_version_id(&bare).unwrap(), "spec-2");
+        let missing = activity_request(serde_json::json!({"data": {}}));
+        assert!(Driver::spec_version_id(&missing).is_err());
+    }
 
     struct TestDirectory(PathBuf);
 

@@ -118,13 +118,28 @@ impl Server {
         Ok((self.0.models)(provider))
     }
 
-    fn method_search_evaluator(&self) -> Arc<dyn MethodSearchEvaluator> {
+    pub(crate) fn method_search_evaluator(&self) -> Arc<dyn MethodSearchEvaluator> {
         self.0
             .method_search_evaluator
             .read()
             .unwrap()
             .clone()
             .unwrap_or_else(|| Arc::new(coordinator::local_evaluator()))
+    }
+
+    /// The revision of this computer's execution context, which a method
+    /// search step is sealed with: a search refuses to run on a context
+    /// changed since it was approved.
+    pub(crate) async fn local_context_revision(&self) -> Option<String> {
+        let context = self
+            .0
+            .store
+            .get_execution_context(wisp_runtime::LOCAL_CONTEXT_ID)
+            .await
+            .ok()
+            .flatten()?;
+        let value = serde_json::to_value(&context).ok()?;
+        Some(wisp_store::canonical_json_sha256(&value).1)
     }
 
     /// Lets tests evaluate candidates without the local Python.
@@ -385,10 +400,20 @@ impl Server {
 
     /// Once a search has ended, the batch step that started it, if one
     /// did, is settled with its result.
+    /// Here no batch is waiting on the search in this run of the app (it
+    /// was resumed after a restart), so the batch is carried on from its
+    /// recorded steps, as the WebView's `continue_recovered_workflow` does.
     pub(crate) async fn continue_after_method_search(&self, run_id: &str) {
-        if let Err(error) = coordinator::settle_linked_workflow_attempt(&self.0.store, run_id).await
-        {
-            tracing::error!(%run_id, %error, "Could not settle the batch step of a method search");
+        match coordinator::settle_linked_workflow_attempt(&self.0.store, run_id).await {
+            Ok(Some(workflow)) => {
+                if let Err(error) = self.continue_delegated_batch(&workflow).await {
+                    tracing::error!(%run_id, %workflow, %error, "Could not carry on a batch after its method search");
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::error!(%run_id, %error, "Could not settle the batch step of a method search");
+            }
         }
     }
 }

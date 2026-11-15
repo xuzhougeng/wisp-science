@@ -90,7 +90,14 @@ struct TaskArgs {
     instruction: String,
     #[serde(default)]
     depends_on: Vec<String>,
+    #[serde(default)]
     capabilities: Vec<String>,
+    /// `agent` (the default) or `run_activity`: a step the host runs
+    /// itself, a method search over the contract a dependency prepared.
+    #[serde(default)]
+    task_kind: Option<String>,
+    #[serde(default)]
+    run_activity: Option<RunActivityArgs>,
     #[serde(default)]
     output_schema: Option<Value>,
     /// One of the researcher's experts to do the task as.
@@ -105,6 +112,35 @@ struct TaskArgs {
     /// Work in a temporary Git worktree, merged back when the task succeeds.
     #[serde(default)]
     isolated: bool,
+}
+
+/// The pointer a method search reads its frozen spec's id from, in what
+/// the preparing task returned.
+const SPEC_POINTER: &str = "method_search_spec_artifact_version_id";
+
+/// A method search step, as the WebView's `RunActivityProposal`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RunActivityArgs {
+    activity: String,
+    #[serde(default = "local_context")]
+    context_id: String,
+    /// The task whose result names the frozen spec; a direct dependency.
+    input_task_id: String,
+    #[serde(default = "spec_pointer")]
+    spec_output_pointer: String,
+    max_candidates: u32,
+    max_wall_seconds: u64,
+    max_evaluator_seconds: u64,
+    max_cost_microunits: u64,
+}
+
+fn local_context() -> String {
+    wisp_runtime::LOCAL_CONTEXT_ID.into()
+}
+
+fn spec_pointer() -> String {
+    SPEC_POINTER.into()
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -214,8 +250,60 @@ fn validate(batch: &BatchArgs) -> Result<(), String> {
                 task.id
             ));
         }
-        if task.capabilities.is_empty() {
-            return Err(format!("task {} requires at least one capability", task.id));
+        match task.task_kind.as_deref() {
+            None | Some("agent") => {
+                if task.run_activity.is_some() {
+                    return Err(format!(
+                        "task {} has run_activity but is not a run_activity task",
+                        task.id
+                    ));
+                }
+                if task.capabilities.is_empty() {
+                    return Err(format!("task {} requires at least one capability", task.id));
+                }
+            }
+            Some("run_activity") => {
+                let activity = task.run_activity.as_ref().ok_or_else(|| {
+                    format!("Run activity task {} requires run_activity", task.id)
+                })?;
+                if !task.capabilities.is_empty()
+                    || task.specialist_id.is_some()
+                    || task.output_schema.is_some()
+                    || task.isolated
+                    || task.model_tier.is_some()
+                    || task.budget.is_some()
+                    || task.timeout_secs.is_some()
+                {
+                    return Err(format!(
+                        "Run activity task {} cannot include Agent-only fields",
+                        task.id
+                    ));
+                }
+                if activity.activity != "method_search"
+                    || activity.context_id != wisp_runtime::LOCAL_CONTEXT_ID
+                    || activity.spec_output_pointer != SPEC_POINTER
+                    || !(1..=50).contains(&activity.max_candidates)
+                    || activity.max_wall_seconds == 0
+                    || activity.max_wall_seconds > 7 * 24 * 60 * 60
+                    || activity.max_evaluator_seconds == 0
+                    || activity.max_evaluator_seconds > 300
+                    || activity.max_cost_microunits == 0
+                {
+                    return Err(format!(
+                        "Run activity task {} has an invalid activity or budget (a local method_search, 1-50 candidates, at most a week, evaluator at most 300 s)",
+                        task.id
+                    ));
+                }
+                if !task.depends_on.contains(&activity.input_task_id) {
+                    return Err(format!(
+                        "Run activity task {} input_task_id must be a direct dependency",
+                        task.id
+                    ));
+                }
+            }
+            Some(other) => {
+                return Err(format!("task {} has unknown task_kind {other}", task.id));
+            }
         }
         if task.output_schema.as_ref().is_some_and(|schema| {
             !schema.is_object()
@@ -248,6 +336,33 @@ fn validate(batch: &BatchArgs) -> Result<(), String> {
                 ));
             }
         }
+        // The preparing task must promise the spec's id in its result.
+        if let Some(activity) = task.run_activity.as_ref() {
+            let input = batch
+                .tasks
+                .iter()
+                .find(|candidate| candidate.id == activity.input_task_id)
+                .ok_or_else(|| format!("Run activity task {} input_task_id is unknown", task.id))?;
+            let pointer = activity.spec_output_pointer.as_str();
+            let declares = input.output_schema.as_ref().is_some_and(|schema| {
+                schema
+                    .get("properties")
+                    .and_then(Value::as_object)
+                    .is_some_and(|properties| properties.contains_key(pointer))
+                    && schema
+                        .get("required")
+                        .and_then(Value::as_array)
+                        .is_some_and(|required| {
+                            required.iter().any(|value| value.as_str() == Some(pointer))
+                        })
+            });
+            if !declares {
+                return Err(format!(
+                    "Run activity task {} requires dependency {} to declare required output {pointer} in its output_schema",
+                    task.id, input.id
+                ));
+            }
+        }
     }
     let mut done = HashSet::new();
     while done.len() < batch.tasks.len() {
@@ -276,12 +391,27 @@ fn resolve(
     registry: &CapabilityRegistry,
     host: &DelegationHostPolicy,
     experts: &[crate::experts::Expert],
+    local_context: Option<&str>,
 ) -> Result<DelegationPlan, String> {
     validate(&batch)?;
     let context = batch.context.trim().to_owned();
     let mut steps = Vec::with_capacity(batch.tasks.len());
     for task in batch.tasks {
         let stored = stored_task_id(&workflow, &task.id);
+        if let Some(activity) = task.run_activity {
+            steps.push(run_activity_step(
+                &workflow,
+                stored,
+                task.id,
+                task.instruction,
+                task.depends_on,
+                &context,
+                activity,
+                host,
+                local_context,
+            )?);
+            continue;
+        }
         // The expert's name and instructions go with the task; this host
         // runs it on the task's own model.
         let specialist = match task.specialist_id.as_deref().map(str::trim) {
@@ -339,10 +469,13 @@ fn resolve(
             run_activity: None,
         });
     }
+    // A method search spends time and money on its own, so it is always
+    // approved first, as in the WebView.
     let requires_confirmation = !host.auto_safe
-        || steps
-            .iter()
-            .any(|step| !step.spec.approval_reasons.is_empty());
+        || steps.iter().any(|step| {
+            step.task_kind == WorkflowTaskKind::RunActivity
+                || !step.spec.approval_reasons.is_empty()
+        });
     let plan = DelegationPlan {
         schema_version: DYNAMIC_DELEGATION_SCHEMA_VERSION,
         id: workflow,
@@ -354,6 +487,86 @@ fn resolve(
     };
     plan.validate().map_err(|error| error.to_string())?;
     Ok(plan)
+}
+
+/// A method search step, resolved and sealed as the WebView's
+/// `dynamic_workflow` does: on this computer's context as it is now, with
+/// the host's default model to propose candidates, and the budget the
+/// contract must have been frozen with.
+#[allow(clippy::too_many_arguments)]
+fn run_activity_step(
+    workflow: &str,
+    stored: String,
+    display: String,
+    instruction: String,
+    depends_on: Vec<String>,
+    context: &str,
+    activity: RunActivityArgs,
+    host: &DelegationHostPolicy,
+    local_context: Option<&str>,
+) -> Result<DelegationPlanStep, String> {
+    let context_revision = local_context
+        .ok_or("This computer's execution context is not available for a method search")?;
+    let mut resolved = wisp_core::RunActivitySpec {
+        activity: activity.activity,
+        context_id: activity.context_id,
+        context_revision: context_revision.to_owned(),
+        input_task_id: stored_task_id(workflow, &activity.input_task_id),
+        spec_output_pointer: activity.spec_output_pointer,
+        max_candidates: activity.max_candidates,
+        max_wall_seconds: activity.max_wall_seconds,
+        max_evaluator_seconds: activity.max_evaluator_seconds,
+        max_cost_microunits: activity.max_cost_microunits,
+        provider_profile_id: None,
+        model_profile_id: host.default_model_id.clone(),
+        approval_reasons: vec![
+            "Runs bounded candidate code generation and evaluation.".into(),
+            "Consumes the explicitly approved method-search time and cost budget.".into(),
+        ],
+        integrity_hash: String::new(),
+    };
+    resolved.seal().map_err(|error| error.to_string())?;
+    let spec = AgentSpec {
+        agent_id: stored.clone(),
+        name: display.clone(),
+        goal: instruction.trim().into(),
+        context_summary: context.into(),
+        inputs: vec![],
+        acceptance_criteria: vec![],
+        dependencies: depends_on
+            .iter()
+            .map(|dependency| stored_task_id(workflow, dependency))
+            .collect(),
+        role: wisp_core::AgentRole::Custom("run_activity".into()),
+        backend: wisp_core::AgentBackend::Local,
+        model: None,
+        prompt_template: "Host-managed Workflow Run activity.".into(),
+        input_contract: json!({"type": "object"}),
+        output_contract: json!({"type": "object"}),
+        permissions: PermissionSet::default(),
+        context_policy: ContextPolicy::default(),
+        budget: AgentBudget::default(),
+        timeout_secs: Some(resolved.max_wall_seconds),
+        requires_review: true,
+        session_policy: wisp_core::AgentSessionPolicy::New,
+        allow_delegation: false,
+        origin: wisp_core::AgentOrigin::Temporary,
+        capabilities: vec![],
+        skill_bindings: vec![],
+        executor: None,
+        request_preferences: None,
+        workspace_policy: None,
+        output_schema_source: AgentOutputSchemaSource::Standard,
+        approval_reasons: resolved.approval_reasons.clone(),
+        authorization: None,
+    };
+    Ok(DelegationPlanStep {
+        id: stored,
+        spec,
+        input: json!({"task_id": display}),
+        task_kind: WorkflowTaskKind::RunActivity,
+        run_activity: Some(resolved),
+    })
 }
 
 /// Gives tasks that did not finish the token budget the researcher set, by
@@ -516,7 +729,17 @@ fn records(
             stored.context_policy_json = serde_json::to_string(&spec.context_policy)?;
             stored.budget_json = serde_json::to_string(&spec.budget)?;
             stored.spec_json = serde_json::to_string(spec)?;
-            stored.task_kind = "agent".into();
+            stored.task_kind = match step.task_kind {
+                WorkflowTaskKind::Agent => "agent",
+                WorkflowTaskKind::RunActivity => "run_activity",
+            }
+            .into();
+            stored.activity_json = step
+                .run_activity
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()?
+                .unwrap_or_else(|| "{}".into());
             stored.timeout_secs = spec.timeout_secs.map(i64::try_from).transpose()?;
             Ok(stored)
         })
@@ -2545,7 +2768,15 @@ impl Server {
         }
         let workflow = uuid::Uuid::new_v4().to_string();
         let experts = crate::experts::list(store).await;
-        let mut plan = resolve(workflow.clone(), batch, &registry, &host, &experts)?;
+        let local = self.local_context_revision().await;
+        let mut plan = resolve(
+            workflow.clone(),
+            batch,
+            &registry,
+            &host,
+            &experts,
+            local.as_deref(),
+        )?;
         if let Some(context) = &nested {
             namespace_display_ids(&mut plan, &context.parent_display_id);
         }
@@ -2726,9 +2957,21 @@ impl Server {
             parent_attempt_id: None,
             depth: 1,
         });
+        // A method search step is run by the host itself.
+        let driver = crate::method_search::coordinator::StoreWorkflowRunActivityDriver::new(
+            self.0.store.clone(),
+            project.into(),
+            PathBuf::from(root),
+            Arc::new(crate::method_search::control::HostGenerators {
+                server: self.clone(),
+                frame: Some(parent.into()),
+            }),
+            self.method_search_evaluator(),
+        );
         let executor = DelegationExecutor::new(delegator.clone())
             .with_observer(recorder.clone())
             .with_lineage(lineage)
+            .with_run_activity_driver(Arc::new(driver))
             .with_dynamic_policy(registry, host);
         (delegator, recorder, executor)
     }
@@ -2763,6 +3006,84 @@ impl Server {
             }
             server.deliver_batches(&parent).await;
         });
+    }
+
+    /// Carries on a running batch whose steps have all ended, from what
+    /// they recorded: one whose method search was resumed after the app
+    /// restarted, so nothing in this run of the app was waiting on it. A
+    /// background batch's result is then delivered as usual. The WebView's
+    /// `resume_inline_agent_workflow`.
+    pub(crate) async fn continue_delegated_batch(&self, batch: &str) -> anyhow::Result<()> {
+        let store = &self.0.store;
+        let workflow = store
+            .get_agent_workflow(batch)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("The batch no longer exists"))?;
+        anyhow::ensure!(
+            workflow.status == AgentWorkflowStatus::Running && workflow.depth == 0,
+            "Only a running batch carries on after its method search"
+        );
+        let session = workflow
+            .frame_id
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("The batch has no conversation"))?;
+        let plan: DelegationPlan = serde_json::from_str(&workflow.plan_json)?;
+        let (registry, host) = self
+            .delegation_policy(&session)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        let mut latest = HashMap::<String, AgentWorkflowAttempt>::new();
+        for attempt in store.list_agent_workflow_attempts(batch).await? {
+            if latest
+                .get(&attempt.step_id)
+                .is_none_or(|kept| kept.attempt < attempt.attempt)
+            {
+                latest.insert(attempt.step_id.clone(), attempt);
+            }
+        }
+        let mut prior = Vec::new();
+        for attempt in latest.into_values() {
+            anyhow::ensure!(
+                attempt.status.is_terminal(),
+                "A step of the batch is still running"
+            );
+            prior.push(wisp_core::DelegationStepExecution {
+                response: attempt_response(Some(&attempt), &attempt.step_id),
+                step_id: attempt.step_id,
+            });
+        }
+        let root = self.project_root(&workflow.project_id).await?;
+        let display = display_task_ids(&plan);
+        let (_, _, executor) = self.batch_executor(
+            &workflow.project_id,
+            &root,
+            &session,
+            batch,
+            registry,
+            host,
+            None,
+            None,
+        );
+        let executed = executor.resume(plan, prior).await;
+        let pending = store
+            .list_agent_workflow_deliveries(batch)
+            .await?
+            .into_iter()
+            .filter(|delivery| delivery.result_json.is_none())
+            .last();
+        if let Some(delivery) = pending {
+            let settled = match &executed {
+                Ok(execution) => {
+                    complete_delivery(store, &delivery, compact(execution, &display)).await
+                }
+                Err(error) => settle_failed(store, &delivery, &error.to_string()).await,
+            };
+            if let Err(error) = settled {
+                tracing::warn!(%error, %batch, "Could not keep a carried-on batch's result");
+            }
+            self.deliver_batches(&session).await;
+        }
+        executed.map(drop)
     }
 
     /// Runs a failed or stopped batch of `session` again, in the
@@ -3136,9 +3457,30 @@ fn delegate_schema(experts: &[crate::experts::Expert]) -> ToolSchema {
                             "isolated": {
                                 "type": "boolean",
                                 "description": "Work in a temporary Git worktree (Git projects only): its changes are cherry-picked into the project when it succeeds without conflict, otherwise kept as a patch artifact"
+                            },
+                            "task_kind": {
+                                "type": "string",
+                                "enum": ["agent", "run_activity"],
+                                "description": "agent (default), or run_activity: a computational method search the host runs over the contract a direct dependency froze with prepare_method_search. A run_activity task has no capabilities or other Agent fields; the batch is approved first and the researcher starts the search from its Run after reading the contract. Run such a batch in the background."
+                            },
+                            "run_activity": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "description": "For a run_activity task only. Its budget must equal the one the contract was frozen with.",
+                                "properties": {
+                                    "activity": {"type": "string", "enum": ["method_search"]},
+                                    "context_id": {"type": "string", "enum": ["local"]},
+                                    "input_task_id": {"type": "string", "description": "The dependency whose output_schema requires method_search_spec_artifact_version_id"},
+                                    "spec_output_pointer": {"type": "string", "enum": ["method_search_spec_artifact_version_id"]},
+                                    "max_candidates": {"type": "integer", "minimum": 1, "maximum": 50},
+                                    "max_wall_seconds": {"type": "integer", "minimum": 1, "maximum": 604800},
+                                    "max_evaluator_seconds": {"type": "integer", "minimum": 1, "maximum": 300},
+                                    "max_cost_microunits": {"type": "integer", "minimum": 1}
+                                },
+                                "required": ["activity", "input_task_id", "max_candidates", "max_wall_seconds", "max_evaluator_seconds", "max_cost_microunits"]
                             }
                         },
-                        "required": ["id", "instruction", "capabilities"]
+                        "required": ["id", "instruction"]
                     }
                 }
             },
@@ -3314,12 +3656,89 @@ mod tests {
             &CapabilityRegistry::builtins(),
             &host_policy(vec![worker(false)], false, true),
             &[],
+            None,
         )
         .unwrap();
         assert_eq!(
             git.steps[0].spec.workspace_policy,
             Some(wisp_core::AgentWorkspacePolicy::Isolated)
         );
+    }
+
+    #[test]
+    fn a_method_search_step_needs_a_preparing_task_and_a_sealed_local_budget() {
+        let prep = json!({
+            "id": "prep",
+            "instruction": "Freeze the contract",
+            "capabilities": ["code_run"],
+            "output_schema": {
+                "type": "object",
+                "properties": {"method_search_spec_artifact_version_id": {"type": "string"}},
+                "required": ["method_search_spec_artifact_version_id"],
+            },
+        });
+        let search = |activity: Value| {
+            json!({
+                "id": "search",
+                "instruction": "Search",
+                "task_kind": "run_activity",
+                "depends_on": ["prep"],
+                "run_activity": activity,
+            })
+        };
+        let budget = json!({
+            "activity": "method_search",
+            "input_task_id": "prep",
+            "max_candidates": 3,
+            "max_wall_seconds": 600,
+            "max_evaluator_seconds": 30,
+            "max_cost_microunits": 1000,
+        });
+        let resolved = plan(json!([prep.clone(), search(budget.clone())]), false).unwrap();
+        let step = &resolved.steps[1];
+        assert_eq!(step.task_kind, WorkflowTaskKind::RunActivity);
+        let activity = step.run_activity.as_ref().unwrap();
+        assert_eq!(activity.context_id, wisp_runtime::LOCAL_CONTEXT_ID);
+        assert_eq!(activity.context_revision, LOCAL_REVISION);
+        assert_eq!(activity.input_task_id, "wf:prep");
+        assert_eq!(activity.spec_output_pointer, SPEC_POINTER);
+        assert!(!activity.integrity_hash.is_empty());
+        assert_eq!(step.spec.dependencies, vec!["wf:prep".to_string()]);
+        assert!(resolved.requires_confirmation);
+
+        // The preparing task must promise the spec's id.
+        let mut silent = prep.clone();
+        silent.as_object_mut().unwrap().remove("output_schema");
+        assert!(validate(&batch(json!([silent, search(budget.clone())])))
+            .unwrap_err()
+            .contains("declare required output"));
+        // It must be a direct dependency, and the budget must be bounded.
+        let mut undepended = search(budget.clone());
+        undepended["depends_on"] = json!([]);
+        assert!(validate(&batch(json!([prep.clone(), undepended])))
+            .unwrap_err()
+            .contains("direct dependency"));
+        let mut unbounded = budget.clone();
+        unbounded["max_candidates"] = json!(0);
+        assert!(validate(&batch(json!([prep.clone(), search(unbounded)])))
+            .unwrap_err()
+            .contains("invalid activity or budget"));
+        // An agent-only field on the step is refused rather than ignored.
+        let mut mixed = search(budget.clone());
+        mixed["capabilities"] = json!(["code_run"]);
+        assert!(validate(&batch(json!([prep.clone(), mixed])))
+            .unwrap_err()
+            .contains("Agent-only fields"));
+        // Without this computer's context there is nothing to seal it to.
+        let unsealed = resolve(
+            "wf".into(),
+            batch(json!([prep, search(budget)])),
+            &CapabilityRegistry::builtins(),
+            &host_policy(vec![worker(false)], false, false),
+            &[],
+            None,
+        );
+        assert!(unsealed.is_err());
     }
 
     fn worker(external: bool) -> ModelProfilePolicy {
@@ -3331,6 +3750,9 @@ mod tests {
         }
     }
 
+    /// A canonical SHA-256, as the host seals this computer's context with.
+    const LOCAL_REVISION: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
     fn plan(tasks: Value, external: bool) -> Result<DelegationPlan, String> {
         resolve(
             "wf".into(),
@@ -3338,6 +3760,7 @@ mod tests {
             &CapabilityRegistry::builtins(),
             &host_policy(vec![worker(external)], false, false),
             &[],
+            Some(LOCAL_REVISION),
         )
     }
 
@@ -3414,6 +3837,7 @@ mod tests {
             &CapabilityRegistry::builtins(),
             &host_policy(vec![worker(false)], false, false),
             &experts,
+            None,
         )
         .unwrap();
         let spec = &resolved.steps[0].spec;
@@ -3432,6 +3856,7 @@ mod tests {
             &CapabilityRegistry::builtins(),
             &host_policy(vec![worker(false)], false, false),
             &experts,
+            None,
         )
         .unwrap_err()
         .contains("unknown expert"));
@@ -3577,6 +4002,7 @@ mod tests {
             &registry,
             &host,
             &[],
+            None,
         )
         .unwrap();
         let (record, steps) = records(&plan, crate::PROJECT, &root, &parent, &host).unwrap();
