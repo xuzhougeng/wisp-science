@@ -8152,7 +8152,9 @@ async fn a_question_asked_aside_is_answered_without_touching_the_conversation() 
         .ask_aside(PROJECT, &session, &earlier, "  why 100?  ")
         .await
         .unwrap();
-    assert_eq!(answer, "Because the file has 400 lines.");
+    assert_eq!(answer.text, "Because the file has 400 lines.");
+    // The one turn is quoted whole, so nothing earlier goes along.
+    assert!(answer.sources.is_empty());
     {
         let asked = asked.lock().unwrap();
         assert_eq!(asked.len(), 1);

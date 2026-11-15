@@ -2,7 +2,7 @@
 //! answered, kept beside it and never part of it. One thread per
 //! conversation, in memory; it holds no graphics state.
 use crate::i18n::tr;
-use wisp_server::desktop::AsideExchange;
+use wisp_server::desktop::{AsideAnswer, AsideExchange, AsideSource};
 
 /// How many exchanges a thread keeps; older ones fall off the top.
 pub const KEPT: usize = 50;
@@ -13,6 +13,8 @@ pub struct Entry {
     pub question: String,
     /// The answer, or why there is none.
     pub answer: Result<String, String>,
+    /// The passages from earlier in the conversation it was given.
+    pub sources: Vec<AsideSource>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -51,10 +53,26 @@ impl Thread {
             // The thread was cleared while the model was answering.
             return;
         };
-        self.entries.push(Entry { question, answer });
+        self.entries.push(Entry {
+            question,
+            answer,
+            sources: Vec::new(),
+        });
         if self.entries.len() > KEPT {
             let extra = self.entries.len() - KEPT;
             self.entries.drain(..extra);
+        }
+    }
+
+    /// Files an answer with the passages it was given.
+    pub fn answered_with(&mut self, answer: Result<AsideAnswer, String>) {
+        let sources = answer
+            .as_ref()
+            .map(|answer| answer.sources.clone())
+            .unwrap_or_default();
+        self.answered(answer.map(|answer| answer.text));
+        if let Some(last) = self.entries.last_mut() {
+            last.sources = sources;
         }
     }
 
@@ -78,6 +96,27 @@ pub fn hint(has_conversation: bool) -> &'static str {
     } else {
         tr("Open a conversation to ask about it.")
     }
+}
+
+/// The line above a passage: its label, who said it and the words of the
+/// question it matched.
+pub fn source_line(source: &AsideSource) -> String {
+    let who = match source.role.as_str() {
+        "user" => tr("You"),
+        // The product's name is the same in every language.
+        "assistant" => "Wisp",
+        _ => tr("A tool"),
+    };
+    let matched: Vec<String> = source
+        .matched
+        .iter()
+        .take(3)
+        .map(|word| format!("“{word}”"))
+        .collect();
+    crate::i18n::fill(
+        tr("[{}] {} · matched {}"),
+        &[&source.label, &who, &matched.join(", ")],
+    )
 }
 
 #[cfg(test)]
@@ -129,5 +168,31 @@ mod tests {
     fn the_hint_says_what_asking_aside_does() {
         assert!(hint(true).contains("nothing is added"));
         assert!(hint(false).starts_with("Open a conversation"));
+    }
+
+    #[test]
+    fn an_answer_keeps_the_passages_it_was_given() {
+        let mut thread = Thread::default();
+        thread.ask("why?").unwrap();
+        let source = AsideSource {
+            label: "E1".into(),
+            role: "assistant".into(),
+            excerpt: "Batch two is apart.".into(),
+            matched: vec!["batch".into(), "two".into(), "apart".into(), "pca".into()],
+        };
+        thread.answered_with(Ok(AsideAnswer {
+            text: "Because of batch two [E1].".into(),
+            sources: vec![source.clone()],
+        }));
+        let entry = thread.entries.last().unwrap();
+        assert_eq!(entry.answer.as_deref(), Ok("Because of batch two [E1]."));
+        assert_eq!(entry.sources, [source.clone()]);
+        assert_eq!(
+            source_line(&source),
+            "[E1] Wisp · matched “batch”, “two”, “apart”"
+        );
+        thread.ask("again?").unwrap();
+        thread.answered_with(Err("no model".into()));
+        assert!(thread.entries.last().unwrap().sources.is_empty());
     }
 }

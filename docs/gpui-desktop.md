@@ -190,7 +190,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Artifacts | Files a turn wrote are recorded when it ends; an Artifacts tab lists them for the conversation or the project and opens them, and lists each one's versions, any of which can be saved as a copy from its snapshot (checked against its checksum, up to 512 MB); By folder puts them under their folders, and each one's trail button says which tool call wrote it, with the code and Open the conversation |
 | Side panel | Tabs: Files, Runs, Environments (this computer and the saved SSH hosts: attach one to the conversation so its runs may go there, take it away, check it, open a terminal or its folders, and set where the project keeps things there: uploaded data, run folders and the results folder), Artifacts, Notebook, Provenance (the loaded part's tool calls with how each went, opening to what each was given and returned, with Show in the conversation), Agents, Highlights, Memos, Memory, Aside; the open tab is named, the others are icons. − beside the open tab takes it away and + adds one back; the tabs kept are remembered, and opening a tab from elsewhere brings it back |
 | Agents | The Agents tab lists the helpers the conversation sent off to explore: what each was asked, how it went, and what it found |
-| Aside | The Aside tab (or the command palette) asks the conversation's model a question about the open conversation; the answer shows beside it and nothing is added to the conversation. Ask aside under a message opens it with that message quoted in the question |
+| Aside | The Aside tab (or the command palette) asks the conversation's model a question about the open conversation; the answer shows beside it and nothing is added to the conversation. The latest turns are quoted whole; passages from before them that match the question go along labelled [E1]… and are listed under the answer, with who said them and the words they matched. Ask aside under a message opens it with that message quoted in the question |
 | Quoting | Quote under a message puts it in the message box as a quotation after what you were writing, ready to answer; a selected passage is copied with Cmd/Ctrl+C |
 | Favorites | A star under any message saves it as it reads now; an image in Artifacts can be saved as a figure. Highlights lists what this conversation saved; the Favorites page lists everything from every project, with search, a kind filter, the item in full, its source conversation and removal after a confirmation |
 | Memory | One switch; habits the model is shown in every project; this project's notes by day, which the model can search; add, edit and delete either, and save any message to one or the other, or press Suggest for the reviewer model's draft of what is worth keeping from its turn (the WebView's `turn_memory` prompt), with where it suggests keeping it; a weekly tidy that proposes merging or retiring habits for you to apply or dismiss |
@@ -2520,6 +2520,10 @@ start; quit and start again (without `WISP_GPUI_WORKSPACE`): the built-in
 project's Files tab shows that folder. Clear the field and Save to go back.
 Turn Each project its own database on, make a new project: its folder
 holds `.wisp/project.sqlite`; turn it off and the next one does not.
+In a conversation of more than twelve turns, ask aside about something
+said early on, by a word it used: the answer cites [E1] and Earlier
+passages lists that message with the matched words. Ask with only common
+words ("why was it?"): no passages are listed.
 Press ⌘⇧H: the privacy dialog lists the projects; press Escape and it
 closes. Open it again, tick one and Hide selected: its card and its recent
 conversations leave the home page, and the palette no longer finds it.

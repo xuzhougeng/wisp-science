@@ -5983,7 +5983,7 @@ impl Server {
         session: &str,
         earlier: &[AsideExchange],
         question: &str,
-    ) -> Result<String> {
+    ) -> Result<AsideAnswer> {
         self.ask_aside_about(project, session, None, earlier, question)
             .await
     }
@@ -6001,7 +6001,7 @@ impl Server {
         run: &str,
         earlier: &[AsideExchange],
         question: &str,
-    ) -> Result<String> {
+    ) -> Result<AsideAnswer> {
         self.ask_aside_about(project, session, Some(run), earlier, question)
             .await
     }
@@ -6013,7 +6013,7 @@ impl Server {
         run: Option<&str>,
         earlier: &[AsideExchange],
         question: &str,
-    ) -> Result<String> {
+    ) -> Result<AsideAnswer> {
         self.own_conversation(project, session).await?;
         let snapshot = match run {
             None => None,
@@ -6038,17 +6038,25 @@ impl Server {
         let messages = store
             .load_recent_turn_preview_messages(session, crate::aside::TURNS)
             .await?;
+        // Passages from before the turns quoted whole that match the
+        // question go along, labelled, as the WebView's evidence does.
+        let history = store
+            .load_recent_turn_preview_messages(session, crate::aside::HISTORY_TURNS)
+            .await?;
+        let before = history.len().saturating_sub(messages.len());
+        let sources = crate::aside::sources(question, &history[..before]);
         let provider = (self.0.models)(model);
         match crate::aside::ask(
             provider.as_ref(),
             &messages,
             snapshot.as_deref(),
+            &sources,
             earlier,
             question,
         )
         .await
         {
-            Ok(answer) => Ok(answer),
+            Ok(text) => Ok(AsideAnswer { text, sources }),
             Err(error) => bail!(
                 "{}",
                 crate::network::explain(store, &format!("{error:#}")).await
@@ -7213,6 +7221,7 @@ pub use crate::acp_agents::{
 pub use crate::acp_turn::{AcpChoice, AcpCommand, AcpControls, AcpPick, AcpSetting, AcpValue};
 pub use crate::approvals::{ApprovalScope, ProjectApprovals, ToolRule};
 pub use crate::aside::Exchange as AsideExchange;
+pub use crate::aside::{Answer as AsideAnswer, Source as AsideSource};
 pub use crate::assistant::{is_assistant, ASSISTANT_FRAME_ID};
 pub use crate::browser::{BrowserSettings, BrowserStatus};
 pub use crate::browser_filters::{BrowserFilters, BrowserHostRule};

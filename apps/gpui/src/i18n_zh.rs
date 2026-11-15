@@ -33,6 +33,9 @@ pub const ZH: &[(&str, &str)] = &[
     ("Smaller code", "缩小代码"),
     ("Show the first-run guide", "显示首次使用向导"),
     ("Privacy mode", "隐私模式"),
+    ("A tool", "工具"),
+    ("[{}] {} · matched {}", "[{}] {} · 匹配 {}"),
+    ("Earlier passages ({})", "较早的段落（{}）"),
     ("Privacy mode is on.", "隐私模式已开启。"),
     ("Privacy mode is off.", "隐私模式已关闭。"),
     (

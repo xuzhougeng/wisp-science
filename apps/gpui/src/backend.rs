@@ -2382,7 +2382,7 @@ impl Backend {
         run: String,
         earlier: Vec<wisp_server::desktop::AsideExchange>,
         question: String,
-    ) -> Reply<String> {
+    ) -> Reply<wisp_server::desktop::AsideAnswer> {
         self.local(move |host| async move {
             host.ask_aside_about_run(&project, &session, &run, &earlier, &question)
                 .await
@@ -2395,7 +2395,7 @@ impl Backend {
         session: String,
         earlier: Vec<wisp_server::desktop::AsideExchange>,
         question: String,
-    ) -> Reply<String> {
+    ) -> Reply<wisp_server::desktop::AsideAnswer> {
         self.local(move |host| async move {
             host.ask_aside(&project, &session, &earlier, &question)
                 .await

@@ -60,7 +60,7 @@ impl Workspace {
             let _ = this.update(cx, |this, cx| {
                 // Filed with its own conversation, whichever is open now.
                 if let Some(thread) = this.asides.get_mut(&session) {
-                    thread.answered(answer);
+                    thread.answered_with(answer);
                 }
                 cx.notify();
             });
@@ -134,6 +134,36 @@ impl Workspace {
                         .child(crate::i18n::host(problem)),
                 ),
             };
+            // The passages from earlier it was given, as the answer cites them.
+            if !entry.sources.is_empty() {
+                let mut sources = div().v_flex().gap_1().pt_1().child(
+                    div()
+                        .text_xs()
+                        .font_semibold()
+                        .text_color(muted)
+                        .child(crate::i18n::fill(
+                            tr("Earlier passages ({})"),
+                            &[&entry.sources.len()],
+                        )),
+                );
+                for source in &entry.sources {
+                    sources = sources.child(
+                        div()
+                            .v_flex()
+                            .pl_2()
+                            .border_l_2()
+                            .border_color(border)
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child(aside::source_line(source)),
+                            )
+                            .child(div().text_xs().line_clamp(3).child(source.excerpt.clone())),
+                    );
+                }
+                block = block.child(sources);
+            }
             list = list.child(block.pb_2().border_b_1().border_color(border));
         }
         if let Some(question) = thread.and_then(|thread| thread.asking.as_ref()) {
