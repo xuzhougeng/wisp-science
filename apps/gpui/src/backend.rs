@@ -1105,6 +1105,50 @@ impl Backend {
         })
     }
 
+    pub fn check_paper(
+        &self,
+        project: String,
+        version: String,
+        policy: wisp_server::desktop::PaperPolicy,
+    ) -> Reply<wisp_server::desktop::PaperCheck> {
+        self.local(move |host| async move { host.check_paper(&project, &version, policy).await })
+    }
+
+    pub fn finalize_paper(
+        &self,
+        project: String,
+        version: String,
+        policy: wisp_server::desktop::PaperPolicy,
+    ) -> Reply<wisp_server::desktop::PaperCheck> {
+        self.local(move |host| async move { host.finalize_paper(&project, &version, policy).await })
+    }
+
+    pub fn waive_paper_finding(
+        &self,
+        project: String,
+        version: String,
+        code: String,
+        reason: String,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.waive_paper_finding(&project, &version, &code, &reason)
+                .await
+        })
+    }
+
+    pub fn new_paper_version(
+        &self,
+        project: String,
+        paper: String,
+        version: String,
+        label: String,
+    ) -> Reply<wisp_server::desktop::Paper> {
+        self.local(move |host| async move {
+            host.new_paper_version(&project, &paper, &version, &label)
+                .await
+        })
+    }
+
     /// The decision model as the form shows it; never its key.
     pub fn decision_model(&self) -> Reply<wisp_dto::DecisionModelSettings> {
         self.local(|host| async move { host.decision_model().await })

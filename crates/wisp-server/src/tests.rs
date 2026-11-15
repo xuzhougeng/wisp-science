@@ -6514,6 +6514,204 @@ async fn a_paper_keeps_its_figures_with_the_results_and_runs_they_rest_on() {
 }
 
 #[tokio::test]
+async fn a_paper_version_is_checked_waived_finalized_and_continued() {
+    use desktop::{
+        PaperAudience, PaperFinding, PaperInput, PaperItemInput, PaperItemKind, PaperPolicy,
+        PaperSourceKind, PaperVersionState,
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), true))
+        .await
+        .unwrap();
+    assert!(!server.commands().iter().any(|command| {
+        command.contains("final") || command.contains("waive") || command.contains("freeze")
+    }));
+    let paper = server
+        .create_paper(
+            PROJECT,
+            PaperInput {
+                title: "Copy number".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let version = paper.shown.clone();
+    let figure = PaperItemInput {
+        id: String::new(),
+        kind: PaperItemKind::Figure,
+        title: "Figure 1".into(),
+        note: String::new(),
+    };
+    server
+        .save_paper_item(PROJECT, &version, figure.clone())
+        .await
+        .unwrap();
+    let figure_id = server.paper(PROJECT, &paper.id, None).await.unwrap().items[0]
+        .id
+        .clone();
+    let codes = |found: &[PaperFinding]| -> Vec<String> {
+        found.iter().map(|finding| finding.code.clone()).collect()
+    };
+
+    // With nothing bound the check says so, and finalizing is refused.
+    let private = PaperPolicy::default();
+    assert_eq!(private.audience, PaperAudience::Private);
+    let check = server
+        .check_paper(PROJECT, &version, private)
+        .await
+        .unwrap();
+    assert!(!check.can_finalize && !check.finalized);
+    let blockers = codes(&check.blockers);
+    assert!(
+        blockers.contains(&"no_selected_evidence".to_owned()),
+        "{blockers:?}"
+    );
+    assert!(blockers.contains(&"publication_item_missing_evidence".to_owned()));
+    let refused = server
+        .finalize_paper(PROJECT, &version, private)
+        .await
+        .unwrap();
+    assert!(!refused.finalized);
+    let shown = server.paper(PROJECT, &paper.id, None).await.unwrap();
+    assert_eq!(shown.versions[0].state, PaperVersionState::Draft);
+    assert!(shown.versions[0].fingerprint.is_empty());
+
+    // For the public, both reviews have to be confirmed.
+    let public = PaperPolicy {
+        audience: PaperAudience::Public,
+        ..private
+    };
+    let blockers = codes(
+        &server
+            .check_paper(PROJECT, &version, public)
+            .await
+            .unwrap()
+            .blockers,
+    );
+    assert!(blockers.contains(&"sensitive_data_review_required".to_owned()));
+    assert!(blockers.contains(&"redistribution_review_required".to_owned()));
+
+    // A finished run is bound; what it lacks can stand once a reason is
+    // given.
+    let mut run = wisp_store::RunRecord::new("run-fit", PROJECT, "local", "fit.py", "script");
+    run.status = wisp_store::RunStatus::Succeeded;
+    server.0.store.create_run(&run).await.unwrap();
+    server
+        .bind_paper_source(
+            PROJECT,
+            &version,
+            &figure_id,
+            PaperSourceKind::Run,
+            "run-fit",
+            "the fit",
+        )
+        .await
+        .unwrap();
+    let check = server
+        .check_paper(PROJECT, &version, private)
+        .await
+        .unwrap();
+    assert!(!check.can_finalize && !check.blockers.is_empty());
+    assert!(
+        check.blockers.iter().all(|finding| finding.waivable),
+        "{:?}",
+        check.blockers
+    );
+    let first = check.blockers[0].code.clone();
+    assert!(server
+        .waive_paper_finding(PROJECT, &version, &first, "  ")
+        .await
+        .is_err());
+    for finding in &check.blockers {
+        server
+            .waive_paper_finding(
+                PROJECT,
+                &version,
+                &finding.code,
+                " kept in the lab notebook ",
+            )
+            .await
+            .unwrap();
+    }
+    let check = server
+        .check_paper(PROJECT, &version, private)
+        .await
+        .unwrap();
+    assert!(check.can_finalize, "{:?}", check.blockers);
+    assert!(check
+        .blockers
+        .iter()
+        .all(|finding| finding.waived.as_deref() == Some("kept in the lab notebook")));
+
+    // Finalizing locks the version under a fingerprint.
+    let done = server
+        .finalize_paper(PROJECT, &version, private)
+        .await
+        .unwrap();
+    assert!(done.finalized);
+    assert_eq!(done.fingerprint.len(), 64);
+    let shown = server.paper(PROJECT, &paper.id, None).await.unwrap();
+    assert_eq!(shown.versions[0].state, PaperVersionState::Finalized);
+    assert_eq!(shown.versions[0].fingerprint, done.fingerprint);
+    assert!(!shown.editable);
+    assert!(server
+        .save_paper_item(PROJECT, &version, figure.clone())
+        .await
+        .is_err());
+    assert!(server
+        .check_paper(PROJECT, &version, private)
+        .await
+        .is_err());
+    assert!(server
+        .waive_paper_finding(PROJECT, &version, &first, "again")
+        .await
+        .is_err());
+    assert!(server.delete_paper(PROJECT, &paper.id).await.is_err());
+
+    // A new version is a draft with the same items and evidence, named
+    // after its number unless a name is given.
+    let next = server
+        .new_paper_version(PROJECT, &paper.id, &version, "")
+        .await
+        .unwrap();
+    assert_eq!(next.versions.len(), 2);
+    assert_eq!(next.shown, next.versions[0].id);
+    assert_eq!(next.versions[0].label, "Version 2");
+    assert_eq!(next.versions[0].state, PaperVersionState::Draft);
+    assert!(next.editable);
+    assert_eq!(next.items[0].title, "Figure 1");
+    assert_eq!(next.items[0].sources.len(), 1);
+    server
+        .save_paper_item(PROJECT, &next.shown, figure)
+        .await
+        .unwrap();
+    let named = server
+        .new_paper_version(PROJECT, &paper.id, &version, " Reply to reviewers ")
+        .await
+        .unwrap();
+    assert_eq!(named.versions[0].label, "Reply to reviewers");
+
+    // Another project's paper is refused.
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    assert!(server
+        .check_paper(&lab, &next.shown, private)
+        .await
+        .is_err());
+    assert!(server
+        .waive_paper_finding(&lab, &next.shown, &first, "reason")
+        .await
+        .is_err());
+    assert!(server
+        .new_paper_version(&lab, &paper.id, &version, "")
+        .await
+        .is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_scheduled_task_fires_once_per_time_into_a_new_conversation() {
     use desktop::ScheduleInput;
     let temp = tempfile::tempdir().unwrap();

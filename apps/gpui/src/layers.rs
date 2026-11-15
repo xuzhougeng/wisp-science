@@ -59,6 +59,10 @@ pub enum Layer {
     PaperSources,
     /// Question before a paper is removed.
     ConfirmRemovePaper,
+    /// The readiness check of the shown draft version, and finalizing it.
+    PaperFinalize,
+    /// The reason a finding of that check may stand.
+    PaperWaiver,
     /// The research calendar across projects: a page of its own.
     Calendar,
     /// The overview of what Wisp can draw on in the open project.
@@ -201,7 +205,9 @@ impl Layer {
             Layer::PaperForm
             | Layer::PaperItemForm
             | Layer::PaperSources
-            | Layer::ConfirmRemovePaper => Some(Layer::Papers),
+            | Layer::ConfirmRemovePaper
+            | Layer::PaperFinalize => Some(Layer::Papers),
+            Layer::PaperWaiver => Some(Layer::PaperFinalize),
             Layer::BatchGroupMenu | Layer::ConfirmBatchDelete => Some(Layer::SelectMode),
             _ => None,
         }
@@ -594,6 +600,20 @@ mod tests {
         stack.open(Layer::PaperSources);
         assert!(stack.close(Layer::Papers));
         assert!(!stack.contains(Layer::PaperSources));
+        // The reason for letting a finding stand is asked inside the
+        // finalize panel: Escape takes the reason first, the panel next,
+        // and the page stays until a third press.
+        stack.open(Layer::Papers);
+        stack.open(Layer::PaperFinalize);
+        stack.open(Layer::PaperWaiver);
+        assert_eq!(stack.dismiss_top(), Some(Layer::PaperWaiver));
+        assert!(stack.contains(Layer::PaperFinalize));
+        assert_eq!(stack.dismiss_top(), Some(Layer::PaperFinalize));
+        assert!(stack.contains(Layer::Papers));
+        stack.open(Layer::PaperFinalize);
+        stack.open(Layer::PaperWaiver);
+        assert!(stack.close(Layer::Papers));
+        assert!(!stack.contains(Layer::PaperWaiver) && !stack.contains(Layer::PaperFinalize));
         // The trajectory is a dialog over the conversation: Escape closes
         // it alone, and a panel that was open beside it stays.
         stack.open(Layer::FilesPanel);

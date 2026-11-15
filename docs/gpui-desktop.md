@@ -171,7 +171,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Notebook | A tab of the side panel: the conversation's code as cells, with what each run returned; copy, save to favorites, or show it in the conversation |
 | Research calendar | A page across every project: a month as a grid with how many records each day holds, and the chosen day's records; projects can be left out |
 | Scheduled tasks | A page across projects (the clock on the home page, or the command palette): a prompt is sent into a new conversation of its project every few hours, daily or weekly at a time, while the app is open; each task can be run now, switched off or deleted, and its latest firing opens the conversation it made |
-| Paper evidence | A page for the open project (Papers in the sidebar, or the command palette): the papers it is writing, each with its versions and, in a draft version, figures, tables and claims with the project results and runs they rest on and why each was chosen |
+| Paper evidence | A page for the open project (Papers in the sidebar, or the command palette): the papers it is writing, each with its versions and, in a draft version, figures, tables and claims with the project results and runs they rest on and why each was chosen. Finalize… checks a draft for whom the evidence is for (private, restricted or public, with the reviews public needs) and lists what stands in the way, warnings and what the record leaves out; a finding that may stand is kept with a reason; when nothing is left in the way the version is locked under a SHA-256 fingerprint. New version starts a draft from any version with its items and evidence |
 | Research journey | A page for the open project: one month of what happened, by day (what you asked, runs, files, decisions, your own records), a filter, and a form to add a record of your own |
 | Outline | A button in the conversation's header lists what you asked, in order; choosing one scrolls to it |
 | Find in conversation | Cmd/Ctrl+F, or the command palette: a bar over the transcript marks every message, and every tool call, that contains the words; Return and the arrows move between them |
@@ -715,11 +715,15 @@ Limits of this slice:
   here.
 - Paper evidence keeps papers, versions, items and evidence in the same
   tables the WebView desktop uses, so a paper made in one shows in the
-  other. From here a paper has the one version it starts with: a version
-  cannot be finalized, published, copied into a new one, packed as a
-  capsule or reproduced, and there is no readiness check. A version the
-  WebView finalized is shown with its evidence and cannot be changed, and
-  a paper with such a version cannot be removed. Evidence is a registered
+  other. A draft can be checked and finalized here with the WebView's
+  own rules (the check is ported into the host from
+  `src-tauri/src/publication_freeze.rs`), findings can be let stand with
+  a reason (recorded as written by "Local user"), and New version copies
+  any version into a draft. A version cannot be published, packed as a
+  capsule or reproduced from here. A finalized version is shown with its
+  evidence and cannot be changed, and a paper with such a version cannot
+  be removed. Finding messages come from the check in English; the few
+  fixed ones are translated. Evidence is a registered
   result of the project (bound at the version it has when chosen) or a
   run; passages of a conversation, tool calls and outside resources
   bound in the WebView are listed by kind but cannot be added here.
@@ -1160,6 +1164,19 @@ counts it. Remove the evidence, change the figure's title, remove the
 figure. With a form open press Escape: only the form closes; press it
 again: the page closes. Rename the paper, then remove it: the question
 has to be answered first.
+In a draft with a figure and no evidence press Finalize…: Private is
+chosen. Press Check this version: "no_selected_evidence" and the figure
+are listed under Stands in the way and Finalize and lock the evidence
+stays off. Choose Public: the check is cleared and two reviews appear;
+check again and both reviews are listed until they are ticked. Bind a
+finished run to the figure and check: what the run lacks is listed;
+press Let it stand… on each, give a reason and save: the check runs
+again and shows the reason. When the verdict reads Ready to finalize,
+finalize: the panel closes, the version reads Finalized with its
+fingerprint, and Add evidence and Change are gone. Press New version:
+"v2 · Version 2" opens as a draft with the same figure and evidence.
+With the reason field open press Escape: only the field closes; press it
+again: the panel closes and the page stays.
 Send `/timer 1m say the time`: a note confirms it, the Scheduled tasks
 page lists it as a conversation's timer, and within a minute and a half
 the prompt arrives in the same conversation as a turn. Send `/timer

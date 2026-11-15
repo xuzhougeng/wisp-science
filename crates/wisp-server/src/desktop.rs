@@ -3479,6 +3479,59 @@ impl Server {
         crate::papers::unbind(&self.0.store, project, version, binding).await
     }
 
+    /// Checks a draft version against `policy` without changing it.
+    pub async fn check_paper(
+        &self,
+        project: &str,
+        version: &str,
+        policy: PaperPolicy,
+    ) -> Result<PaperCheck> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        crate::papers::check(&self.0.store, project, version, policy, false).await
+    }
+
+    /// Checks a draft version again and, when nothing blocks it, locks it
+    /// with its evidence. Later changes need a new version.
+    pub async fn finalize_paper(
+        &self,
+        project: &str,
+        version: &str,
+        policy: PaperPolicy,
+    ) -> Result<PaperCheck> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        crate::papers::check(&self.0.store, project, version, policy, true).await
+    }
+
+    /// Lets a finding of a draft version stand, with the reason why.
+    pub async fn waive_paper_finding(
+        &self,
+        project: &str,
+        version: &str,
+        code: &str,
+        reason: &str,
+    ) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        crate::papers::waive(&self.0.store, project, version, code, reason).await
+    }
+
+    /// Starts a draft from `version`, with its items and evidence, and
+    /// opens the paper at it.
+    pub async fn new_paper_version(
+        &self,
+        project: &str,
+        paper: &str,
+        version: &str,
+        label: &str,
+    ) -> Result<Paper> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        let created = crate::papers::new_version(&self.0.store, project, version, label).await?;
+        crate::papers::open(&self.0.store, project, paper, Some(&created)).await
+    }
+
     /// The installed plugins, and whether `project` has each switched on;
     /// with no project, none reads as on.
     pub async fn plugins(&self, project: Option<&str>) -> Result<Vec<PluginRow>> {
@@ -4796,8 +4849,9 @@ pub use crate::experts::{Expert, ExpertInput};
 pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow};
 pub use crate::origin::FileOrigin;
 pub use crate::papers::{
-    Paper, PaperInput, PaperItem, PaperItemInput, PaperItemKind, PaperRow, PaperSource,
-    PaperSourceChoice, PaperSourceKind, PaperVersion, PaperVersionState,
+    Paper, PaperAudience, PaperCheck, PaperFinding, PaperInput, PaperItem, PaperItemInput,
+    PaperItemKind, PaperLevel, PaperPolicy, PaperRow, PaperSource, PaperSourceChoice,
+    PaperSourceKind, PaperVersion, PaperVersionState,
 };
 pub use crate::pet::{Pet, PetLook, SHEET_HEIGHT, SHEET_WIDTH};
 pub use crate::plugins::PluginRow;

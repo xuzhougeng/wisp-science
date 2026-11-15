@@ -16,6 +16,7 @@ mod model_view;
 mod network;
 mod origin;
 mod output;
+mod paper_freeze;
 mod papers;
 mod pet;
 mod plugins;

@@ -4,12 +4,13 @@
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Selectable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     input::Input,
 };
 use wisp_server::desktop::{
-    Paper, PaperInput, PaperItem, PaperItemInput, PaperItemKind, PaperSourceChoice, PaperSourceKind,
+    Paper, PaperAudience, PaperCheck, PaperFinding, PaperInput, PaperItem, PaperItemInput,
+    PaperItemKind, PaperPolicy, PaperSourceChoice, PaperSourceKind,
 };
 
 use super::{
@@ -24,11 +25,12 @@ use crate::{
 };
 
 /// The forms of the page; one is open at a time.
-const FORMS: [Layer; 4] = [
+const FORMS: [Layer; 5] = [
     Layer::PaperForm,
     Layer::PaperItemForm,
     Layer::PaperSources,
     Layer::ConfirmRemovePaper,
+    Layer::PaperFinalize,
 ];
 
 impl Workspace {
@@ -55,6 +57,8 @@ impl Workspace {
         for form in FORMS {
             self.layers.close(form);
         }
+        self.paper_check = None;
+        self.paper_waiving = None;
     }
 
     /// Reads the project's papers, then shows `open`, or the paper that
@@ -365,6 +369,144 @@ impl Workspace {
         self.change_paper(reply, window, cx);
     }
 
+    /// Opens the readiness check for the shown draft version, starting
+    /// from evidence kept to yourself.
+    fn open_paper_finalize(&mut self, cx: &mut Context<Self>) {
+        self.close_paper_forms();
+        self.paper_policy = PaperPolicy::default();
+        self.layers.open(Layer::PaperFinalize);
+        self.error = None;
+        cx.notify();
+    }
+
+    /// Changes what the version is checked against; the last check no
+    /// longer holds.
+    fn set_paper_policy(&mut self, policy: PaperPolicy, cx: &mut Context<Self>) {
+        if self.paper_policy != policy {
+            self.paper_policy = policy;
+            self.paper_check = None;
+            self.paper_waiving = None;
+            self.layers.close(Layer::PaperWaiver);
+        }
+        cx.notify();
+    }
+
+    /// Checks the shown version; with `finalize`, locks it when nothing
+    /// stands in the way and shows it locked.
+    fn check_paper_version(&mut self, finalize: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(project), Some(paper)) = (self.state.project.clone(), &self.paper) else {
+            return;
+        };
+        if self.paper_checking {
+            return;
+        }
+        let (id, version) = (paper.id.clone(), paper.shown.clone());
+        let policy = self.paper_policy;
+        let reply = if finalize {
+            self.backend
+                .finalize_paper(project, version.clone(), policy)
+        } else {
+            self.backend.check_paper(project, version.clone(), policy)
+        };
+        self.paper_checking = true;
+        self.error = None;
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.paper_checking = false;
+                let current = this.paper.as_ref().map(|paper| paper.shown.as_str());
+                if current != Some(version.as_str()) || this.paper_policy != policy {
+                    return;
+                }
+                match result {
+                    Ok(check) if check.finalized => {
+                        this.close_paper_forms();
+                        this.show_paper(id, Some(version), window, cx);
+                    }
+                    Ok(check) => this.paper_check = Some(check),
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn open_paper_waiver(&mut self, code: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.paper_waiving = Some(code);
+        self.layers.open(Layer::PaperWaiver);
+        self.paper_waiver_field.update(cx, |input, cx| {
+            input.set_value("", window, cx);
+            input.focus(window, cx);
+        });
+        cx.notify();
+    }
+
+    /// Records why the finding may stand, then checks again so it shows
+    /// as let stand.
+    fn save_paper_waiver(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(project), Some(paper), Some(code)) = (
+            self.state.project.clone(),
+            &self.paper,
+            self.paper_waiving.clone(),
+        ) else {
+            return;
+        };
+        let reason = self.paper_waiver_field.read(cx).value().to_string();
+        let reply = self
+            .backend
+            .waive_paper_finding(project, paper.shown.clone(), code, reason);
+        self.error = None;
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(()) => {
+                        this.layers.close(Layer::PaperWaiver);
+                        this.paper_waiving = None;
+                        this.check_paper_version(false, window, cx);
+                    }
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Starts a draft from the shown version, with its items and evidence,
+    /// and shows it.
+    fn new_paper_version(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(project), Some(paper)) = (self.state.project.clone(), &self.paper) else {
+            return;
+        };
+        let reply = self.backend.new_paper_version(
+            project,
+            paper.id.clone(),
+            paper.shown.clone(),
+            papers::next_version_label(paper),
+        );
+        self.close_paper_forms();
+        self.error = None;
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(paper) => {
+                        let id = paper.id.clone();
+                        this.paper = Some(paper);
+                        this.load_papers(Some(id), window, cx);
+                    }
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn form_frame(&self, title: &'static str, cx: &App) -> Div {
         div()
             .v_flex()
@@ -563,6 +705,284 @@ impl Workspace {
         )
     }
 
+    /// One finding of the check: what it is, and either the reason it was
+    /// let stand or, when it may, a way to give one.
+    fn paper_finding_row(
+        &self,
+        index: usize,
+        finding: &PaperFinding,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let mut words = div()
+            .v_flex()
+            .flex_1()
+            .min_w_0()
+            .gap_0p5()
+            .child(div().text_sm().child(crate::i18n::host(&finding.message)))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(finding.code.clone()),
+            );
+        if let Some(reason) = &finding.waived {
+            words = words.child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(crate::i18n::fill(tr("Let stand: {}"), &[reason])),
+            );
+        }
+        let mut row = div()
+            .v_flex()
+            .gap_1()
+            .py_1()
+            .child(div().h_flex().items_start().gap_2().child(words));
+        let asking = self.paper_waiving.as_deref() == Some(finding.code.as_str())
+            && self.layers.contains(Layer::PaperWaiver);
+        if asking {
+            row = row.child(
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .child(Input::new(&self.paper_waiver_field).small()),
+                    )
+                    .child(
+                        Button::new(("paper-waiver-save", index))
+                            .label(tr("Save"))
+                            .small()
+                            .primary()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.save_paper_waiver(window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new(("paper-waiver-cancel", index))
+                            .label(tr("Cancel"))
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.layers.close(Layer::PaperWaiver);
+                                this.paper_waiving = None;
+                                cx.notify();
+                            })),
+                    ),
+            );
+        } else if finding.waivable && finding.waived.is_none() {
+            let code = finding.code.clone();
+            row = row.child(
+                div().h_flex().child(
+                    Button::new(("paper-waive", index))
+                        .label(tr("Let it stand…"))
+                        .xsmall()
+                        .ghost()
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.open_paper_waiver(code.clone(), window, cx)
+                        })),
+                ),
+            );
+        }
+        row
+    }
+
+    fn paper_findings(
+        &self,
+        title: &'static str,
+        offset: usize,
+        findings: &[PaperFinding],
+        cx: &mut Context<Self>,
+    ) -> Option<Div> {
+        if findings.is_empty() {
+            return None;
+        }
+        let mut section = div().v_flex().gap_1().pt_1().child(
+            div()
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .child(crate::i18n::fill(title, &[&findings.len()])),
+        );
+        for (index, finding) in findings.iter().enumerate() {
+            section = section.child(self.paper_finding_row(offset + index, finding, cx));
+        }
+        Some(section)
+    }
+
+    fn paper_check_result(&self, check: &PaperCheck, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let tone = if check.can_finalize {
+            Tone::Success
+        } else {
+            Tone::Danger
+        };
+        let mut result = div()
+            .v_flex()
+            .gap_1()
+            .pt_2()
+            .border_t_1()
+            .border_color(cx.theme().border)
+            .child(
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .child(chip(papers::verdict(check), tone, cx))
+                    .child(div().text_xs().text_color(muted).child(crate::i18n::fill(
+                        tr("Evidence level: {}"),
+                        &[&papers::level_label(check.level)],
+                    ))),
+            );
+        let blockers = check.blockers.len();
+        let warnings = check.warnings.len();
+        for section in [
+            self.paper_findings(tr("Stands in the way ({})"), 0, &check.blockers, cx),
+            self.paper_findings(tr("Warnings ({})"), blockers, &check.warnings, cx),
+            self.paper_findings(
+                tr("Left out of the record ({})"),
+                blockers + warnings,
+                &check.omissions,
+                cx,
+            ),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            result = result.child(section);
+        }
+        result
+    }
+
+    /// The panel that checks the shown draft and finalizes it.
+    fn paper_finalize_form(&self, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let policy = self.paper_policy;
+        let mut audiences = div().h_flex().gap_1();
+        for audience in PaperAudience::ALL {
+            audiences = audiences.child(
+                Button::new(SharedString::from(format!("paper-audience-{audience:?}")))
+                    .label(papers::audience_label(audience))
+                    .small()
+                    .selected(policy.audience == audience)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let policy = PaperPolicy {
+                            audience,
+                            ..this.paper_policy
+                        };
+                        this.set_paper_policy(policy, cx)
+                    })),
+            );
+        }
+        let confirm =
+            |id: &'static str, text: &'static str, on: bool, change: fn(&mut PaperPolicy)| {
+                Button::new(id)
+                    .icon(glyph(if on { "check-square" } else { "square" }))
+                    .label(text)
+                    .small()
+                    .ghost()
+                    .selected(on)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let mut policy = this.paper_policy;
+                        change(&mut policy);
+                        this.set_paper_policy(policy, cx)
+                    }))
+            };
+        let mut confirms = div().v_flex().items_start().gap_1();
+        if policy.audience == PaperAudience::Public {
+            confirms = confirms
+                .child(confirm(
+                    "paper-personal-reviewed",
+                    tr("I looked over the evidence for health and personal details"),
+                    policy.personal_reviewed,
+                    |policy| policy.personal_reviewed = !policy.personal_reviewed,
+                ))
+                .child(confirm(
+                    "paper-rights-reviewed",
+                    tr("I looked over licences and the right to pass it on"),
+                    policy.rights_reviewed,
+                    |policy| policy.rights_reviewed = !policy.rights_reviewed,
+                ));
+        } else {
+            confirms = confirms.child(confirm(
+                "paper-keep-restricted",
+                tr("Copy restricted files into the record where allowed"),
+                policy.keep_restricted,
+                |policy| policy.keep_restricted = !policy.keep_restricted,
+            ));
+        }
+        let ready = self
+            .paper_check
+            .as_ref()
+            .is_some_and(|check| check.can_finalize);
+        let mut actions = div()
+            .h_flex()
+            .gap_2()
+            .pt_1()
+            .child(
+                Button::new("paper-check")
+                    .icon(glyph("check"))
+                    .label(tr("Check this version"))
+                    .small()
+                    .disabled(self.paper_checking)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.check_paper_version(false, window, cx)
+                    })),
+            )
+            .child(
+                Button::new("paper-finalize-confirm")
+                    .icon(glyph("lock"))
+                    .label(tr("Finalize and lock the evidence"))
+                    .small()
+                    .primary()
+                    .disabled(self.paper_checking || !ready)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.check_paper_version(true, window, cx)
+                    })),
+            )
+            .child(
+                Button::new("paper-finalize-cancel")
+                    .label(tr("Cancel"))
+                    .small()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.close_paper_forms();
+                        cx.notify();
+                    })),
+            );
+        if self.paper_checking {
+            actions = actions.child(div().text_xs().text_color(muted).child(tr("Checking…")));
+        }
+        let mut form = self
+            .form_frame(tr("Finalize this version"), cx)
+            .child(div().text_xs().text_color(muted).child(tr(
+                "Check the evidence first. Finalizing locks this version; later changes need a \
+                 new version.",
+            )))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(tr("Who the evidence may be shown to")),
+            )
+            .child(audiences)
+            .child(confirms)
+            .child(actions)
+            .child(div().text_xs().text_color(muted).child(tr(
+                "Finalizing keeps the evidence. Whether the results can be made again is a \
+                 separate question that a passing check does not answer.",
+            )));
+        match &self.paper_check {
+            Some(check) => form = form.child(self.paper_check_result(check, cx)),
+            None if !self.paper_checking => {
+                form = form.child(div().text_xs().text_color(muted).child(tr(
+                    "Check this version to see what is missing, what to look at, and what \
+                     the record will leave out.",
+                )))
+            }
+            None => {}
+        }
+        form
+    }
+
     fn paper_item_row(&self, paper: &Paper, item: &PaperItem, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
         let version = paper.shown.clone();
@@ -702,6 +1122,28 @@ impl Workspace {
                         })),
                 );
         } else {
+            if paper.editable && !self.layers.contains(Layer::PaperFinalize) {
+                actions = actions.child(
+                    Button::new("paper-finalize")
+                        .icon(glyph("lock"))
+                        .label(tr("Finalize…"))
+                        .small()
+                        .ghost()
+                        .on_click(cx.listener(|this, _, _, cx| this.open_paper_finalize(cx))),
+                );
+            }
+            if !paper.shown.is_empty() {
+                actions = actions.child(
+                    Button::new("paper-new-version")
+                        .icon(glyph("note-plus"))
+                        .label(tr("New version"))
+                        .small()
+                        .ghost()
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.new_paper_version(window, cx)),
+                        ),
+                );
+            }
             actions = actions
                 .child(
                     Button::new("paper-rename")
@@ -775,6 +1217,19 @@ impl Workspace {
                 "This version is finalized: it shows the evidence it was locked with and \
                  cannot be changed here.",
             )));
+            if let Some(locked) = paper
+                .versions
+                .iter()
+                .find(|version| version.id == paper.shown && !version.fingerprint.is_empty())
+            {
+                body = body.child(div().text_xs().text_color(muted).child(crate::i18n::fill(
+                    tr("Locked under {}. New version starts a draft from it."),
+                    &[&papers::fingerprint(&locked.fingerprint)],
+                )));
+            }
+        }
+        if self.layers.contains(Layer::PaperFinalize) && paper.editable {
+            body = body.child(self.paper_finalize_form(cx));
         }
         for item in &paper.items {
             body = body.child(self.paper_item_row(paper, item, cx));

@@ -1,7 +1,7 @@
 //! Paper evidence: how a paper's versions, items and their sources read.
 use wisp_server::desktop::{
-    Paper, PaperItemKind, PaperSource, PaperSourceChoice, PaperSourceKind, PaperVersion,
-    PaperVersionState,
+    Paper, PaperAudience, PaperCheck, PaperItemKind, PaperLevel, PaperSource, PaperSourceChoice,
+    PaperSourceKind, PaperVersion, PaperVersionState,
 };
 
 use crate::i18n::{fill, tr};
@@ -87,10 +87,63 @@ pub fn summary(paper: &Paper) -> String {
     line
 }
 
+pub fn audience_label(audience: PaperAudience) -> &'static str {
+    match audience {
+        PaperAudience::Private => tr("Private"),
+        PaperAudience::Restricted => tr("Restricted"),
+        PaperAudience::Public => tr("Public"),
+    }
+}
+
+pub fn level_label(level: PaperLevel) -> &'static str {
+    match level {
+        PaperLevel::Archived => tr("Archived"),
+        PaperLevel::Traceable => tr("Traceable"),
+        PaperLevel::Rerunnable => tr("Re-runnable"),
+        PaperLevel::Reproduced => tr("Reproduced"),
+    }
+}
+
+/// What a new version is called: the number after the paper's last one.
+pub fn next_version_label(paper: &Paper) -> String {
+    let next = paper
+        .versions
+        .iter()
+        .map(|version| version.number)
+        .max()
+        .unwrap_or(0)
+        + 1;
+    fill(tr("Version {}"), &[&next])
+}
+
+/// A locked version's fingerprint, short enough to read.
+pub fn fingerprint(hash: &str) -> String {
+    format!("sha256:{}", hash.get(..12).unwrap_or(hash))
+}
+
+/// What the check comes to, in a line: ready, or how much stands in the
+/// way.
+pub fn verdict(check: &PaperCheck) -> String {
+    if check.finalized {
+        return tr("Finalized").to_owned();
+    }
+    let open = check
+        .blockers
+        .iter()
+        .filter(|finding| finding.waived.is_none())
+        .count();
+    let waived = check.blockers.len() - open;
+    match (check.can_finalize, waived) {
+        (true, 0) => tr("Ready to finalize").to_owned(),
+        (true, waived) => fill(tr("Ready to finalize, with {} let stand"), &[&waived]),
+        (false, _) => fill(tr("{} to fix or let stand before finalizing"), &[&open]),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wisp_server::desktop::PaperItem;
+    use wisp_server::desktop::{PaperFinding, PaperItem};
 
     fn source(name: &str, purpose: &str) -> PaperSource {
         PaperSource {
@@ -118,6 +171,7 @@ mod tests {
             number: 2,
             label: "Revision".into(),
             state: PaperVersionState::Draft,
+            fingerprint: String::new(),
         };
         assert_eq!(version_label(&version), "v2 · Revision");
         version.state = PaperVersionState::Finalized;
@@ -163,5 +217,61 @@ mod tests {
         assert_eq!(summary(&paper), "2 items · 3 sources · 1 without a source");
         paper.items.pop();
         assert_eq!(summary(&paper), "1 items · 3 sources");
+    }
+
+    fn found(code: &str, waived: Option<&str>) -> PaperFinding {
+        PaperFinding {
+            code: code.into(),
+            message: code.into(),
+            waivable: true,
+            waived: waived.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn the_verdict_counts_what_stands_in_the_way() {
+        let mut check = PaperCheck {
+            finalized: false,
+            level: PaperLevel::Traceable,
+            blockers: vec![found("run_code_missing", None), found("a", Some("kept"))],
+            warnings: vec![],
+            omissions: vec![],
+            fingerprint: "ab".repeat(32),
+            can_finalize: false,
+        };
+        assert_eq!(verdict(&check), "1 to fix or let stand before finalizing");
+        check.blockers[0].waived = Some("by hand".into());
+        check.can_finalize = true;
+        assert_eq!(verdict(&check), "Ready to finalize, with 2 let stand");
+        check.blockers.clear();
+        assert_eq!(verdict(&check), "Ready to finalize");
+        check.finalized = true;
+        assert_eq!(verdict(&check), "Finalized");
+        assert_eq!(fingerprint(&check.fingerprint), "sha256:abababababab");
+        assert_eq!(fingerprint("abc"), "sha256:abc");
+    }
+
+    #[test]
+    fn a_new_version_is_numbered_after_the_last() {
+        let version = |number| PaperVersion {
+            id: format!("v{number}"),
+            number,
+            label: String::new(),
+            state: PaperVersionState::Finalized,
+            fingerprint: String::new(),
+        };
+        let mut paper = Paper {
+            id: "p".into(),
+            title: "Paper".into(),
+            description: String::new(),
+            versions: vec![version(3), version(1)],
+            shown: "v3".into(),
+            editable: false,
+            items: vec![],
+            loose: vec![],
+        };
+        assert_eq!(next_version_label(&paper), "Version 4");
+        paper.versions.clear();
+        assert_eq!(next_version_label(&paper), "Version 1");
     }
 }

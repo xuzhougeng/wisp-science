@@ -2,20 +2,24 @@
 //! for each figure, table or claim the results and runs it rests on.
 //!
 //! This is the store's publication model seen from the desktop: papers,
-//! versions, items and the evidence bound to them. Finalizing a version,
-//! capsules and reproduction runs are not done from here; a version that
-//! the WebView desktop finalized is shown and cannot be changed.
+//! versions, items and the evidence bound to them, the readiness check,
+//! waivers, finalizing a version (see `paper_freeze`) and starting a new
+//! version from one. Capsules and reproduction runs are not done from here.
 
 use anyhow::{bail, ensure, Context, Result};
 use wisp_store::{
     EvidenceBinding, EvidenceBindingDraft, EvidenceSelectionState, EvidenceSourceKind,
-    EvidenceVisibility, PublicationItem, PublicationItemKind, PublicationRevisionState, Store,
+    EvidenceVisibility, PublicationCapabilityLevel, PublicationFreezePolicy, PublicationItem,
+    PublicationItemKind, PublicationReadinessFinding, PublicationRevisionState, PublicationWaiver,
+    Store,
 };
 
 const TITLE_LIMIT: usize = 200;
 const NOTE_LIMIT: usize = 4_000;
 /// What a paper's first version is called when the form leaves it empty.
 const FIRST_VERSION: &str = "Initial submission";
+/// Who a waiver is recorded as written by; this desktop has one person.
+const WAIVER_AUTHOR: &str = "Local user";
 
 /// A paper in the project's list.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,6 +47,8 @@ pub struct PaperVersion {
     pub number: i64,
     pub label: String,
     pub state: PaperVersionState,
+    /// The SHA-256 of what a finalized version locked; empty for a draft.
+    pub fingerprint: String,
 }
 
 /// What an item of a paper is. The store knows more kinds than the form
@@ -163,6 +169,105 @@ pub struct PaperSourceChoice {
     pub name: String,
     /// The result's version, or the run's state.
     pub detail: String,
+}
+
+/// Who the finalized evidence may be shown to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PaperAudience {
+    #[default]
+    Private,
+    Restricted,
+    Public,
+}
+
+impl PaperAudience {
+    pub const ALL: [PaperAudience; 3] = [
+        PaperAudience::Private,
+        PaperAudience::Restricted,
+        PaperAudience::Public,
+    ];
+
+    fn stored(self) -> EvidenceVisibility {
+        match self {
+            PaperAudience::Private => EvidenceVisibility::Private,
+            PaperAudience::Restricted => EvidenceVisibility::Restricted,
+            PaperAudience::Public => EvidenceVisibility::Public,
+        }
+    }
+}
+
+/// What finalizing a version is checked against.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PaperPolicy {
+    pub audience: PaperAudience,
+    /// For the public: the evidence was looked over for health and
+    /// personal details.
+    pub personal_reviewed: bool,
+    /// For the public: licences and the right to pass it on were looked over.
+    pub rights_reviewed: bool,
+    /// Not for the public: copy restricted files into the record instead
+    /// of only pointing at them.
+    pub keep_restricted: bool,
+}
+
+impl PaperPolicy {
+    fn stored(self) -> PublicationFreezePolicy {
+        PublicationFreezePolicy {
+            target_visibility: self.audience.stored(),
+            phi_pii_reviewed: self.personal_reviewed,
+            redistribution_reviewed: self.rights_reviewed,
+            snapshot_restricted_bytes: self.keep_restricted,
+        }
+    }
+}
+
+/// How far the locked evidence goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaperLevel {
+    /// Kept, without a way back to what made it.
+    Archived,
+    /// Each result can be traced to what made it.
+    Traceable,
+    /// The runs behind it have their code and environment, to run again.
+    Rerunnable,
+    Reproduced,
+}
+
+/// One thing the readiness check found.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PaperFinding {
+    /// The store's code for it, which a waiver names.
+    pub code: String,
+    pub message: String,
+    pub waivable: bool,
+    /// Why it was waived, when it was.
+    pub waived: Option<String>,
+}
+
+/// What checking or finalizing a version found.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PaperCheck {
+    /// Whether the version is now finalized.
+    pub finalized: bool,
+    pub level: PaperLevel,
+    /// Each stops finalizing until it is fixed or waived.
+    pub blockers: Vec<PaperFinding>,
+    pub warnings: Vec<PaperFinding>,
+    /// What the record leaves out.
+    pub omissions: Vec<PaperFinding>,
+    pub fingerprint: String,
+    pub can_finalize: bool,
+}
+
+fn finding(found: PublicationReadinessFinding) -> PaperFinding {
+    PaperFinding {
+        code: found.code,
+        message: found.message,
+        waivable: found.waivable,
+        waived: found
+            .waived
+            .then(|| found.waiver.map(|waiver| waiver.reason).unwrap_or_default()),
+    }
 }
 
 fn title(text: &str) -> Result<String> {
@@ -330,6 +435,7 @@ pub(crate) async fn open(
                         PaperVersionState::Busy
                     }
                 },
+                fingerprint: revision.manifest_sha256.clone().unwrap_or_default(),
             })
             .collect(),
         items,
@@ -549,4 +655,98 @@ pub(crate) async fn unbind(
         "That evidence is not in this version"
     );
     store.delete_evidence_binding(binding).await
+}
+
+/// Checks a draft version against `policy`, and when `finalize` is set
+/// and nothing blocks it, locks the version with its evidence.
+pub(crate) async fn check(
+    store: &Store,
+    project: &str,
+    version: &str,
+    policy: PaperPolicy,
+    finalize: bool,
+) -> Result<PaperCheck> {
+    draft(store, project, version).await?;
+    let outcome = crate::paper_freeze::prepare_or_freeze_publication(
+        store,
+        version,
+        policy.stored(),
+        !finalize,
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
+    let readiness = outcome.readiness;
+    Ok(PaperCheck {
+        finalized: outcome.frozen,
+        level: match readiness.capability_level {
+            PublicationCapabilityLevel::Archived => PaperLevel::Archived,
+            PublicationCapabilityLevel::Traceable => PaperLevel::Traceable,
+            PublicationCapabilityLevel::ReExecutable => PaperLevel::Rerunnable,
+            PublicationCapabilityLevel::Reproduced => PaperLevel::Reproduced,
+        },
+        blockers: readiness.blockers.into_iter().map(finding).collect(),
+        warnings: readiness.warnings.into_iter().map(finding).collect(),
+        omissions: readiness.omissions.into_iter().map(finding).collect(),
+        fingerprint: readiness.manifest_sha256,
+        can_finalize: readiness.can_freeze,
+    })
+}
+
+/// Records why a finding of a draft version may stand; the next check
+/// counts it as waived.
+pub(crate) async fn waive(
+    store: &Store,
+    project: &str,
+    version: &str,
+    code: &str,
+    reason: &str,
+) -> Result<()> {
+    draft(store, project, version).await?;
+    let reason = note(reason)?;
+    ensure!(!reason.is_empty(), "Say why this can stand");
+    store
+        .save_publication_waiver(&PublicationWaiver {
+            id: uuid::Uuid::new_v4().to_string(),
+            revision_id: version.to_owned(),
+            finding_code: code.to_owned(),
+            author: WAIVER_AUTHOR.to_owned(),
+            reason,
+            created_at: 0,
+        })
+        .await
+}
+
+/// Starts a draft from `version` with its items and evidence, called
+/// `label` or, when that is empty, after its number. Returns the new
+/// version.
+pub(crate) async fn new_version(
+    store: &Store,
+    project: &str,
+    version: &str,
+    label: &str,
+) -> Result<String> {
+    let found = store
+        .get_publication_revision(version)
+        .await?
+        .context("That version is gone")?;
+    owned(store, project, &found.publication_id).await?;
+    let label = match label.trim() {
+        "" => {
+            let next = store
+                .list_publication_revisions(&found.publication_id)
+                .await?
+                .iter()
+                .map(|revision| revision.revision_number)
+                .max()
+                .unwrap_or(0)
+                + 1;
+            format!("Version {next}")
+        }
+        typed => title(typed)?,
+    };
+    let id = uuid::Uuid::new_v4().to_string();
+    store
+        .clone_publication_revision(version, &id, &label)
+        .await?;
+    Ok(id)
 }

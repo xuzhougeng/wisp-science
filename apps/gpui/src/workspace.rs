@@ -203,6 +203,14 @@ pub struct Workspace {
     paper_source_fields: [Entity<InputState>; 2],
     paper_choices: Vec<wisp_server::desktop::PaperSourceChoice>,
     paper_choices_more: bool,
+    /// What finalizing the shown version is checked against, what the
+    /// last check found, and whether one is under way.
+    paper_policy: wisp_server::desktop::PaperPolicy,
+    paper_check: Option<wisp_server::desktop::PaperCheck>,
+    paper_checking: bool,
+    /// The finding a reason is being given for, and the reason.
+    paper_waiving: Option<String>,
+    paper_waiver_field: Entity<InputState>,
     journal_fields: [Entity<InputState>; 2],
     journal_category: &'static str,
     /// What the Files panel's name field is for, and the field; the entry
@@ -566,6 +574,10 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx)),
         ];
+        let paper_waiver_field = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(tr("Why it can stand, for whoever reads the record"))
+        });
         let browser_fields = [
             cx.new(|cx| InputState::new(window, cx).placeholder("example.com")),
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Reason (optional)"))),
@@ -862,6 +874,11 @@ impl Workspace {
             paper_source_fields,
             paper_choices: Vec::new(),
             paper_choices_more: false,
+            paper_policy: Default::default(),
+            paper_check: None,
+            paper_checking: false,
+            paper_waiving: None,
+            paper_waiver_field,
             journal_fields,
             journal_category: "progress",
             file_naming: None,
@@ -1138,6 +1155,8 @@ impl Workspace {
             Some(Layer::ConfirmDeleteSchedule) => self.schedule_deleting = None,
             Some(Layer::Papers) => {
                 self.paper = None;
+                self.paper_check = None;
+                self.paper_waiving = None;
                 self.focus_composer(window, cx);
             }
             Some(
@@ -1146,6 +1165,11 @@ impl Workspace {
                 | Layer::PaperSources
                 | Layer::ConfirmRemovePaper,
             ) => {}
+            Some(Layer::PaperFinalize) => {
+                self.paper_check = None;
+                self.paper_waiving = None;
+            }
+            Some(Layer::PaperWaiver) => self.paper_waiving = None,
             Some(Layer::ConfirmTrashFile) => self.file_trashing = None,
             // Menus and questions that hold no focus of their own.
             Some(

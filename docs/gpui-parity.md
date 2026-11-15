@@ -184,7 +184,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Feature | WebView | GPUI | Host |
 | --- | --- | --- | --- |
 | Research journey [研究历程]: by day, relation graph, search, add record, recap, artifact sources | Yes | Partial: a month at a time by day, a filter, and adding a record of your own; no relation graph, recap or artifact sources | store |
-| Paper evidence [论文证据]: papers, versions, figures and tables with their sources | Yes | Partial: a page of papers with their versions, and figures, tables and claims bound to project results and runs with a reason; no finalizing, new versions, readiness check, capsules or reproduction, and no conversation passages as evidence | store |
+| Paper evidence [论文证据]: papers, versions, figures and tables with their sources | Yes | Partial: a page of papers with their versions, and figures, tables and claims bound to project results and runs with a reason; readiness check, waivers, finalizing and new versions are there; no capsules or reproduction, and no conversation passages as evidence | store |
 
 ## 8. Settings
 
@@ -272,7 +272,7 @@ row says what is there.
 | Terminal | Several terminals, choose the environment, collapse, close — one terminal in the project folder is there; the rest is Missing | tauri |
 | Agents | Swarm progress, agent workflow runs (draft, approve, run, cancel, retry), method-search runs — an Agents tab lists a conversation's helpers, and workflows run as one conversation (section 8); the rest is Missing | store |
 | Library | Versions of saved code, edit code, insert into chat | store |
-| Publication | Revisions, manuscript items, evidence binding, readiness waivers, reproduction check, capsule — papers, items and evidence from results and runs are there (section 7); the rest is Missing | store |
+| Publication | Revisions, manuscript items, evidence binding, readiness waivers, reproduction check, capsule — papers, items, evidence from results and runs, new revisions, the readiness check with waivers and finalizing are there (section 7); reproduction and capsules are Missing | store |
 | Assistant | Assistant chat, saved plans, scheduled tasks, daily recap, weekly memory tidy, research mandates, WeChat binding — scheduled tasks are there (section 1); the rest is Missing | store |
 | App | Onboarding wizard, toolchain installer (uv, Python, R, Node, pixi), local tool detection | tauri |
 | App | Action palette (⌘P), privacy mode (⌘⇧H), application and native menus | ui |
