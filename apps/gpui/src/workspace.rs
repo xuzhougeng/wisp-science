@@ -603,6 +603,11 @@ pub struct Workspace {
     /// page of columns shown.
     file_sequences: Option<(String, std::sync::Arc<crate::sequences::Alignment>)>,
     sequence_page: usize,
+    /// The molecule or structure being previewed, read once; how far it is
+    /// turned (yaw, pitch); and where a drag that turns it last was.
+    file_structure: Option<(String, std::sync::Arc<crate::molecules::Structure>)>,
+    structure_turn: (f32, f32),
+    structure_drag: Option<Point<Pixels>>,
     favorite_request: u64,
     rename: Entity<InputState>,
     settings: settings_view::SettingsForm,
@@ -1306,6 +1311,9 @@ impl Workspace {
             file_pages: None,
             file_sequences: None,
             sequence_page: 0,
+            file_structure: None,
+            structure_turn: (0.0, 0.0),
+            structure_drag: None,
             inline_images: HashMap::new(),
             favorite_request: 0,
             rename,

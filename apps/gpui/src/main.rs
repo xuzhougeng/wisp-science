@@ -29,6 +29,7 @@ mod mandates;
 mod memory;
 mod memos;
 mod model_view;
+mod molecules;
 mod notebook;
 mod notify;
 mod onboarding;

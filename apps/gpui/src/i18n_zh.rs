@@ -1858,4 +1858,9 @@ pub const ZH: &[(&str, &str)] = &[
     ("amino acids", "氨基酸"),
     ("{} sequences · {} columns · {}", "{} 条序列 · {} 列 · {}"),
     (" · showing the first {} rows and {} columns", " · 显示前 {} 行、前 {} 列"),
+    ("Show the drawing", "显示结构图"),
+    ("Face on", "正面视图"),
+    ("{} chains · {} residues traced · drag to turn", "{} 条链 · 追踪 {} 个残基 · 拖动可旋转"),
+    ("The first {} of {} atoms · drag to turn", "显示前 {} 个原子（共 {} 个）· 拖动可旋转"),
+    ("{} atoms · {} bonds · drag to turn", "{} 个原子 · {} 个化学键 · 拖动可旋转"),
 ];

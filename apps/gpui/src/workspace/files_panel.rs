@@ -303,6 +303,7 @@ impl Workspace {
         self.file_document = None;
         self.file_pages = None;
         self.file_sequences = None;
+        self.file_structure = None;
         self.file_problem = None;
         self.file_as_text = false;
         // A PDF's first pages are drawn, off the window's thread.
@@ -426,6 +427,9 @@ impl Workspace {
                         this.file_sequences = crate::sequences::parse(&content.path, &text)
                             .map(|read| (content.path.clone(), std::sync::Arc::new(read)));
                         this.sequence_page = 0;
+                        this.file_structure = crate::molecules::parse(&content.path, &text)
+                            .map(|read| (content.path.clone(), std::sync::Arc::new(read)));
+                        this.structure_turn = (0.0, 0.0);
                         this.file_view
                             .update(cx, |input, cx| input.set_value(text, window, cx));
                     }
@@ -667,6 +671,13 @@ impl Workspace {
                 {
                     return self.render_sequences(read.clone(), cx);
                 }
+                if let Some((_, read)) = self
+                    .file_structure
+                    .as_ref()
+                    .filter(|(path, _)| *path == content.path)
+                {
+                    return self.render_structure(read.clone(), cx);
+                }
                 if let Some(book) = files::notebook(&content.path, text) {
                     return self.render_notebook(&content.path, book, window, cx);
                 }
@@ -685,6 +696,187 @@ impl Workspace {
             .flex_1()
             .min_h_0()
             .child(Input::new(&self.file_view).disabled(true).h_full())
+            .into_any_element()
+    }
+
+    /// A molecule as its atoms and bonds, or a structure as the trace of
+    /// its chains, drawn flat and turned by dragging; with a switch to its
+    /// text.
+    fn render_structure(
+        &self,
+        read: std::sync::Arc<crate::molecules::Structure>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        use crate::molecules;
+        let muted = cx.theme().muted_foreground;
+        let switch = Button::new("file-structure-switch")
+            .label(if self.file_as_text {
+                tr("Show the drawing")
+            } else {
+                tr("Show as text")
+            })
+            .xsmall()
+            .ghost()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.file_as_text = !this.file_as_text;
+                cx.notify();
+            }));
+        if self.file_as_text {
+            return div()
+                .v_flex()
+                .flex_1()
+                .min_h_0()
+                .child(div().h_flex().px_3().py_1().child(switch))
+                .child(self.render_text_preview())
+                .into_any_element();
+        }
+        let (yaw, pitch) = self.structure_turn;
+        let bond_colour = cx.theme().foreground.opacity(0.7);
+        let dot = cx.theme().foreground;
+        let drawing = read.clone();
+        let shown = read.clone();
+        let picture = canvas(
+            move |bounds, _, _| {
+                molecules::project(
+                    &drawing,
+                    yaw,
+                    pitch,
+                    f32::from(bounds.size.width),
+                    f32::from(bounds.size.height),
+                )
+            },
+            move |bounds, points, window, _| {
+                let at = |index: usize| {
+                    let (x, y, _) = points[index];
+                    point(bounds.origin.x + px(x), bounds.origin.y + px(y))
+                };
+                // Bonds of one colour go in one path: a chain each when
+                // traced, all together for a small molecule.
+                let mut groups: Vec<(String, PathBuilder)> = Vec::new();
+                for &(first, second) in &shown.bonds {
+                    let chain = if shown.trace {
+                        shown.atoms[first].chain.clone()
+                    } else {
+                        String::new()
+                    };
+                    let index = match groups.iter().position(|(kept, _)| *kept == chain) {
+                        Some(index) => index,
+                        None => {
+                            groups.push((
+                                chain,
+                                PathBuilder::stroke(px(if shown.trace { 2. } else { 1.5 })),
+                            ));
+                            groups.len() - 1
+                        }
+                    };
+                    let path = &mut groups[index].1;
+                    path.move_to(at(first));
+                    path.line_to(at(second));
+                }
+                for (number, (_, path)) in groups.into_iter().enumerate() {
+                    let colour = if shown.trace {
+                        hsla((number as f32 * 0.17) % 1.0, 0.6, 0.5, 1.0)
+                    } else {
+                        bond_colour
+                    };
+                    if let Ok(path) = path.build() {
+                        window.paint_path(path, colour);
+                    }
+                }
+                if shown.trace {
+                    return;
+                }
+                // The far atoms first, so the near ones cover them.
+                let mut order: Vec<usize> = (0..shown.atoms.len()).collect();
+                order.sort_by(|a, b| points[*a].2.total_cmp(&points[*b].2));
+                for index in order {
+                    let atom = &shown.atoms[index];
+                    let (colour, radius) = match molecules::element_colour(&atom.element) {
+                        Some((hue, lightness)) => (hsla(hue, 0.7, lightness, 1.0), 4.),
+                        None => (dot, 2.),
+                    };
+                    let centre = at(index);
+                    window.paint_quad(
+                        fill(
+                            Bounds::new(
+                                point(centre.x - px(radius), centre.y - px(radius)),
+                                size(px(radius * 2.), px(radius * 2.)),
+                            ),
+                            colour,
+                        )
+                        .corner_radii(px(radius)),
+                    );
+                }
+            },
+        )
+        .size_full();
+        div()
+            .v_flex()
+            .flex_1()
+            .min_h_0()
+            .child(
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .px_3()
+                    .py_1()
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(molecules::note(&read)),
+                    )
+                    .child(
+                        Button::new("file-structure-reset")
+                            .label(tr("Face on"))
+                            .xsmall()
+                            .ghost()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.structure_turn = (0.0, 0.0);
+                                cx.notify();
+                            })),
+                    )
+                    .child(switch),
+            )
+            .child(
+                div()
+                    .id("file-structure")
+                    .flex_1()
+                    .min_h_0()
+                    .m_3()
+                    .rounded(cx.theme().radius)
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .cursor_grab()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, event: &MouseDownEvent, _, _| {
+                            this.structure_drag = Some(event.position);
+                        }),
+                    )
+                    .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                        if event.pressed_button != Some(MouseButton::Left) {
+                            this.structure_drag = None;
+                            return;
+                        }
+                        if let Some(last) = this.structure_drag {
+                            let (yaw, pitch) = this.structure_turn;
+                            this.structure_turn = (
+                                yaw + f32::from(event.position.x - last.x) * 0.01,
+                                (pitch + f32::from(event.position.y - last.y) * 0.01)
+                                    .clamp(-1.5, 1.5),
+                            );
+                            cx.notify();
+                        }
+                        this.structure_drag = Some(event.position);
+                    }))
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|this, _: &MouseUpEvent, _, _| this.structure_drag = None),
+                    )
+                    .child(picture),
+            )
             .into_any_element()
     }
 
