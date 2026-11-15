@@ -844,6 +844,28 @@ impl Backend {
         self.local(move |host| async move { host.set_credential(id, &value).await })
     }
 
+    pub fn custom_credentials(&self) -> Reply<Vec<wisp_server::desktop::CustomCredential>> {
+        self.local(|host| async move { host.custom_credentials().await })
+    }
+
+    pub fn add_custom_credential(
+        &self,
+        name: String,
+        env_var: String,
+        value: String,
+    ) -> Reply<Vec<wisp_server::desktop::CustomCredential>> {
+        self.local(
+            move |host| async move { host.add_custom_credential(&name, &env_var, &value).await },
+        )
+    }
+
+    pub fn remove_custom_credential(
+        &self,
+        id: String,
+    ) -> Reply<Vec<wisp_server::desktop::CustomCredential>> {
+        self.local(move |host| async move { host.remove_custom_credential(&id).await })
+    }
+
     pub fn usage(&self) -> Reply<UsageView> {
         self.local(|host| async move { host.usage().await })
     }

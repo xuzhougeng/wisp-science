@@ -636,6 +636,10 @@ pub struct Workspace {
     /// The service keys, as the Credentials page lists them, each with the
     /// field a new value is typed into.
     credentials: Vec<(wisp_server::desktop::CredentialRow, Entity<InputState>)>,
+    /// Credentials of your own, and the fields for adding one: name,
+    /// environment variable and value.
+    custom_credentials: Vec<wisp_server::desktop::CustomCredential>,
+    custom_credential_fields: [Entity<InputState>; 3],
     /// Tokens used, as the Usage page shows them; `None` until read.
     usage: Option<wisp_server::desktop::UsageView>,
     /// What Wisp keeps and where; `None` until read.
@@ -780,6 +784,15 @@ impl Workspace {
         let find_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Find in this conversation…")));
         let file_name_input = cx.new(|cx| InputState::new(window, cx));
+        let custom_credential_fields = [
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Name, for you"))),
+            cx.new(|cx| InputState::new(window, cx).placeholder("LAB_API_TOKEN")),
+            cx.new(|cx| {
+                InputState::new(window, cx)
+                    .masked(true)
+                    .placeholder(tr("Value"))
+            }),
+        ];
         let file_search = cx.new(|cx| {
             InputState::new(window, cx).placeholder(tr("Search by name across the project…"))
         });
@@ -1446,6 +1459,8 @@ impl Workspace {
             mcp_token,
             mcp_tested: HashMap::new(),
             credentials: vec![],
+            custom_credentials: vec![],
+            custom_credential_fields,
             usage: None,
             storage: None,
             saved: vec![],

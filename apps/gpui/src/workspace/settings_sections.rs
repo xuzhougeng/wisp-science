@@ -1172,6 +1172,18 @@ impl Workspace {
     /// Reads which service keys are saved. Each keeps its field across
     /// reloads; what is in a field is only what was just typed.
     fn load_credentials(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mine = self.backend.custom_credentials();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(mine).await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(rows) => this.custom_credentials = rows,
+                    Err(error) => this.settings_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
         let reply = self.backend.credentials();
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
@@ -1241,6 +1253,151 @@ impl Workspace {
             });
         })
         .detach();
+    }
+
+    /// Adds the credential of your own the fields describe; on success the
+    /// fields are emptied, the value first.
+    fn add_custom_credential(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let [name, env_var, value] = [0, 1, 2].map(|at| {
+            self.custom_credential_fields[at]
+                .read(cx)
+                .value()
+                .to_string()
+        });
+        self.settings_error = None;
+        let reply = self.backend.add_custom_credential(name, env_var, value);
+        self.receive_custom_credentials(reply, true, window, cx);
+    }
+
+    fn remove_custom_credential(
+        &mut self,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings_error = None;
+        let reply = self.backend.remove_custom_credential(id);
+        self.receive_custom_credentials(reply, false, window, cx);
+    }
+
+    fn receive_custom_credentials(
+        &mut self,
+        reply: crate::backend::Reply<Vec<wisp_server::desktop::CustomCredential>>,
+        clear: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(rows) => {
+                        this.custom_credentials = rows;
+                        if clear {
+                            for field in &this.custom_credential_fields {
+                                field.update(cx, |input, cx| input.set_value("", window, cx));
+                            }
+                        }
+                    }
+                    Err(error) => this.settings_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Credentials of your own: what is saved, and a form to add one.
+    fn custom_credential_section(&self, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let mut section = div()
+            .v_flex()
+            .gap_2()
+            .pt_4()
+            .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(tr("Your own")))
+            .child(div().w(px(NOTE_WIDTH + 80.)).text_xs().text_color(muted).child(tr(
+                "Any other key, given to the code the model runs under the environment variable you name. Adding one with a variable that is already here replaces its value.",
+            )));
+        for credential in &self.custom_credentials {
+            let id = credential.id.clone();
+            section = section.child(
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .py_1()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .child(
+                        div()
+                            .w(px(180.))
+                            .truncate()
+                            .text_sm()
+                            .child(credential.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_xs()
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .text_color(muted)
+                            .child(credential.env_var.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(if credential.saved {
+                                tr("Saved")
+                            } else {
+                                tr("Not set")
+                            }),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("custom-credential-remove-{id}")))
+                            .label(tr("Remove"))
+                            .small()
+                            .ghost()
+                            .tooltip(tr("Remove it and its value from the keychain"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.remove_custom_credential(id.clone(), window, cx)
+                            })),
+                    ),
+            );
+        }
+        let ready = self
+            .custom_credential_fields
+            .iter()
+            .all(|field| !field.read(cx).value().trim().is_empty());
+        section.child(
+            div()
+                .h_flex()
+                .gap_2()
+                .child(
+                    div()
+                        .w(px(160.))
+                        .child(Input::new(&self.custom_credential_fields[0]).small()),
+                )
+                .child(
+                    div()
+                        .w(px(160.))
+                        .child(Input::new(&self.custom_credential_fields[1]).small()),
+                )
+                .child(
+                    div()
+                        .w(px(160.))
+                        .child(Input::new(&self.custom_credential_fields[2]).small()),
+                )
+                .child(
+                    Button::new("custom-credential-add")
+                        .label(tr("Add"))
+                        .small()
+                        .disabled(!ready)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.add_custom_credential(window, cx)
+                        })),
+                ),
+        )
     }
 
     pub(super) fn render_credential_settings(&self, cx: &mut Context<Self>) -> Div {
@@ -1323,7 +1480,7 @@ impl Workspace {
                     ),
             );
         }
-        page
+        page.child(self.custom_credential_section(cx))
     }
 
     pub(super) fn settings_page(&self, cx: &App) -> Div {
