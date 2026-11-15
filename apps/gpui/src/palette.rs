@@ -6,7 +6,7 @@ use crate::i18n::tr;
 use wisp_dto::{ProjectSummary, SessionSearchInfo};
 use wisp_server::desktop::{FileMatch, ReferenceOption};
 
-use crate::home::Screen;
+use crate::{compose::Chip, home::Screen};
 
 /// Rows shown per section, so one kind of result never buries the others.
 const PROJECTS: usize = 5;
@@ -273,6 +273,26 @@ impl Entry {
         }
     }
 
+    /// What this row adds to the message being written in `project`
+    /// (conversation `session`, when one is open), found while looking
+    /// for something to go to: a file of that project, or another
+    /// conversation.
+    pub fn chip_in(&self, mode: Mode, project: &str, session: Option<&str>) -> Option<Chip> {
+        if mode != Mode::Open {
+            return None;
+        }
+        match self {
+            Entry::File(file) if file.project_id == project => Some(Chip::File(file.path.clone())),
+            Entry::Conversation { id, title, .. } if Some(id.as_str()) != session => {
+                Some(Chip::Conversation {
+                    id: id.clone(),
+                    title: title.clone(),
+                })
+            }
+            _ => None,
+        }
+    }
+
     /// The project this row can also open in a window of its own: a
     /// project found to go to, not one listed to attach.
     pub fn window_project(&self, mode: Mode) -> Option<&str> {
@@ -497,6 +517,43 @@ pub fn child_index(entries: &[Entry], index: usize) -> usize {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_file_or_another_conversation_found_can_join_the_message() {
+        let file = |project: &str| {
+            Entry::File(FileMatch {
+                project_id: project.into(),
+                project_name: "Lab".into(),
+                path: "data/reads.csv".into(),
+            })
+        };
+        assert_eq!(
+            file("p").chip_in(Mode::Open, "p", Some("s")),
+            Some(Chip::File("data/reads.csv".into()))
+        );
+        // Its path means nothing in another project.
+        assert_eq!(file("q").chip_in(Mode::Open, "p", Some("s")), None);
+        let other = Entry::Conversation {
+            project: "q".into(),
+            id: "t".into(),
+            title: "Counts".into(),
+            place: "Lab".into(),
+        };
+        assert_eq!(
+            other.chip_in(Mode::Open, "p", Some("s")),
+            Some(Chip::Conversation {
+                id: "t".into(),
+                title: "Counts".into()
+            })
+        );
+        // Not context for itself, and not offered twice while attaching.
+        assert_eq!(other.chip_in(Mode::Open, "p", Some("t")), None);
+        assert_eq!(file("p").chip_in(Mode::Attach, "p", None), None);
+        assert_eq!(
+            Entry::Command(Command::NewWindow).chip_in(Mode::Open, "p", None),
+            None
+        );
+    }
 
     #[test]
     fn a_project_found_to_go_to_can_open_in_a_new_window() {

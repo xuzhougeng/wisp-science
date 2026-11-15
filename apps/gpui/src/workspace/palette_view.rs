@@ -396,6 +396,31 @@ impl Workspace {
                     cx.notify();
                 }))
             });
+            // A file or conversation found can join the message without
+            // leaving the conversation.
+            let attach = self
+                .state
+                .project
+                .as_deref()
+                .filter(|_| self.screen == Screen::Project)
+                .and_then(|project| {
+                    entry.chip_in(self.palette.mode, project, self.state.session.as_deref())
+                })
+                .map(|chip| {
+                    icon_button(
+                        ("palette-attach", index),
+                        "attach",
+                        tr("Add to the message"),
+                    )
+                    .xsmall()
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.layers.close(Layer::Palette);
+                        this.attach(chip.clone(), cx);
+                        this.focus_composer(window, cx);
+                        cx.notify();
+                    }))
+                });
             list = list.child(
                 div()
                     .id(("palette-row", index))
@@ -425,6 +450,7 @@ impl Workspace {
                             .text_color(muted)
                             .child(detail),
                     )
+                    .children(attach)
                     .children(new_window)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.activate_palette(Some(index), window, cx)

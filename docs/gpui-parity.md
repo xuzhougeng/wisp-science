@@ -64,7 +64,7 @@ to find in the running app.
 | Research assistant [科研助理] | Scheduled tasks and plans | Partial: a Scheduled tasks page across projects (every few hours, daily or weekly; run now, on or off, delete; templates) that fires into a new conversation while the app is open, the daily recap run with its time, switch and Run now, the assistant's conversation with its plan for the day and dispatching to projects, and the weekly habit tidy on the Memory tab; and research mandates with their page, rounds, requests and reports | store |
 | Research calendar [研究日历] | Month grid, per-project filter, day detail | Done: month grid with counts, projects can be left out, and the chosen day's records | store |
 | Favorites library [收藏库] | Saved code, figures, highlights; search and kind filter | Done: a page of its own; saved snippets cannot be edited into versions | store |
-| Command palette [搜索, ⌘K] | Projects, files, conversations, commands | Partial: finds projects, files and conversations in every project and runs GPUI's own commands; a project found there opens in a new window from its row; no attach-from-result, and the commands for features not ported yet are absent | served + ui |
+| Command palette [搜索, ⌘K] | Projects, files, conversations, commands | Partial: finds projects, files and conversations in every project and runs GPUI's own commands; a project found there opens in a new window from its row, and a file of the open project or another conversation joins the message from its row; the commands for features not ported yet are absent | served + ui |
 | Documentation [文档] | Opens the docs | Done: from the home page, Settings and the command palette, in the system's browser | ui |
 | Settings entry | Yes | Done | ui |
 
