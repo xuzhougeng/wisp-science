@@ -1126,6 +1126,11 @@ impl Backend {
         self.local(move |host| async move { host.research_archive(&project, &session).await })
     }
 
+    /// A new conversation that goes on from a frozen archive.
+    pub fn continue_research(&self, project: String, session: String) -> Reply<String> {
+        self.local(move |host| async move { host.continue_research(&project, &session).await })
+    }
+
     /// Has the model draft an archive of a conversation; nothing is saved.
     /// Conversations Codex and Claude Code keep on this computer.
     pub fn external_conversations(

@@ -148,6 +148,32 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Goes on from the frozen archive in a new conversation, which opens.
+    fn continue_research(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let selection = self.state.selection();
+        let (Some(project), Some(session)) = (selection.project.clone(), selection.session.clone())
+        else {
+            return;
+        };
+        self.archive_error = None;
+        let reply = self.backend.continue_research(project.clone(), session);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(continued) => {
+                        this.close_research_archive(window, cx);
+                        this.open_session(project, continued, window, cx);
+                    }
+                    Err(error) => this.archive_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn close_research_archive(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.layers.close(Layer::ResearchArchive) {
             self.archive = None;
@@ -275,6 +301,16 @@ impl Workspace {
                             .selectable(true),
                     )
                     .child(note(scripts_line(&frozen.scripts)));
+                actions = actions.child(
+                    Button::new("archive-continue")
+                        .label(tr("Continue research"))
+                        .small()
+                        .primary()
+                        .tooltip(tr("A new conversation that starts from this archive"))
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.continue_research(window, cx)),
+                        ),
+                );
             }
         }
         actions = actions.child(

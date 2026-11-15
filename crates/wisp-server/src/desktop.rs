@@ -4653,6 +4653,38 @@ impl Server {
             .filter(|archive| archive.frozen_at.is_some()))
     }
 
+    /// Goes on from a frozen archive, as the WebView's Continue research
+    /// does: a new conversation of the project, linked to the archive,
+    /// named after it and opened with the report and where the retained
+    /// materials and the original conversation are. Nothing is sent yet.
+    /// Returns the new conversation.
+    pub async fn continue_research(&self, project: &str, session: &str) -> Result<String> {
+        let archive = self
+            .research_archive(project, session)
+            .await?
+            .context("This conversation's research is not archived")?;
+        let id = self.create_conversation(project).await?;
+        let store = &self.0.store;
+        store.link_archive_continuation(&archive, &id).await?;
+        store
+            .rename_session(&id, project, &format!("Continue · {}", archive.title))
+            .await?;
+        store
+            .append_message(
+                &id,
+                1,
+                &wisp_llm::Message::user(format!(
+                    "Continue research from the archived milestone: {}\n\n{}\n\nRead the \
+                     retained materials when relevant: .wisp/research-archives/{}/REPORT.md\n\
+                     Original notebook: {}. Preserve the original record; record later \
+                     corrections as new findings.",
+                    archive.title, archive.report, archive.id, archive.frame_id
+                )),
+            )
+            .await?;
+        Ok(id)
+    }
+
     /// Has the conversation's model write a draft archive of it: a report
     /// and the scripts that can be put together from what was run. Nothing
     /// is saved; the researcher reviews the draft and freezes it.

@@ -590,6 +590,8 @@ pub const ZH: &[(&str, &str)] = &[
     ("Resize and continue", "缩小并继续"),
     ("Which sound", "提示音"),
     ("Merged branch result", "已合并的分支结果"),
+    ("Continue research", "继续研究"),
+    ("A new conversation that starts from this archive", "从这份归档开始的新对话"),
     ("Open the branch", "打开分支"),
     ("One of the system's sounds; choosing one plays it.", "系统自带的声音之一；选择时会播放它。"),
     (

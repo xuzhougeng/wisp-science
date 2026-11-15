@@ -9333,6 +9333,19 @@ async fn a_conversations_research_is_drafted_reviewed_and_frozen() {
         .draft_research_archive(PROJECT, &session)
         .await
         .is_err());
+    // Research goes on in a new conversation that starts from the archive.
+    let continued = server.continue_research(PROJECT, &session).await.unwrap();
+    assert_ne!(continued, session);
+    let opening = server.whole_transcript(&continued).await.unwrap();
+    let said = opening[0].content.as_text();
+    assert!(
+        said.starts_with("Continue research from the archived milestone: "),
+        "{said}"
+    );
+    assert!(said.contains(&format!(".wisp/research-archives/{}/REPORT.md", frozen.id)));
+    assert!(!snapshot(&server, &continued).await.read_only);
+    // Only from a frozen archive.
+    assert!(server.continue_research(PROJECT, &continued).await.is_err());
     // Another conversation of the project is untouched.
     let next = create(&server).await;
     send(&server, &next, "count the reads again").await.unwrap();

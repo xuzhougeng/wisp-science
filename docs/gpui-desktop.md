@@ -165,7 +165,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Plugins | Settings, Plugins, installs a plugin from a folder in the Claude plugin layout (`.claude-plugin/plugin.json`, `skills/*/SKILL.md`) into the app's data without running anything in it, lists what each brings, switches one on for the open project, whose conversations then have its skills, and removes it |
 | Decision model | Settings, Decision model, sets up one fast endpoint (TypeSafe Jev, StartLux-Decision hosted or self-hosted, or a custom System One server) with its key, thinking mode and timeout, and tests it; while one is in use the model's `map_items` tool, which runs one step over many items, also offers its `decide` step, and an MCP server whose tools are Cua Driver's also gives `desktop_autopilot`, which drives the computer step by step with the decision model (asking before it runs) |
 | Pet | Settings, Pet, turns on an animated companion drawn from a folder you choose (pet.json and a sprite sheet, Codex-compatible version 2); it stands in the transcript's corner and shows whether the conversation is working, being reviewed, waiting for you, done or failed |
-| Research archive | A conversation's Research archive button (or the command palette) has the model draft a report of its findings with the scripts behind them; you change the draft and freeze it, which writes it into the project and makes the conversation read-only |
+| Research archive | A conversation's Research archive button (or the command palette) has the model draft a report of its findings with the scripts behind them; you change the draft and freeze it, which writes it into the project and makes the conversation read-only; Continue research then opens a new conversation, linked to the archive, that starts from its report |
 | Review turns | The composer's Review turns switch has each turn that used a tool, or said a good deal, reviewed when it ends; the result shows above the composer, and See opens the findings |
 | Review | A conversation's Review button (or the command palette) has the model read the conversation as a reviewer and lists claims its own tool output does not support, each with the evidence and a fix; Ask Wisp to correct puts the corrections in the composer |
 | Save as skill | A conversation's Save as skill button (or the command palette) puts a request in the composer that asks Wisp to distill the conversation into a reusable skill; you send it, changed or not |
@@ -2149,6 +2149,9 @@ scripts that go with it. Change a sentence and press Freeze: the dialog
 shows the frozen report and where it is; `.wisp/research-archives/<id>/`
 holds REPORT.md with your change and the scripts; the composer no longer
 sends in this conversation, and a new conversation works as before.
+Press Continue research: a conversation named "Continue · <title>" opens
+with the report and where the materials are as its first message, and
+the composer sends there.
 Press Escape on a draft: nothing is written.
 Switch Review turns on in the composer and have a turn run a tool: when
 it ends the line above the composer reads Reviewing the answer…, then the
