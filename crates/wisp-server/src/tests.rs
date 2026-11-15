@@ -6711,6 +6711,132 @@ async fn a_paper_version_is_checked_waived_finalized_and_continued() {
     server.shutdown().await;
 }
 
+/// A stand-in ACP agent: answers `initialize` with a name and one way to
+/// sign in, and stops when its input closes.
+#[cfg(unix)]
+const FAKE_ACP_AGENT: &str = r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s\n' "$line" | grep -o '"id":[^,}]*' | head -n 1 | cut -d: -f2-)
+  method=$(printf '%s\n' "$line" | grep -o '"method":"[^"]*"' | head -n 1 | cut -d'"' -f4)
+  case "$method" in
+    initialize)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[{"id":"login","name":"Sign in"}],"agentInfo":{"name":"fake-agent","title":"Fake agent","version":"0.1.0"}}}\n' "$id"
+      ;;
+  esac
+done
+"#;
+
+#[cfg(unix)]
+pub(crate) fn fake_acp_agent(dir: &Path, body: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let script = dir.join("fake-acp-agent");
+    std::fs::write(&script, body).unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    script
+}
+
+#[tokio::test]
+async fn acp_agents_are_kept_in_the_shared_list_tested_and_removed() {
+    use desktop::AcpAgent;
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    assert!(!server
+        .commands()
+        .iter()
+        .any(|command| command.contains("acp")));
+    assert!(server.acp_agents().await.is_empty());
+    let agent = |label: &str, command: &str| AcpAgent {
+        label: label.into(),
+        command: command.into(),
+        ..Default::default()
+    };
+    // A name and a program are needed, and a change needs an agent.
+    assert!(server.save_acp_agent(agent(" ", "x")).await.is_err());
+    assert!(server.save_acp_agent(agent("A", " ")).await.is_err());
+    assert!(server
+        .save_acp_agent(AcpAgent {
+            id: "missing".into(),
+            ..agent("A", "x")
+        })
+        .await
+        .is_err());
+    assert!(server
+        .save_acp_agent(AcpAgent {
+            args: vec!["a\nb".into()],
+            ..agent("A", "x")
+        })
+        .await
+        .is_err());
+
+    let id = server
+        .save_acp_agent(AcpAgent {
+            args: vec!["--acp".into(), " ".into()],
+            ..agent(" Missing ", " wisp-no-such-agent ")
+        })
+        .await
+        .unwrap();
+    let rows = server.acp_agents().await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].agent.id, id);
+    assert_eq!(rows[0].agent.label, "Missing");
+    assert_eq!(rows[0].agent.command, "wisp-no-such-agent");
+    assert_eq!(rows[0].agent.args, ["--acp"]);
+    assert!(!rows[0].found);
+    // The WebView desktop reads the same setting in the same shape.
+    let raw = server
+        .0
+        .store
+        .get_setting("acp_agent_profiles")
+        .await
+        .unwrap()
+        .unwrap();
+    let kept: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(kept[0]["id"], id.as_str());
+    assert_eq!(kept[0]["command"], "wisp-no-such-agent");
+    assert_eq!(kept[0]["args"], json!(["--acp"]));
+    assert!(server.test_acp_agent(&id).await.is_err());
+    assert!(server.test_acp_agent("missing").await.is_err());
+
+    server
+        .save_acp_agent(AcpAgent {
+            id: id.clone(),
+            ..agent("Renamed", "wisp-no-such-agent")
+        })
+        .await
+        .unwrap();
+    let rows = server.acp_agents().await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].agent.label, "Renamed");
+    assert!(rows[0].agent.args.is_empty());
+
+    #[cfg(unix)]
+    {
+        let script = fake_acp_agent(temp.path(), FAKE_ACP_AGENT);
+        let fake = server
+            .save_acp_agent(agent("Fake", &script.to_string_lossy()))
+            .await
+            .unwrap();
+        let rows = server.acp_agents().await;
+        assert!(rows.iter().any(|row| row.agent.id == fake && row.found));
+        let report = server.test_acp_agent(&fake).await.unwrap();
+        assert_eq!(report.protocol, 1);
+        assert_eq!(report.name, "Fake agent");
+        assert_eq!(report.version, "0.1.0");
+        assert_eq!(report.sign_in, ["Sign in"]);
+    }
+
+    server.remove_acp_agent(&id).await.unwrap();
+    assert!(server.remove_acp_agent(&id).await.is_err());
+    assert!(server
+        .acp_agents()
+        .await
+        .iter()
+        .all(|row| row.agent.id != id));
+    server.shutdown().await;
+}
+
 #[tokio::test]
 async fn a_scheduled_task_fires_once_per_time_into_a_new_conversation() {
     use desktop::ScheduleInput;

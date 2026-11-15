@@ -27,6 +27,7 @@ mod queue_view;
 mod remote_files_view;
 mod review_view;
 mod schedules_view;
+mod settings_acp;
 mod settings_browser;
 mod settings_data;
 mod settings_decision;
@@ -406,6 +407,15 @@ pub struct Workspace {
     expert_editing: Option<String>,
     /// Name, description, instructions.
     expert_fields: [Entity<InputState>; 3],
+    /// The ACP agents, the one in the form or the remove question (empty
+    /// is a new one), its name, program and arguments, the one being
+    /// tested, and what each test found.
+    acp_agents: Option<Vec<wisp_server::desktop::AcpAgentRow>>,
+    acp_editing: Option<String>,
+    acp_fields: [Entity<InputState>; 3],
+    acp_testing: Option<String>,
+    acp_reports:
+        std::collections::HashMap<String, Result<wisp_server::desktop::AcpAgentReport, String>>,
     mcp_servers: Option<Vec<wisp_server::desktop::McpServerRow>>,
     /// The server the form changes or the remove question is about; `None`
     /// in the form means a new one.
@@ -622,6 +632,11 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
+        ];
+        let acp_fields = [
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx).placeholder("npx")),
+            cx.new(|cx| InputState::new(window, cx)),
         ];
         let mcp_token = cx.new(|cx| InputState::new(window, cx).masked(true));
         let skills_search =
@@ -983,6 +998,11 @@ impl Workspace {
             experts: Vec::new(),
             expert_editing: None,
             expert_fields,
+            acp_agents: None,
+            acp_editing: None,
+            acp_fields,
+            acp_testing: None,
+            acp_reports: Default::default(),
             mcp_servers: None,
             mcp_editing: None,
             mcp_http: true,
@@ -1093,6 +1113,7 @@ impl Workspace {
             Some(Layer::ConfirmRemoveFavorite) => {}
             Some(Layer::McpForm | Layer::ConfirmRemoveMcp) => self.mcp_editing = None,
             Some(Layer::ExpertForm | Layer::ConfirmRemoveExpert) => self.expert_editing = None,
+            Some(Layer::AcpAgentForm | Layer::ConfirmRemoveAcpAgent) => self.acp_editing = None,
             Some(Layer::ConfirmRemovePlugin) => self.plugin_removing = None,
             Some(Layer::ConfirmResetRemoteCode) => {}
             Some(Layer::WorkflowForm) => {

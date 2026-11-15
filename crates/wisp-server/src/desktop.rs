@@ -3532,6 +3532,28 @@ impl Server {
         crate::papers::open(&self.0.store, project, paper, Some(&created)).await
     }
 
+    /// The ACP agents that can be started from here, with whether each
+    /// program is found.
+    pub async fn acp_agents(&self) -> Vec<AcpAgentRow> {
+        crate::acp_agents::rows(&self.0.store).await
+    }
+
+    /// Adds an agent, or changes the one with its id; returns its id.
+    pub async fn save_acp_agent(&self, agent: AcpAgent) -> Result<String> {
+        let _admission = self.0.admission.read().await;
+        crate::acp_agents::save(&self.0.store, agent).await
+    }
+
+    pub async fn remove_acp_agent(&self, id: &str) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        crate::acp_agents::remove(&self.0.store, id).await
+    }
+
+    /// Starts the agent, reads how it introduces itself, and stops it.
+    pub async fn test_acp_agent(&self, id: &str) -> Result<AcpAgentReport> {
+        crate::acp_agents::test(&self.0.store, id).await
+    }
+
     /// Python, R and Node installed under the data directory, and how the
     /// current or last install is going.
     pub fn toolchain(&self) -> wisp_dto::ToolchainStatus {
@@ -4875,6 +4897,7 @@ pub struct ProjectGrants {
     pub tools: Vec<String>,
 }
 
+pub use crate::acp_agents::{AcpAgent, AcpAgentReport, AcpAgentRow};
 pub use crate::aside::Exchange as AsideExchange;
 pub use crate::browser::{BrowserSettings, BrowserStatus};
 pub use crate::browser_filters::{BrowserFilters, BrowserHostRule};

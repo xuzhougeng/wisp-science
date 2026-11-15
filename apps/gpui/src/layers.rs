@@ -136,6 +136,10 @@ pub enum Layer {
     ConfirmRemoveQuickAction,
     /// The form for an expert, on the Experts page of Settings.
     ExpertForm,
+    /// The form for an ACP agent, on the ACP agents page of Settings.
+    AcpAgentForm,
+    /// Question before an ACP agent is removed from the list.
+    ConfirmRemoveAcpAgent,
     /// Question before an expert is removed.
     ConfirmRemoveExpert,
     /// The form for an SSH host, on the Environments page of Settings.
@@ -193,6 +197,8 @@ impl Layer {
             | Layer::ConfirmRemoveEnvironment
             | Layer::ExpertForm
             | Layer::ConfirmRemoveExpert
+            | Layer::AcpAgentForm
+            | Layer::ConfirmRemoveAcpAgent
             | Layer::QuickActionForm
             | Layer::WorkflowForm
             | Layer::ConfirmRemoveWorkflow
@@ -516,6 +522,16 @@ mod tests {
         stack.open(Layer::ConfirmRemoveExpert);
         assert!(stack.close(Layer::Settings));
         assert!(!stack.contains(Layer::ConfirmRemoveExpert));
+        // The ACP agent form and its remove question are the same.
+        stack.open(Layer::Settings);
+        for inside in [Layer::AcpAgentForm, Layer::ConfirmRemoveAcpAgent] {
+            stack.open(inside);
+            assert_eq!(stack.dismiss_top(), Some(inside));
+            assert!(stack.contains(Layer::Settings));
+        }
+        stack.open(Layer::AcpAgentForm);
+        assert!(stack.close(Layer::Settings));
+        assert!(!stack.contains(Layer::AcpAgentForm));
         // And the question before the remote access code is replaced.
         stack.open(Layer::Settings);
         stack.open(Layer::ConfirmResetRemoteCode);

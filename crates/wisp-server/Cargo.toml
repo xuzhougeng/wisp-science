@@ -24,12 +24,14 @@ sha2 = { workspace = true }
 tar = { workspace = true }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
 walkdir = { workspace = true }
+which = "7"
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 url = { workspace = true }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 uuid = { workspace = true }
+wisp-acp = { workspace = true }
 wisp-app = { workspace = true }
 wisp-bio = { workspace = true }
 wisp-core = { workspace = true }

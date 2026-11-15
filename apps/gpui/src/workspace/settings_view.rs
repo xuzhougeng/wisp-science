@@ -806,6 +806,7 @@ impl Workspace {
             Section::Credentials => self.render_credential_settings(cx),
             Section::Environments => self.render_environment_settings(cx),
             Section::Experts => self.render_expert_settings(cx),
+            Section::AcpAgents => self.render_acp_settings(cx),
             Section::QuickActions => self.render_quick_settings(cx),
             Section::Pet => self.render_pet_settings(cx),
             Section::Browser => self.render_browser_settings(cx),

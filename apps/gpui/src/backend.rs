@@ -1162,6 +1162,22 @@ impl Backend {
         self.local(|host| async move { Ok(host.cancel_toolchain_install()) })
     }
 
+    pub fn acp_agents(&self) -> Reply<Vec<wisp_server::desktop::AcpAgentRow>> {
+        self.local(|host| async move { Ok(host.acp_agents().await) })
+    }
+
+    pub fn save_acp_agent(&self, agent: wisp_server::desktop::AcpAgent) -> Reply<String> {
+        self.local(move |host| async move { host.save_acp_agent(agent).await })
+    }
+
+    pub fn remove_acp_agent(&self, id: String) -> Reply<()> {
+        self.local(move |host| async move { host.remove_acp_agent(&id).await })
+    }
+
+    pub fn test_acp_agent(&self, id: String) -> Reply<wisp_server::desktop::AcpAgentReport> {
+        self.local(move |host| async move { host.test_acp_agent(&id).await })
+    }
+
     /// The decision model as the form shows it; never its key.
     pub fn decision_model(&self) -> Reply<wisp_dto::DecisionModelSettings> {
         self.local(|host| async move { host.decision_model().await })

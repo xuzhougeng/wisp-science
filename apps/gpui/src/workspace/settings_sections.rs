@@ -97,6 +97,7 @@ impl Workspace {
             Section::Credentials => self.load_credentials(window, cx),
             Section::Environments => self.load_environments(window, cx),
             Section::Experts => self.load_experts(window, cx),
+            Section::AcpAgents => self.load_acp_agents(window, cx),
             Section::QuickActions => self.load_quick_actions(window, cx),
             Section::Pet => self.load_pet(window, cx),
             Section::Browser => self.load_browser(window, cx),

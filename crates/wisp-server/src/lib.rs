@@ -1,3 +1,4 @@
+mod acp_agents;
 mod aside;
 mod branch_merge;
 mod browser;

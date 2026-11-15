@@ -7348,6 +7348,8 @@ dependencies = [
  "url",
  "uuid",
  "walkdir",
+ "which",
+ "wisp-acp",
  "wisp-app",
  "wisp-bio",
  "wisp-core",

@@ -176,7 +176,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Outline | A button in the conversation's header lists what you asked, in order; choosing one scrolls to it |
 | Find in conversation | Cmd/Ctrl+F, or the command palette: a bar over the transcript marks every message, and every tool call, that contains the words; Return and the arrows move between them |
 | Help | Documentation (home page, Settings, palette) and Report a problem (Settings, palette) open the tutorials and the issue tracker in the system's browser |
-| Settings | A search field narrows the pages to those about what you type. Pages: General (language; appearance: system, light or dark; the send key; notifications and sound; update check; what the app opens on), Network (a route for model requests, for connectors and MCP servers, and for the code the model runs; a conda mirror, a Python package index and a CA bundle the model is told to use), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold, suggesting what to ask next, reviewing turns, the reviewer model and the sub-agent model), Skills (every skill with where it comes from, search, on or off), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Environments (Python, R and Node.js installed into Wisp's own data folder with progress, a log and Stop; the SSH hosts work can run on: add, change, remove, add from `~/.ssh/config`, check the connection and see what the host is, and which one new work goes to), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
+| Settings | A search field narrows the pages to those about what you type. Pages: General (language; appearance: system, light or dark; the send key; notifications and sound; update check; what the app opens on), Network (a route for model requests, for connectors and MCP servers, and for the code the model runs; a conda mirror, a Python package index and a CA bundle the model is told to use), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), ACP agents (programs on this computer that speak the Agent Client Protocol: add, change, remove, and Test, which starts one and shows its name, version and how it signs in), Conversation (steps per turn, automatic compaction and its threshold, suggesting what to ask next, reviewing turns, the reviewer model and the sub-agent model), Skills (every skill with where it comes from, search, on or off), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Environments (Python, R and Node.js installed into Wisp's own data folder with progress, a log and Stop; the SSH hosts work can run on: add, change, remove, add from `~/.ssh/config`, check the connection and see what the host is, and which one new work goes to), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
 | Inbox | Conversations in any project that are waiting for you; opens across projects |
 | Read state | A finished answer is marked read once it is on screen in the active window |
 | Transcript | Virtualized Markdown, selectable text, paginated history |
@@ -484,6 +484,14 @@ Limits of this slice:
   (`subagent_model_id`), then the conversation's model. A choice naming
   a profile that is gone or unusable falls through to the next. It
   applies from a conversation's next turn.
+- ACP agents keeps the WebView's list (`acp_agent_profiles`, same
+  shape), so an agent added in either desktop is in both. A program is
+  shown as not found when it is neither a path to a file nor a name on
+  `PATH`. Test starts the program with its arguments through `wisp-acp`,
+  waits up to 30 seconds for it to introduce itself, and stops it; nothing
+  else starts it yet. A conversation cannot be run by an ACP agent from
+  here, an agent cannot be signed in to from here, and environment
+  variables for the program are not set from the form.
 - An expert is chosen before a conversation's first message and cannot
   be changed afterwards: its instructions are written into the system
   prompt with the first turn and stay as they were then, also if the
@@ -1147,6 +1155,12 @@ running while code runs. Point at it for its path and memory. Press
 Stop: it reads stopped; ask the model to use the variable it had set and
 confirm the reply says the interpreter was stopped. Press Dismiss: the
 chip goes, and the next code call starts a fresh interpreter.
+In Settings, ACP agents, add an agent with a name and a program that is
+not installed: it is listed with Program not found, and Test says it
+could not be started. Change it to an installed ACP agent (or adapter)
+with its arguments, one of them quoted: Test shows its name, version,
+`ACP v1` and how it signs in. Press Add, then Escape: the form closes and
+Settings stays. Remove it: the question has to be answered first.
 In Settings, Experts, add an expert with a name and instructions; a
 name already in use is refused. In a new conversation choose it from the
 composer's Expert menu, send a message, and confirm in What the model is

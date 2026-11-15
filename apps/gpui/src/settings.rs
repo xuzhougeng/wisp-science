@@ -15,6 +15,8 @@ use wisp_server::{
 pub enum Section {
     #[default]
     Models,
+    /// Programs on this computer that speak the Agent Client Protocol.
+    AcpAgents,
     Conversation,
     /// Personas a conversation can be started as.
     Experts,
@@ -44,12 +46,13 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 19] = [
+    pub const ALL: [Section; 20] = [
         Section::General,
         Section::Network,
         Section::Remote,
         Section::Pet,
         Section::Models,
+        Section::AcpAgents,
         Section::DecisionModel,
         Section::Conversation,
         Section::Experts,
@@ -71,6 +74,7 @@ impl Section {
             Section::General => tr("General"),
             Section::Network => tr("Network"),
             Section::Models => tr("Models"),
+            Section::AcpAgents => tr("ACP agents"),
             Section::Conversation => tr("Conversation"),
             Section::Experts => tr("Experts"),
             Section::QuickActions => tr("Quick actions"),
@@ -95,6 +99,7 @@ impl Section {
             Section::General => "controls",
             Section::Network => "share",
             Section::Models => "bot",
+            Section::AcpAgents => "terminal",
             Section::Conversation => "chat",
             Section::Experts => "user",
             Section::QuickActions => "bolt",
@@ -137,6 +142,10 @@ impl Section {
                  helper explore worker"
             }
             Section::Experts => "expert persona specialist role instructions illustrator 专家",
+            Section::AcpAgents => {
+                "acp agent client protocol external program coding claude code codex gemini \
+                 adapter command 智能体"
+            }
             Section::DecisionModel => {
                 "decision model decide map_items typesafe jev startlux bamboo systemone yes no \
                  score choice 决策模型"
@@ -169,6 +178,7 @@ impl Section {
         match self {
             Section::General | Section::Network | Section::Remote | Section::Pet => tr("App"),
             Section::Models
+            | Section::AcpAgents
             | Section::DecisionModel
             | Section::Conversation
             | Section::Experts
@@ -923,6 +933,7 @@ mod tests {
                 "App",
                 "App",
                 "App",
+                "AI",
                 "AI",
                 "AI",
                 "AI",
