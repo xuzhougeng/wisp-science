@@ -187,7 +187,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Tool calls | One folded line each with outcome and elapsed time; click for the verbatim input and output; interrupted calls stop claiming to run |
 | Runs | A Runs tab: runs started by the conversation with kind, status, exit code, command and output tails; a run that has not ended can be cancelled, and is followed until it ends. One that has ended and kept a workspace where it ran can have it deleted after a question (its logs are saved into the project first, and outputs never brought back are not lost without a second question); a cleaned run, or one whose cleanup failed, says so. A run that moves files between machines shows its phase, file, bytes, rate and time left on its card, and while it moves (and a few seconds after) in a Transfers tray above the composer that folds to one line. A finished run on an SSH host has a folder button: a dialog lists what it left there a folder at a time, with a name filter and More… for long folders, and the files and folders chosen (across folders) are brought into the project as the conversation's results, a folder as one archive, or deleted there after a question; the whole workspace can be deleted from it too. In the transcript, a call that started or watched a run shows the run's state now, and Show in Runs opens its output there |
 | Artifacts | Files a turn wrote are recorded when it ends; an Artifacts tab lists them for the conversation or the project and opens them, and lists each one's versions, any of which can be saved as a copy from its snapshot (checked against its checksum, up to 512 MB) |
-| Side panel | Tabs: Files, Runs, Artifacts, Notebook, Provenance (the loaded part's tool calls with how each went, opening to what each was given and returned, with Show in the conversation), Agents, Highlights, Memos, Memory, Aside; the open tab is named, the others are icons. − beside the open tab takes it away and + adds one back; the tabs kept are remembered, and opening a tab from elsewhere brings it back |
+| Side panel | Tabs: Files, Runs, Environments (this computer and the saved SSH hosts: attach one to the conversation so its runs may go there, take it away, check it, open a terminal or its folders), Artifacts, Notebook, Provenance (the loaded part's tool calls with how each went, opening to what each was given and returned, with Show in the conversation), Agents, Highlights, Memos, Memory, Aside; the open tab is named, the others are icons. − beside the open tab takes it away and + adds one back; the tabs kept are remembered, and opening a tab from elsewhere brings it back |
 | Agents | The Agents tab lists the helpers the conversation sent off to explore: what each was asked, how it went, and what it found |
 | Aside | The Aside tab (or the command palette) asks the conversation's model a question about the open conversation; the answer shows beside it and nothing is added to the conversation. Ask aside under a message opens it with that message quoted in the question |
 | Quoting | Quote under a message puts it in the message box as a quotation after what you were writing, ready to answer; a selected passage is copied with Cmd/Ctrl+C |
@@ -1791,6 +1791,13 @@ and press Return: only matching names stay. Press Delete the whole
 workspace… and confirm: the dialog closes and the card says it was cleaned.
 Press Output and Whole log on that card: the run's log is read from the
 project's `runs/<id>` folder.
+Open the side panel's Environments tab in a new conversation: This computer
+is listed as always available and the saved host as Not attached. Ask the
+model to run `hostname` on that host: it is refused as not selected. Press
+Attach and ask again: it runs there. Choose the host in the composer's
+Runs on menu: the card says New work runs here, and Take away is refused
+until another place is chosen. Press its terminal and folder buttons: a
+terminal opens on the host, and the Files tab shows its folders.
 Ask the model to download a large file from that host into the project:
 while it moves, a Transfers tray above the composer shows the file, bytes,
 share done, rate and time left; fold it to one line and unfold it. When it

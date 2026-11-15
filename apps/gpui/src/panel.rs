@@ -10,6 +10,8 @@ pub enum PanelTab {
     #[default]
     Files,
     Runs,
+    /// This computer and the SSH hosts the conversation's work may run on.
+    Environments,
     Artifacts,
     Memos,
     Memory,
@@ -24,9 +26,10 @@ pub enum PanelTab {
 }
 
 impl PanelTab {
-    pub const ALL: [PanelTab; 10] = [
+    pub const ALL: [PanelTab; 11] = [
         PanelTab::Files,
         PanelTab::Runs,
+        PanelTab::Environments,
         PanelTab::Artifacts,
         PanelTab::Notebook,
         PanelTab::Provenance,
@@ -41,6 +44,7 @@ impl PanelTab {
         match self {
             PanelTab::Files => tr("Files"),
             PanelTab::Runs => tr("Runs"),
+            PanelTab::Environments => tr("Environments"),
             PanelTab::Artifacts => tr("Artifacts"),
             PanelTab::Memos => tr("Memos"),
             PanelTab::Memory => tr("Memory"),
@@ -56,6 +60,7 @@ impl PanelTab {
         match self {
             PanelTab::Files => "folder",
             PanelTab::Runs => "activity-orbit",
+            PanelTab::Environments => "server",
             PanelTab::Artifacts => "layers",
             PanelTab::Memos => "note-plus",
             PanelTab::Memory => "memory",
@@ -72,6 +77,7 @@ impl PanelTab {
         match self {
             PanelTab::Files => "files",
             PanelTab::Runs => "runs",
+            PanelTab::Environments => "environments",
             PanelTab::Artifacts => "artifacts",
             PanelTab::Memos => "memos",
             PanelTab::Memory => "memory",

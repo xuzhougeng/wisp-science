@@ -742,6 +742,26 @@ impl Backend {
         self.local(move |host| async move { host.cancel_run(&project, &run).await })
     }
 
+    /// The SSH hosts a conversation's work may run on, by alias.
+    pub fn conversation_hosts(&self, project: String, session: String) -> Reply<Vec<String>> {
+        self.local(move |host| async move { host.conversation_hosts(&project, &session).await })
+    }
+
+    /// Attaches a saved host to a conversation, or takes it away; answers
+    /// the hosts attached now.
+    pub fn set_conversation_host(
+        &self,
+        project: String,
+        session: String,
+        alias: String,
+        attached: bool,
+    ) -> Reply<Vec<String>> {
+        self.local(move |host| async move {
+            host.set_conversation_host(&project, &session, &alias, attached)
+                .await
+        })
+    }
+
     /// One page of one folder of what a finished run left on its SSH host.
     pub fn run_workspace(
         &self,

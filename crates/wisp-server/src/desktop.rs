@@ -4274,6 +4274,59 @@ impl Server {
     /// Saves where a conversation's work runs. Nothing is written when it
     /// is already so, which also leaves alone a choice this desktop cannot
     /// offer but another one made.
+    /// The saved SSH hosts this conversation's work may run on, by alias.
+    /// This computer always may; a run on a host that is not attached is
+    /// refused.
+    pub async fn conversation_hosts(&self, project: &str, session: &str) -> Result<Vec<String>> {
+        self.own_conversation(project, session).await?;
+        Ok(self
+            .0
+            .store
+            .list_session_execution_context_ids(session)
+            .await?
+            .into_iter()
+            .filter_map(|id| id.strip_prefix("ssh:").map(str::to_owned))
+            .collect())
+    }
+
+    /// Lets this conversation's work run on a saved SSH host, or stops it.
+    /// The host its new work goes to stays attached until another is chosen.
+    /// Answers the hosts attached now.
+    pub async fn set_conversation_host(
+        &self,
+        project: &str,
+        session: &str,
+        alias: &str,
+        attached: bool,
+    ) -> Result<Vec<String>> {
+        use wisp_runs::ssh_hosts::{self, SessionDefaultExecutionContext as Choice};
+        self.own_conversation(project, session).await?;
+        let store = &self.0.store;
+        let id = format!("ssh:{}", alias.trim());
+        {
+            let _admission = self.0.admission.read().await;
+            if attached {
+                ensure!(
+                    ssh_hosts::load(store)
+                        .await
+                        .iter()
+                        .any(|host| host.alias == alias.trim()),
+                    "That host is no longer saved; choose another"
+                );
+            } else {
+                ensure!(
+                    ssh_hosts::stored_session_default_execution_context(store, session).await
+                        != Choice::Remote(id.clone()),
+                    "New work in this conversation runs on that host; choose another where it runs first"
+                );
+            }
+            store
+                .set_session_execution_context_enabled(session, &id, attached)
+                .await?;
+        }
+        self.conversation_hosts(project, session).await
+    }
+
     async fn store_runs_on(&self, session: &str, wanted: &str) -> Result<()> {
         use wisp_runs::ssh_hosts::{self, SessionDefaultExecutionContext as Choice};
         let store = &self.0.store;

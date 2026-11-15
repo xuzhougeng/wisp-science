@@ -12,6 +12,7 @@ mod files_panel;
 mod find_view;
 mod follow_ups_view;
 mod home_view;
+mod hosts_view;
 mod import_view;
 mod inline_view;
 mod journey_view;
@@ -783,6 +784,11 @@ pub struct Workspace {
     run_review_filter: Entity<InputState>,
     /// The transfers above the composer show as one line.
     transfers_folded: bool,
+    /// The SSH hosts the open conversation's work may run on, by alias;
+    /// `None` until read.
+    conversation_hosts: Option<Vec<String>>,
+    /// A host is being attached or taken away.
+    hosts_busy: bool,
     artifacts: Vec<ArtifactRow>,
     /// The Artifacts tab lists the whole project instead of the conversation.
     artifacts_all: bool,
@@ -1661,6 +1667,8 @@ impl Workspace {
             run_review: None,
             run_review_filter,
             transfers_folded: false,
+            conversation_hosts: None,
+            hosts_busy: false,
             artifacts: vec![],
             artifacts_all: false,
             artifacts_request: 0,
@@ -2158,6 +2166,7 @@ impl Workspace {
             self.saved.clear();
             self.rewind_turn = None;
             self.status = None;
+            self.conversation_hosts = None;
             self.copied = None;
             // The list belonged to the conversation, or project, being left.
             self.artifacts.clear();
@@ -2610,10 +2619,14 @@ impl Workspace {
         self.remember_place(window, cx);
     }
 
-    /// Refreshes the Artifacts tab if that is what the panel is showing.
+    /// Refreshes the Artifacts or Environments tab if that is what the
+    /// panel is showing.
     fn reload_artifacts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.layers.contains(Layer::FilesPanel) && self.panel_tab == PanelTab::Artifacts {
             self.load_artifacts(window, cx);
+        }
+        if self.layers.contains(Layer::FilesPanel) && self.panel_tab == PanelTab::Environments {
+            self.load_conversation_hosts(window, cx);
         }
     }
 
@@ -3419,7 +3432,7 @@ impl Workspace {
             .set_conversation_options(project, session, options);
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
-            let _ = this.update(cx, |this, cx| {
+            let _ = this.update_in(cx, |this, window, cx| {
                 if !this.state.current(&selection) {
                     return;
                 }
@@ -3428,6 +3441,8 @@ impl Workspace {
                     (Ok(_), None) => {}
                     (Err(error), _) => this.error = Some(error),
                 }
+                // A host chosen for new work is attached with it.
+                this.reload_artifacts(window, cx);
                 cx.notify();
             });
         })

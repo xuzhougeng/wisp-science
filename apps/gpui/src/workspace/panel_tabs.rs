@@ -49,6 +49,10 @@ impl Workspace {
             // Cells show whether their code is saved.
             PanelTab::Highlights | PanelTab::Notebook => self.load_saved(window, cx),
             PanelTab::Agents => self.load_batches(window, cx),
+            PanelTab::Environments => {
+                self.load_environments(window, cx);
+                self.load_conversation_hosts(window, cx);
+            }
             // Read from the transcript as it is.
             PanelTab::Runs | PanelTab::Aside | PanelTab::Provenance => {}
         }

@@ -445,7 +445,12 @@ impl Workspace {
 
     /// Connects to `alias` now. What it found, or why it failed, is part of
     /// the list that is read again afterwards.
-    fn check_environment(&mut self, alias: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn check_environment(
+        &mut self,
+        alias: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.env_checking.insert(alias.clone()) {
             return;
         }

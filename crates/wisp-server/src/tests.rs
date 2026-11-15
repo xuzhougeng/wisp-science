@@ -4950,6 +4950,83 @@ async fn a_users_mcp_server_gives_turns_its_tools_and_each_asks_before_it_runs()
 }
 
 #[tokio::test]
+async fn a_conversation_runs_only_on_the_hosts_attached_to_it() {
+    use desktop::{ConversationOptions, SshHostRow};
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    for alias in ["gpu", "hpc"] {
+        server
+            .save_ssh_host(SshHostRow {
+                alias: alias.into(),
+                host_name: "10.0.0.8".into(),
+                identity_file: "~/.ssh/id_lab".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+    }
+    let session = create(&server).await;
+    assert!(server
+        .conversation_hosts(PROJECT, &session)
+        .await
+        .unwrap()
+        .is_empty());
+
+    // Attached, its runs may go there; the list says so.
+    let attached = server
+        .set_conversation_host(PROJECT, &session, "hpc", true)
+        .await
+        .unwrap();
+    assert_eq!(attached, ["hpc"]);
+    assert!(server
+        .0
+        .store
+        .session_execution_context_enabled(&session, "ssh:hpc")
+        .await
+        .unwrap());
+    // Choosing where new work runs attaches that host too, and it cannot
+    // be taken away while it is the choice.
+    let options = ConversationOptions {
+        runs_on: "gpu".into(),
+        ..server.stored_options(&session).await.unwrap()
+    };
+    server
+        .set_conversation_options(PROJECT, &session, options)
+        .await
+        .unwrap();
+    assert_eq!(
+        server.conversation_hosts(PROJECT, &session).await.unwrap(),
+        ["gpu", "hpc"]
+    );
+    let refused = server
+        .set_conversation_host(PROJECT, &session, "gpu", false)
+        .await
+        .unwrap_err();
+    assert!(refused.to_string().contains("choose another"), "{refused}");
+    // Another one goes.
+    assert_eq!(
+        server
+            .set_conversation_host(PROJECT, &session, "hpc", false)
+            .await
+            .unwrap(),
+        ["gpu"]
+    );
+    // Only a saved host, of a conversation of this project.
+    assert!(server
+        .set_conversation_host(PROJECT, &session, "ghost", true)
+        .await
+        .is_err());
+    assert!(server
+        .set_conversation_host("missing", &session, "hpc", true)
+        .await
+        .is_err());
+    assert!(server.conversation_hosts(PROJECT, "missing").await.is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn ssh_hosts_are_registered_as_execution_contexts_without_their_keys() {
     use desktop::SshHostRow;
     let temp = tempfile::tempdir().unwrap();

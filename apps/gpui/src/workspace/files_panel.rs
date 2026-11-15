@@ -1770,6 +1770,9 @@ impl Workspace {
                     .child(self.render_runs_tab(window, cx))
                     .into_any_element();
             }
+            PanelTab::Environments => {
+                return panel.child(self.render_hosts_tab(cx)).into_any_element();
+            }
             PanelTab::Artifacts => {
                 return panel
                     .child(self.render_artifacts_tab(cx))
