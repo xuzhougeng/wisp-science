@@ -649,9 +649,11 @@ Limits of this slice:
 - Whole log reads `stdout.log` and `stderr.log` from the run's own
   folder (`~/.wisp-science/runs/<id>`), the last 512 KB of each, when it
   is asked for; it does not follow a run that is still writing, so press
-  it again to see more. Only runs on this computer have it: a run on an
-  SSH host keeps its log on that host, and its last lines are what the
-  Output shows. Once a run's folder is gone, so is its whole log.
+  it again to see more. A run on an SSH host keeps its log on that host,
+  and its last lines are what the Output shows, until its workspace is
+  cleaned up: the log is then saved into the project's `runs/<id>`
+  folder first, and Whole log reads it from there. Once a local run's
+  folder is gone, so is its whole log, unless it was saved the same way.
 - The update check runs once when the app starts, unless At start is
   turned off in Settings, General, or Don't check at start is pressed on
   the note it shows (the WebView's `update_check_enabled`, so either
@@ -1787,6 +1789,8 @@ Artifacts tab. Choose one, press Delete chosen… and then Escape: only the
 question closes. Delete it: it is gone from the list. Type part of a name
 and press Return: only matching names stay. Press Delete the whole
 workspace… and confirm: the dialog closes and the card says it was cleaned.
+Press Output and Whole log on that card: the run's log is read from the
+project's `runs/<id>` folder.
 In Settings, General, press Check for updates: it reads Checking… and
 then says this is the latest version or names a newer one, with Open
 releases opening the project's release page. Without a network it says

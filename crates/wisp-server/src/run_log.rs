@@ -1,8 +1,9 @@
 //! A run's whole log, read from where the run wrote it. A run record keeps
 //! only the last lines; a run on this computer writes `stdout.log` and
 //! `stderr.log` into its own folder under the home folder, and those are
-//! read here. A run on another machine keeps its log there, and that is
-//! not read from here.
+//! read here. A run on another machine keeps its log there until its
+//! workspace is cleaned up, when the log is saved into the project's
+//! `runs/<run>` folder and read from there.
 
 use std::path::{Path, PathBuf};
 
@@ -34,6 +35,21 @@ pub(crate) fn folder(home: &Path, workdir: &str, run: &str) -> Result<PathBuf> {
         "This run's log is not kept where it can be read from here"
     );
     Ok(home.join(".wisp-science/runs").join(run))
+}
+
+/// The folder in the project a run's log was saved into when its
+/// workspace was cleaned. Only the place the run manager saves it is
+/// accepted, so a record cannot point the reader anywhere else.
+pub(crate) fn saved(project: &Path, logs_path: &str, run: &str) -> Result<PathBuf> {
+    let valid = !run.is_empty()
+        && run
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-');
+    ensure!(
+        valid && logs_path.trim_end_matches('/') == format!("runs/{run}"),
+        "This run's log is not kept where it can be read from here"
+    );
+    Ok(project.join("runs").join(run))
 }
 
 /// The last `limit` bytes of a file as text, and whether there was more.
@@ -103,6 +119,25 @@ mod tests {
             ("wisp-runs/abc", "abc"),
         ] {
             assert!(folder(home, workdir, run).is_err(), "{workdir}");
+        }
+    }
+
+    #[test]
+    fn only_the_runs_own_folder_in_the_project_is_read_once_saved() {
+        let project = Path::new("/work/project");
+        let id = "710f9fe7-0843-4906-9953-6da23b32a4ba";
+        assert_eq!(
+            saved(project, &format!("runs/{id}"), id).unwrap(),
+            project.join("runs").join(id)
+        );
+        for (logs, run) in [
+            ("runs/other", id),
+            ("../runs/x", "x"),
+            ("runs/../../.ssh", "../../.ssh"),
+            ("/etc", id),
+            ("runs/", ""),
+        ] {
+            assert!(saved(project, logs, run).is_err(), "{logs}");
         }
     }
 

@@ -6611,6 +6611,27 @@ async fn a_finished_runs_workspace_is_cleaned_only_when_nothing_would_be_lost() 
         .delete_run_files(PROJECT, "finished", vec!["../x".into()])
         .await
         .is_err());
+
+    // A run on a host has only its last lines here, until its workspace
+    // is cleaned and its log saved into the project.
+    let refused = server.run_log(PROJECT, "cleaned").await.unwrap_err();
+    assert!(refused.to_string().contains("on the machine"), "{refused}");
+    let saved = config(temp.path()).workspace.join("runs/cleaned");
+    std::fs::create_dir_all(&saved).unwrap();
+    std::fs::write(saved.join("stdout.log"), "aligned 1000 reads\n").unwrap();
+    store
+        .mark_run_logs_saved("cleaned", "runs/cleaned")
+        .await
+        .unwrap();
+    let log = server.run_log(PROJECT, "cleaned").await.unwrap();
+    assert_eq!(log.stdout, "aligned 1000 reads\n");
+    assert!(log.stderr.is_empty() && !log.cut);
+    // A saved place that is not the run's own is not read.
+    store
+        .mark_run_logs_saved("finished", "runs/cleaned")
+        .await
+        .unwrap();
+    assert!(server.run_log(PROJECT, "finished").await.is_err());
     server.shutdown().await;
 }
 

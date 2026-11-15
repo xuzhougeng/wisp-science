@@ -214,10 +214,11 @@ pub fn run_output(run: &RunRecord) -> String {
     }
 }
 
-/// Whether a run's whole log can be read: only a run on this computer
-/// keeps it where the app can reach.
+/// Whether a run's whole log can be read: a run on this computer keeps it
+/// where the app can reach, and one whose workspace was cleaned up had its
+/// log saved into the project first.
 pub fn has_whole_log(run: &RunRecord) -> bool {
-    run.kind == "local_detached"
+    run.kind == "local_detached" || run.cleaned_at.is_some()
 }
 
 /// A run's whole log as it is shown: each stream that has something in it,
@@ -296,6 +297,20 @@ mod tests {
             whole_log(&wisp_server::desktop::RunLog::default()),
             "The run wrote nothing."
         );
+    }
+
+    #[test]
+    fn a_whole_log_is_offered_for_a_local_run_and_for_one_cleaned_up() {
+        let mut ran = run("succeeded", Some(0));
+        ran.kind = "ssh_direct".into();
+        // On the host still: only its last lines are here.
+        assert!(!has_whole_log(&ran));
+        // Its log was saved into the project before its workspace went.
+        ran.cleaned_at = Some(9);
+        assert!(has_whole_log(&ran));
+        ran.kind = "local_detached".into();
+        ran.cleaned_at = None;
+        assert!(has_whole_log(&ran));
     }
 
     fn item(value: serde_json::Value) -> Item {

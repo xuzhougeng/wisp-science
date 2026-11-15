@@ -4188,15 +4188,21 @@ impl Server {
     }
 
     /// What a run wrote in full, or the end of it when it is very long.
-    /// Only a run on this computer keeps its log where it can be read; a
-    /// run on another machine has its last lines in the run record.
+    /// A run on this computer keeps its log where it can be read, and so
+    /// does one whose workspace was cleaned up, its log saved into the
+    /// project; any other run on another machine has its last lines in the
+    /// run record.
     pub async fn run_log(&self, project: &str, run: &str) -> Result<RunLog> {
-        self.project_root(project).await?;
+        let root = std::path::PathBuf::from(self.project_root(project).await?);
         let record = self.0.store.get_run(run).await?.context("Run not found")?;
         ensure!(
             record.project_id == project,
             "Run does not belong to the selected project"
         );
+        if let Some(saved) = record.logs_path.as_deref() {
+            let folder = crate::run_log::saved(&root, saved, &record.id)?;
+            return tokio::task::spawn_blocking(move || crate::run_log::read(&folder)).await?;
+        }
         ensure!(
             record.kind == "local_detached",
             "This run's log is on the machine it ran on; its last lines are in the output"
