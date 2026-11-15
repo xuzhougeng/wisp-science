@@ -6567,6 +6567,50 @@ async fn a_finished_runs_workspace_is_cleaned_only_when_nothing_would_be_lost() 
         .is_some());
     // It is the desktop's own.
     assert!(!server.commands().iter().any(|name| name.contains("clean")));
+
+    // Only the workspace of a finished run on an SSH host is looked at.
+    let refused = server
+        .run_workspace(PROJECT, "going", "", "", 0)
+        .await
+        .unwrap_err();
+    assert!(refused.to_string().contains("still running"), "{refused}");
+    let refused = server
+        .run_workspace(PROJECT, "finished", "", "", 0)
+        .await
+        .unwrap_err();
+    assert!(
+        refused.to_string().contains("no server workspace"),
+        "{refused}"
+    );
+    assert!(server
+        .run_workspace(PROJECT, "ghost", "", "", 0)
+        .await
+        .is_err());
+    // Something has to be chosen, inside the workspace.
+    let none = server
+        .download_run_files(PROJECT, "finished", vec![], vec![])
+        .await
+        .unwrap_err();
+    assert!(none.to_string().contains("Choose"), "{none}");
+    for outside in ["../secrets", "/etc/passwd", "a//b"] {
+        assert!(server
+            .download_run_files(PROJECT, "finished", vec![outside.into()], vec![])
+            .await
+            .is_err());
+    }
+    assert!(server
+        .delete_run_files(PROJECT, "finished", vec![])
+        .await
+        .is_err());
+    let root = server
+        .delete_run_files(PROJECT, "finished", vec![String::new()])
+        .await
+        .unwrap_err();
+    assert!(root.to_string().contains("cleaning the run up"), "{root}");
+    assert!(server
+        .delete_run_files(PROJECT, "finished", vec!["../x".into()])
+        .await
+        .is_err());
     server.shutdown().await;
 }
 

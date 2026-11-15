@@ -795,6 +795,21 @@ impl Workspace {
                         })),
                 );
             }
+            // What a run left on its SSH host can be looked through.
+            if panel::can_clean(run) && run.kind == "ssh_direct" {
+                let (reviewed, title) = (id.clone(), run.title.clone());
+                actions = actions.child(
+                    icon_button(
+                        SharedString::from(format!("run-review-{id}")),
+                        "folder",
+                        tr("Look through what it left on its host"),
+                    )
+                    .xsmall()
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_run_review(reviewed.clone(), title.clone(), window, cx)
+                    })),
+                );
+            }
             if panel::can_clean(run) {
                 let clean = id.clone();
                 actions = actions.child(

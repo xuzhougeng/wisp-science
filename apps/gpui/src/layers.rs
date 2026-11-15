@@ -13,6 +13,10 @@ pub enum Layer {
     PanelTabMenu,
     /// Question under a run's card before its workspace is deleted.
     ConfirmCleanRun,
+    /// What a finished run left on its SSH host: a dialog over everything.
+    RunReview,
+    /// Question in that dialog before files there are deleted.
+    ConfirmRunFilesDelete,
     /// Settings, shown in place of the transcript.
     Settings,
     /// Inline title editor for the open conversation.
@@ -298,6 +302,7 @@ impl Layer {
             Layer::PaperWaiver => Some(Layer::PaperFinalize),
             Layer::BatchGroupMenu | Layer::ConfirmBatchDelete => Some(Layer::SelectMode),
             Layer::ExampleCopy => Some(Layer::Examples),
+            Layer::ConfirmRunFilesDelete => Some(Layer::RunReview),
             _ => None,
         }
     }
@@ -440,6 +445,16 @@ mod tests {
         stack.open(Layer::PanelTabMenu);
         assert!(stack.close(Layer::FilesPanel));
         assert!(!stack.contains(Layer::PanelTabMenu));
+
+        // The question in the run review closes before the review.
+        stack.open(Layer::RunReview);
+        stack.open(Layer::ConfirmRunFilesDelete);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmRunFilesDelete));
+        assert_eq!(stack.dismiss_top(), Some(Layer::RunReview));
+        stack.open(Layer::RunReview);
+        stack.open(Layer::ConfirmRunFilesDelete);
+        assert!(stack.close(Layer::RunReview));
+        assert!(!stack.contains(Layer::ConfirmRunFilesDelete));
 
         // So does the question before a run's workspace is cleaned.
         stack.open(Layer::FilesPanel);

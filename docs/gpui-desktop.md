@@ -185,7 +185,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Read state | A finished answer is marked read once it is on screen in the active window |
 | Transcript | Virtualized Markdown, selectable text, paginated history |
 | Tool calls | One folded line each with outcome and elapsed time; click for the verbatim input and output; interrupted calls stop claiming to run |
-| Runs | A Runs tab: runs started by the conversation with kind, status, exit code, command and output tails; a run that has not ended can be cancelled, and is followed until it ends. One that has ended and kept a workspace where it ran can have it deleted after a question (its logs are saved into the project first, and outputs never brought back are not lost without a second question); a cleaned run, or one whose cleanup failed, says so. In the transcript, a call that started or watched a run shows the run's state now, and Show in Runs opens its output there |
+| Runs | A Runs tab: runs started by the conversation with kind, status, exit code, command and output tails; a run that has not ended can be cancelled, and is followed until it ends. One that has ended and kept a workspace where it ran can have it deleted after a question (its logs are saved into the project first, and outputs never brought back are not lost without a second question); a cleaned run, or one whose cleanup failed, says so. A finished run on an SSH host has a folder button: a dialog lists what it left there a folder at a time, with a name filter and More… for long folders, and the files and folders chosen (across folders) are brought into the project as the conversation's results, a folder as one archive, or deleted there after a question; the whole workspace can be deleted from it too. In the transcript, a call that started or watched a run shows the run's state now, and Show in Runs opens its output there |
 | Artifacts | Files a turn wrote are recorded when it ends; an Artifacts tab lists them for the conversation or the project and opens them, and lists each one's versions, any of which can be saved as a copy from its snapshot (checked against its checksum, up to 512 MB) |
 | Side panel | Tabs: Files, Runs, Artifacts, Notebook, Provenance (the loaded part's tool calls with how each went, opening to what each was given and returned, with Show in the conversation), Agents, Highlights, Memos, Memory, Aside; the open tab is named, the others are icons. − beside the open tab takes it away and + adds one back; the tabs kept are remembered, and opening a tab from elsewhere brings it back |
 | Agents | The Agents tab lists the helpers the conversation sent off to explore: what each was asked, how it went, and what it found |
@@ -1779,6 +1779,14 @@ the card; press Escape and only the question closes. Press it again and
 Clean up: the card says its workspace was cleaned and the button is gone.
 For a run that declared outputs which were never brought back, Clean up
 asks again, saying they would be lost, and only Clean up anyway deletes it.
+On a saved SSH host, have the model start a run that writes a few files and
+a folder, and wait for it to end. Press the run's folder button: the
+dialog lists the top of its workspace. Open the folder, choose a file, go
+up and choose another, and press Bring into the project: both appear in the
+Artifacts tab. Choose one, press Delete chosen… and then Escape: only the
+question closes. Delete it: it is gone from the list. Type part of a name
+and press Return: only matching names stay. Press Delete the whole
+workspace… and confirm: the dialog closes and the card says it was cleaned.
 In Settings, General, press Check for updates: it reads Checking… and
 then says this is the latest version or names a newer one, with Open
 releases opening the project's release page. Without a network it says

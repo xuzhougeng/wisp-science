@@ -742,6 +742,40 @@ impl Backend {
         self.local(move |host| async move { host.cancel_run(&project, &run).await })
     }
 
+    /// One page of one folder of what a finished run left on its SSH host.
+    pub fn run_workspace(
+        &self,
+        project: String,
+        run: String,
+        path: String,
+        filter: String,
+        offset: usize,
+    ) -> Reply<wisp_dto::WorkspaceListing> {
+        self.local(move |host| async move {
+            host.run_workspace(&project, &run, &path, &filter, offset)
+                .await
+        })
+    }
+
+    /// Brings the chosen files and folders of a run's workspace into the
+    /// project; answers how many came.
+    pub fn download_run_files(
+        &self,
+        project: String,
+        run: String,
+        files: Vec<String>,
+        folders: Vec<String>,
+    ) -> Reply<usize> {
+        self.local(move |host| async move {
+            host.download_run_files(&project, &run, files, folders)
+                .await
+        })
+    }
+
+    pub fn delete_run_files(&self, project: String, run: String, paths: Vec<String>) -> Reply<()> {
+        self.local(move |host| async move { host.delete_run_files(&project, &run, paths).await })
+    }
+
     /// Deletes a finished run's workspace where it ran; `force` lets
     /// outputs never brought back go with it.
     pub fn clean_run(&self, project: String, run: String, force: bool) -> Reply<()> {

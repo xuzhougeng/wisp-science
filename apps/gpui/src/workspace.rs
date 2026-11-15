@@ -32,6 +32,7 @@ mod project_sync_view;
 mod queue_view;
 mod remote_files_view;
 mod review_view;
+mod run_review_view;
 mod runtime_console_view;
 mod schedules_view;
 mod settings_acp;
@@ -776,6 +777,9 @@ pub struct Workspace {
     /// The run whose workspace is being asked about, and whether cleaning
     /// it now would lose outputs never brought back.
     run_cleaning: Option<(String, bool)>,
+    /// What a finished run left on its SSH host, being looked through.
+    run_review: Option<crate::run_review::RunReview>,
+    run_review_filter: Entity<InputState>,
     artifacts: Vec<ArtifactRow>,
     /// The Artifacts tab lists the whole project instead of the conversation.
     artifacts_all: bool,
@@ -1025,6 +1029,8 @@ impl Workspace {
             }),
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Branch, tag or commit"))),
         ];
+        let run_review_filter =
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Names containing…")));
         let plugin_address = [
             cx.new(|cx| InputState::new(window, cx).placeholder("https://example.org/plugin.zip")),
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Its SHA-256, as published"))),
@@ -1077,6 +1083,12 @@ impl Workspace {
             }),
             // Search runs in the host: titles and message text, archive included.
             // Return keeps the budget typed for a delegated task.
+            // Return lists the names that contain what was typed.
+            cx.subscribe_in(&run_review_filter, window, |this, _, event, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    this.list_run_review(false, window, cx);
+                }
+            }),
             cx.subscribe_in(&budget_input, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::PressEnter { .. }) {
                     this.save_budget(window, cx);
@@ -1643,6 +1655,8 @@ impl Workspace {
             panel_tab: PanelTab::default(),
             kept_tabs: PanelTab::ALL.to_vec(),
             run_cleaning: None,
+            run_review: None,
+            run_review_filter,
             artifacts: vec![],
             artifacts_all: false,
             artifacts_request: 0,
@@ -1675,6 +1689,12 @@ impl Workspace {
             Some(Layer::FilesPanel) => self.restore_focus(window, cx),
             Some(Layer::PanelTabMenu) => {}
             Some(Layer::ConfirmCleanRun) => self.run_cleaning = None,
+            Some(Layer::RunReview) => self.run_review = None,
+            Some(Layer::ConfirmRunFilesDelete) => {
+                if let Some(review) = &mut self.run_review {
+                    review.asking = None;
+                }
+            }
             // These layers own the focused field, which goes away with them.
             Some(Layer::Settings | Layer::Rename | Layer::ConfirmDelete) => {
                 self.focus_composer(window, cx)
@@ -2119,9 +2139,11 @@ impl Workspace {
             Layer::ModelView,
             Layer::ResearchArchive,
             Layer::BranchMerge,
+            Layer::RunReview,
         ] {
             self.layers.close(layer);
         }
+        self.run_review = None;
         self.archive = None;
         self.merge = None;
         self.clear_trajectory();
@@ -4085,6 +4107,11 @@ impl Render for Workspace {
         };
         let root = if self.layers.contains(Layer::Capabilities) {
             root.child(self.render_capabilities(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::RunReview) {
+            root.child(self.render_run_review(cx))
         } else {
             root
         };

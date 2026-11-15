@@ -4065,6 +4065,96 @@ impl Server {
             .map_err(anyhow::Error::msg)
     }
 
+    /// A finished run of `project`, checked to be its own.
+    async fn own_run(&self, project: &str, run: &str) -> Result<wisp_store::RunRecord> {
+        self.project_root(project).await?;
+        let record = self.0.store.get_run(run).await?.context("Run not found")?;
+        ensure!(
+            record.project_id == project,
+            "Run does not belong to the selected project"
+        );
+        Ok(record)
+    }
+
+    /// One page of one folder of the workspace a finished run left on its
+    /// SSH host, `filter` matching names there. Read each time; nothing of
+    /// it is kept.
+    pub async fn run_workspace(
+        &self,
+        project: &str,
+        run: &str,
+        path: &str,
+        filter: &str,
+        offset: usize,
+    ) -> Result<wisp_dto::WorkspaceListing> {
+        self.own_run(project, run).await?;
+        let listing = self
+            .0
+            .runs
+            .list_run_workspace_files(&self.0.store, run, path, filter.trim(), offset, 200)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        Ok(wisp_dto::WorkspaceListing {
+            truncated: listing.truncated,
+            entries: listing
+                .entries
+                .into_iter()
+                .map(|entry| wisp_dto::WorkspaceEntry {
+                    path: entry.path,
+                    kind: entry.kind,
+                    size_bytes: entry.size_bytes,
+                    file_count: entry.file_count,
+                })
+                .collect(),
+        })
+    }
+
+    /// Brings the chosen files and folders of a finished run's workspace
+    /// into the project as the conversation's results (a folder as one
+    /// archive). Returns how many were brought.
+    pub async fn download_run_files(
+        &self,
+        project: &str,
+        run: &str,
+        files: Vec<String>,
+        folders: Vec<String>,
+    ) -> Result<usize> {
+        self.own_run(project, run).await?;
+        ensure!(
+            !files.is_empty() || !folders.is_empty(),
+            "Choose the files or folders to bring back"
+        );
+        let _admission = self.0.admission.read().await;
+        self.0
+            .runs
+            .download_run_files(&self.0.store, run, &files, &folders)
+            .await
+            .map(|brought| brought.len())
+            .map_err(anyhow::Error::msg)
+    }
+
+    /// Deletes the chosen files and folders of a finished run's workspace
+    /// on its host.
+    pub async fn delete_run_files(
+        &self,
+        project: &str,
+        run: &str,
+        paths: Vec<String>,
+    ) -> Result<()> {
+        self.own_run(project, run).await?;
+        ensure!(!paths.is_empty(), "Choose the files or folders to delete");
+        ensure!(
+            paths.iter().all(|path| !path.is_empty()),
+            "The whole workspace is deleted by cleaning the run up"
+        );
+        // Each path is checked to stay inside the workspace there.
+        self.0
+            .runs
+            .delete_run_files(&self.0.store, run, &paths)
+            .await
+            .map_err(anyhow::Error::msg)
+    }
+
     /// The tool call that last wrote a project file, if one of the
     /// project's conversations did: looked for in `session` first, when
     /// one is given, then in the others. A file the user put there, or one
