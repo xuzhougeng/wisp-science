@@ -119,6 +119,11 @@ pub struct Live {
     pub review: Option<Result<crate::review::Review, String>>,
     /// The reviewer is reading the latest turn right now.
     pub reviewing: bool,
+    /// A memory the model drafted after the latest turn, for the
+    /// researcher to confirm, until the next turn.
+    pub memory_proposal: Option<crate::turn_memory::MemoryProposal>,
+    /// The model is drafting it right now.
+    pub proposing: bool,
     /// Why the latest turn's loop stopped short (`max_iterations`), if it
     /// did.
     pub stop_reason: Option<String>,

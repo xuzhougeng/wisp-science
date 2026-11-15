@@ -1158,6 +1158,8 @@ impl Server {
         live.suggesting = false;
         live.review = None;
         live.reviewing = false;
+        live.memory_proposal = None;
+        live.proposing = false;
         live.stop_reason = None;
         session.suggested.notify_waiters();
         live.calls.clear();
@@ -1215,6 +1217,7 @@ impl Server {
             // can wait for the questions without missing them.
             live.suggesting = answered;
             live.reviewing = answered && auto_review;
+            live.proposing = answered;
             live.generation
         };
         // The turn is over: what follows is not one of the four.
@@ -1223,6 +1226,7 @@ impl Server {
             let frame = &request.session_id;
             tokio::join!(
                 self.suggest_follow_ups(frame, session, side_model.clone(), ended),
+                self.propose_memory_after_turn(frame, session, side_model.clone(), ended),
                 self.review_after_turn(frame, session, side_model, ended, auto_review, place),
             );
         }

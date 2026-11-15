@@ -6018,6 +6018,142 @@ async fn a_conversation_is_read_back_as_a_trajectory() {
 }
 
 #[tokio::test]
+async fn a_turn_that_asks_to_remember_has_a_memory_drafted_to_confirm() {
+    // A model that answers, and drafts a memory when asked on the side.
+    struct Drafting {
+        drafts: Arc<AtomicUsize>,
+    }
+    #[async_trait]
+    impl Provider for Drafting {
+        fn name(&self) -> &str {
+            "offline"
+        }
+        fn model(&self) -> &str {
+            "offline"
+        }
+        async fn complete(
+            &self,
+            messages: &[Message],
+            _: &[ToolSchema],
+        ) -> wisp_llm::Result<Completion> {
+            let drafting = messages[0]
+                .content
+                .as_text()
+                .starts_with("You prepare a memory draft");
+            if drafting {
+                self.drafts.fetch_add(1, Ordering::Relaxed);
+            }
+            Ok(Completion {
+                content: if drafting {
+                    r#"{"scope":"global","content":"Plot on a log scale."}"#
+                } else {
+                    "[]"
+                }
+                .into(),
+                finish_reason: Some("stop".into()),
+                ..Default::default()
+            })
+        }
+        async fn stream(
+            &self,
+            _: &[Message],
+            _: &[ToolSchema],
+            sink: &mut dyn StreamSink,
+        ) -> wisp_llm::Result<Completion> {
+            sink.on_text("Noted.");
+            Ok(Completion {
+                content: "Noted.".into(),
+                finish_reason: Some("stop".into()),
+                ..Default::default()
+            })
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let drafts = Arc::new(AtomicUsize::new(0));
+    let factory: ModelFactory = {
+        let drafts = drafts.clone();
+        Arc::new(move |_| {
+            Box::new(Drafting {
+                drafts: drafts.clone(),
+            })
+        })
+    };
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    let after = |message: &'static str| {
+        let (server, session) = (&server, session.clone());
+        async move {
+            send(server, &session, message).await.unwrap();
+            wait_for(server, &session, |s| !s.running).await;
+            server.after_turn_settled(PROJECT, &session).await.unwrap();
+            server
+                .conversation_status(PROJECT, &session)
+                .await
+                .unwrap()
+                .memory_proposal
+        }
+    };
+    // An ordinary turn has nothing drafted.
+    assert_eq!(after("count the reads").await, None);
+    assert_eq!(drafts.load(Ordering::Relaxed), 0);
+    // Asked to remember: a draft to confirm, with its scope.
+    let proposal = after("Remember: always plot on a log scale").await.unwrap();
+    assert_eq!(proposal.trigger, desktop::ProposalTrigger::Explicit);
+    assert_eq!(proposal.scope, "global");
+    assert_eq!(proposal.content, "Plot on a log scale.");
+    assert_eq!(drafts.load(Ordering::Relaxed), 1);
+    // Put away, it is gone; only through the conversation's own project.
+    assert!(server
+        .dismiss_memory_proposal("missing", &session)
+        .await
+        .is_err());
+    server
+        .dismiss_memory_proposal(PROJECT, &session)
+        .await
+        .unwrap();
+    assert_eq!(
+        server
+            .conversation_status(PROJECT, &session)
+            .await
+            .unwrap()
+            .memory_proposal,
+        None
+    );
+
+    // The thresholds for tool failures, under the WebView's key; off
+    // until turned on.
+    let start = server.failure_analysis().await.unwrap();
+    assert!(!start.enabled);
+    let saved = server
+        .set_failure_analysis(desktop::AutoFailureAnalysisSettings {
+            enabled: true,
+            failure_rate_threshold: 0,
+            minimum_failures: 3,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            saved.enabled,
+            saved.failure_rate_threshold,
+            saved.minimum_failures
+        ),
+        (true, 1, 3)
+    );
+    assert_eq!(server.failure_analysis().await.unwrap(), saved);
+    assert!(server
+        .0
+        .store
+        .get_setting("auto_failure_analysis")
+        .await
+        .unwrap()
+        .is_some());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn an_answer_is_followed_by_questions_to_ask_next() {
     // A model that answers a turn, and suggests when asked on the side.
     struct Advising {

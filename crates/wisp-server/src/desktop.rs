@@ -3609,6 +3609,7 @@ impl Server {
             review,
             acp,
             fast_available,
+            memory_proposal: live.memory_proposal.clone(),
         })
     }
 
@@ -4930,7 +4931,7 @@ impl Server {
                 woken.as_mut().enable();
                 {
                     let live = session.live.lock().unwrap();
-                    if !live.suggesting && !live.reviewing {
+                    if !live.suggesting && !live.reviewing && !live.proposing {
                         return;
                     }
                 }
@@ -5226,6 +5227,9 @@ pub struct ConversationStatus {
     pub acp: Option<AcpControls>,
     /// Whether the conversation's model offers fast mode.
     pub fast_available: bool,
+    /// A memory drafted after the latest turn, until it is saved, put
+    /// away or the next turn starts.
+    pub memory_proposal: Option<MemoryProposal>,
 }
 
 /// An interpreter a conversation started and keeps, with what it has in
@@ -5759,7 +5763,7 @@ pub use crate::subscriptions::{
     CodexAccount, CodexUsage, SignInChallenge, SignInState, SignInStatus, Subscription, UsageWindow,
 };
 pub use crate::trajectory::TurnTokens;
-pub use crate::turn_memory::MemorySuggestion;
+pub use crate::turn_memory::{MemoryProposal, MemorySuggestion, ProposalTrigger};
 pub use crate::turn_undo::TurnFiles;
 pub use crate::updates::UpdateCheck;
 pub use crate::workflows::{
@@ -5773,6 +5777,7 @@ pub use wisp_core::ContextUsage;
 pub use wisp_core::ModelTier;
 /// The most tasks a workflow run as agents takes.
 pub use wisp_core::MAX_DELEGATION_TASKS as WORKFLOW_AGENT_LIMIT;
+pub use wisp_dto::AutoFailureAnalysisSettings;
 pub use wisp_dto::{ArchiveScript, ResearchArchive};
 pub use wisp_dto::{LabKnowledgeBaseInfo, LabMemberInfo, LabStatus};
 
