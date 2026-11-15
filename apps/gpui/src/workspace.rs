@@ -428,6 +428,8 @@ pub struct Workspace {
     inline_images: HashMap<String, Option<std::sync::Arc<Image>>>,
     /// The picture being previewed in the Files panel, with its path.
     file_image: Option<(String, std::sync::Arc<Image>)>,
+    /// The document being previewed, turned into text, with its path.
+    file_document: Option<(String, Result<String, String>)>,
     favorite_request: u64,
     rename: Entity<InputState>,
     settings: settings_view::SettingsForm,
@@ -975,6 +977,7 @@ impl Workspace {
             favorite: None,
             favorite_image: None,
             file_image: None,
+            file_document: None,
             inline_images: HashMap::new(),
             favorite_request: 0,
             rename,
@@ -1013,6 +1016,7 @@ impl Workspace {
             Some(Layer::FilePreview) => {
                 self.files.close_preview();
                 self.file_image = None;
+                self.file_document = None;
                 self.restore_focus(window, cx);
                 // A file revealed from the palette has no listing under it yet.
                 self.ensure_files(window, cx);

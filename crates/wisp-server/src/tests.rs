@@ -229,6 +229,36 @@ async fn mobile_project_list_omits_a_missing_registered_database() {
 }
 
 #[tokio::test]
+async fn a_document_of_the_project_reads_as_markdown() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = config(tmp.path());
+    let server = Server::open_with_models(cfg.clone(), models(Arc::default(), false))
+        .await
+        .unwrap();
+    std::fs::create_dir_all(&cfg.workspace).unwrap();
+    std::fs::write(
+        cfg.workspace.join("notes.rtf"),
+        r"{\rtf1\ansi Reads per sample \b were low\b0 in S1.\par}",
+    )
+    .unwrap();
+    std::fs::write(cfg.workspace.join("plain.txt"), "just text").unwrap();
+    let read = server
+        .document_preview(PROJECT, "notes.rtf")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(read.contains("Reads per sample"), "{read}");
+    assert!(read.contains("were low"), "{read}");
+    // Not a document: nothing to convert; outside the project: refused.
+    assert_eq!(
+        server.document_preview(PROJECT, "plain.txt").await.unwrap(),
+        None
+    );
+    assert!(server.document_preview(PROJECT, "../x.pdf").await.is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_codex_conversation_is_imported_once_and_brought_forward_after() {
     let tmp = tempfile::tempdir().unwrap();
     let server = Server::open_with_models(config(tmp.path()), models(Arc::default(), false))

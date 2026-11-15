@@ -266,6 +266,18 @@ pub fn file_name(path: &str) -> &str {
     path.rsplit_once('/').map_or(path, |(_, name)| name)
 }
 
+/// A document the host can turn into text to read: PDF, Word, Excel,
+/// PowerPoint, OpenDocument, RTF and EPUB.
+pub fn is_document(path: &str) -> bool {
+    const KINDS: &[&str] = &[
+        "pdf", "doc", "docx", "docm", "odt", "rtf", "epub", "ppt", "pps", "pot", "pptx", "pptm",
+        "ppsx", "ppsm", "xls", "xlsx", "xlsm", "xlsb", "ods", "odp",
+    ];
+    file_name(path)
+        .rsplit_once('.')
+        .is_some_and(|(_, kind)| KINDS.contains(&kind.to_ascii_lowercase().as_str()))
+}
+
 pub fn is_markdown(path: &str) -> bool {
     let name = file_name(path).to_ascii_lowercase();
     name.ends_with(".md") || name.ends_with(".markdown")
@@ -1035,5 +1047,21 @@ mod tests {
             notebook("empty.ipynb", "{\"cells\": []}").unwrap(),
             "This notebook has no cells."
         );
+    }
+
+    #[test]
+    fn documents_are_told_by_their_kind() {
+        for path in [
+            "paper.pdf",
+            "data/Report.DOCX",
+            "sheet.xlsx",
+            "talk.pptx",
+            "notes.odt",
+        ] {
+            assert!(is_document(path), "{path}");
+        }
+        for path in ["qc.csv", "README.md", "figure.png", "pdf", "archive.zip"] {
+            assert!(!is_document(path), "{path}");
+        }
     }
 }

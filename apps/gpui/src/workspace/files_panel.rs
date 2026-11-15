@@ -259,7 +259,34 @@ impl Workspace {
         };
         self.layers.open(Layer::FilePreview);
         self.file_image = None;
+        self.file_document = None;
         self.file_problem = None;
+        // A document is turned into text by the host, beside the preview
+        // that tells its size.
+        if files::is_document(&path) {
+            let reply = self
+                .backend
+                .document_preview(ticket.project.clone(), path.clone());
+            let wanted = path.clone();
+            cx.spawn_in(window, async move |this, cx| {
+                let result = receive(reply).await;
+                let _ = this.update(cx, |this, cx| {
+                    if this.files.preview_path.as_deref() != Some(wanted.as_str()) {
+                        return;
+                    }
+                    let read = match result {
+                        Ok(Some(text)) => Ok(text),
+                        Ok(None) => {
+                            Err(tr("This file is not text. Preview is not available.").into())
+                        }
+                        Err(error) => Err(error),
+                    };
+                    this.file_document = Some((wanted, read));
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
         // A picture is fetched whole, beside the text preview that tells
         // its size.
         if crate::favorites::is_image(&path) {
@@ -455,6 +482,48 @@ impl Workspace {
                         .child(crate::i18n::host(problem))
                         .into_any_element(),
                     None => message(tr("Loading the picture…")),
+                }
+            }
+            PreviewMode::Binary if files::is_document(&content.path) => {
+                match self
+                    .file_document
+                    .as_ref()
+                    .filter(|(path, _)| *path == content.path)
+                {
+                    None => message(tr("Turning the document into text…")),
+                    Some((_, Err(problem))) => div()
+                        .p_4()
+                        .text_sm()
+                        .text_color(cx.theme().danger)
+                        .child(crate::i18n::host(problem))
+                        .into_any_element(),
+                    Some((path, Ok(text))) => div()
+                        .v_flex()
+                        .flex_1()
+                        .min_h_0()
+                        .child(
+                            div()
+                                .px_4()
+                                .pt_2()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(tr(
+                                    "The document's text and tables, to read; its layout and pictures are not shown. Open it with the system's application for the original.",
+                                )),
+                        )
+                        .child(
+                            div().flex_1().min_h_0().p_4().child(
+                                TextView::markdown(
+                                    SharedString::from(format!("document-{path}")),
+                                    text.clone(),
+                                    window,
+                                    cx,
+                                )
+                                .selectable(true)
+                                .scrollable(true),
+                            ),
+                        )
+                        .into_any_element(),
                 }
             }
             PreviewMode::Binary => message(tr("This file is not text. Preview is not available.")),

@@ -697,6 +697,42 @@ impl Server {
         Ok((content_type.to_owned(), tokio::fs::read(&real).await?))
     }
 
+    /// A document of the project (PDF, Word, Excel, PowerPoint, OpenDocument,
+    /// RTF, EPUB) as Markdown to read: its text and tables, not its layout
+    /// or pictures. The converter is the one the model's `read` tool uses.
+    /// `None` for a file that is not such a document.
+    pub async fn document_preview(&self, project: &str, path: &str) -> Result<Option<String>> {
+        /// What the preview shows of a long document.
+        const SHOWN: usize = 256 * 1024;
+        let root = std::path::PathBuf::from(self.project_root(project).await?);
+        let real = crate::files::resolve(&root, path).await?;
+        let meta = tokio::fs::metadata(&real).await?;
+        ensure!(meta.is_file(), "That is not a file");
+        ensure!(
+            meta.len() <= FIGURE_LIMIT,
+            "Documents of more than 32 MB are not shown here"
+        );
+        tokio::task::spawn_blocking(move || {
+            let bytes = std::fs::read(&real)?;
+            match wisp_tools::read::document_markdown(&real, &bytes) {
+                None => Ok(None),
+                Some(Err(error)) => bail!("This document could not be read: {error}"),
+                Some(Ok(mut text)) => {
+                    if text.len() > SHOWN {
+                        let mut cut = SHOWN;
+                        while !text.is_char_boundary(cut) {
+                            cut -= 1;
+                        }
+                        text.truncate(cut);
+                        text.push_str("\n\n…");
+                    }
+                    Ok(Some(text))
+                }
+            }
+        })
+        .await?
+    }
+
     /// Makes an empty folder (`folder`) or file named `name` in the project
     /// folder `parent`; the reply is its project-relative path.
     pub async fn create_project_entry(

@@ -165,6 +165,11 @@ impl Backend {
     }
 
     /// A picture in the project: its content type and its bytes.
+    /// A document of the project as Markdown to read.
+    pub fn document_preview(&self, project: String, path: String) -> Reply<Option<String>> {
+        self.local(move |host| async move { host.document_preview(&project, &path).await })
+    }
+
     pub fn project_image(&self, project: String, path: String) -> Reply<(String, Vec<u8>)> {
         self.local(move |host| async move { host.project_image(&project, &path).await })
     }
