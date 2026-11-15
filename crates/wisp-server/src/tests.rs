@@ -6779,6 +6779,7 @@ while IFS= read -r line; do
           esac
           ;;
         *)
+          say '{"sessionUpdate":"available_commands_update","availableCommands":[{"name":"compact","description":"Summarise the session"},{"name":"init","description":"Write an AGENTS.md","input":{"hint":"what to cover"}}]}'
           say '{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"Looking at the data"}}'
           say '{"sessionUpdate":"tool_call","toolCallId":"t1","title":"Read data.csv","kind":"read","status":"in_progress","rawInput":{"path":"data.csv"}}'
           say '{"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"completed","rawOutput":"3 rows"}'
@@ -6895,6 +6896,13 @@ async fn a_conversation_given_to_an_acp_agent_streams_asks_and_stops_through_it(
     );
     assert_eq!(controls.options[0].name, "Model");
     assert_eq!(current(&controls.options[0]).0, "fast");
+    // And the commands it accepts at the start of a message.
+    let commands: Vec<_> = controls
+        .commands
+        .iter()
+        .map(|command| (command.name.as_str(), command.hint.as_str()))
+        .collect();
+    assert_eq!(commands, [("compact", ""), ("init", "what to cover")]);
     let controls = server.set_acp_mode(PROJECT, &id, "plan").await.unwrap();
     assert_eq!(current(controls.mode.as_ref().unwrap()).0, "plan");
     let controls = server

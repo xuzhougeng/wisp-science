@@ -1400,4 +1400,5 @@ pub const ZH: &[(&str, &str)] = &[
     ("This agent reads its key from an environment variable; set it where the agent's documentation says, then test again", "该智能体从环境变量读取密钥；请按其文档设置后再测试"),
     ("Mode", "模式"),
     ("The agent is not running; send a message first", "智能体尚未运行，请先发送一条消息"),
+    ("The agent lists its commands once it has answered.", "智能体回答过一次后会列出它的命令。"),
 ];

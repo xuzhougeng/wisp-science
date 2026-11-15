@@ -46,6 +46,17 @@ pub(crate) struct AcpLive {
     handle: Arc<AcpSessionHandle>,
     modes: Option<serde_json::Value>,
     options: serde_json::Value,
+    commands: serde_json::Value,
+}
+
+/// A command the agent accepts at the start of a message.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AcpCommand {
+    /// Without the slash.
+    pub name: String,
+    pub description: String,
+    /// What to write after it, when it takes something.
+    pub hint: String,
 }
 
 /// One choice of a mode or an option.
@@ -82,6 +93,8 @@ pub struct AcpSetting {
 pub struct AcpControls {
     pub mode: Option<AcpSetting>,
     pub options: Vec<AcpSetting>,
+    /// The commands it accepts, as it last listed them.
+    pub commands: Vec<AcpCommand>,
 }
 
 /// A value to give an option.
@@ -115,7 +128,33 @@ fn choices(list: &serde_json::Value, id: &str) -> Vec<AcpChoice> {
 }
 
 /// The modes and options as the agent reported them, in the wire shapes.
-fn controls_of(modes: Option<&serde_json::Value>, options: &serde_json::Value) -> AcpControls {
+fn controls_of(live: &AcpLive) -> AcpControls {
+    let mut controls = settings_of(live.modes.as_ref(), &live.options);
+    let text = |item: &serde_json::Value, key: &str| {
+        item.get(key)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    controls.commands = live
+        .commands
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|command| AcpCommand {
+            name: text(command, "name").trim_start_matches('/').to_owned(),
+            description: text(command, "description"),
+            hint: command
+                .get("input")
+                .map(|input| text(input, "hint"))
+                .unwrap_or_default(),
+        })
+        .filter(|command| !command.name.is_empty())
+        .collect();
+    controls
+}
+
+fn settings_of(modes: Option<&serde_json::Value>, options: &serde_json::Value) -> AcpControls {
     let mode = modes.and_then(|modes| {
         let available = choices(modes.get("availableModes")?, "id");
         (!available.is_empty()).then(|| AcpSetting {
@@ -153,7 +192,11 @@ fn controls_of(modes: Option<&serde_json::Value>, options: &serde_json::Value) -
             Some(AcpSetting { id, name, value })
         })
         .collect();
-    AcpControls { mode, options }
+    AcpControls {
+        mode,
+        options,
+        commands: vec![],
+    }
 }
 
 /// What the running agent offers to set, when an agent runs the
@@ -161,7 +204,7 @@ fn controls_of(modes: Option<&serde_json::Value>, options: &serde_json::Value) -
 pub(crate) async fn controls(session: &Session) -> Option<AcpControls> {
     let slot = session.acp.lock().await;
     let live = slot.as_ref().filter(|live| live.handle.is_alive())?;
-    Some(controls_of(live.modes.as_ref(), &live.options))
+    Some(controls_of(live))
 }
 
 /// Keeps what the agent reports about its mode and options.
@@ -183,6 +226,11 @@ async fn remember(session: &Session, kind: AcpUpdateKind, payload: &serde_json::
                 live.options = options.clone();
             }
         }
+        AcpUpdateKind::AvailableCommands => {
+            if let Some(commands) = payload.get("availableCommands") {
+                live.commands = commands.clone();
+            }
+        }
         _ => {}
     }
 }
@@ -201,7 +249,7 @@ pub(crate) async fn set_mode(session: &Session, mode: &str) -> Result<AcpControl
     if let Some(modes) = live.modes.as_mut() {
         modes["currentModeId"] = mode.into();
     }
-    Ok(controls_of(live.modes.as_ref(), &live.options))
+    Ok(controls_of(live))
 }
 
 /// Sets one of the running agent's options.
@@ -226,7 +274,7 @@ pub(crate) async fn set_option(
         .await
         .map_err(|error| anyhow::anyhow!("{error}"))?;
     live.options = serde_json::to_value(options)?;
-    Ok(controls_of(live.modes.as_ref(), &live.options))
+    Ok(controls_of(live))
 }
 
 /// The same fingerprint the WebView keeps on a binding: a hash of the
@@ -398,6 +446,7 @@ async fn connect(
             .config_options
             .and_then(|options| serde_json::to_value(options).ok())
             .unwrap_or_default(),
+        commands: serde_json::Value::Null,
     });
     Ok((handle, id))
 }

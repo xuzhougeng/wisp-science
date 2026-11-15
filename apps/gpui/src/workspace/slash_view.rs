@@ -3,7 +3,7 @@
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    Selectable, Sizable,
+    ActiveTheme, Selectable, Sizable,
     button::{Button, ButtonVariants},
 };
 
@@ -206,6 +206,47 @@ impl Workspace {
             return button;
         }
         let mut menu = Self::composer_menu(380., cx);
+        // An ACP agent's conversation lists the agent's own commands; one
+        // is written into the message, to be sent with what follows it.
+        if !self.options().acp_agent.is_empty() {
+            let commands = self
+                .status
+                .as_ref()
+                .and_then(|status| status.acp.as_ref())
+                .map(|controls| controls.commands.clone())
+                .unwrap_or_default();
+            if commands.is_empty() {
+                menu = menu.child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(tr("The agent lists its commands once it has answered.")),
+                );
+            }
+            for command in commands {
+                let detail = match command.hint.trim() {
+                    "" => command.description.clone(),
+                    hint => format!("{} — {hint}", command.description),
+                };
+                let typed = format!("/{} ", command.name);
+                menu = menu.child(
+                    Self::menu_row(
+                        SharedString::from(format!("agent-slash-{}", command.name)),
+                        format!("/{}", command.name),
+                        detail,
+                        false,
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.layers.close(Layer::SlashMenu);
+                        this.fill_composer(typed.clone(), window, cx);
+                    })),
+                );
+            }
+            return button.child(deferred(menu));
+        }
         for (name, command, about) in slash::COMMANDS {
             if command == Slash::Help {
                 continue;

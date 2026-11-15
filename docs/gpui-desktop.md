@@ -511,7 +511,11 @@ Limits of this slice:
   for one of several values, a switch for one that is on or off. They are
   set through the agent and kept as it reports them while its process
   runs; before the first answer and after a restart until the next one
-  they are not shown, as nothing is cached between runs.
+  they are not shown, as nothing is cached between runs. In such a
+  conversation every message goes to the agent as typed, a leading `/`
+  included, so Wisp's own slash commands are not run there; the "/"
+  button lists the commands the agent reported instead, and picking one
+  writes it into the message box.
 - A conversation is given to an ACP agent from the composer's agent
   button before its first message, for good (the store refuses another
   choice; Wisp needs a new conversation). Its first message starts the
@@ -527,7 +531,6 @@ Limits of this slice:
   first, expert, where work runs and turn review do not apply and are not
   shown; follow-up questions and reviews are not asked for. Not ported
   from the WebView: the MCP bridge that gives the agent Wisp's tools,
-  its slash commands,
   questions it asks the user, file and conversation
   references sent as resource links, and a conversation run by an agent
   inside an exploration.
@@ -1207,7 +1210,8 @@ Send something long and press Stop: it stops and nothing is added; send
 again and it answers in the same session. With an agent that reports
 modes or options, after its first answer the composer shows Mode and its
 options; choose another mode or value: the button follows, and the next
-message runs that way.
+message runs that way. Press "/": the agent's commands are listed, and
+one is written into the message box.
 In Settings, ACP agents, add an agent with a name and a program that is
 not installed: it is listed with Program not found, and Test says its
 program was not found on this computer. Change it to an installed ACP agent (or adapter)

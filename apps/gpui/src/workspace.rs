@@ -2180,8 +2180,10 @@ impl Workspace {
 
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.composer.read(cx).value().to_string();
-        // A message that is only a command is run, not sent.
-        if self.run_typed_slash(&text, window, cx) {
+        // A message that is only a command is run, not sent; in an ACP
+        // agent's conversation every message is the agent's to read, its
+        // own commands included.
+        if self.options().acp_agent.is_empty() && self.run_typed_slash(&text, window, cx) {
             return;
         }
         // While a turn runs the message waits for it to end.

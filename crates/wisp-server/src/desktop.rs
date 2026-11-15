@@ -4990,7 +4990,7 @@ pub struct ProjectGrants {
 pub use crate::acp_agents::{
     AcpAgent, AcpAgentReport, AcpAgentRow, AcpSignIn, AcpSignInKind, AcpSignInOutcome,
 };
-pub use crate::acp_turn::{AcpChoice, AcpControls, AcpPick, AcpSetting, AcpValue};
+pub use crate::acp_turn::{AcpChoice, AcpCommand, AcpControls, AcpPick, AcpSetting, AcpValue};
 pub use crate::aside::Exchange as AsideExchange;
 pub use crate::browser::{BrowserSettings, BrowserStatus};
 pub use crate::browser_filters::{BrowserFilters, BrowserHostRule};
