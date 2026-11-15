@@ -251,19 +251,32 @@ impl Workspace {
                 crate::open_window_on(this.backend.clone(), Some(window_id.clone()), cx);
             })),
         );
-        let export_id = id.clone();
-        actions = actions.child(
-            icon_button(
-                SharedString::from(format!("project-export-{id}")),
-                "archive-export",
-                tr("Export the project as an archive"),
+        let (export_id, package_id) = (id.clone(), id.clone());
+        actions = actions
+            .child(
+                icon_button(
+                    SharedString::from(format!("project-export-{id}")),
+                    "archive-export",
+                    tr("Export the project as an archive"),
+                )
+                .disabled(self.pending)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.export_project(export_id.clone(), window, cx)
+                })),
             )
-            .disabled(self.pending)
-            .on_click(cx.listener(move |this, _, window, cx| {
-                cx.stop_propagation();
-                this.export_project(export_id.clone(), window, cx)
-            })),
-        );
+            .child(
+                icon_button(
+                    SharedString::from(format!("project-package-{id}")),
+                    "folder-move",
+                    tr("Export the project as a folder another computer opens in place"),
+                )
+                .disabled(self.pending)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.export_project_folder(package_id.clone(), window, cx)
+                })),
+            );
         if wisp_server::desktop::removable(&id) {
             let remove_id = id.clone();
             actions = actions.child(
@@ -506,7 +519,7 @@ impl Workspace {
                         icon_button(
                             "home-import",
                             "archive-import",
-                            tr("Import a project archive"),
+                            tr("Import a project archive or folder package"),
                         )
                         .disabled(self.pending)
                         .on_click(

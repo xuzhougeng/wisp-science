@@ -134,7 +134,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Search | Titles and message text across the project, archived conversations included |
 | Command palette | One box over everything: projects, files by name in every project, conversations by title or message text, and the window's commands; arrow keys, Return, Escape |
 | Pictures in answers | When an answer shows a picture of the project with Markdown image syntax, the picture is drawn under the answer, and so are the pictures its turn wrote with `write` or `edit` that it does not show (under the turn's last answer); clicking one opens it in the Files tab |
-| Project archives | Export on a project's card writes the project, its records and its files, as one zip; Import on the home page reads one and puts the project in a folder you choose |
+| Project archives | Export on a project's card writes the project, its records and its files, as one zip; its folder-package button writes them as a folder another computer opens in place, in a new folder named after the project. Import on the home page takes either: a zip is put in a folder you choose, a folder package is opened where it is |
 | Project sync | Project settings, Sync: Sync now publishes the project through a relay or a shared folder (set in Settings, Remote access) or brings in another device's changes, Copy device code, and after a conflict Use the other device's copy or Keep this device's copy, each asked first; a project in a cloud-drive folder can save itself there instead. Join a project from another device on the home page takes a device code and a folder |
 | Capabilities | A dialog for the open project: how many skills, connectors, MCP servers and SSH hosts are on or usable, the state of memory, and which command-line tools were found on this computer |
 | Follow-up questions | After an answer, up to three questions you could ask next show above the composer; picking one puts it in the composer to send or change, and the list can be put away |
@@ -2368,6 +2368,11 @@ zip and then a folder: the project appears with its conversations, and its
 files are in a new folder there. Import the same zip again and confirm it
 is refused as already present. Open the zip in the WebView desktop's
 import, and one of its exports here.
+Press the folder-package button on a project's card and choose a folder: a
+new folder named after the project is written there, and a second export
+makes a second folder. On another data directory press Import and choose
+that folder (not a file): the project opens where it is, with its
+conversations. Do the same with a folder package the WebView exported.
 In a project press Capabilities: the counts match the Settings pages, the
 tools on this computer are listed with where they were found, Settings on a
 line opens that page, and Escape closes the dialog.

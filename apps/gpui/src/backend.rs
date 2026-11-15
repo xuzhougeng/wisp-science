@@ -256,6 +256,17 @@ impl Backend {
     }
 
     /// Reads an archive and puts its project in a new folder under `parent`.
+    /// Writes a project as a folder package under `parent`; answers the
+    /// folder made.
+    pub fn export_project_folder(&self, project: String, parent: PathBuf) -> Reply<PathBuf> {
+        self.local(move |host| async move { host.export_project_folder(&project, &parent).await })
+    }
+
+    /// Opens a project folder package where it is.
+    pub fn import_project_folder(&self, package: PathBuf) -> Reply<String> {
+        self.local(move |host| async move { host.import_project_folder(&package).await })
+    }
+
     pub fn import_project(&self, archive: PathBuf, parent: PathBuf) -> Reply<String> {
         self.local(move |host| async move { host.import_project(&archive, &parent).await })
     }

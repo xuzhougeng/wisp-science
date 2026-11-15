@@ -9471,6 +9471,67 @@ async fn a_project_is_exported_as_an_archive_and_imported_elsewhere() {
 }
 
 #[tokio::test]
+async fn a_project_is_exported_as_a_folder_package_and_opened_elsewhere() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::write(folder.join("counts.csv"), "gene,count\nA,1\n").unwrap();
+    let lab = source.register_local_project(&folder).await.unwrap();
+    source.create_conversation(&lab).await.unwrap();
+
+    let parent = temp.path().join("exports");
+    std::fs::create_dir(&parent).unwrap();
+    // Only into a folder that is there, said in full.
+    assert!(source
+        .export_project_folder(&lab, std::path::Path::new("exports"))
+        .await
+        .is_err());
+    assert!(source
+        .export_project_folder(&lab, &parent.join("missing"))
+        .await
+        .is_err());
+    let package = source.export_project_folder(&lab, &parent).await.unwrap();
+    assert!(package.starts_with(&parent) && package.is_dir());
+    // A second export makes a second folder rather than writing over it.
+    let second = source.export_project_folder(&lab, &parent).await.unwrap();
+    assert_ne!(second, package);
+    // It is this host's own project already.
+    assert!(source.import_project_folder(&package).await.is_err());
+    source.shutdown().await;
+    drop(source);
+
+    let other = tempfile::tempdir().unwrap();
+    let target = Server::open_with_models(config(other.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    assert!(target
+        .import_project_folder(&other.path().join("missing"))
+        .await
+        .is_err());
+    let opened = target.import_project_folder(&package).await.unwrap();
+    assert_eq!(opened, lab);
+    assert_eq!(
+        target.0.store.list_sessions(&opened).await.unwrap().len(),
+        1
+    );
+    let (_, _, root) = target
+        .0
+        .store
+        .get_project_meta(&opened)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        std::path::Path::new(&root).join("counts.csv").is_file(),
+        "{root}"
+    );
+    target.shutdown().await;
+}
+
+#[tokio::test]
 async fn conversations_map_over_items_and_decide_only_with_a_decision_model() {
     let temp = tempfile::tempdir().unwrap();
     let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();

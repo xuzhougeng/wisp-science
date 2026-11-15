@@ -1,6 +1,7 @@
-//! Moving a whole project between computers: writing it as an archive and
-//! reading one back in. Where the archive goes, which one is read and
-//! where the project is put are all chosen in the system's own dialogs.
+//! Moving a whole project between computers: writing it as an archive or
+//! as a folder package, and reading either back in. Where it goes, which
+//! one is read and where an archive's project is put are all chosen in the
+//! system's own dialogs; a folder package is opened where it is.
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 
@@ -60,8 +61,61 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Asks for an archive, then for the folder to put the project in, and
-    /// reads it in. Nothing is changed until both are chosen.
+    /// Asks where to put a folder package of the project, and writes it
+    /// there in a new folder named after it.
+    pub(super) fn export_project_folder(
+        &mut self,
+        project: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.pending {
+            return;
+        }
+        self.error = None;
+        self.notice = None;
+        let parent = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some(tr("Put the package here").into()),
+        });
+        let backend = self.backend.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(parents))) = parent.await else {
+                return;
+            };
+            let Some(parent) = parents.into_iter().next() else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.pending = true;
+                this.notice = Some(crate::i18n::fill(tr("Writing {}…"), &[&parent.display()]));
+                cx.notify();
+            });
+            let result = receive(backend.export_project_folder(project, parent)).await;
+            let _ = this.update(cx, |this, cx| {
+                this.pending = false;
+                match result {
+                    Ok(package) => {
+                        this.notice =
+                            Some(crate::i18n::fill(tr("Saved to {}"), &[&package.display()]))
+                    }
+                    Err(error) => {
+                        this.notice = None;
+                        this.error = Some(error);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Asks for an archive or a folder package. A folder package is opened
+    /// where it is; for an archive, the folder to put the project in is
+    /// asked next. Nothing is changed until all is chosen.
     pub(super) fn import_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.pending || !self.ready {
             return;
@@ -70,7 +124,7 @@ impl Workspace {
         self.notice = None;
         let archive = cx.prompt_for_paths(PathPromptOptions {
             files: true,
-            directories: false,
+            directories: true,
             multiple: false,
             prompt: Some(tr("Import").into()),
         });
@@ -82,6 +136,30 @@ impl Workspace {
             let Some(archive) = archives.into_iter().next() else {
                 return;
             };
+            if archive.is_dir() {
+                let _ = this.update(cx, |this, cx| {
+                    this.pending = true;
+                    this.notice = Some(crate::i18n::fill(tr("Reading {}…"), &[&archive.display()]));
+                    cx.notify();
+                });
+                let result = receive(backend.import_project_folder(archive)).await;
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.pending = false;
+                    match result {
+                        Ok(_) => {
+                            this.notice = Some(tr("The project was imported.").into());
+                            this.load_projects(window, cx);
+                            this.load_recent(window, cx);
+                        }
+                        Err(error) => {
+                            this.notice = None;
+                            this.error = Some(error);
+                        }
+                    }
+                    cx.notify();
+                });
+                return;
+            }
             let Ok(parent) = cx.update(|_, cx| {
                 cx.prompt_for_paths(PathPromptOptions {
                     files: false,

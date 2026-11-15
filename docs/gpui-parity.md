@@ -53,8 +53,8 @@ to find in the running app.
 | Open a project | Yes | Done | served |
 | Star a project so it stays first [星标项目并置顶] | Yes | Done | store |
 | New project [新建项目] | Name, folder | Yes: New project on the home page takes a name, a description and whether to lay the folder out in the standard research layout, then where to put it, and makes a folder named after the project there; Open folder opens an existing one. The rules for the model are set in Project settings afterwards | served |
-| Import project [导入项目] | Archive import | Partial: a zip archive, placed in a folder you choose; no folder packages and no progress display | tauri |
-| Export project [导出项目] | Archive export | Partial: as a zip archive in the WebView's format; no folder packages and no progress display | tauri |
+| Import project [导入项目] | Archive import | Partial: a zip archive, placed in a folder you choose, or a folder package (exported as a folder, or a folder that keeps its own database) opened where it is, from the same Import button; no progress display | tauri |
+| Export project [导出项目] | Archive export | Partial: as a zip archive in the WebView's format, or as a folder package in a new folder named after the project under the one you choose; no progress display | tauri |
 | Project settings [项目设置] | Name, description, sync | Done: name, description and the rules for the model (`.wisp/WISP.md`), from the project's card and the command palette; Sync now, device code, conflict resolution and cloud-drive folder saving; and the automatic server cleanup windows for succeeded runs, failed runs and orphaned files | store |
 | Remove a project from Wisp, files kept [删除] | With confirmation | Done | store |
 | Delete a project together with its local data | Second choice in the same dialog, with a countdown | Done: second choice in the same question; the project's name is typed instead of a countdown, and a folder that holds more than the project is refused | tauri |

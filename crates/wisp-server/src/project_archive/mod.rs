@@ -974,7 +974,7 @@ fn publish_archive(temporary: &Path, destination: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn unique_destination(parent: &Path, name: &str) -> Result<PathBuf, String> {
+pub(crate) fn unique_destination(parent: &Path, name: &str) -> Result<PathBuf, String> {
     if !parent.is_dir() {
         return Err("the selected import destination is not a directory".into());
     }

@@ -10,7 +10,12 @@ pub const ZH: &[(&str, &str)] = &[
     ("Rigorous research, with Wisp at your side.", "严谨的研究，有 Wisp 相伴。"),
     ("GPUI preview", "GPUI 预览版"),
     ("Search everything", "搜索全部内容"),
-    ("Import a project archive", "导入项目归档"),
+    ("Import a project archive or folder package", "导入项目归档或文件夹包"),
+    ("Put the package here", "把文件夹包放在这里"),
+    (
+        "Export the project as a folder another computer opens in place",
+        "把项目导出为另一台电脑可直接打开的文件夹",
+    ),
     ("Documentation, in your browser", "在浏览器中打开文档"),
     ("Open folder", "打开文件夹"),
     ("Conversations you start will appear here.", "你开始的会话会显示在这里。"),

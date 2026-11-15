@@ -1109,6 +1109,40 @@ impl Server {
     /// refused while a turn or a run of the project is going, and no turn
     /// starts while it is written.
     pub async fn export_project(&self, project: &str, destination: &std::path::Path) -> Result<()> {
+        self.export_project_as(project, destination, false).await
+    }
+
+    /// Exports a project as a folder package, the WebView's other kind of
+    /// export: a new folder under `parent`, named after the project, that
+    /// another computer opens in place. Returns the folder.
+    pub async fn export_project_folder(
+        &self,
+        project: &str,
+        parent: &std::path::Path,
+    ) -> Result<std::path::PathBuf> {
+        ensure!(
+            parent.is_absolute(),
+            "Choose the folder to put the package in"
+        );
+        ensure!(parent.is_dir(), "Choose the folder to put the package in");
+        let (name, _, _) = self
+            .0
+            .store
+            .get_project_meta(project)
+            .await?
+            .context("Project not found")?;
+        let package = crate::project_archive::unique_destination(parent, &name)
+            .map_err(anyhow::Error::msg)?;
+        self.export_project_as(project, &package, true).await?;
+        Ok(package)
+    }
+
+    async fn export_project_as(
+        &self,
+        project: &str,
+        destination: &std::path::Path,
+        folder: bool,
+    ) -> Result<()> {
         // Exclusive: nothing is admitted while the records are copied.
         let _admission = self.0.admission.write().await;
         self.known_project(project).await?;
@@ -1133,11 +1167,33 @@ impl Server {
             &self.0.config.data,
             project,
             destination,
-            false,
+            folder,
             None,
         )
         .await
         .map_err(anyhow::Error::msg)
+    }
+
+    /// Opens a project folder package where it is: one exported as a
+    /// folder, or a project folder that keeps its own database. The reply
+    /// is the project's id; one that is already here is refused.
+    pub async fn import_project_folder(&self, package: &std::path::Path) -> Result<String> {
+        let _admission = self.0.admission.write().await;
+        ensure!(
+            !self.0.shutting_down.load(Ordering::Relaxed),
+            "Host is shutting down"
+        );
+        let package = tokio::fs::canonicalize(package)
+            .await
+            .context("Choose the project's folder")?;
+        ensure!(package.is_dir(), "Choose the project's folder");
+        ensure!(
+            !package.starts_with(&self.0.config.data),
+            "Keep project files separate from the host data directory"
+        );
+        crate::project_archive::import_project_folder(&self.0.store, &self.0.config.data, &package)
+            .await
+            .map_err(anyhow::Error::msg)
     }
 
     /// Reads a project archive, puts the project in a new folder under
