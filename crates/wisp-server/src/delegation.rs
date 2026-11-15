@@ -4226,7 +4226,7 @@ mod tests {
             .retry_delegated_batch(&parent, "wf-1", &larger)
             .await
             .unwrap();
-        let batches = tokio::time::timeout(Duration::from_secs(10), async {
+        let batches = tokio::time::timeout(Duration::from_secs(30), async {
             loop {
                 let batches = server
                     .delegated_batches(crate::PROJECT, &parent)

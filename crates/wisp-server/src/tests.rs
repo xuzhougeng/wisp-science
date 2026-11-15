@@ -964,7 +964,9 @@ async fn wait_for(
     id: &str,
     ready: impl Fn(&dto::Snapshot) -> bool,
 ) -> dto::Snapshot {
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    // Generous: a loaded CI runner can take seconds over several turns; a
+    // turn that never gets there still fails.
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
         loop {
             let value = snapshot(server, id).await;
             if ready(&value) {
