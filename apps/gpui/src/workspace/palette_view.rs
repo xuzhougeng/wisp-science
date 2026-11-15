@@ -224,6 +224,7 @@ impl Workspace {
             Command::Journey => return self.open_journey(window, cx),
             Command::Papers => return self.open_papers(window, cx),
             Command::Schedules => return self.open_schedules(window, cx),
+            Command::Assistant => return self.open_assistant(window, cx),
             Command::Calendar => return self.open_calendar(window, cx),
             Command::Capabilities => return self.open_capabilities(window, cx),
             Command::Trajectory => return self.open_trajectory(window, cx),

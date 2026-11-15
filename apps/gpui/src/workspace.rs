@@ -1,6 +1,7 @@
 mod agents_view;
 mod archive_view;
 mod aside_view;
+mod assistant_view;
 mod calendar_view;
 mod capabilities_view;
 mod conversation_actions;
@@ -181,6 +182,8 @@ pub struct Workspace {
     journey_search: Entity<InputState>,
     /// The local day whose recap is being drafted, by its midnight.
     recap_drafting: Option<i64>,
+    /// The research assistant's plan for today.
+    assistant_plan: Vec<wisp_dto::ResearchAssistantPlanItem>,
     /// The daily recap run, on the Scheduled tasks page.
     daily_recap: Option<wisp_dto::DailyRecapAutomation>,
     recap_time: Entity<InputState>,
@@ -1016,6 +1019,7 @@ impl Workspace {
             journey_request: 0,
             journey_search,
             recap_drafting: None,
+            assistant_plan: Vec::new(),
             daily_recap: None,
             recap_time,
             schedules: None,
@@ -2230,6 +2234,13 @@ impl Workspace {
         if self.agents_visible() {
             self.load_batches(window, cx);
         }
+        if selection
+            .session
+            .as_deref()
+            .is_some_and(wisp_server::desktop::is_assistant)
+        {
+            self.load_assistant_plan(window, cx);
+        }
         let backend = self.backend.clone();
         self.poll = Some(cx.spawn_in(window, async move |this, cx| {
             loop {
@@ -2293,6 +2304,16 @@ impl Workspace {
                                         this.reload_artifacts(window, cx);
                                         if this.agents_visible() {
                                             this.load_batches(window, cx);
+                                        }
+                                        // The assistant's turn may have
+                                        // changed the plan.
+                                        if this
+                                            .state
+                                            .session
+                                            .as_deref()
+                                            .is_some_and(wisp_server::desktop::is_assistant)
+                                        {
+                                            this.load_assistant_plan(window, cx);
                                         }
                                         // What could be asked next arrives
                                         // a little after the answer.

@@ -221,6 +221,90 @@ impl Provider for DelegatingModel {
     }
 }
 
+/// The research assistant's model: lists the projects, dispatches a count to
+/// one, and says it started; in the project, counts; asked to review the
+/// outcome, reports it.
+struct AssistingModel;
+
+#[async_trait]
+impl Provider for AssistingModel {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+        Ok(Completion {
+            content: "Report: the project counted 42 reads.".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        let said = |needle: &str| {
+            messages
+                .iter()
+                .any(|m| m.content.as_text().contains(needle))
+        };
+        let call = |name: &str, args: serde_json::Value| {
+            Ok(Completion {
+                tool_calls: vec![ToolCall {
+                    id: format!("{name}-1"),
+                    kind: "function".into(),
+                    function: wisp_llm::FunctionCall {
+                        name: name.into(),
+                        arguments: args.to_string(),
+                    },
+                }],
+                finish_reason: Some("tool_calls".into()),
+                ..Default::default()
+            })
+        };
+        let results = messages
+            .iter()
+            .filter(|m| m.role == wisp_llm::Role::Tool)
+            .count();
+        let text = if said("[From the research assistant]") {
+            "42 reads"
+        } else if said("research assistant in Wisp Science") {
+            // Only the assistant's own tools are offered to it.
+            let names: Vec<&str> = tools
+                .iter()
+                .map(|tool| tool.function.name.as_str())
+                .collect();
+            if names
+                .iter()
+                .any(|name| matches!(*name, "write" | "edit" | "shell" | "read"))
+            {
+                "I was given project tools."
+            } else if results == 0 {
+                return call("research_projects", json!({}));
+            } else if results == 1 {
+                return call(
+                    "dispatch_to_project",
+                    json!({"project_id": PROJECT, "instruction": "Count the reads in data.fastq", "title": "Counting"}),
+                );
+            } else {
+                "Started the count; I will report back."
+            }
+        } else {
+            "ok"
+        };
+        sink.on_text(text);
+        Ok(Completion {
+            content: text.into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+}
+
 pub(crate) fn config(root: &Path) -> Config {
     Config {
         data: root.join("data"),
@@ -9028,6 +9112,100 @@ async fn a_background_batch_is_delivered_later_and_resumes_its_conversation() {
         .any(|item| item.role == "user" && item.text.contains("delegated_batch_completion")));
     let batches = server.delegated_batches(PROJECT, &parent).await.unwrap();
     assert_eq!(batches[0].status, "succeeded");
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_research_assistant_dispatches_to_a_project_and_gets_the_report() {
+    let temp = tempfile::tempdir().unwrap();
+    let factory: ModelFactory = Arc::new(|_| Box::new(AssistingModel));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    // Dispatching asks first, like other tools that set work going,
+    // unless the conversation has full access.
+    let defaults = server.turn_defaults().await.unwrap();
+    server
+        .set_turn_defaults(desktop::TurnDefaults {
+            full_access: true,
+            ..defaults
+        })
+        .await
+        .unwrap();
+    let (project, frame) = server.open_assistant().await.unwrap();
+    assert_eq!(
+        server.open_assistant().await.unwrap(),
+        (project.clone(), frame.clone())
+    );
+    // Its project is not one of the researcher's.
+    let listed = server.0.store.list_projects().await.unwrap();
+    assert!(!listed.iter().any(|row| row.0 == project));
+    server
+        .send(
+            &project,
+            send_text(&frame, "a1", "count the reads in my project"),
+        )
+        .await
+        .unwrap();
+    turn_done(&server, &frame).await;
+    let texts = texts_of(&server, &frame).await;
+    assert!(texts[0].starts_with("You are the researcher's research assistant"));
+    assert!(
+        texts
+            .iter()
+            .any(|text| text == "Started the count; I will report back."),
+        "{texts:?}"
+    );
+
+    // The work runs in a conversation of the project, told who asked.
+    let list = server.conversations(PROJECT, "", false).await.unwrap();
+    let counting = list
+        .rows
+        .iter()
+        .find(|row| row.title == "Counting")
+        .unwrap();
+    let asked = texts_of(&server, &counting.id).await;
+    assert!(asked
+        .iter()
+        .any(|text| text.starts_with("[From the research assistant]")));
+    // Its outcome comes back to the assistant, reviewed.
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        loop {
+            if texts_of(&server, &frame)
+                .await
+                .iter()
+                .any(|text| text == "Report: the project counted 42 reads.")
+            {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the outcome must be reported to the assistant");
+
+    // The plan records where the work went, and can be ticked off.
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let plan = server.assistant_plan(&today).await.unwrap();
+    let item = plan
+        .iter()
+        .find(|item| item.session_id.as_deref() == Some(counting.id.as_str()))
+        .expect("the dispatch is on today's plan");
+    assert_eq!(item.status, "open");
+    assert!(item.project_name.is_some());
+    assert!(server
+        .set_assistant_plan_item(&item.id, "finished")
+        .await
+        .is_err());
+    server
+        .set_assistant_plan_item(&item.id, "done")
+        .await
+        .unwrap();
+    assert_eq!(
+        server.assistant_plan(&today).await.unwrap()[0].status,
+        "done"
+    );
+    assert!(server.assistant_plan("not a day").await.is_err());
     server.shutdown().await;
 }
 

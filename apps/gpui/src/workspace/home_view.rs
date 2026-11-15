@@ -369,6 +369,11 @@ impl Workspace {
                         ),
                     )
                     .child(
+                        icon_button("home-assistant", "bot", tr("Research assistant")).on_click(
+                            cx.listener(|this, _, window, cx| this.open_assistant(window, cx)),
+                        ),
+                    )
+                    .child(
                         icon_button("home-favorites", "star", tr("Favorites")).on_click(
                             cx.listener(|this, _, window, cx| this.open_favorites(window, cx)),
                         ),

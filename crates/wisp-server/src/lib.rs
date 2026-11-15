@@ -2,6 +2,7 @@ mod acp_agents;
 pub mod acp_bridge;
 mod acp_turn;
 mod aside;
+mod assistant;
 mod branch_merge;
 mod browser;
 mod browser_filters;
@@ -28,6 +29,7 @@ mod paper_freeze;
 mod papers;
 mod pet;
 mod plugins;
+mod progress;
 mod project_archive;
 mod project_folder;
 mod project_sync;
@@ -153,6 +155,8 @@ struct Inner {
     sweeping_deliveries: AtomicBool,
     /// The daily recap run is going.
     recapping: AtomicBool,
+    /// Serializes making the research assistant's project.
+    assistant_lock: tokio::sync::Mutex<()>,
 }
 
 /// What runs a turn: Wisp's own agent (with the model its side requests
@@ -303,6 +307,7 @@ impl Server {
             delivering: Default::default(),
             sweeping_deliveries: AtomicBool::new(false),
             recapping: AtomicBool::new(false),
+            assistant_lock: Default::default(),
         })))
     }
 
@@ -589,6 +594,11 @@ impl Server {
         }
         if write_locked {
             notes.push(EXPLORATION_FROZEN_NOTE.to_owned());
+        }
+        // The research assistant's conversation never ends, so each turn
+        // is told the date and time.
+        if assistant::is_assistant(&request.session_id) {
+            notes.push(assistant::now_note());
         }
         let isolation = wisp_runs::exploration_isolation::boundary_for_scope(&self.0.store, &scope)
             .await
@@ -907,6 +917,11 @@ impl Server {
                 let tools = std::mem::replace(&mut agent.tools, wisp_tools::Registry::builtins());
                 agent.tools = tools.filtered(&keep);
             }
+        }
+        // The research assistant keeps to its own tools and prompt.
+        if assistant::is_assistant(&request.session_id) {
+            self.shape_assistant(&mut agent).await?;
+            return Ok(agent);
         }
         if member {
             agent.add_tool(Box::new(channels::lab_mail::LabMembersTool {

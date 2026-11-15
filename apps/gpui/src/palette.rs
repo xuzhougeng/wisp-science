@@ -46,6 +46,7 @@ pub enum Command {
     Journey,
     Papers,
     Schedules,
+    Assistant,
     Calendar,
     NewWindow,
     Capabilities,
@@ -81,6 +82,7 @@ impl Command {
             Command::Journey => tr("Research journey"),
             Command::Papers => tr("Paper evidence"),
             Command::Schedules => tr("Scheduled tasks"),
+            Command::Assistant => tr("Research assistant"),
             Command::Calendar => tr("Research calendar"),
             Command::NewWindow => tr("New window"),
             Command::Capabilities => tr("Capabilities of this project"),
@@ -115,6 +117,7 @@ impl Command {
             Command::Journey => "timeline",
             Command::Papers => "doc",
             Command::Schedules => "clock",
+            Command::Assistant => "bot",
             Command::Calendar => "calendar",
             Command::NewWindow => "dock",
             Command::Capabilities => "sparkles",
@@ -160,11 +163,12 @@ impl Command {
             | Command::Feedback
             | Command::Calendar
             | Command::Schedules
+            | Command::Assistant
             | Command::NewWindow => true,
         }
     }
 
-    const ALL: [Command; 30] = [
+    const ALL: [Command; 31] = [
         Command::NewConversation,
         Command::OpenFolder,
         Command::Home,
@@ -185,6 +189,7 @@ impl Command {
         Command::Journey,
         Command::Papers,
         Command::Schedules,
+        Command::Assistant,
         Command::Calendar,
         Command::NewWindow,
         Command::Capabilities,
@@ -492,11 +497,14 @@ mod tests {
                 Section::Commands,
                 Section::Commands,
                 Section::Commands,
+                Section::Commands,
                 Section::Commands
             ]
         );
-        // Scheduled tasks span projects, so they are offered at home too.
+        // Scheduled tasks span projects, so they are offered at home too,
+        // and so is the research assistant.
         assert!(home.contains(&Entry::Command(Command::Schedules)));
+        assert!(home.contains(&Entry::Command(Command::Assistant)));
         // Project-only commands appear once a project is open.
         let inside = state.entries(&projects, &recent, Screen::Project);
         assert!(inside.contains(&Entry::Command(Command::NewConversation)));

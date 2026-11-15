@@ -174,6 +174,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Research calendar | A page across every project: a month as a grid with how many records each day holds, and the chosen day's records; projects can be left out |
 | Scheduled tasks | A page across projects (the clock on the home page, or the command palette): a prompt is sent into a new conversation of its project every few hours, daily or weekly at a time, while the app is open; each task can be run now, switched off or deleted, and its latest firing opens the conversation it made |
 | Paper evidence | A page for the open project (Papers in the sidebar, or the command palette): the papers it is writing, each with its versions and, in a draft version, figures, tables and claims with the project results and runs they rest on and why each was chosen. Finalize… checks a draft for whom the evidence is for (private, restricted or public, with the reviews public needs) and lists what stands in the way, warnings and what the record leaves out; a finding that may stand is kept with a reason; when nothing is left in the way the version is locked under a SHA-256 fingerprint. New version starts a draft from any version with its items and evidence |
+| Research assistant | One conversation of its own (the robot on the home page, or the command palette) that reads what was recorded across projects and each project's progress, keeps your dated plan, and hands work to a project conversation, whose outcome it reports back; a bar over it shows today's plan to tick off or drop |
 | Research journey | A page for the open project: one month of what happened, by day (what you asked, runs, files, decisions, your own records), a filter, and a form to add a record of your own. Each day can have a recap the model drafts from its records, with what was done, found, went wrong and comes next, which you confirm or dismiss; Scheduled tasks drafts the last days' recaps each morning |
 | Outline | A button in the conversation's header lists what you asked, in order; choosing one scrolls to it |
 | Find in conversation | Cmd/Ctrl+F, or the command palette: a bar over the transcript marks every message, and every tool call, that contains the words; Return and the arrows move between them |
@@ -1006,9 +1007,29 @@ Limits of this slice:
   fetched. A picture that only a tool wrote, or that the answer mentions
   without image syntax, is not shown; it is in the Artifacts tab and the
   Files panel. There is no zoom and no click to open.
-- Scheduled tasks and the daily recap are the parts of the WebView's
-  research assistant that are ported: there is no plan for the day,
-  memory tidy or mandate. Tasks fire only while the app is open, looked for
+- The research assistant follows the WebView's `research_assistant.rs`:
+  one conversation in a hidden project, made on first use, run through
+  the ordinary turn pipeline but with its own system prompt and only its
+  own tools: the projects, a week of recorded activity with the days'
+  recaps, a project's progress memory, a project's conversations and
+  execution contexts, the dated plan (add, list with earlier open items,
+  open/done/dropped), dispatching work to a new or named conversation of
+  a project (optionally on an execution context), and a conversation's
+  latest answer. Each turn is told the local date and time. Dispatched
+  work runs as an ordinary turn of that conversation, which keeps the
+  name the assistant gave it; when it ends, the assistant's model
+  reviews the outcome into a report added to the assistant's
+  conversation once it is at rest, without resuming it. Dispatching and
+  changing the plan ask first unless the conversation has full access.
+  The progress memory follows `project_status.rs`: the daily recap run
+  folds each project's complete days into it with the default model, up
+  to a week of days per run, and only the assistant reads it. Not
+  ported: privacy mode (every project is visible to the assistant),
+  the side model that answers approvals of dispatched work, a selected
+  project as the message's scope, the assistant on WeChat, mandates and
+  the weekly memory tidy.
+- Scheduled tasks and the daily recap are the other parts of the
+  WebView's research assistant that are ported. Tasks fire only while the app is open, looked for
   every 30 seconds; a time that was missed fires once at the next look
   and the cadence keeps its place on the clock. A fired task is an
   ordinary turn in a new conversation named after the task: it uses
@@ -1808,6 +1829,14 @@ the day with the finding; Confirm turns it Confirmed, Dismiss removes it
 and the day offers Draft a recap again. On the Scheduled tasks page the
 Daily recap card shows On at 09:00; set 25:00 and Save: it is refused;
 set 07:30 and Save: the field keeps 07:30 after the page is opened again.
+With a model that can use tools and full access by default, press the
+robot on the home page: the Research assistant conversation opens with a
+bar saying what it is for and that nothing is planned. Ask it to plan
+"check the alignment" for today: the bar lists the item; press its check
+mark: it shows Done. Ask it to have a project count its files: a
+conversation named for the work appears in that project, and when it is
+answered a report appears in the assistant's conversation. New
+conversation is off in the assistant's sidebar.
 Save one without a title and confirm it is refused and the form stays.
 Press a row that came from a conversation and confirm that conversation
 opens. Open Journey again and press Escape: the page closes.

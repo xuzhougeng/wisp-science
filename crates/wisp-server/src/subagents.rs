@@ -129,7 +129,7 @@ impl Server {
         Ok(())
     }
 
-    fn is_running(&self, session: &str) -> bool {
+    pub(crate) fn is_running(&self, session: &str) -> bool {
         self.session(session).live.lock().unwrap().running
     }
 
@@ -344,7 +344,7 @@ impl Server {
             stop_reason.as_deref(),
             &evidence,
         );
-        let summary = self.review_subagent(parent, &evidence).await;
+        let summary = self.review_outcome(parent, REVIEW_PROMPT, &evidence).await;
         let text = match summary {
             Some(summary) => summary,
             None => format!(
@@ -428,16 +428,19 @@ impl Server {
         started.map(drop).map_err(|error| format!("{error:#}"))
     }
 
-    /// A short report of the child's outcome from the parent's model; none
-    /// when it does not answer within a minute.
-    async fn review_subagent(&self, parent: &str, evidence: &Value) -> Option<String> {
+    /// A short report of dispatched work's outcome from the model of the
+    /// conversation that dispatched it, told how with `prompt`; none when it
+    /// does not answer within a minute.
+    pub(crate) async fn review_outcome(
+        &self,
+        parent: &str,
+        prompt: &str,
+        evidence: &Value,
+    ) -> Option<String> {
         let options = self.stored_options(parent).await.ok()?;
         let model = self.0.model.read().unwrap().pick(&options.model).ok()?;
         let provider = (self.0.models)(model.provider);
-        let messages = [
-            Message::system(REVIEW_PROMPT),
-            Message::user(evidence.to_string()),
-        ];
+        let messages = [Message::system(prompt), Message::user(evidence.to_string())];
         let reply =
             tokio::time::timeout(Duration::from_secs(60), provider.complete(&messages, &[]))
                 .await

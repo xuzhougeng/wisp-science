@@ -127,7 +127,17 @@ impl Workspace {
             .as_ref()
             .and_then(|id| self.projects.iter().find(|project| &project.id == id))
             .map(|project| project.name.clone())
-            .unwrap_or_else(|| tr("Project").into());
+            .unwrap_or_else(|| {
+                // The assistant's own project is not one of the researcher's.
+                if crate::assistant::is_assistant_project(self.state.project.as_deref()) {
+                    tr("Research assistant").into()
+                } else {
+                    tr("Project").into()
+                }
+            });
+        // It has one conversation, its own.
+        let has_project =
+            has_project && !crate::assistant::is_assistant_project(self.state.project.as_deref());
 
         let mut new_chat =
             nav_row(
@@ -2098,6 +2108,9 @@ impl Workspace {
             content = content.child(bar);
         }
         if let Some(bar) = self.render_subagent_bar(cx) {
+            content = content.child(bar);
+        }
+        if let Some(bar) = self.render_assistant_bar(cx) {
             content = content.child(bar);
         }
         if !self.settings.configured() {

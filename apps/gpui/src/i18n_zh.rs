@@ -1723,4 +1723,12 @@ pub const ZH: &[(&str, &str)] = &[
     ("Draft a recap", "起草回顾"),
     ("Daily recap", "每日回顾"),
     ("Each day after this time, a recap is drafted from the records of each project's last three days that have none yet. Drafts wait on the project's research journey for you to confirm or dismiss.", "每天到这个时间之后，会根据每个项目最近三天中还没有回顾的记录起草一份回顾。草稿留在项目的研究历程里，等你确认或忽略。"),
+    ("Research assistant", "科研助理"),
+    ("Dropped", "已放弃"),
+    ("Open", "未完成"),
+    ("Nothing planned for today. Tell the assistant what you mean to do.", "今天还没有计划。告诉助理你打算做什么。"),
+    ("Today's plan: {} of {} done", "今天的计划：完成 {} / {} 项"),
+    ("Your research assistant keeps track of every project, remembers your plan and hands work to project conversations; it does no work itself.", "科研助理跟踪每个项目、记住你的计划，并把工作交给项目里的会话；它自己不做研究工作。"),
+    ("Mark it done", "标记为完成"),
+    ("Drop it", "放弃"),
 ];

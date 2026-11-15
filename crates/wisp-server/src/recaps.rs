@@ -6,8 +6,9 @@
 //!
 //! The daily run goes with the scheduler: once per local day after its
 //! configured time it drafts any missing recap for the last few days,
-//! never replacing an existing or dismissed one. Recaps are drafted on the
-//! default model profile; the WebView's Recap specialist is not ported.
+//! never replacing an existing or dismissed one, and brings each project's
+//! progress memory up to yesterday. Recaps are drafted on the default
+//! model profile; the WebView's Recap specialist is not ported.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
@@ -491,7 +492,7 @@ impl Server {
                 Vec::new()
             }
         };
-        'projects: for (id, name, ..) in projects {
+        'projects: for (id, name, _, created_at, ..) in projects {
             for back in 1..=CATCH_UP_DAYS {
                 let Some((start, end)) = local_day(today - chrono::Days::new(back)) else {
                     continue;
@@ -506,6 +507,15 @@ impl Server {
                             break 'projects;
                         }
                     }
+                }
+            }
+            // The same complete days, folded into the project's progress
+            // memory for the research assistant.
+            if let Err(error) = self.fold_progress(&id, created_at, today).await {
+                tracing::warn!(%error, project = %id, "Progress memory failed");
+                errors.push(format!("{name}: {error}"));
+                if errors.len() >= MAX_RUN_ERRORS {
+                    break 'projects;
                 }
             }
         }

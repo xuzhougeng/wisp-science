@@ -5232,6 +5232,7 @@ pub use crate::acp_agents::{
 };
 pub use crate::acp_turn::{AcpChoice, AcpCommand, AcpControls, AcpPick, AcpSetting, AcpValue};
 pub use crate::aside::Exchange as AsideExchange;
+pub use crate::assistant::{is_assistant, ASSISTANT_FRAME_ID};
 pub use crate::browser::{BrowserSettings, BrowserStatus};
 pub use crate::browser_filters::{BrowserFilters, BrowserHostRule};
 pub use crate::channels::{

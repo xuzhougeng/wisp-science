@@ -1537,6 +1537,22 @@ impl Backend {
         self.local(move |host| async move { host.join_lab_knowledge_base(&parent).await })
     }
 
+    /// The research assistant's project and its one conversation, made on
+    /// first use.
+    pub fn open_assistant(&self) -> Reply<(String, String)> {
+        self.local(move |host| async move { host.open_assistant().await })
+    }
+
+    /// The assistant's plan for `day` (`YYYY-MM-DD`), with earlier items
+    /// still open.
+    pub fn assistant_plan(&self, day: String) -> Reply<Vec<wisp_dto::ResearchAssistantPlanItem>> {
+        self.local(move |host| async move { host.assistant_plan(&day).await })
+    }
+
+    pub fn set_assistant_plan_item(&self, id: String, status: String) -> Reply<()> {
+        self.local(move |host| async move { host.set_assistant_plan_item(&id, &status).await })
+    }
+
     /// The task batches the conversation's agent delegated, newest first.
     pub fn delegated_batches(
         &self,
