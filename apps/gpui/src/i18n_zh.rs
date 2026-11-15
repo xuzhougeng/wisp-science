@@ -1808,4 +1808,17 @@ pub const ZH: &[(&str, &str)] = &[
         "The assistant keeps one conversation, the one open.",
         "科研助理只有一个会话，就是当前打开的这个。",
     ),
+    ("Runs again with up to {} tokens", "再次运行时最多 {} 个 token"),
+    ("Up to {} tokens", "最多 {} 个 token"),
+    ("Runs again with no token limit", "再次运行时不限 token"),
+    ("No token limit", "不限 token"),
+    (
+        "Enter a whole number of tokens; 0 is no limit",
+        "请输入 token 数（整数），0 表示不限",
+    ),
+    (
+        "Give the task another token budget for its next run",
+        "为这个任务的下一次运行设定新的 token 预算",
+    ),
+    ("Tokens", "Token 数"),
 ];

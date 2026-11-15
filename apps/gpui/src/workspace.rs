@@ -546,6 +546,12 @@ pub struct Workspace {
     /// The latest work over many items the open conversation ran.
     swarm: Option<wisp_dto::SwarmProgress>,
     batches_request: u64,
+    /// The task whose token budget is being changed, by batch and task id,
+    /// and the field it is typed in.
+    budget_target: Option<(String, String)>,
+    budget_input: Entity<InputState>,
+    /// Token budgets given to tasks for their batch's next run.
+    budget_changes: HashMap<(String, String), u32>,
     explore_name: Entity<InputState>,
     explore_from: Option<TurnRef>,
     explore_preview: Option<(String, wisp_server::desktop::PromotionPreview)>,
@@ -709,6 +715,7 @@ impl Workspace {
                 .multi_line(true)
                 .placeholder(tr("Code to run in this interpreter…"))
         });
+        let budget_input = cx.new(|cx| InputState::new(window, cx).placeholder(tr("Tokens")));
         let mandate_fields = [
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Literature watch"))),
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
@@ -846,6 +853,12 @@ impl Workspace {
                 }
             }),
             // Search runs in the host: titles and message text, archive included.
+            // Return keeps the budget typed for a delegated task.
+            cx.subscribe_in(&budget_input, window, |this, _, event, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    this.save_budget(window, cx);
+                }
+            }),
             cx.subscribe_in(&search, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.load_sessions(window, cx);
@@ -1257,6 +1270,9 @@ impl Workspace {
             batches: Vec::new(),
             swarm: None,
             batches_request: 0,
+            budget_target: None,
+            budget_input,
+            budget_changes: HashMap::new(),
             explore_name,
             explore_from: None,
             explore_preview: None,
@@ -1463,6 +1479,7 @@ impl Workspace {
                 self.console_runtime = None;
                 self.focus_composer(window, cx);
             }
+            Some(Layer::TaskBudget) => self.budget_target = None,
             Some(Layer::Mandates) => self.focus_composer(window, cx),
             Some(Layer::MandateForm) => {}
             Some(Layer::ConfirmDeleteMandate) => self.mandate_deleting = None,

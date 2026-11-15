@@ -147,6 +147,55 @@ pub fn can_retry(batch: &wisp_server::desktop::DelegatedBatch) -> bool {
     matches!(batch.status.as_str(), "failed" | "cancelled")
 }
 
+/// Whether a task's token budget can be changed: before its batch runs
+/// again, and only when the task did not finish.
+pub fn budget_editable(
+    batch: &wisp_server::desktop::DelegatedBatch,
+    task: &wisp_server::desktop::DelegatedTask,
+) -> bool {
+    can_retry(batch) && task.status != "succeeded"
+}
+
+/// A task's token budget, or the one the rerun will give it when it was
+/// changed.
+pub fn budget_line(task: &wisp_server::desktop::DelegatedTask, changed: Option<u32>) -> String {
+    let tokens = changed.or(task.max_tokens).filter(|tokens| *tokens > 0);
+    match (tokens, changed.is_some()) {
+        (Some(tokens), true) => crate::i18n::fill(
+            crate::i18n::tr("Runs again with up to {} tokens"),
+            &[&tokens],
+        ),
+        (Some(tokens), false) => crate::i18n::fill(crate::i18n::tr("Up to {} tokens"), &[&tokens]),
+        (None, true) => crate::i18n::tr("Runs again with no token limit").to_owned(),
+        (None, false) => crate::i18n::tr("No token limit").to_owned(),
+    }
+}
+
+/// A typed token budget: a whole number, zero for no limit.
+pub fn parse_budget(text: &str) -> Result<u32, &'static str> {
+    text.trim()
+        .replace([',', '_', ' '], "")
+        .parse::<u32>()
+        .map_err(|_| crate::i18n::tr("Enter a whole number of tokens; 0 is no limit"))
+}
+
+/// The budgets a rerun of `batch` sends: its tasks that did not finish and
+/// were given another one, by task id.
+pub fn rerun_budgets(
+    batch: &wisp_server::desktop::DelegatedBatch,
+    changed: &std::collections::HashMap<(String, String), u32>,
+) -> std::collections::HashMap<String, u32> {
+    batch
+        .tasks
+        .iter()
+        .filter(|task| budget_editable(batch, task))
+        .filter_map(|task| {
+            let tokens = *changed.get(&(batch.id.clone(), task.id.clone()))?;
+            (task.max_tokens.unwrap_or(0) != tokens).then(|| (task.id.clone(), tokens))
+        })
+        .collect()
+}
+
 /// How far a batch has come: its tasks that finished, of all of them.
 pub fn batch_progress(batch: &wisp_server::desktop::DelegatedBatch) -> String {
     let done = batch
@@ -225,6 +274,7 @@ mod tests {
             input_tokens: 0,
             output_tokens: 0,
             tool_calls: 0,
+            max_tokens: None,
         };
         let batch = DelegatedBatch {
             id: "b".into(),
@@ -262,6 +312,50 @@ mod tests {
         assert_eq!(
             task_usage(&used).as_deref(),
             Some("1500 tokens · 4 tool calls")
+        );
+
+        // Before a failed batch runs again, the tasks that did not finish
+        // can be given another token budget.
+        let failed = DelegatedBatch {
+            status: "failed".into(),
+            tasks: vec![
+                task("a", "succeeded"),
+                DelegatedTask {
+                    max_tokens: Some(4000),
+                    ..task("b", "failed")
+                },
+                task("c", "cancelled"),
+            ],
+            ..batch.clone()
+        };
+        assert!(!budget_editable(&batch, &batch.tasks[1]));
+        assert!(!budget_editable(&failed, &failed.tasks[0]));
+        assert!(budget_editable(&failed, &failed.tasks[1]));
+        assert_eq!(budget_line(&failed.tasks[1], None), "Up to 4000 tokens");
+        assert_eq!(budget_line(&failed.tasks[2], None), "No token limit");
+        assert_eq!(
+            budget_line(&failed.tasks[1], Some(9000)),
+            "Runs again with up to 9000 tokens"
+        );
+        assert_eq!(
+            budget_line(&failed.tasks[1], Some(0)),
+            "Runs again with no token limit"
+        );
+        assert_eq!(parse_budget(" 12,000 "), Ok(12_000));
+        assert_eq!(parse_budget("0"), Ok(0));
+        assert!(parse_budget("lots").is_err());
+        assert!(parse_budget("-5").is_err());
+        let key = |task: &str| ("b".to_owned(), task.to_owned());
+        let changed = std::collections::HashMap::from([
+            // A finished task's is not sent, nor one set to what it was.
+            (key("a"), 100),
+            (key("b"), 4000),
+            (key("c"), 9000),
+            (("other".to_owned(), "c".to_owned()), 1),
+        ]);
+        assert_eq!(
+            rerun_budgets(&failed, &changed),
+            std::collections::HashMap::from([("c".to_owned(), 9000)])
         );
     }
 

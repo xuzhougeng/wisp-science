@@ -67,6 +67,9 @@ pub enum Layer {
     /// A console on one of the conversation's interpreters, over the
     /// composer.
     RuntimeConsole,
+    /// The token budget of a delegated task being changed before its batch
+    /// runs again, in the Agents tab.
+    TaskBudget,
     /// The research mandates of every project: a page of its own.
     Mandates,
     /// The form on that page for a new mandate or a change to one.
@@ -227,7 +230,8 @@ impl Layer {
             | Layer::MemoEditor
             | Layer::ConfirmDeleteMemo
             | Layer::MemoryEditor
-            | Layer::ConfirmDeleteMemory => Some(Layer::FilesPanel),
+            | Layer::ConfirmDeleteMemory
+            | Layer::TaskBudget => Some(Layer::FilesPanel),
             Layer::ConfirmDeleteModel
             | Layer::McpForm
             | Layer::ConfirmRemoveMcp
@@ -672,6 +676,15 @@ mod tests {
         stack.open(Layer::RuntimeConsole);
         assert_eq!(stack.dismiss_top(), Some(Layer::RuntimeConsole));
         assert!(!stack.contains(Layer::RuntimeConsole));
+        // A task's budget being changed closes before the side panel, and
+        // with it.
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::TaskBudget);
+        assert_eq!(stack.dismiss_top(), Some(Layer::TaskBudget));
+        assert!(stack.contains(Layer::FilesPanel));
+        stack.open(Layer::TaskBudget);
+        assert!(stack.close(Layer::FilesPanel));
+        assert!(!stack.contains(Layer::TaskBudget));
         // The mandates page and what opens on it.
         stack.open(Layer::Mandates);
         stack.open(Layer::MandateForm);

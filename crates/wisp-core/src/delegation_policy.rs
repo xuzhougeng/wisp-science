@@ -351,6 +351,22 @@ impl CapabilityRegistry {
             .collect()
     }
 
+    /// Resolves a task of a resolved plan again as if it had asked for
+    /// `budget`; everything else it asked for stays as it was. Used to give
+    /// a task that did not finish another budget before its batch reruns.
+    pub fn resolve_with_budget(
+        &self,
+        spec: &AgentSpec,
+        input: Value,
+        budget: AgentBudget,
+        host: &DelegationHostPolicy,
+    ) -> Result<AgentSpec, ResolutionError> {
+        let mut proposal = proposal_from_spec(spec)?;
+        proposal.input = input;
+        proposal.budget = Some(budget);
+        Ok(self.resolve_task(proposal, host)?.spec)
+    }
+
     pub fn resolve_task(
         &self,
         proposal: DelegatedTaskProposal,

@@ -1689,8 +1689,15 @@ impl Backend {
     }
 
     /// Runs a failed or stopped batch of the conversation again.
-    pub fn retry_delegated_batch(&self, session: String, batch: String) -> Reply<()> {
-        self.local(move |host| async move { host.retry_delegated_batch(&session, &batch).await })
+    pub fn retry_delegated_batch(
+        &self,
+        session: String,
+        batch: String,
+        budgets: std::collections::HashMap<String, u32>,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.retry_delegated_batch(&session, &batch, &budgets).await
+        })
     }
 
     /// The latest work over many items the conversation ran.

@@ -134,6 +134,8 @@ pub struct DelegatedTask {
     pub input_tokens: i64,
     pub output_tokens: i64,
     pub tool_calls: i64,
+    /// The most tokens it may use; none (or zero) for no limit.
+    pub max_tokens: Option<u32>,
 }
 
 /// A delegated batch as the window lists it.
@@ -344,6 +346,49 @@ fn resolve(
     };
     plan.validate().map_err(|error| error.to_string())?;
     Ok(plan)
+}
+
+/// Gives tasks that did not finish the token budget the researcher set, by
+/// the agent's task id; zero is no limit. Nothing else of the plan changes.
+/// Returns whether anything did.
+fn revise_budgets(
+    plan: &mut DelegationPlan,
+    display: &HashMap<String, String>,
+    finished: &HashSet<String>,
+    budgets: &HashMap<String, u32>,
+    registry: &CapabilityRegistry,
+    host: &DelegationHostPolicy,
+) -> Result<bool, String> {
+    let mut changed = false;
+    for (task, &tokens) in budgets {
+        let step = plan
+            .steps
+            .iter_mut()
+            .find(|step| display.get(&step.id).unwrap_or(&step.id) == task)
+            .ok_or_else(|| format!("The batch has no task '{task}'"))?;
+        if finished.contains(&step.id) {
+            return Err(format!(
+                "Task '{task}' finished; only a task that did not can be given another budget"
+            ));
+        }
+        // Resolved again as if the task had asked for it, so the plan's own
+        // checks still hold.
+        let mut budget = step
+            .spec
+            .request_preferences
+            .as_ref()
+            .and_then(|preferences| preferences.budget.clone())
+            .unwrap_or_default();
+        budget.max_tokens = Some(tokens);
+        let revised = registry
+            .resolve_with_budget(&step.spec, step.input.clone(), budget, host)
+            .map_err(|error| format!("Task '{task}' cannot have that budget: {error}"))?;
+        if revised != step.spec {
+            step.spec = revised;
+            changed = true;
+        }
+    }
+    Ok(changed)
 }
 
 fn display_task_ids(plan: &DelegationPlan) -> HashMap<String, String> {
@@ -2077,7 +2122,12 @@ impl Server {
     /// background: tasks that succeeded keep their results, the others run
     /// anew, and the result is delivered to the conversation, whose agent
     /// is resumed to sum it up.
-    pub async fn retry_delegated_batch(&self, session: &str, batch: &str) -> anyhow::Result<()> {
+    pub async fn retry_delegated_batch(
+        &self,
+        session: &str,
+        batch: &str,
+        budgets: &HashMap<String, u32>,
+    ) -> anyhow::Result<()> {
         let store = &self.0.store;
         let workflow = store
             .get_agent_workflow(batch)
@@ -2094,30 +2144,58 @@ impl Server {
             ),
             "Only a batch that failed or was stopped can be run again"
         );
-        let plan: DelegationPlan = serde_json::from_str(&workflow.plan_json)?;
+        let mut plan: DelegationPlan = serde_json::from_str(&workflow.plan_json)?;
         let (registry, host) = self
             .delegation_policy(session)
             .await
+            .map_err(anyhow::Error::msg)?;
+        let completed = successful_steps(store, batch).await?;
+        let finished: HashSet<String> = completed.iter().map(|step| step.step_id.clone()).collect();
+        let display = display_task_ids(&plan);
+        let revised = revise_budgets(&mut plan, &display, &finished, budgets, &registry, &host)
             .map_err(anyhow::Error::msg)?;
         registry.validate_resolved_plan(&plan, &host).map_err(|_| {
             anyhow::anyhow!(
                 "The models or tools changed since this batch was planned; ask the agent to delegate it again"
             )
         })?;
-        let completed = successful_steps(store, batch).await?;
         let root = self.project_root(&workflow.project_id).await?;
-        anyhow::ensure!(
+        let approved = if revised {
+            // Only the budgets change; the tasks keep their ids, so the
+            // finished ones are still kept.
+            let (mut replacement, steps) =
+                records(&plan, &workflow.project_id, &root, session, &host)?;
+            replacement.workspace_id.clone_from(&workflow.workspace_id);
+            replacement
+                .root_workflow_id
+                .clone_from(&workflow.root_workflow_id);
+            replacement
+                .parent_attempt_id
+                .clone_from(&workflow.parent_attempt_id);
+            replacement.depth = workflow.depth;
+            replacement.description.clone_from(&workflow.description);
+            replacement.version = workflow.version;
+            replacement.enabled = workflow.enabled;
+            replacement.created_at = workflow.created_at;
+            store
+                .replace_agent_workflow_plan_for_retry(
+                    &replacement,
+                    &steps,
+                    workflow.status,
+                    workflow.version,
+                )
+                .await?
+        } else {
             store
                 .transition_agent_workflow_status(
                     batch,
                     workflow.status,
-                    AgentWorkflowStatus::Approved
+                    AgentWorkflowStatus::Approved,
                 )
-                .await?,
-            "The batch changed meanwhile; try again"
-        );
+                .await?
+        };
+        anyhow::ensure!(approved, "The batch changed meanwhile; try again");
         let delivery = store.create_agent_workflow_delivery(batch, true).await?;
-        let display = display_task_ids(&plan);
         let (_, _, executor) = self.batch_executor(
             &workflow.project_id,
             &root,
@@ -2251,6 +2329,7 @@ impl Server {
                         input_tokens: latest.map_or(0, |attempt| attempt.input_tokens),
                         output_tokens: latest.map_or(0, |attempt| attempt.output_tokens),
                         tool_calls: latest.map_or(0, |attempt| attempt.tool_calls),
+                        max_tokens: step.spec.budget.max_tokens,
                     }
                 })
                 .collect();
@@ -2715,6 +2794,48 @@ mod tests {
         assert!(parse_result("{\"summary\": \"ok\", \"findings\": []}", reviewer).is_ok());
     }
 
+    #[test]
+    fn only_a_task_that_did_not_finish_is_given_another_budget() {
+        let registry = CapabilityRegistry::builtins();
+        let host = host_policy(vec![worker(false)], false);
+        let mut resolved = plan(
+            json!([
+                {"id": "read", "instruction": "Read", "capabilities": ["project_read"]},
+                {"id": "check", "instruction": "Check", "capabilities": ["review"],
+                 "depends_on": ["read"]},
+            ]),
+            false,
+        )
+        .unwrap();
+        let display = display_task_ids(&resolved);
+        let step = |plan: &DelegationPlan, task: &str| {
+            plan.steps
+                .iter()
+                .find(|step| display[&step.id] == task)
+                .unwrap()
+                .clone()
+        };
+        let read = step(&resolved, "read").id;
+        let finished = HashSet::from([read]);
+        let budgets = |task: &str, tokens| HashMap::from([(task.to_owned(), tokens)]);
+        let revise = |plan: &mut DelegationPlan, budgets: &HashMap<String, u32>| {
+            revise_budgets(plan, &display, &finished, budgets, &registry, &host)
+        };
+        let refused = revise(&mut resolved, &budgets("read", 9_000)).unwrap_err();
+        assert!(refused.contains("finished"), "{refused}");
+        assert!(revise(&mut resolved, &budgets("gone", 9_000)).is_err());
+        assert!(revise(&mut resolved, &budgets("check", 9_000)).unwrap());
+        assert_eq!(step(&resolved, "check").spec.budget.max_tokens, Some(9_000));
+        // The revised plan still passes the checks a rerun makes.
+        registry.validate_resolved_plan(&resolved, &host).unwrap();
+        // The same budget again changes nothing; zero is no limit.
+        assert!(!revise(&mut resolved, &budgets("check", 9_000)).unwrap());
+        assert!(revise(&mut resolved, &budgets("check", 0)).unwrap());
+        assert_eq!(step(&resolved, "check").spec.budget.max_tokens, None);
+        registry.validate_resolved_plan(&resolved, &host).unwrap();
+        assert!(!revise(&mut resolved, &HashMap::new()).unwrap());
+    }
+
     #[tokio::test]
     async fn a_batch_the_app_closed_on_is_settled_delivered_and_run_again() {
         let temp = tempfile::tempdir().unwrap();
@@ -2804,9 +2925,25 @@ mod tests {
         };
         assert_eq!(count(&again), 1);
 
-        // Run again, it does the task and delivers a second result.
-        assert!(server.retry_delegated_batch("other", "wf-1").await.is_err());
-        server.retry_delegated_batch(&parent, "wf-1").await.unwrap();
+        // Run again with a larger budget, it does the task and delivers a
+        // second result.
+        let none = HashMap::new();
+        assert!(server
+            .retry_delegated_batch("other", "wf-1", &none)
+            .await
+            .is_err());
+        let unknown = HashMap::from([("nope".to_owned(), 10)]);
+        let refused = server
+            .retry_delegated_batch(&parent, "wf-1", &unknown)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("no task 'nope'"), "{refused}");
+        let larger = HashMap::from([("read".to_owned(), 50_000)]);
+        server
+            .retry_delegated_batch(&parent, "wf-1", &larger)
+            .await
+            .unwrap();
         let batches = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 let batches = server
@@ -2829,9 +2966,10 @@ mod tests {
         assert_eq!(task.status, "succeeded");
         assert_eq!(task.summary.as_deref(), Some("Saved result"));
         assert!(task.conversation.is_some());
+        assert_eq!(task.max_tokens, Some(50_000));
         // Only what failed or was stopped runs again.
         let refused = server
-            .retry_delegated_batch(&parent, "wf-1")
+            .retry_delegated_batch(&parent, "wf-1", &none)
             .await
             .unwrap_err()
             .to_string();

@@ -7,6 +7,7 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Sizable, StyledExt,
     button::{Button, ButtonVariants},
+    input::Input,
     text::TextView,
 };
 use wisp_server::desktop::DelegatedBatch;
@@ -70,24 +71,133 @@ impl Workspace {
         .detach();
     }
 
-    /// Runs a failed or stopped batch again; its result comes back to the
-    /// conversation.
+    /// Runs a failed or stopped batch again, with the token budgets given
+    /// to its tasks meanwhile; its result comes back to the conversation.
     fn retry_batch(&mut self, batch: String, window: &mut Window, cx: &mut Context<Self>) {
         let Some(session) = self.state.session.clone() else {
             return;
         };
-        let reply = self.backend.retry_delegated_batch(session, batch);
+        let budgets = self
+            .batches
+            .iter()
+            .find(|shown| shown.id == batch)
+            .map(|shown| agents::rerun_budgets(shown, &self.budget_changes))
+            .unwrap_or_default();
+        self.layers.close(Layer::TaskBudget);
+        self.budget_target = None;
+        let reply = self
+            .backend
+            .retry_delegated_batch(session, batch.clone(), budgets);
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
             let _ = this.update_in(cx, |this, window, cx| {
-                if let Err(error) = result {
-                    this.error = Some(error);
+                match result {
+                    // What was given is the plan's now.
+                    Ok(()) => this.budget_changes.retain(|(id, _), _| *id != batch),
+                    Err(error) => this.error = Some(error),
                 }
                 this.load_batches(window, cx);
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    /// Opens the field for a task's token budget, with what it is now.
+    fn edit_budget(
+        &mut self,
+        key: (String, String),
+        current: Option<u32>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let value = current.map(|tokens| tokens.to_string()).unwrap_or_default();
+        self.budget_input.update(cx, |input, cx| {
+            input.set_value(value, window, cx);
+            input.focus(window, cx);
+        });
+        self.budget_target = Some(key);
+        self.layers.open(Layer::TaskBudget);
+        cx.notify();
+    }
+
+    /// Keeps the typed budget for the task's next run.
+    pub(super) fn save_budget(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(key) = self.budget_target.clone() else {
+            return;
+        };
+        match agents::parse_budget(&self.budget_input.read(cx).value()) {
+            Ok(tokens) => {
+                self.budget_changes.insert(key, tokens);
+                self.budget_target = None;
+                self.layers.close(Layer::TaskBudget);
+                self.error = None;
+            }
+            Err(message) => self.error = Some(message.to_owned()),
+        }
+        cx.notify();
+    }
+
+    fn cancel_budget(&mut self, cx: &mut Context<Self>) {
+        self.budget_target = None;
+        self.layers.close(Layer::TaskBudget);
+        cx.notify();
+    }
+
+    /// A task's token budget, with Change while its batch can run again.
+    fn render_budget(
+        &self,
+        batch: &DelegatedBatch,
+        task: &wisp_server::desktop::DelegatedTask,
+        id: usize,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let key = (batch.id.clone(), task.id.clone());
+        let changed = self.budget_changes.get(&key).copied();
+        if self.layers.contains(Layer::TaskBudget) && self.budget_target.as_ref() == Some(&key) {
+            return div()
+                .h_flex()
+                .gap_1()
+                .child(
+                    div()
+                        .w(px(120.))
+                        .child(Input::new(&self.budget_input).xsmall()),
+                )
+                .child(
+                    Button::new(("budget-save", id))
+                        .label(tr("Keep"))
+                        .xsmall()
+                        .on_click(cx.listener(|this, _, window, cx| this.save_budget(window, cx))),
+                )
+                .child(
+                    Button::new(("budget-cancel", id))
+                        .label(tr("Cancel"))
+                        .xsmall()
+                        .ghost()
+                        .on_click(cx.listener(|this, _, _, cx| this.cancel_budget(cx))),
+                );
+        }
+        let current = changed.or(task.max_tokens);
+        div()
+            .h_flex()
+            .gap_2()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(agents::budget_line(task, changed)),
+            )
+            .child(
+                Button::new(("budget-edit", id))
+                    .label(tr("Change"))
+                    .xsmall()
+                    .ghost()
+                    .tooltip(tr("Give the task another token budget for its next run"))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.edit_budget(key.clone(), current, window, cx)
+                    })),
+            )
     }
 
     /// Stops a running batch and every task in it.
@@ -266,6 +376,9 @@ impl Workspace {
             }
             if let Some(usage) = agents::task_usage(task) {
                 row = row.child(div().text_xs().text_color(muted).child(usage));
+            }
+            if agents::budget_editable(batch, task) {
+                row = row.child(self.render_budget(batch, task, index * 100 + number, cx));
             }
             card = card.child(row);
         }

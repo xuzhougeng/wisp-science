@@ -349,10 +349,14 @@ Limits of this slice:
   be run again from its card: it is checked against the models and tools
   there are now (and refused if they changed), tasks that succeeded keep
   their results, the others run again in the background, and the result
-  is delivered like a background batch's. Not ported: nested
-  delegation, an expert's own model, isolated worktrees, changing a task's budget
-  before running it again, ACP executors, literature and web research
-  capabilities, and method-search run activities.
+  is delivered like a background batch's. Before that, each task that did
+  not finish shows its token budget with Change: the number typed there
+  (0 for no limit) is the task's budget for the rerun, resolved again as
+  if the task had asked for it, as the WebView's retry budget is; nothing
+  else of the plan changes. Not ported: nested delegation, an expert's own
+  model, isolated worktrees, the other budget limits (tool calls, cost),
+  ACP executors, literature and web research capabilities, and
+  method-search run activities.
 - Explorations follow the WebView's `exploration_commands.rs`,
   `exploration_promotion.rs` and `exploration_workspace.rs`, whose
   services and tests are carried over. The first candidate of a round
@@ -2007,9 +2011,13 @@ Ask for the same work in the background: the turn ends at once saying
 it started; a little later a delegate_tasks_completion row appears in
 the conversation and the agent answers again without a new message of
 yours.
-On the batch you stopped press Run again: its tasks that had finished
-stay Done, the others run, and its result arrives in the conversation
-the same way.
+On the batch you stopped, press Change under a task that did not finish
+and press Escape at once: only the field closes. Press Change again, type
+`50000` and press Return: the line reads Runs again with up to 50000
+tokens. Type `lots` instead: an error asks for a whole number. Press Run
+again: its tasks that had finished stay Done, the others run, the changed
+task's line reads Up to 50000 tokens, and its result arrives in the
+conversation the same way.
 In a project with a file `notes.txt`, ask something and wait for the
 answer; on it press Start an exploration from here, keep the offered
 name and Start: a conversation opens with the same history and a bar
