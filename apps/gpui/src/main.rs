@@ -9,6 +9,7 @@ mod backend;
 mod browser;
 mod calendar;
 mod channels;
+mod cif;
 mod codex_pool;
 mod compose;
 mod console;

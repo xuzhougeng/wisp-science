@@ -1,7 +1,7 @@
 //! Molecules and structures as the WebView's 3Dmol viewer shows them,
-//! drawn flat: a small molecule (MOL, SDF, MOL2) as its atoms and bonds,
-//! and a protein or nucleic acid (PDB) as the trace of its chains, turned
-//! by dragging. Reading and projecting are pure, so they are tested here;
+//! drawn flat: a small molecule (MOL, SDF, MOL2, or a crystal's CIF) as its
+//! atoms and bonds, and a protein or nucleic acid (PDB or mmCIF) as the
+//! trace of its chains, turned by dragging. Reading and projecting are pure, so they are tested here;
 //! the Files preview draws the result.
 use crate::i18n::{fill, tr};
 
@@ -41,6 +41,7 @@ pub fn parse(path: &str, text: &str) -> Option<Structure> {
         "sdf" | "mol" => molfile(text),
         "mol2" => mol2(text),
         "pdb" => pdb(text),
+        "cif" | "mmcif" => cif(text),
         _ => None,
     }?;
     (!read.atoms.is_empty()).then_some(read)
@@ -173,6 +174,12 @@ fn pdb(text: &str) -> Option<Structure> {
         }
         all.push(atom);
     }
+    Some(assemble(all, backbone))
+}
+
+/// A polymer as the trace through its backbone atoms (with their residue
+/// numbers), or, without a backbone, all its atoms bonded by distance.
+fn assemble(all: Vec<Atom>, backbone: Vec<(Atom, i64)>) -> Structure {
     let total_atoms = all.len();
     if backbone.len() >= 2 {
         let mut bonds = Vec::new();
@@ -189,20 +196,178 @@ fn pdb(text: &str) -> Option<Structure> {
             .map(|(atom, _)| atom)
             .collect::<Vec<_>>();
         bonds.retain(|(first, second)| *first < atoms.len() && *second < atoms.len());
-        return Some(Structure {
+        return Structure {
             atoms,
             bonds,
             trace: true,
             total_atoms,
-        });
+        };
     }
-    let atoms: Vec<Atom> = all.into_iter().take(2000).collect();
-    Some(Structure {
+    let atoms: Vec<Atom> = all.into_iter().take(BONDED_BY_DISTANCE).collect();
+    Structure {
         bonds: by_distance(&atoms),
         atoms,
         trace: false,
         total_atoms,
-    })
+    }
+}
+
+/// The most atoms whose bonds are worked out from their distances.
+const BONDED_BY_DISTANCE: usize = 2000;
+
+/// A CIF file: an mmCIF structure as a PDB file is read, from its
+/// `_atom_site` table's Cartesian coordinates; a small-molecule CIF from its
+/// fractional coordinates in the unit cell (the asymmetric unit only, as
+/// the file lists it).
+fn cif(text: &str) -> Option<Structure> {
+    let read = crate::cif::read(text);
+    let sites = read
+        .loop_with("_atom_site_cartn_x")
+        .or_else(|| read.loop_with("_atom_site_fract_x"))?;
+    let column = |names: &[&str]| names.iter().find_map(|name| sites.column(name));
+    let value = |row: &[String], at: Option<usize>| -> Option<String> {
+        at.and_then(|at| row.get(at))
+            .filter(|value| !matches!(value.as_str(), "?" | "."))
+            .cloned()
+    };
+    let element_at = column(&["_atom_site_type_symbol"]);
+    let label_at = column(&[
+        "_atom_site_label_atom_id",
+        "_atom_site_auth_atom_id",
+        "_atom_site_label",
+    ]);
+    if let Some(x_at) = sites.column("_atom_site_cartn_x") {
+        let (y_at, z_at) = (
+            sites.column("_atom_site_cartn_y")?,
+            sites.column("_atom_site_cartn_z")?,
+        );
+        let group_at = column(&["_atom_site_group_pdb"]);
+        let chain_at = column(&["_atom_site_auth_asym_id", "_atom_site_label_asym_id"]);
+        let residue_at = column(&["_atom_site_auth_seq_id", "_atom_site_label_seq_id"]);
+        let model_at = column(&["_atom_site_pdbx_pdb_model_num"]);
+        let mut model = None;
+        let mut all = Vec::new();
+        let mut backbone = Vec::new();
+        for row in &sites.rows {
+            // The first model only.
+            let this_model = value(row, model_at);
+            if model.is_none() {
+                model = this_model.clone();
+            } else if this_model != model {
+                break;
+            }
+            let coordinate = |at: usize| row.get(at).and_then(|value| crate::cif::number(value));
+            let (Some(x), Some(y), Some(z)) =
+                (coordinate(x_at), coordinate(y_at), coordinate(z_at))
+            else {
+                continue;
+            };
+            let name = value(row, label_at).unwrap_or_default();
+            let atom = Atom {
+                element: value(row, element_at)
+                    .map(|symbol| type_symbol(&symbol))
+                    .unwrap_or_else(|| element_symbol(&name)),
+                position: [x as f32, y as f32, z as f32],
+                chain: value(row, chain_at).unwrap_or_default(),
+            };
+            let polymer = value(row, group_at).is_none_or(|group| group == "ATOM");
+            if polymer && matches!(name.as_str(), "CA" | "P") {
+                let residue = value(row, residue_at)
+                    .and_then(|residue| residue.parse::<i64>().ok())
+                    .unwrap_or_default();
+                backbone.push((atom.clone(), residue));
+            }
+            all.push(atom);
+        }
+        return Some(assemble(all, backbone));
+    }
+    // A small molecule's fractional coordinates, turned Cartesian with the
+    // cell's edges and angles.
+    let cell = |name: &str| read.number(name);
+    let (a, b, c) = (
+        cell("_cell_length_a")?,
+        cell("_cell_length_b")?,
+        cell("_cell_length_c")?,
+    );
+    let angle = |name: &str| cell(name).unwrap_or(90.0).to_radians();
+    let (alpha, beta, gamma) = (
+        angle("_cell_angle_alpha"),
+        angle("_cell_angle_beta"),
+        angle("_cell_angle_gamma"),
+    );
+    let cy = (alpha.cos() - beta.cos() * gamma.cos()) / gamma.sin();
+    let cz = (1.0 - beta.cos().powi(2) - cy.powi(2)).max(0.0).sqrt();
+    let axes = [
+        [a, 0.0, 0.0],
+        [b * gamma.cos(), b * gamma.sin(), 0.0],
+        [c * beta.cos(), c * cy, c * cz],
+    ];
+    let fractions = [
+        sites.column("_atom_site_fract_x")?,
+        sites.column("_atom_site_fract_y")?,
+        sites.column("_atom_site_fract_z")?,
+    ];
+    let mut atoms = Vec::new();
+    'rows: for row in &sites.rows {
+        let mut fraction = [0.0; 3];
+        for (axis, at) in fractions.iter().enumerate() {
+            match row.get(*at).and_then(|value| crate::cif::number(value)) {
+                Some(value) => fraction[axis] = value,
+                // A site without a position is not drawn.
+                None => continue 'rows,
+            }
+        }
+        let position: [f32; 3] = std::array::from_fn(|out| {
+            (0..3)
+                .map(|axis| fraction[axis] * axes[axis][out])
+                .sum::<f64>() as f32
+        });
+        let label = value(row, label_at).unwrap_or_default();
+        atoms.push(Atom {
+            element: value(row, element_at)
+                .map(|symbol| type_symbol(&symbol))
+                .unwrap_or_else(|| element_symbol(&label)),
+            position,
+            chain: String::new(),
+        });
+    }
+    Some(assemble(atoms, Vec::new()))
+}
+
+/// The element a CIF type symbol names, in any case: `O2-` is oxygen and
+/// `FE3+` or `Fe3+` iron.
+fn type_symbol(text: &str) -> String {
+    let letters: String = text
+        .chars()
+        .take_while(char::is_ascii_alphabetic)
+        .take(2)
+        .collect();
+    let mut chars = letters.chars();
+    match chars.next() {
+        Some(first) => format!(
+            "{}{}",
+            first.to_ascii_uppercase(),
+            chars.as_str().to_ascii_lowercase()
+        ),
+        None => String::new(),
+    }
+}
+
+/// The element an atom label names: `C12` is carbon and `Cl1` chlorine,
+/// while `CA` (a Cα) is carbon.
+fn element_symbol(text: &str) -> String {
+    let letters: Vec<char> = text
+        .chars()
+        .take_while(char::is_ascii_alphabetic)
+        .take(2)
+        .collect();
+    match letters.as_slice() {
+        [first, second] if second.is_ascii_lowercase() => {
+            format!("{}{}", first.to_ascii_uppercase(), second)
+        }
+        [first, ..] => first.to_ascii_uppercase().to_string(),
+        [] => String::new(),
+    }
 }
 
 /// Bonds between atoms closer than a covalent bond is long.
@@ -381,6 +546,63 @@ mod tests {
         // Within chain A, not across to B, and not over B's gap.
         assert_eq!(read.bonds, [(0, 1), (1, 2)]);
         assert_eq!(note(&read), "2 chains · 5 residues traced · drag to turn");
+    }
+
+    #[test]
+    fn an_mmcif_structure_is_traced_like_a_pdb_file() {
+        let text = "data_1ABC\n#\nloop_\n\
+            _atom_site.group_PDB\n_atom_site.id\n_atom_site.type_symbol\n\
+            _atom_site.label_atom_id\n_atom_site.label_seq_id\n_atom_site.Cartn_x\n\
+            _atom_site.Cartn_y\n_atom_site.Cartn_z\n_atom_site.auth_seq_id\n\
+            _atom_site.auth_asym_id\n_atom_site.pdbx_PDB_model_num\n\
+            ATOM 1 N N 1 0.0 0.0 0.0 1 A 1\n\
+            ATOM 2 C CA 1 1.0 0.0 0.0 1 A 1\n\
+            ATOM 3 C CA 2 4.8 0.0 0.0 2 A 1\n\
+            HETATM 4 CA CA . 9.0 0.0 0.0 . B 1\n\
+            ATOM 5 C CA 1 99.0 0.0 0.0 1 A 2\n#\n";
+        let read = parse("1abc.cif", text).unwrap();
+        assert!(read.trace);
+        // Four atoms in the first model; a calcium ion is not a Cα.
+        assert_eq!(read.total_atoms, 4);
+        assert_eq!(read.atoms.len(), 2);
+        assert_eq!(read.bonds, [(0, 1)]);
+        assert_eq!(read.atoms[1].position, [4.8, 0.0, 0.0]);
+        // Without Cα atoms every atom is drawn, the ion as calcium.
+        let ions = text.replace(" C CA ", " C CB ");
+        let read = parse("1abc.cif", &ions).unwrap();
+        assert!(!read.trace);
+        assert_eq!(read.atoms[3].element, "Ca");
+        assert_eq!(type_symbol("FE3+"), "Fe");
+    }
+
+    #[test]
+    fn a_small_molecule_cif_is_placed_in_its_cell() {
+        let text = "data_water\n\
+            _cell_length_a 10.0(2)\n_cell_length_b 10\n_cell_length_c 10\n\
+            _cell_angle_alpha 90\n_cell_angle_beta 90\n_cell_angle_gamma 90\n\
+            loop_\n_atom_site_label\n_atom_site_type_symbol\n\
+            _atom_site_fract_x\n_atom_site_fract_y\n_atom_site_fract_z\n\
+            O1 O2- 0.5 0.5 0.5\nH1 H 0.596 0.5 0.5\nH2 H 0.476 0.593 0.5\nCl1 ? ? 0.1 0.1\n";
+        let read = parse("water.cif", text).unwrap();
+        assert!(!read.trace);
+        let elements: Vec<_> = read
+            .atoms
+            .iter()
+            .map(|atom| atom.element.as_str())
+            .collect();
+        // The site without a position is left out.
+        assert_eq!(elements, ["O", "H", "H"]);
+        assert!((read.atoms[1].position[0] - 5.96).abs() < 1e-4);
+        assert_eq!(read.bonds, [(0, 1), (0, 2)]);
+        // Without a type symbol the label names the element.
+        assert_eq!(element_symbol("Cl1"), "Cl");
+        assert_eq!(element_symbol("Fe3+"), "Fe");
+        assert_eq!(element_symbol("C12"), "C");
+        // A monoclinic cell leans its third edge.
+        let leaning = text.replace("_cell_angle_beta 90", "_cell_angle_beta 120");
+        let read = parse("water.cif", &leaning).unwrap();
+        assert!((read.atoms[0].position[0] - 2.5).abs() < 1e-3);
+        assert_eq!(parse("water.cif", "data_x\n_cell_length_a 1\n"), None);
     }
 
     #[test]
