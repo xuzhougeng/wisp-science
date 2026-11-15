@@ -12304,7 +12304,40 @@ async fn a_conversation_is_compacted_on_request_and_its_history_archived() {
     assert_eq!(archives.len(), 1);
     // The transcript on screen is as long as it was.
     assert_eq!(snapshot(&server, &session).await.items.len(), shown_before);
-    // The conversation goes on from what was kept.
+
+    // Undone, the model is sent everything again; only the compaction
+    // that was looked at, and only once.
+    let compacted = server.model_view(PROJECT, &session).await.unwrap();
+    assert!(compacted.epoch > 0);
+    let whole_before = compacted.chars;
+    assert!(server
+        .undo_compaction(PROJECT, &session, compacted.epoch + 1)
+        .await
+        .is_err());
+    assert!(server
+        .undo_compaction("missing", &session, compacted.epoch)
+        .await
+        .is_err());
+    server
+        .undo_compaction(PROJECT, &session, compacted.epoch)
+        .await
+        .unwrap();
+    let restored = server.model_view(PROJECT, &session).await.unwrap();
+    assert_eq!(restored.epoch, 0);
+    assert!(!restored.compacted);
+    assert!(restored.chars >= whole_before);
+    assert!(server
+        .undo_compaction(PROJECT, &session, compacted.epoch)
+        .await
+        .is_err());
+
+    // Compacted again, and the conversation goes on from what was kept;
+    // then it can no longer be undone.
+    server
+        .compact_conversation(PROJECT, &session)
+        .await
+        .unwrap();
+    let again = server.model_view(PROJECT, &session).await.unwrap().epoch;
     send(&server, &session, "what did we find?").await.unwrap();
     wait_for(&server, &session, |s| !s.running).await;
     assert!(seen
@@ -12312,6 +12345,12 @@ async fn a_conversation_is_compacted_on_request_and_its_history_archived() {
         .unwrap()
         .join("\n")
         .contains("what did we find?"));
+    let refused = server
+        .undo_compaction(PROJECT, &session, again)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(refused.contains("went on after"), "{refused}");
     server.shutdown().await;
 }
 

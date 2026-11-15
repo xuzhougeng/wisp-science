@@ -112,9 +112,27 @@ pub fn opens(row: &ModelViewRow) -> bool {
     !text.is_empty() && (text != first || first.chars().count() > ONE_LINE)
 }
 
+/// Whether the working set shown can be put back to what it was before
+/// its compaction: it is compacted, and the compaction is named.
+pub fn can_undo(view: &ModelView) -> bool {
+    view.compacted && view.epoch > 0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_named_compaction_can_be_undone() {
+        let mut view = ModelView::default();
+        assert!(!can_undo(&view));
+        view.compacted = true;
+        assert!(!can_undo(&view));
+        view.epoch = 2;
+        assert!(can_undo(&view));
+        view.compacted = false;
+        assert!(!can_undo(&view));
+    }
 
     fn row(kind: ModelRowKind, text: &str, chars: usize) -> ModelViewRow {
         ModelViewRow {
@@ -158,6 +176,7 @@ mod tests {
                 conversation: 600,
                 ..Default::default()
             },
+            epoch: 0,
         };
         assert_eq!(
             by_kind(&view),
@@ -186,6 +205,7 @@ mod tests {
             chars: 12_000,
             compacted: false,
             breakdown: Default::default(),
+            epoch: 0,
         };
         assert_eq!(share(&tool, &view), "≈750 · 25%");
 

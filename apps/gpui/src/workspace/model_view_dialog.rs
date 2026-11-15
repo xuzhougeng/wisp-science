@@ -2,7 +2,7 @@
 //! the saved working set row by row, with how much of it each row is.
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
-use gpui_component::{ActiveTheme, Sizable, StyledExt, button::Button};
+use gpui_component::{ActiveTheme, Disableable, Sizable, StyledExt, button::Button};
 
 use super::{
     Workspace,
@@ -46,6 +46,32 @@ impl Workspace {
         self.model_view = None;
         self.model_view_error = None;
         self.model_view_open.clear();
+    }
+
+    /// Undoes the compaction the dialog shows, then shows the working set
+    /// as it is again.
+    fn undo_compaction(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(project), Some(session), Some(view)) = (
+            self.state.project.clone(),
+            self.state.session.clone(),
+            self.model_view.as_ref(),
+        ) else {
+            return;
+        };
+        let reply = self.backend.undo_compaction(project, session, view.epoch);
+        self.model_view_error = None;
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(()) => this.open_model_view(window, cx),
+                    Err(error) => this.model_view_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     fn close_model_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -217,13 +243,37 @@ impl Workspace {
                 }
             }
         }
-        card = card.child(
-            div().h_flex().justify_end().pt_2().child(
-                Button::new("model-view-close")
-                    .label(tr("Close"))
+        let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
+        let undo = self
+            .model_view
+            .as_ref()
+            .filter(|view| model_view::can_undo(view))
+            .map(|_| {
+                Button::new("model-view-undo")
+                    .icon(glyph("undo-compact"))
+                    .label(tr("Undo the compaction"))
                     .small()
-                    .on_click(cx.listener(|this, _, window, cx| this.close_model_view(window, cx))),
-            ),
+                    .disabled(running)
+                    .tooltip(tr(
+                        "Send the model everything again, as before the compaction; only while nothing has been said since",
+                    ))
+                    .on_click(cx.listener(|this, _, window, cx| this.undo_compaction(window, cx)))
+            });
+        card = card.child(
+            div()
+                .h_flex()
+                .gap_2()
+                .justify_end()
+                .pt_2()
+                .children(undo)
+                .child(
+                    Button::new("model-view-close")
+                        .label(tr("Close"))
+                        .small()
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.close_model_view(window, cx)),
+                        ),
+                ),
         );
         div()
             .id("model-view-backdrop")

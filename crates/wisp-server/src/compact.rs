@@ -109,4 +109,48 @@ impl Server {
             summarised,
         })
     }
+
+    /// Puts back what the latest compaction replaced, as the WebView's undo
+    /// does: only the compaction that was looked at (`expected`, the
+    /// working set's epoch then), and only while nothing has been said
+    /// after it. What the turns after it would have read is the model's
+    /// again from the next turn.
+    pub async fn undo_compaction(&self, project: &str, session: &str, expected: i64) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        self.own_conversation(project, session).await?;
+        ensure!(
+            !self.archived(session).await?,
+            "A frozen conversation cannot be changed"
+        );
+        ensure!(
+            crate::acp_turn::agent_of(&self.0.store, session)
+                .await?
+                .is_none(),
+            "A conversation an ACP agent runs cannot undo a compaction"
+        );
+        let live = self.session(session);
+        // Acceptance takes the same lock, so no turn starts meanwhile.
+        let _accept = live.accept.lock().await;
+        ensure!(
+            !live.live.lock().unwrap().running,
+            "Stop the running turn before undoing the compaction"
+        );
+        let current = self.0.store.frame_head_epoch(session).await?;
+        ensure!(
+            expected > 0 && current == expected,
+            "What the model is sent has changed; look at it again before undoing the compaction"
+        );
+        match self.0.store.undo_context_epoch(session).await {
+            Ok(_) => Ok(()),
+            Err(error) if error.to_string().contains("context_epoch_has_new_turns") => {
+                Err(anyhow!(
+                    "The conversation went on after the compaction, so it can no longer be undone"
+                ))
+            }
+            Err(error) if error.to_string().contains("context_epoch_none") => {
+                Err(anyhow!("There is no compaction to undo"))
+            }
+            Err(error) => Err(error),
+        }
+    }
 }

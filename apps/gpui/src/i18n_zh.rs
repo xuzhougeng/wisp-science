@@ -57,6 +57,8 @@ pub const ZH: &[(&str, &str)] = &[
     ("Branch from here", "从这里分支"),
     ("Review this turn", "审查这一轮"),
     ("Open in a new window", "在新窗口打开"),
+    ("Undo the compaction", "撤销压缩"),
+    ("Send the model everything again, as before the compaction; only while nothing has been said since", "恢复压缩前发给模型的全部内容；仅在之后没有新消息时可用"),
     ("No tool has run in the loaded part of this conversation.", "这个会话已加载的部分里还没有运行过工具。"),
     ("Show in the conversation", "在会话中显示"),
     ("Provenance", "溯源"),

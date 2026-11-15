@@ -687,8 +687,11 @@ Limits of this slice:
   sources) show as they were then, and a turn that is running shows only
   what it has saved. Token figures are the length in characters divided
   by four, not the model's own count; tool definitions are sent too and
-  are not listed. A row's opened text stops at 16,000 characters. A
-  compaction cannot be undone from here.
+  are not listed. A row's opened text stops at 16,000 characters. When
+  the working set is compacted, Undo the compaction puts back what the
+  compaction replaced, as the WebView's undo does: only the compaction
+  shown, only while nothing has been said after it, and not while a turn
+  runs; the model is sent everything again from the next turn.
 - The interpreter line is read when a conversation opens, about once a
   second while a turn runs, when a turn ends and after Stop; an
   interpreter that dies while nothing is running shows as stopped only at
@@ -836,8 +839,9 @@ Limits of this slice:
   project's `.wisp/history/` and shortens what the model is sent, as a
   turn does by itself when the context fills up. It is refused while a
   turn runs and in an archived conversation. There is no choice between
-  pruning and summarising, no instruction for the summary and no undo;
-  the transcript on screen keeps its length.
+  pruning and summarising and no instruction for the summary; it can be
+  undone from What the model is sent until the conversation goes on. The
+  transcript on screen keeps its length.
 - A slash command is read only when it is the first word of the message
   and one of the known ones, so a message that starts with a path is
   sent as a message. There is no list that narrows as you type.

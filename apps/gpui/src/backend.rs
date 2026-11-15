@@ -912,6 +912,11 @@ impl Backend {
     }
 
     /// What the model is sent for a conversation: its saved working set.
+    /// Puts back what the compaction at `epoch` replaced.
+    pub fn undo_compaction(&self, project: String, session: String, epoch: i64) -> Reply<()> {
+        self.local(move |host| async move { host.undo_compaction(&project, &session, epoch).await })
+    }
+
     pub fn model_view(
         &self,
         project: String,

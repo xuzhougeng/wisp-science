@@ -23,6 +23,9 @@ pub struct ModelView {
     /// context usage splits them. Tool definitions are made when a turn
     /// starts and are not saved, so they are not counted here.
     pub breakdown: wisp_core::ContextUsage,
+    /// Which compaction the working set is from: 0 before any. Undoing
+    /// a compaction names the one that was looked at.
+    pub epoch: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -4937,14 +4937,16 @@ impl Server {
     pub async fn model_view(&self, project: &str, session: &str) -> Result<ModelView> {
         self.own_conversation(project, session).await?;
         let messages = self.0.store.load_messages(session).await?;
-        Ok(crate::model_view::fold(&messages))
+        let mut view = crate::model_view::fold(&messages);
+        view.epoch = self.0.store.frame_head_epoch(session).await?;
+        Ok(view)
     }
 
     /// Has the conversation's model review the conversation as a
     /// reviewer: where a claim is not borne out by the tool output it came
-    /// from. Nothing is added to the conversation and the report is not
-    /// kept. It waits for a running turn to end, because half a turn
-    /// cannot be judged.
+    /// from. Nothing is added to the conversation; the report is kept with
+    /// it, after what was read. It waits for a running turn to end,
+    /// because half a turn cannot be judged.
     pub async fn review_conversation(&self, project: &str, session: &str) -> Result<Review> {
         self.own_conversation(project, session).await?;
         let messages = self.numbered_transcript(session).await?;
