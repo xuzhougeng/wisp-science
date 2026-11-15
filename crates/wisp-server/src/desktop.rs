@@ -1412,10 +1412,16 @@ impl Server {
         let rules = tokio::fs::read_to_string(rules_file(&root))
             .await
             .unwrap_or_default();
+        let (succeeded, failed, orphaned) = self.0.store.project_run_retention(project).await?;
         Ok(ProjectSettings {
             name,
             description,
             rules,
+            retention: RunRetention {
+                succeeded,
+                failed,
+                orphaned,
+            },
         })
     }
 
@@ -1447,6 +1453,14 @@ impl Server {
             rules.chars().count() <= PROJECT_RULES_LIMIT,
             "Keep the rules under {PROJECT_RULES_LIMIT} characters"
         );
+        let retention = settings.retention;
+        ensure!(
+            [retention.succeeded, retention.failed, retention.orphaned]
+                .into_iter()
+                .flatten()
+                .all(|days| (1..=RETENTION_DAYS_LIMIT).contains(&days)),
+            "Keep runs and files from 1 to {RETENTION_DAYS_LIMIT} days, or leave the field empty"
+        );
         let file = rules_file(&root);
         if rules.is_empty() {
             match tokio::fs::remove_file(&file).await {
@@ -1466,6 +1480,15 @@ impl Server {
         self.0
             .store
             .update_project(project, name, description)
+            .await?;
+        self.0
+            .store
+            .set_project_run_retention(
+                project,
+                retention.succeeded,
+                retention.failed,
+                retention.orphaned,
+            )
             .await?;
         self.project_settings(project).await
     }
@@ -5771,7 +5794,25 @@ pub struct ProjectSettings {
     /// What the model is told to follow in this project, in the user's own
     /// words. Kept in the project folder as `.wisp/WISP.md`.
     pub rules: String,
+    /// When the run manager cleans up after the project's runs on servers.
+    pub retention: RunRetention,
 }
+
+/// How many days a project's finished runs and unused server files are
+/// kept before the run manager cleans them up, as the WebView's Project
+/// settings keeps them. `None` keeps them until they are cleaned up by hand.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RunRetention {
+    /// A succeeded run's working folder, once its results were brought back.
+    pub succeeded: Option<i64>,
+    /// A failed or cancelled run's working folder.
+    pub failed: Option<i64>,
+    /// Files uploaded to or kept on a server that nothing refers to any more.
+    pub orphaned: Option<i64>,
+}
+
+/// The longest a cleanup window can be, in days.
+pub const RETENTION_DAYS_LIMIT: i64 = 3_650;
 
 pub const PROJECT_NAME_LIMIT: usize = 120;
 pub const PROJECT_DESCRIPTION_LIMIT: usize = 2_000;

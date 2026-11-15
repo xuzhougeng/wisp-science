@@ -8,10 +8,10 @@ use gpui_component::{
     button::{Button, ButtonVariants},
     input::Input,
 };
-use wisp_server::desktop::ProjectSettings;
+use wisp_server::desktop::{ProjectSettings, RunRetention};
 
 use super::{Workspace, shell::error_banner};
-use crate::{backend::receive, layers::Layer};
+use crate::{backend::receive, home, layers::Layer};
 
 impl Workspace {
     /// Opens the dialog on `project` and fills it with what is saved.
@@ -36,7 +36,14 @@ impl Workspace {
                 }
                 match result {
                     Ok(saved) => {
-                        let values = [saved.name, saved.description, saved.rules];
+                        let values = [
+                            saved.name,
+                            saved.description,
+                            saved.rules,
+                            home::days_text(saved.retention.succeeded),
+                            home::days_text(saved.retention.failed),
+                            home::days_text(saved.retention.orphaned),
+                        ];
                         for (field, value) in this.project_fields.iter().zip(values) {
                             field.update(cx, |input, cx| input.set_value(value, window, cx));
                         }
@@ -67,10 +74,24 @@ impl Workspace {
             return;
         }
         let text = |index: usize| self.project_fields[index].read(cx).value().to_string();
+        let days = |index: usize| home::days_typed(&text(index));
+        let retention = match (days(3), days(4), days(5)) {
+            (Ok(succeeded), Ok(failed), Ok(orphaned)) => RunRetention {
+                succeeded,
+                failed,
+                orphaned,
+            },
+            (Err(error), ..) | (_, Err(error), _) | (.., Err(error)) => {
+                self.project_form_error = Some(error);
+                cx.notify();
+                return;
+            }
+        };
         let settings = ProjectSettings {
             name: text(0),
             description: text(1),
             rules: text(2),
+            retention,
         };
         self.project_form_error = None;
         let reply = self.backend.set_project_settings(project.clone(), settings);
@@ -100,6 +121,33 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The three cleanup windows side by side, each in days.
+    fn render_cleanup_windows(&self, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let mut row = div().h_flex().gap_3();
+        for (index, name) in [
+            (3, tr("Succeeded runs")),
+            (4, tr("Failed runs")),
+            (5, tr("Orphaned files")),
+        ] {
+            row = row.child(
+                div()
+                    .v_flex()
+                    .flex_1()
+                    .gap_1()
+                    .child(div().text_xs().child(name))
+                    .child(
+                        div()
+                            .h_flex()
+                            .gap_1()
+                            .child(Input::new(&self.project_fields[index]).small())
+                            .child(div().text_xs().text_color(muted).child(tr("days"))),
+                    ),
+            );
+        }
+        row
+    }
+
     pub(super) fn render_project_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
         let label = |text: &'static str, note: &'static str| {
@@ -114,6 +162,8 @@ impl Workspace {
             .v_flex()
             .gap_3()
             .w(px(620.))
+            .max_h(relative(0.92))
+            .overflow_y_scroll()
             .p_5()
             .rounded(cx.theme().radius_lg)
             .border_1()
@@ -154,6 +204,16 @@ impl Workspace {
                     .h(px(220.))
                     .child(Input::new(&self.project_fields[2]).h_full()),
             )
+            .child(label(
+                tr("Automatic server cleanup"),
+                tr(
+                    "A succeeded run's folder on the server is removed this many days after its \
+                 results were brought back, a failed or cancelled run's after the second, and \
+                 files on a server that nothing refers to any more after the third. Leave a \
+                 field empty to keep everything until you clean up yourself.",
+                ),
+            ))
+            .child(self.render_cleanup_windows(cx))
             .child(self.render_project_sync(cx))
             .child(
                 div()

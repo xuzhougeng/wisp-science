@@ -446,7 +446,9 @@ pub struct Workspace {
     /// description, rules); whether they hold what is saved yet; and why
     /// the last Save was refused.
     project_form: Option<String>,
-    project_fields: [Entity<InputState>; 3],
+    /// Name, description, rules, and the days succeeded runs, failed runs
+    /// and orphaned server files are kept.
+    project_fields: [Entity<InputState>; 6],
     project_form_ready: bool,
     project_form_error: Option<String>,
     /// The host form's fields: name, address, user, port, key file, jump
@@ -806,6 +808,9 @@ impl Workspace {
                     .multi_line(true)
                     .placeholder(tr("Always report effect sizes with confidence intervals."))
             }),
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Off"))),
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Off"))),
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Off"))),
         ];
         let find_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Find in this conversation…")));
@@ -1869,6 +1874,9 @@ impl Workspace {
                 &self.project_fields[2],
                 tr("Always report effect sizes with confidence intervals."),
             ),
+            (&self.project_fields[3], tr("Off")),
+            (&self.project_fields[4], tr("Off")),
+            (&self.project_fields[5], tr("Off")),
             (&self.find_input, tr("Find in this conversation…")),
             (&self.aside_input, tr("Ask about this conversation…")),
             (

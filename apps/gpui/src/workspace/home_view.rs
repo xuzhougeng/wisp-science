@@ -538,9 +538,10 @@ impl Workspace {
                         ),
                     )
                     .child(
-                        icon_button("home-examples", "book", tr("Example conversations")).on_click(
-                            cx.listener(|this, _, window, cx| this.open_examples(window, cx)),
-                        ),
+                        icon_button("home-examples", "file-play", tr("Example conversations"))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.open_examples(window, cx)),
+                            ),
                     )
                     .child(
                         icon_button("home-calendar", "calendar", tr("Research calendar")).on_click(

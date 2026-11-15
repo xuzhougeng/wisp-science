@@ -5857,6 +5857,8 @@ async fn project_settings_name_the_project_and_give_the_model_its_rules() {
         with(|s| s.name = "two\nlines".into()),
         with(|s| s.name = "n".repeat(PROJECT_NAME_LIMIT + 1)),
         with(|s| s.rules = "r".repeat(PROJECT_RULES_LIMIT + 1)),
+        with(|s| s.retention.succeeded = Some(0)),
+        with(|s| s.retention.orphaned = Some(desktop::RETENTION_DAYS_LIMIT + 1)),
     ] {
         assert!(server.set_project_settings(PROJECT, refused).await.is_err());
     }
@@ -5871,11 +5873,22 @@ async fn project_settings_name_the_project_and_give_the_model_its_rules() {
                 name: " Screens 2026 ".into(),
                 description: " CRISPR screens ".into(),
                 rules: "Always report effect sizes.\n".into(),
+                retention: desktop::RunRetention {
+                    succeeded: Some(7),
+                    failed: None,
+                    orphaned: Some(30),
+                },
             },
         )
         .await
         .unwrap();
     assert_eq!(saved.name, "Screens 2026");
+    // The cleanup windows are the run manager's, kept with the project.
+    assert_eq!(
+        server.0.store.project_run_retention(PROJECT).await.unwrap(),
+        (Some(7), None, Some(30))
+    );
+    assert_eq!(saved.retention.orphaned, Some(30));
     assert_eq!(saved.description, "CRISPR screens");
     assert_eq!(
         std::fs::read_to_string(&rules_file).unwrap(),

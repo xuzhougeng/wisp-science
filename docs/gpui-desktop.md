@@ -138,7 +138,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Project sync | Project settings, Sync: Sync now publishes the project through a relay or a shared folder (set in Settings, Remote access) or brings in another device's changes, Copy device code, and after a conflict Use the other device's copy or Keep this device's copy, each asked first; a project in a cloud-drive folder can save itself there instead. Join a project from another device on the home page takes a device code and a folder |
 | Capabilities | A dialog for the open project: how many skills, connectors, MCP servers and SSH hosts are on or usable, the state of memory, and which command-line tools were found on this computer |
 | Follow-up questions | After an answer, up to three questions you could ask next show above the composer; picking one puts it in the composer to send or change, and the list can be put away |
-| Sample project | The home page's flask button makes a small sample project in a folder you choose and opens it: made-up counts for twelve samples, a script, and a README of things to ask. Its book button opens Example conversations: the research recorded with Wisp that ships with it, read only, and Copy to a project, which adds one to a project as a conversation to go on with |
+| Sample project | The home page's flask button makes a small sample project in a folder you choose and opens it: made-up counts for twelve samples, a script, and a README of things to ask. Its play-file button opens Example conversations: the research recorded with Wisp that ships with it, read only, and Copy to a project, which adds one to a project as a conversation to go on with |
 | Host folders | With an SSH host saved, the Files tab offers it beside the project: its folders are listed, to walk through and see what is there |
 | File origin | A file's preview has Origin: which tool call last wrote it, with the code it ran, the project files it read and the conversation, which it can open |
 | Terminal | Terminals drawn in the window, in a dock at the foot of the conversation (Terminals in the top bar shows or hides it; hidden, they keep running): the Files tab's terminal button (or the command palette) opens one in the folder being browsed, + one in the project's folder, the host button one on a saved SSH host, and Terminal on a host's row in Environments or over a host's folder in Files one there; several at once as tabs, each closed with its ×; the dock's last button opens the system's terminal instead |
@@ -1393,8 +1393,13 @@ Limits of this slice:
   description at most 2,000, the rules at most 20,000; the WebView has no
   such limits, so longer rules written there can be read here but not saved
   again unshortened. The description is for you and is not shown to the
-  model. The built-in workspace can be renamed like any other. Sync, run
-  retention and deleting a project together with its data are not ported.
+  model. The built-in workspace can be renamed like any other. Its
+  automatic server cleanup is the WebView's: how many days a succeeded
+  run's folder on a server is kept after its results came back, a failed or
+  cancelled run's, and server files nothing refers to any more, each from
+  1 to 3,650 days or empty to keep them; they are kept with the project and
+  the run manager's sweep, which runs while the app is open, applies them.
+  A refused form saves none of its fields.
 - Storage measures, as the WebView's page does, the database, the
   favorites, the Python, R and Node.js installed into the data folder, the
   plugins, the rest of the data folder and its total, and for each project
@@ -1641,7 +1646,7 @@ Delete a conversation and confirm what was saved from it is still listed.
 On the home page press the flask button and choose a folder: a "Wisp
 sample project" folder appears there and opens as a project with its
 README, data and script. Cancel the folder dialog: nothing is made.
-On the home page press the book button: Example conversations opens on
+On the home page press the play-file button: Example conversations opens on
 the first recording. Choose another; open a tool row and a thinking row
 and close them again. Press Copy to a project, press Escape (the menu
 closes, the dialog stays), press Escape again (the dialog closes). Copy
@@ -2278,7 +2283,10 @@ refused and the dialog stays), then give a name, a description and a rule
 and Save: the card and the recent conversations show the new name, and
 `.wisp/WISP.md` in the project holds the rule. Send a message in a
 conversation that was already open and confirm the model follows the rule;
-empty the rules, save, and confirm the file is gone. Press Escape with the
+empty the rules, save, and confirm the file is gone. Type 0 in Failed
+runs and Save: it is refused and nothing is saved; type 14 and Save, open
+the dialog again and confirm 14 is there, and that the WebView's Project
+settings shows the same. Press Escape with the
 dialog open and confirm only the dialog closes. Inside a project, find
 Project settings in the command palette.
 Press the book on the home page, and Documentation and Known problems in

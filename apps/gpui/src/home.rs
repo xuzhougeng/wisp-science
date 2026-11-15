@@ -184,9 +184,46 @@ pub fn short_path(path: &str, home: Option<&str>) -> String {
     }
 }
 
+/// A cleanup window as Project settings shows it: the days, or nothing
+/// when runs are kept until cleaned up by hand.
+pub fn days_text(days: Option<i64>) -> String {
+    days.map(|days| days.to_string()).unwrap_or_default()
+}
+
+/// A cleanup window as it was typed: empty keeps runs, a whole number of
+/// days from 1 to the limit sets one, anything else is said to be wrong.
+pub fn days_typed(text: &str) -> Result<Option<i64>, String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    match text.parse::<i64>() {
+        Ok(days) if (1..=wisp_server::desktop::RETENTION_DAYS_LIMIT).contains(&days) => {
+            Ok(Some(days))
+        }
+        _ => Err(crate::i18n::fill(
+            tr("Keep runs and files from 1 to {} days, or leave the field empty"),
+            &[&wisp_server::desktop::RETENTION_DAYS_LIMIT],
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cleanup_windows_are_whole_days_or_nothing() {
+        assert_eq!(days_typed(""), Ok(None));
+        assert_eq!(days_typed("  "), Ok(None));
+        assert_eq!(days_typed(" 14 "), Ok(Some(14)));
+        assert_eq!(days_typed("3650"), Ok(Some(3650)));
+        for wrong in ["0", "-3", "3651", "1.5", "two weeks"] {
+            assert!(days_typed(wrong).is_err(), "{wrong}");
+        }
+        assert_eq!(days_text(Some(7)), "7");
+        assert_eq!(days_text(None), "");
+    }
 
     #[test]
     fn a_cloud_folder_project_says_where_its_changes_stand() {

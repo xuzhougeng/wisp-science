@@ -785,6 +785,13 @@ pub const ZH: &[(&str, &str)] = &[
     ("It read:", "它读取了："),
     // Sample project.
     ("Make a sample project to try Wisp on", "创建一个示例项目来试用 Wisp"),
+    ("Automatic server cleanup", "服务器自动清理"),
+    ("A succeeded run's folder on the server is removed this many days after its results were brought back, a failed or cancelled run's after the second, and files on a server that nothing refers to any more after the third. Leave a field empty to keep everything until you clean up yourself.", "成功任务在结果取回后，按第一个天数删除它在服务器上的文件夹；失败或取消的任务按第二个天数；服务器上已无任何引用的文件按第三个天数。留空则全部保留，直到你自己清理。"),
+    ("Succeeded runs", "成功任务"),
+    ("Failed runs", "失败任务"),
+    ("Orphaned files", "孤儿文件"),
+    ("days", "天"),
+    ("Keep runs and files from 1 to {} days, or leave the field empty", "保留天数须在 1 到 {} 之间，或者留空"),
     ("Example conversations", "示例对话"),
     ("This copy of Wisp has no example conversations.", "这个 Wisp 没有附带示例对话。"),
     ("The example was copied into {}, to go on with there.", "示例已复制到 {}，可在那里继续。"),
