@@ -724,9 +724,11 @@ Limits of this slice:
   reported back, not its steps along the way.
 - The sub-agent model is the model the `explore` helper works on, the
   only sub-agent this host has. The order is the WebView's: a
-  conversation's own choice for its sub-agents (its `frames` column,
-  which this desktop reads but cannot set), then the choice in Settings
-  (`subagent_model_id`), then the conversation's model. A choice naming
+  conversation's own choice for its sub-agents (its `frames` column, set
+  at the end of the composer's model menu: as in Settings, this
+  conversation's model, or a saved model), then the choice in Settings
+  (`subagent_model_id`), then the conversation's model. Choosing this
+  conversation's model outranks Settings. A choice naming
   a profile that is gone or unusable falls through to the next. It
   applies from a conversation's next turn. Subagents and delegated tasks
   use the choice in Settings, or the conversation's model when there is

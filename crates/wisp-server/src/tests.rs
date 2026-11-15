@@ -2492,6 +2492,52 @@ async fn desktop_model_profiles_are_validated_saved_and_chosen_per_conversation(
         .set_frame_subagent_model(&session, PROJECT, None)
         .await
         .unwrap();
+    // The conversation's own choice, made through its options: a saved
+    // model, its own model over Settings, or Settings again.
+    let subagents = |choice: Option<&str>| ConversationOptions {
+        subagent_model: choice.map(str::to_owned),
+        ..Default::default()
+    };
+    assert!(server
+        .set_conversation_options(PROJECT, &other_session, subagents(Some("ghost")))
+        .await
+        .is_err());
+    let chosen = server
+        .set_conversation_options(PROJECT, &other_session, subagents(Some(&first.id)))
+        .await
+        .unwrap();
+    assert_eq!(chosen.subagent_model.as_deref(), Some(first.id.as_str()));
+    let lab_own = server.0.model.read().unwrap().pick(&first.id).unwrap();
+    let other_worker = || async {
+        server
+            .subagent_model_for(&other_session, &own)
+            .await
+            .provider
+            .model
+    };
+    assert_eq!(other_worker().await, "lab-model-2");
+    server.set_subagent_model(&first.id).await.unwrap();
+    server
+        .set_conversation_options(PROJECT, &other_session, subagents(Some("")))
+        .await
+        .unwrap();
+    // Its own model is the one it runs on, whatever Settings says.
+    assert_eq!(other_worker().await, "deep-model");
+    assert_eq!(
+        server
+            .subagent_model_for(&other_session, &lab_own)
+            .await
+            .provider
+            .model,
+        "lab-model-2"
+    );
+    let back = server
+        .set_conversation_options(PROJECT, &other_session, subagents(None))
+        .await
+        .unwrap();
+    assert_eq!(back.subagent_model, None);
+    assert_eq!(other_worker().await, "lab-model-2");
+    server.set_subagent_model("").await.unwrap();
 
     // A review is made with the conversation's model until another is
     // chosen for reviews. (This model writes no report, so the review

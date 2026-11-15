@@ -1389,8 +1389,12 @@ impl Workspace {
     }
 
     /// The saved models, with "follow the default" first.
-    fn model_menu(&self, current: &str, cx: &mut Context<Self>) -> Div {
-        let mut menu = Self::composer_menu(300., cx);
+    fn model_menu(&self, current: &str, cx: &mut Context<Self>) -> Stateful<Div> {
+        // Two lists of every model: it scrolls rather than leave the window.
+        let mut menu = Self::composer_menu(300., cx)
+            .id("model-menu")
+            .max_h(px(440.))
+            .overflow_y_scroll();
         let Some(models) = self.settings.current() else {
             return menu;
         };
@@ -1421,6 +1425,55 @@ impl Workspace {
                         this.choose_model(id.clone(), window, cx)
                     })),
                 );
+        }
+        // What this conversation's sub-agents work on.
+        let theirs = self.options().subagent_model;
+        let choose = |choice: Option<String>| {
+            cx.listener(move |this: &mut Self, _: &ClickEvent, window, cx| {
+                this.choose_subagent_model(choice.clone(), window, cx)
+            })
+        };
+        menu = menu
+            .child(
+                div()
+                    .px_2()
+                    .pt_2()
+                    .pb_1()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(tr("Sub-agents work on")),
+            )
+            .child(
+                Self::menu_row(
+                    "subagent-settings".into(),
+                    tr("As in Settings"),
+                    "",
+                    theirs.is_none(),
+                    cx,
+                )
+                .on_click(choose(None)),
+            )
+            .child(
+                Self::menu_row(
+                    "subagent-own".into(),
+                    tr("This conversation's model"),
+                    "",
+                    theirs.as_deref() == Some(""),
+                    cx,
+                )
+                .on_click(choose(Some(String::new()))),
+            );
+        for profile in &models.profiles {
+            menu = menu.child(
+                Self::menu_row(
+                    SharedString::from(format!("subagent-choice-{}", profile.id)),
+                    profile.name.clone(),
+                    profile.fields.model.clone(),
+                    theirs.as_deref() == Some(profile.id.as_str()),
+                    cx,
+                )
+                .on_click(choose(Some(profile.id.clone()))),
+            );
         }
         menu
     }

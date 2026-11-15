@@ -3278,6 +3278,24 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The model this conversation's sub-agents work on: `None` as in
+    /// Settings, an empty id this conversation's own model.
+    fn choose_subagent_model(
+        &mut self,
+        choice: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.layers.close(Layer::ModelMenu);
+        let options = ConversationOptions {
+            subagent_model: choice,
+            ..self.options()
+        };
+        self.set_options(options, window, cx);
+        self.focus_composer(window, cx);
+        cx.notify();
+    }
+
     /// Puts a quick action's request into the composer, after whatever is
     /// being written, with the caret at its end.
     fn use_quick_action(&mut self, prompt: String, window: &mut Window, cx: &mut Context<Self>) {

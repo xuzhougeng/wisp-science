@@ -111,7 +111,7 @@ to find in the running app.
 | Plan first [先计划] | Yes | Done: the model investigates and submits a plan; tools that change things refuse until the plan is approved or plan mode is left | served |
 | Expert (persona) for the conversation [专家] | Yes | Partial: chosen in the composer before the first message; its instructions join the system prompt and it runs on its own model when it has one; an expert's skill or connector lists are not applied | tauri |
 | Automatic review toggle and review model [自动审查] | Yes | Partial: per conversation, with a default and a reviewer model in Settings; the result shows above the composer and corrections are asked for by hand, not made automatically | tauri |
-| Sub-agent model [子智能体模型] | Yes | Partial: one choice in Settings for the model the explore helper works on; a conversation's own choice is honoured when the WebView saved one but cannot be set here | store |
+| Sub-agent model [子智能体模型] | Yes | Yes: a choice in Settings for every conversation, and each conversation's own in the composer's model menu (as in Settings, its own model, or a saved model), in the WebView's order | store |
 | Compute environment for the conversation [计算环境] | Yes | Partial: the default, this computer or a saved SSH host, for where runs start; Python, R and the shell stay on this computer | store |
 | Context usage meter and manual compaction | Yes | Yes: how full the context is, as a percentage that opens the list of what the model is sent, message by message; /compact shortens the history at once | served |
 | Request a review of the conversation [请求审查] | Yes | Partial: a Review dialog lists what the reviewer model finds and puts the corrections in the composer; the report is not kept with the conversation | tauri |

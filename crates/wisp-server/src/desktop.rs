@@ -3521,6 +3521,12 @@ impl Server {
                 .await?
                 .unwrap_or_default(),
             fast: is_fast(self.0.store.frame_service_tier(session).await?.as_deref()),
+            subagent_model: self
+                .0
+                .store
+                .frame_subagent_model(session)
+                .await?
+                .map(|id| id.trim().to_owned()),
         })
     }
 
@@ -4415,8 +4421,13 @@ impl Server {
     /// a profile which is gone or cannot be used falls through to the next.
     pub(crate) async fn subagent_model_for(&self, session: &str, own: &ModelConfig) -> ModelConfig {
         let store = &self.0.store;
+        let theirs = store.frame_subagent_model(session).await.ok().flatten();
+        // The conversation chose its own model for them, over Settings.
+        if theirs.as_deref().is_some_and(|id| id.trim().is_empty()) {
+            return own.clone();
+        }
         let chosen = [
-            store.frame_subagent_model(session).await.ok().flatten(),
+            theirs,
             store.get_setting(SUBAGENT_MODEL).await.ok().flatten(),
         ];
         let models = self.0.model.read().unwrap();
@@ -4604,6 +4615,27 @@ impl Server {
         }
         self.store_runs_on(session, &options.runs_on).await?;
         crate::acp_turn::choose(&self.0.store, project, session, &options.acp_agent).await?;
+        let subagent = options.subagent_model.as_deref().map(str::trim);
+        if let Some(id) = subagent.filter(|id| !id.is_empty()) {
+            ensure!(
+                self.0
+                    .model
+                    .read()
+                    .unwrap()
+                    .settings()
+                    .profiles
+                    .iter()
+                    .any(|profile| profile.id == id),
+                "That model was removed; choose another"
+            );
+        }
+        let saved = self.0.store.frame_subagent_model(session).await?;
+        if saved.as_deref().map(str::trim) != subagent {
+            self.0
+                .store
+                .set_frame_subagent_model(session, project, subagent)
+                .await?;
+        }
         // Written only when it changes, so a tier the WebView saved for
         // another reason is left as it was.
         let tier = self.0.store.frame_service_tier(session).await?;
@@ -5108,6 +5140,10 @@ pub struct ConversationOptions {
     /// Ask for OpenAI's faster priority processing, which costs more. Only
     /// a model whose service offers it ([`fast_available`]) is asked.
     pub fast: bool,
+    /// The model this conversation's sub-agents work on, as the WebView
+    /// keeps it: `None` follows Settings, an empty id this conversation's
+    /// own model, any other the saved model it names.
+    pub subagent_model: Option<String>,
 }
 
 /// The version of Wisp that is running, as releases are numbered.
