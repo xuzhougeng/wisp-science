@@ -1354,7 +1354,10 @@ Limits of this slice:
   project's `.wisp` and `uploads` folders (up to 50,000 entries each). It
   does not measure your data, and nothing can be moved or cleaned from the
   page. Thinking is kept as the model reported it; a model that reports
-  none leaves no Thought. Fast mode is not ported.
+  none leaves no Thought. Fast mode is a lightning button in the composer
+  for a conversation on OpenAI's own API, its Responses API or a ChatGPT
+  sign-in; it is saved as the WebView saves it (`service_tier=priority`)
+  and sent from the next turn. There is no per-model default for it.
 - Plan mode uses the WebView's switch (`frame_plan_mode:<conversation>`) and its
   prompt section, which now lives in `wisp_tools::plan` for any host to use;
   `src-tauri` still carries its own copy of the same text. Approving sends

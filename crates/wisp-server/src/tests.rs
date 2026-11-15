@@ -2802,6 +2802,92 @@ async fn desktop_search_and_project_files_need_no_conversation() {
 }
 
 #[tokio::test]
+async fn fast_mode_is_asked_for_only_where_the_model_offers_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut cfg = config(temp.path());
+    // OpenAI's own API; the fake model answers, nothing is sent.
+    cfg.model.as_mut().unwrap().provider.base_url = "https://api.openai.com/v1".into();
+    let tiers: Arc<std::sync::Mutex<Vec<Option<String>>>> = Arc::default();
+    let seen = tiers.clone();
+    let factory: ModelFactory = Arc::new(move |provider| {
+        seen.lock().unwrap().push(provider.service_tier.clone());
+        Box::new(FakeModel {
+            calls: Arc::default(),
+            write: false,
+        })
+    });
+    let server = Server::open_with_models(cfg, factory).await.unwrap();
+    let session = create(&server).await;
+    let status = server.conversation_status(PROJECT, &session).await.unwrap();
+    assert!(status.fast_available);
+    assert!(!status.options.fast);
+
+    let fast = desktop::ConversationOptions {
+        fast: true,
+        ..status.options.clone()
+    };
+    let saved = server
+        .set_conversation_options(PROJECT, &session, fast)
+        .await
+        .unwrap();
+    assert!(saved.fast);
+    // Saved the way the WebView desktop saves it.
+    assert_eq!(
+        server
+            .0
+            .store
+            .frame_service_tier(&session)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some(desktop::FAST_TIER)
+    );
+    send(&server, &session, "hello").await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    assert!(tiers
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|tier| tier.as_deref() == Some(desktop::FAST_TIER)));
+
+    // Off again: the next turn asks for nothing.
+    let saved = server
+        .set_conversation_options(
+            PROJECT,
+            &session,
+            desktop::ConversationOptions {
+                fast: false,
+                ..saved
+            },
+        )
+        .await
+        .unwrap();
+    assert!(!saved.fast);
+    tiers.lock().unwrap().clear();
+    send(&server, &session, "again").await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    let asked = tiers.lock().unwrap().clone();
+    assert!(!asked.is_empty());
+    assert!(asked.iter().all(Option::is_none), "{asked:?}");
+    server.shutdown().await;
+}
+
+#[test]
+fn only_openais_own_services_offer_fast_mode() {
+    use wisp_llm::{ProviderConfig, ProviderKind};
+    let local = ProviderConfig::openai("http://127.0.0.1:9", "k", "m");
+    assert!(!desktop::fast_available(&local));
+    let openai = ProviderConfig::openai("https://api.openai.com/v1", "k", "m");
+    assert!(desktop::fast_available(&openai));
+    let mut responses = local.clone();
+    responses.kind = ProviderKind::OpenAiResponses;
+    assert!(desktop::fast_available(&responses));
+    let mut anthropic = openai.clone();
+    anthropic.kind = ProviderKind::Anthropic;
+    assert!(!desktop::fast_available(&anthropic));
+}
+
+#[tokio::test]
 async fn desktop_conversation_options_shape_the_next_turn() {
     let temp = tempfile::tempdir().unwrap();
     let cfg = config(temp.path());

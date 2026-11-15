@@ -1646,6 +1646,25 @@ impl Workspace {
             effort = effort.child(deferred(self.effort_menu(&options.reasoning_effort, cx)));
         }
 
+        // OpenAI's priority processing, where the model offers it.
+        let fast = self
+            .status
+            .as_ref()
+            .is_some_and(|status| status.fast_available)
+            .then(|| {
+                Button::new("fast")
+                    .icon(glyph("bolt"))
+                    .small()
+                    .ghost()
+                    .selected(options.fast)
+                    .tooltip(if options.fast {
+                        tr("Fast is on: requests ask for priority processing, which may use more quota. Click to turn it off from the next message")
+                    } else {
+                        tr("Fast is off. Click to ask for priority processing from the next message; it may use more quota")
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_fast(window, cx)))
+            });
+
         let model_open = self.layers.contains(Layer::ModelMenu);
         let mut model = div().relative().child(
             Button::new("model")
@@ -2119,6 +2138,7 @@ impl Workspace {
                                 .when(!by_agent, |row| {
                                     row.child(model)
                                         .child(effort)
+                                        .children(fast)
                                         .children(runs_on)
                                         .children(expert)
                                 })

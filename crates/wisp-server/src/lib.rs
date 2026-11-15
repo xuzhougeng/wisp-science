@@ -636,6 +636,10 @@ impl Server {
             Some(_) => None,
             None => {
                 let mut model = self.0.model.read().unwrap().pick(&options.model)?;
+                // Priority processing, where the model's service offers it.
+                if options.fast && desktop::fast_available(&model.provider) {
+                    model.provider.service_tier = Some(desktop::FAST_TIER.into());
+                }
                 // A subscription's token is refreshed before the turn.
                 self.fresh_subscription(&mut model, &self.provider_of(&options.model))
                     .await?;

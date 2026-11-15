@@ -3507,6 +3507,7 @@ impl Server {
             acp_agent: crate::acp_turn::chosen(&self.0.store, session)
                 .await?
                 .unwrap_or_default(),
+            fast: is_fast(self.0.store.frame_service_tier(session).await?.as_deref()),
         })
     }
 
@@ -3550,6 +3551,15 @@ impl Server {
     ) -> Result<ConversationStatus> {
         self.own_conversation(project, session).await?;
         let options = self.stored_options(session).await?;
+        // An ACP agent runs on its own model, not one of Wisp's.
+        let fast_available = options.acp_agent.is_empty()
+            && self
+                .0
+                .model
+                .read()
+                .unwrap()
+                .pick(&options.model)
+                .is_ok_and(|model| fast_available(&model.provider));
         let session = self.session(session);
         let acp = crate::acp_turn::controls(&session).await;
         let runtimes = session
@@ -3579,6 +3589,7 @@ impl Server {
             runtimes,
             review,
             acp,
+            fast_available,
         })
     }
 
@@ -4542,6 +4553,15 @@ impl Server {
         }
         self.store_runs_on(session, &options.runs_on).await?;
         crate::acp_turn::choose(&self.0.store, project, session, &options.acp_agent).await?;
+        // Written only when it changes, so a tier the WebView saved for
+        // another reason is left as it was.
+        let tier = self.0.store.frame_service_tier(session).await?;
+        if options.fast != is_fast(tier.as_deref()) {
+            self.0
+                .store
+                .set_frame_service_tier(session, project, options.fast.then_some(FAST_TIER))
+                .await?;
+        }
         self.stored_options(session).await
     }
 
@@ -5034,6 +5054,30 @@ pub struct ConversationOptions {
     /// own model; empty is Wisp. It can only be chosen before the first
     /// message.
     pub acp_agent: String,
+    /// Ask for OpenAI's faster priority processing, which costs more. Only
+    /// a model whose service offers it ([`fast_available`]) is asked.
+    pub fast: bool,
+}
+
+/// The service tier fast mode asks for, as the WebView desktop saves it.
+pub const FAST_TIER: &str = "priority";
+
+/// Whether a model's service offers priority processing: OpenAI's own
+/// API, its Responses API and the ChatGPT sign-ins. Another service that
+/// speaks OpenAI's protocol is not sent a field it may refuse.
+pub fn fast_available(provider: &wisp_llm::ProviderConfig) -> bool {
+    use wisp_llm::ProviderKind as Kind;
+    match provider.kind {
+        Kind::OpenAiResponses | Kind::OpenAiCodex | Kind::OpenAiChatGpt => true,
+        Kind::OpenAiCompatible => provider.base_url.contains("://api.openai.com"),
+        Kind::Anthropic => false,
+    }
+}
+
+/// Whether a conversation's saved service tier is fast mode. The WebView
+/// saves an empty value to turn a model's default off.
+fn is_fast(tier: Option<&str>) -> bool {
+    matches!(tier.map(str::trim), Some("priority" | "fast"))
 }
 
 /// The [`ConversationOptions::runs_on`] value for this computer.
@@ -5068,6 +5112,8 @@ pub struct ConversationStatus {
     /// The mode and options of the ACP agent running the conversation,
     /// once it has started.
     pub acp: Option<AcpControls>,
+    /// Whether the conversation's model offers fast mode.
+    pub fast_available: bool,
 }
 
 /// An interpreter a conversation started and keeps, with what it has in

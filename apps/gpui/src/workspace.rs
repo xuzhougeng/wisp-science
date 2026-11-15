@@ -3321,6 +3321,20 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Fast mode on or off, from the next message.
+    fn toggle_fast(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for menu in Layer::COMPOSER_MENUS {
+            self.layers.close(menu);
+        }
+        let options = ConversationOptions {
+            fast: !self.options().fast,
+            ..self.options()
+        };
+        self.set_options(options, window, cx);
+        self.focus_composer(window, cx);
+        cx.notify();
+    }
+
     fn choose_effort(&mut self, effort: &'static str, window: &mut Window, cx: &mut Context<Self>) {
         self.layers.close(Layer::EffortMenu);
         let options = ConversationOptions {

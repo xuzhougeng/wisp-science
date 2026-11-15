@@ -106,7 +106,7 @@ to find in the running app.
 | Paste or drop files | Yes | Done: files dropped onto the conversation are attached, and a picture pasted into the composer (a screenshot, say) is kept in `uploads/` and attached; text pastes as text | tauri |
 | `@` artifact, `#` conversation, `/` skill mentions | Yes | Partial: conversations and skills, picked from the add-context box rather than typed inline; a conversation is passed as a recent excerpt, not through the reader agent; no artifacts, environments, runtimes, workflows or memos | served |
 | Model picker per conversation | Yes | Done: saved API models, or follow the default | served |
-| Reasoning effort / fast mode | Yes | Partial: effort per conversation, kept across restarts; no fast mode | store |
+| Reasoning effort / fast mode | Yes | Yes: effort, and fast mode (priority processing) where the model is OpenAI's own, per conversation and kept across restarts; fast mode has no per-model default in Settings | store |
 | Permission mode [默认 / 完全权限] | Yes | Done: Ask first or Full access per conversation, with a question before it turns on; dangerous shell commands still ask | served |
 | Plan first [先计划] | Yes | Done: the model investigates and submits a plan; tools that change things refuse until the plan is approved or plan mode is left | served |
 | Expert (persona) for the conversation [专家] | Yes | Partial: chosen in the composer before the first message; its instructions join the system prompt; an expert's own model and skill or connector lists are not applied | tauri |

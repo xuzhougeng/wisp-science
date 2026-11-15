@@ -56,6 +56,8 @@ pub const ZH: &[(&str, &str)] = &[
     ("Edit and send again", "编辑后重新发送"),
     ("Branch from here", "从这里分支"),
     ("Review this turn", "审查这一轮"),
+    ("Fast is on: requests ask for priority processing, which may use more quota. Click to turn it off from the next message", "Fast 已开启：请求会要求优先处理，可能增加配额消耗。点击后从下一条消息起关闭"),
+    ("Fast is off. Click to ask for priority processing from the next message; it may use more quota", "Fast 已关闭。点击后从下一条消息起要求优先处理，可能增加配额消耗"),
     ("Wisp needs your decision", "Wisp 需要你的决定"),
     ("Wisp asked", "Wisp 的提问"),
     ("Or type your own answer below.", "也可以在下方输入你自己的回答。"),
