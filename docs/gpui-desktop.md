@@ -168,7 +168,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Review | A conversation's Review button (or the command palette) has the model read the conversation as a reviewer and lists claims its own tool output does not support, each with the evidence and a fix; Ask Wisp to correct puts the corrections in the composer |
 | Save as skill | A conversation's Save as skill button (or the command palette) puts a request in the composer that asks Wisp to distill the conversation into a reusable skill; you send it, changed or not |
 | Trajectory | A conversation's Trajectory button (or the command palette) shows every turn's steps in the order they happened: what you asked, what the model said, each tool with how it went and how long it took, and each model call with its tokens; the totals are at the top |
-| Windows | New Window (the app menu, Cmd/Ctrl+Shift+N, or the command palette) opens another window on the same projects, each with its own page and conversation |
+| Windows | New Window (the app menu, Cmd/Ctrl+Shift+N, or the command palette) opens another window on the same projects, each with its own page and conversation; a project's card or palette row opens it in a window of its own, which opens again at the next start until it is closed |
 | Export | A conversation's Export button saves the whole of it as a Markdown file where you choose |
 | Notebook | A tab of the side panel: the conversation's code as cells, with what each run returned; copy, save to favorites, or show it in the conversation |
 | Research calendar | A page across every project: a month as a grid with how many records each day holds, and the chosen day's records; projects can be left out |
@@ -465,8 +465,9 @@ Limits of this slice:
 - The palette finds files by name, not content. Each project is walked
   breadth-first for at most 20,000 entries, skipping links, dot-folders,
   `node_modules` and `__pycache__`, so a file deep in a very large tree can be
-  missed. Results cannot yet be opened in a new window or attached to a
-  message.
+  missed. A project found there has a button that opens it in a new
+  window; while a project is open, a file of that project or another
+  conversation has one that adds it to the message being written.
 - The desktop now loads the skills that ship with Wisp (`skills/` in a
   checkout; an installed build has to name its resource directory) after any
   directory in `WISP_SKILLS_PATH`, then the project's own `skills/` and
@@ -1275,9 +1276,12 @@ Limits of this slice:
   not hear at once what another changed: lists catch up when they are next
   read or refreshed. Two windows on one conversation both follow its turn;
   the host still runs one turn at a time in it. Closing a window leaves
-  the others; the app quits with the last. Windows are not restored at the
-  next start, and a project or conversation cannot be sent to a new window
-  from its row.
+  the others; the app quits with the last. A project's card and its row
+  in the palette open it in a new window. Such a project window is kept
+  (as the preference `project_windows`) until it is closed: quitting keeps
+  it, and it opens again in that project at the next start, if the project
+  is still there. Windows opened on the home page are not kept, and a
+  conversation cannot be sent to a new window from its row.
 - A project archive is the WebView desktop's format (`wisp-project`,
   version 1: a manifest, a snapshot of the project's records, and the
   workspace files), written and checked by the same code, copied into the

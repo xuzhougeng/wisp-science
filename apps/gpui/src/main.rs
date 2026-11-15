@@ -44,6 +44,7 @@ mod pdf_pages;
 mod pet;
 mod plugins;
 mod present;
+mod project_windows;
 mod queue;
 mod remote;
 mod review;
@@ -86,6 +87,17 @@ pub fn open_window(backend: backend::Backend, cx: &mut App) -> bool {
 /// Opens a window as [`open_window`] does, in `project` when one is given
 /// rather than on the home page.
 pub fn open_window_on(backend: backend::Backend, project: Option<String>, cx: &mut App) -> bool {
+    open_window_noting(backend, project, true, cx)
+}
+
+/// Opens a window; one for a project is added to the saved list when
+/// `note` is set, and taken off it when it is closed.
+fn open_window_noting(
+    backend: backend::Backend,
+    project: Option<String>,
+    note: bool,
+    cx: &mut App,
+) -> bool {
     let shift = cascade(cx.windows().len());
     let mut bounds = Bounds::centered(None, size(px(1180.), px(780.)), cx);
     bounds.origin.x += px(shift);
@@ -102,10 +114,20 @@ pub fn open_window_on(backend: backend::Backend, project: Option<String>, cx: &m
             ..Default::default()
         },
         |window, cx| {
+            let keeper = backend.clone();
             let workspace = cx.new(|cx| workspace::Workspace::new(backend, window, cx));
             if let Some(project) = project {
                 workspace.update(cx, |workspace, cx| {
-                    workspace.enter_project(project, window, cx)
+                    workspace.enter_project(project.clone(), window, cx)
+                });
+                // Kept so it opens again at the next start, until it is
+                // closed; quitting keeps it.
+                if note {
+                    save_project_windows(&keeper, project_windows::note(&project, true), cx);
+                }
+                window.on_window_should_close(cx, move |_, cx| {
+                    save_project_windows(&keeper, project_windows::note(&project, false), cx);
+                    true
                 });
             }
             cx.new(|cx| Root::new(workspace, window, cx))
@@ -115,6 +137,48 @@ pub fn open_window_on(backend: backend::Backend, project: Option<String>, cx: &m
         eprintln!("Cannot open GPUI window: {error:#}");
     }
     opened.is_ok()
+}
+
+/// Saves the list of project windows. Nothing is said if it fails: the
+/// windows simply do not open again at the next start.
+fn save_project_windows(backend: &backend::Backend, list: String, cx: &App) {
+    let reply = backend.set_preference(project_windows::PREFERENCE, list);
+    cx.background_spawn(async move {
+        let _ = backend::receive(reply).await;
+    })
+    .detach();
+}
+
+/// Opens again the project windows that were open when Wisp last quit,
+/// for the projects that are still there.
+fn reopen_project_windows(backend: backend::Backend, cx: &mut App) {
+    let saved = backend.preference(project_windows::PREFERENCE);
+    let present = backend.request::<Vec<wisp_dto::ProjectSummary>>(
+        "list_projects",
+        None,
+        serde_json::json!({}),
+    );
+    cx.spawn(async move |cx| {
+        let Ok(Some(saved)) = backend::receive(saved).await else {
+            return;
+        };
+        let Ok(present) = backend::receive(present).await else {
+            return;
+        };
+        let projects = project_windows::decode(&saved)
+            .into_iter()
+            .filter(|project| present.iter().any(|known| &known.id == project))
+            .collect::<Vec<_>>();
+        let _ = cx.update(|cx| {
+            // Saved once for all of them; a project that went away is not
+            // kept.
+            save_project_windows(&backend, project_windows::replace(&projects), cx);
+            for project in projects {
+                open_window_noting(backend.clone(), Some(project), false, cx);
+            }
+        });
+    })
+    .detach();
 }
 
 fn main() -> anyhow::Result<()> {
@@ -178,9 +242,10 @@ fn main() -> anyhow::Result<()> {
                     MenuItem::action("Quit", Quit),
                 ],
             }]);
-            if !open_window(ui_backend, cx) {
+            if !open_window(ui_backend.clone(), cx) {
                 cx.quit();
             }
+            reopen_project_windows(ui_backend, cx);
             cx.on_window_closed(|cx| {
                 if cx.windows().is_empty() {
                     cx.quit();
