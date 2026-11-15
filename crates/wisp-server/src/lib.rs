@@ -804,9 +804,16 @@ impl Server {
                 ),
             };
             server
-                .end_turn(&request, &session, task, permit, side_model, auto_review)
+                .end_turn(
+                    &request,
+                    &session,
+                    task,
+                    permit,
+                    activity,
+                    side_model,
+                    auto_review,
+                )
                 .await;
-            drop(activity);
         });
         Ok(reply)
     }
@@ -969,6 +976,7 @@ impl Server {
         session: &Arc<Session>,
         task: tokio::task::JoinHandle<Result<()>>,
         permit: tokio::sync::OwnedSemaphorePermit,
+        activity: tokio::sync::OwnedRwLockReadGuard<()>,
         side_model: Option<wisp_llm::ProviderConfig>,
         auto_review: bool,
     ) {
@@ -985,6 +993,10 @@ impl Server {
         {
             error = Some(format!("Could not save turn completion: {e}"));
         }
+        // The turn's work is done: the project is free before anyone sees
+        // the turn over, so an exploration can start from its answer at
+        // once, while follow-ups and the review are still being asked for.
+        drop(activity);
         let answered = error.is_none() && side_model.is_some();
         let ended = {
             let mut live = session.live.lock().unwrap();

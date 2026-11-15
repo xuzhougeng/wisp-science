@@ -305,6 +305,41 @@ impl Provider for AssistingModel {
     }
 }
 
+/// Answers at once, but takes its time over a side question such as what
+/// could be asked next.
+struct SlowAfterwardsModel;
+
+#[async_trait]
+impl Provider for SlowAfterwardsModel {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        Ok(Completion {
+            content: "[]".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        _: &[Message],
+        _: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        sink.on_text("An answer");
+        Ok(Completion {
+            content: "An answer".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+}
+
 pub(crate) fn config(root: &Path) -> Config {
     Config {
         data: root.join("data"),
@@ -9206,6 +9241,33 @@ async fn the_research_assistant_dispatches_to_a_project_and_gets_the_report() {
         "done"
     );
     assert!(server.assistant_plan("not a day").await.is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_exploration_starts_from_an_answer_while_follow_ups_are_still_asked_for() {
+    let temp = tempfile::tempdir().unwrap();
+    let factory: ModelFactory = Arc::new(|_| Box::new(SlowAfterwardsModel));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let folder = temp.path().join("study");
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::write(folder.join("notes.txt"), "v1").unwrap();
+    let project = server.register_local_project(&folder).await.unwrap();
+    let source = server.create_conversation(&project).await.unwrap();
+    server
+        .send(&project, send_text(&source, "r1", "what now?"))
+        .await
+        .unwrap();
+    turn_done(&server, &source).await;
+    // The follow-up questions are still being asked for...
+    assert!(server.session(&source).live.lock().unwrap().suggesting);
+    // ...but the turn's work is over, so the project is not busy.
+    server
+        .start_exploration(&project, &source, None, "Try A")
+        .await
+        .unwrap();
     server.shutdown().await;
 }
 
