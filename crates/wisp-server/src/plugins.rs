@@ -9,8 +9,10 @@
 //! cannot be shared from here because it lives in the Tauri shell, and
 //! the records are the store's own.
 //!
-//! A project that switches a plugin on gets its skills. The MCP servers a
-//! plugin declares are listed but not started by this host.
+//! A project that switches a plugin on gets its skills, and the MCP
+//! servers it declares are started for that project's turns, as the WebView
+//! starts them: in the plugin's folder, with a cleared environment, every
+//! tool asking before it runs.
 
 use std::{
     collections::{BTreeMap, HashSet},
@@ -434,6 +436,12 @@ fn row(installation: PluginInstallation, enabled: bool) -> PluginRow {
                     Err(error) => problems.push(format!("{skill}: {error}")),
                 }
             }
+            // A server that could not be started says why.
+            for server in &manifest.mcp_servers {
+                if let Err(error) = launch(&installation, &manifest, server) {
+                    problems.push(format!("MCP '{}': {error:#}", server.id));
+                }
+            }
             servers = manifest
                 .mcp_servers
                 .iter()
@@ -460,6 +468,120 @@ fn row(installation: PluginInstallation, enabled: bool) -> PluginRow {
         servers,
         problems,
     }
+}
+
+/// How one of a plugin's MCP servers is started: a program in the plugin's
+/// folder or on the PATH, with `${CLAUDE_PLUGIN_ROOT}` (or
+/// `${WISP_PLUGIN_ROOT}`) in what it is given standing for that folder.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ServerLaunch {
+    /// `plugin:<plugin>:<server>`, as the WebView names it.
+    pub id: String,
+    /// What its tools are named after.
+    pub name: String,
+    pub command: PathBuf,
+    pub args: Vec<String>,
+    pub env: BTreeMap<String, String>,
+    pub cwd: PathBuf,
+    pub root: PathBuf,
+}
+
+fn expand_root(value: &str, root: &Path) -> Result<String> {
+    let root = root.to_string_lossy();
+    let expanded = value
+        .replace("${CLAUDE_PLUGIN_ROOT}", &root)
+        .replace("${WISP_PLUGIN_ROOT}", &root);
+    ensure!(
+        !expanded.contains("${") && !expanded.contains('\0'),
+        "unsupported variable in plugin value '{value}'"
+    );
+    Ok(expanded)
+}
+
+fn launch(
+    installation: &PluginInstallation,
+    manifest: &Manifest,
+    server: &McpServer,
+) -> Result<ServerLaunch> {
+    let root = dunce::canonicalize(&installation.install_root)
+        .context("resolve plugin install directory")?;
+    let command = expand_root(&server.command, &root)?;
+    let command = if command.contains(['/', '\\']) {
+        let path = dunce::canonicalize(&command)
+            .with_context(|| format!("resolve plugin MCP command '{command}'"))?;
+        ensure!(
+            path.starts_with(&root) && path.is_file(),
+            "plugin MCP command path must be a file inside the plugin directory"
+        );
+        path
+    } else {
+        which::which(&command)
+            .map_err(|_| anyhow!("plugin MCP executable '{command}' was not found in PATH"))?
+    };
+    let args = server
+        .args
+        .iter()
+        .map(|argument| expand_root(argument, &root))
+        .collect::<Result<Vec<_>>>()?;
+    let mut env = BTreeMap::new();
+    for (key, value) in &server.env {
+        ensure!(
+            crate::mcp::valid_env_name(key),
+            "plugin MCP environment key '{key}' is invalid"
+        );
+        env.insert(key.clone(), expand_root(value, &root)?);
+    }
+    let cwd = match &server.cwd {
+        Some(relative) => {
+            let relative = inside(relative, "plugin MCP cwd")?;
+            let path = dunce::canonicalize(root.join(relative))
+                .with_context(|| format!("resolve plugin MCP working directory '{}'", server.id))?;
+            ensure!(
+                path.starts_with(&root) && path.is_dir(),
+                "plugin MCP working directory must stay inside the plugin directory"
+            );
+            path
+        }
+        None => root.clone(),
+    };
+    Ok(ServerLaunch {
+        id: format!("plugin:{}:{}", manifest.id, server.id),
+        name: format!("{} {}", manifest.id, server.id),
+        command,
+        args,
+        env,
+        cwd,
+        root,
+    })
+}
+
+/// How to start the MCP servers of the plugins `project` has switched on,
+/// and why any of them cannot be, by plugin.
+pub(crate) async fn enabled_launches(
+    store: &Store,
+    project: &str,
+) -> (Vec<ServerLaunch>, Vec<String>) {
+    let mut launches = vec![];
+    let mut problems = vec![];
+    for installation in store
+        .list_enabled_plugin_installations(project)
+        .await
+        .unwrap_or_default()
+    {
+        let Ok(manifest) = manifest_of(&installation) else {
+            continue;
+        };
+        for server in &manifest.mcp_servers {
+            match launch(&installation, &manifest, server) {
+                Ok(found) => launches.push(found),
+                Err(error) => problems.push(format!(
+                    "Plugin '{}' MCP '{}': {error:#}",
+                    manifest.display_name, server.id
+                )),
+            }
+        }
+    }
+    (launches, problems)
 }
 
 /// The skill folders of the plugins `project` has switched on.

@@ -4284,6 +4284,145 @@ async fn service_keys_live_in_the_secret_store_and_are_never_read_back() {
     server.shutdown().await;
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn a_plugins_mcp_server_runs_in_its_folder_for_the_projects_that_switch_it_on() {
+    use std::os::unix::fs::PermissionsExt;
+    // A model that calls the plugin's tool once, then says what came back.
+    struct Caller;
+    #[async_trait]
+    impl Provider for Caller {
+        fn name(&self) -> &str {
+            "offline"
+        }
+        fn model(&self) -> &str {
+            "offline"
+        }
+        async fn complete(
+            &self,
+            messages: &[Message],
+            _: &[ToolSchema],
+        ) -> wisp_llm::Result<Completion> {
+            let back = messages
+                .iter()
+                .rev()
+                .find(|message| message.role == wisp_llm::Role::Tool)
+                .map(|message| message.content.as_text());
+            Ok(match back {
+                Some(text) => Completion {
+                    content: format!("It said: {text}"),
+                    finish_reason: Some("stop".into()),
+                    ..Default::default()
+                },
+                None => Completion {
+                    tool_calls: vec![ToolCall {
+                        id: "call-1".into(),
+                        kind: "function".into(),
+                        function: wisp_llm::FunctionCall {
+                            name: "lab_tools_lab__where".into(),
+                            arguments: "{}".into(),
+                        },
+                    }],
+                    finish_reason: Some("tool_calls".into()),
+                    ..Default::default()
+                },
+            })
+        }
+        async fn stream(
+            &self,
+            messages: &[Message],
+            tools: &[ToolSchema],
+            _: &mut dyn StreamSink,
+        ) -> wisp_llm::Result<Completion> {
+            self.complete(messages, tools).await
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), Arc::new(|_| Box::new(Caller)))
+        .await
+        .unwrap();
+    // A plugin whose one MCP server is a script inside it, answering MCP a
+    // line at a time with the folder it runs in and the root it was given.
+    let package = temp.path().join("lab-plugin");
+    std::fs::create_dir_all(package.join(".claude-plugin")).unwrap();
+    std::fs::create_dir_all(package.join("server")).unwrap();
+    std::fs::write(
+        package.join(".claude-plugin/plugin.json"),
+        r#"{"name":"lab-tools","version":"1.0.0","description":"Lab"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        package.join(".mcp.json"),
+        r#"{"lab":{"command":"${CLAUDE_PLUGIN_ROOT}/server/serve.sh","env":{"LAB_ROOT":"${CLAUDE_PLUGIN_ROOT}"}},
+            "broken":{"command":"wisp-no-such-program-anywhere"}}"#,
+    )
+    .unwrap();
+    let script = package.join("server/serve.sh");
+    std::fs::write(
+        &script,
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -z "$id" ] && continue
+  case "$line" in
+    *'"initialize"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"lab","version":"1"}}}\n' "$id" ;;
+    *'"tools/list"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"where","description":"Say where","inputSchema":{"type":"object"}}]}}\n' "$id" ;;
+    *'"tools/call"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"cwd=%s root=%s token=%s"}],"isError":false}}\n' "$id" "$(pwd)" "$LAB_ROOT" "${WISP_TEST_SECRET:-none}" ;;
+    *) printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id" ;;
+  esac
+done
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let installed = server.install_plugin(&package).await.unwrap();
+    // The one that cannot start says why; the other has nothing to say.
+    assert_eq!(installed.problems.len(), 1, "{:?}", installed.problems);
+    assert!(installed.problems[0].contains("broken"));
+
+    // Off: no project's turn gets its tools.
+    assert!(server.plugin_mcp_tools(PROJECT).await.is_empty());
+    server
+        .set_plugin_enabled(PROJECT, "lab-tools", "1.0.0", true)
+        .await
+        .unwrap();
+    let names: Vec<String> = server
+        .plugin_mcp_tools(PROJECT)
+        .await
+        .iter()
+        .map(|tool| tool.name().to_owned())
+        .collect();
+    assert_eq!(names, ["lab_tools_lab__where"]);
+
+    // In a turn its tool asks first, then runs in the plugin's folder with
+    // the root it was given and nothing of this app's own secrets.
+    let session = create(&server).await;
+    send(&server, &session, "where").await.unwrap();
+    let asked = wait_for(&server, &session, |s| !s.approvals.is_empty()).await;
+    server
+        .answer_approval(
+            PROJECT,
+            &session,
+            &asked.approvals[0].approval_id,
+            true,
+            desktop::Remember::No,
+        )
+        .await
+        .unwrap();
+    let done = wait_for(&server, &session, |s| !s.running).await;
+    let said = done
+        .items
+        .iter()
+        .map(|item| item.text.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let root = dunce::canonicalize(server.0.config.data.join("plugins/lab-tools/1.0.0")).unwrap();
+    assert!(said.contains(&format!("cwd={}", root.display())), "{said}");
+    assert!(said.contains(&format!("root={}", root.display())), "{said}");
+    assert!(said.contains("token=none"), "{said}");
+    server.shutdown().await;
+}
+
 #[tokio::test]
 async fn the_local_tools_paths_are_saved_as_the_webview_keeps_them() {
     use std::collections::BTreeMap;

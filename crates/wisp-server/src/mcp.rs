@@ -52,7 +52,42 @@ pub(crate) struct Credentials {
     pub token: Option<String>,
     pub env: Vec<(String, String)>,
     pub headers: Vec<(String, String)>,
+    /// A plugin's server: started in this folder, its plugin's root, with a
+    /// cleared environment that keeps only [`PASSTHROUGH`].
+    pub plugin: Option<(std::path::PathBuf, std::path::PathBuf)>,
 }
+
+/// What a plugin's server keeps of this app's environment: the plumbing
+/// runtimes need and where your settings are, never a token.
+const PASSTHROUGH: &[&str] = &[
+    "PATH",
+    "HOME",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_CACHE_HOME",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "LANG",
+    "LC_ALL",
+    "SYSTEMROOT",
+    "SYSTEMDRIVE",
+    "PATHEXT",
+    "COMSPEC",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+];
 
 /// A name a program's environment can have: letters, digits and `_`, not
 /// starting with a digit.
@@ -183,36 +218,51 @@ pub struct Connections {
 
 impl Connections {
     async fn connect(server: &McpServer, with: &Credentials, proxy: &str) -> Result<McpClient> {
-        let connecting = async {
-            match &server.transport {
-                McpTransport::Stdio { command, args } => {
-                    let mut program = tokio::process::Command::new(command.trim());
-                    program.args(args).envs(with.env.iter().cloned());
-                    McpClient::launch_with_command(program)
-                        .await
-                        .with_context(|| format!("Could not start {}", command.trim()))
+        let connecting =
+            async {
+                match &server.transport {
+                    McpTransport::Stdio { command, args } => {
+                        let mut program = tokio::process::Command::new(command.trim());
+                        program.args(args);
+                        if let Some((cwd, root)) = &with.plugin {
+                            program.current_dir(cwd).env_clear();
+                            program.envs(PASSTHROUGH.iter().filter_map(|key| {
+                                std::env::var_os(key).map(|value| (*key, value))
+                            }));
+                            program
+                                .env("WISP_PLUGIN_ROOT", root)
+                                .env("CLAUDE_PLUGIN_ROOT", root);
+                            // The connector route, as a program's proxy.
+                            if !proxy.is_empty() {
+                                program.envs(wisp_tools::network::proxy_env(proxy));
+                            }
+                        }
+                        program.envs(with.env.iter().cloned());
+                        McpClient::launch_with_command(program)
+                            .await
+                            .with_context(|| format!("Could not start {}", command.trim()))
+                    }
+                    McpTransport::Http { url } => {
+                        // A header of its own that says who you are wins over
+                        // the token.
+                        let named = with
+                            .headers
+                            .iter()
+                            .any(|(name, _)| name.eq_ignore_ascii_case("authorization"));
+                        let mut headers: Vec<_> = with
+                            .token
+                            .as_ref()
+                            .filter(|_| !named)
+                            .map(|token| ("Authorization".to_owned(), format!("Bearer {token}")))
+                            .into_iter()
+                            .collect();
+                        headers.extend(with.headers.iter().cloned());
+                        McpClient::connect_http_with_proxy(url.trim(), &headers, proxy)
+                            .await
+                            .with_context(|| format!("Could not reach {}", url.trim()))
+                    }
                 }
-                McpTransport::Http { url } => {
-                    // A header of its own that says who you are wins over
-                    // the token.
-                    let named = with
-                        .headers
-                        .iter()
-                        .any(|(name, _)| name.eq_ignore_ascii_case("authorization"));
-                    let mut headers: Vec<_> = with
-                        .token
-                        .as_ref()
-                        .filter(|_| !named)
-                        .map(|token| ("Authorization".to_owned(), format!("Bearer {token}")))
-                        .into_iter()
-                        .collect();
-                    headers.extend(with.headers.iter().cloned());
-                    McpClient::connect_http_with_proxy(url.trim(), &headers, proxy)
-                        .await
-                        .with_context(|| format!("Could not reach {}", url.trim()))
-                }
-            }
-        };
+            };
         match tokio::time::timeout(CONNECT_TIMEOUT, connecting).await {
             Ok(client) => client,
             Err(_) => bail!("The server did not answer in time"),

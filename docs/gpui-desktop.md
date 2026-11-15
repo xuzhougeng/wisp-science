@@ -1068,9 +1068,14 @@ Limits of this slice:
   one replaces its files, and a project that had the older one on has
   to switch the new one on. A package with a symbolic link, more than
   10,000 files or 512 MB is refused. The MCP servers a plugin declares
-  are listed with the command that would start them, but this desktop
-  does not start them, so only a plugin's skills take effect. Those
-  skills do not show on the Skills page and cannot be turned off one by
+  are started for the turns of the projects that switch it on, as the
+  WebView starts them: a program inside the plugin's folder or on the PATH,
+  with `${CLAUDE_PLUGIN_ROOT}` standing for that folder, run in it with a
+  cleared environment that keeps only the system's plumbing, the plugin's
+  own variables and the connector route; their tools are named after the
+  plugin and the server and ask before they run. One that cannot be started
+  is listed with why among the plugin's problems. A plugin's skills do not
+  show on the Skills page and cannot be turned off one by
   one there. The records are the store's own (`plugin_installations`,
   `project_plugins`), shared with the WebView desktop; removing a
   plugin that desktop installed removes the record and leaves its
@@ -2170,6 +2175,9 @@ again: the line reads `X-Api-Key:` with no value, and saving it so keeps the
 key. Remove the line and save: the header is no longer sent. For a server
 that is a program, add `LAB_TOKEN=<a made-up value>` and confirm the program
 sees it.
+Install a plugin whose `.mcp.json` names a server inside it, switch it on
+for one project, and ask for its tool there: it asks, then answers; in
+another project it is not offered.
 In Settings, Environments, under Where the tools are, each hint shows where
 the search path finds that program. Type a path that does not exist for
 Python and Save paths: it is refused and named; type the real one and save,

@@ -3249,7 +3249,64 @@ impl Server {
             token: self.mcp_token(&server.id).await,
             env: pick(&server.env, &env),
             headers: pick(&server.headers, &headers),
+            plugin: None,
         }
+    }
+
+    /// What MCP gives a turn in `project`: your servers' tools and those of
+    /// the servers its plugins declare.
+    pub(crate) async fn turn_mcp_tools(&self, project: &str) -> Vec<Box<dyn wisp_tools::Tool>> {
+        let mut tools = self.mcp_tools().await;
+        for tool in self.plugin_mcp_tools(project).await {
+            if !tools.iter().any(|other| other.name() == tool.name()) {
+                tools.push(tool);
+            }
+        }
+        tools
+    }
+
+    /// The tools the MCP servers of `project`'s plugins give a turn; each
+    /// asks before it runs. A server that cannot start gives none.
+    pub(crate) async fn plugin_mcp_tools(&self, project: &str) -> Vec<Box<dyn wisp_tools::Tool>> {
+        let (launches, problems) = crate::plugins::enabled_launches(&self.0.store, project).await;
+        for problem in problems {
+            tracing::warn!("{problem}");
+        }
+        let mut credentials = HashMap::new();
+        let servers: Vec<McpServer> = launches
+            .into_iter()
+            .map(|launch| {
+                credentials.insert(
+                    launch.id.clone(),
+                    crate::mcp::Credentials {
+                        env: launch.env.into_iter().collect(),
+                        plugin: Some((launch.cwd, launch.root)),
+                        ..Default::default()
+                    },
+                );
+                McpServer {
+                    id: launch.id,
+                    name: launch.name,
+                    enabled: true,
+                    transport: McpTransport::Stdio {
+                        command: launch.command.to_string_lossy().into_owned(),
+                        args: launch.args,
+                    },
+                    env: vec![],
+                    headers: vec![],
+                    proxy: String::new(),
+                }
+            })
+            .collect();
+        if servers.is_empty() {
+            return vec![];
+        }
+        self.0
+            .mcp
+            .tools(&servers, |id| {
+                credentials.get(id).cloned().unwrap_or_default()
+            })
+            .await
     }
 
     /// The token saved for a server, if there is one.

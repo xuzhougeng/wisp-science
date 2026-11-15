@@ -1094,7 +1094,7 @@ impl Server {
             std::path::Path::new(root),
             frame,
             &self.service_keys().await,
-            self.mcp_tools().await,
+            self.turn_mcp_tools(project).await,
         )
         .await;
         Ok(acp_turn::Offered {
@@ -1145,7 +1145,7 @@ impl Server {
             &request.references,
             options.plan_first,
             &self.service_keys().await,
-            self.mcp_tools().await,
+            self.turn_mcp_tools(project).await,
             &subagent,
             self.decision_model_in_use().await,
             self.0.browser.bridge(),
