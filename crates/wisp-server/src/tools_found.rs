@@ -15,6 +15,20 @@ pub(crate) const TOOLS: [(&str, &str); 8] = [
     ("node", "JavaScript"),
 ];
 
+/// The executables the local environment names, as the WebView keeps them
+/// on the `local` execution context: its key, what it is, and the program
+/// looked for on the search path when no path is saved.
+pub(crate) const PATHS: [(&str, &str, &str); 8] = [
+    ("python_executable", "Python", "python3"),
+    ("rscript_executable", "Rscript", "Rscript"),
+    ("uv_executable", "uv", "uv"),
+    ("node_executable", "Node.js", "node"),
+    ("npm_executable", "npm", "npm"),
+    ("sci_executable", "SCIMaster CLI (sci)", "sci"),
+    ("pixi_executable", "pixi", "pixi"),
+    ("cua_driver_executable", "Computer-use driver", "cua-driver"),
+];
+
 /// The first place along `path` where `name` is found, trying each of
 /// `extensions` (one empty entry on systems that have none). `exists` says
 /// whether a file is there, so this is tested without a file system.

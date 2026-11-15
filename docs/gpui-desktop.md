@@ -1187,6 +1187,13 @@ Limits of this slice:
   the next turn. A connector's Skip approvals (`skip_approval_connectors:
   <project>`) lets all its tools run whatever their rules, a denied one
   included, as in the WebView.
+- Where the tools are, on the Environments page, keeps the WebView's paths
+  for the local environment's executables on its `local` execution context
+  (`python_executable`, `rscript_executable`, `uv_executable`,
+  `node_executable`, `npm_executable`, `sci_executable`, `pixi_executable`,
+  `cua_driver_executable`), which is also where installing a tool records
+  it. A path must name a file; nothing is run to check it. An empty one is
+  looked for on the search path the app started with, shown as the hint.
 - Command hooks are the WebView's, under its keys (`command_hooks`, and
   `project_hooks_trust` for the SHA-256 of each project's trusted
   `.wisp/hooks.json`, in Claude Code's layout). A hook runs in the project
@@ -2163,6 +2170,11 @@ again: the line reads `X-Api-Key:` with no value, and saving it so keeps the
 key. Remove the line and save: the header is no longer sent. For a server
 that is a program, add `LAB_TOKEN=<a made-up value>` and confirm the program
 sees it.
+In Settings, Environments, under Where the tools are, each hint shows where
+the search path finds that program. Type a path that does not exist for
+Python and Save paths: it is refused and named; type the real one and save,
+leave the page and come back: it is kept. Clear it and save: the hint is
+used again.
 In the Files tab press the tiles button: the folder shows as tiles, its
 pictures as themselves; open a folder and a file from their tiles; restart
 the app and the Files tab is still tiles; press the list button to go back.

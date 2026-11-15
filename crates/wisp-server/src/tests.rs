@@ -4285,6 +4285,56 @@ async fn service_keys_live_in_the_secret_store_and_are_never_read_back() {
 }
 
 #[tokio::test]
+async fn the_local_tools_paths_are_saved_as_the_webview_keeps_them() {
+    use std::collections::BTreeMap;
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let paths = server.tool_paths().await.unwrap();
+    let keys: Vec<_> = paths.iter().map(|path| path.key).collect();
+    assert_eq!(keys[..2], ["python_executable", "rscript_executable"]);
+    assert!(paths.iter().all(|path| path.saved.is_empty()));
+    // A file is needed; nothing is run to check it.
+    let python = temp.path().join("python3");
+    std::fs::write(&python, "not run").unwrap();
+    let one = |key: &str, value: &str| BTreeMap::from([(key.to_owned(), value.to_owned())]);
+    assert!(server
+        .set_tool_paths(one("python_executable", "/no/such/python"))
+        .await
+        .is_err());
+    assert!(server
+        .set_tool_paths(one("ruby_executable", python.to_str().unwrap()))
+        .await
+        .is_err());
+    let saved = server
+        .set_tool_paths(one("python_executable", &format!(" {} ", python.display())))
+        .await
+        .unwrap();
+    assert_eq!(saved[0].saved, python.to_string_lossy());
+    // Kept on the local context, as the WebView keeps it.
+    let context = server
+        .0
+        .store
+        .get_execution_context("local")
+        .await
+        .unwrap()
+        .unwrap();
+    let config: Value = serde_json::from_str(&context.config_json).unwrap();
+    assert_eq!(
+        config["python_executable"],
+        python.to_string_lossy().as_ref()
+    );
+    // Emptied, it is looked for on the search path again.
+    let cleared = server
+        .set_tool_paths(one("python_executable", ""))
+        .await
+        .unwrap();
+    assert!(cleared[0].saved.is_empty());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn the_sci_and_agent_infini_keys_are_set_up_where_their_clis_read_them() {
     let temp = tempfile::tempdir().unwrap();
     let server = Server::open_with(

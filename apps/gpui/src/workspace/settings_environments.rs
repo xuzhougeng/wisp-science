@@ -6,7 +6,7 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
+    input::{Input, InputState},
 };
 use wisp_server::desktop::SshHostRow;
 
@@ -20,6 +20,9 @@ use crate::{
 impl Workspace {
     pub(super) fn load_environments(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.follow_toolchain(window, cx);
+        self.tool_paths_saved = false;
+        let reply = self.backend.tool_paths();
+        self.show_tool_paths(reply, window, cx);
         let reply = self.backend.environments();
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
@@ -32,6 +35,125 @@ impl Workspace {
             });
         })
         .detach();
+    }
+
+    /// Shows the paths the host kept, each in a field with what the search
+    /// path finds as its hint.
+    fn show_tool_paths(
+        &mut self,
+        reply: Reply<Vec<wisp_server::desktop::ToolPath>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(paths) => {
+                        this.tool_paths = paths
+                            .into_iter()
+                            .map(|path| {
+                                let hint = path
+                                    .found
+                                    .clone()
+                                    .unwrap_or_else(|| tr("Not found on the search path").into());
+                                let value = path.saved.clone();
+                                let field = cx.new(|cx| {
+                                    let mut input = InputState::new(window, cx).placeholder(hint);
+                                    input.set_value(value, window, cx);
+                                    input
+                                });
+                                (path, field)
+                            })
+                            .collect();
+                    }
+                    Err(error) => this.settings_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn save_tool_paths(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let paths = self
+            .tool_paths
+            .iter()
+            .map(|(path, field)| (path.key.to_owned(), field.read(cx).value().to_string()))
+            .collect();
+        self.settings_error = None;
+        let reply = self.backend.set_tool_paths(paths);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(_) => {
+                        this.tool_paths_saved = true;
+                        // Shown again as kept, trimmed.
+                        let reply = this.backend.tool_paths();
+                        this.show_tool_paths(reply, window, cx);
+                    }
+                    Err(error) => this.settings_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// The local environment's executables: a path for each, or empty to
+    /// look on the search path, as the WebView's Environments page keeps
+    /// them.
+    fn tool_paths_card(&self, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let mut card = div()
+            .v_flex()
+            .gap_2()
+            .pt_5()
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(tr("Where the tools are")),
+            )
+            .child(div().w(px(540.)).text_xs().text_color(muted).child(tr(
+                "The full path of each program on this computer. Empty looks for it on the \
+                 search path, shown as the hint. A path is checked to be a file; nothing is run.",
+            )));
+        for (path, field) in &self.tool_paths {
+            card = card.child(
+                div()
+                    .h_flex()
+                    .gap_3()
+                    .child(
+                        div()
+                            .w(px(160.))
+                            .flex_shrink_0()
+                            .text_sm()
+                            .child(path.label),
+                    )
+                    .child(div().w(px(420.)).child(Input::new(field).small())),
+            );
+        }
+        card.child(
+            div()
+                .h_flex()
+                .gap_2()
+                .child(
+                    Button::new("tool-paths-save")
+                        .label(tr("Save paths"))
+                        .small()
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.save_tool_paths(window, cx)),
+                        ),
+                )
+                .children(self.tool_paths_saved.then(|| {
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().success)
+                        .child(tr("Saved"))
+                })),
+        )
     }
 
     /// Reads the managed tools' state, and keeps reading it every half
@@ -777,6 +899,6 @@ impl Workspace {
                     .child(found),
             );
         }
-        page
+        page.child(self.tool_paths_card(cx))
     }
 }

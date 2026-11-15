@@ -785,6 +785,10 @@ pub const ZH: &[(&str, &str)] = &[
     ("It read:", "它读取了："),
     // Sample project.
     ("Make a sample project to try Wisp on", "创建一个示例项目来试用 Wisp"),
+    ("Save paths", "保存路径"),
+    ("The full path of each program on this computer. Empty looks for it on the search path, shown as the hint. A path is checked to be a file; nothing is run.", "这台电脑上每个程序的完整路径。留空则在搜索路径上查找，结果显示在提示里。只检查路径是否为文件，不会运行任何程序。"),
+    ("Where the tools are", "工具在哪里"),
+    ("Not found on the search path", "在搜索路径上没有找到"),
     ("Route: a proxy for this server alone, or none to connect directly. Empty follows the connector route in Settings, Network.", "线路：只用于这个服务器的代理；填 none 表示直连。留空则跟随“设置 → 网络”中的连接器线路。"),
     ("A proxy for this model alone, such as http://127.0.0.1:7890, or none to connect directly. Empty follows Settings, Network.", "只用于这个模型的代理，例如 http://127.0.0.1:7890；填 none 表示直连。留空则跟随“设置 → 网络”。"),
     ("Route", "线路"),

@@ -1242,6 +1242,62 @@ impl Server {
         Ok(frame)
     }
 
+    /// Where the local environment's executables are: the path saved for
+    /// each, as the WebView's Environments page keeps it, and where it is
+    /// found on the search path otherwise.
+    pub async fn tool_paths(&self) -> Result<Vec<ToolPath>> {
+        let saved: serde_json::Map<String, serde_json::Value> = self
+            .0
+            .store
+            .get_execution_context("local")
+            .await?
+            .and_then(|context| serde_json::from_str(&context.config_json).ok())
+            .unwrap_or_default();
+        Ok(tokio::task::spawn_blocking(move || {
+            let (path, extensions) = crate::tools_found::search_path();
+            crate::tools_found::PATHS
+                .iter()
+                .map(|(key, label, program)| ToolPath {
+                    key,
+                    label,
+                    saved: saved
+                        .get(*key)
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    found: crate::tools_found::find(program, &path, &extensions, |candidate| {
+                        candidate.is_file()
+                    })
+                    .map(|found| found.to_string_lossy().into_owned()),
+                })
+                .collect()
+        })
+        .await?)
+    }
+
+    /// Saves the paths as typed: an empty one goes back to looking on the
+    /// search path. A path that names no file is refused; nothing is run.
+    pub async fn set_tool_paths(&self, paths: BTreeMap<String, String>) -> Result<Vec<ToolPath>> {
+        for (key, value) in &paths {
+            let label = crate::tools_found::PATHS
+                .iter()
+                .find(|(known, ..)| known == key)
+                .map(|(_, label, _)| *label)
+                .with_context(|| format!("There is no tool called {key}"))?;
+            let value = value.trim();
+            ensure!(
+                value.is_empty() || std::path::Path::new(value).is_file(),
+                "{label}: there is no file at {value}"
+            );
+        }
+        let paths = paths
+            .into_iter()
+            .map(|(key, value)| (key, value.trim().to_owned()))
+            .collect();
+        self.0.store.save_local_environment_paths(&paths).await?;
+        self.tool_paths().await
+    }
+
     /// What Wisp can draw on in `project`, counted: skills, connectors, MCP
     /// servers, SSH hosts, memory, and the command-line tools found on
     /// this computer.
@@ -6023,6 +6079,18 @@ pub struct Capabilities {
     pub memory_notes: usize,
     pub habits: usize,
     pub tools: Vec<LocalTool>,
+}
+
+/// One executable of the local environment.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolPath {
+    /// The key it is kept under, such as `python_executable`.
+    pub key: &'static str,
+    pub label: &'static str,
+    /// The path saved for it; empty when it is looked for on the search path.
+    pub saved: String,
+    /// Where it is on the search path, if it is.
+    pub found: Option<String>,
 }
 
 /// A command-line tool and where it was found, if it was.

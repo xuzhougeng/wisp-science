@@ -2290,6 +2290,18 @@ impl Backend {
         self.local(move |host| async move { host.set_review_model(&profile).await })
     }
 
+    /// Where the local environment's executables are.
+    pub fn tool_paths(&self) -> Reply<Vec<wisp_server::desktop::ToolPath>> {
+        self.local(|host| async move { host.tool_paths().await })
+    }
+
+    pub fn set_tool_paths(
+        &self,
+        paths: std::collections::BTreeMap<String, String>,
+    ) -> Reply<Vec<wisp_server::desktop::ToolPath>> {
+        self.local(move |host| async move { host.set_tool_paths(paths).await })
+    }
+
     /// Your command hooks.
     pub fn command_hooks(&self) -> Reply<Vec<wisp_dto::CommandHook>> {
         self.local(|host| async move { host.command_hooks().await })

@@ -411,6 +411,11 @@ pub struct Workspace {
     /// see; empty is the first saved one that can.
     picture_model: String,
     steps_input: Entity<InputState>,
+    /// Where the local environment's executables are, each with the field
+    /// its path is typed into.
+    tool_paths: Vec<(wisp_server::desktop::ToolPath, Entity<InputState>)>,
+    /// The paths were saved, since they were last shown.
+    tool_paths_saved: bool,
     /// Tools that are always allowed, project by project.
     grants: Vec<wisp_server::desktop::ProjectGrants>,
     /// Tools that are allowed in every project.
@@ -1414,6 +1419,8 @@ impl Workspace {
             picture_model: String::new(),
             steps_input,
             grants: vec![],
+            tool_paths: vec![],
+            tool_paths_saved: false,
             global_grants: vec![],
             approvals: None,
             settings_error: None,
