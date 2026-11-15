@@ -9376,7 +9376,11 @@ async fn a_mandate_asks_for_what_it_needs_and_goes_on_once_answered() {
     let waiting = tokio::time::timeout(std::time::Duration::from_secs(20), async {
         loop {
             let all = server.mandates().await.unwrap();
-            if all[0].request.is_some() && all[0].mandate.status == "waiting" {
+            // The round that asked is recorded from its answer.
+            if all[0].request.is_some()
+                && all[0].mandate.status == "waiting"
+                && all[0].last_round.is_some()
+            {
                 let (_, frame) = server.open_assistant().await.unwrap();
                 if texts_of(&server, &frame)
                     .await
@@ -9426,12 +9430,34 @@ async fn a_mandate_asks_for_what_it_needs_and_goes_on_once_answered() {
     assert!(done[0].request.is_none());
     turn_done(&server, &frame).await;
 
-    // Closed, it runs no more and its conversation is an ordinary one.
+    // Closed, it runs no more and its conversation is an ordinary one. A
+    // report covers whole seconds before it, so let one pass.
+    tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
     let closed = server
         .set_mandate_status(&mandate.id, "done")
         .await
         .unwrap();
     assert_eq!(closed.status, "done");
+    // Closing writes one last report, on the card and to the assistant.
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        loop {
+            let all = server.mandates().await.unwrap();
+            let (_, frame) = server.open_assistant().await.unwrap();
+            let told = texts_of(&server, &frame)
+                .await
+                .iter()
+                .any(|text| text.starts_with("职责汇报 / Mandate report"));
+            if all[0].reports.len() == 1 && told {
+                // The round that asked, recorded from its answer, and the
+                // round that reported.
+                assert_eq!(all[0].reports[0].rounds, 2);
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the closing report must be written and announced");
     assert!(server.run_mandate_now(&mandate.id).await.is_err());
     assert!(server.reply_to_mandate(&mandate.id, "more").await.is_err());
     assert!(server

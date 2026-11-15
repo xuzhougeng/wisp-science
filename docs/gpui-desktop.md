@@ -1041,8 +1041,13 @@ Limits of this slice:
   are not told. A round that ends without `end_round` is still recorded
   from its last answer, an ended period closes the mandate, and closing
   withdraws an open request. Rounds run while the app is open, looked
-  for with the scheduled tasks. The window has no mandates page yet, and
-  mandate reports are not written yet.
+  for with the scheduled tasks. Reports follow `mandate_report.rs` (its
+  tests are carried over): on the mandate's report cadence, on closing,
+  or on request, the rounds of the period and the project's records
+  become a cited report on the default model, from the rounds' own words
+  when the period was quiet or the draft fails; it is kept on the
+  mandate and added to the research assistant's conversation. The window
+  has no mandates page yet.
 - Scheduled tasks and the daily recap are the other parts of the
   WebView's research assistant that are ported. Tasks fire only while the app is open, looked for
   every 30 seconds; a time that was missed fires once at the next look

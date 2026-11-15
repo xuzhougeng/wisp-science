@@ -9,7 +9,7 @@
 //! `request_assistance`, from `wisp-app`. When the mandate says so (the
 //! default), its turns ask before anything that changes state. A request
 //! for the researcher is added to the research assistant's conversation;
-//! chat apps are not told.
+//! chat apps are not told. Reports are written by `mandate_report`.
 
 use anyhow::{Context as _, Result};
 use wisp_dto::{MandateDraft, MandateOverview, MandateRecord, MandateRequest};
@@ -348,6 +348,13 @@ impl Server {
             "The mandate no longer exists."
         );
         store.withdraw_mandate_requests(id).await?;
+        // One last report covers the time since the previous one.
+        let (server, id) = (self.clone(), id.to_owned());
+        tokio::spawn(async move {
+            if let Err(error) = server.report_mandate(&id).await {
+                tracing::warn!(%error, mandate = %id, "Could not write a mandate's closing report");
+            }
+        });
         Ok(())
     }
 
@@ -462,16 +469,19 @@ impl Server {
         let started = chrono::Utc::now().timestamp();
         let result = async {
             let frame = self.round_frame(&mandate).await?;
+            let live = self.session(&frame);
+            let before = live.live.lock().unwrap().generation;
             self.send_to_mandate(
                 &mandate.project_id,
                 &frame,
                 wisp_app::mandates::round_prompt(&mandate),
             )
             .await?;
-            // The round is the turn: wait for it to end.
-            let live = self.session(&frame);
-            while live.live.lock().unwrap().running {
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            // The round is the turn: wait for it to end, which moves the
+            // conversation on twice (started, ended), even when the
+            // researcher's next message starts another turn right after.
+            while live.live.lock().unwrap().generation.wrapping_sub(before) < 2 {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             }
             Ok::<_, anyhow::Error>(frame)
         }

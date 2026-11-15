@@ -20,6 +20,7 @@ mod explorations;
 mod export;
 mod files;
 mod follow_ups;
+mod mandate_report;
 mod mandates;
 pub mod mcp;
 mod memory_tidy;

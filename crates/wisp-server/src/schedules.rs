@@ -321,6 +321,8 @@ impl Server {
                 server.memory_tidy_tick().await;
                 // Research mandates run their due rounds.
                 server.fire_due_mandates().await;
+                // And write the reports that are due.
+                server.report_due_mandates().await;
             }
         });
     }
