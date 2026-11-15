@@ -860,9 +860,11 @@ Limits of this slice:
   Cloud-drive folder projects keep their own snapshots in their folder
   (the store's folder snapshots): this device's edits are published every
   20 seconds once nothing runs, and opening the project takes in a newer
-  version when this device has nothing unpublished. Sync keeps the
-  WebView's names, so a project synchronized on either desktop syncs on
-  the other.
+  version when this device has nothing unpublished. Its card on the home
+  page says where its latest changes stand: saved to the folder, not yet
+  saved, a newer version in the folder, a version conflict, or waiting for
+  the drive. Sync keeps the WebView's names, so a project synchronized on
+  either desktop syncs on the other.
 - Remote web access is the only tunnel ported. A browser
   gets the commands a headless `wisp-server` offers (projects,
   conversations, messages, stopping a turn, answering an approval

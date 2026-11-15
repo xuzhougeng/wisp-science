@@ -238,7 +238,7 @@ row says what is there.
 | --- | --- | --- |
 | Home | Search across projects, conversations and recent artifacts (projects, conversations and files are in the palette; artifacts are not) | store |
 | Home | Import a folder in place, a ZIP, or recover conversations from a workspace; transfer progress | tauri |
-| Home | Sync now, device code, conflict resolution (use remote / use local) — **Done** in project settings, with Join a project from another device on the home page; cloud-folder badges on the project cards — Missing | shared |
+| Home | Sync now, device code, conflict resolution (use remote / use local) — **Done** in project settings, with Join a project from another device on the home page; cloud-folder badges on the project cards — **Done** | shared |
 | Sidebar | Conversation menu: copy title, export conversation, export debug request, reload project rules — exporting a conversation as Markdown is **Done**, and project rules are read again every turn; the rest is Missing | tauri |
 | Sidebar | Nested children: branches are nested — **Done**; explorations are opened from the bar over their source conversation, not nested in the sidebar. Subagent conversations are nested under their parent — **Done**. "Load earlier" paging — Missing | store |
 | Sidebar | Update-available card; "done / failed in another project" notices (an update check is in Settings, General, and a turn that ends raises a system notification; there is no card in the sidebar) | tauri |

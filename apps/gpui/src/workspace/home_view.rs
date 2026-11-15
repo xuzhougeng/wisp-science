@@ -130,6 +130,9 @@ impl Workspace {
         for (label, tone) in home::activity(project) {
             top = top.child(chip(label, tone, cx));
         }
+        if let Some((label, tone)) = home::folder_badge(project) {
+            top = top.child(chip(label, tone, cx));
+        }
         top = top.child(div().flex_1()).child(
             div()
                 .flex_shrink_0()

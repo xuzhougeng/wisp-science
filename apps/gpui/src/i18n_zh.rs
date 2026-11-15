@@ -1769,4 +1769,9 @@ pub const ZH: &[(&str, &str)] = &[
     ("Pause", "暂停"),
     ("Report now", "立即汇报"),
     ("Reopen", "重新开启"),
+    ("Saved to project folder", "已保存到项目文件夹"),
+    ("Changes not yet saved to folder", "有更改尚未保存到文件夹"),
+    ("Newer version in folder", "文件夹中有更新的版本"),
+    ("Folder version conflict", "文件夹版本冲突"),
+    ("Waiting for the cloud drive", "等待网盘同步完成"),
 ];

@@ -121,6 +121,18 @@ fn activity_in(locale: Locale, project: &ProjectSummary) -> Vec<(String, Tone)> 
     chips
 }
 
+/// Where a cloud-drive folder project's latest changes stand, for its
+/// card; none for a project that is not saved to such a folder.
+pub fn folder_badge(project: &ProjectSummary) -> Option<(&'static str, Tone)> {
+    Some(match project.folder_sync.as_deref()? {
+        "saved" => (tr("Saved to project folder"), Tone::Success),
+        "unpublished" => (tr("Changes not yet saved to folder"), Tone::Attention),
+        "remote-newer" => (tr("Newer version in folder"), Tone::Active),
+        "conflict" => (tr("Folder version conflict"), Tone::Danger),
+        _ => (tr("Waiting for the cloud drive"), Tone::Neutral),
+    })
+}
+
 /// How long ago `then` was, as a short label. Both are Unix seconds; a
 /// millisecond value from an older row is accepted too.
 pub fn age(now: i64, then: i64) -> String {
@@ -175,6 +187,40 @@ pub fn short_path(path: &str, home: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cloud_folder_project_says_where_its_changes_stand() {
+        let mut project = ProjectSummary {
+            starred: false,
+            id: "p".into(),
+            name: "RNA lab".into(),
+            description: String::new(),
+            workspace_dir: "/work/rna".into(),
+            session_count: 0,
+            artifact_count: 0,
+            updated_at: 0,
+            running_count: 0,
+            needs_you_count: 0,
+            sync_configured: false,
+            last_synced_at: None,
+            folder_sync: None,
+        };
+        assert_eq!(folder_badge(&project), None);
+        for (state, label, tone) in [
+            ("saved", "Saved to project folder", Tone::Success),
+            (
+                "unpublished",
+                "Changes not yet saved to folder",
+                Tone::Attention,
+            ),
+            ("remote-newer", "Newer version in folder", Tone::Active),
+            ("conflict", "Folder version conflict", Tone::Danger),
+            ("waiting", "Waiting for the cloud drive", Tone::Neutral),
+        ] {
+            project.folder_sync = Some(state.into());
+            assert_eq!(folder_badge(&project), Some((label, tone)), "{state}");
+        }
+    }
 
     #[test]
     fn deleting_a_folder_says_what_goes_and_needs_the_name() {
