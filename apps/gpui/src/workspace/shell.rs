@@ -756,6 +756,34 @@ impl Workspace {
                     .border_1()
                     .border_color(cx.theme().border)
                     .child(header);
+                // The run this call started or watched, as it stands now.
+                if let Some(run) = &item.run {
+                    let (state, tone) = present::run_state(&run.status, None);
+                    let wanted = run.id.clone();
+                    card = card.child(
+                        div()
+                            .h_flex()
+                            .gap_2()
+                            .px_3()
+                            .pb_2()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(icon("play").text_color(muted))
+                            .child(tr("Run"))
+                            .child(chip(state, tone, cx))
+                            .child(div().flex_1())
+                            .child(
+                                Button::new(SharedString::from(format!("show-run-{index}")))
+                                    .label(tr("Show in Runs"))
+                                    .xsmall()
+                                    .ghost()
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.expanded_run = Some(wanted.clone());
+                                        this.show_panel_tab(PanelTab::Runs, window, cx);
+                                    })),
+                            ),
+                    );
+                }
                 if open {
                     card = card.child(div().px_3().pb_3().child(
                         TextView::markdown(id, present::body(item), window, cx).selectable(true),

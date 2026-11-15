@@ -140,14 +140,19 @@ pub fn session_status(status: &str) -> Option<(&'static str, Tone)> {
 }
 
 pub fn run_status(run: &RunRecord) -> (String, Tone) {
-    let tone = match run.status.as_str() {
+    run_state(run.status.as_str(), run.exit_code)
+}
+
+/// A run's state in a word, with its exit code when that says it failed.
+pub fn run_state(status: &str, exit_code: Option<i64>) -> (String, Tone) {
+    let tone = match status {
         "submitted" | "running" | "cancelling" => Tone::Active,
         "succeeded" => Tone::Success,
         "failed" | "timed_out" | "lost" => Tone::Danger,
         "paused" => Tone::Attention,
         _ => Tone::Neutral,
     };
-    let mut label = match run.status.as_str() {
+    let mut label = match status {
         "draft" => tr("draft").to_owned(),
         "submitted" => tr("submitted").to_owned(),
         "running" => tr("running").to_owned(),
@@ -160,7 +165,7 @@ pub fn run_status(run: &RunRecord) -> (String, Tone) {
         "lost" => tr("lost").to_owned(),
         other => other.replace('_', " "),
     };
-    if let Some(code) = run.exit_code.filter(|code| *code != 0) {
+    if let Some(code) = exit_code.filter(|code| *code != 0) {
         label.push_str(&crate::i18n::fill(tr(" · exit {}"), &[&code]));
     }
     (label, tone)

@@ -1233,4 +1233,6 @@ pub const ZH: &[(&str, &str)] = &[
     ("A figure is here.", "此处有一张图。"),
     ("This notebook has no cells.", "这个笔记本没有单元格。"),
     ("Show as a notebook", "以笔记本显示"),
+    // Run rows.
+    ("Show in Runs", "在运行中查看"),
 ];

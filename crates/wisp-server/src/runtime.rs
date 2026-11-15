@@ -4,6 +4,7 @@ use crate::{
 };
 use anyhow::Result;
 use std::{
+    collections::HashMap,
     path::PathBuf,
     sync::{atomic::Ordering, Arc},
 };
@@ -874,6 +875,92 @@ pub fn item(role: &str, text: &str) -> Item {
     }
 }
 
+/// A run as a transcript row is marked with it.
+pub(crate) struct RunState {
+    pub id: String,
+    pub frame: Option<String>,
+    pub status: String,
+    /// Finished on an SSH host and not yet cleaned up there.
+    pub needs_review: bool,
+}
+
+impl From<&wisp_store::RunRecord> for RunState {
+    fn from(run: &wisp_store::RunRecord) -> Self {
+        Self {
+            id: run.id.clone(),
+            frame: run.frame_id.clone(),
+            status: run.status.as_str().into(),
+            needs_review: run.status.is_terminal()
+                && run.kind == "ssh_direct"
+                && run.cleaned_at.is_none(),
+        }
+    }
+}
+
+/// The run a tool row started: the run tools answer with the run's record.
+fn submitted_run_id(item: &Item) -> Option<String> {
+    if item.role != "tool"
+        || item.ok != Some(true)
+        || !matches!(
+            item.tool_name.as_deref(),
+            Some("run_in_context" | "wisp_run_in_context" | "transfer_between_contexts")
+        )
+    {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_str(&item.text).ok()?;
+    value
+        .get("run_id")
+        .or_else(|| value.get("id"))?
+        .as_str()
+        .filter(|id| !id.trim().is_empty())
+        .map(str::to_owned)
+}
+
+/// The run a tool row started or watched.
+fn transcript_run_id(item: &Item) -> Option<String> {
+    if item.role == "tool"
+        && matches!(
+            item.tool_name.as_deref(),
+            Some("monitor_run" | "wisp_monitor_run")
+        )
+    {
+        let input = item.input.as_deref()?.trim();
+        // The tool is given the id, alone or as `{"run_id": …}`.
+        let id = serde_json::from_str::<serde_json::Value>(input)
+            .ok()
+            .and_then(|value| value.get("run_id")?.as_str().map(str::to_owned))
+            .unwrap_or_else(|| input.to_owned());
+        return (!id.is_empty()).then_some(id);
+    }
+    submitted_run_id(item)
+}
+
+/// Marks each row that started or watched one of `session`'s runs with
+/// that run and how it stands now, and the row that started it, as the
+/// WebView does, so a client can show the run where it happened.
+pub(crate) fn annotate_runs(items: &mut [Item], runs: &[RunState], session: &str) {
+    let mut owners = HashMap::new();
+    for (index, item) in items.iter().enumerate() {
+        if let Some(id) = submitted_run_id(item) {
+            owners.entry(id).or_insert(index);
+        }
+    }
+    for item in items {
+        item.run = transcript_run_id(item).and_then(|id| {
+            let run = runs
+                .iter()
+                .find(|run| run.id == id && run.frame.as_deref() == Some(session))?;
+            Some(wisp_dto::native_conversations::TranscriptRun {
+                owner_index: owners.get(&id).copied(),
+                status: run.status.clone(),
+                needs_review: run.needs_review,
+                id,
+            })
+        });
+    }
+}
+
 pub fn items(messages: &[Message]) -> Vec<Item> {
     let mut items = Vec::new();
     for message in messages {
@@ -985,6 +1072,66 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].text, "你好");
         assert!(bounded(&"中".repeat(50000)).ends_with("server]"));
+    }
+
+    #[test]
+    fn a_row_that_started_or_watched_a_run_is_marked_with_it() {
+        let started = |id: &str, ok| {
+            let mut row = item(
+                "tool",
+                &format!("{{\"id\":\"{id}\",\"status\":\"submitted\"}}"),
+            );
+            row.tool_name = Some("run_in_context".into());
+            row.ok = Some(ok);
+            row
+        };
+        let watched = |input: &str| {
+            let mut row = item("tool", "still running");
+            row.tool_name = Some("monitor_run".into());
+            row.input = Some(input.into());
+            row
+        };
+        let mut rows = vec![
+            item("user", "Align the reads"),
+            started("r1", true),
+            watched("{\"run_id\":\"r1\"}"),
+            started("r2", true),
+            started("r3", false),
+            watched("r1"),
+        ];
+        let run = |id: &str, frame: &str, status: &str| RunState {
+            id: id.into(),
+            frame: Some(frame.into()),
+            status: status.into(),
+            needs_review: false,
+        };
+        let runs = [
+            run("r1", "c-1", "running"),
+            run("r2", "c-other", "succeeded"),
+            run("r3", "c-1", "failed"),
+        ];
+        annotate_runs(&mut rows, &runs, "c-1");
+        let marked: Vec<_> = rows
+            .iter()
+            .map(|row| {
+                row.run
+                    .as_ref()
+                    .map(|run| (run.id.as_str(), run.status.as_str(), run.owner_index))
+            })
+            .collect();
+        assert_eq!(
+            marked,
+            [
+                None,
+                Some(("r1", "running", Some(1))),
+                Some(("r1", "running", Some(1))),
+                // Another conversation's run is not this one's to show.
+                None,
+                // A run call that failed started nothing.
+                None,
+                Some(("r1", "running", Some(1))),
+            ]
+        );
     }
 
     #[test]

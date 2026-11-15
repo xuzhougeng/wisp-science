@@ -181,7 +181,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Read state | A finished answer is marked read once it is on screen in the active window |
 | Transcript | Virtualized Markdown, selectable text, paginated history |
 | Tool calls | One folded line each with outcome and elapsed time; click for the verbatim input and output; interrupted calls stop claiming to run |
-| Runs | A Runs tab: runs started by the conversation with kind, status, exit code, command and output tails; a run that has not ended can be cancelled, and is followed until it ends |
+| Runs | A Runs tab: runs started by the conversation with kind, status, exit code, command and output tails; a run that has not ended can be cancelled, and is followed until it ends. In the transcript, a call that started or watched a run shows the run's state now, and Show in Runs opens its output there |
 | Artifacts | Files a turn wrote are recorded when it ends; an Artifacts tab lists them for the conversation or the project and opens them |
 | Side panel | Tabs: Files, Runs, Artifacts, Notebook, Agents, Highlights, Memos, Memory, Aside; the open tab is named, the others are icons |
 | Agents | The Agents tab lists the helpers the conversation sent off to explore: what each was asked, how it went, and what it found |
@@ -1054,6 +1054,9 @@ Start a slow turn, switch to another app and wait: a notification names
 the conversation when the turn ends, and another when a tool asks for
 approval. Stay in Wisp and confirm nothing is posted. Turn Notify me off
 and Play a sound on in Settings, General: only the sound comes.
+After a turn that started a run, the run call in the transcript has a line
+with the run's state that changes as the run does; Show in Runs opens the
+Runs tab with that run's output open.
 Open a Jupyter notebook in the Files tab: its text cells read as text, each
 code cell shows its run number, its code and what it printed or returned, a
 figure is named in its place and an error shows its name and message; Show

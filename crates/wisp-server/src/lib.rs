@@ -804,6 +804,8 @@ impl Server {
                 item.duration_ms = Some(outcome.duration_ms);
             }
         }
+        let states: Vec<runtime::RunState> = runs.iter().map(Into::into).collect();
+        runtime::annotate_runs(&mut items, &states, &request.session_id);
         if use_live && !live.draft.is_empty() {
             items.push(runtime::item("assistant", &live.draft));
         }

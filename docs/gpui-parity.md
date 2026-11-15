@@ -249,7 +249,7 @@ row says what is there.
 | Composer | ACP agent conversations and their mode / config options | tauri |
 | Transcript | Equations, table copy, internal file links, confirm before opening an external link | ui |
 | Transcript | Generated-artifact strip (the files are in the Artifacts tab, not yet under the message); image and video generation cards | store |
-| Transcript | Run cards: send to background, cancel, harvest outputs, details | shared |
+| Transcript | Run cards: send to background, cancel, harvest outputs, details — a call that started or watched a run shows the run's state under it and opens its output in the Runs tab, where it can be cancelled; no send to background or harvest | shared |
 | Transcript | Compaction markers, undo compaction, stream-recovery and reviewer banners | tauri |
 | Transcript | Undo a turn (restore or remove the files it wrote) — **Done** for the latest turn's text files from the go-back question; no preview beforehand | store |
 | Transcript | Quote a range of turns into another conversation; distill an experience | tauri |
