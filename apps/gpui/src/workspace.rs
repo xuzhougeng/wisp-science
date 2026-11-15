@@ -130,6 +130,9 @@ pub struct Workspace {
     /// Files and references attached to the message being written, per
     /// conversation, like the drafts.
     chips: HashMap<String, Pending>,
+    /// Per conversation, the messages sent from this window with
+    /// references and what they carried, to show on them.
+    sent_references: HashMap<String, Vec<(String, Vec<crate::compose::Chip>)>>,
     /// Messages written while a turn runs, waiting for it to end.
     queue: crate::queue::Queue,
     /// Options, usage and remembered approvals of the open conversation.
@@ -1159,6 +1162,7 @@ impl Workspace {
             delete_name_input,
             open_tools: HashSet::new(),
             chips: HashMap::new(),
+            sent_references: HashMap::new(),
             queue: Default::default(),
             status: None,
             status_tick: 0,
@@ -2897,6 +2901,7 @@ impl Workspace {
             return;
         };
         let attachments = carried.attachments();
+        let referenced = carried.reference_chips();
         // Files alone are a message; the host names it after the first one.
         let sendable = if text.trim().is_empty() && !attachments.is_empty() {
             "files"
@@ -2941,6 +2946,14 @@ impl Workspace {
                 }
                 match result {
                     Ok(_) => {
+                        // What it carried, shown on it while this window
+                        // is open.
+                        if !referenced.is_empty() {
+                            let sent = this.sent_references.entry(session.clone()).or_default();
+                            sent.push((text.trim().to_owned(), referenced));
+                            let over = sent.len().saturating_sub(crate::compose::SENT_KEPT);
+                            sent.drain(..over);
+                        }
                         // Clear only after durable acceptance. Failure preserves the draft.
                         if from_composer {
                             this.composer

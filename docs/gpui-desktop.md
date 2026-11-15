@@ -1405,7 +1405,9 @@ Limits of this slice:
   changed. A model that cannot see gets the paths only; the WebView's
   separate model that describes pictures is not used. A referenced conversation is
   passed as its most recent exchange (about 12,000 bytes), and a skill as its
-  instructions, for that turn only: neither is saved with the message. Paste,
+  instructions, for that turn only: neither is saved with the message, so
+  the chips a message shows for them last while the window that sent it
+  is open, as in the WebView. Paste,
   drag and drop, and typing `@`, `#` or `/` in the composer are not ported.
 - Runs can be cancelled. Harvest, review of a remote workspace, transfers and
   the full log are not ported.

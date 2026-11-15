@@ -132,7 +132,7 @@ to find in the running app.
 | Thinking blocks | Yes | Yes: shown above the composer while the model thinks, and kept in the transcript as a folded Thought ahead of its answer | served |
 | Images and figures inline | Yes | Partial: project pictures an answer shows with Markdown image syntax, and those its turn wrote with `write` or `edit`, drawn under the answer and opened in the Files tab with a click; the WebView's cards for the turn's other files, and pictures written by code the model ran, are not shown | served |
 | Token usage per turn | Yes | Yes: the running turn's usage and context above the composer, and every saved turn's input, output, thinking and cached tokens under its last answer, kept across restarts | served |
-| Skill and attachment chips on the user message | Yes | Partial: file chips; references are context for that turn only and are not shown afterwards | served |
+| Skill and attachment chips on the user message | Yes | Yes: file chips, and the conversations and skills a message was sent with from this window while it is open; as in the WebView, references are context for that turn only and are not kept with the message | served |
 | Copy message [复制] | Yes | Done: copies the message as Markdown | ui |
 | Rewind to a message [回溯 / 撤销] | Yes | Yes: goes back and returns the text to the composer, and the latest turn can be undone with the files it wrote | store |
 | Branch from a message [分支] | Yes | Partial: a copy through that turn, nested under its source, that can be brought back: Bring back has the model summarise what the branch did, you read and change the summary, and it is added to the source conversation; no branch card | store |

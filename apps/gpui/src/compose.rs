@@ -120,6 +120,16 @@ impl Pending {
     }
 
     /// Conversations and skills are context for this turn only.
+    /// The conversations and skills attached: what a sent message shows
+    /// it carried, besides its files.
+    pub fn reference_chips(&self) -> Vec<Chip> {
+        self.0
+            .iter()
+            .filter(|chip| !matches!(chip, Chip::File(_)))
+            .cloned()
+            .collect()
+    }
+
     pub fn references(&self) -> Vec<ComposerReferenceArg> {
         self.0
             .iter()
@@ -186,6 +196,31 @@ pub fn pasted_name(extension: &str, now: chrono::NaiveDateTime) -> String {
 /// Whether Cmd+V (Ctrl+V off macOS) was pressed with nothing else held.
 pub fn is_paste(key: &str, primary: bool, shift: bool, others: bool) -> bool {
     key == "v" && primary && !shift && !others
+}
+
+/// Messages sent from this window with references, and what each carried,
+/// oldest first, kept as long as the window: the host does not keep
+/// references with a message, and neither does the WebView.
+pub const SENT_KEPT: usize = 50;
+
+/// The references the user message at `index` was sent with from this
+/// window, if it was. Messages with the same words are told apart by
+/// order, newest with newest.
+pub fn sent_with<'a>(sent: &'a [(String, Vec<Chip>)], rows: &[Item], index: usize) -> &'a [Chip] {
+    let Some(row) = rows.get(index).filter(|row| row.role == "user") else {
+        return &[];
+    };
+    let text = user_text(row);
+    let text = text.trim();
+    let later = rows[index + 1..]
+        .iter()
+        .filter(|later| later.role == "user" && user_text(later).trim() == text)
+        .count();
+    let same: Vec<&(String, Vec<Chip>)> = sent.iter().filter(|(sent, _)| sent == text).collect();
+    same.len()
+        .checked_sub(later + 1)
+        .and_then(|at| same.get(at))
+        .map_or(&[], |(_, chips)| chips.as_slice())
 }
 
 pub fn user_text(item: &Item) -> String {
@@ -291,6 +326,51 @@ pub fn with_quote(typed: &str, message: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_sent_message_shows_the_references_it_carried() {
+        let row = |role: &str, text: &str| -> Item {
+            serde_json::from_value(json!({
+                "role": role, "text": text, "tool_name": null, "input": null,
+                "ok": null, "status": null
+            }))
+            .unwrap()
+        };
+        let skill = Chip::Skill("stats".into());
+        let earlier = Chip::Conversation {
+            id: "c1".into(),
+            title: "Counts".into(),
+        };
+        let sent = vec![
+            ("compare".to_string(), vec![skill.clone()]),
+            ("compare".to_string(), vec![earlier.clone()]),
+        ];
+        let rows = [
+            row("user", "compare"),
+            row("assistant", "Done."),
+            row("user", "compare"),
+            row("user", "thanks"),
+        ];
+        // The same words twice: newest with newest.
+        assert_eq!(sent_with(&sent, &rows, 2), [earlier]);
+        assert_eq!(sent_with(&sent, &rows, 0), [skill]);
+        // Sent with nothing, not a message, or not there.
+        assert!(sent_with(&sent, &rows, 3).is_empty());
+        assert!(sent_with(&sent, &rows, 1).is_empty());
+        assert!(sent_with(&sent, &rows, 9).is_empty());
+        // An older message with the same words than were sent from here.
+        let more = [
+            row("user", "compare"),
+            row("user", "compare"),
+            row("user", "compare"),
+        ];
+        assert!(sent_with(&sent, &more, 0).is_empty());
+        let pending = Pending(vec![
+            Chip::File("a.csv".into()),
+            Chip::Skill("stats".into()),
+        ]);
+        assert_eq!(pending.reference_chips(), [Chip::Skill("stats".into())]);
+    }
 
     #[test]
     fn a_pasted_picture_is_named_for_when_it_was_pasted() {

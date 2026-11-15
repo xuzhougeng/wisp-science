@@ -847,6 +847,24 @@ impl Workspace {
                     }
                     message = message.child(files);
                 }
+                // The conversations and skills it was sent with from here.
+                let referenced = self
+                    .state
+                    .session
+                    .as_ref()
+                    .and_then(|session| self.sent_references.get(session))
+                    .map_or(&[][..], |sent| compose::sent_with(sent, &self.rows, index));
+                if !referenced.is_empty() {
+                    let mut chips = div().h_flex().flex_wrap().justify_end().gap_1();
+                    for chip in referenced {
+                        chips = chips.child(
+                            Self::chip_box(cx)
+                                .child(icon(chip.icon()).text_color(cx.theme().muted_foreground))
+                                .child(chip.label()),
+                        );
+                    }
+                    message = message.child(chips);
+                }
                 message
                     .child(self.message_actions(index, cx))
                     .into_any_element()
