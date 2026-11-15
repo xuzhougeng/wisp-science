@@ -852,10 +852,14 @@ Limits of this slice:
   delivered to the conversation, whose model sums it up. Run as agents
   takes at most 8 tasks, the delegation limit. Not ported: ACP executors
   and a named model profile per task (a task picks the sub-agent model or
-  the conversation's), tool-call and cost budgets, a graph editor,
+  the conversation's), tool-call and cost budgets, dragging tasks about on the map,
   converting skills into a workflow, and literature and web research
   capabilities.
-  A task can only need tasks listed before it. The two libraries are
+  A task can only need tasks listed before it; besides the numbered
+  After task buttons, the form shows the workflow as a map, each task in
+  the column of its stage with an edge to each task that needs it, where
+  clicking a task and then another makes the later one need the earlier
+  one (or no longer need it). The two libraries are
   separate: this desktop keeps its own under `desktop.workflows` and
   neither reads nor changes the WebView's `workflow_templates`. It starts
   with two that can be changed or removed; a workflow has at most 20

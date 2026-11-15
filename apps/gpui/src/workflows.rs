@@ -116,6 +116,64 @@ pub fn approval_label(approval: WorkflowApproval) -> &'static str {
     }
 }
 
+/// Where one task sits on the workflow's map: its stage is its column,
+/// and its row is its place among the tasks of that stage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MapNode {
+    pub task: usize,
+    pub column: usize,
+    pub row: usize,
+}
+
+/// The workflow as a map, as the WebView's graph editor lays it out: each
+/// task in the column of its stage (one after the latest stage of the
+/// tasks it needs), and an edge from each needed task to the task that
+/// needs it.
+pub fn map(after: &[Vec<usize>]) -> (Vec<MapNode>, Vec<(usize, usize)>) {
+    let mut stages: Vec<usize> = Vec::with_capacity(after.len());
+    for needs in after {
+        let stage = needs
+            .iter()
+            .filter_map(|needed| stages.get(*needed))
+            .max()
+            .map_or(0, |latest| latest + 1);
+        stages.push(stage);
+    }
+    let mut filled: Vec<usize> = Vec::new();
+    let nodes = stages
+        .iter()
+        .enumerate()
+        .map(|(task, &column)| {
+            if filled.len() <= column {
+                filled.resize(column + 1, 0);
+            }
+            let row = filled[column];
+            filled[column] += 1;
+            MapNode { task, column, row }
+        })
+        .collect();
+    let edges = after
+        .iter()
+        .enumerate()
+        .flat_map(|(task, needs)| needs.iter().map(move |needed| (*needed, task)))
+        .filter(|(needed, task)| needed < task)
+        .collect();
+    (nodes, edges)
+}
+
+/// A click on the map's task `clicked` with `picked` picked before: the
+/// pick it leaves, and the dependency to add or take away, as the earlier
+/// task and the later one that needs it. The first click picks; a click on
+/// the picked task lets it go; a click on another joins the two, the one
+/// listed later needing the other.
+pub fn map_click(picked: Option<usize>, clicked: usize) -> (Option<usize>, Option<(usize, usize)>) {
+    match picked {
+        None => (Some(clicked), None),
+        Some(picked) if picked == clicked => (None, None),
+        Some(picked) => (None, Some((picked.min(clicked), picked.max(clicked)))),
+    }
+}
+
 /// The dependencies of every task once the task at `removed` is taken
 /// out: nobody needs it any more, and later tasks move up one place.
 pub fn without(after: &[Vec<usize>], removed: usize) -> Vec<Vec<usize>> {
@@ -186,6 +244,24 @@ mod tests {
         let on = toggled_capability(&["code_run".into()], "project_read");
         assert_eq!(on, ["project_read", "code_run"]);
         assert_eq!(toggled_capability(&on, "code_run"), ["project_read"]);
+    }
+
+    #[test]
+    fn the_map_puts_tasks_in_stage_columns_and_clicks_join_them() {
+        // 0; 1 after 0; 2 alone; 3 after 1 and 2.
+        let after = vec![vec![], vec![0], vec![], vec![1, 2]];
+        let (nodes, edges) = map(&after);
+        let at: Vec<(usize, usize)> = nodes.iter().map(|node| (node.column, node.row)).collect();
+        assert_eq!(at, [(0, 0), (1, 0), (0, 1), (2, 0)]);
+        assert_eq!(edges, [(0, 1), (1, 3), (2, 3)]);
+        assert_eq!(map(&[]), (vec![], vec![]));
+
+        // Pick, let go, and join either way round: the later task needs
+        // the earlier one.
+        assert_eq!(map_click(None, 2), (Some(2), None));
+        assert_eq!(map_click(Some(2), 2), (None, None));
+        assert_eq!(map_click(Some(3), 1), (None, Some((1, 3))));
+        assert_eq!(map_click(Some(0), 2), (None, Some((0, 2))));
     }
 
     #[test]

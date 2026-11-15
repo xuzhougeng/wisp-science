@@ -922,6 +922,10 @@ pub const ZH: &[(&str, &str)] = &[
     ),
     ("Approve and run", "批准并运行"),
     ("May: {}", "可以：{}"),
+    (
+        "Map: click a task, then another, to make the later one need the earlier one, or no longer need it.",
+        "图：先点一个任务，再点另一个，让排在后面的任务依赖前面的那个，再点一次则取消依赖。",
+    ),
     ("A token budget is a whole number above zero.", "令牌预算须是大于零的整数。"),
     ("A time limit is a whole number of seconds.", "时间限制须是整数秒。"),
     ("A result shape is a JSON object, such as a JSON Schema.", "结果结构须是一个 JSON 对象，例如 JSON Schema。"),

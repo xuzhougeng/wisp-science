@@ -154,6 +154,7 @@ impl Workspace {
             .map(|task| self.task_draft(task, window, cx))
             .collect();
         self.workflow_approval = shown.approval;
+        self.workflow_pick = None;
         // The experts a task can be done as.
         self.load_experts(window, cx);
         self.workflow_fields[0].update(cx, |input, cx| input.focus(window, cx));
@@ -243,6 +244,8 @@ impl Workspace {
             .map(|draft| draft.after.clone())
             .collect();
         self.workflow_tasks.remove(index);
+        // Places move up, so a pick may now be another task.
+        self.workflow_pick = None;
         for (draft, needs) in self
             .workflow_tasks
             .iter_mut()
@@ -320,7 +323,7 @@ impl Workspace {
                     })),
             );
         }
-        form = form.child(approval);
+        form = form.child(approval).child(self.workflow_map(cx));
         for (index, draft) in self.workflow_tasks.iter().enumerate() {
             // What its agent may do; none is reading the project.
             let mut allowed = div()
@@ -439,6 +442,140 @@ impl Workspace {
                         })),
                 ),
         )
+    }
+
+    /// The workflow as a map: each task in the column of its stage, with
+    /// an edge to each task that needs it. Clicking a task and then another
+    /// makes the one listed later need the other, or no longer need it.
+    fn workflow_map(&self, cx: &mut Context<Self>) -> Div {
+        const WIDTH: f32 = 150.;
+        const HEIGHT: f32 = 36.;
+        const ACROSS: f32 = 56.;
+        const DOWN: f32 = 12.;
+        const MARGIN: f32 = 6.;
+        let muted = cx.theme().muted_foreground;
+        let after: Vec<Vec<usize>> = self
+            .workflow_tasks
+            .iter()
+            .map(|draft| draft.after.clone())
+            .collect();
+        let (nodes, edges) = workflows::map(&after);
+        let columns = nodes.iter().map(|node| node.column + 1).max().unwrap_or(0) as f32;
+        let rows = nodes.iter().map(|node| node.row + 1).max().unwrap_or(0) as f32;
+        // Nodes are in task order, so a task's place is its index.
+        let places: Vec<(f32, f32)> = nodes
+            .iter()
+            .map(|node| {
+                (
+                    MARGIN + node.column as f32 * (WIDTH + ACROSS),
+                    MARGIN + node.row as f32 * (HEIGHT + DOWN),
+                )
+            })
+            .collect();
+        let lines_at = places.clone();
+        let edge = muted.opacity(0.8);
+        let lines = canvas(
+            |_, _, _| (),
+            move |bounds, _, window, _| {
+                let mut path = PathBuilder::stroke(px(1.5));
+                for &(from, to) in &edges {
+                    let ((fx, fy), (tx, ty)) = (lines_at[from], lines_at[to]);
+                    let start = point(
+                        bounds.origin.x + px(fx + WIDTH),
+                        bounds.origin.y + px(fy + HEIGHT / 2.),
+                    );
+                    let end = point(
+                        bounds.origin.x + px(tx),
+                        bounds.origin.y + px(ty + HEIGHT / 2.),
+                    );
+                    let middle = (start.x + end.x) / 2.;
+                    path.move_to(start);
+                    path.cubic_bezier_to(end, point(middle, start.y), point(middle, end.y));
+                }
+                if let Ok(path) = path.build() {
+                    window.paint_path(path, edge);
+                }
+            },
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full();
+        let mut board = div()
+            .relative()
+            .flex_shrink_0()
+            .w(px(
+                MARGIN * 2. + columns * (WIDTH + ACROSS) - ACROSS.min(columns * ACROSS)
+            ))
+            .h(px(
+                MARGIN * 2. + rows * (HEIGHT + DOWN) - DOWN.min(rows * DOWN)
+            ))
+            .child(lines);
+        for node in &nodes {
+            let task = node.task;
+            let (x, y) = places[task];
+            let title = self.workflow_tasks[task]
+                .title
+                .read(cx)
+                .value()
+                .trim()
+                .to_owned();
+            let text = if title.is_empty() {
+                crate::i18n::fill(tr("Task {}"), &[&(task + 1)])
+            } else {
+                format!("{}. {title}", task + 1)
+            };
+            let picked = self.workflow_pick == Some(task);
+            let primary = cx.theme().primary;
+            board = board.child(
+                div()
+                    .id(("workflow-map-node", task))
+                    .absolute()
+                    .left(px(x))
+                    .top(px(y))
+                    .w(px(WIDTH))
+                    .h(px(HEIGHT))
+                    .px_2()
+                    .flex()
+                    .items_center()
+                    .rounded(cx.theme().radius)
+                    .border_1()
+                    .border_color(if picked { primary } else { cx.theme().border })
+                    .bg(if picked {
+                        primary.opacity(0.12)
+                    } else {
+                        cx.theme().background
+                    })
+                    .text_xs()
+                    .cursor_pointer()
+                    .child(div().truncate().child(text))
+                    .on_click(cx.listener(move |this, _, _, cx| this.click_map(task, cx))),
+            );
+        }
+        div()
+            .v_flex()
+            .gap_1()
+            .child(div().text_xs().text_color(muted).child(tr(
+                "Map: click a task, then another, to make the later one need the earlier one, or no longer need it.",
+            )))
+            .child(
+                div()
+                    .id("workflow-map")
+                    .max_w_full()
+                    .overflow_x_scroll()
+                    .child(board),
+            )
+    }
+
+    fn click_map(&mut self, task: usize, cx: &mut Context<Self>) {
+        let (pick, join) = workflows::map_click(self.workflow_pick, task);
+        self.workflow_pick = pick;
+        if let Some((earlier, later)) = join {
+            if let Some(draft) = self.workflow_tasks.get_mut(later) {
+                draft.after = workflows::toggled(&draft.after, earlier);
+            }
+        }
+        cx.notify();
     }
 
     /// How one task's agent works, as the WebView's Workflow Studio sets
