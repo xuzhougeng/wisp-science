@@ -643,7 +643,7 @@ impl Server {
         root: &str,
         frame: &str,
     ) -> Result<acp_turn::Offered> {
-        let tools = runtime::bridge_tools(
+        let (tools, hidden) = runtime::bridge_tools(
             &self.0.config,
             &self.0.store,
             self.0.runs.clone(),
@@ -657,6 +657,7 @@ impl Server {
         Ok(acp_turn::Offered {
             bridge: self.bridge().await?,
             tools,
+            hidden,
         })
     }
 

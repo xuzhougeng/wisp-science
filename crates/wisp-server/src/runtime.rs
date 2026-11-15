@@ -708,8 +708,8 @@ pub(crate) async fn persisting(
 
 /// The tools an ACP agent is offered through the bridge: what is Wisp's
 /// own science rather than what the agent has itself (files, the shell).
-/// Skills, memory while it is on, the switched-on connectors, the user's
-/// MCP servers, and runs.
+/// Listed: skills, memory while it is on, and runs. Found by search: the
+/// switched-on connectors and the user's MCP servers.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn bridge_tools(
     config: &Config,
@@ -720,7 +720,10 @@ pub(crate) async fn bridge_tools(
     frame: &str,
     service_keys: &[(String, String)],
     extra_tools: Vec<Box<dyn wisp_tools::Tool>>,
-) -> Vec<Box<dyn wisp_tools::Tool>> {
+) -> (
+    Vec<Box<dyn wisp_tools::Tool>>,
+    Vec<Box<dyn wisp_tools::Tool>>,
+) {
     let skills = Arc::new(skill_index(config, store, project, root).await);
     let mut tools: Vec<Box<dyn wisp_tools::Tool>> = vec![
         Box::new(wisp_skills::ListSkillCatalogTool::new(skills.clone())),
@@ -758,16 +761,21 @@ pub(crate) async fn bridge_tools(
         scope,
     )));
     // A name already taken stays with the tool that had it.
+    let mut hidden: Vec<Box<dyn wisp_tools::Tool>> = Vec::new();
     for tool in connector_tools(store, service_keys)
         .await
         .into_iter()
         .chain(extra_tools)
     {
-        if !tools.iter().any(|kept| kept.name() == tool.name()) {
-            tools.push(tool);
+        if !tools
+            .iter()
+            .chain(&hidden)
+            .any(|kept| kept.name() == tool.name())
+        {
+            hidden.push(tool);
         }
     }
-    tools
+    (tools, hidden)
 }
 
 pub async fn run(

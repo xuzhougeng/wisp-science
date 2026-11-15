@@ -7065,7 +7065,14 @@ async fn the_bridge_offers_wisps_science_tools_over_mcp_and_a_relay_carries_stdi
     let root = server.project_root(PROJECT).await.unwrap();
     let offered = server.bridge_offer(PROJECT, &root, &id).await.unwrap();
     let bridge = offered.bridge.clone();
-    bridge.offer("token-1", std::path::Path::new(&root), offered.tools);
+    let hidden = offered.hidden.len();
+    assert!(hidden > 0, "the bundled connectors are found by search");
+    bridge.offer(
+        "token-1",
+        std::path::Path::new(&root),
+        offered.tools,
+        offered.hidden,
+    );
     let url = bridge.url("token-1");
     assert!(url.starts_with("http://127.0.0.1:"));
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
@@ -7102,12 +7109,35 @@ async fn the_bridge_offers_wisps_science_tools_over_mcp_and_a_relay_carries_stdi
         "list_skill_catalog",
         "run_in_context",
         "get_run",
+        "wisp_search_tools",
+        "wisp_use_tool",
     ] {
         assert!(
             names.iter().any(|name| name == wanted),
             "{wanted} in {names:?}"
         );
     }
+    // The connectors are not listed one by one; a search finds them.
+    assert!(!names.iter().any(|name| name == "search_articles"));
+    let found: Value = ask(json!({"jsonrpc": "2.0", "id": 10, "method": "tools/call",
+        "params": {"name": "wisp_search_tools", "arguments": {"query": "search articles", "limit": 3}}}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let found: Value =
+        serde_json::from_str(found["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(found["results"][0]["tool_name"], "search_articles");
+    assert!(found["results"].as_array().unwrap().len() <= 3);
+    assert_eq!(found["total_hidden_tools"], hidden);
+    // The listed tools are reached through wisp_use_tool too.
+    let used: Value = ask(json!({"jsonrpc": "2.0", "id": 11, "method": "tools/call",
+        "params": {"name": "wisp_use_tool", "arguments": {"tool_name": "list_skill_catalog", "tool_input": {}}}}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(used["result"]["isError"], false, "{used}");
     // The agent has its own file and shell tools.
     for kept_out in ["shell", "write", "edit", "read"] {
         assert!(!names.iter().any(|name| name == kept_out), "{kept_out}");

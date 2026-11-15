@@ -42,6 +42,7 @@ const TOOL_PREFIX: &str = "acp:";
 pub(crate) struct Offered {
     pub bridge: Arc<crate::acp_bridge::Bridge>,
     pub tools: Vec<Box<dyn wisp_tools::Tool>>,
+    pub hidden: Vec<Box<dyn wisp_tools::Tool>>,
 }
 
 /// How the agent reaches the bridge: over HTTP when it can, through the
@@ -390,7 +391,8 @@ async fn connect(
             && live.cwd == cwd
         {
             // The same address, with the tools as they are now.
-            live.bridge.offer(&live.token, cwd, offered.tools);
+            live.bridge
+                .offer(&live.token, cwd, offered.tools, offered.hidden);
             return Ok((live.handle.clone(), live.session.clone()));
         }
     }
@@ -425,7 +427,9 @@ async fn connect(
     .map_err(|error| anyhow::anyhow!("The agent could not be started: {error}"))?;
     let handle = Arc::new(handle);
     let token = uuid::Uuid::new_v4().simple().to_string();
-    offered.bridge.offer(&token, cwd, offered.tools);
+    offered
+        .bridge
+        .offer(&token, cwd, offered.tools, offered.hidden);
     let servers = bridge_server(&handle, &offered.bridge.url(&token));
     let (id, state) = match &binding {
         Some(binding) => {

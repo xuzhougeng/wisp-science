@@ -534,7 +534,11 @@ Limits of this slice:
   `wisp-science`: the skill catalog and skills, memory search while
   memory is on, runs (`run_in_context` and the tools that follow a run),
   the switched-on literature and biology connectors and the user's MCP
-  servers; not files or the shell, which the agent has itself. The host
+  servers; not files or the shell, which the agent has itself. The
+  skills, memory and run tools are listed; the many connector and MCP
+  tools are kept behind `wisp_search_tools` and `wisp_use_tool` (the
+  WebView's names, arguments and scoring), so the agent is not handed
+  hundreds of tools at once. The host
   serves them on a loopback address with an unguessable path per
   conversation (offered again each turn, so switching a connector applies
   from the next message); an agent that speaks MCP over HTTP is given the
@@ -542,8 +546,8 @@ Limits of this slice:
   executable in relay mode (`--wisp-mcp-relay <address>`), which carries
   stdio to it. Calls run in the project folder without a question of
   Wisp's (the agent asks its own), and what would need one is refused.
-  Not ported from the WebView: the bridge's tool search, capabilities,
-  artifact, research graph and delegation tools,
+  Not ported from the WebView: the bridge's capabilities, artifact,
+  research graph and delegation tools,
   questions it asks the user, file and conversation
   references sent as resource links, and a conversation run by an agent
   inside an exploration.
