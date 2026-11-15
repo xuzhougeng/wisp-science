@@ -2477,6 +2477,9 @@ impl Workspace {
         if let Some(follow_ups) = self.render_follow_ups(cx) {
             content = content.child(follow_ups);
         }
+        if let Some(transfers) = self.render_transfers(cx) {
+            content = content.child(transfers);
+        }
         content
             .child(self.render_composer(running, cx))
             .children(self.render_terminal_dock(cx))

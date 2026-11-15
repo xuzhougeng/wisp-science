@@ -64,6 +64,7 @@ mod terminal_screen;
 mod theme;
 mod toolchain;
 mod trajectory;
+mod transfers;
 mod usage;
 mod workflows;
 mod workspace;

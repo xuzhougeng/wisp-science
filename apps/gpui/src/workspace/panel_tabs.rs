@@ -841,6 +841,10 @@ impl Workspace {
                         .child(div().flex_1())
                         .child(actions),
                 );
+            // A run moving files says how far it has got.
+            if let Some(progress) = crate::transfers::progress(run) {
+                card = card.child(super::transfers_view::meter(&progress, cx));
+            }
             if run.cleaned_at.is_some() {
                 card = card.child(
                     div()

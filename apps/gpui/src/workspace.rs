@@ -60,6 +60,7 @@ mod tabs_view;
 mod terminal_view;
 mod trajectory_view;
 mod transfer_view;
+mod transfers_view;
 
 use crate::i18n::tr;
 use std::{
@@ -780,6 +781,8 @@ pub struct Workspace {
     /// What a finished run left on its SSH host, being looked through.
     run_review: Option<crate::run_review::RunReview>,
     run_review_filter: Entity<InputState>,
+    /// The transfers above the composer show as one line.
+    transfers_folded: bool,
     artifacts: Vec<ArtifactRow>,
     /// The Artifacts tab lists the whole project instead of the conversation.
     artifacts_all: bool,
@@ -1657,6 +1660,7 @@ impl Workspace {
             run_cleaning: None,
             run_review: None,
             run_review_filter,
+            transfers_folded: false,
             artifacts: vec![],
             artifacts_all: false,
             artifacts_request: 0,
