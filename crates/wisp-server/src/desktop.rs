@@ -3316,14 +3316,20 @@ impl Server {
             StorageView {
                 database_bytes: file("wisp.sqlite"),
                 favorites_bytes: file("library.sqlite"),
+                tools_bytes: folder_size(&data.join("toolchain")),
+                plugins_bytes: folder_size(&data.join("plugins")),
+                data_bytes: folder_size(&data),
                 projects: projects
                     .into_iter()
                     .map(|(id, name, workspace, _, _, conversations, ..)| {
                         let root = std::path::Path::new(&workspace);
+                        let (workspace_bytes, workspace_more) = folder_size_bounded(root);
                         ProjectStorage {
                             conversations: conversations.max(0) as usize,
                             wisp_bytes: folder_size(&root.join(".wisp")),
                             uploads_bytes: folder_size(&root.join("uploads")),
+                            workspace_bytes,
+                            workspace_more,
                             missing: !root.is_dir(),
                             project_id: id,
                             name,
@@ -5795,6 +5801,11 @@ pub struct ProjectStorage {
     pub wisp_bytes: u64,
     /// Size of the files attached from outside the project.
     pub uploads_bytes: u64,
+    /// The whole project folder, the researcher's files included, as the
+    /// WebView's Workspace files counts it; `workspace_more` when the
+    /// folder was too large to walk to its end.
+    pub workspace_bytes: u64,
+    pub workspace_more: bool,
     /// The folder is not there (an unplugged disk, a moved folder).
     pub missing: bool,
 }
@@ -5805,7 +5816,22 @@ pub struct StorageView {
     /// Conversations, settings and run records of every project.
     pub database_bytes: u64,
     pub favorites_bytes: u64,
+    /// Python, R and Node.js installed into the data folder.
+    pub tools_bytes: u64,
+    /// Installed plugins.
+    pub plugins_bytes: u64,
+    /// The whole data folder; what the parts above leave is the rest.
+    pub data_bytes: u64,
     pub projects: Vec<ProjectStorage>,
+}
+
+impl StorageView {
+    /// What the data folder holds besides the parts listed.
+    pub fn other_bytes(&self) -> u64 {
+        self.data_bytes.saturating_sub(
+            self.database_bytes + self.favorites_bytes + self.tools_bytes + self.plugins_bytes,
+        )
+    }
 }
 
 /// Entries one folder measurement may look at.
@@ -5814,6 +5840,11 @@ const SIZE_BUDGET: usize = 50_000;
 /// The size of the regular files under `root`, links not followed. A very
 /// large folder is measured up to a bound rather than for minutes.
 fn folder_size(root: &std::path::Path) -> u64 {
+    folder_size_bounded(root).0
+}
+
+/// [`folder_size`], and whether the folder holds more than was looked at.
+fn folder_size_bounded(root: &std::path::Path) -> (u64, bool) {
     let mut total = 0;
     let mut seen = 0;
     let mut pending = vec![root.to_path_buf()];
@@ -5824,7 +5855,7 @@ fn folder_size(root: &std::path::Path) -> u64 {
         for entry in entries.flatten() {
             seen += 1;
             if seen > SIZE_BUDGET {
-                return total;
+                return (total, true);
             }
             let Ok(kind) = entry.file_type() else {
                 continue;
@@ -5836,7 +5867,7 @@ fn folder_size(root: &std::path::Path) -> u64 {
             }
         }
     }
-    total
+    (total, false)
 }
 
 /// A bundled connector as Settings lists it.

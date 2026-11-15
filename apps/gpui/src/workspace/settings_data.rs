@@ -338,19 +338,49 @@ impl Workspace {
                 tr("Copies of what you saved, apart from the conversations."),
                 view.favorites_bytes,
             ))
+            .child(line(
+                tr("Python, R and Node.js"),
+                tr("What Settings, Environments installed into the data folder."),
+                view.tools_bytes,
+            ))
+            .child(line(
+                tr("Plugins"),
+                tr("Installed plugins, every version kept."),
+                view.plugins_bytes,
+            ))
+            .child(line(
+                tr("Other"),
+                tr("Everything else in the data folder."),
+                view.other_bytes(),
+            ))
+            .child(line(
+                tr("Total"),
+                tr("The whole data folder."),
+                view.data_bytes,
+            ))
             .child(heading(tr("In each project's folder")))
             .child(div().pb_1().text_xs().text_color(muted).child(tr(
-                "What Wisp itself keeps there: its .wisp folder (memory, snapshots) and the \
-                 files you attached from elsewhere. Your own files are not counted.",
+                "The whole folder, your own files included, and of it what Wisp itself keeps \
+                 there: its .wisp folder (memory, snapshots) and the files you attached from \
+                 elsewhere. A very large folder is counted up to 50,000 entries.",
             )));
         let home_dir = dirs::home_dir().map(|path| path.to_string_lossy().into_owned());
         for row in &view.projects {
             let detail = if row.missing {
                 tr("The folder is not there.").to_owned()
             } else {
+                let whole = if row.workspace_more {
+                    crate::i18n::fill(tr("over {}"), &[&size_label(row.workspace_bytes)])
+                } else {
+                    size_label(row.workspace_bytes)
+                };
                 crate::i18n::fill(
-                    tr(".wisp {} · uploads {}"),
-                    &[&size_label(row.wisp_bytes), &size_label(row.uploads_bytes)],
+                    tr("{} · .wisp {} · uploads {}"),
+                    &[
+                        &whole,
+                        &size_label(row.wisp_bytes),
+                        &size_label(row.uploads_bytes),
+                    ],
                 )
             };
             page = page.child(

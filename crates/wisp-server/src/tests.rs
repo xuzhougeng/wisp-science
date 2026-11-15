@@ -3511,9 +3511,27 @@ async fn usage_is_counted_from_each_model_call_and_storage_is_measured() {
     assert_eq!(used.days.last().unwrap().1, 450);
     assert_eq!(used.days.iter().map(|(_, tokens)| tokens).sum::<u64>(), 450);
 
-    // Storage: the database, no favorites yet, and what is kept in each
-    // project's folder.
+    // Storage: the database, no favorites yet, what was installed, and
+    // what is kept in each project's folder.
+    std::fs::create_dir_all(data.join("toolchain/python")).unwrap();
+    std::fs::write(data.join("toolchain/python/bin"), vec![0u8; 2_048]).unwrap();
+    std::fs::create_dir_all(data.join("plugins/motif/1.0.0")).unwrap();
+    std::fs::write(data.join("plugins/motif/1.0.0/SKILL.md"), vec![0u8; 512]).unwrap();
+    std::fs::write(folder.join("reads.fq"), vec![0u8; 1_000]).unwrap();
     let storage = server.storage().await.unwrap();
+    assert_eq!(storage.tools_bytes, 2_048);
+    assert_eq!(storage.plugins_bytes, 512);
+    assert!(
+        storage.data_bytes >= storage.database_bytes + storage.tools_bytes + storage.plugins_bytes
+    );
+    assert_eq!(
+        storage.other_bytes(),
+        storage.data_bytes
+            - storage.database_bytes
+            - storage.favorites_bytes
+            - storage.tools_bytes
+            - storage.plugins_bytes
+    );
     // The same folder, whatever links the temp path goes through.
     let same = |shown: &str, wanted: &Path| {
         std::fs::canonicalize(shown).unwrap() == std::fs::canonicalize(wanted).unwrap()
@@ -3532,6 +3550,9 @@ async fn usage_is_counted_from_each_model_call_and_storage_is_measured() {
     let lab_kept = kept(&lab);
     assert_eq!(lab_kept.conversations, 1);
     assert_eq!(lab_kept.uploads_bytes, 4_096);
+    // The whole folder: the researcher's own files as well.
+    assert!(lab_kept.workspace_bytes >= 4_096 + 1_000 + lab_kept.wisp_bytes);
+    assert!(!lab_kept.workspace_more);
     assert!(!lab_kept.missing);
     assert!(same(&lab_kept.workspace_dir, &folder));
     let lost_kept = kept(&lost);

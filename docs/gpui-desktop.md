@@ -1382,10 +1382,13 @@ Limits of this slice:
   again unshortened. The description is for you and is not shown to the
   model. The built-in workspace can be renamed like any other. Sync, run
   retention and deleting a project together with its data are not ported.
-- Storage measures Wisp's own files: the database, the favorites, and each
-  project's `.wisp` and `uploads` folders (up to 50,000 entries each). It
-  does not measure your data, and nothing can be moved or cleaned from the
-  page. Thinking is kept as the model reported it; a model that reports
+- Storage measures, as the WebView's page does, the database, the
+  favorites, the Python, R and Node.js installed into the data folder, the
+  plugins, the rest of the data folder and its total, and for each project
+  its whole folder (your own files included) with its `.wisp` and
+  `uploads` parts, each walked up to 50,000 entries (a larger folder reads
+  "over" what was counted). Nothing can be moved or cleaned from the page,
+  in the WebView either. Thinking is kept as the model reported it; a model that reports
   none leaves no Thought. Fast mode is a lightning button in the composer
   for a conversation on OpenAI's own API, its Responses API or a ChatGPT
   sign-in; it is saved as the WebView saves it (`service_tier=priority`)
