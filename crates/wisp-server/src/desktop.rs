@@ -2229,6 +2229,50 @@ impl Server {
         target: &str,
         keep: bool,
     ) -> Result<String> {
+        self.transfer(project, session, target, keep, None).await
+    }
+
+    /// What moving a conversation to `target` with its artifacts would take
+    /// along: the artifacts it owns and their files, and those that stay
+    /// because another conversation here uses them. The move is made with
+    /// this preview's fingerprint, so what was read is what moves.
+    pub async fn preview_move_with_artifacts(
+        &self,
+        project: &str,
+        session: &str,
+        target: &str,
+    ) -> Result<wisp_dto::SessionArtifactPreview> {
+        ensure!(project != target, "Choose a different project");
+        self.own_conversation(project, session).await?;
+        self.known_project(target).await?;
+        self.0
+            .store
+            .preview_session_artifacts(session, project, Some(target))
+            .await
+    }
+
+    /// Moves a conversation to `target` with the artifacts its preview
+    /// listed, as the WebView's move with artifacts does; refused when what
+    /// would move has changed since the preview was read.
+    pub async fn move_conversation_with_artifacts(
+        &self,
+        project: &str,
+        session: &str,
+        target: &str,
+        fingerprint: &str,
+    ) -> Result<String> {
+        self.transfer(project, session, target, false, Some(fingerprint))
+            .await
+    }
+
+    async fn transfer(
+        &self,
+        project: &str,
+        session: &str,
+        target: &str,
+        keep: bool,
+        artifacts: Option<&str>,
+    ) -> Result<String> {
         ensure!(project != target, "Choose a different project");
         let live = self.session(session);
         // Acceptance takes the same lock, so no turn can start mid-transfer.
@@ -2248,10 +2292,43 @@ impl Server {
                 .await?;
         } else {
             self.without_branches(project, session, "move").await?;
-            self.0
-                .store
-                .move_session_to_project(session, project, target, &id)
-                .await?;
+            match artifacts {
+                Some(fingerprint) => {
+                    // Nothing else may touch either project's files meanwhile.
+                    let busy = || {
+                        anyhow::anyhow!(
+                            "A project is busy. Try again when its current work finishes."
+                        )
+                    };
+                    let _source = self
+                        .0
+                        .project_locks
+                        .project(project)
+                        .try_write_owned()
+                        .map_err(|_| busy())?;
+                    let _target = self
+                        .0
+                        .project_locks
+                        .project(target)
+                        .try_write_owned()
+                        .map_err(|_| busy())?;
+                    self.0
+                        .store
+                        .operate_session_with_artifacts(
+                            session,
+                            project,
+                            Some((target, &id)),
+                            fingerprint,
+                        )
+                        .await?;
+                }
+                None => {
+                    self.0
+                        .store
+                        .move_session_to_project(session, project, target, &id)
+                        .await?;
+                }
+            }
         }
         // The user sent it there themselves; it does not arrive unread.
         self.0.store.mark_frame_seen(&id).await?;

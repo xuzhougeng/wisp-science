@@ -414,6 +414,8 @@ impl Workspace {
 
     /// Opens one of the conversation bar's surfaces in place of the others.
     pub(super) fn toggle_bar_layer(&mut self, layer: Layer, cx: &mut Context<Self>) {
+        // A move waiting to be confirmed is not kept for the next opening.
+        self.transfer_preview = None;
         if !self.layers.close(layer) {
             self.layers.switch(layer, &Layer::CONVERSATION_BAR);
         }
@@ -423,7 +425,6 @@ impl Workspace {
     /// Copies or moves the open conversation to `target`, as the transfer
     /// menu is set.
     fn transfer(&mut self, target: String, window: &mut Window, cx: &mut Context<Self>) {
-        self.layers.close(Layer::TransferMenu);
         let (Some(project), Some(session)) =
             (self.state.project.clone(), self.state.session.clone())
         else {
@@ -436,10 +437,61 @@ impl Workspace {
             .find(|project| project.id == target)
             .map(|project| project.name.clone())
             .unwrap_or_else(|| "the other project".into());
-        let selection = self.state.selection();
+        // With its artifacts: first what would go along, to confirm.
+        if !keep && self.transfer_artifacts {
+            let reply = self
+                .backend
+                .preview_move_with_artifacts(project, session, target.clone());
+            self.organise(
+                reply,
+                move |this, preview, _, cx| {
+                    this.transfer_preview = Some((target, name, preview));
+                    cx.notify();
+                },
+                window,
+                cx,
+            );
+            return;
+        }
+        self.layers.close(Layer::TransferMenu);
         let reply = self
             .backend
             .transfer_conversation(project, session.clone(), target, keep);
+        self.finish_transfer(reply, session, name, keep, false, window, cx);
+    }
+
+    /// Moves the open conversation with its artifacts, as the preview read
+    /// for the project chosen listed them.
+    fn confirm_move_with_artifacts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(project), Some(session), Some((target, name, preview))) = (
+            self.state.project.clone(),
+            self.state.session.clone(),
+            self.transfer_preview.take(),
+        ) else {
+            return;
+        };
+        self.layers.close(Layer::TransferMenu);
+        let reply = self.backend.move_conversation_with_artifacts(
+            project,
+            session.clone(),
+            target,
+            preview.fingerprint,
+        );
+        self.finish_transfer(reply, session, name, false, true, window, cx);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn finish_transfer(
+        &mut self,
+        reply: Reply<String>,
+        session: String,
+        name: String,
+        keep: bool,
+        with_artifacts: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selection = self.state.selection();
         self.organise(
             reply,
             move |this, _, window, cx| {
@@ -454,10 +506,17 @@ impl Workspace {
                 if this.state.current(&selection) {
                     this.leave_conversation(window, cx);
                 }
-                this.notice = Some(crate::i18n::fill(
-                    tr("Moved to {}. Its files, runs and artifacts stay in this project."),
-                    &[&name],
-                ));
+                this.notice = Some(if with_artifacts {
+                    crate::i18n::fill(
+                        tr("Moved to {} with the artifacts that could go along."),
+                        &[&name],
+                    )
+                } else {
+                    crate::i18n::fill(
+                        tr("Moved to {}. Its files, runs and artifacts stay in this project."),
+                        &[&name],
+                    )
+                });
             },
             window,
             cx,
@@ -1240,6 +1299,45 @@ impl Workspace {
                 .child(mode("transfer-move", tr("Move"), false))
                 .child(mode("transfer-copy", tr("Copy"), true)),
         );
+        // A move waiting for its artifacts' preview to be confirmed.
+        if let Some((_, name, preview)) = &self.transfer_preview {
+            let mut confirm = div().v_flex().gap_1().px_2().py_1().text_xs().child(
+                div()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(crate::i18n::fill(tr("Move to {}"), &[name])),
+            );
+            for line in crate::organise::move_preview_lines(preview) {
+                confirm = confirm.child(div().text_color(muted).child(line));
+            }
+            confirm = confirm.child(
+                div()
+                    .h_flex()
+                    .gap_1()
+                    .pt_1()
+                    .child(
+                        Button::new("transfer-confirm")
+                            .label(tr("Move"))
+                            .xsmall()
+                            .primary()
+                            .disabled(self.pending)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.confirm_move_with_artifacts(window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("transfer-back")
+                            .label(tr("Back"))
+                            .xsmall()
+                            .ghost()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.transfer_preview = None;
+                                cx.notify();
+                            })),
+                    ),
+            );
+            button = button.child(deferred(menu.child(confirm)));
+            return button;
+        }
         menu = menu.child(
             div()
                 .px_2()
@@ -1251,6 +1349,10 @@ impl Workspace {
                         "A copy of the transcript is added to the project you choose. \
                      This conversation stays here.",
                     )
+                } else if self.transfer_artifacts {
+                    tr("The transcript moves to the project you choose, with the \
+                     artifacts it made and their files, unless another conversation \
+                     uses them or they were changed since. Runs stay here.")
                 } else {
                     tr(
                         "The transcript moves to the project you choose. Its files, \
@@ -1258,6 +1360,22 @@ impl Workspace {
                     )
                 }),
         );
+        if !copy {
+            let along = self.transfer_artifacts;
+            menu = menu.child(
+                div().px_1().child(
+                    Button::new("transfer-artifacts")
+                        .label(tr("Take its artifacts along"))
+                        .xsmall()
+                        .ghost()
+                        .selected(along)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.transfer_artifacts = !along;
+                            cx.notify();
+                        })),
+                ),
+            );
+        }
         let home_dir = dirs::home_dir().map(|path| path.to_string_lossy().into_owned());
         let mut targets = div()
             .id("transfer-targets")

@@ -342,6 +342,10 @@ pub struct Workspace {
     folder_name: Entity<InputState>,
     /// The transfer menu copies instead of moving.
     transfer_copy: bool,
+    /// Moving takes the conversation's artifacts along; and the preview of
+    /// that for the project chosen, with its name, waiting to be confirmed.
+    transfer_artifacts: bool,
+    transfer_preview: Option<(String, String, wisp_dto::SessionArtifactPreview)>,
     /// Something that went as asked and is worth a line.
     notice: Option<String>,
     /// The project's memos; `None` until they were read.
@@ -1303,6 +1307,8 @@ impl Workspace {
             folder_target: None,
             folder_name,
             transfer_copy: false,
+            transfer_artifacts: false,
+            transfer_preview: None,
             notice: None,
             memos: None,
             memos_request: 0,
@@ -1700,9 +1706,10 @@ impl Workspace {
                 Layer::SortMenu
                 | Layer::BatchGroupMenu
                 | Layer::ConfirmBatchDelete
-                | Layer::GroupMenu
-                | Layer::TransferMenu,
+                | Layer::GroupMenu,
             ) => {}
+            // A move waiting to be confirmed is forgotten with its menu.
+            Some(Layer::TransferMenu) => self.transfer_preview = None,
             None => return false,
         }
         cx.notify();

@@ -5281,6 +5281,53 @@ async fn files_a_turn_writes_become_artifacts_of_its_conversation() {
         .is_err());
     assert!(server.artifact_versions(PROJECT, "ghost").await.is_err());
 
+    // Moved with its artifacts: what the preview listed goes along, and a
+    // preview that no longer matches moves nothing.
+    // A file changed by hand since it was written stays where it is.
+    let changed = server
+        .preview_move_with_artifacts(PROJECT, &writer, &other)
+        .await
+        .unwrap();
+    assert!(changed.artifacts.is_empty(), "{changed:?}");
+    assert_eq!(changed.retained[0].reason, "changed");
+    std::fs::write(cfg.workspace.join("answer.txt"), "offline result").unwrap();
+    let preview = server
+        .preview_move_with_artifacts(PROJECT, &writer, &other)
+        .await
+        .unwrap();
+    assert_eq!(preview.artifacts, ["answer.txt"], "{preview:?}");
+    assert!(preview.files.contains(&"answer.txt".to_string()));
+    assert!(server
+        .preview_move_with_artifacts(PROJECT, &writer, PROJECT)
+        .await
+        .is_err());
+    assert!(server
+        .move_conversation_with_artifacts(PROJECT, &writer, &other, "stale")
+        .await
+        .is_err());
+    assert_eq!(
+        server.artifacts(PROJECT, None, "", 10).await.unwrap().len(),
+        1
+    );
+    let moved = server
+        .move_conversation_with_artifacts(PROJECT, &writer, &other, &preview.fingerprint)
+        .await
+        .unwrap();
+    assert!(server
+        .artifacts(PROJECT, None, "", 10)
+        .await
+        .unwrap()
+        .is_empty());
+    let there = server.artifacts(&other, None, "", 10).await.unwrap();
+    assert_eq!(there.len(), 1, "{there:?}");
+    assert_eq!(there[0].name, "answer.txt");
+    assert_eq!(there[0].session_id, moved);
+    // The file went to the same place in the other project's folder.
+    assert_eq!(
+        std::fs::read_to_string(temp.path().join("other-project/answer.txt")).unwrap(),
+        "offline result"
+    );
+
     // A run that does not exist, or is not this project's, is not cancelled.
     assert!(server.cancel_run(PROJECT, "ghost").await.is_err());
     assert!(server.cancel_run("missing", "ghost").await.is_err());

@@ -390,6 +390,28 @@ impl Picks {
 
 /// A file name for a conversation saved as a document: its title with
 /// what a file name cannot hold replaced, not too long, ending in `.md`.
+/// What moving a conversation with its artifacts takes along and leaves,
+/// as its preview says, in a line or two.
+pub fn move_preview_lines(preview: &wisp_dto::SessionArtifactPreview) -> Vec<String> {
+    let mut lines = vec![if preview.artifacts.is_empty() {
+        tr("None of its artifacts can go along; the transcript moves alone.").to_owned()
+    } else {
+        crate::i18n::fill(
+            tr("Takes {} artifacts along: {}"),
+            &[&preview.artifacts.len(), &preview.artifacts.join(", ")],
+        )
+    }];
+    if !preview.retained.is_empty() {
+        let stay: Vec<String> = preview
+            .retained
+            .iter()
+            .map(|kept| format!("{} ({})", kept.name, kept.reason))
+            .collect();
+        lines.push(crate::i18n::fill(tr("Stay here: {}"), &[&stay.join(", ")]));
+    }
+    lines
+}
+
 pub fn export_name(title: &str) -> String {
     let cleaned: String = title
         .trim()
@@ -465,6 +487,27 @@ pub fn nested(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_move_with_artifacts_says_what_goes_and_what_stays() {
+        let mut preview = wisp_dto::SessionArtifactPreview::default();
+        assert_eq!(
+            move_preview_lines(&preview),
+            ["None of its artifacts can go along; the transcript moves alone."]
+        );
+        preview.artifacts = vec!["a.csv".into(), "plot.png".into()];
+        preview.retained = vec![wisp_dto::RetainedSessionArtifact {
+            name: "notes.md".into(),
+            reason: "changed".into(),
+        }];
+        assert_eq!(
+            move_preview_lines(&preview),
+            [
+                "Takes 2 artifacts along: a.csv, plot.png",
+                "Stay here: notes.md (changed)"
+            ]
+        );
+    }
 
     #[test]
     fn subagents_nest_like_branches() {

@@ -467,6 +467,31 @@ impl Backend {
 
     /// Copies (`keep`) or moves a conversation to another project and
     /// returns its id there.
+    pub fn preview_move_with_artifacts(
+        &self,
+        project: String,
+        session: String,
+        target: String,
+    ) -> Reply<wisp_dto::SessionArtifactPreview> {
+        self.local(move |host| async move {
+            host.preview_move_with_artifacts(&project, &session, &target)
+                .await
+        })
+    }
+
+    pub fn move_conversation_with_artifacts(
+        &self,
+        project: String,
+        session: String,
+        target: String,
+        fingerprint: String,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.move_conversation_with_artifacts(&project, &session, &target, &fingerprint)
+                .await
+        })
+    }
+
     pub fn transfer_conversation(
         &self,
         project: String,

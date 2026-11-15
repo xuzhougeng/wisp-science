@@ -84,7 +84,7 @@ to find in the running app.
 | Folders [新建分组]: create, rename, reorder, move a conversation | Yes | Done: reorder is one place at a time, no drag | store |
 | Multi-select and batch actions [选择] | Yes | Done: move to group, archive or restore, delete | store |
 | Sort and group options [排序与分组] | Yes | Done: date sections are elapsed spans, not calendar days | ui |
-| Copy or move a conversation to another project | Yes *(source)* | Partial: transcript only; moving its artifacts along is not ported | store |
+| Copy or move a conversation to another project | Yes *(source)* | Yes: a copy takes the transcript; a move takes it alone or, with Take its artifacts along, the artifacts and files the WebView's preview lists, confirmed from that preview | store |
 | Files entry [文件] | Opens the Files panel | Done | served |
 | Research journey [研究历程] | Section 7 | Partial: see section 7 | store |
 | Memos [备忘录] | Section 6 | Done | store |

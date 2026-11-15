@@ -128,7 +128,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Groups | Named groups per project: create, rename, reorder, delete (conversations stay); put a conversation in one from its bar; fold a section |
 | Sort and group | The list by groups, by last activity or flat, newest first or by name; remembered across launches |
 | Select mode | Pick conversations by click, Shift-click for a range, or all; move them to a group, archive or restore them, or delete them after one confirmation; a line reports what changed and why anything was left |
-| Copy or move | Copy or move the open conversation's transcript to another project |
+| Copy or move | Copy or move the open conversation's transcript to another project; a move can take its artifacts along (with their files), after a preview of what goes and what stays because another conversation uses it or it was changed since |
 | Edit and send again | Under a message of yours: after one confirmation the conversation goes back to just before it and its text returns to the composer |
 | Branch | Under a reply: a new conversation holding everything through that turn, opened at once and listed under the one it came from |
 | Search | Titles and message text across the project, archived conversations included |
