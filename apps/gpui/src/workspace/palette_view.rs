@@ -15,7 +15,7 @@ use crate::{
     files,
     home::{self, Screen},
     layers::Layer,
-    palette::{self, Command, Entry, Mode},
+    palette::{self, Command, Entry, Mode, PaletteState},
     panel::PanelTab,
 };
 
@@ -68,6 +68,20 @@ impl Workspace {
         entries
     }
 
+    /// Lists results that came back from the host, keeping the highlighted
+    /// row highlighted however many are listed above it.
+    fn accept_palette_results(&mut self, accept: impl FnOnce(&mut PaletteState) -> bool) {
+        let before = self.palette_entries();
+        if accept(&mut self.palette) {
+            let after = self.palette_entries();
+            self.palette.follow_selection(&before, &after);
+            if let Some(selected) = self.palette.selection(after.len()) {
+                self.palette_scroll
+                    .scroll_to_item(palette::child_index(&after, selected));
+            }
+        }
+    }
+
     /// Searches the host for what is typed, after a pause so fast typing
     /// costs one search rather than one per letter.
     pub(super) fn search_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -102,7 +116,9 @@ impl Workspace {
                 let _ = this.update(cx, |this, cx| {
                     match skills {
                         Ok(skills) => {
-                            this.palette.accept_skills(ticket, skills);
+                            this.accept_palette_results(|palette| {
+                                palette.accept_skills(ticket, skills)
+                            });
                         }
                         Err(error) if this.palette.current(ticket) => this.error = Some(error),
                         Err(_) => {}
@@ -119,7 +135,9 @@ impl Workspace {
             let _ = this.update(cx, |this, cx| {
                 match conversations {
                     Ok(rows) => {
-                        this.palette.accept_conversations(ticket, rows);
+                        this.accept_palette_results(|palette| {
+                            palette.accept_conversations(ticket, rows)
+                        });
                     }
                     Err(error) if this.palette.current(ticket) => this.error = Some(error),
                     Err(_) => {}
@@ -130,7 +148,7 @@ impl Workspace {
             let _ = this.update(cx, |this, cx| {
                 match found {
                     Ok(found) => {
-                        this.palette.accept_files(ticket, found);
+                        this.accept_palette_results(|palette| palette.accept_files(ticket, found));
                     }
                     Err(error) if this.palette.current(ticket) => this.error = Some(error),
                     Err(_) => {}

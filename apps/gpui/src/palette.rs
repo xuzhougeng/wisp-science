@@ -447,6 +447,18 @@ impl PaletteState {
     pub fn selection(&self, len: usize) -> Option<usize> {
         (len > 0).then(|| self.selected.min(len - 1))
     }
+
+    /// Keeps the selection on the row it was on when results that arrive
+    /// later are listed above it, so Enter opens what was highlighted. A
+    /// row that is gone leaves the selection where it was.
+    pub fn follow_selection(&mut self, before: &[Entry], after: &[Entry]) {
+        let Some(selected) = self.selection(before.len()).map(|index| &before[index]) else {
+            return;
+        };
+        if let Some(index) = after.iter().position(|entry| entry == selected) {
+            self.selected = index;
+        }
+    }
 }
 
 /// Position of entry `index` among the list's children, where every section
@@ -638,6 +650,30 @@ mod tests {
         assert_eq!(state.selected, 0);
         state.selected = 2;
         state.begin("x");
+        assert_eq!(state.selected, 0);
+    }
+
+    #[test]
+    fn late_results_do_not_move_the_highlighted_row() {
+        let mut state = PaletteState::default();
+        let ticket = state.begin("python");
+        let before = state.entries(&[], &[], Screen::Project);
+        let console = before
+            .iter()
+            .position(|entry| *entry == Entry::Command(Command::PythonConsole))
+            .expect("the command matches what is typed");
+        state.selected = console;
+        // Conversations found by the host are listed above the commands.
+        state.accept_conversations(ticket, vec![conversation("c1", "print in python", false)]);
+        let after = state.entries(&[], &[], Screen::Project);
+        assert_ne!(after[console], before[console]);
+        state.follow_selection(&before, &after);
+        let selected = state.selection(after.len()).unwrap();
+        assert_eq!(after[selected], Entry::Command(Command::PythonConsole));
+        // A row that is no longer listed leaves the selection alone.
+        state.selected = 0;
+        let gone = vec![Entry::Command(Command::Settings)];
+        state.follow_selection(&gone, &after);
         assert_eq!(state.selected, 0);
     }
 
