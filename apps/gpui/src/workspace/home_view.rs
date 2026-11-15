@@ -374,6 +374,11 @@ impl Workspace {
                         ),
                     )
                     .child(
+                        icon_button("home-mandates", "gauge", tr("Research mandates")).on_click(
+                            cx.listener(|this, _, window, cx| this.open_mandates(window, cx)),
+                        ),
+                    )
+                    .child(
                         icon_button("home-favorites", "star", tr("Favorites")).on_click(
                             cx.listener(|this, _, window, cx| this.open_favorites(window, cx)),
                         ),

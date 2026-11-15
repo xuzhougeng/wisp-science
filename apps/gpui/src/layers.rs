@@ -64,6 +64,12 @@ pub enum Layer {
     ScheduleForm,
     /// Question before a scheduled task is deleted.
     ConfirmDeleteSchedule,
+    /// The research mandates of every project: a page of its own.
+    Mandates,
+    /// The form on that page for a new mandate or a change to one.
+    MandateForm,
+    /// Question before a mandate is deleted.
+    ConfirmDeleteMandate,
     /// The papers of the open project: a page of its own.
     Papers,
     /// The form on the papers page for a new paper or a new name.
@@ -243,6 +249,7 @@ impl Layer {
             Layer::ConfirmSyncReplace => Some(Layer::ProjectSettings),
             Layer::JournalForm => Some(Layer::Journey),
             Layer::ScheduleForm | Layer::ConfirmDeleteSchedule => Some(Layer::Schedules),
+            Layer::MandateForm | Layer::ConfirmDeleteMandate => Some(Layer::Mandates),
             Layer::PaperForm
             | Layer::PaperItemForm
             | Layer::PaperSources
@@ -658,6 +665,17 @@ mod tests {
         stack.open(Layer::ScheduleForm);
         assert!(stack.close(Layer::Schedules));
         assert!(!stack.contains(Layer::ScheduleForm));
+        // The mandates page and what opens on it.
+        stack.open(Layer::Mandates);
+        stack.open(Layer::MandateForm);
+        assert_eq!(stack.dismiss_top(), Some(Layer::MandateForm));
+        assert!(stack.contains(Layer::Mandates));
+        stack.open(Layer::ConfirmDeleteMandate);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmDeleteMandate));
+        assert!(stack.contains(Layer::Mandates));
+        stack.open(Layer::MandateForm);
+        assert!(stack.close(Layer::Mandates));
+        assert!(!stack.contains(Layer::MandateForm));
         // The papers page is the same: a form or a question inside it
         // goes first, and closing the page takes them along.
         stack.open(Layer::Papers);

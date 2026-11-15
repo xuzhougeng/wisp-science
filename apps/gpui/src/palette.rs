@@ -47,6 +47,7 @@ pub enum Command {
     Papers,
     Schedules,
     Assistant,
+    Mandates,
     Calendar,
     NewWindow,
     Capabilities,
@@ -83,6 +84,7 @@ impl Command {
             Command::Papers => tr("Paper evidence"),
             Command::Schedules => tr("Scheduled tasks"),
             Command::Assistant => tr("Research assistant"),
+            Command::Mandates => tr("Research mandates"),
             Command::Calendar => tr("Research calendar"),
             Command::NewWindow => tr("New window"),
             Command::Capabilities => tr("Capabilities of this project"),
@@ -118,6 +120,7 @@ impl Command {
             Command::Papers => "doc",
             Command::Schedules => "clock",
             Command::Assistant => "bot",
+            Command::Mandates => "gauge",
             Command::Calendar => "calendar",
             Command::NewWindow => "dock",
             Command::Capabilities => "sparkles",
@@ -164,11 +167,12 @@ impl Command {
             | Command::Calendar
             | Command::Schedules
             | Command::Assistant
+            | Command::Mandates
             | Command::NewWindow => true,
         }
     }
 
-    const ALL: [Command; 31] = [
+    const ALL: [Command; 32] = [
         Command::NewConversation,
         Command::OpenFolder,
         Command::Home,
@@ -190,6 +194,7 @@ impl Command {
         Command::Papers,
         Command::Schedules,
         Command::Assistant,
+        Command::Mandates,
         Command::Calendar,
         Command::NewWindow,
         Command::Capabilities,
@@ -489,6 +494,7 @@ mod tests {
                 Section::Projects,
                 Section::Projects,
                 Section::Conversations,
+                Section::Commands,
                 Section::Commands,
                 Section::Commands,
                 Section::Commands,

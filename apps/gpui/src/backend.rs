@@ -1563,6 +1563,44 @@ impl Backend {
         self.local(move |host| async move { host.join_lab_knowledge_base(&parent).await })
     }
 
+    pub fn mandates(&self) -> Reply<Vec<wisp_dto::MandateOverview>> {
+        self.local(move |host| async move { host.mandates().await })
+    }
+
+    /// Makes a mandate, or with `id` changes one.
+    pub fn save_mandate(
+        &self,
+        id: Option<String>,
+        draft: wisp_dto::MandateDraft,
+    ) -> Reply<wisp_dto::MandateRecord> {
+        self.local(move |host| async move {
+            match id {
+                Some(id) => host.update_mandate(&id, draft).await,
+                None => host.create_mandate(draft).await,
+            }
+        })
+    }
+
+    pub fn set_mandate_status(&self, id: String, status: String) -> Reply<wisp_dto::MandateRecord> {
+        self.local(move |host| async move { host.set_mandate_status(&id, &status).await })
+    }
+
+    pub fn delete_mandate(&self, id: String) -> Reply<()> {
+        self.local(move |host| async move { host.delete_mandate(&id).await })
+    }
+
+    pub fn run_mandate_now(&self, id: String) -> Reply<()> {
+        self.local(move |host| async move { host.run_mandate_now(&id).await })
+    }
+
+    pub fn reply_to_mandate(&self, id: String, text: String) -> Reply<wisp_dto::MandateRecord> {
+        self.local(move |host| async move { host.reply_to_mandate(&id, &text).await })
+    }
+
+    pub fn report_mandate(&self, id: String) -> Reply<wisp_dto::MandateReport> {
+        self.local(move |host| async move { host.report_mandate(&id).await })
+    }
+
     /// The research assistant's project and its one conversation, made on
     /// first use.
     pub fn open_assistant(&self) -> Reply<(String, String)> {

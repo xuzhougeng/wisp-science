@@ -24,6 +24,7 @@ mod inline;
 mod journey;
 mod layers;
 mod links;
+mod mandates;
 mod memory;
 mod memos;
 mod model_view;

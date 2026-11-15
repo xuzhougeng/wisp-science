@@ -14,6 +14,7 @@ mod home_view;
 mod import_view;
 mod inline_view;
 mod journey_view;
+mod mandates_view;
 mod memory_view;
 mod memos_view;
 mod merge_view;
@@ -186,6 +187,19 @@ pub struct Workspace {
     assistant_plan: Vec<wisp_dto::ResearchAssistantPlanItem>,
     /// The weekly habit tidy, on the Memory tab.
     memory_tidy: Option<wisp_dto::MemoryTidyAutomation>,
+    /// The research mandates page.
+    mandates: Option<Vec<wisp_dto::MandateOverview>>,
+    /// The mandate the form changes; none for a new one.
+    mandate_editing: Option<String>,
+    mandate_project: Option<String>,
+    mandate_interval: i64,
+    mandate_report_interval: i64,
+    mandate_review: bool,
+    /// Name, goal, KPI, and the reply to a mandate's request.
+    mandate_fields: [Entity<InputState>; 4],
+    mandate_deleting: Option<String>,
+    /// The mandate whose request is being answered.
+    mandate_replying: Option<String>,
     /// The daily recap run, on the Scheduled tasks page.
     daily_recap: Option<wisp_dto::DailyRecapAutomation>,
     recap_time: Entity<InputState>,
@@ -679,6 +693,12 @@ impl Workspace {
         let journey_search =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Filter this month…")));
         let recap_time = cx.new(|cx| InputState::new(window, cx).placeholder("09:00"));
+        let mandate_fields = [
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Literature watch"))),
+            cx.new(|cx| InputState::new(window, cx).multi_line(true)),
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Papers filed, 5, per week"))),
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Your answer…"))),
+        ];
         let journal_fields = [
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("The reads are clean"))),
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
@@ -1023,6 +1043,15 @@ impl Workspace {
             recap_drafting: None,
             assistant_plan: Vec::new(),
             memory_tidy: None,
+            mandates: None,
+            mandate_editing: None,
+            mandate_project: None,
+            mandate_interval: 86_400,
+            mandate_report_interval: 7 * 86_400,
+            mandate_review: true,
+            mandate_fields,
+            mandate_deleting: None,
+            mandate_replying: None,
             daily_recap: None,
             recap_time,
             schedules: None,
@@ -1407,6 +1436,9 @@ impl Workspace {
             Some(Layer::Schedules) => self.focus_composer(window, cx),
             Some(Layer::ScheduleForm) => {}
             Some(Layer::ConfirmDeleteSchedule) => self.schedule_deleting = None,
+            Some(Layer::Mandates) => self.focus_composer(window, cx),
+            Some(Layer::MandateForm) => {}
+            Some(Layer::ConfirmDeleteMandate) => self.mandate_deleting = None,
             Some(Layer::Papers) => {
                 self.paper = None;
                 self.paper_check = None;
@@ -1471,6 +1503,7 @@ impl Workspace {
                     || self.layers.contains(Layer::Journey)
                     || self.layers.contains(Layer::Papers)
                     || self.layers.contains(Layer::Schedules)
+                    || self.layers.contains(Layer::Mandates)
                     || self.layers.contains(Layer::Favorites)
                     || self.layers.contains(Layer::Palette)
                     || self.layers.contains(Layer::ProjectSettings)
@@ -1490,6 +1523,7 @@ impl Workspace {
                     || self.layers.contains(Layer::Journey)
                     || self.layers.contains(Layer::Papers)
                     || self.layers.contains(Layer::Schedules)
+                    || self.layers.contains(Layer::Mandates)
                     || self.layers.contains(Layer::Favorites)
                     || self.layers.contains(Layer::Palette)
                 {
@@ -3315,6 +3349,7 @@ impl Render for Workspace {
             Layer::Journey,
             Layer::Papers,
             Layer::Schedules,
+            Layer::Mandates,
             Layer::Calendar,
         ]);
         let root = if page == Some(Layer::Settings) {
@@ -3327,6 +3362,8 @@ impl Render for Workspace {
             root.child(self.render_papers(cx))
         } else if page == Some(Layer::Schedules) {
             root.child(self.render_schedules(cx))
+        } else if page == Some(Layer::Mandates) {
+            root.child(self.render_mandates(cx))
         } else if page == Some(Layer::Favorites) {
             root.child(self.render_favorites(window, cx))
         } else {

@@ -174,6 +174,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Research calendar | A page across every project: a month as a grid with how many records each day holds, and the chosen day's records; projects can be left out |
 | Scheduled tasks | A page across projects (the clock on the home page, or the command palette): a prompt is sent into a new conversation of its project every few hours, daily or weekly at a time, while the app is open; each task can be run now, switched off or deleted, and its latest firing opens the conversation it made |
 | Paper evidence | A page for the open project (Papers in the sidebar, or the command palette): the papers it is writing, each with its versions and, in a draft version, figures, tables and claims with the project results and runs they rest on and why each was chosen. Finalize… checks a draft for whom the evidence is for (private, restricted or public, with the reviews public needs) and lists what stands in the way, warnings and what the record leaves out; a finding that may stand is kept with a reason; when nothing is left in the way the version is locked under a SHA-256 fingerprint. New version starts a draft from any version with its items and evidence |
+| Research mandates | A page of standing goals (the gauge on the home page, or the command palette): each project's agent works on its mandate in rounds on a cadence in one conversation, asks you through the research assistant when it needs something only you can give, and writes reports; answer, run now, pause, report, edit, close or delete from its card |
 | Research assistant | One conversation of its own (the robot on the home page, or the command palette) that reads what was recorded across projects and each project's progress, keeps your dated plan, and hands work to a project conversation, whose outcome it reports back; a bar over it shows today's plan to tick off or drop |
 | Research journey | A page for the open project: one month of what happened, by day (what you asked, runs, files, decisions, your own records), a filter, and a form to add a record of your own. Each day can have a recap the model drafts from its records, with what was done, found, went wrong and comes next, which you confirm or dismiss; Scheduled tasks drafts the last days' recaps each morning |
 | Outline | A button in the conversation's header lists what you asked, in order; choosing one scrolls to it |
@@ -1046,8 +1047,16 @@ Limits of this slice:
   or on request, the rounds of the period and the project's records
   become a cited report on the default model, from the rounds' own words
   when the period was quiet or the draft fails; it is kept on the
-  mandate and added to the research assistant's conversation. The window
-  has no mandates page yet.
+  mandate and added to the research assistant's conversation. The
+  Research mandates page (the gauge on the home page, or the command
+  palette) lists every project's mandates with their status, KPIs, last
+  round, next round and latest report; an open request is answered on
+  its card; a mandate can be run now, paused and resumed, reported on,
+  edited, closed and reopened, opened in its conversation, and deleted
+  after a question. The form takes the project, the goal, a name, one
+  KPI as "name, target, period", the cadence of rounds and of reports,
+  and whether it asks before changes. End dates, more than one KPI and
+  the constraint notes the WebView's form also takes are not offered.
 - Scheduled tasks and the daily recap are the other parts of the
   WebView's research assistant that are ported. Tasks fire only while the app is open, looked for
   every 30 seconds; a time that was missed fires once at the next look
@@ -1868,6 +1877,12 @@ mark: it shows Done. Ask it to have a project count its files: a
 conversation named for the work appears in that project, and when it is
 answered a report appears in the assistant's conversation. New
 conversation is off in the assistant's sidebar.
+Press the gauge on the home page: Research mandates says there are none.
+Press New mandate, give a goal and Save: a card shows it Active with its
+next round. Press Run now: a conversation named after it appears in its
+project; Open its conversation opens it. Press Edit, then Escape: only the
+form closes. Press Delete, then Escape: only the question closes; press
+Delete and confirm: the card goes and the conversation stays.
 Save one without a title and confirm it is refused and the form stays.
 Press a row that came from a conversation and confirm that conversation
 opens. Open Journey again and press Escape: the page closes.
