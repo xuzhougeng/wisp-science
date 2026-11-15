@@ -785,6 +785,9 @@ pub const ZH: &[(&str, &str)] = &[
     ("It read:", "它读取了："),
     // Sample project.
     ("Make a sample project to try Wisp on", "创建一个示例项目来试用 Wisp"),
+    ("Environment variables it is started with, one per line as NAME=value, kept in the system keychain. A name with no value keeps the one that is saved.", "启动程序时使用的环境变量，每行一个，写成 NAME=value，保存在系统钥匙串中。只写名称不写值会保留已保存的值。"),
+    ("Headers sent with every request, one per line as Name: value, kept in the system keychain. A name with no value keeps the one that is saved.", "每次请求都会带上的请求头，每行一个，写成 Name: value，保存在系统钥匙串中。只写名称不写值会保留已保存的值。"),
+    ("Write each on a line of its own, as name{}value", "每项单独一行，写成 名称{}值"),
     ("Show as tiles", "以图块显示"),
     ("Show as a list", "以列表显示"),
     ("{} more are not shown as tiles; the list shows every entry.", "另有 {} 项未以图块显示；列表视图会显示全部。"),

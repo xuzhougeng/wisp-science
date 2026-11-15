@@ -565,6 +565,39 @@ pub fn tool_count(count: usize) -> String {
     }
 }
 
+/// Names with their values, one per line, as an MCP server's form takes
+/// them: `NAME=value` for a program's environment, `Name: value` for an HTTP
+/// server's headers. A name with nothing after the separator keeps the
+/// value saved for it.
+pub fn parse_pairs(text: &str, separator: char) -> Result<Vec<(String, String)>, String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| match line.split_once(separator) {
+            Some((name, value)) if !name.trim().is_empty() => {
+                Ok((name.trim().to_owned(), value.trim().to_owned()))
+            }
+            _ => Err(crate::i18n::fill(
+                tr("Write each on a line of its own, as name{}value"),
+                &[&separator],
+            )),
+        })
+        .collect()
+}
+
+/// The saved names as the form shows them, one per line with no value:
+/// left so, each keeps the value saved for it.
+pub fn pairs_text(names: &[String], separator: char) -> String {
+    names
+        .iter()
+        .map(|name| match separator {
+            ':' => format!("{name}: "),
+            other => format!("{name}{other}"),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// A command line as typed, taken apart into the program and what it is
 /// given. Quotes keep words with spaces together; nothing else is special.
 pub fn split_command(line: &str) -> Vec<String> {
@@ -1414,6 +1447,35 @@ mod tests {
             problem: problem.map(str::to_owned),
             sees: false,
         }
+    }
+
+    #[test]
+    fn variables_and_headers_are_read_a_line_each() {
+        assert_eq!(
+            parse_pairs("LAB_TOKEN=abc=1\n\n  DEBUG = 1 ", '='),
+            Ok(vec![
+                ("LAB_TOKEN".to_owned(), "abc=1".to_owned()),
+                ("DEBUG".to_owned(), "1".to_owned())
+            ])
+        );
+        assert_eq!(
+            parse_pairs("X-Api-Key: k1\nX-Team:", ':'),
+            Ok(vec![
+                ("X-Api-Key".to_owned(), "k1".to_owned()),
+                ("X-Team".to_owned(), String::new())
+            ])
+        );
+        assert!(parse_pairs("no separator", '=').is_err());
+        assert!(parse_pairs("=value", '=').is_err());
+        assert_eq!(parse_pairs("", ':'), Ok(vec![]));
+        let names = ["X-Api-Key".to_owned()];
+        assert_eq!(pairs_text(&names, ':'), "X-Api-Key: ");
+        assert_eq!(pairs_text(&["A".to_owned(), "B".to_owned()], '='), "A=\nB=");
+        // What the form shows reads back as names that keep their values.
+        assert_eq!(
+            parse_pairs(&pairs_text(&names, ':'), ':'),
+            Ok(vec![("X-Api-Key".to_owned(), String::new())])
+        );
     }
 
     #[test]

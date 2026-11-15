@@ -64,14 +64,22 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (id, name, http, target) = match row {
-            Some(row) => (
-                Some(row.server.id.clone()),
-                row.server.name.clone(),
-                matches!(row.server.transport, McpTransport::Http { .. }),
-                settings::transport_line(&row.server.transport),
-            ),
-            None => (None, String::new(), true, String::new()),
+        let (id, name, http, target, pairs) = match row {
+            Some(row) => {
+                let http = matches!(row.server.transport, McpTransport::Http { .. });
+                let pairs = match http {
+                    true => settings::pairs_text(&row.server.headers, ':'),
+                    false => settings::pairs_text(&row.server.env, '='),
+                };
+                (
+                    Some(row.server.id.clone()),
+                    row.server.name.clone(),
+                    http,
+                    settings::transport_line(&row.server.transport),
+                    pairs,
+                )
+            }
+            None => (None, String::new(), true, String::new(), String::new()),
         };
         self.mcp_editing = id;
         self.mcp_http = http;
@@ -82,6 +90,7 @@ impl Workspace {
             (&self.mcp_name, name),
             (&self.mcp_target, target),
             (&self.mcp_token, String::new()),
+            (&self.mcp_pairs, pairs),
         ] {
             field.update(cx, |input, cx| input.set_value(value, window, cx));
         }
@@ -106,11 +115,25 @@ impl Workspace {
         };
         // An empty token field leaves a saved token alone.
         let token = self.mcp_token.read(cx).value().trim().to_string();
+        let separator = if self.mcp_http { ':' } else { '=' };
+        let pairs = match settings::parse_pairs(&self.mcp_pairs.read(cx).value(), separator) {
+            Ok(pairs) => pairs,
+            Err(problem) => {
+                self.settings_error = Some(problem);
+                return cx.notify();
+            }
+        };
+        let (env, headers) = match self.mcp_http {
+            true => (Some(Vec::new()), Some(pairs)),
+            false => (Some(pairs), Some(Vec::new())),
+        };
         let input = McpServerInput {
             id: self.mcp_editing.clone(),
             name: self.mcp_name.read(cx).value().to_string(),
             transport,
             token: (self.mcp_http && !token.is_empty()).then_some(token),
+            env,
+            headers,
         };
         let reply = self.backend.save_mcp_server(input);
         self.change_mcp(
@@ -211,12 +234,24 @@ impl Workspace {
                     "Token, if the server asks for one. Sent as a bearer token and kept \
                      in the system keychain; leave empty to keep the one that is saved.",
                 )))
-                .child(Input::new(&self.mcp_token).small());
+                .child(Input::new(&self.mcp_token).small())
+                .child(label(tr(
+                    "Headers sent with every request, one per line as Name: value, kept in \
+                     the system keychain. A name with no value keeps the one that is saved.",
+                )))
+                .child(div().h(px(72.)).child(Input::new(&self.mcp_pairs).h_full()));
         } else {
-            form = form.child(label(tr(
-                "The program runs as you, with your files within its reach. Add only \
-                 servers you trust.",
-            )));
+            form = form
+                .child(label(tr(
+                    "Environment variables it is started with, one per line as NAME=value, \
+                     kept in the system keychain. A name with no value keeps the one that \
+                     is saved.",
+                )))
+                .child(div().h(px(72.)).child(Input::new(&self.mcp_pairs).h_full()))
+                .child(label(tr(
+                    "The program runs as you, with your files within its reach. Add only \
+                     servers you trust.",
+                )));
         }
         form.child(
             div()

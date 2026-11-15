@@ -6,7 +6,7 @@ pub use crate::output::{tool_question, TokenUsage};
 use crate::{config::ModelConfig, Server};
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::Ordering;
 pub use wisp_dto::native_conversations::ReferenceOption;
 use wisp_dto::SessionSearchInfo;
@@ -3134,6 +3134,53 @@ impl Server {
         format!("desktop.mcp.{key_id}.{server}")
     }
 
+    /// Where a server's environment variables and headers are kept, with
+    /// their values, as one JSON object: `{"env": {…}, "headers": {…}}`.
+    fn mcp_extra_secret(key_id: &str, server: &str) -> String {
+        format!("desktop.mcp.{key_id}.{server}.extra")
+    }
+
+    /// The values saved for a server's environment variables and headers.
+    async fn mcp_extra(
+        &self,
+        server: &str,
+    ) -> (BTreeMap<String, String>, BTreeMap<String, String>) {
+        #[derive(Default, serde::Deserialize)]
+        struct Extra {
+            #[serde(default)]
+            env: BTreeMap<String, String>,
+            #[serde(default)]
+            headers: BTreeMap<String, String>,
+        }
+        let Some(key_id) = self.0.store.get_setting(MODEL_KEY_ID).await.ok().flatten() else {
+            return Default::default();
+        };
+        let extra: Extra = self
+            .0
+            .secrets
+            .get(&Self::mcp_extra_secret(&key_id, server))
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default();
+        (extra.env, extra.headers)
+    }
+
+    /// What a connection to `server` is made with: its token, and the
+    /// variables and headers it names with their saved values.
+    async fn mcp_credentials(&self, server: &McpServer) -> crate::mcp::Credentials {
+        let (env, headers) = self.mcp_extra(&server.id).await;
+        let pick = |names: &[String], values: &BTreeMap<String, String>| {
+            names
+                .iter()
+                .filter_map(|name| Some((name.clone(), values.get(name)?.clone())))
+                .collect()
+        };
+        crate::mcp::Credentials {
+            token: self.mcp_token(&server.id).await,
+            env: pick(&server.env, &env),
+            headers: pick(&server.headers, &headers),
+        }
+    }
+
     /// The token saved for a server, if there is one.
     async fn mcp_token(&self, server: &str) -> Option<String> {
         let key_id = self.0.store.get_setting(MODEL_KEY_ID).await.ok()??;
@@ -3149,15 +3196,15 @@ impl Server {
         if !servers.iter().any(|server| server.enabled) {
             return vec![];
         }
-        let mut tokens = HashMap::new();
+        let mut credentials = HashMap::new();
         for server in &servers {
-            if let Some(token) = self.mcp_token(&server.id).await {
-                tokens.insert(server.id.clone(), token);
-            }
+            credentials.insert(server.id.clone(), self.mcp_credentials(server).await);
         }
         self.0
             .mcp
-            .tools(&servers, |id| tokens.get(id).cloned())
+            .tools(&servers, |id| {
+                credentials.get(id).cloned().unwrap_or_default()
+            })
             .await
     }
 
@@ -3198,8 +3245,63 @@ impl Server {
             name: input.name.trim().to_owned(),
             enabled: existing.is_none_or(|index| servers[index].enabled),
             transport: input.transport,
+            env: Vec::new(),
+            headers: Vec::new(),
         };
+        let mut server = server;
         server.validate()?;
+        // The variables and headers: a name typed with no value keeps the
+        // value saved for it; one left out is forgotten.
+        let (saved_env, saved_headers) = self.mcp_extra(&server.id).await;
+        let merge = |given: Option<Vec<(String, String)>>,
+                     saved: &BTreeMap<String, String>,
+                     kept: &[String],
+                     valid: fn(&str) -> bool,
+                     what: &str|
+         -> Result<BTreeMap<String, String>> {
+            let Some(given) = given else {
+                return Ok(kept
+                    .iter()
+                    .filter_map(|name| Some((name.clone(), saved.get(name)?.clone())))
+                    .collect());
+            };
+            ensure!(given.len() <= 32, "Keep to 32 {what}s");
+            let mut out = BTreeMap::new();
+            for (name, value) in given {
+                let name = name.trim().to_owned();
+                ensure!(valid(&name), "\"{name}\" cannot be the name of a {what}");
+                let value = match value.trim() {
+                    "" => saved
+                        .get(&name)
+                        .cloned()
+                        .with_context(|| format!("Give {name} a value"))?,
+                    value => value.to_owned(),
+                };
+                ensure!(
+                    crate::mcp::valid_value(&value),
+                    "The value of {name} is one line of at most 8192 characters"
+                );
+                out.insert(name, value);
+            }
+            Ok(out)
+        };
+        let before = existing.map(|index| servers[index].clone());
+        let env = merge(
+            input.env,
+            &saved_env,
+            before.as_ref().map_or(&[][..], |server| &server.env),
+            crate::mcp::valid_env_name,
+            "variable",
+        )?;
+        let headers = merge(
+            input.headers,
+            &saved_headers,
+            before.as_ref().map_or(&[][..], |server| &server.headers),
+            crate::mcp::valid_header_name,
+            "header",
+        )?;
+        server.env = env.keys().cloned().collect();
+        server.headers = headers.keys().cloned().collect();
         ensure!(
             !servers
                 .iter()
@@ -3216,6 +3318,23 @@ impl Server {
             self.0
                 .secrets
                 .set(&Self::mcp_secret(&key_id, &server.id), token)?;
+        }
+        if !env.is_empty()
+            || !headers.is_empty()
+            || !saved_env.is_empty()
+            || !saved_headers.is_empty()
+        {
+            let key_id = self.key_id().await?;
+            let extra = match env.is_empty() && headers.is_empty() {
+                true => String::new(),
+                false => serde_json::to_string(&serde_json::json!({
+                    "env": env,
+                    "headers": headers,
+                }))?,
+            };
+            self.0
+                .secrets
+                .set(&Self::mcp_extra_secret(&key_id, &server.id), &extra)?;
         }
         match existing {
             Some(index) => servers[index] = server.clone(),
@@ -3251,6 +3370,9 @@ impl Server {
         crate::mcp::save(&self.0.store, &servers).await?;
         if let Some(key_id) = self.0.store.get_setting(MODEL_KEY_ID).await? {
             self.0.secrets.set(&Self::mcp_secret(&key_id, id), "")?;
+            self.0
+                .secrets
+                .set(&Self::mcp_extra_secret(&key_id, id), "")?;
         }
         self.0.mcp.close(id).await;
         Ok(())
@@ -3264,11 +3386,11 @@ impl Server {
             .iter()
             .find(|server| server.id == id)
             .context("That server is no longer saved")?;
-        let token = self.mcp_token(id).await;
+        let credentials = self.mcp_credentials(server).await;
         Ok(self
             .0
             .mcp
-            .list(server, token)
+            .list(server, credentials)
             .await?
             .iter()
             .filter(|tool| tool.visible_to_model())
@@ -6004,6 +6126,12 @@ pub struct McpServerInput {
     /// A bearer token for an HTTP server: `Some("")` forgets the saved
     /// one, `None` leaves it as it is.
     pub token: Option<String>,
+    /// The environment variables a program is started with, as name and
+    /// value; an empty value keeps the saved one, a name left out is
+    /// forgotten, and `None` leaves them all as they are.
+    pub env: Option<Vec<(String, String)>>,
+    /// The same for the headers sent to an HTTP server.
+    pub headers: Option<Vec<(String, String)>>,
 }
 
 /// A service key the bundled connectors can use.

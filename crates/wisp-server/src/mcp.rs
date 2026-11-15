@@ -30,6 +30,47 @@ pub struct McpServer {
     pub name: String,
     pub enabled: bool,
     pub transport: McpTransport,
+    /// The environment variables a program is started with, by name; their
+    /// values are in the system keychain.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env: Vec<String>,
+    /// The headers sent to an HTTP server, by name; their values are in the
+    /// system keychain.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headers: Vec<String>,
+}
+
+/// What a connection is made with besides where the server is: the bearer
+/// token, and the environment variables and headers with their values. A
+/// change means a new connection.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Credentials {
+    pub token: Option<String>,
+    pub env: Vec<(String, String)>,
+    pub headers: Vec<(String, String)>,
+}
+
+/// A name a program's environment can have: letters, digits and `_`, not
+/// starting with a digit.
+pub(crate) fn valid_env_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && !name.starts_with(|c: char| c.is_ascii_digit())
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// A name an HTTP header can have.
+pub(crate) fn valid_header_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c))
+}
+
+/// A value that fits on one line and is not too long.
+pub(crate) fn valid_value(value: &str) -> bool {
+    value.len() <= 8_192 && !value.contains(['\r', '\n', '\0'])
 }
 
 impl McpServer {
@@ -121,7 +162,7 @@ pub(crate) async fn save(store: &Store, servers: &[McpServer]) -> Result<()> {
 struct Open {
     /// What the connection was made for; a change means a new one.
     server: McpServer,
-    token: Option<String>,
+    credentials: Credentials,
     client: Arc<McpClient>,
 }
 
@@ -137,17 +178,31 @@ pub struct Connections {
 }
 
 impl Connections {
-    async fn connect(server: &McpServer, token: Option<&str>, proxy: &str) -> Result<McpClient> {
+    async fn connect(server: &McpServer, with: &Credentials, proxy: &str) -> Result<McpClient> {
         let connecting = async {
             match &server.transport {
-                McpTransport::Stdio { command, args } => McpClient::launch(command.trim(), args)
-                    .await
-                    .with_context(|| format!("Could not start {}", command.trim())),
+                McpTransport::Stdio { command, args } => {
+                    let mut program = tokio::process::Command::new(command.trim());
+                    program.args(args).envs(with.env.iter().cloned());
+                    McpClient::launch_with_command(program)
+                        .await
+                        .with_context(|| format!("Could not start {}", command.trim()))
+                }
                 McpTransport::Http { url } => {
-                    let headers: Vec<_> = token
+                    // A header of its own that says who you are wins over
+                    // the token.
+                    let named = with
+                        .headers
+                        .iter()
+                        .any(|(name, _)| name.eq_ignore_ascii_case("authorization"));
+                    let mut headers: Vec<_> = with
+                        .token
+                        .as_ref()
+                        .filter(|_| !named)
                         .map(|token| ("Authorization".to_owned(), format!("Bearer {token}")))
                         .into_iter()
                         .collect();
+                    headers.extend(with.headers.iter().cloned());
                     McpClient::connect_http_with_proxy(url.trim(), &headers, proxy)
                         .await
                         .with_context(|| format!("Could not reach {}", url.trim()))
@@ -165,12 +220,12 @@ impl Connections {
     pub(crate) async fn client(
         &self,
         server: &McpServer,
-        token: Option<String>,
+        credentials: Credentials,
     ) -> Result<Arc<McpClient>> {
         let mut open = self.open.lock().await;
         if let Some(existing) = open.get(&server.id) {
             if &existing.server == server
-                && existing.token == token
+                && existing.credentials == credentials
                 && existing.client.is_connected()
             {
                 return Ok(existing.client.clone());
@@ -180,12 +235,12 @@ impl Connections {
             let _ = stale.client.shutdown().await;
         }
         let proxy = self.proxy.read().unwrap().clone();
-        let client = Arc::new(Self::connect(server, token.as_deref(), &proxy).await?);
+        let client = Arc::new(Self::connect(server, &credentials, &proxy).await?);
         open.insert(
             server.id.clone(),
             Open {
                 server: server.clone(),
-                token,
+                credentials,
                 client: client.clone(),
             },
         );
@@ -221,10 +276,10 @@ impl Connections {
     pub(crate) async fn list(
         &self,
         server: &McpServer,
-        token: Option<String>,
+        credentials: Credentials,
     ) -> Result<Vec<wisp_mcp::RemoteTool>> {
         let listed = async {
-            let client = self.client(server, token).await?;
+            let client = self.client(server, credentials).await?;
             let tools = tokio::time::timeout(CONNECT_TIMEOUT, client.tools_list())
                 .await
                 .map_err(|_| anyhow::anyhow!("The server did not list its tools in time"))??;
@@ -250,11 +305,11 @@ impl Connections {
     pub(crate) async fn tools(
         &self,
         servers: &[McpServer],
-        token: impl Fn(&str) -> Option<String>,
+        credentials: impl Fn(&str) -> Credentials,
     ) -> Vec<Box<dyn wisp_tools::Tool>> {
         let mut tools: Vec<Box<dyn wisp_tools::Tool>> = Vec::new();
         for server in servers.iter().filter(|server| server.enabled) {
-            let secret = token(&server.id);
+            let secret = credentials(&server.id);
             let Ok(listed) = self.list(server, secret.clone()).await else {
                 continue;
             };
@@ -292,7 +347,20 @@ mod tests {
             name: name.into(),
             enabled: true,
             transport,
+            env: vec![],
+            headers: vec![],
         }
+    }
+
+    #[test]
+    fn names_and_values_are_ones_a_program_and_a_server_take() {
+        assert!(valid_env_name("LAB_API_TOKEN") && valid_env_name("_x1"));
+        for wrong in ["", "1ST", "LAB-TOKEN", "A B"] {
+            assert!(!valid_env_name(wrong), "{wrong}");
+        }
+        assert!(valid_header_name("X-Api-Key") && valid_header_name("Authorization"));
+        assert!(!valid_header_name("X Api") && !valid_header_name("X:Y"));
+        assert!(valid_value("abc def") && !valid_value("line\nbreak"));
     }
 
     fn http(url: &str) -> McpTransport {

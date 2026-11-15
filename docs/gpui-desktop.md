@@ -486,9 +486,13 @@ Limits of this slice:
   ported.
 - Your own MCP servers are kept in this database (`desktop.mcp_servers`), not
   in the WebView's list, so each desktop has its own. A server is reached
-  over HTTP, with an optional bearer token kept in the keychain, or started
-  as a program on this computer; other headers, environment variables for
-  the program, OAuth and per-server proxies are not ported. Connections are
+  over HTTP, with an optional bearer token and headers of your own (a
+  header named Authorization is sent in place of the token), or started as a
+  program on this computer with environment variables of your own. The
+  names are saved with the server; their values are kept together in the
+  keychain (`desktop.mcp.<key>.<server>.extra`) and are never shown again: a
+  name written with no value keeps the saved one, and a name left out is
+  forgotten. OAuth and per-server proxies are not ported. Connections are
   kept between turns and closed when a server is changed, switched off or
   removed, and when the app quits. The model calls a tool as
   `<server>__<tool>`; every such tool asks before it runs, and that question
@@ -2139,6 +2143,12 @@ and the composer shows that a hook failed. In a project, write a
 trusted and a turn says it was not run; Trust it as it is now, and it
 runs; change the file and it reads as not trusted again. Press Add a hook,
 then Escape: only the form closes.
+In Settings, Connections, change an MCP server over HTTP and add the header
+`X-Api-Key: <a made-up key>`; Test reaches it with the header; open the form
+again: the line reads `X-Api-Key:` with no value, and saving it so keeps the
+key. Remove the line and save: the header is no longer sent. For a server
+that is a program, add `LAB_TOKEN=<a made-up value>` and confirm the program
+sees it.
 In the Files tab press the tiles button: the folder shows as tiles, its
 pictures as themselves; open a folder and a file from their tiles; restart
 the app and the Files tab is still tiles; press the list button to go back.

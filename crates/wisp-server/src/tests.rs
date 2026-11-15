@@ -4281,10 +4281,13 @@ async fn a_users_mcp_server_gives_turns_its_tools_and_each_asks_before_it_runs()
     // An MCP server on the loopback interface with one tool, `echo`.
     let tokens: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
     let heard = tokens.clone();
+    let keys: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let heard_keys = keys.clone();
     let app = Router::new().route(
         "/mcp",
         post(move |headers: HeaderMap, Json(body): Json<Value>| {
             let heard = heard.clone();
+            let heard_keys = heard_keys.clone();
             async move {
                 let auth = headers
                     .get("authorization")
@@ -4292,6 +4295,9 @@ async fn a_users_mcp_server_gives_turns_its_tools_and_each_asks_before_it_runs()
                     .unwrap_or_default()
                     .to_owned();
                 heard.lock().unwrap().push(auth);
+                if let Some(key) = headers.get("x-lab-key").and_then(|v| v.to_str().ok()) {
+                    heard_keys.lock().unwrap().push(key.to_owned());
+                }
                 let Some(id) = body.get("id").cloned() else {
                     return axum::http::StatusCode::ACCEPTED.into_response();
                 };
@@ -4387,6 +4393,8 @@ async fn a_users_mcp_server_gives_turns_its_tools_and_each_asks_before_it_runs()
         name: name.into(),
         transport: McpTransport::Http { url: url.into() },
         token: None,
+        env: None,
+        headers: None,
     };
     assert!(server.save_mcp_server(input(" ", &url)).await.is_err());
     assert!(server
@@ -4420,6 +4428,55 @@ async fn a_users_mcp_server_gives_turns_its_tools_and_each_asks_before_it_runs()
         .iter()
         .all(|auth| auth == "Bearer tok-1"));
     assert!(server.test_mcp_server("missing").await.is_err());
+
+    // A header of its own goes with every request; its value stays in the
+    // keychain and only its name is saved.
+    let with_header = |headers: Vec<(&str, &str)>| McpServerInput {
+        id: Some(fake.id.clone()),
+        headers: Some(
+            headers
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
+                .collect(),
+        ),
+        ..input("Fake", &url)
+    };
+    assert!(server
+        .save_mcp_server(with_header(vec![("X Lab", "k1")]))
+        .await
+        .is_err());
+    assert!(server
+        .save_mcp_server(with_header(vec![("X-Lab-Key", "")]))
+        .await
+        .is_err());
+    let saved = server
+        .save_mcp_server(with_header(vec![("X-Lab-Key", "k1")]))
+        .await
+        .unwrap();
+    assert_eq!(saved.headers, ["X-Lab-Key"]);
+    assert!(!crate::mcp::load(&server.0.store)
+        .await
+        .iter()
+        .any(|server| serde_json::to_string(server).unwrap().contains("k1")));
+    server.test_mcp_server(&fake.id).await.unwrap();
+    assert_eq!(keys.lock().unwrap().last().map(String::as_str), Some("k1"));
+    // Given again with no value, it keeps the one saved; left out, it goes.
+    server
+        .save_mcp_server(with_header(vec![("X-Lab-Key", " ")]))
+        .await
+        .unwrap();
+    keys.lock().unwrap().clear();
+    server.test_mcp_server(&fake.id).await.unwrap();
+    assert_eq!(keys.lock().unwrap().last().map(String::as_str), Some("k1"));
+    assert!(server
+        .save_mcp_server(with_header(vec![]))
+        .await
+        .unwrap()
+        .headers
+        .is_empty());
+    keys.lock().unwrap().clear();
+    server.test_mcp_server(&fake.id).await.unwrap();
+    assert!(keys.lock().unwrap().is_empty());
 
     // In a turn its tool asks first, then runs.
     let session = create(&server).await;
@@ -6116,6 +6173,8 @@ async fn network_routes_reach_the_model_and_mcp_servers_and_mirrors_reach_the_pr
                 url: "http://mcp.invalid/mcp".into(),
             },
             token: None,
+            env: None,
+            headers: None,
         })
         .await
         .unwrap();
@@ -13652,6 +13711,8 @@ async fn usage_ranks_the_skills_and_mcp_tools_the_model_called() {
             transport: crate::mcp::McpTransport::Http {
                 url: "https://lab.example/mcp".into(),
             },
+            env: vec![],
+            headers: vec![],
         }],
     )
     .await

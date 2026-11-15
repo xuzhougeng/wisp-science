@@ -675,6 +675,8 @@ pub struct Workspace {
     mcp_name: Entity<InputState>,
     mcp_target: Entity<InputState>,
     mcp_token: Entity<InputState>,
+    /// The server's headers or environment variables, a line each.
+    mcp_pairs: Entity<InputState>,
     /// What testing a server found: `None` while it runs, then its tools
     /// or why it failed.
     mcp_tested: HashMap<String, Option<Result<Vec<String>, String>>>,
@@ -990,6 +992,7 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx)),
         ];
         let mcp_token = cx.new(|cx| InputState::new(window, cx).masked(true));
+        let mcp_pairs = cx.new(|cx| InputState::new(window, cx).multi_line(true));
         let sign_in_redirect = cx.new(|cx| {
             InputState::new(window, cx).placeholder("http://localhost:1455/auth/callback?code=…")
         });
@@ -1548,6 +1551,7 @@ impl Workspace {
             mcp_name,
             mcp_target,
             mcp_token,
+            mcp_pairs,
             mcp_tested: HashMap::new(),
             credentials: vec![],
             custom_credentials: vec![],
