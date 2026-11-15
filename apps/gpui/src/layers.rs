@@ -11,6 +11,8 @@ pub enum Layer {
     FilePreview,
     /// The side panel's tabs that can be added back, under its tab row.
     PanelTabMenu,
+    /// Question under a run's card before its workspace is deleted.
+    ConfirmCleanRun,
     /// Settings, shown in place of the transcript.
     Settings,
     /// Inline title editor for the open conversation.
@@ -249,6 +251,7 @@ impl Layer {
         match self {
             Layer::FilePreview
             | Layer::PanelTabMenu
+            | Layer::ConfirmCleanRun
             | Layer::FileName
             | Layer::ConfirmTrashFile
             | Layer::MemoEditor
@@ -437,6 +440,15 @@ mod tests {
         stack.open(Layer::PanelTabMenu);
         assert!(stack.close(Layer::FilesPanel));
         assert!(!stack.contains(Layer::PanelTabMenu));
+
+        // So does the question before a run's workspace is cleaned.
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::ConfirmCleanRun);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmCleanRun));
+        assert!(stack.contains(Layer::FilesPanel));
+        stack.open(Layer::ConfirmCleanRun);
+        assert!(stack.close(Layer::FilesPanel));
+        assert!(!stack.contains(Layer::ConfirmCleanRun));
     }
 
     #[test]

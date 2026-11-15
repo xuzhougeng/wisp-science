@@ -183,6 +183,23 @@ pub fn can_cancel(status: &str) -> bool {
     matches!(status, "draft" | "submitted" | "running" | "paused")
 }
 
+/// Whether a run left a workspace where it ran that can be deleted: one
+/// that has ended, kept a folder there and has not been cleaned. A method
+/// search and a file transfer keep none of their own.
+pub fn can_clean(run: &RunRecord) -> bool {
+    !matches!(run.kind.as_str(), "method_search" | "file_transfer")
+        && !can_cancel(&run.status)
+        && run.status != "cancelling"
+        && run.cleaned_at.is_none()
+        && run.remote_workdir.is_some()
+}
+
+/// Whether the host refused to clean a run only because outputs it
+/// declared were never brought back, which cleaning anyway would lose.
+pub fn outputs_at_stake(refusal: &str) -> bool {
+    refusal.contains("never harvested")
+}
+
 /// How many of the conversation's runs have not ended, for the tab.
 pub fn active_runs(runs: &[RunRecord]) -> usize {
     runs.iter()
@@ -310,6 +327,34 @@ mod tests {
         let runs = [run("running"), run("cancelling"), run("succeeded")];
         assert_eq!(active_runs(&runs), 2);
         assert_eq!(active_runs(&[]), 0);
+    }
+
+    #[test]
+    fn only_an_ended_run_with_a_workspace_left_can_be_cleaned() {
+        let mut ended = run("failed");
+        assert!(!can_clean(&ended), "no workspace was kept");
+        ended.remote_workdir = Some("runs/r".into());
+        assert!(can_clean(&ended));
+        for status in ["running", "cancelling", "draft"] {
+            let going = RunRecord {
+                status: status.into(),
+                ..ended.clone()
+            };
+            assert!(!can_clean(&going), "{status}");
+        }
+        for kind in ["method_search", "file_transfer"] {
+            let own = RunRecord {
+                kind: kind.into(),
+                ..ended.clone()
+            };
+            assert!(!can_clean(&own), "{kind}");
+        }
+        ended.cleaned_at = Some(5);
+        assert!(!can_clean(&ended), "already cleaned");
+        assert!(outputs_at_stake(
+            "Run outputs were never harvested; call harvest_run first"
+        ));
+        assert!(!outputs_at_stake("Run has no server workspace to clean"));
     }
 
     #[test]

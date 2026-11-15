@@ -186,6 +186,111 @@ impl Workspace {
         .detach();
     }
 
+    /// Asks before a run's workspace is deleted, under its card.
+    fn ask_clean_run(&mut self, run: String, cx: &mut Context<Self>) {
+        self.run_cleaning = Some((run, false));
+        self.layers.open(Layer::ConfirmCleanRun);
+        cx.notify();
+    }
+
+    /// Deletes what a finished run left where it ran. Refused because
+    /// outputs were never brought back, the question asks again whether
+    /// to lose them.
+    fn clean_run(&mut self, run: String, force: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let selection = self.state.selection();
+        let Some(project) = selection.project.clone() else {
+            return;
+        };
+        self.error = None;
+        let reply = self.backend.clean_run(project, run.clone(), force);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if !this.state.current(&selection) {
+                    return;
+                }
+                match result {
+                    Ok(()) => {
+                        this.run_cleaning = None;
+                        this.layers.close(Layer::ConfirmCleanRun);
+                        this.notice = Some(tr("The run's workspace is cleaned.").into());
+                    }
+                    Err(error) if !force && panel::outputs_at_stake(&error) => {
+                        this.run_cleaning = Some((run, true));
+                    }
+                    Err(error) => {
+                        this.run_cleaning = None;
+                        this.layers.close(Layer::ConfirmCleanRun);
+                        this.error = Some(error);
+                    }
+                }
+                // The run's new state arrives with the next snapshot.
+                this.start_poll(window, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// The question under a run's card before its workspace goes.
+    fn clean_question(&self, run: &str, at_stake: bool, cx: &mut Context<Self>) -> Div {
+        let (asked, run) = (run.to_owned(), run.to_owned());
+        div()
+            .v_flex()
+            .gap_1()
+            .p_2()
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(if at_stake {
+                cx.theme().danger
+            } else {
+                cx.theme().border
+            })
+            .child(div().text_xs().child(if at_stake {
+                tr("Its outputs were never brought back; cleaning up anyway loses them.")
+            } else {
+                tr(
+                    "Delete this run's workspace where it ran? Its logs are saved into the \
+                    project first.",
+                )
+            }))
+            .child(
+                div()
+                    .h_flex()
+                    .gap_1()
+                    .child({
+                        let button =
+                            Button::new(SharedString::from(format!("run-clean-yes-{run}")))
+                                .label(if at_stake {
+                                    tr("Clean up anyway")
+                                } else {
+                                    tr("Clean up")
+                                })
+                                .xsmall()
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.clean_run(asked.clone(), at_stake, window, cx)
+                                }));
+                        if at_stake {
+                            button.danger()
+                        } else {
+                            button.primary()
+                        }
+                    })
+                    .child(
+                        Button::new(SharedString::from(format!("run-clean-no-{run}")))
+                            .label(tr("Cancel"))
+                            .xsmall()
+                            .ghost()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.run_cleaning = None;
+                                this.layers.close(Layer::ConfirmCleanRun);
+                                cx.notify();
+                            })),
+                    ),
+            )
+    }
+
     /// Forgets the open method search card.
     pub(super) fn close_search(&mut self) {
         self.open_search = None;
@@ -690,6 +795,20 @@ impl Workspace {
                         })),
                 );
             }
+            if panel::can_clean(run) {
+                let clean = id.clone();
+                actions = actions.child(
+                    icon_button(
+                        SharedString::from(format!("run-clean-{id}")),
+                        "trash",
+                        tr("Delete what this run left where it ran"),
+                    )
+                    .xsmall()
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.ask_clean_run(clean.clone(), cx)),
+                    ),
+                );
+            }
             let mut card = div()
                 .v_flex()
                 .gap_1()
@@ -707,6 +826,27 @@ impl Workspace {
                         .child(div().flex_1())
                         .child(actions),
                 );
+            if run.cleaned_at.is_some() {
+                card = card.child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(tr("Its workspace was cleaned.")),
+                );
+            } else if let Some(problem) = &run.cleanup_error {
+                card = card.child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().danger)
+                        .child(crate::i18n::host(problem)),
+                );
+            }
+            if let Some((cleaning, at_stake)) = &self.run_cleaning
+                && *cleaning == id
+                && self.layers.contains(Layer::ConfirmCleanRun)
+            {
+                card = card.child(self.clean_question(&id, *at_stake, cx));
+            }
             if searching && self.open_search.as_ref() == Some(&id) {
                 card = card.child(self.render_method_search(run, window, cx));
             }

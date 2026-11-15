@@ -4042,6 +4042,29 @@ impl Server {
             .map_err(anyhow::Error::msg)
     }
 
+    /// Deletes the workspace a finished run kept on the machine it ran on,
+    /// once its logs are saved into the project. Outputs it declared but
+    /// never brought back are kept from loss unless `force` says they may
+    /// go. A run already cleaned is left as it is.
+    pub async fn clean_run(&self, project: &str, run: &str, force: bool) -> Result<()> {
+        self.project_root(project).await?;
+        let record = self.0.store.get_run(run).await?.context("Run not found")?;
+        ensure!(
+            record.project_id == project,
+            "Run does not belong to the selected project"
+        );
+        ensure!(
+            record.kind != "method_search" && record.kind != "file_transfer",
+            "This run keeps no workspace of its own to clean"
+        );
+        self.0
+            .runs
+            .cleanup_run_workspace(&self.0.store, run, force)
+            .await
+            .map(drop)
+            .map_err(anyhow::Error::msg)
+    }
+
     /// The tool call that last wrote a project file, if one of the
     /// project's conversations did: looked for in `session` first, when
     /// one is given, then in the others. A file the user put there, or one

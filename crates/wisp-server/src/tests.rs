@@ -6497,6 +6497,80 @@ async fn files_a_turn_writes_become_artifacts_of_its_conversation() {
 }
 
 #[tokio::test]
+async fn a_finished_runs_workspace_is_cleaned_only_when_nothing_would_be_lost() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let store = &server.0.store;
+    let run = |id: &str, kind: &str, status| {
+        let mut run = wisp_store::RunRecord::new(id, PROJECT, "local", "Align", kind);
+        run.status = status;
+        run
+    };
+    // Unknown runs and other projects are refused.
+    assert!(server.clean_run(PROJECT, "ghost", false).await.is_err());
+    assert!(server.clean_run("missing", "ghost", false).await.is_err());
+
+    // A run still going keeps its workspace.
+    store
+        .create_run(&run("going", "ssh_direct", wisp_store::RunStatus::Running))
+        .await
+        .unwrap();
+    let refused = server.clean_run(PROJECT, "going", false).await.unwrap_err();
+    assert!(refused.to_string().contains("still running"), "{refused}");
+
+    // Outputs it declared and never brought back are not lost by default.
+    let mut finished = run("finished", "ssh_direct", wisp_store::RunStatus::Succeeded);
+    finished.output_specs_json =
+        r#"[{"glob":"results/*.csv","kind":"table","residency":"local"}]"#.into();
+    store.create_run(&finished).await.unwrap();
+    let refused = server
+        .clean_run(PROJECT, "finished", false)
+        .await
+        .unwrap_err();
+    assert!(refused.to_string().contains("never harvested"), "{refused}");
+    // Accepting the loss gets as far as the workspace, which this one lacks.
+    let refused = server
+        .clean_run(PROJECT, "finished", true)
+        .await
+        .unwrap_err();
+    assert!(
+        refused.to_string().contains("no server workspace"),
+        "{refused}"
+    );
+
+    // A search ends through its own coordinator and keeps no workspace.
+    store
+        .create_run(&run(
+            "search",
+            "method_search",
+            wisp_store::RunStatus::Succeeded,
+        ))
+        .await
+        .unwrap();
+    assert!(server.clean_run(PROJECT, "search", true).await.is_err());
+
+    // One already cleaned is left as it is.
+    store
+        .create_run(&run("cleaned", "ssh_direct", wisp_store::RunStatus::Failed))
+        .await
+        .unwrap();
+    store.mark_run_cleaned("cleaned").await.unwrap();
+    server.clean_run(PROJECT, "cleaned", false).await.unwrap();
+    assert!(store
+        .get_run("cleaned")
+        .await
+        .unwrap()
+        .unwrap()
+        .cleaned_at
+        .is_some());
+    // It is the desktop's own.
+    assert!(!server.commands().iter().any(|name| name.contains("clean")));
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_model_with_a_route_of_its_own_takes_it_over_the_network_page() {
     use desktop::{ConversationOptions, ModelFields, ModelInput};
     let temp = tempfile::tempdir().unwrap();

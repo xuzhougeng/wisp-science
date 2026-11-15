@@ -773,6 +773,9 @@ pub struct Workspace {
     panel_tab: PanelTab,
     /// The side panel's tabs that have not been taken away; saved.
     kept_tabs: Vec<PanelTab>,
+    /// The run whose workspace is being asked about, and whether cleaning
+    /// it now would lose outputs never brought back.
+    run_cleaning: Option<(String, bool)>,
     artifacts: Vec<ArtifactRow>,
     /// The Artifacts tab lists the whole project instead of the conversation.
     artifacts_all: bool,
@@ -1639,6 +1642,7 @@ impl Workspace {
             expanded_run: None,
             panel_tab: PanelTab::default(),
             kept_tabs: PanelTab::ALL.to_vec(),
+            run_cleaning: None,
             artifacts: vec![],
             artifacts_all: false,
             artifacts_request: 0,
@@ -1670,6 +1674,7 @@ impl Workspace {
             }
             Some(Layer::FilesPanel) => self.restore_focus(window, cx),
             Some(Layer::PanelTabMenu) => {}
+            Some(Layer::ConfirmCleanRun) => self.run_cleaning = None,
             // These layers own the focused field, which goes away with them.
             Some(Layer::Settings | Layer::Rename | Layer::ConfirmDelete) => {
                 self.focus_composer(window, cx)

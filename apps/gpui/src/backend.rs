@@ -742,6 +742,12 @@ impl Backend {
         self.local(move |host| async move { host.cancel_run(&project, &run).await })
     }
 
+    /// Deletes a finished run's workspace where it ran; `force` lets
+    /// outputs never brought back go with it.
+    pub fn clean_run(&self, project: String, run: String, force: bool) -> Reply<()> {
+        self.local(move |host| async move { host.clean_run(&project, &run, force).await })
+    }
+
     /// A method search's card: read as it is, or after one of its controls.
     pub fn method_search(
         &self,

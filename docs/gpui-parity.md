@@ -172,7 +172,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Environments [环境]: conversation environment, attach servers, probe, terminal | Yes | Partial: the conversation's environment is chosen in the composer and hosts are checked in Settings; no panel tab, attaching or terminal | store + shared |
 | Runs [运行]: list, output | Yes | Done: a Runs tab with status and output tails | served |
 | Runs: cancel | Yes | Done | served |
-| Runs: harvest, transfer, full log, workspace review | Yes | Partial: the whole log of a run on this computer; no harvest, transfer or workspace review, and no whole log for runs on SSH hosts | shared |
+| Runs: harvest, transfer, full log, workspace review | Yes | Partial: the whole log of a run on this computer, and cleaning up a finished run's workspace from its card (after a question, and a second one when outputs were never brought back), with cleaned and cleanup-failed shown; no workspace review (browse, download, delete), transfer progress or whole log for runs on SSH hosts | shared |
 | Notebook [Notebook]: code cells and outputs | Yes | Done: a panel tab with the loaded conversation's cells and outputs, copy, save to favorites and show in the conversation | store |
 | Highlights [划线] | Yes | Done: lists what the conversation saved, with use, copy and remove | store |
 | Provenance [溯源]: tool evidence behind a claim | Yes | Partial: a Provenance tab lists the tool calls of the loaded conversation with how each went, opening to what each was given and returned, and a file's preview shows which tool call wrote it; no tracing of a claim in an answer to its evidence | store |
