@@ -1499,6 +1499,76 @@ impl Backend {
         self.local(move |host| async move { host.join_lab_knowledge_base(&parent).await })
     }
 
+    pub fn explorations(&self, project: String) -> Reply<Vec<wisp_dto::ExplorationSummary>> {
+        self.local(move |host| async move { host.explorations(&project).await })
+    }
+
+    /// Starts an exploration from the answer to `turn` (the latest when
+    /// none).
+    pub fn start_exploration(
+        &self,
+        project: String,
+        session: String,
+        turn: Option<wisp_server::desktop::TurnRef>,
+        name: String,
+    ) -> Reply<wisp_server::desktop::StartedExploration> {
+        self.local(move |host| async move {
+            host.start_exploration(&project, &session, turn.as_ref(), &name)
+                .await
+        })
+    }
+
+    pub fn preview_exploration(
+        &self,
+        project: String,
+        exploration: String,
+    ) -> Reply<wisp_server::desktop::PromotionPreview> {
+        self.local(
+            move |host| async move { host.preview_exploration(&project, &exploration).await },
+        )
+    }
+
+    /// Keeps an exploration; the mainline conversation it continues.
+    pub fn promote_exploration(
+        &self,
+        project: String,
+        exploration: String,
+        guard: String,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.promote_exploration(&project, &exploration, &guard)
+                .await
+        })
+    }
+
+    pub fn discard_exploration(&self, project: String, exploration: String) -> Reply<()> {
+        self.local(
+            move |host| async move { host.discard_exploration(&project, &exploration).await },
+        )
+    }
+
+    pub fn abandon_exploration_round(&self, project: String, source: String) -> Reply<()> {
+        self.local(
+            move |host| async move { host.abandon_exploration_round(&project, &source).await },
+        )
+    }
+
+    pub fn exploration_folders(
+        &self,
+        project: String,
+        exploration: String,
+    ) -> Reply<(PathBuf, PathBuf)> {
+        self.local(
+            move |host| async move { host.exploration_folders(&project, &exploration).await },
+        )
+    }
+
+    pub fn finish_manual_resolution(&self, project: String, exploration: String) -> Reply<()> {
+        self.local(move |host| async move {
+            host.finish_manual_resolution(&project, &exploration).await
+        })
+    }
+
     pub fn onboarding_done(&self) -> Reply<bool> {
         self.local(|host| async move { host.onboarding_done().await })
     }

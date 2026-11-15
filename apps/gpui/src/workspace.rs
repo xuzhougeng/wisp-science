@@ -4,6 +4,7 @@ mod aside_view;
 mod calendar_view;
 mod capabilities_view;
 mod conversation_actions;
+mod explore_view;
 mod favorites_view;
 mod files_panel;
 mod find_view;
@@ -500,6 +501,17 @@ pub struct Workspace {
     join_code: Entity<InputState>,
     join_busy: bool,
     join_note: Option<String>,
+    /// The open project's exploration round, the dialog that names a new
+    /// exploration and the answer it starts from, what keeping one would
+    /// bring in, the question asked before one is given up, and how the
+    /// last action went.
+    explorations: Vec<wisp_dto::ExplorationSummary>,
+    explore_name: Entity<InputState>,
+    explore_from: Option<TurnRef>,
+    explore_preview: Option<(String, wisp_server::desktop::PromotionPreview)>,
+    explore_question: Option<explore_view::ExploreQuestion>,
+    explore_busy: bool,
+    explore_note: Option<Result<String, String>>,
     acp_reports:
         std::collections::HashMap<String, Result<wisp_server::desktop::AcpAgentReport, String>>,
     mcp_servers: Option<Vec<wisp_server::desktop::McpServerRow>>,
@@ -695,6 +707,7 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx).placeholder("/Volumes/Shared/Wisp")),
         ];
         let join_code = cx.new(|cx| InputState::new(window, cx).placeholder("wisp-sync:…"));
+        let explore_name = cx.new(|cx| InputState::new(window, cx));
         let lab_fields = [
             cx.new(|cx| InputState::new(window, cx).placeholder("https://relay.example")),
             cx.new(|cx| InputState::new(window, cx).masked(true)),
@@ -1167,6 +1180,13 @@ impl Workspace {
             join_code,
             join_busy: false,
             join_note: None,
+            explorations: Vec::new(),
+            explore_name,
+            explore_from: None,
+            explore_preview: None,
+            explore_question: None,
+            explore_busy: false,
+            explore_note: None,
             acp_reports: Default::default(),
             mcp_servers: None,
             mcp_editing: None,
@@ -1307,6 +1327,9 @@ impl Workspace {
                 self.project_form_error = None;
             }
             Some(Layer::ConfirmSyncReplace | Layer::JoinSyncedProject) => {}
+            Some(Layer::StartExploration) => self.explore_from = None,
+            Some(Layer::ExplorationPreview) => self.explore_preview = None,
+            Some(Layer::ConfirmExploration) => self.explore_question = None,
             Some(Layer::Find) => {
                 self.find.clear();
                 self.focus_composer(window, cx);
@@ -1428,6 +1451,8 @@ impl Workspace {
                     || self.layers.contains(Layer::Palette)
                     || self.layers.contains(Layer::ProjectSettings)
                     || self.layers.contains(Layer::JoinSyncedProject)
+                    || self.layers.contains(Layer::StartExploration)
+                    || self.layers.contains(Layer::ExplorationPreview)
                 {
                     return false;
                 }
@@ -1972,6 +1997,8 @@ impl Workspace {
     }
 
     fn load_sessions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The round's candidates are listed with the conversations.
+        self.load_explorations(window, cx);
         let selection = self.state.selection();
         let Some(project) = selection.project.clone() else {
             return;
@@ -3262,6 +3289,16 @@ impl Render for Workspace {
         };
         let root = if self.layers.contains(Layer::JoinSyncedProject) {
             root.child(self.render_join_synced(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::StartExploration) {
+            root.child(self.render_start_exploration(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::ExplorationPreview) {
+            root.child(self.render_exploration_preview(cx))
         } else {
             root
         };

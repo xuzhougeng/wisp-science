@@ -506,7 +506,21 @@ impl Workspace {
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.open_review_of(index, window, cx)
                         })),
-                ),
+                )
+                .when(self.can_explore(), |actions| {
+                    actions.child(
+                        icon_button(
+                            ("explore-row", index),
+                            "flask",
+                            tr("Start an exploration from here"),
+                        )
+                        .xsmall()
+                        .disabled(!idle)
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| this.ask_explore_from(index, window, cx),
+                        )),
+                    )
+                }),
             _ => actions,
         }
     }
@@ -2078,6 +2092,9 @@ impl Workspace {
             .children(self.render_tabs(cx))
             .child(self.render_topbar(cx));
         if let Some(bar) = self.render_conversation_bar(cx) {
+            content = content.child(bar);
+        }
+        if let Some(bar) = self.render_exploration_bar(cx) {
             content = content.child(bar);
         }
         if !self.settings.configured() {

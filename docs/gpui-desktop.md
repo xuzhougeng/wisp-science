@@ -197,6 +197,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Plan first | The model investigates and submits a plan as a card; nothing is changed until you approve it, which leaves plan mode and starts the work |
 | First-run guide | On a first run a dialog walks through four steps: welcome, what Wisp can do, a model (a DeepSeek key sets up deepseek-v4-flash as the default and deepseek-v4-pro beside it, or a link to Settings, Models for another provider), and the tools on this computer (install Python with uv). Get started or Escape puts it away for good, in this desktop and the WebView one |
 | Import from Codex or Claude Code | The import button in the conversation list's header lists the conversations Codex CLI (`~/.codex/sessions`) and Claude Code (`~/.claude/projects`) keep on this computer, newest first, with the first thing asked and the folder it was had in. Import brings one into the project in a group named `codex` or `claude`, with its messages and tool calls; importing it again brings in only what was added since, and leaves a conversation continued here alone. Only this computer is looked at, not SSH or WSL hosts |
+| Explorations | On an answer, Start an exploration from here names one and continues the conversation in its own copy of the project; more candidates of the same round start from the same answer. The source shows a bar with each candidate and Abandon the round; a candidate shows its status, View changes and keep (what it changed, what the mainline changed meanwhile, why it cannot be kept), Discard, Back to the mainline and Abandon the round; when it cannot be kept, Show both folders and Finish by hand |
 | Bringing a branch back | In a branch, Bring back in the conversation's toolbar has the model summarise what the branch did since it split off; you read and change the summary, and Bring it back adds it to the conversation the branch came from, which reads it from then on, and opens that conversation. A branch is brought back once |
 | Approving a plan | When the model sets out a new plan it waits for you: the plan's steps show above the composer with Approve, Turn down, and a box to say what should change; Send feedback (or Return in the box) turns the plan down with your words, which the model reads to revise it |
 | Working plan | When the model sets out or updates its plan for a long piece of work, the update is a checklist in the transcript (done, in progress, to do, dropped), and while steps remain a line above the composer says how many are done and which is next |
@@ -281,6 +282,33 @@ Limits of this slice:
   branch back with a summary are not ported, and a branch made here does not
   take part in them. A conversation cannot be deleted or moved while it has
   branches; delete those first.
+- Explorations follow the WebView's `exploration_commands.rs`,
+  `exploration_promotion.rs` and `exploration_workspace.rs`, whose
+  services and tests are carried over. The first candidate of a round
+  freezes one checkpoint: the conversation up to the chosen answer, the
+  project's records, and a snapshot of its files as they are (small
+  regular files copied into a content-addressed store under the data
+  folder, the rest referenced and listed in the copy's
+  `.wisp/exploration-references.json`; symlinks are not followed). Each
+  candidate gets its own copy of the files under the data folder's
+  `explorations/` and its own conversation, whose turns work in the copy,
+  read only inside it, may not name the mainline's folder and are told so.
+  The source conversation is frozen, and the project's other
+  conversations keep to tools that change nothing until the round ends;
+  rewinding, branching, moving, archiving or deleting the source or a
+  candidate is refused meanwhile, as are project sync and removal.
+  Keeping one is fast-forward only: it is refused when the mainline
+  changed what the candidate changed, its records moved on, or a
+  referenced file changed, and the preview's guard must still match;
+  otherwise its files are applied through a journal that is rolled back
+  (never over an outside edit) or finished at the next start, its
+  conversation continues the source conversation, and the other
+  candidates go. Discarding the last candidate or abandoning the round
+  leaves the mainline as it was. Candidates are not listed in the sidebar
+  (the session lists leave them out, as the WebView's do): they are opened
+  from the bar over the source. A conversation run by an ACP agent, a
+  branch, or a candidate cannot start an exploration. The Files tab shows
+  the mainline's files, not a candidate's copy.
 - A group holds a conversation together with its branches. Group names are
   unique in a project, ignoring case, and at most 60 characters. Groups are
   reordered one place at a time; conversations are not dragged. Sections show
@@ -1752,6 +1780,18 @@ Sync now on one, then on the other: the second says both changed and
 offers Use the other device's copy and Keep this device's copy; press
 one, then Escape: only the question closes; answer it: the files match
 the side chosen.
+In a project with a file `notes.txt`, ask something and wait for the
+answer; on it press Start an exploration from here, keep the offered
+name and Start: a conversation opens with the same history and a bar
+naming the exploration. Ask it to change `notes.txt`. Back to the
+mainline: the bar there lists the exploration, the composer refuses to
+send, and the mainline's `notes.txt` is unchanged. Start a second one
+from the same answer, open it and Discard, then Escape: only the
+question closes; Discard and answer: it goes. Open the first, View
+changes and keep: `notes.txt` is listed as modified; Keep it as the
+mainline: the mainline conversation opens with the exploration's turns
+and `notes.txt` changed. Start one more and Abandon the round: the
+mainline is as it was.
 On a project's card press Project settings: clear the name and Save (it is
 refused and the dialog stays), then give a name, a description and a rule
 and Save: the card and the recent conversations show the new name, and

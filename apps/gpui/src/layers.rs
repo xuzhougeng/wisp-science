@@ -44,6 +44,12 @@ pub enum Layer {
     ConfirmSyncReplace,
     /// The dialog that joins a project from another device by its code.
     JoinSyncedProject,
+    /// The dialog that names an exploration before it starts.
+    StartExploration,
+    /// What keeping an exploration would bring in.
+    ExplorationPreview,
+    /// Question before an exploration or a round is given up.
+    ConfirmExploration,
     /// The find bar over the open conversation.
     Find,
     /// The outline of the open conversation, under its header.
@@ -742,6 +748,19 @@ mod tests {
         // The join dialog is a layer of its own.
         stack.open(Layer::JoinSyncedProject);
         assert_eq!(stack.dismiss_top(), Some(Layer::JoinSyncedProject));
+        assert_eq!(stack.dismiss_top(), None);
+    }
+
+    #[test]
+    fn exploration_questions_close_before_the_preview() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::ExplorationPreview);
+        stack.open(Layer::ConfirmExploration);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmExploration));
+        assert!(stack.contains(Layer::ExplorationPreview));
+        assert_eq!(stack.dismiss_top(), Some(Layer::ExplorationPreview));
+        stack.open(Layer::StartExploration);
+        assert_eq!(stack.dismiss_top(), Some(Layer::StartExploration));
         assert_eq!(stack.dismiss_top(), None);
     }
 }

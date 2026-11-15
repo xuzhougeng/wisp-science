@@ -12,6 +12,7 @@ mod codex_pool;
 mod compose;
 mod controls;
 mod decision;
+mod explore;
 mod favorites;
 mod files;
 mod find;
