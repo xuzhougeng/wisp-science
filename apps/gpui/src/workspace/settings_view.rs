@@ -802,6 +802,17 @@ impl Workspace {
                     true,
                     cx,
                 )
+                .on_click(cx.listener(|this, _, window, cx| this.report_problem(window, cx))),
+            )
+            .child(
+                nav_row(
+                    "settings-issues",
+                    "external-link",
+                    tr("Known problems"),
+                    false,
+                    true,
+                    cx,
+                )
                 .on_click(cx.listener(|_, _, _, cx| cx.open_url(crate::links::ISSUES))),
             );
         let body = match self.settings_section {

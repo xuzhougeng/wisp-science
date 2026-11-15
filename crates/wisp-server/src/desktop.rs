@@ -5072,6 +5072,12 @@ pub struct ConversationOptions {
     pub fast: bool,
 }
 
+/// The version of Wisp that is running, as releases are numbered.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The project the host was started on, which is always there.
+pub const BUILT_IN_PROJECT: &str = crate::PROJECT;
+
 /// The service tier fast mode asks for, as the WebView desktop saves it.
 pub const FAST_TIER: &str = "priority";
 

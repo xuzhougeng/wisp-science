@@ -57,6 +57,8 @@ pub const ZH: &[(&str, &str)] = &[
     ("Branch from here", "从这里分支"),
     ("Review this turn", "审查这一轮"),
     ("Open in a new window", "在新窗口打开"),
+    ("Known problems", "已知问题"),
+    ("Help me file a GitHub issue for xuzhougeng/wisp-science.\n\n[Collected automatically; do not ask me for API keys, transcripts, project files, environment variables, usernames or absolute paths]\n- Wisp version: {} (GPUI desktop)\n- OS / architecture: {} / {}\n- Model: {}\n\nGuide me in plain language: what happened, steps to reproduce, expected and actual behaviour, and any Run ID or error text I know. When we have enough detail, propose a short issue title and a Markdown body with sections (Problem, Steps to reproduce, Expected, Actual, Environment). Then give a prefilled GitHub link using this base address: {}?title=...&body=... Remind me that screenshots must be attached on GitHub by hand; Wisp does not upload them.", "请帮我向 xuzhougeng/wisp-science 提交一个 GitHub issue。\n\n【已自动采集，请勿向我索要 API key、transcript、项目文件、环境变量、用户名或绝对路径】\n- Wisp 版本：{}（GPUI 桌面版）\n- OS / 架构：{} / {}\n- 模型：{}\n\n请用中文逐条引导我说明：发生了什么、复现步骤、预期与实际行为，以及我知道的 Run ID 或错误信息。信息足够后，给出简短 issue 标题和 Markdown 正文（含问题描述、复现步骤、预期、实际、环境等小节），并提供预填链接：{}?title=...&body=... 提醒截图需在 GitHub 页面手动附加，Wisp 不会上传截图。"),
     ("Load earlier", "加载更早的"),
     ("Load the whole conversation, so all of it is listed", "加载整个对话，列出全部消息"),
     ("Search by name across the project…", "按文件名搜索整个项目…"),

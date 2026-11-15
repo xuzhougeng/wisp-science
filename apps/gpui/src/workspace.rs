@@ -2729,6 +2729,67 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Starts a conversation that drafts a problem report with the model,
+    /// as the WebView's Feedback does: in the open project, or the built-in
+    /// one, with what is known about the app in the composer, to send once
+    /// the problem is described.
+    pub(crate) fn report_problem(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending {
+            return;
+        }
+        for page in [
+            Layer::Settings,
+            Layer::Calendar,
+            Layer::Journey,
+            Layer::Papers,
+            Layer::Schedules,
+            Layer::Mandates,
+            Layer::Favorites,
+        ] {
+            self.layers.close(page);
+        }
+        let project = match (&self.state.project, self.screen) {
+            (Some(project), Screen::Project) => project.clone(),
+            _ => {
+                let project = wisp_server::desktop::BUILT_IN_PROJECT.to_owned();
+                self.enter_project(project.clone(), window, cx);
+                project
+            }
+        };
+        let options = self.options();
+        let model = crate::settings::model_label(self.settings.current(), &options.model);
+        let prompt = crate::links::issue_report_prompt(
+            wisp_server::desktop::VERSION,
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            &model,
+        );
+        self.pending = true;
+        let selection = self.state.selection();
+        let reply = self.backend.create_conversation(project);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.pending = false;
+                if !this.state.current(&selection) {
+                    return;
+                }
+                match result {
+                    Ok(id) => {
+                        this.select_session(id, window, cx);
+                        this.load_sessions(window, cx);
+                        this.state.save_draft(prompt.clone());
+                        this.fill_composer(prompt, window, cx);
+                    }
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn create_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.pending || self.state.project.is_none() {
             return;

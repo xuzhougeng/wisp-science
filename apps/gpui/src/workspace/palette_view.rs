@@ -247,7 +247,10 @@ impl Workspace {
             Command::Settings => return self.open_settings(window, cx),
             // These leave the app: they open in the system's browser.
             Command::Docs => return cx.open_url(crate::links::DOCS),
-            Command::Feedback => return cx.open_url(crate::links::ISSUES),
+            Command::Feedback => {
+                self.layers.close(Layer::Settings);
+                return self.report_problem(window, cx);
+            }
             Command::Find => return self.open_find(window, cx),
             Command::Journey => return self.open_journey(window, cx),
             Command::Papers => return self.open_papers(window, cx),

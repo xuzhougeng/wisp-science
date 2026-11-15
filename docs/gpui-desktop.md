@@ -179,7 +179,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Research journey | A page for the open project: one month of what happened, by day (what you asked, runs, files, decisions, your own records), a filter, and a form to add a record of your own. Each day can have a recap the model drafts from its records, with what was done, found, went wrong and comes next, which you confirm or dismiss; Scheduled tasks drafts the last days' recaps each morning |
 | Outline | A button in the conversation's header lists what you asked, in order; choosing one scrolls to it |
 | Find in conversation | Cmd/Ctrl+F, or the command palette: a bar over the transcript marks every message, and every tool call, that contains the words; Return and the arrows move between them |
-| Help | Documentation (home page, Settings, palette) and Report a problem (Settings, palette) open the tutorials and the issue tracker in the system's browser |
+| Help | Documentation (home page, Settings, palette) opens the tutorials and Known problems (Settings) the issue tracker in the system's browser; Report a problem (Settings, palette) starts a conversation, in the open project or the built-in one, with the app's version, system and model in the composer, for the model to draft the report and a prefilled GitHub link |
 | Settings | A search field narrows the pages to those about what you type. Pages: General (language; appearance: system, light or dark; the send key; notifications and sound; update check; what the app opens on), Network (a route for model requests, for connectors and MCP servers, and for the code the model runs; a conda mirror, a Python package index and a CA bundle the model is told to use), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test; and subscriptions: sign in to ChatGPT, ChatGPT through Codex or SuperGrok to use their models without a key), ACP agents (programs on this computer that speak the Agent Client Protocol: add, change, remove, and Test, which starts one and shows its name, version and how it signs in, with a button for each way: signed in by the agent itself, or in the system's terminal), Conversation (steps per turn, continuing cut-off answers, automatic compaction and its threshold, suggesting what to ask next, reviewing turns, the reviewer model and the sub-agent model), Skills (every skill with where it comes from and its tags, search, on or off, and Tags to give it your own tags in place of the ones it came with, kept under the WebView's `skill_tags`), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Environments (Python, R and Node.js installed into Wisp's own data folder with progress, a log and Stop; the SSH hosts work can run on: add, change, remove, add from `~/.ssh/config`, check the connection and see what the host is, and which one new work goes to), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project, and the skills and MCP tools the model called most, counted from its messages, the first nine and the rest as Other) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
 | Inbox | Conversations in any project that are waiting for you; opens across projects |
 | Read state | A finished answer is marked read once it is on screen in the active window |
@@ -2232,10 +2232,14 @@ conversation that was already open and confirm the model follows the rule;
 empty the rules, save, and confirm the file is gone. Press Escape with the
 dialog open and confirm only the dialog closes. Inside a project, find
 Project settings in the command palette.
-Press the book on the home page, and Documentation and Report a problem in
-Settings and in the command palette: each opens in the system's browser, the
-first two the tutorials, the last the issue tracker, and the app stays where
-it was.
+Press the book on the home page, and Documentation and Known problems in
+Settings, and Documentation in the command palette: each opens in the
+system's browser, the first two the tutorials, the last the issue tracker,
+and the app stays where it was. Press Report a problem in Settings, and
+again from the home page through the palette: a new conversation opens (in
+the built-in project from the home page) with the Wisp version, system,
+architecture and model in the composer, and nothing is sent until you add
+what happened and send it.
 In Settings type a word in the search field above the pages, for example
 "proxy" or "ssh": only the pages about it stay listed, Return opens the
 first, and a word no page is about says so. Close Settings and open it again:

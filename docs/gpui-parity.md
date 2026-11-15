@@ -91,7 +91,7 @@ to find in the running app.
 | Paper evidence [论文证据] | Section 7 | Partial: see section 7 | store |
 | Favorites [收藏库] | Section 1 | Done | store |
 | Capability summary [能力]: skills, MCP, memory counts, local tools found | Dialog | Done: counts of skills, connectors, MCP servers, SSH hosts and memory, and the tools found on the search path | shared |
-| Feedback [反馈] | Yes | Partial: "Report a problem" in Settings and the command palette opens the issue tracker; the report the model drafts with the app's version and system is not ported | ui |
+| Feedback [反馈] | Yes | Yes: Report a problem (Settings, palette) starts a conversation with the app's version, system and model in the composer, for the model to draft the issue and a prefilled GitHub link; Known problems opens the issue tracker. The collected details are visible in the composer rather than hidden, and startup timings are not included | ui |
 
 ## 3. Composer
 
