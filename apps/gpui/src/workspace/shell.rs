@@ -1588,9 +1588,19 @@ impl Workspace {
         area.child(
             editor
                 .child(
-                    Input::new(&self.composer)
-                        .appearance(false)
-                        .disabled(self.pending),
+                    // Return sends here when that is the chosen key: the
+                    // context lets the composer's binding outrank the
+                    // input's own new line, and only in this input.
+                    div()
+                        .key_context(self.send_key.context())
+                        .on_action(cx.listener(|this, _: &super::SendMessage, window, cx| {
+                            this.send(window, cx)
+                        }))
+                        .child(
+                            Input::new(&self.composer)
+                                .appearance(false)
+                                .disabled(self.pending),
+                        ),
                 )
                 .child(
                     div()

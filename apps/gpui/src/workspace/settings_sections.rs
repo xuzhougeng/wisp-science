@@ -24,6 +24,7 @@ use crate::{
 const APPEARANCE: &str = "appearance";
 const LANGUAGE: &str = "language";
 const LAUNCH: &str = "launch";
+const SEND_KEY: &str = "send_key";
 const NOTIFY: &str = "notifications";
 const NOTIFY_SOUND: &str = "notification_sound";
 const LAST_OPEN: &str = "last_open";
@@ -667,19 +668,24 @@ impl Workspace {
             });
         })
         .detach();
-        let (appearance, launch, place) = (
+        let (appearance, launch, place, send_key) = (
             self.backend.preference(APPEARANCE),
             self.backend.preference(LAUNCH),
             self.backend.preference(LAST_OPEN),
+            self.backend.preference(SEND_KEY),
         );
         cx.spawn_in(window, async move |this, cx| {
             let saved = |reply| async move { receive(reply).await.ok().flatten() };
-            let (appearance, launch, place) = (
+            let (appearance, launch, place, send_key) = (
                 saved(appearance).await,
                 saved(launch).await,
                 saved(place).await,
+                saved(send_key).await,
             );
             let _ = this.update_in(cx, |this, window, cx| {
+                this.send_key =
+                    settings::SendKey::from_key(send_key.as_deref().unwrap_or_default());
+                this.word_fields(window, cx);
                 this.appearance =
                     crate::theme::Appearance::from_key(appearance.as_deref().unwrap_or_default());
                 this.launch = settings::Launch::from_key(launch.as_deref().unwrap_or_default());
@@ -781,6 +787,21 @@ impl Workspace {
                     })),
             );
         }
+        let mut sends = div().h_flex().gap_1();
+        for choice in settings::SendKey::ALL {
+            sends = sends.child(
+                Button::new(SharedString::from(format!("send-{}", choice.key())))
+                    .label(choice.label())
+                    .small()
+                    .selected(self.send_key == choice)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.send_key = choice;
+                        // The empty composer says which key it is now.
+                        this.word_fields(window, cx);
+                        this.save_general(SEND_KEY, choice.key().into(), window, cx);
+                    })),
+            );
+        }
         let mut starts = div().h_flex().gap_1();
         for choice in settings::Launch::ALL {
             starts = starts.child(
@@ -811,6 +832,7 @@ impl Workspace {
                 looks,
                 cx,
             ))
+            .child(setting(tr("Send with"), settings::send_key_note(), sends, cx))
             .child(setting(
                 tr("Notify me"),
                 tr(

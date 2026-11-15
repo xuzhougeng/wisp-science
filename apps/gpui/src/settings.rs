@@ -617,6 +617,84 @@ impl Launch {
     }
 }
 
+/// Which key sends what is written in the composer. The other one starts
+/// a new line.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SendKey {
+    /// Return sends; Shift+Return starts a new line. The WebView's default.
+    #[default]
+    Enter,
+    /// Cmd+Return (Ctrl+Enter off macOS) sends; Return starts a new line.
+    Modifier,
+}
+
+impl SendKey {
+    pub const ALL: [SendKey; 2] = [SendKey::Enter, SendKey::Modifier];
+
+    pub fn label(self) -> &'static str {
+        match (self, cfg!(target_os = "macos")) {
+            (SendKey::Enter, true) => tr("Return"),
+            (SendKey::Enter, false) => tr("Enter"),
+            (SendKey::Modifier, true) => tr("⌘Return"),
+            (SendKey::Modifier, false) => tr("Ctrl+Enter"),
+        }
+    }
+
+    /// The words the WebView's own choice is saved as.
+    pub fn key(self) -> &'static str {
+        match self {
+            SendKey::Enter => "enter",
+            SendKey::Modifier => "modifier_enter",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|choice| choice.key() == key.trim())
+            .unwrap_or_default()
+    }
+
+    /// The composer's key context. Return sends only inside
+    /// [`SEND_ON_ENTER`]; anywhere else it is the input's own new line.
+    pub fn context(self) -> &'static str {
+        match self {
+            SendKey::Enter => SEND_ON_ENTER,
+            SendKey::Modifier => "Composer",
+        }
+    }
+
+    /// What the empty composer says, so the key is never a guess.
+    pub fn placeholder(self) -> &'static str {
+        match (self, cfg!(target_os = "macos")) {
+            (SendKey::Enter, true) => {
+                tr("Describe your research task…  Return to send, Shift+Return for a new line")
+            }
+            (SendKey::Enter, false) => {
+                tr("Describe your research task…  Enter to send, Shift+Enter for a new line")
+            }
+            (SendKey::Modifier, true) => tr("Describe your research task…  ⌘Return to send"),
+            (SendKey::Modifier, false) => tr("Describe your research task…  Ctrl+Enter to send"),
+        }
+    }
+}
+
+/// The key context of a composer in which Return sends.
+pub const SEND_ON_ENTER: &str = "ComposerEnter";
+
+/// What the send key setting says about itself.
+pub fn send_key_note() -> &'static str {
+    if cfg!(target_os = "macos") {
+        tr(
+            "The key that sends your message. When Return sends, Shift+Return starts a new line; when ⌘Return sends, Return does. While an input method is composing, Return still goes to it.",
+        )
+    } else {
+        tr(
+            "The key that sends your message. When Enter sends, Shift+Enter starts a new line; when Ctrl+Enter sends, Enter does. While an input method is composing, Enter still goes to it.",
+        )
+    }
+}
+
 /// The conversation that was open, as it is saved: project, then
 /// conversation, on two lines.
 pub fn encode_place(project: &str, session: &str) -> String {
@@ -993,6 +1071,22 @@ mod tests {
             assert_eq!(Launch::from_key(choice.key()), choice);
         }
         assert_eq!(Launch::from_key("somewhere"), Launch::Home);
+    }
+
+    #[test]
+    fn the_send_key_is_saved_in_the_webviews_words_and_return_is_the_default() {
+        assert_eq!(SendKey::default(), SendKey::Enter);
+        for choice in SendKey::ALL {
+            assert_eq!(SendKey::from_key(choice.key()), choice);
+        }
+        assert_eq!(SendKey::from_key("modifier_enter"), SendKey::Modifier);
+        assert_eq!(SendKey::from_key(""), SendKey::Enter);
+        // Only the Return choice puts the composer where Return sends.
+        assert_eq!(SendKey::Enter.context(), SEND_ON_ENTER);
+        assert_ne!(SendKey::Modifier.context(), SEND_ON_ENTER);
+        // The empty composer names the key that sends.
+        assert!(SendKey::Enter.placeholder().contains("to send, Shift+"));
+        assert!(!SendKey::Modifier.placeholder().contains("Shift+"));
     }
 
     #[test]

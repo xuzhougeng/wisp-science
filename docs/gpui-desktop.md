@@ -175,7 +175,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Outline | A button in the conversation's header lists what you asked, in order; choosing one scrolls to it |
 | Find in conversation | Cmd/Ctrl+F, or the command palette: a bar over the transcript marks every message, and every tool call, that contains the words; Return and the arrows move between them |
 | Help | Documentation (home page, Settings, palette) and Report a problem (Settings, palette) open the tutorials and the issue tracker in the system's browser |
-| Settings | A search field narrows the pages to those about what you type. Pages: General (appearance: system, light or dark; what the app opens on), Network (a route for model requests, for connectors and MCP servers, and for the code the model runs; a conda mirror, a Python package index and a CA bundle the model is told to use), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold, suggesting what to ask next, reviewing turns, the reviewer model and the sub-agent model), Skills (every skill with where it comes from, search, on or off), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Environments (the SSH hosts work can run on: add, change, remove, add from `~/.ssh/config`, check the connection and see what the host is, and which one new work goes to), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
+| Settings | A search field narrows the pages to those about what you type. Pages: General (language; appearance: system, light or dark; the send key; notifications and sound; update check; what the app opens on), Network (a route for model requests, for connectors and MCP servers, and for the code the model runs; a conda mirror, a Python package index and a CA bundle the model is told to use), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), Conversation (steps per turn, automatic compaction and its threshold, suggesting what to ask next, reviewing turns, the reviewer model and the sub-agent model), Skills (every skill with where it comes from, search, on or off), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Environments (the SSH hosts work can run on: add, change, remove, add from `~/.ssh/config`, check the connection and see what the host is, and which one new work goes to), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
 | Inbox | Conversations in any project that are waiting for you; opens across projects |
 | Read state | A finished answer is marked read once it is on screen in the active window |
 | Transcript | Virtualized Markdown, selectable text, paginated history |
@@ -189,7 +189,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Memory | One switch; habits the model is shown in every project; this project's notes by day, which the model can search; add, edit and delete either, and save any message to one or the other |
 | Memos | Your own notes per project: add, edit, pin, copy, delete after a confirmation, and put one into the message box. The model is never shown them |
 | Files | Project file browser, available before the first conversation; read-only text and Markdown preview, and pictures (PNG, JPEG, GIF, WebP, SVG, BMP); new folder, new file, rename, and move to the project's trash |
-| Composer | Native multiline input; Enter for newline, Cmd/Ctrl+Enter to send. While a turn runs the same key queues the message: it is sent when the turn ends |
+| Composer | Native multiline input. Return sends and Shift+Return starts a new line, or, with the other choice in Settings, General, Return starts a new line and Cmd/Ctrl+Return sends; Cmd/Ctrl+Return always sends. While an input method is composing, Return goes to it. While a turn runs the same key queues the message: it is sent when the turn ends |
 | Plan first | The model investigates and submits a plan as a card; nothing is changed until you approve it, which leaves plan mode and starts the work |
 | Thinking | What the model is thinking, above the composer, while it thinks |
 | Conversation options | Ask first or Full access, the model, reasoning effort, and where its work runs (the default, this computer or a saved SSH host), per conversation; all are kept across restarts and apply from the next message |
@@ -870,12 +870,15 @@ Limits of this slice:
   provenance are not ported.
 - Status refreshes every two seconds while any turn is running and once more
   when the last one stops; it is not pushed by the host.
-- General has two choices. The rest of the WebView's page (language, send
-  key, workspace directory, notifications, sound, update check, tool paths) is
-  not ported: in particular the composer always sends with Cmd/Ctrl+Enter,
-  because the multiline input inserts its newline before the app hears the
-  key. Accent colour, fonts and sizes are not ported either. "Where I left
-  off" reopens the last conversation that was opened, in its project; if that
+- General has the language, appearance, send key, notifications, sound,
+  update check and what the app opens on. The WebView's workspace directory,
+  per-project storage, selection quick actions and tool paths are not
+  ported, nor are accent colour, fonts and sizes. The send key is saved
+  under the WebView's words (`enter`, `modifier_enter`) but in the host's
+  settings, so the WebView's own choice, kept in its browser storage, is not
+  read. Return sends through a key binding of the composer's own that
+  outranks the input's new line, so it applies to the composer only. "Where
+  I left off" reopens the last conversation that was opened, in its project; if that
   project or conversation is gone the app says so and stays where it is.
 - Removing a project deletes its conversations from the preview database and
   leaves the folder alone. The workspace the app starts on cannot be removed,
@@ -1045,6 +1048,12 @@ Start a slow turn, switch to another app and wait: a notification names
 the conversation when the turn ends, and another when a tool asks for
 approval. Stay in Wisp and confirm nothing is posted. Turn Notify me off
 and Play a sound on in Settings, General: only the sound comes.
+In a conversation, type a line, press Shift+Return and type another: the
+composer holds two lines; press Return and both are sent as one message.
+In Settings, General, choose ⌘Return under Send with: the empty composer
+says so; Return now starts a new line and ⌘Return sends. With a Chinese
+input method, type pinyin and press Return: the letters are committed and
+nothing is sent. Choose Return again before going on.
 In Settings, General, choose 中文: the sidebar, the home page and the
 composer read in Chinese at once, without a restart; choose English and
 they read in English; choose System on a Chinese system and they read in

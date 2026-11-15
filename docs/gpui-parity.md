@@ -99,7 +99,7 @@ to find in the running app.
 | --- | --- | --- | --- |
 | Multiline text, IME, drafts kept per conversation | Yes | Done | ui |
 | Send and stop | Yes | Done | served |
-| Send key choice (Enter or modifier+Enter) | Setting | Partial: modifier+Enter only | ui |
+| Send key choice (Enter or modifier+Enter) | Setting | Yes: Return or Cmd/Ctrl+Return in Settings, General, Return by default; the other key starts a new line | ui |
 | Queue a message while a turn runs | Yes *(source)* | Partial: up to ten per conversation, sent in order as turns end, with take back and drop; kept in the window only, and no cut-in that steers the running turn | tauri |
 | Attach files, images, PDF [附加文件] | Yes | Partial: any file through the system dialog, copied into `uploads/` when it is outside the project; the model gets the paths, not the image pixels | served |
 | Browse project files to attach [你的文件] | Yes | Done: found by name in the add-context box | served |
@@ -113,7 +113,7 @@ to find in the running app.
 | Automatic review toggle and review model [自动审查] | Yes | Partial: per conversation, with a default and a reviewer model in Settings; the result shows above the composer and corrections are asked for by hand, not made automatically | tauri |
 | Sub-agent model [子智能体模型] | Yes | Partial: one choice in Settings for the model the explore helper works on; a conversation's own choice is honoured when the WebView saved one but cannot be set here | store |
 | Compute environment for the conversation [计算环境] | Yes | Partial: the default, this computer or a saved SSH host, for where runs start; Python, R and the shell stay on this computer | store |
-| Context usage meter and manual compaction | Yes | Partial: how full the context is, as a percentage that opens the list of what the model is sent, message by message; no manual compaction | served |
+| Context usage meter and manual compaction | Yes | Yes: how full the context is, as a percentage that opens the list of what the model is sent, message by message; /compact shortens the history at once | served |
 | Request a review of the conversation [请求审查] | Yes | Partial: a Review dialog lists what the reviewer model finds and puts the corrections in the composer; the report is not kept with the conversation | tauri |
 | Share as long image or HTML [分享为长图] | Yes | Partial: Export saves the conversation as a Markdown file; no long image or HTML | ui |
 | Save the conversation as a skill [保存为技能] | Yes | Done: puts the request for the `skill-creator` skill in the composer, after anything already typed | shared |
@@ -134,7 +134,7 @@ to find in the running app.
 | Token usage per turn | Yes | Partial: the running or latest turn only, and not after a restart | served |
 | Skill and attachment chips on the user message | Yes | Partial: file chips; references are context for that turn only and are not shown afterwards | served |
 | Copy message [复制] | Yes | Done: copies the message as Markdown | ui |
-| Rewind to a message [回溯 / 撤销] | Yes | Partial: goes back and returns the text to the composer; written files are not undone | store |
+| Rewind to a message [回溯 / 撤销] | Yes | Yes: goes back and returns the text to the composer, and the latest turn can be undone with the files it wrote | store |
 | Branch from a message [分支] | Yes | Partial: a copy through that turn, nested under its source; no branch card or merge back | store |
 | Save to memory [记忆] | Yes | Partial: the message is opened for trimming and saved for the project or as a habit; no model-written suggestion | store |
 | Review a turn [审查] | Yes | Partial: a review button under each answer reviews the conversation as it stood when that turn ended; the report is not kept with the turn | tauri |
@@ -166,7 +166,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Files: name search | In the panel | Partial: through the command palette, across projects | served |
 | Files: upload, new file, new folder, rename, delete, sort, grid view | Yes | Partial: new folder, new file, rename, and delete as a move to the project's own trash; no upload into a folder, sort or grid | tauri |
 | Files: other locations (SSH / WSL contexts) | Yes | Partial: the Files tab lists the folders of a checked SSH host, to look at; no preview, download, upload or change there, and no WSL | shared |
-| Files: image, PDF, Office, notebook, table previews | Yes | Partial: pictures (PNG, JPEG, GIF, WebP, SVG, BMP) up to 32 MB; no PDF, Office, notebook or table preview | ui |
+| Files: image, PDF, Office, notebook, table previews | Yes | Partial: pictures (PNG, JPEG, GIF, WebP, SVG, BMP) up to 32 MB, and CSV and TSV as a table; no PDF, Office or notebook preview | ui |
 | Agents [Agents]: sub-agents, parallel exploration, workflows | Yes | Partial: an Agents tab lists the explore helpers of the loaded conversation with their question, status and findings; no delegated tasks, child conversations or workflows, which this host does not run | store |
 | Artifacts [产物]: figures, tables, outputs, star, open | Yes | Partial: files a turn wrote are recorded with a snapshot, listed per conversation or project, and open in Files; no grouping, versions, download, star or provenance | served |
 | Environments [环境]: conversation environment, attach servers, probe, terminal | Yes | Partial: the conversation's environment is chosen in the composer and hosts are checked in Settings; no panel tab, attaching or terminal | store + shared |
@@ -190,7 +190,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 
 | Section | WebView | GPUI | Host |
 | --- | --- | --- | --- |
-| General [常规]: language, workspace directory, per-project storage, resume last conversation, send key, selection quick actions, notifications, sound, update check, local tool paths | Yes | Partial: resume the last conversation at launch; the rest is not ported | tauri |
+| General [常规]: language, workspace directory, per-project storage, resume last conversation, send key, selection quick actions, notifications, sound, update check, local tool paths | Yes | Partial: language, appearance, send key, notifications, sound, update check and resuming the last conversation; no workspace directory, per-project storage, selection quick actions or tool paths | tauri |
 | Network [网络]: proxy per channel (model API, account login, MCP, code requests), package mirrors | Yes | Partial: routes for model requests, connectors and MCP, and code; conda mirror, Python index and CA bundle; no sign-in route, and no route of its own for one model or one MCP server | tauri |
 | Conversation [对话]: iteration limit, auto-continue, auto-compaction and threshold, follow-up questions | Yes | Partial: steps per turn, automatic compaction and its threshold, follow-up questions, review of turns and the reviewer model; no auto-continue | tauri |
 | Appearance [外观]: system/light/dark, theme, accent, fonts and sizes, live preview | Yes | Partial: system, light or dark with the Wisp palettes, applied at once; no other themes, accent, fonts or sizes | ui |

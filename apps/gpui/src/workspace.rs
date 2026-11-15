@@ -50,6 +50,24 @@ use std::{
     time::Duration,
 };
 
+actions!(composer, [SendMessage]);
+
+/// The composer's own keys, bound after the input component's so they win
+/// where both apply: with the Return choice, Return sends and Shift+Return
+/// starts a new line. Elsewhere, and with the other choice, the input keeps
+/// Return for a new line and Cmd/Ctrl+Return sends.
+pub fn composer_bindings() -> Vec<KeyBinding> {
+    let inside = format!("{} > Input", crate::settings::SEND_ON_ENTER);
+    vec![
+        KeyBinding::new("enter", SendMessage, Some(&inside)),
+        KeyBinding::new(
+            "shift-enter",
+            gpui_component::input::Enter { secondary: false },
+            Some(&inside),
+        ),
+    ]
+}
+
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, StyledExt,
@@ -266,6 +284,8 @@ pub struct Workspace {
     update: Option<crate::settings::Update>,
     /// What the app opens on.
     launch: crate::settings::Launch,
+    /// Which key sends the composer's text.
+    send_key: crate::settings::SendKey,
     /// The Settings page that is showing.
     settings_section: crate::settings::Section,
     /// How turns run and new conversations start; `None` until read.
@@ -450,11 +470,7 @@ impl Workspace {
         let composer = cx.new(|cx| {
             InputState::new(window, cx)
                 .auto_grow(3, 9)
-                .placeholder(if cfg!(target_os = "macos") {
-                    tr("Describe your research task…  ⌘Return to send")
-                } else {
-                    tr("Describe your research task…  Ctrl+Enter to send")
-                })
+                .placeholder(crate::settings::SendKey::default().placeholder())
         });
         let search =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Search conversations…")));
@@ -591,7 +607,8 @@ impl Workspace {
                     cx.notify();
                 }
                 // Let the input component and platform IME consume composition.
-                // Enter inserts a newline; platform secondary+Enter sends.
+                // Platform secondary+Enter always sends; plain Enter sends
+                // through `SendMessage` when that is the chosen key.
                 if matches!(event, InputEvent::PressEnter { secondary: true }) {
                     this.send(window, cx);
                 }
@@ -837,6 +854,7 @@ impl Workspace {
             notify: Default::default(),
             update: None,
             launch: Default::default(),
+            send_key: Default::default(),
             settings_section: Default::default(),
             turn_defaults: None,
             review_model: String::new(),
@@ -1149,11 +1167,7 @@ impl Workspace {
     /// Words the empty text fields again, after the language changed: a
     /// field keeps the placeholder it was made with otherwise.
     pub(super) fn word_fields(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let composer = if cfg!(target_os = "macos") {
-            tr("Describe your research task…  ⌘Return to send")
-        } else {
-            tr("Describe your research task…  Ctrl+Enter to send")
-        };
+        let composer = self.send_key.placeholder();
         let fields = [
             (&self.composer, composer),
             (&self.search, tr("Search conversations…")),
@@ -2763,6 +2777,33 @@ impl Render for Workspace {
             root.child(self.render_palette(cx))
         } else {
             root
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::KeyContext;
+
+    fn stack(names: &[&str]) -> Vec<KeyContext> {
+        names
+            .iter()
+            .map(|name| KeyContext::parse(name).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn the_composer_keys_apply_only_in_a_composer_where_return_sends() {
+        let bindings = super::composer_bindings();
+        assert_eq!(bindings.len(), 2);
+        let sends = stack(&["Workspace", crate::settings::SEND_ON_ENTER, "Input"]);
+        let modifier = stack(&["Workspace", "Composer", "Input"]);
+        let elsewhere = stack(&["Workspace", "Input"]);
+        for binding in &bindings {
+            let applies = binding.predicate().unwrap();
+            assert!(applies.eval_inner(&sends, &sends));
+            assert!(!applies.eval_inner(&modifier, &modifier));
+            assert!(!applies.eval_inner(&elsewhere, &elsewhere));
         }
     }
 }

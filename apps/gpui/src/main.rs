@@ -124,6 +124,8 @@ fn main() -> anyhow::Result<()> {
                 KeyBinding::new(&format!("{primary}-q"), Quit, None),
                 KeyBinding::new(&format!("{primary}-shift-n"), NewWindow, None),
             ]);
+            // After the input component's own keys, so the composer's win.
+            cx.bind_keys(workspace::composer_bindings());
             cx.set_menus(vec![Menu {
                 name: "Wisp Science".into(),
                 items: vec![
