@@ -43,6 +43,7 @@ mod schedules;
 mod settings;
 mod slash;
 mod state;
+mod sync;
 mod tabs;
 mod terminal;
 mod theme;

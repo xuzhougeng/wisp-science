@@ -25,6 +25,7 @@ impl Workspace {
         self.project_form_error = None;
         self.project_form_ready = false;
         self.layers.open(Layer::ProjectSettings);
+        self.load_project_sync(project.clone(), window, cx);
         let reply = self.backend.project_settings(project.clone());
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
@@ -153,6 +154,7 @@ impl Workspace {
                     .h(px(220.))
                     .child(Input::new(&self.project_fields[2]).h_full()),
             )
+            .child(self.render_project_sync(cx))
             .child(
                 div()
                     .h_flex()

@@ -105,6 +105,7 @@ impl Workspace {
             Section::Workflows => self.load_workflows(window, cx),
             Section::Remote => {
                 self.load_remote_access(window, cx);
+                self.load_sync_settings(window, cx);
                 self.load_device_bridge(window, cx);
             }
             Section::Channels => self.load_channels(window, cx),

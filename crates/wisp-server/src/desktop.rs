@@ -5213,6 +5213,7 @@ pub use crate::papers::{
 };
 pub use crate::pet::{Pet, PetLook, SHEET_HEIGHT, SHEET_WIDTH};
 pub use crate::plugins::PluginRow;
+pub use crate::project_sync::{ProjectSyncInfo, ProjectSyncResult, SyncSettings};
 pub use crate::quick_actions::{QuickAction, QuickActionInput};
 pub use crate::remote_access::{RemoteAccess, RemoteState};
 pub use crate::remote_dir::RemoteDirectory;

@@ -24,6 +24,7 @@ mod panel_tabs;
 mod papers_view;
 mod pet_view;
 mod project_settings;
+mod project_sync_view;
 mod queue_view;
 mod remote_files_view;
 mod review_view;
@@ -480,6 +481,25 @@ pub struct Workspace {
     lab_removing: Option<String>,
     lab_busy: bool,
     lab_note: Option<Result<String, String>>,
+    /// Sync of the project in the settings dialog: how it stands (`Some`
+    /// once read; inside, `None` when it is not synchronized), whether a
+    /// sync runs, how the last went, whether it ended in a conflict, and
+    /// which side the conflict question would keep.
+    project_sync: Option<Option<wisp_server::desktop::ProjectSyncInfo>>,
+    project_sync_busy: bool,
+    project_sync_note: Option<Result<String, String>>,
+    project_sync_conflict: bool,
+    project_sync_replace: Option<bool>,
+    /// Where projects are synchronized, on the Remote access page: the
+    /// relay, a new token and the folder typed, and the backend chosen.
+    sync_settings: Option<wisp_server::desktop::SyncSettings>,
+    sync_fields: [Entity<InputState>; 3],
+    sync_backend: String,
+    sync_note: Option<Result<String, String>>,
+    /// The dialog that joins a project by its device code.
+    join_code: Entity<InputState>,
+    join_busy: bool,
+    join_note: Option<String>,
     acp_reports:
         std::collections::HashMap<String, Result<wisp_server::desktop::AcpAgentReport, String>>,
     mcp_servers: Option<Vec<wisp_server::desktop::McpServerRow>>,
@@ -669,6 +689,12 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
         ];
+        let sync_fields = [
+            cx.new(|cx| InputState::new(window, cx).placeholder("https://relay.example")),
+            cx.new(|cx| InputState::new(window, cx).masked(true)),
+            cx.new(|cx| InputState::new(window, cx).placeholder("/Volumes/Shared/Wisp")),
+        ];
+        let join_code = cx.new(|cx| InputState::new(window, cx).placeholder("wisp-sync:…"));
         let lab_fields = [
             cx.new(|cx| InputState::new(window, cx).placeholder("https://relay.example")),
             cx.new(|cx| InputState::new(window, cx).masked(true)),
@@ -1129,6 +1155,18 @@ impl Workspace {
             lab_removing: None,
             lab_busy: false,
             lab_note: None,
+            project_sync: None,
+            project_sync_busy: false,
+            project_sync_note: None,
+            project_sync_conflict: false,
+            project_sync_replace: None,
+            sync_settings: None,
+            sync_fields,
+            sync_backend: "relay".into(),
+            sync_note: None,
+            join_code,
+            join_busy: false,
+            join_note: None,
             acp_reports: Default::default(),
             mcp_servers: None,
             mcp_editing: None,
@@ -1268,6 +1306,7 @@ impl Workspace {
                 self.project_form = None;
                 self.project_form_error = None;
             }
+            Some(Layer::ConfirmSyncReplace | Layer::JoinSyncedProject) => {}
             Some(Layer::Find) => {
                 self.find.clear();
                 self.focus_composer(window, cx);
@@ -1388,6 +1427,7 @@ impl Workspace {
                     || self.layers.contains(Layer::Favorites)
                     || self.layers.contains(Layer::Palette)
                     || self.layers.contains(Layer::ProjectSettings)
+                    || self.layers.contains(Layer::JoinSyncedProject)
                 {
                     return false;
                 }
@@ -1683,6 +1723,13 @@ impl Workspace {
 
     /// Opens a project from the home page.
     fn enter_project(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        // A cloud-drive folder project takes in a newer version another
+        // device saved, while this one has nothing unsaved.
+        let adopting = self.backend.adopt_newer_folder_version(id.clone());
+        cx.background_spawn(async move {
+            let _ = receive(adopting).await;
+        })
+        .detach();
         self.screen = Screen::Project;
         self.layers.close(Layer::ConfirmRemoveProject);
         self.removing = None;
@@ -3210,6 +3257,11 @@ impl Render for Workspace {
         // Last, so they are drawn over whichever screen or layer is showing.
         let root = if self.layers.contains(Layer::ProjectSettings) {
             root.child(self.render_project_settings(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::JoinSyncedProject) {
+            root.child(self.render_join_synced(cx))
         } else {
             root
         };

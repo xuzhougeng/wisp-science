@@ -264,6 +264,7 @@ impl Workspace {
              asks before writing files or running commands.",
                 )),
         )
+        .child(self.render_sync_settings(cx))
         .child(self.render_device_bridge(cx))
     }
 }

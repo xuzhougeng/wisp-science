@@ -314,6 +314,113 @@ impl Workspace {
         choices
     }
 
+    /// Downloads the lab's knowledge base into a folder the user picks.
+    fn download_knowledge_base(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.lab_note = None;
+        let picker = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some(tr("Put the knowledge base in this folder").into()),
+        });
+        let backend = self.backend.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = async {
+                let paths = picker
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .map_err(|e| e.to_string())?;
+                match paths.and_then(|mut paths| paths.pop()) {
+                    Some(parent) => receive(backend.join_lab_knowledge_base(parent))
+                        .await
+                        .map(Some),
+                    None => Ok(None),
+                }
+            }
+            .await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(Some(_)) => {
+                        this.lab_note = Some(Ok(tr(
+                            "The knowledge base is on this computer; agents here read it.",
+                        )
+                        .to_owned()));
+                        this.load_projects(window, cx);
+                        this.load_lab(window, cx);
+                    }
+                    Ok(None) => {}
+                    Err(error) => this.lab_note = Some(Err(error)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// The lab's knowledge base: the leader publishes a synced project as
+    /// it; a member downloads it.
+    fn lab_knowledge_base(&self, status: &LabStatus, cx: &mut Context<Self>) -> Div {
+        let published = status.knowledge_base.as_ref();
+        if status.leader {
+            let mut choices = div().flex().flex_wrap().gap_1();
+            for project in &self.projects {
+                let id = project.id.clone();
+                choices = choices.child(
+                    Button::new(SharedString::from(format!("lab-kb-{}", project.id)))
+                        .label(project.name.clone())
+                        .xsmall()
+                        .selected(published.is_some_and(|kb| kb.project_id == project.id))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            let reply = this.backend.publish_lab_knowledge_base(id.clone());
+                            this.lab_change(
+                                reply,
+                                Some("The knowledge base is published to the lab."),
+                                window,
+                                cx,
+                            );
+                        })),
+                );
+            }
+            return div().child(setting(
+                tr("Knowledge base"),
+                tr("A project synchronized through the lab's relay that members download and their agents read. Sync it once from its settings first."),
+                choices,
+                cx,
+            ));
+        }
+        let (note, action) = match published {
+            None => (tr("The leader has not published one yet.").to_owned(), None),
+            Some(kb) if kb.local => (
+                crate::i18n::fill(
+                    tr("{}, on this computer; agents here read it."),
+                    &[&kb.project_name],
+                ),
+                None,
+            ),
+            Some(_) => (
+                tr("The leader published one; download it so agents here can read it.").to_owned(),
+                Some(
+                    Button::new("lab-kb-download")
+                        .label(tr("Download it…"))
+                        .small()
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.download_knowledge_base(window, cx)
+                        })),
+                ),
+            ),
+        };
+        div().child(setting(
+            tr("Knowledge base"),
+            "",
+            div()
+                .h_flex()
+                .gap_2()
+                .child(div().text_xs().child(note))
+                .when_some(action, |row, action| row.child(action)),
+            cx,
+        ))
+    }
+
     pub(super) fn lab_card(&self, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
         let mut card =
@@ -477,15 +584,8 @@ impl Workspace {
                 );
             }
         }
-        if let Some(knowledge_base) = &status.knowledge_base {
-            card = card.child(div().text_xs().text_color(muted).child(crate::i18n::fill(
-                tr("The leader published a knowledge base ({}); it is shared through project sync, which this desktop does not have yet."),
-                &[&if knowledge_base.project_name.is_empty() {
-                    knowledge_base.project_id.clone()
-                } else {
-                    knowledge_base.project_name.clone()
-                }],
-            )));
+        if status.state == "active" {
+            card = card.child(self.lab_knowledge_base(status, cx));
         }
         if let Some(note) = &self.lab_note {
             card = card.child(match note {

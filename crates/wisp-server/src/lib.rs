@@ -27,6 +27,7 @@ mod pet;
 mod plugins;
 mod project_archive;
 mod project_folder;
+mod project_sync;
 mod quick_actions;
 mod remote_access;
 mod remote_dir;
@@ -712,8 +713,14 @@ impl Server {
         let subagent = self.subagent_model_for(&request.session_id, model).await;
         // A lab member's agent can list the lab and write to its members.
         let member = self.is_lab_member().await;
+        // A turn another member's mail started reads only its own project,
+        // so it is not pointed at the knowledge base.
+        let knowledge_base = match member && !lab_mail {
+            true => self.lab_knowledge_base_root().await,
+            false => None,
+        };
         let lab = runtime::LabTurn {
-            context: member.then(channels::lab_mail::turn_context),
+            context: member.then(|| channels::lab_mail::turn_context(knowledge_base.as_deref())),
             mail: lab_mail,
         };
         let mut agent = runtime::build(

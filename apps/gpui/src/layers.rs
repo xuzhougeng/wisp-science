@@ -40,6 +40,10 @@ pub enum Layer {
     QuickMenu,
     /// The dialog for a project's name, description and rules.
     ProjectSettings,
+    /// Question before a sync conflict is ended, inside project settings.
+    ConfirmSyncReplace,
+    /// The dialog that joins a project from another device by its code.
+    JoinSyncedProject,
     /// The find bar over the open conversation.
     Find,
     /// The outline of the open conversation, under its header.
@@ -230,6 +234,7 @@ impl Layer {
             | Layer::ConfirmResetRemoteCode
             | Layer::ConfirmRemoveQuickAction => Some(Layer::Settings),
             Layer::ConfirmRemoveFavorite => Some(Layer::Favorites),
+            Layer::ConfirmSyncReplace => Some(Layer::ProjectSettings),
             Layer::JournalForm => Some(Layer::Journey),
             Layer::ScheduleForm | Layer::ConfirmDeleteSchedule => Some(Layer::Schedules),
             Layer::PaperForm
@@ -722,5 +727,21 @@ mod tests {
         stack.open(Layer::ProjectSettings);
         assert_eq!(stack.dismiss_top(), Some(Layer::ProjectSettings));
         assert!(stack.contains(Layer::FilesPanel));
+    }
+
+    #[test]
+    fn sync_questions_close_before_their_dialog() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::ProjectSettings);
+        stack.open(Layer::ConfirmSyncReplace);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmSyncReplace));
+        assert!(stack.contains(Layer::ProjectSettings));
+        stack.open(Layer::ConfirmSyncReplace);
+        assert!(stack.close(Layer::ProjectSettings));
+        assert!(!stack.contains(Layer::ConfirmSyncReplace));
+        // The join dialog is a layer of its own.
+        stack.open(Layer::JoinSyncedProject);
+        assert_eq!(stack.dismiss_top(), Some(Layer::JoinSyncedProject));
+        assert_eq!(stack.dismiss_top(), None);
     }
 }

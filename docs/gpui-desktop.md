@@ -135,6 +135,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Command palette | One box over everything: projects, files by name in every project, conversations by title or message text, and the window's commands; arrow keys, Return, Escape |
 | Pictures in answers | When an answer shows a picture of the project with Markdown image syntax, the picture is drawn under the answer; clicking it opens it in the Files tab |
 | Project archives | Export on a project's card writes the project, its records and its files, as one zip; Import on the home page reads one and puts the project in a folder you choose |
+| Project sync | Project settings, Sync: Sync now publishes the project through a relay or a shared folder (set in Settings, Remote access) or brings in another device's changes, Copy device code, and after a conflict Use the other device's copy or Keep this device's copy, each asked first; a project in a cloud-drive folder can save itself there instead. Join a project from another device on the home page takes a device code and a folder |
 | Capabilities | A dialog for the open project: how many skills, connectors, MCP servers and SSH hosts are on or usable, the state of memory, and which command-line tools were found on this computer |
 | Follow-up questions | After an answer, up to three questions you could ask next show above the composer; picking one puts it in the composer to send or change, and the list can be put away |
 | Sample project | The home page's flask button makes a small sample project in a folder you choose and opens it: made-up counts for twelve samples, a script, and a README of things to ask |
@@ -718,9 +719,11 @@ Limits of this slice:
   skills, the plan, `lab_members` and finishing; it reads only inside its
   project and leaves the user's memory out. At most four mails follow
   one another without a person writing. Up to four project files of 32
-  MiB each travel along, encrypted, and arrive under `uploads/lab/`. Not
-  ported: the lab's knowledge base, a project shared through project
-  sync (its name shows when the leader published one).
+  MiB each travel along, encrypted, and arrive under `uploads/lab/`. The
+  leader publishes a project synchronized through the lab's relay as the
+  knowledge base (its device code, sealed with the lab key); a member
+  downloads it like a synced project, and from then on member agents are
+  told its folder every turn but a mail's.
 - The StickS3 desk display follows `device_bridge.rs` and `device_hub.rs`:
   an opt-in HTTP listener on one concrete IPv4 address (never 0.0.0.0),
   port 18766 unless another is given, whose routes but `/health` want
@@ -738,8 +741,27 @@ Limits of this slice:
   conversation) and `acknowledge`; the last 50 are listed at `/actions`.
   Turning the listener off forgets the token. The relay transport the
   WebView reserves is not offered there either.
-- Remote web access is the only tunnel ported: there is no project
-  sync through the relay. A browser
+- Project sync follows `project_sync.rs`, whose core is carried over
+  unchanged: the project's records (its database, exported whole) and its
+  workspace files are encrypted with a per-project key and published as
+  revisions signed with it, through a wisp-relay (`sync_relay_url`, the
+  token in the keychain as `sync_relay_token`) or a shared folder
+  (`sync_folder`, revisions under `Wisp Sync`), chosen by `sync_backend`.
+  The key is kept in the keychain as `sync_project_key:<project>`; the
+  device code carries it, with the project's id, name and relay. A sync
+  pushes when only this device changed, pulls when only the other did,
+  and when both did says so and changes nothing until a side is chosen.
+  Files over 64 MiB, or with names Windows or macOS cannot hold, stay on
+  the device and are listed. A sync waits while anything in the project
+  runs, waits on an approval or is reviewed; there is no lock that holds
+  new turns back meanwhile. A pull drops the conversations' live state.
+  Cloud-drive folder projects keep their own snapshots in their folder
+  (the store's folder snapshots): this device's edits are published every
+  20 seconds once nothing runs, and opening the project takes in a newer
+  version when this device has nothing unpublished. Sync keeps the
+  WebView's names, so a project synchronized on either desktop syncs on
+  the other.
+- Remote web access is the only tunnel ported. A browser
   gets the commands a headless `wisp-server` offers (projects,
   conversations, messages, stopping a turn, answering an approval
   once), which is fewer than the WebView desktop's tunnel: no research
@@ -1719,6 +1741,17 @@ answer or press "Send the next one". Start a turn that waits for an approval,
 queue a message and press its lightning button: it leaves the queue; approve,
 and the message shows after the tool's result with the answer to it below,
 in the same turn.
+In Settings, Remote access, under Project sync, give a relay of your own
+and its token and Save. Open a project's settings: Sync reads Not
+synchronized; press Sync now: it reads Published, then Synchronized
+through the relay, just now. Copy device code. On a second computer (or
+a second data folder) set the same relay, press Join a project from
+another device on the home page, paste the code and choose a folder: the
+project opens with its files and conversations. Change a file on each,
+Sync now on one, then on the other: the second says both changed and
+offers Use the other device's copy and Keep this device's copy; press
+one, then Escape: only the question closes; answer it: the files match
+the side chosen.
 On a project's card press Project settings: clear the name and Save (it is
 refused and the dialog stays), then give a name, a description and a rule
 and Save: the card and the recent conversations show the new name, and

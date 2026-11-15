@@ -336,6 +336,17 @@ impl Workspace {
                     )
                     .child(
                         icon_button(
+                            "home-join",
+                            "sync",
+                            tr("Join a project from another device"),
+                        )
+                        .disabled(self.pending)
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.open_join_synced(window, cx)),
+                        ),
+                    )
+                    .child(
+                        icon_button(
                             "home-sample",
                             "flask",
                             "Make a sample project to try Wisp on",

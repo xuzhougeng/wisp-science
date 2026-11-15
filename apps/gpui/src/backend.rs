@@ -76,6 +76,8 @@ impl Backend {
                 // The StickS3 desk display's listener, when it was left on;
                 // a failure shows on its page and never stops the app.
                 let _ = server.start_device_bridge().await;
+                // Cloud-drive folder projects publish this device's edits.
+                server.start_folder_publisher();
                 Ok::<_, String>(server)
             })
             .await?;
@@ -1426,6 +1428,75 @@ impl Backend {
     /// Waits until the desk display asks for a conversation.
     pub fn next_device_focus(&self) -> Reply<(String, String)> {
         self.local(|host| async move { Ok(host.next_device_focus().await) })
+    }
+
+    pub fn project_sync(
+        &self,
+        project: String,
+    ) -> Reply<Option<wisp_server::desktop::ProjectSyncInfo>> {
+        self.local(move |host| async move { host.project_sync(&project).await })
+    }
+
+    pub fn sync_project(&self, project: String) -> Reply<wisp_server::desktop::ProjectSyncResult> {
+        self.local(move |host| async move { host.sync_project(&project).await })
+    }
+
+    /// Ends a conflict with the other device's copy, or this device's.
+    pub fn resolve_project_sync(
+        &self,
+        project: String,
+        use_remote: bool,
+    ) -> Reply<wisp_server::desktop::ProjectSyncResult> {
+        self.local(move |host| async move { host.resolve_project_sync(&project, use_remote).await })
+    }
+
+    pub fn enable_project_folder_sync(
+        &self,
+        project: String,
+    ) -> Reply<wisp_server::desktop::ProjectSyncResult> {
+        self.local(move |host| async move { host.enable_project_folder_sync(&project).await })
+    }
+
+    pub fn adopt_newer_folder_version(&self, project: String) -> Reply<()> {
+        self.local(move |host| async move {
+            host.adopt_newer_folder_version(&project).await;
+            Ok(())
+        })
+    }
+
+    pub fn project_sync_code(&self, project: String) -> Reply<String> {
+        self.local(move |host| async move { host.project_sync_code(&project).await })
+    }
+
+    /// Downloads a project from another device into a new folder under
+    /// `parent`; its id.
+    pub fn join_synced_project(&self, code: String, parent: PathBuf) -> Reply<String> {
+        self.local(move |host| async move { host.join_synced_project(&code, &parent).await })
+    }
+
+    pub fn sync_settings(&self) -> Reply<wisp_server::desktop::SyncSettings> {
+        self.local(|host| async move { Ok(host.sync_settings().await) })
+    }
+
+    pub fn set_sync_settings(
+        &self,
+        backend: String,
+        relay: String,
+        token: Option<String>,
+        folder: String,
+    ) -> Reply<wisp_server::desktop::SyncSettings> {
+        self.local(move |host| async move {
+            host.set_sync_settings(&backend, &relay, token, &folder)
+                .await
+        })
+    }
+
+    pub fn publish_lab_knowledge_base(&self, project: String) -> Reply<()> {
+        self.local(move |host| async move { host.publish_lab_knowledge_base(&project).await })
+    }
+
+    pub fn join_lab_knowledge_base(&self, parent: PathBuf) -> Reply<String> {
+        self.local(move |host| async move { host.join_lab_knowledge_base(&parent).await })
     }
 
     pub fn onboarding_done(&self) -> Reply<bool> {

@@ -6,15 +6,16 @@
 //! members' computers: it comes inside the leader's invite code and seals
 //! every mail before it leaves. The identity is one keychain secret under
 //! the WebView's name, written whole, so a member key never outlives the
-//! lab key it belongs to. Not ported: the knowledge base, which is a
-//! project shared through project sync; its name is shown when the leader
-//! published one.
+//! lab key it belongs to. The knowledge base is a project synchronized
+//! through the lab's relay whose device code the leader publishes, sealed
+//! with the lab key; members download it like any synced project.
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use wisp_dto::{LabKnowledgeBaseInfo, LabMemberInfo, LabStatus};
 use wisp_sync::{
-    HttpRelay, LabInvite, LabJoinRequest, LabMemberStatus, LabRejection, LabRole, LabView,
+    open_frame, seal_frame, HttpRelay, LabInvite, LabJoinRequest, LabKnowledgeBase,
+    LabMemberStatus, LabRejection, LabRole, LabView, LAB_KB_AAD,
 };
 
 use super::get_setting;
@@ -370,6 +371,64 @@ impl Server {
     pub async fn remove_lab_member(&self, member: &str) -> Result<()> {
         let (_, client) = self.require_lab()?;
         client.lab_remove(member).await.map_err(explain)
+    }
+
+    /// The folder of the lab's knowledge base, when it is on this computer.
+    pub(crate) async fn lab_knowledge_base_root(&self) -> Option<String> {
+        let id = get_setting(&self.0.store, KB_PROJECT_KEY).await;
+        if id.is_empty() {
+            return None;
+        }
+        self.0
+            .store
+            .get_project(&id)
+            .await
+            .ok()
+            .flatten()
+            .map(|(_, root)| root)
+    }
+
+    /// Makes a project the lab's knowledge base. It must already be
+    /// synchronized through the lab's relay; from then on the relay takes
+    /// commits to it from the leader only.
+    pub async fn publish_lab_knowledge_base(&self, project: &str) -> Result<()> {
+        let (identity, client) = self.require_lab()?;
+        let (relay_url, code) =
+            crate::project_sync::relay_device_code(&self.0.store, self.0.secrets.as_ref(), project)
+                .await
+                .map_err(|error| anyhow!(error))?;
+        let same = matches!(
+            (wisp_sync::relay_base(&relay_url), wisp_sync::relay_base(&identity.relay_url)),
+            (Ok(left), Ok(right)) if left == right
+        );
+        ensure!(
+            same,
+            "This project is synchronized somewhere else. Synchronize it through the lab's relay first."
+        );
+        let sealed = seal_frame(&identity.lab_key()?, LAB_KB_AAD, code.as_bytes())?;
+        client
+            .lab_set_knowledge_base(&LabKnowledgeBase {
+                project_id: project.into(),
+                sealed,
+            })
+            .await
+            .map_err(explain)
+    }
+
+    /// Downloads the lab's knowledge base as a project in a new folder
+    /// under `parent`; returns its id.
+    pub async fn join_lab_knowledge_base(&self, parent: &std::path::Path) -> Result<String> {
+        let (identity, client) = self.require_lab()?;
+        let view = client.lab_view().await.map_err(explain)?;
+        let knowledge_base = view
+            .knowledge_base
+            .context("The leader has not published a knowledge base yet.")?;
+        let code = open_frame(&identity.lab_key()?, LAB_KB_AAD, &knowledge_base.sealed)
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            // Sealed with another key: the invite belonged to another lab.
+            .context("The knowledge base cannot be opened with this computer's lab key.")?;
+        self.join_synced_project(&code, parent).await
     }
 
     /// Fetches lab mail in place of any running poller; nothing on a

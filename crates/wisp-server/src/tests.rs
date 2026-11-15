@@ -8272,6 +8272,155 @@ async fn the_desk_display_reads_the_agent_and_the_pet_only_with_its_token() {
     server.shutdown().await;
 }
 
+#[tokio::test]
+async fn projects_sync_between_devices_and_a_lab_shares_its_knowledge_base() {
+    use desktop::SecretStore;
+    let temp = tempfile::tempdir().unwrap();
+    let url = lab_relay(temp.path()).await;
+    let computer = |name: &str| {
+        let root = temp.path().join(name);
+        async move {
+            let secrets = Arc::new(desktop::MemorySecrets::default());
+            let server = Server::open_with(
+                config(&root),
+                models(Arc::default(), false),
+                secrets.clone(),
+            )
+            .await
+            .unwrap();
+            (server, secrets)
+        }
+    };
+    let (ada, ada_secrets) = computer("ada").await;
+    let (lin, _) = computer("lin").await;
+    assert!(!ada
+        .commands()
+        .iter()
+        .any(|command| command.contains("sync")));
+
+    // Nothing is set up: a sync says where to set it up.
+    let folder = temp.path().join("study");
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::write(folder.join("notes.txt"), "first draft").unwrap();
+    let project = ada.register_local_project(&folder).await.unwrap();
+    assert!(ada.sync_project(&project).await.is_err());
+    assert!(ada.project_sync(&project).await.unwrap().is_none());
+    assert!(ada
+        .set_sync_settings("relay", "http://example.com", None, "")
+        .await
+        .is_err());
+    assert!(ada
+        .set_sync_settings("folder", "", None, "relative/path")
+        .await
+        .is_err());
+    for server in [&ada, &lin] {
+        let settings = server
+            .set_sync_settings("relay", &url, Some("test-relay-token".into()), "")
+            .await
+            .unwrap();
+        assert!(settings.has_token && settings.backend == "relay");
+    }
+
+    // The first sync publishes; a second has nothing to do.
+    let pushed = ada.sync_project(&project).await.unwrap();
+    assert_eq!(
+        (pushed.status.as_str(), pushed.direction.as_str()),
+        ("synced", "push")
+    );
+    assert!(ada.sync_project(&project).await.unwrap().direction == "none");
+    assert!(ada.project_sync(&project).await.unwrap().unwrap().synced);
+    // The project key is in the keychain, never in the store.
+    assert!(ada_secrets
+        .get(&format!("sync_project_key:{project}"))
+        .is_some_and(|key| !key.is_empty()));
+    let code = ada.project_sync_code(&project).await.unwrap();
+    assert!(code.starts_with("wisp-sync:"));
+
+    // The other device joins with the code and gets the files.
+    let parent = temp.path().join("lin-projects");
+    std::fs::create_dir(&parent).unwrap();
+    assert!(lin
+        .join_synced_project("not a code", &parent)
+        .await
+        .is_err());
+    let joined = lin.join_synced_project(&code, &parent).await.unwrap();
+    assert_eq!(joined, project);
+    let (_, lin_root) = lin.0.store.get_project(&joined).await.unwrap().unwrap();
+    let lin_root = std::path::PathBuf::from(lin_root);
+    assert_eq!(
+        std::fs::read_to_string(lin_root.join("notes.txt")).unwrap(),
+        "first draft"
+    );
+    assert!(lin.join_synced_project(&code, &parent).await.is_err());
+
+    // A change on one device reaches the other.
+    std::fs::write(lin_root.join("notes.txt"), "second draft").unwrap();
+    assert_eq!(lin.sync_project(&joined).await.unwrap().direction, "push");
+    assert_eq!(ada.sync_project(&project).await.unwrap().direction, "pull");
+    assert_eq!(
+        std::fs::read_to_string(folder.join("notes.txt")).unwrap(),
+        "second draft"
+    );
+
+    // Both changed: nothing is overwritten until one side is chosen.
+    std::fs::write(folder.join("notes.txt"), "ada's edit").unwrap();
+    std::fs::write(lin_root.join("notes.txt"), "lin's edit").unwrap();
+    lin.sync_project(&joined).await.unwrap();
+    let conflict = ada.sync_project(&project).await.unwrap_err().to_string();
+    assert!(conflict.contains("conflict"), "{conflict}");
+    assert_eq!(
+        std::fs::read_to_string(folder.join("notes.txt")).unwrap(),
+        "ada's edit"
+    );
+    let resolved = ada.resolve_project_sync(&project, true).await.unwrap();
+    assert_eq!(resolved.direction, "pull");
+    assert_eq!(
+        std::fs::read_to_string(folder.join("notes.txt")).unwrap(),
+        "lin's edit"
+    );
+
+    // A lab on the same relay publishes a synced project as its knowledge
+    // base; a member downloads it and their agents are pointed at it.
+    ada.join_lab(&url, Some("test-relay-token".into()), "Ada", "Genomics", "")
+        .await
+        .unwrap();
+    ada.0.channels.lab.stop();
+    let invite = ada.create_lab_invite().await.unwrap();
+    lin.join_lab("", Some("test-relay-token".into()), "Lin", "", &invite)
+        .await
+        .unwrap();
+    lin.0.channels.lab.stop();
+    let waiting = ada
+        .lab_status()
+        .await
+        .members
+        .into_iter()
+        .find(|member| member.pending)
+        .unwrap();
+    ada.approve_lab_member(&waiting.id).await.unwrap();
+    let protocols = temp.path().join("protocols");
+    std::fs::create_dir(&protocols).unwrap();
+    std::fs::write(protocols.join("pcr.md"), "Anneal at 58 °C.").unwrap();
+    let base = ada.register_local_project(&protocols).await.unwrap();
+    // Not synchronized yet: there is no device code to publish.
+    assert!(ada.publish_lab_knowledge_base(&base).await.is_err());
+    ada.sync_project(&base).await.unwrap();
+    ada.publish_lab_knowledge_base(&base).await.unwrap();
+    let shown = lin.lab_status().await.knowledge_base.unwrap();
+    assert!(!shown.local);
+    let kb = lin.join_lab_knowledge_base(&parent).await.unwrap();
+    assert_eq!(kb, base);
+    assert!(lin.lab_status().await.knowledge_base.unwrap().local);
+    let root = lin.lab_knowledge_base_root().await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(std::path::Path::new(&root).join("pcr.md")).unwrap(),
+        "Anneal at 58 °C."
+    );
+    assert!(crate::channels::lab_mail::turn_context(Some(&root)).contains(&root));
+    ada.shutdown().await;
+    lin.shutdown().await;
+}
+
 /// A ChatGPT access token as Codex CLI keeps it (unsigned; claims only).
 fn chatgpt_token(account: &str, exp: i64, email: &str) -> String {
     use base64::Engine;
