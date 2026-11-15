@@ -223,6 +223,28 @@ pub fn sent_with<'a>(sent: &'a [(String, Vec<Chip>)], rows: &[Item], index: usiz
         .map_or(&[], |(_, chips)| chips.as_slice())
 }
 
+/// Whether the composer's change from `before` to `after` is one `@` or `#`
+/// typed where a word starts: what the WebView reads as asking to mention a
+/// file, a conversation or a skill. The picker opens instead, and the
+/// character is taken back out, so `before` is the text to keep.
+pub fn mention_typed(before: &str, after: &str) -> bool {
+    if after.chars().count() != before.chars().count() + 1 {
+        return false;
+    }
+    let at = before
+        .char_indices()
+        .zip(after.char_indices())
+        .find(|((_, old), (_, new))| old != new)
+        .map_or(before.len(), |((index, _), _)| index);
+    let Some(typed) = after[at..].chars().next() else {
+        return false;
+    };
+    let rest = &after[at + typed.len_utf8()..];
+    matches!(typed, '@' | '#')
+        && rest == &before[at..]
+        && before[..at].chars().last().is_none_or(char::is_whitespace)
+}
+
 pub fn user_text(item: &Item) -> String {
     if item.attachments.is_empty() {
         return item.text.clone();
@@ -326,6 +348,22 @@ pub fn with_quote(typed: &str, message: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn an_at_or_hash_typed_where_a_word_starts_asks_for_a_mention() {
+        assert!(mention_typed("", "@"));
+        assert!(mention_typed("compare ", "compare #"));
+        assert!(mention_typed("see  and", "see @ and"));
+        assert!(mention_typed("行 ", "行 @"));
+        // Inside a word, an address or a tag, it is just a character.
+        assert!(!mention_typed("me", "me@"));
+        assert!(!mention_typed("issue", "issue#"));
+        assert!(!mention_typed("compare ", "compare x"));
+        // Pasted or deleted text is not typing one character.
+        assert!(!mention_typed("", "@@"));
+        assert!(!mention_typed("a @", "a "));
+        assert!(!mention_typed("", ""));
+    }
 
     #[test]
     fn a_sent_message_shows_the_references_it_carried() {

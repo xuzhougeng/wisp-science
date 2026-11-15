@@ -1416,7 +1416,10 @@ Limits of this slice:
   instructions, for that turn only: neither is saved with the message, so
   the chips a message shows for them last while the window that sent it
   is open, as in the WebView. Paste,
-  drag and drop, and typing `@`, `#` or `/` in the composer are not ported.
+  drag and drop work, and typing `@` or `#` where a word starts opens the
+  add-context picker (the character is taken back out). A slash command
+  runs when it is the whole message; the composer's `/` button lists them,
+  and typing `/` does not.
 - Runs can be cancelled. Harvest, review of a remote workspace, transfers and
   the full log are not ported.
 - Favorites are the WebView's library: a database of their own

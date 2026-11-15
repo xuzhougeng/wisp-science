@@ -135,6 +135,9 @@ pub struct Workspace {
     sent_references: HashMap<String, Vec<(String, Vec<crate::compose::Chip>)>>,
     /// Messages written while a turn runs, waiting for it to end.
     queue: crate::queue::Queue,
+    /// The composer's text before its latest change, to tell one character
+    /// typed from the rest.
+    composer_before: String,
     /// Options, usage and remembered approvals of the open conversation.
     status: Option<ConversationStatus>,
     /// Counts snapshot polls, so the status is refreshed about once a second.
@@ -959,8 +962,17 @@ impl Workspace {
         let subscriptions = vec![
             cx.subscribe_in(&composer, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::Change) {
-                    this.state
-                        .save_draft(this.composer.read(cx).value().to_string());
+                    let now = this.composer.read(cx).value().to_string();
+                    // `@` or `#` where a word starts asks to mention
+                    // something: the picker opens and the character goes.
+                    if crate::compose::mention_typed(&this.composer_before, &now) {
+                        let kept = this.composer_before.clone();
+                        this.fill_composer(kept, window, cx);
+                        this.toggle_attach_palette(window, cx);
+                        return;
+                    }
+                    this.composer_before = now.clone();
+                    this.state.save_draft(now);
                     cx.notify();
                 }
                 // Let the input component and platform IME consume composition.
@@ -1187,6 +1199,7 @@ impl Workspace {
             sent_references: HashMap::new(),
             queue: Default::default(),
             status: None,
+            composer_before: String::new(),
             status_tick: 0,
             turn_tokens: Vec::new(),
             provenance_open: HashMap::new(),
