@@ -2383,9 +2383,13 @@ impl Server {
         status: DelegationStatus,
     ) -> Result<(), String> {
         let store = &self.0.store;
-        crate::runtime::session_runtimes(&self.0.config, &self.session(child))
-            .shutdown_all()
-            .await;
+        crate::runtime::session_runtimes(
+            &self.0.config,
+            &self.session(child),
+            self.service_keys().await,
+        )
+        .shutdown_all()
+        .await;
         let cancel = status != DelegationStatus::Succeeded;
         let mut sent = HashSet::new();
         loop {

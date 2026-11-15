@@ -3091,20 +3091,116 @@ impl Server {
     }
 
     /// The service keys that are saved, as `(NAME, value)` the way the
-    /// services' own documentation names them. Read at the start of a turn.
+    /// services' own documentation names them, and then the credentials of
+    /// your own under the names you gave them. Read at the start of a turn.
     pub(crate) async fn service_keys(&self) -> Vec<(String, String)> {
+        let mut keys = Vec::new();
         // No id yet means nothing was ever saved; do not make one to look.
-        let Ok(Some(key_id)) = self.0.store.get_setting(MODEL_KEY_ID).await else {
-            return vec![];
-        };
-        SERVICE_KEYS
-            .iter()
-            .filter_map(|key| {
+        if let Ok(Some(key_id)) = self.0.store.get_setting(MODEL_KEY_ID).await {
+            keys.extend(SERVICE_KEYS.iter().filter_map(|key| {
                 let value = self.0.secrets.get(&Self::service_secret(&key_id, key.id))?;
                 // A forgotten key is stored empty.
                 (!value.is_empty()).then(|| (key.env.to_owned(), value))
+            }));
+        }
+        for row in custom_rows(&self.0.store).await {
+            if let Some(value) = self.0.secrets.get(&custom_secret(&row.id)) {
+                if !value.is_empty() {
+                    keys.push((row.env_var, value));
+                }
+            }
+        }
+        keys
+    }
+
+    /// Credentials of your own: a name, the environment variable code run
+    /// by the model reads, and whether a value is saved (never the value).
+    /// Kept as the WebView keeps them, so either desktop has them.
+    pub async fn custom_credentials(&self) -> Result<Vec<CustomCredential>> {
+        Ok(custom_rows(&self.0.store)
+            .await
+            .into_iter()
+            .map(|row| CustomCredential {
+                saved: self
+                    .0
+                    .secrets
+                    .get(&custom_secret(&row.id))
+                    .is_some_and(|value| !value.is_empty()),
+                id: row.id,
+                name: row.name,
+                env_var: row.env_var,
             })
-            .collect()
+            .collect())
+    }
+
+    /// Adds a credential of your own, or gives the one under the same
+    /// environment variable a new name and value. The value goes to the
+    /// system keychain; only the name and variable are kept here.
+    pub async fn add_custom_credential(
+        &self,
+        name: &str,
+        env_var: &str,
+        value: &str,
+    ) -> Result<Vec<CustomCredential>> {
+        let (name, env_var, value) = (name.trim(), env_var.trim(), value.trim());
+        ensure!(!name.is_empty(), "Give the credential a name");
+        ensure!(
+            name.chars().count() <= 80,
+            "A credential's name is at most 80 characters"
+        );
+        ensure!(
+            env_var.len() <= 128 && valid_env_var(env_var),
+            "An environment variable starts with a letter or underscore and has only letters, digits and underscores"
+        );
+        ensure!(!value.is_empty(), "Enter the credential's value");
+        ensure!(
+            !SERVICE_KEYS
+                .iter()
+                .any(|key| key.env.eq_ignore_ascii_case(env_var)),
+            "{env_var} is one of the service keys above"
+        );
+        let mut rows = custom_rows(&self.0.store).await;
+        let id = match rows
+            .iter_mut()
+            .find(|row| row.env_var.eq_ignore_ascii_case(env_var))
+        {
+            // The same variable again replaces its value in place, so a
+            // lost value never blocks setting it again.
+            Some(row) => {
+                row.name = name.to_owned();
+                row.id.clone()
+            }
+            None => {
+                let id = uuid::Uuid::new_v4().to_string();
+                rows.push(CustomRow {
+                    id: id.clone(),
+                    name: name.to_owned(),
+                    env_var: env_var.to_owned(),
+                });
+                id
+            }
+        };
+        self.0.secrets.set(&custom_secret(&id), value)?;
+        self.0
+            .store
+            .set_setting(CUSTOM_CREDENTIALS, &serde_json::to_string(&rows)?)
+            .await?;
+        self.custom_credentials().await
+    }
+
+    /// Removes a credential of your own and its value.
+    pub async fn remove_custom_credential(&self, id: &str) -> Result<Vec<CustomCredential>> {
+        let mut rows = custom_rows(&self.0.store).await;
+        let before = rows.len();
+        rows.retain(|row| row.id != id);
+        ensure!(rows.len() < before, "That credential is no longer there");
+        // Stored empty, as a forgotten service key is.
+        self.0.secrets.set(&custom_secret(id), "")?;
+        self.0
+            .store
+            .set_setting(CUSTOM_CREDENTIALS, &serde_json::to_string(&rows)?)
+            .await?;
+        self.custom_credentials().await
     }
 
     /// The service keys Wisp can use, with whether each is saved. The
@@ -5537,6 +5633,59 @@ const SERVICE_KEYS: &[ServiceKey] = &[
         secret: true,
     },
 ];
+
+/// Where the WebView keeps the list of credentials of your own.
+const CUSTOM_CREDENTIALS: &str = "custom_credentials";
+
+/// One credential of your own as the WebView keeps it; the value is in the
+/// keychain under [`custom_secret`].
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct CustomRow {
+    id: String,
+    name: String,
+    env_var: String,
+}
+
+fn custom_secret(id: &str) -> String {
+    format!("custom_credential:{id}")
+}
+
+fn valid_env_var(value: &str) -> bool {
+    let mut chars = value.chars();
+    matches!(chars.next(), Some('_' | 'A'..='Z' | 'a'..='z'))
+        && chars.all(|ch| matches!(ch, '_' | 'A'..='Z' | 'a'..='z' | '0'..='9'))
+}
+
+/// The saved list, keeping only well-formed rows with one variable each,
+/// as the WebView reads it.
+async fn custom_rows(store: &wisp_store::Store) -> Vec<CustomRow> {
+    let saved = store
+        .get_setting(CUSTOM_CREDENTIALS)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let mut seen = HashSet::new();
+    serde_json::from_str::<Vec<CustomRow>>(&saved)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|row| {
+            uuid::Uuid::parse_str(&row.id).is_ok()
+                && !row.name.trim().is_empty()
+                && valid_env_var(&row.env_var)
+                && seen.insert(row.env_var.to_ascii_uppercase())
+        })
+        .collect()
+}
+
+/// A credential of your own, as Settings lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CustomCredential {
+    pub id: String,
+    pub name: String,
+    pub env_var: String,
+    pub saved: bool,
+}
 
 /// A service key as Settings lists it. Its value is never part of it.
 #[derive(Clone, Debug, PartialEq, Eq)]

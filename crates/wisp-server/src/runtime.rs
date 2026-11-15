@@ -490,7 +490,7 @@ pub async fn build(
         scope,
     )));
     let (worker, r_worker) = workers();
-    let runtime = session_runtimes(config, session);
+    let runtime = session_runtimes(config, session, service_keys.to_vec());
     if worker.is_file() {
         agent.add_tool(Box::new(wisp_runtime::ReplTool::new(
             runtime.clone(),
@@ -522,7 +522,14 @@ pub(crate) fn workers() -> (PathBuf, PathBuf) {
 
 /// The interpreters a conversation keeps between its turns, made the first
 /// time they are needed.
-pub(crate) fn session_runtimes(config: &Config, session: &Session) -> wisp_runtime::RuntimeManager {
+/// `envs` are the service keys and credentials the interpreters are
+/// started with, as the WebView starts its kernels; an interpreter already
+/// running keeps the ones it started with.
+pub(crate) fn session_runtimes(
+    config: &Config,
+    session: &Session,
+    envs: Vec<(String, String)>,
+) -> wisp_runtime::RuntimeManager {
     let (worker, r_worker) = workers();
     session
         .runtime
@@ -537,7 +544,7 @@ pub(crate) fn session_runtimes(config: &Config, session: &Session) -> wisp_runti
                 config.data.clone(),
                 worker,
                 Some(r_worker),
-                vec![],
+                envs,
                 Some(Arc::new(move || {
                     crate::toolchain::Layout::new(&data).rscript()
                 })),

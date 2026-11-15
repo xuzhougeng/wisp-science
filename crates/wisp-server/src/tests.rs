@@ -3641,6 +3641,79 @@ async fn service_keys_live_in_the_secret_store_and_are_never_read_back() {
         server.service_keys().await,
         [("NCBI_EMAIL".to_string(), "lab@example.org".to_string())]
     );
+
+    // Credentials of your own: a name and a variable, the value in the
+    // secret store; refused when malformed or one of the service keys.
+    assert!(server.custom_credentials().await.unwrap().is_empty());
+    for (name, env, value) in [
+        ("", "LAB_TOKEN", "t"),
+        ("Lab", "9LAB", "t"),
+        ("Lab", "LAB-TOKEN", "t"),
+        ("Lab", "LAB_TOKEN", " "),
+        ("Lab", "ncbi_api_key", "t"),
+    ] {
+        assert!(
+            server
+                .add_custom_credential(name, env, value)
+                .await
+                .is_err(),
+            "{env}"
+        );
+    }
+    let mine = server
+        .add_custom_credential(" Lab token ", "LAB_TOKEN", " tok-1 ")
+        .await
+        .unwrap();
+    assert_eq!(mine.len(), 1);
+    assert_eq!(
+        (
+            mine[0].name.as_str(),
+            mine[0].env_var.as_str(),
+            mine[0].saved
+        ),
+        ("Lab token", "LAB_TOKEN", true)
+    );
+    // The same variable again: a new value in its place, not a second row.
+    let again = server
+        .add_custom_credential("Lab", "lab_token", "tok-2")
+        .await
+        .unwrap();
+    assert_eq!(again.len(), 1);
+    assert_eq!(again[0].id, mine[0].id);
+    assert_eq!(
+        desktop::SecretStore::get(
+            secrets.as_ref(),
+            &format!("custom_credential:{}", mine[0].id)
+        )
+        .as_deref(),
+        Some("tok-2")
+    );
+    assert!(server
+        .service_keys()
+        .await
+        .contains(&("LAB_TOKEN".to_string(), "tok-2".to_string())));
+    // Kept in the WebView's shape, without the value.
+    let saved = server
+        .0
+        .store
+        .get_setting("custom_credentials")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(saved.contains("\"env_var\":\"LAB_TOKEN\""), "{saved}");
+    assert!(!saved.contains("tok-2"));
+    // Removed, it is gone with its value.
+    assert!(server.remove_custom_credential("missing").await.is_err());
+    assert!(server
+        .remove_custom_credential(&mine[0].id)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(!server
+        .service_keys()
+        .await
+        .iter()
+        .any(|(name, _)| name == "LAB_TOKEN"));
     server.shutdown().await;
 }
 

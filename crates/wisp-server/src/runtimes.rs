@@ -44,7 +44,11 @@ impl Server {
             }
             _ => self.project_root(project).await?,
         };
-        let manager = crate::runtime::session_runtimes(&self.0.config, &self.session(session));
+        let manager = crate::runtime::session_runtimes(
+            &self.0.config,
+            &self.session(session),
+            self.service_keys().await,
+        );
         Ok((manager, root))
     }
 
