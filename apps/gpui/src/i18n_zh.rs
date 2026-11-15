@@ -581,6 +581,7 @@ pub const ZH: &[(&str, &str)] = &[
     ("Attached", "已接入"),
     ("Not attached", "未接入"),
     ("Take away", "移除"),
+    ("Attach it", "接入"),
     (
         "The conversation's work no longer runs on this host",
         "此对话的工作不再在这台主机上运行",

@@ -347,7 +347,7 @@ impl Workspace {
                     .label(if attached {
                         tr("Take away")
                     } else {
-                        tr("Attach")
+                        tr("Attach it")
                     })
                     .xsmall()
                     .disabled(self.hosts_busy || self.conversation_hosts.is_none())

@@ -5069,6 +5069,25 @@ async fn a_conversation_runs_only_on_the_hosts_attached_to_it() {
             .await
             .is_err());
     }
+    // Said in words, not by the store's column names.
+    let said = server
+        .set_host_storage(
+            PROJECT,
+            "gpu",
+            desktop::HostStorage {
+                data_root: "/scratch".into(),
+                workdir_root: "runs".into(),
+                results_dir: "../x".into(),
+                saved: false,
+            },
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        said.starts_with("The results folder must not contain"),
+        "{said}"
+    );
     assert_eq!(server.host_storage(PROJECT, "gpu").await.unwrap(), saved);
     assert!(server.host_storage(PROJECT, "ghost").await.is_err());
     assert!(server.host_storage("missing", "gpu").await.is_err());

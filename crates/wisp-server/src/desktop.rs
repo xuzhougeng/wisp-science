@@ -3345,6 +3345,16 @@ impl Server {
         // The project and the host are checked the same way.
         self.host_storage(project, alias).await?;
         let now = chrono::Utc::now().timestamp();
+        // The store names the fields as its columns; say which folder.
+        let say = |error: anyhow::Error| {
+            anyhow::anyhow!(
+                "{}",
+                format!("{error:#}")
+                    .replace("remote_data_root", "The folder for uploaded data")
+                    .replace("remote_workdir_root", "The place for run folders")
+                    .replace("local_results_dir", "The results folder")
+            )
+        };
         self.0
             .store
             .upsert_context_storage_prefs(&wisp_store::ContextStoragePrefs {
@@ -3356,7 +3366,8 @@ impl Server {
                 created_at: now,
                 updated_at: now,
             })
-            .await?;
+            .await
+            .map_err(say)?;
         self.host_storage(project, alias).await
     }
 

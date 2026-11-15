@@ -610,7 +610,9 @@ impl Workspace {
             .snapshot
             .as_ref()
             .map_or(0, |snapshot| panel::active_runs(&snapshot.run_cards));
-        let mut tabs = div().h_flex().gap_1().flex_1().min_w_0().overflow_hidden();
+        // More tabs than fit the panel's width go on to a second line
+        // rather than past its edge.
+        let mut tabs = div().h_flex().flex_wrap().gap_1().flex_1().min_w_0();
         for tab in panel::visible(&self.kept_tabs, self.panel_tab) {
             let selected = self.panel_tab == tab;
             // Only the open tab spells its name; the rest are icons with a
@@ -670,9 +672,11 @@ impl Workspace {
         }
         div()
             .h_flex()
+            .items_start()
             .gap_2()
             .px_2()
-            .h(px(44.))
+            .py(px(6.))
+            .min_h(px(44.))
             .flex_shrink_0()
             .border_b_1()
             .border_color(cx.theme().border)
