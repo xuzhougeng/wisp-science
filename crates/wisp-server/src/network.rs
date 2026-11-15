@@ -43,6 +43,22 @@ pub(crate) fn route(value: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_owned())
 }
 
+/// Puts a model request on the Network page's model route, unless the
+/// model has a route of its own (`proxy` is already set).
+pub(crate) fn route_model(proxy: &mut Option<String>, settings: &NetworkSettings) {
+    if proxy.is_none() {
+        *proxy = route(&settings.model_proxy_url);
+    }
+}
+
+/// A route of one model's own, trimmed: empty follows the Network page,
+/// `none` connects directly, anything else is a proxy's address.
+pub(crate) fn own_route(label: &str, value: &str) -> Result<String> {
+    let mut value = value.to_owned();
+    normalize_url(label, &mut value, true)?;
+    Ok(value)
+}
+
 /// A failed model request as the user should read it: when it failed to
 /// connect, the route it took is added, because a dead proxy otherwise
 /// reads as a dead model.

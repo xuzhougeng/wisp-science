@@ -84,6 +84,9 @@ pub struct ModelFields {
     pub max_context: String,
     pub max_tokens: String,
     pub reasoning_effort: String,
+    /// This model's own route, as the WebView's `proxy_url`: empty follows
+    /// the Network page, `none` connects directly, else a proxy's address.
+    pub proxy: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,6 +159,13 @@ pub(crate) struct ModelState {
 fn resolve(fields: &ModelFields, key: &str) -> Result<ModelConfig> {
     ensure!(!fields.model.trim().is_empty(), "Enter a model ID");
     ensure!(!key.trim().is_empty(), "Enter an API key");
+    let route = crate::network::own_route("Route", &fields.proxy)?;
+    let mut model = resolve_fields(fields, key)?;
+    model.provider.proxy = crate::network::route(&route);
+    Ok(model)
+}
+
+fn resolve_fields(fields: &ModelFields, key: &str) -> Result<ModelConfig> {
     ModelConfig::resolve(|name| {
         let value = match name {
             "WISP_PROVIDER" => &fields.provider,
@@ -203,6 +213,7 @@ impl ModelState {
             max_context: model.max_context.to_string(),
             max_tokens: model.provider.max_tokens.to_string(),
             reasoning_effort: model.provider.reasoning_effort.clone().unwrap_or_default(),
+            proxy: String::new(),
         };
         Self {
             source: ModelSource::Environment,
@@ -556,7 +567,11 @@ impl Server {
         let profile = SavedProfile {
             id: id.clone(),
             name: name.to_owned(),
-            fields: input.fields,
+            fields: ModelFields {
+                // Saved as it is used: trimmed, `none` or an address.
+                proxy: input.fields.proxy.trim().to_owned(),
+                ..input.fields
+            },
         };
         match saved.profiles.iter_mut().find(|profile| profile.id == id) {
             Some(existing) => *existing = profile,
@@ -595,6 +610,7 @@ impl Server {
                 max_context: String::new(),
                 max_tokens: "8192".into(),
                 reasoning_effort: String::new(),
+                proxy: String::new(),
             },
             api_key: Some(key.to_owned()),
         };
@@ -697,6 +713,7 @@ impl Server {
                     max_context: subscription.context_window().to_string(),
                     max_tokens: "32000".into(),
                     reasoning_effort: String::new(),
+                    proxy: String::new(),
                 },
             });
             if !saved.profiles.iter().any(|p| p.id == saved.default) {
@@ -821,9 +838,7 @@ impl Server {
         let (mut model, _) = self.resolve_input(&input).await?;
         // A test goes the way a turn would.
         let routes = crate::network::load(&self.0.store).await;
-        if let Some(route) = crate::network::route(&routes.model_proxy_url) {
-            model.provider.proxy = Some(route);
-        }
+        crate::network::route_model(&mut model.provider.proxy, &routes);
         let provider = (self.0.models)(model.provider);
         let ask = [wisp_llm::Message::user("Reply with the single word: ready")];
         let reply = tokio::time::timeout(
@@ -3247,6 +3262,12 @@ impl Server {
             transport: input.transport,
             env: Vec::new(),
             headers: Vec::new(),
+            proxy: match input.proxy {
+                Some(route) => crate::network::own_route("Route", &route)?,
+                None => existing
+                    .map(|index| servers[index].proxy.clone())
+                    .unwrap_or_default(),
+            },
         };
         let mut server = server;
         server.validate()?;
@@ -4139,9 +4160,7 @@ impl Server {
         let options = self.stored_options(session).await?;
         let mut model = self.0.model.read().unwrap().pick(&options.model)?.provider;
         let routes = crate::network::load(store).await;
-        if let Some(route) = crate::network::route(&routes.model_proxy_url) {
-            model.proxy = Some(route);
-        }
+        crate::network::route_model(&mut model.proxy, &routes);
         // A draft is a document to write, not a problem to think about.
         model.reasoning_effort = None;
         let messages = self.whole_transcript(session).await?;
@@ -4319,9 +4338,7 @@ impl Server {
         let options = self.stored_options(branch).await?;
         let mut model = self.0.model.read().unwrap().pick(&options.model)?.provider;
         let routes = crate::network::load(store).await;
-        if let Some(route) = crate::network::route(&routes.model_proxy_url) {
-            model.proxy = Some(route);
-        }
+        crate::network::route_model(&mut model.proxy, &routes);
         model.reasoning_effort = None;
         let provider = (self.0.models)(model);
         match crate::branch_merge::summarize(provider.as_ref(), payload).await {
@@ -5013,9 +5030,7 @@ impl Server {
         };
         // The request goes the way a turn would.
         let routes = crate::network::load(store).await;
-        if let Some(route) = crate::network::route(&routes.model_proxy_url) {
-            model.proxy = Some(route);
-        }
+        crate::network::route_model(&mut model.proxy, &routes);
         (self.0.models)(model)
     }
 
@@ -5415,9 +5430,7 @@ impl Server {
         let mut model = self.0.model.read().unwrap().pick(&options.model)?.provider;
         // The request goes the way a turn would.
         let routes = crate::network::load(store).await;
-        if let Some(route) = crate::network::route(&routes.model_proxy_url) {
-            model.proxy = Some(route);
-        }
+        crate::network::route_model(&mut model.proxy, &routes);
         let messages = store
             .load_recent_turn_preview_messages(session, crate::aside::TURNS)
             .await?;
@@ -6150,6 +6163,8 @@ pub struct McpServerInput {
     pub env: Option<Vec<(String, String)>>,
     /// The same for the headers sent to an HTTP server.
     pub headers: Option<Vec<(String, String)>>,
+    /// An HTTP server's own route; `None` leaves it as it is.
+    pub proxy: Option<String>,
 }
 
 /// A service key the bundled connectors can use.

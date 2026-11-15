@@ -34,6 +34,8 @@ pub(super) struct SettingsForm {
     context: Entity<InputState>,
     output: Entity<InputState>,
     effort: Entity<InputState>,
+    /// The model's own route; empty follows the Network page.
+    route: Entity<InputState>,
     /// Last state reported by the host; `None` until it has answered.
     current: Option<ModelSettings>,
     /// Profile the form is editing; `None` is a model not saved yet.
@@ -55,6 +57,7 @@ impl SettingsForm {
         let context = field(tr("From the model catalog"));
         let output = field(tr("From the model catalog"));
         let effort = field(tr("Provider default"));
+        let route = field(tr("Follows the Network page"));
         let key = cx.new(|cx| {
             InputState::new(window, cx)
                 .masked(true)
@@ -69,6 +72,7 @@ impl SettingsForm {
             context,
             output,
             effort,
+            route,
             current: None,
             editing: None,
             busy: false,
@@ -192,6 +196,7 @@ impl Workspace {
             (&form.context, &fields.max_context),
             (&form.output, &fields.max_tokens),
             (&form.effort, &fields.reasoning_effort),
+            (&form.route, &fields.proxy),
         ] {
             input.update(cx, |input, cx| input.set_value(value.clone(), window, cx));
         }
@@ -290,6 +295,7 @@ impl Workspace {
                 max_context: text(&form.context),
                 max_tokens: text(&form.output),
                 reasoning_effort: text(&form.effort),
+                proxy: text(&form.route),
             },
             // The host keeps the stored key when none is typed.
             api_key: (!key.trim().is_empty()).then_some(key),
@@ -614,6 +620,13 @@ impl Workspace {
                 tr("Reasoning effort"),
                 tr("The default for conversations that do not choose one."),
                 &form.effort,
+            ))
+            .child(field(
+                tr("Route"),
+                tr(
+                    "A proxy for this model alone, such as http://127.0.0.1:7890, or none to connect directly. Empty follows Settings, Network.",
+                ),
+                &form.route,
             ));
         if let Some(error) = &form.error {
             body = body.child(error_banner(error, cx));

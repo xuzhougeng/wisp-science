@@ -1158,7 +1158,7 @@ impl Server {
             if let Some(reader) = self.picture_reader().await {
                 let mut cfg = reader.provider.with_session_id(&request.session_id);
                 let network = network::load(&self.0.store).await;
-                cfg.proxy = network::route(&network.model_proxy_url);
+                network::route_model(&mut cfg.proxy, &network);
                 agent.vision_provider = Some((self.0.models)(cfg));
             }
         }
@@ -1473,9 +1473,7 @@ impl Server {
                 .await?;
             // The call goes the way the turn went, and is kept short.
             let routes = network::load(store).await;
-            if let Some(route) = network::route(&routes.model_proxy_url) {
-                model.proxy = Some(route);
-            }
+            network::route_model(&mut model.proxy, &routes);
             model.max_tokens = follow_ups::MAX_TOKENS;
             let provider = (self.0.models)(model);
             follow_ups::suggest(provider.as_ref(), &messages).await

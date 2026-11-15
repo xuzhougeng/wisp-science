@@ -344,9 +344,7 @@ impl Server {
             .await?;
         let mut provider = model.provider;
         let routes = crate::network::load(&self.0.store).await;
-        if let Some(route) = crate::network::route(&routes.model_proxy_url) {
-            provider.proxy = Some(route);
-        }
+        crate::network::route_model(&mut provider.proxy, &routes);
         provider.max_tokens = match provider.max_tokens {
             0 => max_tokens,
             cap => cap.min(max_tokens),

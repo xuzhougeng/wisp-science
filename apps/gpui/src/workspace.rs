@@ -449,7 +449,7 @@ pub struct Workspace {
     /// What the Network page last read from the host, its fields, and
     /// whether the last Save was kept.
     network: Option<wisp_dto::NetworkSettings>,
-    network_fields: [Entity<InputState>; 6],
+    network_fields: [Entity<InputState>; 7],
     network_saved: bool,
     /// The host the form changes or the remove question is about; `None`
     /// in the form means a new one.
@@ -677,6 +677,8 @@ pub struct Workspace {
     mcp_token: Entity<InputState>,
     /// The server's headers or environment variables, a line each.
     mcp_pairs: Entity<InputState>,
+    /// An HTTP server's own route.
+    mcp_route: Entity<InputState>,
     /// What testing a server found: `None` while it runs, then its tools
     /// or why it failed.
     mcp_tested: HashMap<String, Option<Result<Vec<String>, String>>>,
@@ -821,6 +823,7 @@ impl Workspace {
             .map(|hint| cx.new(|cx| InputState::new(window, cx).placeholder(hint)));
         let env_password = cx.new(|cx| InputState::new(window, cx).masked(true));
         let network_fields = [
+            "http://127.0.0.1:7890",
             "http://127.0.0.1:7890",
             "http://127.0.0.1:7890",
             "http://127.0.0.1:7890",
@@ -993,6 +996,8 @@ impl Workspace {
         ];
         let mcp_token = cx.new(|cx| InputState::new(window, cx).masked(true));
         let mcp_pairs = cx.new(|cx| InputState::new(window, cx).multi_line(true));
+        let mcp_route =
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Follows the Network page")));
         let sign_in_redirect = cx.new(|cx| {
             InputState::new(window, cx).placeholder("http://localhost:1455/auth/callback?code=…")
         });
@@ -1552,6 +1557,7 @@ impl Workspace {
             mcp_target,
             mcp_token,
             mcp_pairs,
+            mcp_route,
             mcp_tested: HashMap::new(),
             credentials: vec![],
             custom_credentials: vec![],

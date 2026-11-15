@@ -522,9 +522,12 @@ Limits of this slice:
   tools start as the usual proxy variables. That last one is one value for
   the whole app, as in the WebView. A model request that cannot connect says
   which route it took. The mirror, the index and the CA bundle are advice in
-  the prompt of every turn, not a rule; nothing checks that they exist. A
-  route for one model, one MCP server or a subscription sign-in is not
-  ported; the sign-in route a WebView database carries is kept as it is.
+  the prompt of every turn, not a rule; nothing checks that they exist. The
+  subscription sign-in route is used for signing in to ChatGPT, Codex or
+  SuperGrok and for renewing that sign-in. A saved model can have a route of
+  its own (its Route field: empty follows the page, `none` connects
+  directly), which wins over the page's model route for every request made
+  with it; so can an MCP server over HTTP, over the connector route.
 - Environments keeps SSH hosts in the WebView's list (`ssh_hosts`) and
   registers each as the execution context `ssh:<name>`, which is what the
   model passes to `run_in_context`. Every turn's prompt names them and the
@@ -2150,6 +2153,10 @@ and the composer shows that a hook failed. In a project, write a
 trusted and a turn says it was not run; Trust it as it is now, and it
 runs; change the file and it reads as not trusted again. Press Add a hook,
 then Escape: only the form closes.
+In Settings, Network, set the subscription sign-in route and save; open
+the page again and confirm it is kept. Give a saved model the Route `none`
+while the Model API route names a proxy that is not running: that model
+still answers, another one does not.
 In Settings, Connections, change an MCP server over HTTP and add the header
 `X-Api-Key: <a made-up key>`; Test reaches it with the header; open the form
 again: the line reads `X-Api-Key:` with no value, and saving it so keeps the

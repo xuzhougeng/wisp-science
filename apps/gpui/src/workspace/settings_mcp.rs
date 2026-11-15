@@ -64,6 +64,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let route = row.map(|row| row.server.proxy.clone()).unwrap_or_default();
         let (id, name, http, target, pairs) = match row {
             Some(row) => {
                 let http = matches!(row.server.transport, McpTransport::Http { .. });
@@ -91,6 +92,7 @@ impl Workspace {
             (&self.mcp_target, target),
             (&self.mcp_token, String::new()),
             (&self.mcp_pairs, pairs),
+            (&self.mcp_route, route),
         ] {
             field.update(cx, |input, cx| input.set_value(value, window, cx));
         }
@@ -134,6 +136,11 @@ impl Workspace {
             token: (self.mcp_http && !token.is_empty()).then_some(token),
             env,
             headers,
+            // A program has no route of its own.
+            proxy: Some(match self.mcp_http {
+                true => self.mcp_route.read(cx).value().to_string(),
+                false => String::new(),
+            }),
         };
         let reply = self.backend.save_mcp_server(input);
         self.change_mcp(
@@ -239,7 +246,12 @@ impl Workspace {
                     "Headers sent with every request, one per line as Name: value, kept in \
                      the system keychain. A name with no value keeps the one that is saved.",
                 )))
-                .child(div().h(px(72.)).child(Input::new(&self.mcp_pairs).h_full()));
+                .child(div().h(px(72.)).child(Input::new(&self.mcp_pairs).h_full()))
+                .child(label(tr(
+                    "Route: a proxy for this server alone, or none to connect directly. Empty \
+                     follows the connector route in Settings, Network.",
+                )))
+                .child(Input::new(&self.mcp_route).small());
         } else {
             form = form
                 .child(label(tr(

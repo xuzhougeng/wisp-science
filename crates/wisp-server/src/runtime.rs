@@ -399,9 +399,7 @@ pub async fn build(
     };
     let mut cfg = model.provider.clone().with_session_id(frame);
     let network = crate::network::load(store).await;
-    if let Some(route) = crate::network::route(&network.model_proxy_url) {
-        cfg.proxy = Some(route);
-    }
+    crate::network::route_model(&mut cfg.proxy, &network);
     // The conversation's own choice outranks the model's default.
     if reasoning_effort.is_some() {
         cfg.reasoning_effort = reasoning_effort;

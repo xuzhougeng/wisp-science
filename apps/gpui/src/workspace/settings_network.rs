@@ -14,7 +14,7 @@ use crate::{backend::receive, settings};
 
 /// The fields in the order of `settings::network_form`: what each is called
 /// and what it is for.
-const FIELDS: [(&str, &str); 6] = [
+const FIELDS: [(&str, &str); 7] = [
     (
         "Model API",
         "Requests to the models you added. Applies from the next turn, and to Test connection.",
@@ -28,6 +28,10 @@ const FIELDS: [(&str, &str); 6] = [
         "Code the model runs",
         "Handed to shell commands and Python as the usual proxy variables, so pip, conda, git \
          and curl follow it.",
+    ),
+    (
+        "Subscription sign-in",
+        "Signing in to ChatGPT, Codex or SuperGrok, and renewing that sign-in before turns.",
     ),
     (
         "Conda mirror",
@@ -78,19 +82,20 @@ impl Workspace {
         self.network = Some(saved);
     }
 
-    fn typed_network(&self, saved: &NetworkSettings, cx: &App) -> NetworkSettings {
+    fn typed_network(&self, cx: &App) -> NetworkSettings {
         let typed = self
             .network_fields
             .each_ref()
             .map(|field| field.read(cx).value().to_string());
-        settings::network_form(typed, saved)
+        settings::network_form(typed)
     }
 
     fn save_network(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(saved) = &self.network else {
+        // Nothing is sent before the saved values are shown.
+        if self.network.is_none() {
             return;
-        };
-        let reply = self.backend.set_network(self.typed_network(saved, cx));
+        }
+        let reply = self.backend.set_network(self.typed_network(cx));
         self.settings_error = None;
         self.network_saved = false;
         cx.spawn_in(window, async move |this, cx| {
@@ -118,7 +123,7 @@ impl Workspace {
         let Some(saved) = &self.network else {
             return page.child(div().text_sm().text_color(muted).child(tr("Loading…")));
         };
-        let typed = self.typed_network(saved, cx);
+        let typed = self.typed_network(cx);
         let values = settings::network_values(&typed);
         let heading = |title: &'static str, note: &'static str| {
             div()

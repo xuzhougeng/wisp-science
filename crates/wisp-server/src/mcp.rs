@@ -38,6 +38,10 @@ pub struct McpServer {
     /// system keychain.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub headers: Vec<String>,
+    /// This HTTP server's own route: empty follows the Network page's
+    /// connector route, `none` connects directly, else a proxy's address.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub proxy: String,
 }
 
 /// What a connection is made with besides where the server is: the bearer
@@ -234,7 +238,11 @@ impl Connections {
         if let Some(stale) = open.remove(&server.id) {
             let _ = stale.client.shutdown().await;
         }
-        let proxy = self.proxy.read().unwrap().clone();
+        // A server's own route wins over the Network page's.
+        let proxy = match server.proxy.trim() {
+            "" => self.proxy.read().unwrap().clone(),
+            own => own.to_owned(),
+        };
         let client = Arc::new(Self::connect(server, &credentials, &proxy).await?);
         open.insert(
             server.id.clone(),
@@ -349,6 +357,7 @@ mod tests {
             transport,
             env: vec![],
             headers: vec![],
+            proxy: String::new(),
         }
     }
 

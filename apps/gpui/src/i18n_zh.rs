@@ -785,6 +785,12 @@ pub const ZH: &[(&str, &str)] = &[
     ("It read:", "它读取了："),
     // Sample project.
     ("Make a sample project to try Wisp on", "创建一个示例项目来试用 Wisp"),
+    ("Route: a proxy for this server alone, or none to connect directly. Empty follows the connector route in Settings, Network.", "线路：只用于这个服务器的代理；填 none 表示直连。留空则跟随“设置 → 网络”中的连接器线路。"),
+    ("A proxy for this model alone, such as http://127.0.0.1:7890, or none to connect directly. Empty follows Settings, Network.", "只用于这个模型的代理，例如 http://127.0.0.1:7890；填 none 表示直连。留空则跟随“设置 → 网络”。"),
+    ("Route", "线路"),
+    ("Follows the Network page", "跟随“网络”页"),
+    ("Signing in to ChatGPT, Codex or SuperGrok, and renewing that sign-in before turns.", "登录 ChatGPT、Codex 或 SuperGrok，以及每轮开始前续期登录。"),
+    ("Subscription sign-in", "订阅登录"),
     ("Literature search with the sci CLI and the bear-* research skills. It is also written into ~/.scimaster/config.json, where sci reads it.", "用于 sci CLI 和 bear-* 研究技能的文献检索。它也会写入 ~/.scimaster/config.json，供 sci 读取。"),
     ("SCIMaster API key", "SCIMaster API 密钥"),
     ("The agent_infini CLI's data analysis over databases and knowledge bases. Saving it runs agent_infini init, which must be installed on this computer.", "agent_infini CLI 对数据库和知识库做数据分析。保存时会运行 agent_infini init，这台电脑上需要已安装它。"),

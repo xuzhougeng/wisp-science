@@ -447,14 +447,15 @@ pub fn search_sections(query: &str) -> Vec<Section> {
 
 /// How many of the Network page's fields are routes; the rest are about
 /// packages.
-pub const NETWORK_ROUTES: usize = 3;
+pub const NETWORK_ROUTES: usize = 4;
 
 /// The Network page's fields, in the order they are shown.
-pub fn network_values(saved: &NetworkSettings) -> [String; 6] {
+pub fn network_values(saved: &NetworkSettings) -> [String; 7] {
     [
         saved.model_proxy_url.clone(),
         saved.mcp_proxy_url.clone(),
         saved.command_proxy_url.clone(),
+        saved.subscription_proxy_url.clone(),
         saved.conda_mirror_url.clone(),
         saved.pip_index_url.clone(),
         saved.ca_bundle_path.clone(),
@@ -462,12 +463,11 @@ pub fn network_values(saved: &NetworkSettings) -> [String; 6] {
 }
 
 /// What Save sends: the fields as typed, in the order of `network_values`.
-/// The page does not show the sign-in route, so that one is kept as it was.
-pub fn network_form(typed: [String; 6], saved: &NetworkSettings) -> NetworkSettings {
-    let [model, mcp, command, conda, pip, ca] = typed.map(|value| value.trim().to_owned());
+pub fn network_form(typed: [String; 7]) -> NetworkSettings {
+    let [model, mcp, command, sign_in, conda, pip, ca] = typed.map(|value| value.trim().to_owned());
     NetworkSettings {
         model_proxy_url: model,
-        subscription_proxy_url: saved.subscription_proxy_url.clone(),
+        subscription_proxy_url: sign_in,
         mcp_proxy_url: mcp,
         command_proxy_url: command,
         conda_mirror_url: conda,
@@ -1688,36 +1688,41 @@ mod tests {
     }
 
     #[test]
-    fn the_network_form_sends_what_is_typed_and_keeps_what_it_does_not_show() {
+    fn the_network_form_sends_what_is_typed() {
         let saved = NetworkSettings {
             model_proxy_url: "http://old.test:1".into(),
             subscription_proxy_url: "socks5://signin.test:1080".into(),
             ..Default::default()
         };
         // The fields are shown in the order they are sent back.
-        assert_eq!(network_form(network_values(&saved), &saved), saved);
+        assert_eq!(network_form(network_values(&saved)), saved);
         let typed = [
             " none ",
             "http://127.0.0.1:7890",
             "",
+            " socks5://signin.test:1081 ",
             "https://conda.test/forge ",
             "",
             " /etc/ca.pem",
         ]
         .map(String::from);
-        let form = network_form(typed, &saved);
+        let form = network_form(typed);
         assert_eq!(form.model_proxy_url, "none");
         assert_eq!(form.mcp_proxy_url, "http://127.0.0.1:7890");
         assert_eq!(form.command_proxy_url, "");
         assert_eq!(form.conda_mirror_url, "https://conda.test/forge");
         assert_eq!(form.ca_bundle_path, "/etc/ca.pem");
-        // The sign-in route has no field here; clearing the page keeps it.
-        assert_eq!(form.subscription_proxy_url, "socks5://signin.test:1080");
+        assert_eq!(form.subscription_proxy_url, "socks5://signin.test:1081");
         // The first fields are the routes, and only those get a reading.
         let values = network_values(&form);
         assert_eq!(
             values[..NETWORK_ROUTES],
-            ["none", "http://127.0.0.1:7890", ""]
+            [
+                "none",
+                "http://127.0.0.1:7890",
+                "",
+                "socks5://signin.test:1081"
+            ]
         );
         assert_eq!(route_note(" "), "Follows the system");
         assert_eq!(route_note("none"), "Connects directly");

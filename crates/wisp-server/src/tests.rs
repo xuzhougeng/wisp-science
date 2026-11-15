@@ -2804,6 +2804,7 @@ async fn desktop_model_profiles_are_validated_saved_and_chosen_per_conversation(
         max_context: "32000".into(),
         max_tokens: "4000".into(),
         reasoning_effort: String::new(),
+        proxy: String::new(),
     };
     let input = |id: Option<&str>, name: &str, fields: ModelFields, key: Option<&str>| ModelInput {
         id: id.map(Into::into),
@@ -3196,6 +3197,7 @@ async fn the_single_model_saved_by_an_earlier_build_is_kept_as_a_profile() {
         max_context: "32000".into(),
         max_tokens: "4000".into(),
         reasoning_effort: String::new(),
+        proxy: String::new(),
     };
     // What the earlier build left behind: one settings row and one key.
     {
@@ -4492,6 +4494,7 @@ async fn a_users_mcp_server_gives_turns_its_tools_and_each_asks_before_it_runs()
         token: None,
         env: None,
         headers: None,
+        proxy: None,
     };
     assert!(server.save_mcp_server(input(" ", &url)).await.is_err());
     assert!(server
@@ -5705,6 +5708,7 @@ async fn a_model_that_cannot_see_is_told_what_a_saved_one_saw() {
             max_context: "32000".into(),
             max_tokens: "4000".into(),
             reasoning_effort: String::new(),
+            proxy: String::new(),
         },
         api_key: Some("made-up-key".into()),
     };
@@ -6200,6 +6204,110 @@ async fn files_a_turn_writes_become_artifacts_of_its_conversation() {
 }
 
 #[tokio::test]
+async fn a_model_with_a_route_of_its_own_takes_it_over_the_network_page() {
+    use desktop::{ConversationOptions, ModelFields, ModelInput};
+    let temp = tempfile::tempdir().unwrap();
+    let mut cfg = config(temp.path());
+    cfg.model = None;
+    // Which route each model was built with, by its ID.
+    let routes: Arc<std::sync::Mutex<Vec<(String, Option<String>)>>> = Arc::default();
+    let heard = routes.clone();
+    let factory: ModelFactory = Arc::new(move |provider| {
+        heard
+            .lock()
+            .unwrap()
+            .push((provider.model.clone(), provider.proxy.clone()));
+        Box::new(FakeModel {
+            calls: Arc::default(),
+            write: false,
+        })
+    });
+    let server = Server::open_with(cfg, factory, Arc::new(desktop::MemorySecrets::default()))
+        .await
+        .unwrap();
+    let input = |model: &str, proxy: &str| ModelInput {
+        id: None,
+        name: model.into(),
+        fields: ModelFields {
+            provider: "openai".into(),
+            api_url: "http://127.0.0.1:9/v1".into(),
+            model: model.into(),
+            max_context: "32000".into(),
+            max_tokens: "4000".into(),
+            reasoning_effort: String::new(),
+            proxy: proxy.into(),
+        },
+        api_key: Some("made-up-key".into()),
+    };
+    let refused = server
+        .save_model_profile(input("lab-bad", "localhost"))
+        .await
+        .unwrap_err();
+    assert!(refused.to_string().starts_with("Route"), "{refused}");
+    server
+        .save_model_profile(input("lab-plain", ""))
+        .await
+        .unwrap();
+    let saved = server
+        .save_model_profile(input("lab-direct", " none "))
+        .await
+        .unwrap();
+    let direct = saved
+        .profiles
+        .iter()
+        .find(|profile| profile.fields.model == "lab-direct")
+        .unwrap()
+        .clone();
+    assert_eq!(direct.fields.proxy, "none");
+    server
+        .set_network(wisp_dto::NetworkSettings {
+            model_proxy_url: "http://127.0.0.1:7890".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let route_of = |model: &str| {
+        routes
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|(id, _)| id == model)
+            .and_then(|(_, route)| route.clone())
+    };
+    // The default model follows the Network page.
+    let plain = create(&server).await;
+    send(&server, &plain, "hello").await.unwrap();
+    wait_for(&server, &plain, |s| !s.running).await;
+    assert_eq!(
+        route_of("lab-plain").as_deref(),
+        Some("http://127.0.0.1:7890")
+    );
+    // The one with its own route keeps it.
+    let own = create(&server).await;
+    let options = server
+        .conversation_status(PROJECT, &own)
+        .await
+        .unwrap()
+        .options;
+    server
+        .set_conversation_options(
+            PROJECT,
+            &own,
+            ConversationOptions {
+                model: direct.id.clone(),
+                ..options
+            },
+        )
+        .await
+        .unwrap();
+    send(&server, &own, "hello").await.unwrap();
+    wait_for(&server, &own, |s| !s.running).await;
+    assert_eq!(route_of("lab-direct").as_deref(), Some("none"));
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn network_routes_reach_the_model_and_mcp_servers_and_mirrors_reach_the_prompt() {
     use axum::{response::IntoResponse, Json, Router};
     use desktop::{McpServerInput, McpTransport};
@@ -6272,6 +6380,7 @@ async fn network_routes_reach_the_model_and_mcp_servers_and_mirrors_reach_the_pr
             token: None,
             env: None,
             headers: None,
+            proxy: None,
         })
         .await
         .unwrap();
@@ -6328,6 +6437,47 @@ async fn network_routes_reach_the_model_and_mcp_servers_and_mirrors_reach_the_pr
     assert_eq!(
         server.test_mcp_server(&fake.id).await.unwrap(),
         ["fake__echo"]
+    );
+
+    // A server's own route wins over the page's: with the page saying
+    // direct, only the server that names the proxy is reached.
+    server
+        .set_network(NetworkSettings {
+            mcp_proxy_url: "none".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let change = |route: Option<&str>| McpServerInput {
+        id: Some(fake.id.clone()),
+        name: "Fake".into(),
+        transport: McpTransport::Http {
+            url: "http://mcp.invalid/mcp".into(),
+        },
+        token: None,
+        env: None,
+        headers: None,
+        proxy: route.map(str::to_owned),
+    };
+    assert!(server
+        .save_mcp_server(change(Some("localhost")))
+        .await
+        .is_err());
+    server.save_mcp_server(change(Some(""))).await.unwrap();
+    assert!(server.test_mcp_server(&fake.id).await.is_err());
+    let own = server
+        .save_mcp_server(change(Some(&format!(" {proxy} "))))
+        .await
+        .unwrap();
+    assert_eq!(own.proxy, proxy);
+    assert_eq!(
+        server.test_mcp_server(&fake.id).await.unwrap(),
+        ["fake__echo"]
+    );
+    // Left as it is when the form does not say.
+    assert_eq!(
+        server.save_mcp_server(change(None)).await.unwrap().proxy,
+        proxy
     );
     server.shutdown().await;
 }
@@ -13810,6 +13960,7 @@ async fn usage_ranks_the_skills_and_mcp_tools_the_model_called() {
             },
             env: vec![],
             headers: vec![],
+            proxy: String::new(),
         }],
     )
     .await
