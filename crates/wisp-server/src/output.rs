@@ -147,6 +147,8 @@ pub struct Session {
     pub guidance: wisp_core::GuidanceQueue,
     /// Numbers each piece of guidance.
     pub guided: std::sync::atomic::AtomicU64,
+    /// Messages written while a turn ran, to go as turns end.
+    pub(crate) queue: Mutex<crate::queue::Waiting>,
     #[cfg(test)]
     pub snapshot_after_read: Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
 }
@@ -162,6 +164,7 @@ impl Default for Session {
             acp: Default::default(),
             guidance: Default::default(),
             guided: Default::default(),
+            queue: Default::default(),
             #[cfg(test)]
             snapshot_after_read: Mutex::new(None),
         }

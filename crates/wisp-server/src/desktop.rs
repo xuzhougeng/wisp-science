@@ -3939,6 +3939,7 @@ impl Server {
             .into_iter()
             .map(RuntimeRow::from)
             .collect();
+        let queued = session.queue.lock().unwrap().list();
         let live = session.live.lock().unwrap();
         let mut allowed_tools: Vec<_> = live.allowed_tools.iter().cloned().collect();
         allowed_tools.sort();
@@ -3958,6 +3959,7 @@ impl Server {
             acp,
             fast_available,
             memory_proposal: live.memory_proposal.clone(),
+            queued,
         })
     }
 
@@ -5689,6 +5691,8 @@ pub struct ConversationStatus {
     /// A memory drafted after the latest turn, until it is saved, put
     /// away or the next turn starts.
     pub memory_proposal: Option<MemoryProposal>,
+    /// Messages waiting for the turn to end, first to go first.
+    pub queued: Vec<QueuedMessage>,
 }
 
 /// An interpreter a conversation started and keeps, with what it has in
@@ -6305,6 +6309,7 @@ pub use crate::papers::{
 pub use crate::pet::{Pet, PetLook, SHEET_HEIGHT, SHEET_WIDTH};
 pub use crate::plugins::PluginRow;
 pub use crate::project_sync::{ProjectSyncInfo, ProjectSyncResult, SyncSettings};
+pub use crate::queue::QueuedMessage;
 pub use crate::quick_actions::{QuickAction, QuickActionInput};
 pub use crate::remote_access::{RemoteAccess, RemoteState};
 pub use crate::remote_dir::RemoteDirectory;

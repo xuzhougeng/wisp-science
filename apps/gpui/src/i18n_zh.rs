@@ -1251,6 +1251,7 @@ pub const ZH: &[(&str, &str)] = &[
     ("lost", "已丢失"),
     (" · exit {}", " · 退出码 {}"),
     ("{} messages are already waiting; remove one or wait for the turn to end", "已有 {} 条消息在等待；请移除一条，或等本轮结束"),
+    ("10 messages are already waiting; remove one or wait for the turn to end", "已有 10 条消息在等待；请移除一条，或等本轮结束"),
     ("The answer was not reviewed: {}", "回答未经审查：{}"),
     ("Review: {}", "审查：{}"),
     ("{} to look at.", "{}需要留意。"),

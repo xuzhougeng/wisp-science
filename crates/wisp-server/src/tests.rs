@@ -1359,6 +1359,105 @@ async fn guidance_is_read_by_the_running_turn_and_refused_when_none_runs() {
 }
 
 #[tokio::test]
+async fn queued_messages_go_one_at_a_time_as_turns_end_without_a_window() {
+    let tmp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(tmp.path()), models(Arc::default(), true))
+        .await
+        .unwrap();
+    let id = create(&server).await;
+    let queued = |text: &str| dto::SendRequest {
+        session_id: id.clone(),
+        request_id: String::new(),
+        message: text.into(),
+        resume: false,
+        resume_after: None,
+        attachments: vec![],
+        references: vec![],
+        acp_agent_id: None,
+    };
+    send(&server, &id, "Write the result").await.unwrap();
+    let pending = wait_for(&server, &id, |s| !s.approvals.is_empty()).await;
+    let first = server
+        .queue_message(PROJECT, queued("Now plot it"))
+        .await
+        .unwrap();
+    let second = server
+        .queue_message(PROJECT, queued("And summarise"))
+        .await
+        .unwrap();
+    let third = server
+        .queue_message(PROJECT, queued("Use GRCh38"))
+        .await
+        .unwrap();
+    assert!(server.queue_message(PROJECT, queued("  ")).await.is_err());
+    assert!(server.queue_message("other", queued("x")).await.is_err());
+    let order =
+        |list: Vec<desktop::QueuedMessage>| list.into_iter().map(|q| q.id).collect::<Vec<_>>();
+    assert_eq!(
+        order(
+            server
+                .conversation_status(PROJECT, &id)
+                .await
+                .unwrap()
+                .queued
+        ),
+        [first, second, third]
+    );
+    // Moved up, then taken back out.
+    assert!(server.move_queued_up(PROJECT, &id, second).await.unwrap());
+    assert!(!server.move_queued_up(PROJECT, &id, second).await.unwrap());
+    let taken = server
+        .take_queued(PROJECT, &id, second)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(taken.message, "And summarise");
+    assert!(server
+        .take_queued(PROJECT, &id, second)
+        .await
+        .unwrap()
+        .is_none());
+    // Words alone can be given to the running turn now.
+    assert!(server.guide_with_queued(PROJECT, &id, third).await.unwrap());
+    assert_eq!(
+        order(server.queued_messages(PROJECT, &id).await.unwrap()),
+        [first]
+    );
+    call(
+        &server,
+        "native_conversation_approve",
+        PROJECT,
+        json!({"session_id": id, "approval_id": pending.approvals[0].approval_id, "approved": true}),
+    )
+    .await
+    .unwrap();
+    // The turn ends and the next message goes by itself, with nobody
+    // looking at the conversation.
+    let said = |s: &dto::Snapshot, text: &str| {
+        s.items
+            .iter()
+            .any(|item| item.role == "user" && item.text == text)
+    };
+    let done = wait_for(&server, &id, |s| !s.running && said(s, "Now plot it")).await;
+    assert!(done.error.is_none(), "{:?}", done.error);
+    assert!(server
+        .queued_messages(PROJECT, &id)
+        .await
+        .unwrap()
+        .is_empty());
+    // One queued while nothing runs goes at once.
+    server
+        .queue_message(PROJECT, queued("One more"))
+        .await
+        .unwrap();
+    wait_for(&server, &id, |s| !s.running && said(s, "One more")).await;
+    // Nothing waits: there is nothing to send now.
+    assert!(!server.send_queued_now(PROJECT, &id).await.unwrap());
+    assert!(server.send_queued_now("other", &id).await.is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn mobile_turn_approval_persistence_and_restart_reuse_the_same_runtime() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = config(tmp.path());

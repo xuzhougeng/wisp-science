@@ -1302,7 +1302,8 @@ Limits of this slice:
   added from the calendar.
 - Every window talks to the one host in the app, so projects, settings and
   conversations are the same in all of them, and each keeps its own page,
-  open conversation, panels and queue of waiting messages. A window does
+  open conversation and panels; waiting messages are the host's, so every
+  window on a conversation shows the same queue. A window does
   not hear at once what another changed: lists catch up when they are next
   read or refreshed. Two windows on one conversation both follow its turn;
   the host still runs one turn at a time in it. Closing a window leaves
@@ -1376,10 +1377,12 @@ Limits of this slice:
   the turn ends; several go one turn at a time, in order. A waiting message
   can be taken back into the composer or dropped. The queue holds, and says
   why, when the turn ended with a question or a plan that waits for your
-  own answer, or with an error; "Send the next one" overrides that. The
-  queue belongs to the window: it is not saved, so quitting drops it; it
-  moves only while its conversation is the one that is open; and a paired
-  phone neither sees nor feeds it. While the turn runs, the lightning button
+  own answer, or with an error; "Send the next one" overrides that. As in
+  the WebView the host keeps the queue, in memory: it moves on whether or
+  not its conversation is open, in any window, and quitting drops it. A
+  correction an automatic review asks for goes before it. Deleting or
+  moving the conversation drops what waits in it, and a paired phone
+  neither sees nor feeds it. While the turn runs, the lightning button
   on a waiting message without attachments gives it to the turn at once: the
   turn reads it at its next step, as your message, and answers it before it
   ends; one that arrives after the turn's last look is answered in the same
@@ -2220,7 +2223,9 @@ Start a turn that takes a while and, before it ends, write two messages and
 press Queue for each: both are listed above the composer and the composer is
 empty again. When the turn ends the first is sent by itself, and the second
 after that. Queue one more, take it back with the pencil and confirm it is in
-the composer again; queue it and drop it with the cross. Queue a message
+the composer again; queue it and drop it with the cross. Queue a message,
+open another conversation before the turn ends, and come back: the message
+was sent when the turn ended. Queue a message
 during a turn that ends with a question card and confirm it waits until you
 answer or press "Send the next one". Start a turn that waits for an approval,
 queue a message and press its lightning button: it leaves the queue; approve,

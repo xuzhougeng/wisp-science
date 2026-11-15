@@ -2199,6 +2199,36 @@ impl Backend {
         self.local(move |host| async move { host.guide(&project, &session, &text).await })
     }
 
+    /// Keeps a message for when the conversation's turn ends; the host
+    /// sends it then, whether or not the conversation is open.
+    pub fn queue_message(&self, project: String, request: SendRequest) -> Reply<u64> {
+        self.local(move |host| async move { host.queue_message(&project, request).await })
+    }
+
+    /// Takes a waiting message back out.
+    pub fn take_queued(
+        &self,
+        project: String,
+        session: String,
+        id: u64,
+    ) -> Reply<Option<wisp_server::desktop::QueuedMessage>> {
+        self.local(move |host| async move { host.take_queued(&project, &session, id).await })
+    }
+
+    pub fn move_queued_up(&self, project: String, session: String, id: u64) -> Reply<bool> {
+        self.local(move |host| async move { host.move_queued_up(&project, &session, id).await })
+    }
+
+    /// Gives a waiting message to the running turn now.
+    pub fn guide_with_queued(&self, project: String, session: String, id: u64) -> Reply<bool> {
+        self.local(move |host| async move { host.guide_with_queued(&project, &session, id).await })
+    }
+
+    /// Sends the next waiting message now, past what holds the queue.
+    pub fn send_queued_now(&self, project: String, session: String) -> Reply<bool> {
+        self.local(move |host| async move { host.send_queued_now(&project, &session).await })
+    }
+
     pub fn stop_runtime(&self, project: String, session: String, id: String) -> Reply<()> {
         self.local(move |host| async move { host.stop_runtime(&project, &session, &id).await })
     }

@@ -40,6 +40,7 @@ mod progress;
 mod project_archive;
 mod project_folder;
 mod project_sync;
+pub mod queue;
 mod quick_actions;
 mod recaps;
 mod remote_access;
@@ -165,9 +166,10 @@ struct Inner {
     /// Conversations whose running turn corrects what an automatic review
     /// found; the review after it is not corrected again.
     corrections: std::sync::Mutex<HashSet<String>>,
-    /// Corrections to start, for the worker that starts them: a turn's
-    /// end cannot start the next turn itself.
-    to_correct: tokio::sync::mpsc::UnboundedSender<Correction>,
+    /// Corrections to start and queues to move on, for the worker that does
+    /// it, one after another: a turn's end cannot start the next turn
+    /// itself.
+    to_correct: tokio::sync::mpsc::UnboundedSender<AfterTurn>,
     sweeping_deliveries: AtomicBool,
     /// The daily recap run is going.
     recapping: AtomicBool,
@@ -199,6 +201,13 @@ struct Correction {
     project: String,
     root: String,
     origin: channels::TurnOrigin,
+}
+
+/// What the worker does after a turn: start the correction a review asked
+/// for, or send the next message waiting in a conversation.
+enum AfterTurn {
+    Correct(Correction),
+    Drain(String),
 }
 
 /// What runs a turn: Wisp's own agent (with the model its side requests
@@ -425,16 +434,19 @@ impl Server {
         Ok(server)
     }
 
-    /// Starts the corrections automatic reviews ask for, one after another,
-    /// for as long as the host is there.
-    fn start_corrections(&self, mut asked: tokio::sync::mpsc::UnboundedReceiver<Correction>) {
+    /// Starts the corrections automatic reviews ask for and sends queued
+    /// messages, one after another, for as long as the host is there.
+    fn start_corrections(&self, mut asked: tokio::sync::mpsc::UnboundedReceiver<AfterTurn>) {
         let host = Arc::downgrade(&self.0);
         tokio::spawn(async move {
-            while let Some(correction) = asked.recv().await {
+            while let Some(next) = asked.recv().await {
                 let Some(inner) = host.upgrade() else {
                     break;
                 };
-                Self(inner).correct(correction).await;
+                match next {
+                    AfterTurn::Correct(correction) => Self(inner).correct(correction).await,
+                    AfterTurn::Drain(session) => Self(inner).drain(&session).await,
+                }
             }
         });
     }
@@ -1233,13 +1245,30 @@ impl Server {
         };
         // The turn is over: what follows is not one of the four.
         drop(permit);
-        if let (true, Some(side_model)) = (answered, side_model) {
-            let frame = &request.session_id;
-            tokio::join!(
-                self.suggest_follow_ups(frame, session, side_model.clone(), ended),
-                self.propose_memory_after_turn(frame, session, side_model.clone(), ended),
-                self.review_after_turn(frame, session, side_model, ended, auto_review, place),
-            );
+        let frame = &request.session_id;
+        match (answered, side_model) {
+            (true, Some(side_model)) => {
+                tokio::join!(
+                    self.suggest_follow_ups(frame, session, side_model.clone(), ended),
+                    self.propose_memory_after_turn(frame, session, side_model.clone(), ended),
+                    async {
+                        // A correction the review asks for goes before
+                        // what was queued, as the WebView's review runs
+                        // before its queue moves.
+                        self.review_after_turn(
+                            frame,
+                            session,
+                            side_model,
+                            ended,
+                            auto_review,
+                            place,
+                        )
+                        .await;
+                        self.drain_later(frame);
+                    },
+                );
+            }
+            _ => self.drain_later(frame),
         }
     }
 
@@ -1303,13 +1332,13 @@ impl Server {
         session.suggested.notify_waiters();
         if let (true, Some(review)) = (current, to_correct) {
             if !self.0.shutting_down.load(Ordering::Relaxed) {
-                let _ = self.0.to_correct.send(Correction {
+                let _ = self.0.to_correct.send(AfterTurn::Correct(Correction {
                     frame: frame.to_owned(),
                     prompt: review.correction(),
                     project: place.project.to_owned(),
                     root: place.root.to_owned(),
                     origin: place.origin,
-                });
+                }));
             }
         }
     }

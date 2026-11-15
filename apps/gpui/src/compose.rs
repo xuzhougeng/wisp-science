@@ -130,6 +130,31 @@ impl Pending {
             .collect()
     }
 
+    /// The chips of a message that was put aside: its files and what it
+    /// referred to, a conversation by the title `title` finds for it.
+    pub fn from_sent(
+        attachments: &[String],
+        references: &[ComposerReferenceArg],
+        title: impl Fn(&str) -> String,
+    ) -> Self {
+        let mut pending = Self::default();
+        for path in attachments {
+            pending.add(Chip::File(path.clone()));
+        }
+        for reference in references {
+            match reference {
+                ComposerReferenceArg::Session { id } => pending.add(Chip::Conversation {
+                    id: id.clone(),
+                    title: title(id),
+                }),
+                ComposerReferenceArg::Skill { name } => pending.add(Chip::Skill(name.clone())),
+                // The composer attaches nothing else.
+                _ => false,
+            };
+        }
+        pending
+    }
+
     pub fn references(&self) -> Vec<ComposerReferenceArg> {
         self.0
             .iter()
@@ -513,6 +538,35 @@ mod tests {
             "tool": "write", "preview": ""
         }]});
         assert!(suggestions(&snapshot(waiting)).is_empty());
+    }
+
+    #[test]
+    fn a_message_put_aside_gets_its_chips_back() {
+        let pending = Pending::from_sent(
+            &["data/qc.csv".into()],
+            &[
+                ComposerReferenceArg::Session { id: "s1".into() },
+                ComposerReferenceArg::Skill {
+                    name: "deseq2".into(),
+                },
+                ComposerReferenceArg::Project { id: "p".into() },
+            ],
+            |id| format!("Title of {id}"),
+        );
+        assert_eq!(
+            pending.chips(),
+            [
+                Chip::File("data/qc.csv".into()),
+                Chip::Conversation {
+                    id: "s1".into(),
+                    title: "Title of s1".into(),
+                },
+                Chip::Skill("deseq2".into()),
+            ]
+        );
+        // What it sends is what it sent.
+        assert_eq!(pending.attachments(), ["data/qc.csv"]);
+        assert_eq!(pending.references().len(), 2);
     }
 
     #[test]

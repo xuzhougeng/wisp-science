@@ -135,7 +135,6 @@ pub struct Workspace {
     /// references and what they carried, to show on them.
     sent_references: HashMap<String, Vec<(String, Vec<crate::compose::Chip>)>>,
     /// Messages written while a turn runs, waiting for it to end.
-    queue: crate::queue::Queue,
     /// The composer's text before its latest change, to tell one character
     /// typed from the rest.
     composer_before: String,
@@ -1219,7 +1218,6 @@ impl Workspace {
             open_tools: HashSet::new(),
             chips: HashMap::new(),
             sent_references: HashMap::new(),
-            queue: Default::default(),
             status: None,
             composer_before: String::new(),
             status_tick: 0,
@@ -2707,11 +2705,6 @@ impl Workspace {
                                         this.await_after_turn(window, cx);
                                     }
                                     this.mark_seen(window, cx);
-                                    // The turn is over: what was written
-                                    // meanwhile goes next.
-                                    if !running {
-                                        this.drain_queue(window, cx);
-                                    }
                                     cx.notify();
                                 }
                                 panel::poll_delay(running, active_runs)
@@ -2973,17 +2966,15 @@ impl Workspace {
             (Some(session), true) => self.chips.get(session).cloned().unwrap_or_default(),
             _ => Pending::default(),
         };
-        self.deliver(text, carried, from_composer, None, window, cx);
+        self.deliver(text, carried, from_composer, window, cx);
     }
 
-    /// Hands a message to the host. `queued` is the queue entry it was
-    /// taken from, which goes back to the front if the host refuses it.
+    /// Hands a message to the host.
     fn deliver(
         &mut self,
         text: String,
         carried: Pending,
         from_composer: bool,
-        queued: Option<crate::queue::Queued>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -3001,9 +2992,6 @@ impl Workspace {
             text.as_str()
         };
         if !self.state.can_send(sendable, self.pending) || self.loading_history {
-            if let Some(queued) = queued {
-                self.queue.put_back(&session, queued);
-            }
             return;
         }
         self.pending = true;
@@ -3029,9 +3017,6 @@ impl Workspace {
                 // The turn runs whether or not its conversation is still open.
                 if result.is_ok() {
                     this.watch_activity(window, cx);
-                } else if let Some(queued) = queued {
-                    // Refused: it keeps its place at the front of the queue.
-                    this.queue.put_back(&session, queued);
                 }
                 if !this.state.current(&selection) {
                     return;

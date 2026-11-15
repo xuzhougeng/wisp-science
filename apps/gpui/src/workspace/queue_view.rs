@@ -9,31 +9,70 @@ use gpui_component::{
 };
 
 use super::{Workspace, shell::glyph};
-use crate::{assets::icon, backend::receive, controls, queue};
+use crate::{assets::icon, backend::receive, compose::Pending, controls, queue};
+use wisp_dto::native_conversations::SendRequest;
+use wisp_server::desktop::QueuedMessage;
 
 impl Workspace {
-    /// Keeps what is typed, and what is attached to it, until the running
-    /// turn ends.
+    /// Hands what is typed, and what is attached to it, to the host, which
+    /// sends it when the running turn ends.
     pub(super) fn enqueue(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(session) = self.state.session.clone() else {
+        let selection = self.state.selection();
+        let (Some(project), Some(session)) = (selection.project.clone(), selection.session.clone())
+        else {
             return;
         };
         if self.pending || self.loading_history {
             return;
         }
         let carried = self.chips.get(&session).cloned().unwrap_or_default();
-        match self.queue.push(&session, &text, carried) {
-            Ok(_) => {
-                self.error = None;
-                self.composer
-                    .update(cx, |input, cx| input.set_value("", window, cx));
-                self.state.save_draft(String::new());
-                self.chips.remove(&session);
-            }
-            // An empty message is simply not queued; a full queue says so.
-            Err(problem) if !text.trim().is_empty() => self.error = Some(problem),
-            Err(_) => {}
+        if text.trim().is_empty() && carried.attachments().is_empty() {
+            return;
         }
+        self.pending = true;
+        let referenced = carried.reference_chips();
+        let reply = self.backend.queue_message(
+            project,
+            SendRequest {
+                session_id: session.clone(),
+                request_id: String::new(),
+                message: text.trim().to_owned(),
+                resume: false,
+                resume_after: None,
+                attachments: carried.attachments(),
+                references: carried.references(),
+                acp_agent_id: None,
+            },
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.pending = false;
+                if !this.state.current(&selection) {
+                    return;
+                }
+                match result {
+                    Ok(_) => {
+                        this.error = None;
+                        // What it carries, shown on it once it is sent.
+                        if !referenced.is_empty() {
+                            let sent = this.sent_references.entry(session.clone()).or_default();
+                            sent.push((text.trim().to_owned(), referenced));
+                            let over = sent.len().saturating_sub(crate::compose::SENT_KEPT);
+                            sent.drain(..over);
+                        }
+                        this.composer
+                            .update(cx, |input, cx| input.set_value("", window, cx));
+                        this.state.save_draft(String::new());
+                        this.chips.remove(&session);
+                    }
+                    Err(problem) => this.error = Some(problem),
+                }
+                this.load_status(window, cx);
+                cx.notify();
+            });
+        })
+        .detach();
         cx.notify();
     }
 
@@ -59,79 +98,94 @@ impl Workspace {
         queue::hold(failed, self.asking())
     }
 
-    /// Sends the next waiting message if nothing stands in its way.
-    pub(super) fn drain_queue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.queue_hold().is_none() {
-            self.send_next_queued(window, cx);
-        }
-    }
-
-    /// Sends the next waiting message now. The host still refuses it while
-    /// a turn runs, in which case it stays first in line.
-    fn send_next_queued(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(session) = self.state.session.clone() else {
-            return;
-        };
-        let idle = self
-            .state
-            .snapshot
+    /// What waits in the open conversation, first to go first.
+    fn waiting(&self) -> &[QueuedMessage] {
+        self.status
             .as_ref()
-            .is_some_and(|snapshot| !snapshot.running && !snapshot.read_only);
-        if !idle || self.pending || self.loading_history {
-            return;
-        }
-        if let Some(next) = self.queue.next(&session) {
-            self.deliver(
-                next.text.clone(),
-                next.carried.clone(),
-                false,
-                Some(next),
-                window,
-                cx,
-            );
-        }
+            .map_or(&[], |status| status.queued.as_slice())
     }
 
-    /// Gives a waiting message to the running turn now, which reads it at
-    /// its next step. If the turn has just stopped reading, the message
-    /// stays in line and goes as the next turn, as it would have anyway.
-    fn guide_with_queued(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(project), Some(session)) =
-            (self.state.project.clone(), self.state.session.clone())
+    /// Runs a queue call on the open conversation, then reads the queue
+    /// again; a refusal is said.
+    fn change_queue<T: 'static>(
+        &mut self,
+        call: impl FnOnce(&crate::backend::Backend, String, String) -> crate::backend::Reply<T>,
+        then: impl FnOnce(&mut Self, T, &mut Window, &mut Context<Self>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selection = self.state.selection();
+        let (Some(project), Some(session)) = (selection.project.clone(), selection.session.clone())
         else {
             return;
         };
-        let Some(text) = self
-            .queue
-            .list(&session)
-            .into_iter()
-            .find(|queued| queued.id == id && queued.carried.attachments().is_empty())
-            .map(|queued| queued.text.clone())
-        else {
-            return;
-        };
-        let reply = self.backend.guide(project, session.clone(), text);
+        let reply = call(&self.backend, project, session);
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
             let _ = this.update_in(cx, |this, window, cx| {
+                if !this.state.current(&selection) {
+                    return;
+                }
                 match result {
-                    Ok(true) => {
-                        this.queue.remove(&session, id);
-                    }
-                    Ok(false) => this.drain_queue(window, cx),
+                    Ok(value) => then(this, value, window, cx),
                     Err(problem) => this.error = Some(problem),
                 }
+                this.load_status(window, cx);
                 cx.notify();
             });
         })
         .detach();
     }
 
-    fn remove_queued(&mut self, id: u64, cx: &mut Context<Self>) {
-        if let Some(session) = self.state.session.clone() {
-            self.queue.remove(&session, id);
-            cx.notify();
-        }
+    /// Sends the next waiting message now, past a failed turn or an
+    /// unanswered question: the user said so.
+    fn send_next_queued(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.change_queue(
+            |backend, project, session| backend.send_queued_now(project, session),
+            |this, sent, window, cx| {
+                if sent {
+                    this.history.clear();
+                    if let Some(snapshot) = &mut this.state.snapshot {
+                        snapshot.running = true;
+                    }
+                    this.watch_activity(window, cx);
+                    this.start_poll(window, cx);
+                    this.load_sessions(window, cx);
+                }
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// Gives a waiting message to the running turn now, which reads it at
+    /// its next step. If the turn has just stopped reading, the message
+    /// stays in line and goes as the next turn, as it would have anyway.
+    fn guide_with_queued(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        self.change_queue(
+            move |backend, project, session| backend.guide_with_queued(project, session, id),
+            |_, _, _, _| {},
+            window,
+            cx,
+        );
+    }
+
+    fn remove_queued(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        self.change_queue(
+            move |backend, project, session| backend.take_queued(project, session, id),
+            |_, _, _, _| {},
+            window,
+            cx,
+        );
+    }
+
+    fn move_queued_up(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        self.change_queue(
+            move |backend, project, session| backend.move_queued_up(project, session, id),
+            |_, _, _, _| {},
+            window,
+            cx,
+        );
     }
 
     /// Puts a waiting message back into the composer to be changed. What is
@@ -150,23 +204,44 @@ impl Workspace {
                 Some(tr("Send or clear what you are writing before changing another").into());
             return cx.notify();
         }
-        if let Some(queued) = self.queue.remove(&session, id) {
-            self.state.save_draft(queued.text.clone());
-            self.composer
-                .update(cx, |input, cx| input.set_value(queued.text, window, cx));
-            if !queued.carried.chips().is_empty() {
-                self.chips.insert(session, queued.carried);
-            }
-            self.focus_composer(window, cx);
-        }
-        cx.notify();
+        self.change_queue(
+            move |backend, project, session| backend.take_queued(project, session, id),
+            move |this, taken, window, cx| {
+                let Some(queued) = taken else {
+                    return;
+                };
+                // A conversation it referred to is named as the sidebar
+                // names it.
+                let titles: Vec<(String, String)> = this
+                    .sessions
+                    .iter()
+                    .map(|row| (row.id.clone(), row.title.clone()))
+                    .collect();
+                let carried = Pending::from_sent(&queued.attachments, &queued.references, |id| {
+                    titles
+                        .iter()
+                        .find(|(known, _)| known == id)
+                        .map(|(_, title)| title.clone())
+                        .unwrap_or_else(|| tr("Conversation").into())
+                });
+                this.state.save_draft(queued.message.clone());
+                this.composer
+                    .update(cx, |input, cx| input.set_value(queued.message, window, cx));
+                if !carried.chips().is_empty() {
+                    this.chips.insert(session, carried);
+                }
+                this.focus_composer(window, cx);
+            },
+            window,
+            cx,
+        );
     }
 
     /// What waits in the open conversation, above the composer; nothing
     /// when nothing waits.
     pub(super) fn queue_strip(&self, running: bool, cx: &mut Context<Self>) -> Option<Div> {
-        let session = self.state.session.as_ref()?;
-        let waiting = self.queue.list(session);
+        self.state.session.as_ref()?;
+        let waiting = self.waiting();
         if waiting.is_empty() {
             return None;
         }
@@ -235,11 +310,8 @@ impl Workspace {
                             .xsmall()
                             .ghost()
                             .tooltip(tr("Send it earlier"))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if let Some(session) = this.state.session.clone() {
-                                    this.queue.move_up(&session, id);
-                                    cx.notify();
-                                }
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.move_queued_up(id, window, cx)
                             })),
                     )
                     .child(
@@ -258,9 +330,9 @@ impl Workspace {
                             .xsmall()
                             .ghost()
                             .tooltip(tr("Do not send it"))
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| this.remove_queued(id, cx)),
-                            ),
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.remove_queued(id, window, cx)
+                            })),
                     ),
             );
         }
