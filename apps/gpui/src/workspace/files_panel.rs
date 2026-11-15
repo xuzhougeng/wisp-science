@@ -326,6 +326,8 @@ impl Workspace {
             self.file_problem = None;
             self.file_origin = None;
             self.file_as_text = false;
+            // A note about the previewed file is not about the list.
+            self.file_notice = None;
             self.restore_focus(window, cx);
             // A file revealed from the palette has no listing under it yet.
             self.ensure_files(window, cx);

@@ -76,17 +76,19 @@ pub fn active_runs(runs: &[RunRecord]) -> usize {
         .count()
 }
 
-/// How long to wait before reading the conversation again, or `None` to
-/// stop. A turn is followed closely; a run that outlives its turn is checked
-/// now and then until it ends, so its status does not go stale.
+/// How long to wait before reading the open conversation again. A turn is
+/// followed closely; a run that outlives its turn is checked now and then
+/// so its status does not go stale; and a quiet conversation is still read
+/// every few seconds, because the host may start a turn in it by itself (a
+/// timer, a scheduled task, a browser through remote access).
 pub fn poll_delay(turn_running: bool, active_runs: usize) -> Option<std::time::Duration> {
-    if turn_running {
-        Some(std::time::Duration::from_millis(150))
+    Some(std::time::Duration::from_millis(if turn_running {
+        150
     } else if active_runs > 0 {
-        Some(std::time::Duration::from_millis(1500))
+        1500
     } else {
-        None
-    }
+        4000
+    }))
 }
 
 /// The line under an artifact's name: where it is, how big, how old, and
@@ -159,7 +161,9 @@ mod tests {
         assert!(fast < slow);
         // The turn sets the pace even when runs are active too.
         assert_eq!(poll_delay(true, 3), Some(fast));
-        assert_eq!(poll_delay(false, 0), None);
+        // A quiet conversation is still read, least often.
+        let quiet = poll_delay(false, 0).unwrap();
+        assert!(slow < quiet);
     }
 
     #[test]

@@ -1306,6 +1306,8 @@ impl Workspace {
                 match result {
                     Ok(()) => {
                         this.ready = true;
+                        // Turns the host starts by itself show up too.
+                        this.watch_activity(window, cx);
                         this.load_projects(window, cx);
                         this.load_recent(window, cx);
                         this.load_inbox(window, cx);
@@ -1743,9 +1745,12 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Keeps project, conversation and inbox status fresh while any turn runs,
-    /// including turns in conversations that are not on screen. Stops by itself
-    /// once the host reports nothing running, after one final refresh.
+    /// Keeps project, conversation and inbox status fresh, including turns
+    /// in conversations that are not on screen: every two seconds while a
+    /// turn runs anywhere, every ten otherwise, since the host may start one
+    /// by itself (a scheduled task, a timer, a browser through remote
+    /// access) and make a new conversation for it. Stops when the host
+    /// cannot be read.
     fn watch_activity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.watching {
             return;
@@ -1753,8 +1758,9 @@ impl Workspace {
         self.watching = true;
         let backend = self.backend.clone();
         self.watch = Some(cx.spawn_in(window, async move |this, cx| {
+            let mut delay = Duration::from_secs(2);
             loop {
-                cx.background_executor().timer(Duration::from_secs(2)).await;
+                cx.background_executor().timer(delay).await;
                 let result = receive(backend.request::<Vec<ProjectSummary>>(
                     "list_projects",
                     None,
@@ -1770,21 +1776,24 @@ impl Workspace {
                                 this.load_recent(window, cx);
                                 this.load_sessions(window, cx);
                                 this.load_inbox(window, cx);
-                                busy
+                                Some(busy)
                             }
                             Err(error) => {
                                 this.error = Some(error);
-                                false
+                                None
                             }
                         };
-                        this.watching = busy;
+                        this.watching = busy.is_some();
                         cx.notify();
                         busy
                     })
-                    .unwrap_or(false);
-                if !busy {
-                    break;
-                }
+                    .ok()
+                    .flatten();
+                delay = match busy {
+                    Some(true) => Duration::from_secs(2),
+                    Some(false) => Duration::from_secs(10),
+                    None => break,
+                };
             }
         }));
     }
