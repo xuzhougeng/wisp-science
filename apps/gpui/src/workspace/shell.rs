@@ -1070,6 +1070,80 @@ impl Workspace {
                 approvals = approvals.child(self.plan_approval_card(id, steps, cx));
                 continue;
             }
+            // A picture too large for the model is asked about on its own,
+            // as the WebView does: only for this once, never remembered.
+            if let Some(picture) = controls::image_resize(&approval.message) {
+                let (resize, cancel) = (id.clone(), id.clone());
+                approvals = approvals.child(
+                    div()
+                        .v_flex()
+                        .gap_2()
+                        .p_3()
+                        .rounded(cx.theme().radius_lg)
+                        .border_1()
+                        .border_color(attention.opacity(0.5))
+                        .bg(attention.opacity(0.06))
+                        .child(
+                            div()
+                                .h_flex()
+                                .gap_2()
+                                .child(icon("image").text_color(attention))
+                                .child(
+                                    div()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .child(tr("Resize large image for model input?")),
+                                ),
+                        )
+                        .child(div().text_sm().truncate().child(picture.to_owned()))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(tr("Wisp will resize a temporary copy for the model. The \
+                                     original file will not be changed.")),
+                        )
+                        .child(
+                            div()
+                                .h_flex()
+                                .gap_2()
+                                .child(
+                                    Button::new(SharedString::from(format!("resize-{resize}")))
+                                        .icon(glyph("check"))
+                                        .label(tr("Resize and continue"))
+                                        .small()
+                                        .primary()
+                                        .disabled(self.pending)
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.answer_approval(
+                                                resize.clone(),
+                                                true,
+                                                Remember::No,
+                                                window,
+                                                cx,
+                                            )
+                                        })),
+                                )
+                                .child(
+                                    Button::new(SharedString::from(format!(
+                                        "resize-cancel-{cancel}"
+                                    )))
+                                    .label(tr("Cancel"))
+                                    .small()
+                                    .disabled(self.pending)
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.answer_approval(
+                                            cancel.clone(),
+                                            false,
+                                            Remember::No,
+                                            window,
+                                            cx,
+                                        )
+                                    })),
+                                ),
+                        ),
+                );
+                continue;
+            }
             let answer = |label: &'static str, glyph_name: &'static str, approved, remember| {
                 let id = id.clone();
                 Button::new(SharedString::from(format!("{label}-{id}")))

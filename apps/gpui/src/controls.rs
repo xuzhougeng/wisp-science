@@ -283,6 +283,17 @@ pub fn plan_approval(message: &str) -> Option<Vec<String>> {
     )
 }
 
+/// The prefix of the question a tool asks before a picture larger than a
+/// model takes is sent to it smaller (`wisp_tools::image`).
+const IMAGE_RESIZE: &str = "IMAGE_RESIZE_CONFIRM:";
+
+/// The picture a resize question is about, read from it. `None` for any
+/// other question.
+pub fn image_resize(message: &str) -> Option<&str> {
+    let rest = message.strip_prefix(IMAGE_RESIZE)?;
+    Some(rest.rsplit_once(": ").map_or(rest, |(_, path)| path).trim())
+}
+
 /// The steps of the working plan the model updated in this row.
 pub fn execution_steps(item: &Item) -> Option<&[wisp_dto::execution_plan::PlanStep]> {
     item.plan_steps.as_deref().filter(|steps| !steps.is_empty())
@@ -763,5 +774,17 @@ mod tests {
         // One long line is cut where it must be, on a character boundary.
         assert_eq!(thinking_tail("推理推理推理推理", 7), "…推理");
         assert_eq!(thinking_tail("", 10), "");
+    }
+
+    #[test]
+    fn a_resize_question_names_its_picture_and_others_are_left_alone() {
+        assert_eq!(
+            image_resize(
+                "IMAGE_RESIZE_CONFIRM:Resize large image for model input? The original file \
+                 will not be changed: /work/figs/scan.png"
+            ),
+            Some("/work/figs/scan.png")
+        );
+        assert_eq!(image_resize("Run tool 'view_image'?"), None);
     }
 }

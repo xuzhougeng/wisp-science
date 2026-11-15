@@ -582,6 +582,12 @@ pub const ZH: &[(&str, &str)] = &[
     ("Not attached", "未接入"),
     ("Take away", "移除"),
     ("Attach it", "接入"),
+    ("Resize large image for model input?", "为模型输入缩小大图？"),
+    (
+        "Wisp will resize a temporary copy for the model. The original file will not be changed.",
+        "Wisp 会为模型缩小一份临时副本，原文件不会被修改。",
+    ),
+    ("Resize and continue", "缩小并继续"),
     (
         "The conversation's work no longer runs on this host",
         "此对话的工作不再在这台主机上运行",
