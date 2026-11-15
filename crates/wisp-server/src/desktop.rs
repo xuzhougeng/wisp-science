@@ -5192,6 +5192,34 @@ impl Server {
         crate::quick_actions::remove(&self.0.store, id).await
     }
 
+    /// Starts a quick action's workflow as agents in `project`, on what
+    /// was typed: a new conversation holds the drafted batch, as Run as
+    /// agents makes it, with the action's request and `input` told to
+    /// every task.
+    pub async fn start_quick_action(
+        &self,
+        project: &str,
+        id: &str,
+        input: &str,
+    ) -> Result<crate::workflows::DraftedWorkflow> {
+        let action = crate::quick_actions::list(&self.0.store)
+            .await
+            .into_iter()
+            .find(|action| action.id == id)
+            .context("That action is no longer there")?;
+        ensure!(
+            !action.workflow.is_empty(),
+            "This action puts a request into the composer; it starts no workflow"
+        );
+        let told = [action.prompt.trim(), input.trim()]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        self.draft_workflow_on(project, &action.workflow, &told)
+            .await
+    }
+
     /// The experts a conversation can be started as.
     pub async fn experts(&self) -> Result<Vec<Expert>> {
         Ok(crate::experts::list(&self.0.store).await)

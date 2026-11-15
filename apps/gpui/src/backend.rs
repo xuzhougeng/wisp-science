@@ -1360,6 +1360,16 @@ impl Backend {
         })
     }
 
+    /// Starts a quick action's workflow as agents on `input`.
+    pub fn start_quick_action(
+        &self,
+        project: String,
+        id: String,
+        input: String,
+    ) -> Reply<wisp_server::desktop::DraftedWorkflow> {
+        self.local(move |host| async move { host.start_quick_action(&project, &id, &input).await })
+    }
+
     /// Drafts a workflow as agents in a new conversation of `project`.
     pub fn draft_workflow(
         &self,

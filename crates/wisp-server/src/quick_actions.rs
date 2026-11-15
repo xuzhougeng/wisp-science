@@ -1,10 +1,11 @@
 //! Quick actions: requests the user asks often, kept under a name and put
-//! into the composer with one click.
+//! into the composer with one click, or workflows of the library started
+//! as agents on what was typed, as the WebView's quick actions start
+//! theirs.
 //!
-//! The WebView desktop's quick actions start multi-agent workflows, which
-//! this host does not run. Here an action is a prompt for the conversation
-//! itself, so these are kept under a key of this desktop's own and the
-//! WebView's are neither read nor changed.
+//! The WebView's actions name its own workflow templates, which this host
+//! does not keep, so these are kept under a key of this desktop's own and
+//! the WebView's are neither read nor changed.
 
 use anyhow::{bail, ensure, Result};
 use serde::{Deserialize, Serialize};
@@ -20,8 +21,13 @@ pub(crate) const LIMIT: usize = 40;
 pub struct QuickAction {
     pub id: String,
     pub name: String,
-    /// What is put into the composer.
+    /// What is put into the composer, or, with a workflow, told to its
+    /// tasks before what was typed. Optional with a workflow.
     pub prompt: String,
+    /// The library's workflow it starts as agents; empty puts the prompt
+    /// into the composer instead.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub workflow: String,
 }
 
 /// What the form sends: `id` empty adds an action.
@@ -30,6 +36,7 @@ pub struct QuickActionInput {
     pub id: String,
     pub name: String,
     pub prompt: String,
+    pub workflow: String,
 }
 
 /// What a desktop that never saved any starts with. They are the user's
@@ -70,6 +77,7 @@ fn starters() -> Vec<QuickAction> {
         id: format!("starter-{id}"),
         name: name.into(),
         prompt: prompt.into(),
+        workflow: String::new(),
     })
     .collect()
 }
@@ -98,7 +106,19 @@ pub(crate) async fn upsert(store: &Store, input: QuickActionInput) -> Result<Vec
         name.chars().count() <= NAME_LIMIT,
         "A name is at most {NAME_LIMIT} characters"
     );
-    ensure!(!prompt.trim().is_empty(), "Write what the action asks");
+    let workflow = input.workflow.trim();
+    ensure!(
+        !prompt.trim().is_empty() || !workflow.is_empty(),
+        "Write what the action asks, or choose a workflow it starts"
+    );
+    ensure!(
+        workflow.is_empty()
+            || crate::workflows::list(store)
+                .await
+                .iter()
+                .any(|known| known.id == workflow),
+        "That workflow is no longer there; choose another"
+    );
     ensure!(
         prompt.chars().count() <= PROMPT_LIMIT,
         "A request is at most {PROMPT_LIMIT} characters"
@@ -117,6 +137,7 @@ pub(crate) async fn upsert(store: &Store, input: QuickActionInput) -> Result<Vec
             id: uuid::Uuid::new_v4().to_string(),
             name: name.into(),
             prompt: prompt.into(),
+            workflow: workflow.into(),
         });
     } else {
         let Some(action) = actions.iter_mut().find(|action| action.id == input.id) else {
@@ -124,6 +145,7 @@ pub(crate) async fn upsert(store: &Store, input: QuickActionInput) -> Result<Vec
         };
         action.name = name.into();
         action.prompt = prompt.into();
+        action.workflow = workflow.into();
     }
     save(store, &actions).await?;
     Ok(actions)
@@ -147,6 +169,7 @@ mod tests {
             id: id.into(),
             name: name.into(),
             prompt: prompt.into(),
+            workflow: String::new(),
         }
     }
 
@@ -194,5 +217,64 @@ mod tests {
         }
         assert!(list(&store).await.is_empty());
         assert!(remove(&store, &mine.id).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn an_action_may_start_a_workflow_of_the_library_instead() {
+        use crate::workflows::{Workflow, WorkflowTask};
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(&temp.path().join("wisp.sqlite")).await.unwrap();
+        let library = crate::workflows::upsert(
+            &store,
+            Workflow {
+                name: "Evidence review".into(),
+                goal: "Weigh the evidence".into(),
+                tasks: vec![WorkflowTask {
+                    title: "Search".into(),
+                    instructions: "Find the papers.".into(),
+                    after: Vec::new(),
+                    capabilities: Vec::new(),
+                    agent: Default::default(),
+                }],
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let review = library[0].id.clone();
+        // With a workflow, what it asks may be left out.
+        let saved = upsert(
+            &store,
+            QuickActionInput {
+                workflow: review.clone(),
+                ..input("", "Review it", "")
+            },
+        )
+        .await
+        .unwrap();
+        let action = saved.last().unwrap();
+        assert_eq!(
+            (action.workflow.as_str(), action.prompt.as_str()),
+            (review.as_str(), "")
+        );
+        // Only a workflow the library has.
+        let refused = upsert(
+            &store,
+            QuickActionInput {
+                workflow: "gone".into(),
+                ..input("", "Other", "")
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(refused.to_string().contains("no longer there"), "{refused}");
+        // Changed back to a request, it needs one.
+        assert!(upsert(&store, input(&action.id, "Review it", ""))
+            .await
+            .is_err());
+        // An action saved before workflows were offered reads as a request.
+        let old: QuickAction =
+            serde_json::from_str(r#"{"id":"a","name":"Old","prompt":"Do it."}"#).unwrap();
+        assert!(old.workflow.is_empty());
     }
 }

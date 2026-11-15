@@ -151,7 +151,7 @@ folder registers its research root; it does not import existing desktop chats.
 | What the model is sent | Clicking the context percentage by the composer (or the command palette) lists the conversation's working set: the instructions, the summary that stands in for compacted turns, and each message with about how many tokens it takes; above them, the same set by kind (system prompt, rules, skills, sub-agent definitions, conversation), with the core's estimate and each one's share, as the WebView's context usage splits it, tool definitions excepted |
 | Interpreters | The Python and R interpreters a conversation keeps between tool calls show above the composer with their version and state; Stop ends one, Dismiss takes a stopped one off the list; Console opens one with its variables, code of your own to run (printed output and plots) and Restart, and the command palette starts the conversation's Python or R console |
 | Experts | Settings, Experts, keeps personas (a name and instructions); the composer's Expert menu starts a new conversation as one, and its instructions hold for the whole conversation |
-| Quick actions | Settings, Quick actions, keeps requests you make often under a name; the composer's quick actions menu puts one into the message box, after whatever is already typed, to finish and send |
+| Quick actions | Settings, Quick actions, keeps requests you make often under a name; the composer's quick actions menu puts one into the message box, after whatever is already typed, to finish and send. An action can instead start a workflow of the library: from the menu it is drafted as agents on what is typed (its request, if any, told to every task first) in a new conversation that opens on its Agents tab |
 | Undo a turn | Going back to the latest message can also undo its files: a file the turn edited gets its earlier content, a file it created goes to the project's trash, and a file changed again since is left and named |
 | Table preview | A `.csv` or `.tsv` file is previewed as a grid of its first 200 rows and 30 columns, with a switch to its text |
 | File actions | A previewed file's path can be copied, the file attached to the message, shown in the file manager or opened with the system's own application |
@@ -1955,6 +1955,11 @@ it: the request follows what was typed, the caret is at its end, and
 nothing is sent. Choose it again: it is not written twice. Press Escape
 with the menu open, then with the form open in Settings: each press
 closes only that. Remove the action: it leaves the menu.
+With a workflow saved in Settings, Workflows, add a quick action, choose
+Starts and that workflow, and save: its row says it starts the workflow.
+In a conversation type a question and choose the action from the bolt
+menu: a new conversation named after the workflow opens on its Agents tab
+with the batch waiting for approval, and the composer is empty.
 On the home page press the clock: Scheduled tasks says there are none.
 Press the Weekly report template: the form opens with its prompt; choose
 a project, Daily and a time a minute ahead, and save. The task is

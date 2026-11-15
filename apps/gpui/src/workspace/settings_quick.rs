@@ -1,16 +1,17 @@
 //! The Quick actions page of Settings: requests kept under a name, to put
-//! into the composer with one click. The form and the remove question are
+//! into the composer with one click, or workflows of the library started
+//! as agents on what was typed. The form and the remove question are
 //! layers inside Settings.
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Sizable, StyledExt,
+    ActiveTheme, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     input::Input,
 };
 use wisp_server::desktop::{QuickAction, QuickActionInput};
 
-use super::Workspace;
+use super::{Workspace, shell::glyph};
 use crate::{
     backend::{Reply, receive},
     layers::Layer,
@@ -76,6 +77,9 @@ impl Workspace {
         for (field, value) in self.quick_fields.iter().zip([&shown.name, &shown.prompt]) {
             field.update(cx, |input, cx| input.set_value(value.clone(), window, cx));
         }
+        self.quick_workflow = shown.workflow.clone();
+        // The workflows it may start.
+        self.load_workflows(window, cx);
         self.quick_fields[0].update(cx, |input, cx| input.focus(window, cx));
         cx.notify();
     }
@@ -85,9 +89,12 @@ impl Workspace {
             return;
         };
         let [name, prompt] = [0, 1].map(|at| self.quick_fields[at].read(cx).value().to_string());
-        let reply = self
-            .backend
-            .save_quick_action(QuickActionInput { id, name, prompt });
+        let reply = self.backend.save_quick_action(QuickActionInput {
+            id,
+            name,
+            prompt,
+            workflow: self.quick_workflow.clone(),
+        });
         self.change_quick_actions(reply, window, cx);
     }
 
@@ -104,9 +111,13 @@ impl Workspace {
             .border_color(cx.theme().border)
             .child(label(tr("Name")))
             .child(Input::new(&self.quick_fields[0]).small())
-            .child(label(tr(
-                "The request. End it where you will go on typing, for example \"Question: \".",
-            )))
+            .child(label(tr("What it does")))
+            .child(self.quick_workflow_choice(cx))
+            .child(label(if self.quick_workflow.is_empty() {
+                tr("The request. End it where you will go on typing, for example \"Question: \".")
+            } else {
+                tr("Told to every task before what was typed. Optional.")
+            }))
             .child(
                 div()
                     .h(px(180.))
@@ -139,6 +150,36 @@ impl Workspace {
             )
     }
 
+    /// Whether the action puts its request into the composer or starts one
+    /// of the library's workflows.
+    fn quick_workflow_choice(&self, cx: &mut Context<Self>) -> Div {
+        let mut row = div().h_flex().flex_wrap().gap_1().child(
+            Button::new("quick-starts-none")
+                .label(tr("Puts the request into the composer"))
+                .xsmall()
+                .selected(self.quick_workflow.is_empty())
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.quick_workflow.clear();
+                    cx.notify();
+                })),
+        );
+        for (index, workflow) in self.workflows.iter().enumerate() {
+            let id = workflow.id.clone();
+            row = row.child(
+                Button::new(("quick-starts", index))
+                    .icon(glyph("swarm"))
+                    .label(crate::i18n::fill(tr("Starts {}"), &[&workflow.name]))
+                    .xsmall()
+                    .selected(self.quick_workflow == workflow.id)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.quick_workflow = id.clone();
+                        cx.notify();
+                    })),
+            );
+        }
+        row
+    }
+
     fn quick_action_row(&self, action: &QuickAction, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
         let id = action.id.clone();
@@ -155,13 +196,20 @@ impl Workspace {
                     .font_weight(FontWeight::MEDIUM)
                     .child(action.name.clone()),
             )
-            .child(
-                div()
-                    .truncate()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(action.prompt.lines().next().unwrap_or_default().to_owned()),
-            );
+            .child(div().truncate().text_xs().text_color(muted).child(
+                if action.workflow.is_empty() {
+                    action.prompt.lines().next().unwrap_or_default().to_owned()
+                } else {
+                    crate::i18n::fill(
+                        tr("Starts {} as agents on what was typed"),
+                        &[&self
+                            .workflows
+                            .iter()
+                            .find(|workflow| workflow.id == action.workflow)
+                            .map_or(action.workflow.as_str(), |workflow| workflow.name.as_str())],
+                    )
+                },
+            ));
         let mut actions = div().h_flex().gap_1().flex_shrink_0();
         if asking {
             actions = actions
@@ -230,7 +278,8 @@ impl Workspace {
             self.settings_page(cx)
                 .child(div().pb_2().text_xs().text_color(muted).child(tr(
                     "Requests you make often, kept under a name. The composer's quick actions \
-                 menu puts one into the message box, to finish and send.",
+                 menu puts one into the message box, to finish and send, or starts a workflow \
+                 of the library as agents on what is typed there.",
                 )));
         let form_open = self.layers.contains(Layer::QuickActionForm);
         let editing = self.quick_editing.as_deref();

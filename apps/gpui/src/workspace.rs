@@ -489,6 +489,8 @@ pub struct Workspace {
     quick_editing: Option<String>,
     /// Name, request.
     quick_fields: [Entity<InputState>; 2],
+    /// The workflow the action being written starts; empty for none.
+    quick_workflow: String,
     /// Your command hooks, as saved.
     command_hooks: Vec<wisp_dto::CommandHook>,
     /// The open project's `.wisp/hooks.json`, when it has one.
@@ -1505,6 +1507,7 @@ impl Workspace {
             quick_actions: Vec::new(),
             quick_editing: None,
             quick_fields,
+            quick_workflow: String::new(),
             command_hooks: vec![],
             project_hook_file: None,
             hook_editing: None,
@@ -3542,6 +3545,37 @@ impl Workspace {
         let text = crate::compose::with_quick_action(&self.composer.read(cx).value(), &prompt);
         self.state.save_draft(text.clone());
         self.fill_composer(text, window, cx);
+        cx.notify();
+    }
+
+    /// Starts a quick action's workflow as agents on what is typed, in a
+    /// new conversation shown with its Agents tab, where the batch is
+    /// approved or discarded. What was typed went to it, so the composer
+    /// is emptied.
+    fn start_quick_action(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.layers.close(Layer::QuickMenu);
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        let typed = self.composer.read(cx).value().to_string();
+        self.error = None;
+        let reply = self.backend.start_quick_action(project.clone(), id, typed);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(drafted) => {
+                        this.state.save_draft(String::new());
+                        this.fill_composer(String::new(), window, cx);
+                        this.open_session(project, drafted.session, window, cx);
+                        this.show_panel_tab(PanelTab::Agents, window, cx);
+                    }
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
         cx.notify();
     }
 

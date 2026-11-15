@@ -119,7 +119,11 @@ impl Workspace {
                 self.load_mcp_servers(window, cx);
             }
             Section::AcpAgents => self.load_acp_agents(window, cx),
-            Section::QuickActions => self.load_quick_actions(window, cx),
+            Section::QuickActions => {
+                self.load_quick_actions(window, cx);
+                // An action names the workflow it starts.
+                self.load_workflows(window, cx);
+            }
             Section::Pet => self.load_pet(window, cx),
             Section::Browser => self.load_browser(window, cx),
             Section::Workflows => self.load_workflows(window, cx),

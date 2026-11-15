@@ -1851,18 +1851,27 @@ impl Workspace {
             if open {
                 let mut menu = Self::composer_menu(320., cx);
                 for action in &self.quick_actions {
-                    let prompt = action.prompt.clone();
+                    let (prompt, id) = (action.prompt.clone(), action.id.clone());
+                    let starts = !action.workflow.is_empty();
                     menu = menu.child(
                         Self::menu_row(
                             SharedString::from(format!("quick-choice-{}", action.id)),
                             action.name.clone(),
-                            "",
+                            if starts {
+                                tr("Starts a workflow on what is typed")
+                            } else {
+                                ""
+                            },
                             false,
                             cx,
                         )
                         .on_click(cx.listener(
                             move |this, _, window, cx| {
-                                this.use_quick_action(prompt.clone(), window, cx)
+                                if starts {
+                                    this.start_quick_action(id.clone(), window, cx)
+                                } else {
+                                    this.use_quick_action(prompt.clone(), window, cx)
+                                }
                             },
                         )),
                     );

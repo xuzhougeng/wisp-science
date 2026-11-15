@@ -134,6 +134,21 @@ pub struct DraftedWorkflow {
 pub type WorkflowInput = Workflow;
 
 impl Workflow {
+    /// The workflow with `input` told to every task besides its context, as
+    /// a quick action starts it on what was typed. Nothing typed leaves it
+    /// as it is.
+    pub fn given(mut self, input: &str) -> Self {
+        let input = input.trim();
+        if !input.is_empty() {
+            let told = format!("What it was started on:\n{input}");
+            self.context = match self.context.trim() {
+                "" => told,
+                context => format!("{context}\n\n{told}"),
+            };
+        }
+        self
+    }
+
     /// The stage each task is in, from 0: one more than the latest stage
     /// of the tasks it needs. Tasks of one stage do not need each other.
     pub fn stages(&self) -> Vec<usize> {
@@ -744,11 +759,22 @@ impl Server {
     /// starts at once. Either way its result is delivered to that
     /// conversation.
     pub async fn draft_workflow(&self, project: &str, id: &str) -> Result<DraftedWorkflow> {
+        self.draft_workflow_on(project, id, "").await
+    }
+
+    /// [`Self::draft_workflow`] with `input` told to every task.
+    pub(crate) async fn draft_workflow_on(
+        &self,
+        project: &str,
+        id: &str,
+        input: &str,
+    ) -> Result<DraftedWorkflow> {
         let workflow = list(&self.0.store)
             .await
             .into_iter()
             .find(|workflow| workflow.id == id)
-            .context("That workflow is no longer there")?;
+            .context("That workflow is no longer there")?
+            .given(input);
         ensure!(
             workflow.tasks.len() <= wisp_core::MAX_DELEGATION_TASKS,
             "Run as agents takes at most {} tasks; this workflow has {}",
@@ -806,6 +832,32 @@ mod tests {
             approval: WorkflowApproval::ReviewAll,
             context: String::new(),
         }
+    }
+
+    #[test]
+    fn what_a_workflow_is_started_on_is_told_to_every_task() {
+        let plain = workflow(vec![task("Search", &[])]);
+        assert_eq!(plain.clone().given("  "), plain);
+        let given = plain.clone().given(" Does drug X lower LDL? ");
+        assert_eq!(
+            given.context,
+            "What it was started on:\nDoes drug X lower LDL?"
+        );
+        let batch = given.batch();
+        assert!(batch["context"]
+            .as_str()
+            .unwrap()
+            .ends_with("What it was started on:\nDoes drug X lower LDL?"));
+        // A context of its own comes first.
+        let scoped = Workflow {
+            context: "Human studies only.".into(),
+            ..plain
+        }
+        .given("LDL");
+        assert_eq!(
+            scoped.context,
+            "Human studies only.\n\nWhat it was started on:\nLDL"
+        );
     }
 
     #[test]

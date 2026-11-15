@@ -12521,6 +12521,69 @@ async fn a_background_batch_is_delivered_later_and_resumes_its_conversation() {
 }
 
 #[tokio::test]
+async fn a_quick_action_drafts_its_workflow_on_what_was_typed() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let library = server
+        .save_workflow(desktop::WorkflowInput {
+            name: "Evidence review".into(),
+            goal: "Weigh the evidence".into(),
+            tasks: vec![desktop::WorkflowTask {
+                title: "Search".into(),
+                instructions: "Find the papers.".into(),
+                ..Default::default()
+            }],
+            approval: desktop::WorkflowApproval::ReviewAll,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let actions = server
+        .save_quick_action(desktop::QuickActionInput {
+            name: "Review it".into(),
+            prompt: "Focus on human studies.".into(),
+            workflow: library[0].id.clone(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let action = actions.last().unwrap().id.clone();
+    let drafted = server
+        .start_quick_action(PROJECT, &action, "  Does drug X lower LDL?  ")
+        .await
+        .unwrap();
+    assert!(!drafted.started);
+    let batches = server
+        .delegated_batches(PROJECT, &drafted.session)
+        .await
+        .unwrap();
+    assert_eq!(batches.len(), 1);
+    assert_eq!(batches[0].status, "draft");
+    // An action that puts a request into the composer starts nothing.
+    let request = actions
+        .iter()
+        .find(|action| action.workflow.is_empty())
+        .unwrap()
+        .id
+        .clone();
+    let refused = server
+        .start_quick_action(PROJECT, &request, "x")
+        .await
+        .unwrap_err();
+    assert!(
+        refused.to_string().contains("starts no workflow"),
+        "{refused}"
+    );
+    assert!(server
+        .start_quick_action(PROJECT, "ghost", "x")
+        .await
+        .is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_workflow_runs_as_agents_once_it_is_approved() {
     let temp = tempfile::tempdir().unwrap();
     let factory: ModelFactory = Arc::new(|_| Box::new(DelegatingModel));
