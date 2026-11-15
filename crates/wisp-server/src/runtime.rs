@@ -961,6 +961,19 @@ pub(crate) fn annotate_runs(items: &mut [Item], runs: &[RunState], session: &str
     }
 }
 
+/// Rows where the model updated its working plan carry the steps, read
+/// from what the tool returned, as the WebView reads them.
+pub(crate) fn annotate_plans(items: &mut [Item]) {
+    for item in items {
+        if item.role == "tool"
+            && item.tool_name.as_deref() == Some("update_plan")
+            && item.ok == Some(true)
+        {
+            item.plan_steps = Some(wisp_dto::execution_plan::parse_plan_steps(&item.text));
+        }
+    }
+}
+
 pub fn items(messages: &[Message]) -> Vec<Item> {
     let mut items = Vec::new();
     for message in messages {
@@ -1072,6 +1085,38 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].text, "你好");
         assert!(bounded(&"中".repeat(50000)).ends_with("server]"));
+    }
+
+    #[test]
+    fn an_updated_plan_carries_its_steps_and_a_refused_one_does_not() {
+        let update = |text: &str, ok| {
+            let mut row = item("tool", text);
+            row.tool_name = Some("update_plan".into());
+            row.ok = Some(ok);
+            row
+        };
+        let mut rows = vec![
+            update(
+                "Plan: 1/3 steps done\n[x] Align the reads\n[~] Count reads per gene\n[ ] Plot",
+                true,
+            ),
+            update("update_plan error: 'steps' must not be empty", false),
+        ];
+        annotate_plans(&mut rows);
+        let steps = rows[0].plan_steps.as_ref().unwrap();
+        let read: Vec<_> = steps
+            .iter()
+            .map(|step| (step.status.as_str(), step.content.as_str()))
+            .collect();
+        assert_eq!(
+            read,
+            [
+                ("done", "Align the reads"),
+                ("running", "Count reads per gene"),
+                ("pending", "Plot"),
+            ]
+        );
+        assert!(rows[1].plan_steps.is_none());
     }
 
     #[test]

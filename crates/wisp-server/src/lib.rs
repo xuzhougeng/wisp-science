@@ -806,6 +806,7 @@ impl Server {
         }
         let states: Vec<runtime::RunState> = runs.iter().map(Into::into).collect();
         runtime::annotate_runs(&mut items, &states, &request.session_id);
+        runtime::annotate_plans(&mut items);
         if use_live && !live.draft.is_empty() {
             items.push(runtime::item("assistant", &live.draft));
         }

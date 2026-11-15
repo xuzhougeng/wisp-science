@@ -574,6 +574,56 @@ impl Workspace {
 
     /// A plan the model submitted. While it is the one waiting, it can be
     /// approved here; approving leaves plan mode and starts the work.
+    /// The working plan as the model last updated it, step by step.
+    fn progress_card(
+        &self,
+        steps: &[wisp_dto::execution_plan::PlanStep],
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        use wisp_dto::execution_plan::PlanStatus;
+        let muted = cx.theme().muted_foreground;
+        let mut card = div()
+            .v_flex()
+            .gap_1()
+            .p_3()
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(cx.theme().border)
+            .child(
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .text_sm()
+                    .child(icon("plan").text_color(muted))
+                    .child(div().font_weight(FontWeight::MEDIUM).child(tr("Plan"))),
+            );
+        for step in steps {
+            let (glyph_name, color) = match step.status {
+                PlanStatus::Done => ("circle-check", cx.theme().success),
+                PlanStatus::Running => ("loader", cx.theme().info),
+                PlanStatus::Pending => ("circle", muted),
+                PlanStatus::Cancelled => ("circle-minus", muted),
+            };
+            let mut text = div()
+                .flex_1()
+                .min_w_0()
+                .text_sm()
+                .child(step.content.clone());
+            if matches!(step.status, PlanStatus::Cancelled | PlanStatus::Done) {
+                text = text.text_color(muted);
+            }
+            card = card.child(
+                div()
+                    .h_flex()
+                    .items_start()
+                    .gap_2()
+                    .child(icon(glyph_name).mt(px(3.)).text_color(color))
+                    .child(text),
+            );
+        }
+        div().w_full().px_6().py_1().child(card).into_any_element()
+    }
+
     fn plan_card(
         &self,
         index: usize,
@@ -714,6 +764,9 @@ impl Workspace {
                 }
                 if let Some(steps) = controls::plan_steps(item) {
                     return self.plan_card(index, steps, cx);
+                }
+                if let Some(steps) = controls::execution_steps(item) {
+                    return self.progress_card(steps, cx);
                 }
                 let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
                 let key = present::tool_key(item, index);
@@ -1580,6 +1633,24 @@ impl Workspace {
                             .child(controls::thinking_tail(thinking, 600)),
                     ),
             );
+        }
+        // Where the working plan stands, while it has steps to go.
+        if let Some(progress) = controls::plan_progress(&self.rows) {
+            let mut line = div()
+                .h_flex()
+                .gap_2()
+                .px_1()
+                .text_xs()
+                .text_color(muted)
+                .child(icon("plan").text_color(muted))
+                .child(crate::i18n::fill(
+                    tr("Plan: {} of {} done"),
+                    &[&progress.done, &progress.total],
+                ));
+            if let Some(current) = progress.current {
+                line = line.child(div().flex_1().min_w_0().truncate().child(current));
+            }
+            area = area.child(line);
         }
         if let Some(strip) = self.queue_strip(running, cx) {
             area = area.child(strip);

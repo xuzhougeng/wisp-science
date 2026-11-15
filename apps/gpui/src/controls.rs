@@ -217,6 +217,58 @@ pub fn awaiting_answer(rows: &[Item], index: usize, running: bool) -> bool {
 /// What approving a plan sends when nothing else is typed. The WebView's.
 pub const APPROVE_PLAN: &str = "Approve and execute";
 
+/// The steps of the working plan the model updated in this row.
+pub fn execution_steps(item: &Item) -> Option<&[wisp_dto::execution_plan::PlanStep]> {
+    item.plan_steps.as_deref().filter(|steps| !steps.is_empty())
+}
+
+/// How far the latest working plan has come: steps done of the steps that
+/// still count, and the one being worked on or next. Nothing when there is
+/// no plan or every step that counts is done.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Progress {
+    pub done: usize,
+    pub total: usize,
+    pub current: Option<String>,
+}
+
+pub fn plan_progress(rows: &[Item]) -> Option<Progress> {
+    use wisp_dto::execution_plan::PlanStatus;
+    let steps = rows.iter().rev().find_map(execution_steps)?;
+    let counted: Vec<_> = steps
+        .iter()
+        .filter(|step| step.status != PlanStatus::Cancelled)
+        .collect();
+    let done = counted
+        .iter()
+        .filter(|step| step.status == PlanStatus::Done)
+        .count();
+    if done == counted.len() {
+        return None;
+    }
+    let current = counted
+        .iter()
+        .find(|step| step.status == PlanStatus::Running)
+        .or_else(|| {
+            counted
+                .iter()
+                .find(|step| step.status == PlanStatus::Pending)
+        })
+        .map(|step| {
+            step.content
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_owned()
+        });
+    Some(Progress {
+        done,
+        total: counted.len(),
+        current,
+    })
+}
+
 /// The steps of a plan the model submitted, with whether each is done.
 pub fn plan_steps(item: &Item) -> Option<Vec<(String, wisp_dto::PlanStatus)>> {
     let proposal = item.proposal.as_ref()?;
@@ -472,6 +524,48 @@ mod tests {
         // An empty trailing assistant row is not an answer.
         let trailing = [asked, item("assistant", None, " ", None)];
         assert!(awaiting_answer(&trailing, 0, false));
+    }
+
+    fn updated(steps: serde_json::Value) -> Item {
+        serde_json::from_value(json!({
+            "role": "tool", "text": "", "tool_name": "update_plan", "input": null,
+            "ok": true, "status": "complete", "plan_steps": steps
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn the_latest_working_plan_says_how_far_it_has_come() {
+        let first = updated(json!([
+            {"status": "running", "content": "Align the reads"},
+            {"status": "pending", "content": "Count reads per gene"}
+        ]));
+        let later = updated(json!([
+            {"status": "done", "content": "Align the reads"},
+            {"status": "cancelled", "content": "Trim adapters"},
+            {"status": "pending", "content": "Count reads per gene\nwith featureCounts"},
+            {"status": "pending", "content": "Plot"}
+        ]));
+        let answer = item("assistant", None, "Aligned.", None);
+        assert_eq!(
+            plan_progress(&[first.clone(), later, answer.clone()]),
+            Some(Progress {
+                done: 1,
+                total: 3,
+                current: Some("Count reads per gene".into()),
+            })
+        );
+        assert_eq!(
+            plan_progress(&[first]).map(|p| (p.done, p.current)),
+            Some((0, Some("Align the reads".into())))
+        );
+        // Finished, or never planned: nothing to show.
+        let finished = updated(json!([
+            {"status": "done", "content": "Align the reads"},
+            {"status": "cancelled", "content": "Plot"}
+        ]));
+        assert_eq!(plan_progress(&[finished]), None);
+        assert_eq!(plan_progress(&[answer]), None);
     }
 
     fn proposal(entries: serde_json::Value) -> Item {
