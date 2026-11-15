@@ -7,6 +7,7 @@ mod assets;
 mod backend;
 mod browser;
 mod calendar;
+mod channels;
 mod codex_pool;
 mod compose;
 mod controls;

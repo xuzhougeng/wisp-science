@@ -11,10 +11,12 @@ async-trait = { workspace = true }
 axum = { workspace = true }
 futures-util = { workspace = true }
 chrono = { workspace = true }
+base64 = { workspace = true }
 dunce = { workspace = true }
 flate2 = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
+qrcode = { version = "0.14.1", default-features = false }
 hex = { workspace = true }
 ignore = { workspace = true }
 serde = { workspace = true }
@@ -47,5 +49,4 @@ wisp-sync = { workspace = true }
 wisp-tools = { workspace = true }
 
 [dev-dependencies]
-base64 = { workspace = true }
 tempfile = "3"

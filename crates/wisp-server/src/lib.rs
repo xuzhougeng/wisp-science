@@ -5,6 +5,7 @@ mod aside;
 mod branch_merge;
 mod browser;
 mod browser_filters;
+mod channels;
 mod compact;
 pub mod config;
 mod decision_model;
@@ -126,6 +127,8 @@ struct Inner {
     bridge: tokio::sync::OnceCell<Arc<acp_bridge::Bridge>>,
     /// Subscription sign-ins under way.
     sign_ins: subscriptions::Attempts,
+    /// Chat apps that talk to Wisp, and the target they share.
+    channels: channels::Channels,
 }
 
 /// What runs a turn: Wisp's own agent (with the model its side requests
@@ -255,6 +258,7 @@ impl Server {
             toolchain: Default::default(),
             bridge: Default::default(),
             sign_ins: Default::default(),
+            channels: Default::default(),
         })))
     }
 
@@ -459,11 +463,18 @@ impl Server {
         }
     }
 
-    async fn start(
+    async fn start(&self, project: &str, root: &str, request: dto::SendRequest) -> Result<Value> {
+        self.start_turn(project, root, request, false).await
+    }
+
+    /// Starts a turn. With `ask` every tool that changes something asks
+    /// first, whatever the conversation allows: a chat app's turn.
+    async fn start_turn(
         &self,
         project: &str,
         root: &str,
         mut request: dto::SendRequest,
+        ask: bool,
     ) -> Result<Value> {
         ensure!(
             request.attachments.len() <= 20 && request.references.len() <= 20,
@@ -543,7 +554,7 @@ impl Server {
             .clone()
             .try_acquire_owned()
             .context("Server is busy; at most four turns can run concurrently")?;
-        let full_access = options.full_access;
+        let full_access = options.full_access && !ask;
         let auto_review = options.auto_review;
         let plan_mode = options.plan_first;
         let engine = match (acp, model) {
@@ -569,6 +580,10 @@ impl Server {
             .store
             .accept_server_turn(&request.session_id, &request.request_id, &request_json)
             .await?;
+        // The project's latest conversation, for the chat apps' target.
+        if let Err(error) = self.record_last_message_session(&request.session_id).await {
+            tracing::warn!(%error, "Could not record the latest conversation");
+        }
         if self.0.store.max_message_seq(&request.session_id).await? == 0
             || matches!(&engine, Engine::Wisp(agent, _) if !agent
                 .ctx
@@ -1020,6 +1035,7 @@ impl Server {
 
     pub async fn shutdown(&self) {
         self.0.remote.stop();
+        self.0.channels.stop_all();
         self.0.browser.stop();
         {
             let _admission = self.0.admission.write().await;

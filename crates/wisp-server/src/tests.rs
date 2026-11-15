@@ -7320,6 +7320,205 @@ async fn a_subscription_sign_in_is_kept_in_the_keychain_and_runs_its_models() {
     server.shutdown().await;
 }
 
+/// Tencent's iLink bot service as far as WeChat binding and chatting
+/// use it, on loopback.
+#[derive(Default)]
+struct FakeIlink {
+    base: String,
+    status_polls: usize,
+    inbox: Vec<serde_json::Value>,
+    sent: Vec<(String, String)>,
+}
+
+async fn fake_ilink() -> Arc<std::sync::Mutex<FakeIlink>> {
+    use axum::{extract::State, routing::get, routing::post, Json, Router};
+    type Shared = Arc<std::sync::Mutex<FakeIlink>>;
+    let fake: Shared = Default::default();
+    let app = Router::new()
+        .route(
+            "/ilink/bot/get_bot_qrcode",
+            get(|| async {
+                Json(json!({"ret": 0, "qrcode": "qr-1", "qrcode_img_content": "https://example.test/qr-1"}))
+            }),
+        )
+        .route(
+            "/ilink/bot/get_qrcode_status",
+            get(|State(fake): State<Shared>| async move {
+                let mut fake = fake.lock().unwrap();
+                fake.status_polls += 1;
+                Json(if fake.status_polls == 1 {
+                    json!({"ret": 0, "status": "wait"})
+                } else {
+                    json!({
+                        "ret": 0,
+                        "status": "confirmed",
+                        "bot_token": "test-bot-token",
+                        "baseurl": fake.base,
+                        "ilink_bot_id": "bot-1",
+                        "ilink_user_id": "owner-1",
+                    })
+                })
+            }),
+        )
+        .route(
+            "/ilink/bot/getupdates",
+            post(|State(fake): State<Shared>| async move {
+                let msgs: Vec<_> = fake.lock().unwrap().inbox.drain(..).collect();
+                Json(json!({"ret": 0, "longpolling_timeout_ms": 0, "get_updates_buf": "cursor-1", "msgs": msgs}))
+            }),
+        )
+        .route(
+            "/ilink/bot/sendmessage",
+            post(
+                |State(fake): State<Shared>, Json(body): Json<serde_json::Value>| async move {
+                    let msg = &body["msg"];
+                    fake.lock().unwrap().sent.push((
+                        msg["to_user_id"].as_str().unwrap_or_default().to_owned(),
+                        msg["item_list"][0]["text_item"]["text"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_owned(),
+                    ));
+                    Json(json!({"ret": 0}))
+                },
+            ),
+        )
+        .with_state(fake.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    fake.lock().unwrap().base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    fake
+}
+
+fn say(fake: &std::sync::Mutex<FakeIlink>, from: &str, text: &str) {
+    fake.lock().unwrap().inbox.push(json!({
+        "from_user_id": from,
+        "to_user_id": "bot-1",
+        "context_token": "ctx",
+        "item_list": [{"type": 1, "text_item": {"text": text}}],
+    }));
+}
+
+/// The next reply after the `seen` first ones that `wanted` accepts.
+async fn wait_sent(
+    fake: &std::sync::Mutex<FakeIlink>,
+    seen: &mut usize,
+    wanted: impl Fn(&str) -> bool,
+) -> String {
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        loop {
+            let found = {
+                let fake = fake.lock().unwrap();
+                fake.sent
+                    .iter()
+                    .enumerate()
+                    .skip(*seen)
+                    .find(|(_, (_, text))| wanted(text))
+                    .map(|(at, (to, text))| (at, to.clone(), text.clone()))
+            };
+            if let Some((at, to, text)) = found {
+                assert_eq!(to, "owner-1", "only the owner is answered");
+                *seen = at + 1;
+                return text;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the bot must reply")
+}
+
+#[tokio::test]
+async fn wechat_binds_by_qr_code_and_runs_the_owners_messages_as_turns() {
+    use desktop::{ChannelState, SecretStore, WeixinScan};
+    let temp = tempfile::tempdir().unwrap();
+    let secrets = Arc::new(desktop::MemorySecrets::default());
+    let server = Server::open_with(
+        config(temp.path()),
+        models(Arc::default(), true),
+        secrets.clone(),
+    )
+    .await
+    .unwrap();
+    assert!(!server
+        .commands()
+        .iter()
+        .any(|command| command.contains("weixin") || command.contains("channel")));
+    let fake = fake_ilink().await;
+    *server.0.channels.ilink_base.lock().unwrap() = fake.lock().unwrap().base.clone();
+
+    // Nothing is bound; WeChat cannot be turned on yet.
+    let status = server.weixin_status().await;
+    assert!(!status.bound && !status.enabled);
+    assert!(server.set_weixin_enabled(true).await.is_err());
+    let qr = server.start_weixin_bind().await.unwrap();
+    assert_eq!(qr.qrcode, "qr-1");
+    assert_eq!(qr.matrix.dark.len(), qr.matrix.width * qr.matrix.width);
+    assert_eq!(
+        server.poll_weixin_bind("qr-1").await.unwrap(),
+        WeixinScan::Waiting
+    );
+    assert_eq!(
+        server.poll_weixin_bind("qr-1").await.unwrap(),
+        WeixinScan::Confirmed
+    );
+    // The WebView's keychain name, so either desktop uses the binding.
+    assert_eq!(
+        secrets.get("weixin_bot_token").as_deref(),
+        Some("test-bot-token")
+    );
+    assert!(server.weixin_status().await.bound);
+
+    let folder = temp.path().join("chat project");
+    std::fs::create_dir(&folder).unwrap();
+    let project = server.register_local_project(&folder).await.unwrap();
+    assert!(server.set_weixin_enabled(true).await.unwrap().enabled);
+
+    let mut seen = 0;
+    say(&fake, "owner-1", "/help");
+    wait_sent(&fake, &mut seen, |text| text.contains("/project <序号")).await;
+    // Someone else is not answered (wait_sent checks every reply's
+    // recipient), and with no target yet a message is not run.
+    say(&fake, "stranger", "/help");
+    say(&fake, "owner-1", "hello");
+    wait_sent(&fake, &mut seen, |text| text.contains("还没有 IM 目标项目")).await;
+    say(&fake, "owner-1", &format!("/project {project}"));
+    wait_sent(&fake, &mut seen, |text| {
+        text.contains("IM 目标已切换到项目")
+    })
+    .await;
+
+    // A turn from the chat asks before writing; the code answers it.
+    say(&fake, "owner-1", "please write the answer");
+    let asked = wait_sent(&fake, &mut seen, |text| text.contains("Wisp 等待审批")).await;
+    assert!(asked.contains("工具: write"));
+    let code = asked
+        .split("/approve ")
+        .nth(1)
+        .and_then(|rest| rest.lines().next())
+        .unwrap()
+        .trim()
+        .to_owned();
+    assert_eq!(code.len(), 8);
+    say(&fake, "owner-1", &format!("/approve {code}"));
+    wait_sent(&fake, &mut seen, |text| text.starts_with("已批准")).await;
+    let answer = wait_sent(&fake, &mut seen, |text| text.contains("Saved result")).await;
+    assert_eq!(answer, "Saved result");
+    assert!(folder.join("answer.txt").exists());
+    // The conversation it started is the target from now on.
+    say(&fake, "owner-1", "/status");
+    let status = wait_sent(&fake, &mut seen, |text| text.contains("最近 IM 会话")).await;
+    assert!(status.contains("chat project"), "{status}");
+    assert!(server.weixin_status().await.state == ChannelState::Running);
+
+    // Unbinding forgets the token and stops the bot.
+    let status = server.unbind_weixin().await.unwrap();
+    assert!(!status.bound && !status.enabled);
+    assert_eq!(status.state, ChannelState::Stopped);
+    assert_eq!(secrets.get("weixin_bot_token").as_deref(), Some(""));
+    server.shutdown().await;
+}
+
 /// A ChatGPT access token as Codex CLI keeps it (unsigned; claims only).
 fn chatgpt_token(account: &str, exp: i64, email: &str) -> String {
     use base64::Engine;

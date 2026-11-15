@@ -5196,6 +5196,10 @@ pub use crate::acp_turn::{AcpChoice, AcpCommand, AcpControls, AcpPick, AcpSettin
 pub use crate::aside::Exchange as AsideExchange;
 pub use crate::browser::{BrowserSettings, BrowserStatus};
 pub use crate::browser_filters::{BrowserFilters, BrowserHostRule};
+pub use crate::channels::{
+    weixin::{QrMatrix, WeixinQr, WeixinScan, WeixinStatus},
+    ChannelState,
+};
 pub use crate::compact::Compacted;
 pub use crate::experts::{Expert, ExpertInput};
 pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow};

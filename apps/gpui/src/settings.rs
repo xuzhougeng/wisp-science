@@ -41,15 +41,18 @@ pub enum Section {
     Network,
     /// Opening this desktop in a browser through a relay.
     Remote,
+    /// Chat apps that talk to Wisp: WeChat.
+    Channels,
     /// The animated companion.
     Pet,
 }
 
 impl Section {
-    pub const ALL: [Section; 20] = [
+    pub const ALL: [Section; 21] = [
         Section::General,
         Section::Network,
         Section::Remote,
+        Section::Channels,
         Section::Pet,
         Section::Models,
         Section::AcpAgents,
@@ -81,6 +84,7 @@ impl Section {
             Section::Workflows => tr("Workflows"),
             Section::Pet => tr("Pet"),
             Section::Remote => tr("Remote access"),
+            Section::Channels => tr("Chat apps"),
             Section::DecisionModel => tr("Decision model"),
             Section::Skills => tr("Skills"),
             Section::Plugins => tr("Plugins"),
@@ -106,6 +110,7 @@ impl Section {
             Section::Workflows => "split",
             Section::Pet => "sparkles",
             Section::Remote => "monitor",
+            Section::Channels => "bubble",
             Section::DecisionModel => "check-square",
             Section::Skills => "skill",
             Section::Plugins => "grid",
@@ -151,6 +156,9 @@ impl Section {
                  score choice 决策模型"
             }
             Section::Remote => "remote access web browser phone relay tunnel code link 远程接入",
+            Section::Channels => {
+                "chat app wechat weixin ilink bot im message phone qr scan bind 微信 消息 渠道"
+            }
             Section::Pet => "pet companion mascot animation sprite 宠物",
             Section::Workflows => "workflow template task stage dependency run 工作流",
             Section::QuickActions => "quick action prompt template shortcut reuse 快捷动作",
@@ -176,7 +184,11 @@ impl Section {
     /// The heading the section is listed under.
     pub fn group(self) -> &'static str {
         match self {
-            Section::General | Section::Network | Section::Remote | Section::Pet => tr("App"),
+            Section::General
+            | Section::Network
+            | Section::Remote
+            | Section::Channels
+            | Section::Pet => tr("App"),
             Section::Models
             | Section::AcpAgents
             | Section::DecisionModel
@@ -929,6 +941,7 @@ mod tests {
         assert_eq!(
             groups,
             [
+                "App",
                 "App",
                 "App",
                 "App",

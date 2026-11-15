@@ -832,6 +832,7 @@ impl Workspace {
             Section::Browser => self.render_browser_settings(cx),
             Section::Workflows => self.render_workflow_settings(cx),
             Section::Remote => self.render_remote_settings(cx),
+            Section::Channels => self.render_channel_settings(cx),
             Section::Plugins => self.render_plugin_settings(cx),
             Section::DecisionModel => self.render_decision_settings(cx),
             Section::Network => self.render_network_settings(cx),

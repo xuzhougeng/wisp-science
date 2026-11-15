@@ -157,6 +157,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Slash commands | A message that is only a command does something instead of being sent: `/review`, `/trajectory`, `/context`, `/btw <question>`, `/plan`, `/save-as-skill`, `/skills`, `/files`, `/upload`, `/memo`, `/remember`, `/archive`, `/compact`, `/timer 30m <prompt>`, `/fork`, `/rewind`, `/permission`, `/share`, `/help`; the composer's "/" button lists them |
 | Browser | Settings, Browser, switches on a bridge to the Wisp extension in your own Chrome or Chromium; conversations can then open a tab, read it and run a script in it, only in tabs they opened themselves, and hosts can be blocked or preferred |
 | Workflows | Settings, Workflows, keeps templates of a goal broken into tasks, each saying which earlier tasks it needs; Run starts a conversation in the open project and gives the model the tasks stage by stage |
+| Chat apps | Settings, Chat apps, binds a WeChat bot by scanning a QR code; the owner's messages then run in the project chats go to and the answer comes back in WeChat, with `/project`, `/session`, `/new`, `/status`, `/stop` and approvals answered by code (`/approve`, `/reject`) |
 | Remote web access | Settings, Remote access, opens this desktop's projects in a phone or a browser through a wisp-relay of your own: it dials out (no inbound port), shows whether the tunnel is up and how many browsers are connected, and gives a link and a code that can be copied or replaced |
 | Plugins | Settings, Plugins, installs a plugin from a folder in the Claude plugin layout (`.claude-plugin/plugin.json`, `skills/*/SKILL.md`) into the app's data without running anything in it, lists what each brings, switches one on for the open project, whose conversations then have its skills, and removes it |
 | Decision model | Settings, Decision model, sets up one fast endpoint (TypeSafe Jev, StartLux-Decision hosted or self-hosted, or a custom System One server) with its key, thinking mode and timeout, and tests it; while one is in use the model's `map_items` tool, which runs one step over many items, also offers its `decide` step |
@@ -663,8 +664,29 @@ Limits of this slice:
   WebView's `workflow_templates`. It starts with two that can be
   changed or removed; a workflow has at most 20 tasks and there are at
   most 40.
-- Remote web access is the only channel ported: there is no project
-  sync through the relay, Feishu, WeChat, StickS3 or Wisp-Lab. A browser
+- Chat apps follow the WebView (`src-tauri/src/channels/`): a text from
+  a chat drives an ordinary conversation through the same turn path as a
+  send from the desktop, and its answer (the turn's `attempt_completion`
+  result or last assistant text) goes back to the chat, cut at 8000
+  characters. Every channel shares one target under the WebView's
+  setting `channel_last_message_route`: `/project` picks the project,
+  `/session` one of its conversations, `/new` starts one with the next
+  message; a send from the desktop only records its project's latest
+  conversation. A turn from a chat asks before every tool that changes
+  something, even in a conversation with full access; the approval is
+  sent to the chat with an eight-character code, and `/approve <code>`
+  or `/reject <code> [reason]` answers it (once; WeChat only). Replies to
+  the chat are in Chinese, as the WebView's are. WeChat binds through
+  Tencent's iLink service (`ilinkai.weixin.qq.com`): only the person who
+  scanned is answered, one to one; the bot token is kept in the keychain
+  as `weixin_bot_token`, the binding, the poll cursor and whether it is
+  on under `weixin_binding`, `weixin_sync_buf` and `weixin_enabled`, so
+  either desktop's binding serves both (run one at a time: both would
+  poll the same bot). The bot runs while the app is open. Not ported
+  yet: Feishu, the research assistant's own WeChat, `/mandates`, and
+  WeChat's notices of work that finished unasked.
+- Remote web access is the only tunnel ported: there is no project
+  sync through the relay, StickS3 or Wisp-Lab. A browser
   gets the commands a headless `wisp-server` offers (projects,
   conversations, messages, stopping a turn, answering an approval
   once), which is fewer than the WebView desktop's tunnel: no research
@@ -1370,6 +1392,18 @@ open: only the form closes. With a project open press Run: Settings
 closes and a conversation named after the workflow shows the goal and
 the tasks under Stage 1 and Stage 2. Remove the workflow: the question
 has to be answered.
+In Settings, Chat apps, press Bind with a QR code: a QR code shows with
+a note to scan it. Scan it with WeChat on your phone and confirm: the
+line reads Bound · off. Press Escape while the code shows: Settings
+closes and the code is put away. Turn Answer messages on: the line
+reads Connected. From the phone send `/help`: the commands come back.
+Send a question: the reply asks for `/project`; send `/project 1`, then
+the question again: the conversation shows in the desktop and the
+answer comes back. Ask for a file to be written: an approval with a
+code arrives; send `/approve` with it and the answer follows. From
+another WeChat account send a message: nothing is answered. Press
+Unbind, then Escape: only the question closes; Unbind again and answer
+it: the line reads Not bound.
 In Settings, Remote access, switch it on with nothing filled in: it is
 refused. Give a relay address that is plain http on another machine: it
 is refused. With a relay of your own running, give its https address

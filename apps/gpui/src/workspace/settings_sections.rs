@@ -104,6 +104,7 @@ impl Workspace {
             Section::Browser => self.load_browser(window, cx),
             Section::Workflows => self.load_workflows(window, cx),
             Section::Remote => self.load_remote_access(window, cx),
+            Section::Channels => self.load_channels(window, cx),
             Section::Plugins => self.load_plugins(window, cx),
             Section::DecisionModel => self.load_decision_model(window, cx),
             Section::Network => self.load_network(window, cx),

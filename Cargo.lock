@@ -7334,6 +7334,7 @@ dependencies = [
  "futures-util",
  "hex",
  "ignore",
+ "qrcode",
  "regex",
  "reqwest 0.12.28",
  "semver",

@@ -71,6 +71,8 @@ impl Backend {
                 server.start_browser().await;
                 // The tunnel for remote web access, when it was left on.
                 server.start_remote_access().await;
+                // The chat apps that were left on.
+                server.start_channels().await;
                 Ok::<_, String>(server)
             })
             .await?;
@@ -1282,6 +1284,27 @@ impl Backend {
             let found = host.import_codex_accounts().await?;
             Ok((found, host.model_settings().await?))
         })
+    }
+
+    pub fn weixin_status(&self) -> Reply<wisp_server::desktop::WeixinStatus> {
+        self.local(|host| async move { Ok(host.weixin_status().await) })
+    }
+
+    /// Asks Tencent's iLink service for a QR code to bind WeChat with.
+    pub fn start_weixin_bind(&self) -> Reply<wisp_server::desktop::WeixinQr> {
+        self.local(|host| async move { host.start_weixin_bind().await })
+    }
+
+    pub fn poll_weixin_bind(&self, qrcode: String) -> Reply<wisp_server::desktop::WeixinScan> {
+        self.local(move |host| async move { host.poll_weixin_bind(&qrcode).await })
+    }
+
+    pub fn set_weixin_enabled(&self, enabled: bool) -> Reply<wisp_server::desktop::WeixinStatus> {
+        self.local(move |host| async move { host.set_weixin_enabled(enabled).await })
+    }
+
+    pub fn unbind_weixin(&self) -> Reply<wisp_server::desktop::WeixinStatus> {
+        self.local(|host| async move { host.unbind_weixin().await })
     }
 
     pub fn onboarding_done(&self) -> Reply<bool> {

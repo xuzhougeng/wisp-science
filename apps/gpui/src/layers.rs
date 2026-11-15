@@ -149,6 +149,8 @@ pub enum Layer {
     ConfirmRemoveAcpAgent,
     /// Question before a ChatGPT (Codex) account is removed from the pool.
     ConfirmRemoveCodexAccount,
+    /// Question before WeChat is unbound, on the Chat apps page.
+    ConfirmUnbindWeixin,
     /// Question before an expert is removed.
     ConfirmRemoveExpert,
     /// The form for an SSH host, on the Environments page of Settings.
@@ -211,6 +213,7 @@ impl Layer {
             | Layer::AcpAgentForm
             | Layer::ConfirmRemoveAcpAgent
             | Layer::ConfirmRemoveCodexAccount
+            | Layer::ConfirmUnbindWeixin
             | Layer::QuickActionForm
             | Layer::WorkflowForm
             | Layer::ConfirmRemoveWorkflow
@@ -544,7 +547,15 @@ mod tests {
         stack.open(Layer::AcpAgentForm);
         assert!(stack.close(Layer::Settings));
         assert!(!stack.contains(Layer::AcpAgentForm));
-        // So is the question before a Codex account is removed.
+        // So is the question before WeChat is unbound.
+        stack.open(Layer::Settings);
+        stack.open(Layer::ConfirmUnbindWeixin);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmUnbindWeixin));
+        assert!(stack.contains(Layer::Settings));
+        stack.open(Layer::ConfirmUnbindWeixin);
+        assert!(stack.close(Layer::Settings));
+        assert!(!stack.contains(Layer::ConfirmUnbindWeixin));
+        // And the question before a Codex account is removed.
         stack.open(Layer::Settings);
         stack.open(Layer::ConfirmRemoveCodexAccount);
         assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmRemoveCodexAccount));

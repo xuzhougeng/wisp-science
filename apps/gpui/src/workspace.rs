@@ -30,6 +30,7 @@ mod review_view;
 mod schedules_view;
 mod settings_acp;
 mod settings_browser;
+mod settings_channels;
 mod settings_data;
 mod settings_decision;
 mod settings_environments;
@@ -445,6 +446,14 @@ pub struct Workspace {
         std::collections::HashMap<String, Result<wisp_server::desktop::CodexUsage, String>>,
     codex_usage_checking: bool,
     codex_removing: Option<String>,
+    /// WeChat on the Chat apps page: where it stands, the QR code being
+    /// scanned and how far the scan got, which binding attempt is current,
+    /// and how the last change went.
+    weixin: Option<wisp_server::desktop::WeixinStatus>,
+    weixin_qr: Option<wisp_server::desktop::WeixinQr>,
+    weixin_scan: Option<wisp_server::desktop::WeixinScan>,
+    weixin_bind: u64,
+    weixin_note: Option<Result<String, String>>,
     acp_reports:
         std::collections::HashMap<String, Result<wisp_server::desktop::AcpAgentReport, String>>,
     mcp_servers: Option<Vec<wisp_server::desktop::McpServerRow>>,
@@ -1056,6 +1065,11 @@ impl Workspace {
             codex_usage: std::collections::HashMap::new(),
             codex_usage_checking: false,
             codex_removing: None,
+            weixin: None,
+            weixin_qr: None,
+            weixin_scan: None,
+            weixin_bind: 0,
+            weixin_note: None,
             acp_reports: Default::default(),
             mcp_servers: None,
             mcp_editing: None,
@@ -1174,6 +1188,7 @@ impl Workspace {
             Some(Layer::ExpertForm | Layer::ConfirmRemoveExpert) => self.expert_editing = None,
             Some(Layer::AcpAgentForm | Layer::ConfirmRemoveAcpAgent) => self.acp_editing = None,
             Some(Layer::ConfirmRemoveCodexAccount) => self.codex_removing = None,
+            Some(Layer::ConfirmUnbindWeixin) => {}
             Some(Layer::ConfirmRemovePlugin) => self.plugin_removing = None,
             Some(Layer::ConfirmResetRemoteCode) => {}
             Some(Layer::WorkflowForm) => {
