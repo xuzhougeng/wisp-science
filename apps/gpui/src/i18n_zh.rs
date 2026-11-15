@@ -1229,4 +1229,8 @@ pub const ZH: &[(&str, &str)] = &[
     // Guiding a running turn.
     ("1 message waits for this turn to end", "1 条消息正等待本轮结束"),
     ("Give it to the running turn now", "现在就交给正在进行的这一轮"),
+    // Notebook preview.
+    ("A figure is here.", "此处有一张图。"),
+    ("This notebook has no cells.", "这个笔记本没有单元格。"),
+    ("Show as a notebook", "以笔记本显示"),
 ];

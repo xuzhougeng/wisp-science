@@ -474,11 +474,11 @@ impl Workspace {
                 )
                 .into_any_element(),
             PreviewMode::Text => {
-                let table = content
-                    .text
-                    .as_deref()
-                    .and_then(|text| files::table(&content.path, text));
-                match table {
+                let text = content.text.as_deref().unwrap_or_default();
+                if let Some(book) = files::notebook(&content.path, text) {
+                    return self.render_notebook(&content.path, book, window, cx);
+                }
+                match files::table(&content.path, text) {
                     Some(table) => self.render_table(&table, cx),
                     None => self.render_text_preview(),
                 }
@@ -493,6 +493,56 @@ impl Workspace {
             .flex_1()
             .min_h_0()
             .child(Input::new(&self.file_view).disabled(true).h_full())
+            .into_any_element()
+    }
+
+    /// A notebook as its cells and outputs, with a switch to its text.
+    fn render_notebook(
+        &self,
+        path: &str,
+        book: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let bar = div().h_flex().px_3().py_1().child(
+            Button::new("file-notebook-switch")
+                .label(if self.file_as_text {
+                    tr("Show as a notebook")
+                } else {
+                    tr("Show as text")
+                })
+                .xsmall()
+                .ghost()
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.file_as_text = !this.file_as_text;
+                    cx.notify();
+                })),
+        );
+        let body = if self.file_as_text {
+            self.render_text_preview()
+        } else {
+            div()
+                .flex_1()
+                .min_h_0()
+                .p_4()
+                .child(
+                    TextView::markdown(
+                        SharedString::from(format!("notebook-{path}")),
+                        book,
+                        window,
+                        cx,
+                    )
+                    .selectable(true)
+                    .scrollable(true),
+                )
+                .into_any_element()
+        };
+        div()
+            .v_flex()
+            .flex_1()
+            .min_h_0()
+            .child(bar)
+            .child(body)
             .into_any_element()
     }
 

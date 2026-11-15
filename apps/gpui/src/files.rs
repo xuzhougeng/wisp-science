@@ -443,6 +443,120 @@ fn records(text: &str, delimiter: char) -> Vec<Vec<String>> {
     records
 }
 
+/// A notebook output is cut here, so one long log does not bury the rest.
+const NOTEBOOK_OUTPUT: usize = 4_000;
+
+/// A Jupyter notebook (`.ipynb`) as Markdown to read: its text cells as
+/// they are, each code cell fenced in the notebook's language with its run
+/// number, and what the cell printed, returned or raised after it. Figures
+/// are named, not drawn. `None` when the file is not a notebook that can be
+/// read, so it is shown as text.
+pub fn notebook(path: &str, text: &str) -> Option<String> {
+    if !file_name(path).to_ascii_lowercase().ends_with(".ipynb") {
+        return None;
+    }
+    let book: serde_json::Value = serde_json::from_str(text).ok()?;
+    let cells = book.get("cells")?.as_array()?;
+    // Text kept as one string or as a list of lines.
+    let joined = |value: Option<&serde_json::Value>| -> String {
+        match value {
+            Some(serde_json::Value::String(text)) => text.clone(),
+            Some(serde_json::Value::Array(lines)) => lines
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<String>(),
+            _ => String::new(),
+        }
+    };
+    let clipped = |text: String| -> String {
+        let text = text.trim_end().to_owned();
+        if text.chars().count() <= NOTEBOOK_OUTPUT {
+            return text;
+        }
+        let mut cut: String = text.chars().take(NOTEBOOK_OUTPUT).collect();
+        cut.push_str("\n…");
+        cut
+    };
+    // A fence longer than any run of backticks inside, so nothing closes it.
+    let fenced = |text: &str, language: &str| -> String {
+        let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+        let fence = "`".repeat(longest.max(2) + 1);
+        format!("{fence}{language}\n{text}\n{fence}")
+    };
+    let metadata = book.get("metadata");
+    let language = metadata
+        .and_then(|m| {
+            m.pointer("/kernelspec/language")
+                .or_else(|| m.pointer("/language_info/name"))
+        })
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("python")
+        .to_owned();
+    let mut parts = Vec::new();
+    for cell in cells {
+        let source = joined(cell.get("source"));
+        match cell.get("cell_type").and_then(serde_json::Value::as_str) {
+            Some("markdown") => {
+                if !source.trim().is_empty() {
+                    parts.push(source.trim_end().to_owned());
+                }
+            }
+            Some("code") => {
+                let run = cell
+                    .get("execution_count")
+                    .and_then(serde_json::Value::as_u64)
+                    .map(|count| format!("[{count}]"))
+                    .unwrap_or_else(|| "[ ]".into());
+                parts.push(format!(
+                    "`{run}`\n\n{}",
+                    fenced(source.trim_end(), &language)
+                ));
+                let outputs = cell
+                    .get("outputs")
+                    .and_then(serde_json::Value::as_array)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
+                for output in outputs {
+                    let data = output.get("data");
+                    let shown = match output
+                        .get("output_type")
+                        .and_then(serde_json::Value::as_str)
+                    {
+                        Some("stream") => Some(clipped(joined(output.get("text")))),
+                        Some("error") => {
+                            let name = joined(output.get("ename"));
+                            let value = joined(output.get("evalue"));
+                            Some(format!("{name}: {value}"))
+                        }
+                        _ if data.is_some_and(|data| {
+                            data.get("image/png").is_some()
+                                || data.get("image/jpeg").is_some()
+                                || data.get("image/svg+xml").is_some()
+                        }) =>
+                        {
+                            parts.push(format!("*{}*", tr("A figure is here.")));
+                            None
+                        }
+                        _ => data
+                            .map(|data| clipped(joined(data.get("text/plain"))))
+                            .filter(|text| !text.is_empty()),
+                    };
+                    if let Some(shown) = shown.filter(|text| !text.trim().is_empty()) {
+                        parts.push(fenced(&shown, "text"));
+                    }
+                }
+            }
+            Some(_) if !source.trim().is_empty() => parts.push(fenced(source.trim_end(), "text")),
+            _ => {}
+        }
+    }
+    Some(if parts.is_empty() {
+        tr("This notebook has no cells.").to_owned()
+    } else {
+        parts.join("\n\n")
+    })
+}
+
 /// The table in a `.csv` or `.tsv` file, when it has one: at least a
 /// header and two columns. Anything else is shown as text.
 pub fn table(path: &str, text: &str) -> Option<Table> {
@@ -875,5 +989,51 @@ mod tests {
         files.set_sort(FileSort::Largest);
         files.set_project(Some("b"));
         assert_eq!(files.sort, FileSort::Largest);
+    }
+
+    #[test]
+    fn a_notebook_reads_as_its_cells_and_what_they_printed() {
+        let book = serde_json::json!({
+            "metadata": {"kernelspec": {"language": "python"}},
+            "cells": [
+                {"cell_type": "markdown", "source": ["# QC\n", "Reads per sample."]},
+                {"cell_type": "code", "execution_count": 3,
+                 "source": "import pandas as pd\nqc = pd.read_csv('qc.csv')",
+                 "outputs": [
+                    {"output_type": "stream", "name": "stdout", "text": ["loaded 12 rows\n"]},
+                    {"output_type": "execute_result", "data": {"text/plain": ["   reads\n0  100"]}},
+                    {"output_type": "display_data", "data": {"image/png": "iVBOR", "text/plain": "<Figure>"}},
+                    {"output_type": "error", "ename": "KeyError", "evalue": "'depth'"}
+                 ]},
+                {"cell_type": "code", "execution_count": null, "source": "", "outputs": []}
+            ]
+        })
+        .to_string();
+        let read = notebook("analysis/qc.ipynb", &book).unwrap();
+        assert!(read.starts_with("# QC\nReads per sample."));
+        assert!(read.contains("`[3]`\n\n```python\nimport pandas as pd"));
+        assert!(read.contains("```text\nloaded 12 rows\n```"));
+        assert!(read.contains("```text\n   reads\n0  100\n```"));
+        assert!(read.contains("*A figure is here.*"));
+        assert!(!read.contains("<Figure>"));
+        assert!(read.contains("KeyError: 'depth'"));
+        assert!(read.contains("`[ ]`"));
+        // Backticks in the code cannot close its fence.
+        let ticks = serde_json::json!({"cells": [
+            {"cell_type": "code", "source": "s = '```'", "outputs": []}
+        ]})
+        .to_string();
+        assert!(
+            notebook("t.ipynb", &ticks)
+                .unwrap()
+                .contains("````python\ns = '```'\n````")
+        );
+        // Not a notebook, or not one that can be read: shown as text.
+        assert_eq!(notebook("qc.json", &book), None);
+        assert_eq!(notebook("cut.ipynb", "{\"cells\": [{\"cell_"), None);
+        assert_eq!(
+            notebook("empty.ipynb", "{\"cells\": []}").unwrap(),
+            "This notebook has no cells."
+        );
     }
 }
