@@ -232,12 +232,23 @@ impl ModelState {
             .profiles
             .into_iter()
             .map(|profile| {
-                let key = key_id
-                    .as_deref()
-                    .and_then(|id| secrets.get(&key_name(id, &profile.id)));
-                let model = match &key {
-                    Some(key) => resolve(&profile.fields, key).map_err(|e| format!("{e:#}")),
-                    None => Err("The saved API key is missing; enter it again".into()),
+                // A subscription's key is its sign-in, shared by its models.
+                let subscription =
+                    crate::subscriptions::Subscription::of_provider(&profile.fields.provider);
+                let key = match subscription {
+                    Some(subscription) => crate::subscriptions::load(secrets, subscription)
+                        .map(|creds| creds.access().to_owned()),
+                    None => key_id
+                        .as_deref()
+                        .and_then(|id| secrets.get(&key_name(id, &profile.id))),
+                };
+                let model = match (&key, subscription) {
+                    (Some(key), _) => resolve(&profile.fields, key).map_err(|e| format!("{e:#}")),
+                    (None, Some(subscription)) => Err(format!(
+                        "Not signed in to {}; sign in again",
+                        crate::subscriptions::name(subscription)
+                    )),
+                    (None, None) => Err("The saved API key is missing; enter it again".into()),
                 };
                 Loaded {
                     profile,
@@ -448,6 +459,19 @@ impl Server {
             .map(str::trim)
             .filter(|key| !key.is_empty())
             .map(str::to_owned);
+        // A subscription model runs on its sign-in, never on a typed key.
+        if let Some(subscription) =
+            crate::subscriptions::Subscription::of_provider(&input.fields.provider)
+        {
+            let creds = crate::subscriptions::load(self.0.secrets.as_ref(), subscription)
+                .with_context(|| {
+                    format!(
+                        "Sign in to {} first",
+                        crate::subscriptions::name(subscription)
+                    )
+                })?;
+            return Ok((resolve(&input.fields, creds.access())?, None));
+        }
         let key = match (&typed, &input.id) {
             (Some(key), _) => key.clone(),
             (None, Some(id)) => {
@@ -557,6 +581,136 @@ impl Server {
             .map(|profile| profile.id.clone())
             .context("The model was not saved")?;
         self.set_default_model(&flash).await
+    }
+
+    /// Each subscription, and the account signed in to it if any.
+    pub fn subscriptions(&self) -> Vec<SubscriptionRow> {
+        crate::subscriptions::Subscription::ALL
+            .into_iter()
+            .map(|subscription| SubscriptionRow {
+                subscription,
+                account: crate::subscriptions::load(self.0.secrets.as_ref(), subscription)
+                    .map(|creds| creds.account()),
+            })
+            .collect()
+    }
+
+    /// A client for sign-in and token refresh, on the Network page's
+    /// subscription route.
+    async fn subscription_client(&self) -> Result<reqwest::Client> {
+        let routes = crate::network::load(&self.0.store).await;
+        let mut client =
+            reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(30));
+        match routes.subscription_proxy_url.trim() {
+            "" => {}
+            "none" => client = client.no_proxy(),
+            proxy => client = client.proxy(reqwest::Proxy::all(proxy)?),
+        }
+        Ok(client.build()?)
+    }
+
+    /// Starts signing in to a subscription, in this computer's browser or
+    /// with a code on another device.
+    pub async fn start_subscription_sign_in(
+        &self,
+        subscription: Subscription,
+        device: bool,
+    ) -> Result<SignInChallenge> {
+        self.editable_models()?;
+        let client = self.subscription_client().await?;
+        self.0
+            .sign_ins
+            .start(subscription, device, client, self.0.secrets.as_ref())
+            .await
+    }
+
+    pub fn subscription_sign_in(&self, id: &str) -> Result<SignInState> {
+        self.0.sign_ins.state(id)
+    }
+
+    /// Finishes a browser sign-in with the address the browser ended on.
+    pub async fn submit_subscription_redirect(
+        &self,
+        id: &str,
+        redirect: &str,
+    ) -> Result<SignInState> {
+        self.0.sign_ins.redirect(id, redirect).await
+    }
+
+    pub fn cancel_subscription_sign_in(&self, id: &str) {
+        self.0.sign_ins.cancel(id)
+    }
+
+    /// Keeps a finished sign-in in the keychain and adds a model of the
+    /// subscription when there is none yet; the first model becomes the
+    /// default.
+    pub async fn save_subscription_sign_in(&self, id: &str) -> Result<ModelSettings> {
+        self.editable_models()?;
+        let creds = self.0.sign_ins.take(id)?;
+        crate::subscriptions::store(self.0.secrets.as_ref(), &creds)?;
+        let subscription = creds.subscription();
+        let mut saved = saved_models(&self.0.store).await?;
+        if !saved
+            .profiles
+            .iter()
+            .any(|profile| profile.fields.provider == subscription.provider())
+        {
+            let id = uuid::Uuid::new_v4().to_string();
+            saved.profiles.push(SavedProfile {
+                id: id.clone(),
+                name: format!(
+                    "{} · {}",
+                    subscription.default_model(),
+                    crate::subscriptions::name(subscription)
+                ),
+                fields: ModelFields {
+                    provider: subscription.provider().into(),
+                    api_url: subscription.default_url().into(),
+                    model: subscription.default_model().into(),
+                    max_context: subscription.context_window().to_string(),
+                    max_tokens: "32000".into(),
+                    reasoning_effort: String::new(),
+                },
+            });
+            if !saved.profiles.iter().any(|p| p.id == saved.default) {
+                saved.default = id;
+            }
+        }
+        self.store_models(&saved).await
+    }
+
+    /// Forgets a subscription's sign-in; its models stay listed, waiting
+    /// for the next one.
+    pub async fn sign_out_subscription(&self, subscription: Subscription) -> Result<ModelSettings> {
+        self.editable_models()?;
+        crate::subscriptions::forget(self.0.secrets.as_ref(), subscription)?;
+        let saved = saved_models(&self.0.store).await?;
+        self.store_models(&saved).await
+    }
+
+    /// A subscription model's token, refreshed when it is about to expire.
+    pub(crate) async fn fresh_subscription(
+        &self,
+        model: &mut ModelConfig,
+        provider: &str,
+    ) -> Result<()> {
+        if let Some(subscription) = crate::subscriptions::Subscription::of_provider(provider) {
+            let client = self.subscription_client().await?;
+            model.provider.api_key =
+                crate::subscriptions::fresh_access(self.0.secrets.as_ref(), subscription, &client)
+                    .await?;
+        }
+        Ok(())
+    }
+
+    /// The provider name a conversation's model profile carries.
+    pub(crate) fn provider_of(&self, profile: &str) -> String {
+        let state = self.0.model.read().unwrap();
+        state
+            .profile(profile)
+            .or_else(|| state.default_profile())
+            .map(|loaded| loaded.profile.fields.provider.clone())
+            .unwrap_or_default()
     }
 
     /// Conversations that chose nothing, and new ones, use this profile.
@@ -4523,6 +4677,13 @@ pub const EFFORTS: &[&str] = &[
     "", "none", "minimal", "low", "medium", "high", "xhigh", "max",
 ];
 
+/// A subscription and who is signed in to it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubscriptionRow {
+    pub subscription: Subscription,
+    pub account: Option<String>,
+}
+
 /// Choices that belong to one conversation.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ConversationOptions {
@@ -5012,6 +5173,7 @@ pub use crate::research_archive::ArchiveDraft;
 pub use crate::review::{Finding as ReviewFinding, Outcome as ReviewOutcome, Review};
 pub use crate::run_log::RunLog;
 pub use crate::schedules::{ScheduleInput, ScheduleRow, ScheduleRun, MIN_INTERVAL_SECS};
+pub use crate::subscriptions::{SignInChallenge, SignInState, SignInStatus, Subscription};
 pub use crate::turn_undo::TurnFiles;
 pub use crate::updates::UpdateCheck;
 pub use crate::workflows::{
@@ -5309,7 +5471,9 @@ mod tests {
         custom.max_tokens = "64000".into();
         assert!(error(&custom, "k").contains("Context must exceed"));
         custom.provider = "typo".into();
-        assert!(error(&custom, "k").contains("API-key providers"));
+        let unknown = error(&custom, "k");
+        assert!(unknown.contains("Supported providers"), "{unknown}");
+        assert!(unknown.contains("openai_chatgpt"));
     }
 
     #[test]

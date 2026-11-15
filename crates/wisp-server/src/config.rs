@@ -61,7 +61,14 @@ impl ModelConfig {
             "openai" => ProviderKind::OpenAiCompatible,
             "openai_responses" => ProviderKind::OpenAiResponses,
             "anthropic" => ProviderKind::Anthropic,
-            _ => bail!("Server supports API-key providers: openai, openai_responses, anthropic"),
+            // Subscriptions: the key is the signed-in access token.
+            "openai_codex" => ProviderKind::OpenAiCodex,
+            "openai_chatgpt" => ProviderKind::OpenAiChatGpt,
+            "xai_oauth" => ProviderKind::OpenAiCompatible,
+            _ => bail!(
+                "Supported providers: openai, openai_responses, anthropic, and the subscriptions \
+                 openai_chatgpt, openai_codex, xai_oauth"
+            ),
         };
         let url = get("WISP_API_URL")
             .filter(|v| !v.trim().is_empty())
@@ -105,10 +112,10 @@ impl ModelConfig {
 
 /// Endpoint used when a provider is chosen without an explicit URL.
 pub fn default_api_url(provider: &str) -> &'static str {
-    if provider == "anthropic" {
-        "https://api.anthropic.com"
-    } else {
-        "https://api.openai.com/v1"
+    match crate::subscriptions::Subscription::of_provider(provider) {
+        Some(subscription) => subscription.default_url(),
+        None if provider == "anthropic" => "https://api.anthropic.com",
+        None => "https://api.openai.com/v1",
     }
 }
 

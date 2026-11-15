@@ -40,6 +40,7 @@ mod settings_plugins;
 mod settings_quick;
 mod settings_remote;
 mod settings_sections;
+mod settings_subscriptions;
 mod settings_view;
 mod settings_workflows;
 mod shell;
@@ -425,6 +426,17 @@ pub struct Workspace {
     acp_signed: std::collections::HashMap<String, Result<String, String>>,
     /// The ACP mode or option whose list is open in the composer.
     acp_setting_open: Option<String>,
+    /// The subscriptions and who is signed in to each; the sign-in under
+    /// way, where it stands, the address pasted for it, and how the last
+    /// one ended.
+    subscriptions: Vec<wisp_server::desktop::SubscriptionRow>,
+    sign_in: Option<(
+        wisp_server::desktop::Subscription,
+        wisp_server::desktop::SignInChallenge,
+    )>,
+    sign_in_state: Option<wisp_server::desktop::SignInState>,
+    sign_in_redirect: Entity<InputState>,
+    sign_in_note: Option<Result<String, String>>,
     acp_reports:
         std::collections::HashMap<String, Result<wisp_server::desktop::AcpAgentReport, String>>,
     mcp_servers: Option<Vec<wisp_server::desktop::McpServerRow>>,
@@ -650,6 +662,9 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx)),
         ];
         let mcp_token = cx.new(|cx| InputState::new(window, cx).masked(true));
+        let sign_in_redirect = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("http://localhost:1455/auth/callback?code=…")
+        });
         let onboarding_key = cx.new(|cx| {
             InputState::new(window, cx)
                 .masked(true)
@@ -1024,6 +1039,11 @@ impl Workspace {
             acp_testing: None,
             acp_signed: Default::default(),
             acp_setting_open: None,
+            subscriptions: Vec::new(),
+            sign_in: None,
+            sign_in_state: None,
+            sign_in_redirect,
+            sign_in_note: None,
             acp_reports: Default::default(),
             mcp_servers: None,
             mcp_editing: None,

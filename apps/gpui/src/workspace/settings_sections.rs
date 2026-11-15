@@ -88,7 +88,8 @@ impl Workspace {
         self.settings_section = section;
         self.settings_error = None;
         match section {
-            Section::Models | Section::General => {}
+            Section::Models => self.load_subscriptions(window, cx),
+            Section::General => {}
             Section::Skills => self.load_skills(window, cx),
             Section::Connections => {
                 self.load_connectors(window, cx);

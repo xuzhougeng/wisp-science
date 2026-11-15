@@ -1207,6 +1207,56 @@ impl Backend {
         self.local(move |host| async move { host.test_acp_agent(&id).await })
     }
 
+    pub fn subscriptions(&self) -> Reply<Vec<wisp_server::desktop::SubscriptionRow>> {
+        self.local(|host| async move { Ok(host.subscriptions()) })
+    }
+
+    pub fn start_subscription_sign_in(
+        &self,
+        subscription: wisp_server::desktop::Subscription,
+        device: bool,
+    ) -> Reply<wisp_server::desktop::SignInChallenge> {
+        self.local(move |host| async move {
+            host.start_subscription_sign_in(subscription, device).await
+        })
+    }
+
+    pub fn subscription_sign_in(&self, id: String) -> Reply<wisp_server::desktop::SignInState> {
+        self.local(move |host| async move { host.subscription_sign_in(&id) })
+    }
+
+    pub fn submit_subscription_redirect(
+        &self,
+        id: String,
+        redirect: String,
+    ) -> Reply<wisp_server::desktop::SignInState> {
+        self.local(
+            move |host| async move { host.submit_subscription_redirect(&id, &redirect).await },
+        )
+    }
+
+    pub fn cancel_subscription_sign_in(&self, id: String) -> Reply<()> {
+        self.local(move |host| async move {
+            host.cancel_subscription_sign_in(&id);
+            Ok(())
+        })
+    }
+
+    /// The credentials never come here; the host keeps them in the keychain.
+    pub fn save_subscription_sign_in(
+        &self,
+        id: String,
+    ) -> Reply<wisp_server::desktop::ModelSettings> {
+        self.local(move |host| async move { host.save_subscription_sign_in(&id).await })
+    }
+
+    pub fn sign_out_subscription(
+        &self,
+        subscription: wisp_server::desktop::Subscription,
+    ) -> Reply<wisp_server::desktop::ModelSettings> {
+        self.local(move |host| async move { host.sign_out_subscription(subscription).await })
+    }
+
     pub fn onboarding_done(&self) -> Reply<bool> {
         self.local(|host| async move { host.onboarding_done().await })
     }

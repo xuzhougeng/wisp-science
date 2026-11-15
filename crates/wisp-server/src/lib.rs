@@ -35,6 +35,7 @@ mod runtime;
 mod sample;
 mod schedules;
 mod session_import;
+mod subscriptions;
 #[cfg(test)]
 mod tests;
 mod toolchain;
@@ -123,6 +124,8 @@ struct Inner {
     toolchain: toolchain::Slot,
     /// Wisp's tools for ACP agents, served once the first one starts.
     bridge: tokio::sync::OnceCell<Arc<acp_bridge::Bridge>>,
+    /// Subscription sign-ins under way.
+    sign_ins: subscriptions::Attempts,
 }
 
 /// What runs a turn: Wisp's own agent (with the model its side requests
@@ -251,6 +254,7 @@ impl Server {
             mcp,
             toolchain: Default::default(),
             bridge: Default::default(),
+            sign_ins: Default::default(),
         })))
     }
 
@@ -503,7 +507,13 @@ impl Server {
         let acp = acp_turn::agent_of(&self.0.store, &request.session_id).await?;
         let model = match &acp {
             Some(_) => None,
-            None => Some(self.0.model.read().unwrap().pick(&options.model)?),
+            None => {
+                let mut model = self.0.model.read().unwrap().pick(&options.model)?;
+                // A subscription's token is refreshed before the turn.
+                self.fresh_subscription(&mut model, &self.provider_of(&options.model))
+                    .await?;
+                Some(model)
+            }
         };
         let request_json = serde_json::to_string(&request)?;
         let reply = serde_json::to_value(dto::SendAccepted {

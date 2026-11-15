@@ -148,6 +148,17 @@ impl Workspace {
         self.edit_profile(editing, window, cx);
     }
 
+    /// Takes a list the host returned after a change made elsewhere on the
+    /// page (a subscription signed in or out).
+    pub(super) fn apply_model_settings_from(
+        &mut self,
+        current: ModelSettings,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_model_settings(current, None, window, cx);
+    }
+
     /// Fills the form from a saved profile, or blanks it for a new model.
     fn edit_profile(&mut self, id: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         self.layers.close(Layer::ConfirmDeleteModel);
@@ -210,6 +221,8 @@ impl Workspace {
             self.layers.close(layer);
         }
         self.layers.open(Layer::Settings);
+        // The Models page, where Settings opens, lists the subscriptions.
+        self.load_subscriptions(window, cx);
         // Every visit starts with all the pages listed.
         self.settings_search
             .update(cx, |input, cx| input.set_value("", window, cx));
@@ -797,7 +810,14 @@ impl Workspace {
                 .items_start()
                 .gap_8()
                 .p_6()
-                .child(self.render_model_list(cx))
+                .child(
+                    div()
+                        .v_flex()
+                        .w(px(280.))
+                        .flex_shrink_0()
+                        .child(self.render_model_list(cx))
+                        .child(self.render_subscriptions(cx)),
+                )
                 .child(self.render_model_form(cx)),
             Section::General => self.render_general_settings(cx),
             Section::Conversation => self.render_conversation_settings(cx),

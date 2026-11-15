@@ -7202,6 +7202,125 @@ async fn the_bridge_offers_wisps_science_tools_over_mcp_and_a_relay_carries_stdi
 }
 
 #[tokio::test]
+async fn a_subscription_sign_in_is_kept_in_the_keychain_and_runs_its_models() {
+    use desktop::{SecretStore, SignInStatus, Subscription};
+    let temp = tempfile::tempdir().unwrap();
+    let mut cfg = config(temp.path());
+    cfg.model = None;
+    let secrets = Arc::new(desktop::MemorySecrets::default());
+    let server = Server::open_with(cfg, models(Arc::default(), false), secrets.clone())
+        .await
+        .unwrap();
+    assert!(!server
+        .commands()
+        .iter()
+        .any(|command| command.contains("subscription") || command.contains("sign_in")));
+    assert!(server
+        .subscriptions()
+        .iter()
+        .all(|row| row.account.is_none()));
+    // Sign in with ChatGPT has no device code; that is refused at once.
+    assert!(server
+        .start_subscription_sign_in(Subscription::ChatGpt, true)
+        .await
+        .is_err());
+
+    // A finished sign-in (the exchange itself needs the network).
+    let creds = crate::subscriptions::Credentials::Codex(wisp_llm::codex_auth::CodexCredentials {
+        access_token: "test-access-1".into(),
+        refresh_token: "test-refresh".into(),
+        expires_at_ms: wisp_llm::codex_auth::now_ms() + 3_600_000,
+        account_id: "acct-test".into(),
+    });
+    let id = server.0.sign_ins.finished(creds);
+    let state = server.subscription_sign_in(&id).unwrap();
+    assert_eq!(state.status, SignInStatus::Done);
+    assert_eq!(state.account, "acct-test");
+    let settings = server.save_subscription_sign_in(&id).await.unwrap();
+    assert!(server.save_subscription_sign_in(&id).await.is_err());
+    assert_eq!(settings.profiles.len(), 1);
+    let profile = &settings.profiles[0];
+    assert_eq!(profile.fields.provider, "openai_codex");
+    assert!(profile.has_api_key && profile.is_default && profile.problem.is_none());
+    // The WebView's keychain name, so either desktop sees the sign-in.
+    assert!(secrets
+        .get("codex_subscription")
+        .unwrap()
+        .contains("test-access-1"));
+    let row = server
+        .subscriptions()
+        .into_iter()
+        .find(|row| row.subscription == Subscription::Codex)
+        .unwrap();
+    assert_eq!(row.account.as_deref(), Some("acct-test"));
+
+    // Its model can be changed in the form without a key.
+    let mut fields = profile.fields.clone();
+    fields.model = "gpt-test-model".into();
+    let changed = server
+        .save_model_profile(desktop::ModelInput {
+            id: Some(profile.id.clone()),
+            name: String::new(),
+            fields,
+            api_key: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(changed.profiles[0].fields.model, "gpt-test-model");
+    assert!(changed.profiles[0].problem.is_none());
+
+    // A turn runs on the access token, refreshed only when due.
+    let mut model = server.0.model.read().unwrap().pick("").unwrap();
+    assert!(matches!(
+        model.provider.kind,
+        wisp_llm::ProviderKind::OpenAiCodex
+    ));
+    assert_eq!(model.provider.api_key, "test-access-1");
+    assert_eq!(
+        model.provider.base_url,
+        wisp_llm::codex_auth::DEFAULT_BASE_URL
+    );
+    model.provider.api_key.clear();
+    server
+        .fresh_subscription(&mut model, "openai_codex")
+        .await
+        .unwrap();
+    assert_eq!(model.provider.api_key, "test-access-1");
+
+    // Signing out keeps the model, waiting for the next sign-in.
+    let settings = server
+        .sign_out_subscription(Subscription::Codex)
+        .await
+        .unwrap();
+    assert!(settings.profiles[0]
+        .problem
+        .as_deref()
+        .unwrap()
+        .contains("Not signed in"));
+    assert!(server.0.model.read().unwrap().pick("").is_err());
+
+    // A browser sign-in takes only an address of its own attempt.
+    let attempt = server
+        .0
+        .sign_ins
+        .browser_for_test(Subscription::Codex, "state-1");
+    assert!(server
+        .submit_subscription_redirect(
+            &attempt,
+            "http://localhost:1455/auth/callback?code=abc&state=other"
+        )
+        .await
+        .is_err());
+    assert!(server
+        .submit_subscription_redirect(&attempt, "   ")
+        .await
+        .is_err());
+    server.cancel_subscription_sign_in(&attempt);
+    assert!(server.subscription_sign_in(&attempt).is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn acp_agents_are_kept_in_the_shared_list_tested_and_removed() {
     use desktop::AcpAgent;
     let temp = tempfile::tempdir().unwrap();

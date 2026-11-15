@@ -176,7 +176,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Outline | A button in the conversation's header lists what you asked, in order; choosing one scrolls to it |
 | Find in conversation | Cmd/Ctrl+F, or the command palette: a bar over the transcript marks every message, and every tool call, that contains the words; Return and the arrows move between them |
 | Help | Documentation (home page, Settings, palette) and Report a problem (Settings, palette) open the tutorials and the issue tracker in the system's browser |
-| Settings | A search field narrows the pages to those about what you type. Pages: General (language; appearance: system, light or dark; the send key; notifications and sound; update check; what the app opens on), Network (a route for model requests, for connectors and MCP servers, and for the code the model runs; a conda mirror, a Python package index and a CA bundle the model is told to use), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test), ACP agents (programs on this computer that speak the Agent Client Protocol: add, change, remove, and Test, which starts one and shows its name, version and how it signs in, with a button for each way: signed in by the agent itself, or in the system's terminal), Conversation (steps per turn, automatic compaction and its threshold, suggesting what to ask next, reviewing turns, the reviewer model and the sub-agent model), Skills (every skill with where it comes from, search, on or off), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Environments (Python, R and Node.js installed into Wisp's own data folder with progress, a log and Stop; the SSH hosts work can run on: add, change, remove, add from `~/.ssh/config`, check the connection and see what the host is, and which one new work goes to), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
+| Settings | A search field narrows the pages to those about what you type. Pages: General (language; appearance: system, light or dark; the send key; notifications and sound; update check; what the app opens on), Network (a route for model requests, for connectors and MCP servers, and for the code the model runs; a conda mirror, a Python package index and a CA bundle the model is told to use), Models (saved models with provider, endpoint, key and limits; presets, a default, a connection test; and subscriptions: sign in to ChatGPT, ChatGPT through Codex or SuperGrok to use their models without a key), ACP agents (programs on this computer that speak the Agent Client Protocol: add, change, remove, and Test, which starts one and shows its name, version and how it signs in, with a button for each way: signed in by the agent itself, or in the system's terminal), Conversation (steps per turn, automatic compaction and its threshold, suggesting what to ask next, reviewing turns, the reviewer model and the sub-agent model), Skills (every skill with where it comes from, search, on or off), Connections (your own MCP servers: add over HTTP or as a local program, test, switch off, remove; and the bundled literature and biology connectors with their tools and links, search, on or off), Credentials (the service keys the connectors use, kept in the system keychain), Environments (Python, R and Node.js installed into Wisp's own data folder with progress, a log and Stop; the SSH hosts work can run on: add, change, remove, add from `~/.ssh/config`, check the connection and see what the host is, and which one new work goes to), Permissions, Usage (tokens in total, per day over the last thirty, by model and by project) and Storage (where the data is and how much room it takes) (how new conversations start, tools that are always allowed); applied without restart |
 | Inbox | Conversations in any project that are waiting for you; opens across projects |
 | Read state | A finished answer is marked read once it is on screen in the active window |
 | Transcript | Virtualized Markdown, selectable text, paginated history |
@@ -231,9 +231,27 @@ conversation and now matches none.
 
 Limits of this slice:
 
-- Models are API models, or an ACP agent for a whole conversation (see
-  ACP agents). Subscription accounts and image or video models are not
-  ported. A broken model chosen for a
+- Models are API models, subscription models, or an ACP agent for a
+  whole conversation (see ACP agents). Image or video models are not
+  ported.
+- Subscriptions follow the WebView (`codex_login.rs`): Sign in with
+  ChatGPT opens the browser and listens on `127.0.0.1:1455` for the
+  answer, or takes the address the browser ended on when it cannot reach
+  this computer; ChatGPT through Codex also offers a code to enter on
+  another device, and SuperGrok only that. The OAuth exchanges are
+  `wisp-llm`'s and go by the Network page's subscription route. The
+  credentials are kept in the system keychain under the WebView's names
+  (`chatgpt_subscription`, `codex_subscription`, `xai_subscription`), so
+  either desktop's sign-in serves both, and one sign-in serves every
+  model of its subscription. Keeping a sign-in adds a model of the
+  subscription when there is none (its default model, made the default
+  when nothing else is); the model can be changed in the form without a
+  key. Before each turn the access token is refreshed when it is within
+  minutes of expiring, and the rotated token is written back. Signing out
+  keeps the models, marked as waiting for a sign-in. Not ported: the
+  WebView's pool of several Codex accounts, switching between them, and
+  the usage meter; nothing is offered while models come from `WISP_*`
+  variables. A broken model chosen for a
   conversation is reported when a message is sent, not replaced silently.
 - Deleting removes the conversation and its messages; files it wrote stay in the
   project. A running conversation must be stopped before it can be archived,
@@ -1229,6 +1247,15 @@ modes or options, after its first answer the composer shows Mode and its
 options; choose another mode or value: the button follows, and the next
 message runs that way. Press "/": the agent's commands are listed, and
 one is written into the message box.
+In Settings, Models, the Subscriptions list names ChatGPT, ChatGPT
+(Codex) and SuperGrok, each Not signed in. Press Sign in for ChatGPT: the
+browser opens on the OpenAI sign-in and the panel waits, with a field for
+the address the browser ends on; finish in the browser and the list says
+Signed in as your account and a ChatGPT model is added (the default when
+there was none). Send a message on it. Press Sign in with a code for
+ChatGPT (Codex): a code shows with Open the sign-in page. Sign out: the
+model stays, marked as not signed in. Started with `WISP_*` model
+variables, the list says so and offers nothing.
 In Settings, ACP agents, add an agent with a name and a program that is
 not installed: it is listed with Program not found, and Test says its
 program was not found on this computer. Change it to an installed ACP agent (or adapter)
