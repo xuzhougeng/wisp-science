@@ -36,8 +36,8 @@ use wisp_core::{
 use wisp_llm::{Role, ToolSchema};
 use wisp_store::{
     AgentDelegationRootLimits, AgentWorkflow, AgentWorkflowAttempt, AgentWorkflowAttemptStart,
-    AgentWorkflowAttemptStatus, AgentWorkflowStatus, AgentWorkflowStep, Store,
-    MAX_ROOT_AGENT_TASKS,
+    AgentWorkflowAttemptStatus, AgentWorkflowDelivery, AgentWorkflowStatus, AgentWorkflowStep,
+    Store, MAX_ROOT_AGENT_TASKS,
 };
 use wisp_tools::{ConfirmDecision, Tool, ToolEnv, ToolResult};
 
@@ -77,6 +77,10 @@ struct BatchArgs {
     #[serde(default)]
     context: String,
     tasks: Vec<TaskArgs>,
+    /// Return a handle now; the result is delivered to the conversation
+    /// when the batch ends, and its agent resumed to sum it up.
+    #[serde(default)]
+    background: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1223,6 +1227,329 @@ fn host_policy(models: Vec<ModelProfilePolicy>, python: bool) -> DelegationHostP
     }
 }
 
+/// What the agent gets back at once for a background batch.
+fn background_handle(
+    workflow: &str,
+    plan: &DelegationPlan,
+    display: &HashMap<String, String>,
+) -> Value {
+    let tasks: Vec<Value> = plan
+        .steps
+        .iter()
+        .map(|step| json!({"id": display.get(&step.id).unwrap_or(&step.id), "status": "queued"}))
+        .collect();
+    json!({
+        "workflow_id": workflow,
+        "status": "running",
+        "completion_policy": "background",
+        "auto_resume": true,
+        "tasks": tasks,
+        "lookup": {"tool": RESULT, "workflow_id": workflow},
+        "message": "The delegated batch is running in the background. Do not poll or claim completion; one result will be delivered to this conversation and you will be resumed to synthesize it.",
+    })
+}
+
+/// Keeps a background batch's result for delivery.
+async fn complete_delivery(
+    store: &Store,
+    delivery: &AgentWorkflowDelivery,
+    result: Value,
+) -> Result<(), String> {
+    let envelope = json!({
+        "type": "delegated_batch_completion",
+        "workflow_id": delivery.workflow_id,
+        "generation": delivery.generation,
+        "result": result,
+        "message": "A background delegated batch finished. Synthesize its ordered results for the user; use get_delegated_result only when the compact result is insufficient.",
+    });
+    // A second result for the same delivery is ignored: the first stands.
+    store
+        .complete_agent_workflow_delivery(&delivery.id, &envelope.to_string())
+        .await
+        .map(drop)
+        .map_err(|error| error.to_string())
+}
+
+/// Ends a background batch that failed to run and keeps what its tasks
+/// left as its result.
+async fn settle_failed(
+    store: &Store,
+    delivery: &AgentWorkflowDelivery,
+    error: &str,
+) -> Result<(), String> {
+    let e = |error: anyhow::Error| error.to_string();
+    if let Some(workflow) = store
+        .get_agent_workflow(&delivery.workflow_id)
+        .await
+        .map_err(e)?
+    {
+        match workflow.status {
+            AgentWorkflowStatus::Approved => {
+                store
+                    .transition_agent_workflow_status(
+                        &workflow.id,
+                        AgentWorkflowStatus::Approved,
+                        AgentWorkflowStatus::Failed,
+                    )
+                    .await
+                    .map_err(e)?;
+            }
+            AgentWorkflowStatus::Running => {
+                store
+                    .fail_agent_workflow_execution(&workflow.id, error)
+                    .await
+                    .map_err(e)?;
+            }
+            _ => {}
+        }
+    }
+    reconstruct(store, delivery).await
+}
+
+/// A task's response as its latest attempt kept it, or a failure when it
+/// never produced one.
+fn attempt_response(attempt: Option<&AgentWorkflowAttempt>, step: &str) -> AgentDelegationResponse {
+    if let Some(response) = attempt
+        .and_then(|attempt| attempt.response_json.as_deref())
+        .and_then(|raw| serde_json::from_str::<AgentDelegationResponse>(raw).ok())
+    {
+        return response;
+    }
+    let status = attempt.map_or(DelegationStatus::Failed, |attempt| match attempt.status {
+        AgentWorkflowAttemptStatus::Succeeded => DelegationStatus::Succeeded,
+        AgentWorkflowAttemptStatus::Cancelled => DelegationStatus::Cancelled,
+        AgentWorkflowAttemptStatus::Blocked => DelegationStatus::Blocked,
+        _ => DelegationStatus::Failed,
+    });
+    AgentDelegationResponse {
+        request_id: attempt
+            .map(|attempt| attempt.request_id.clone())
+            .unwrap_or_else(|| format!("interrupted-{step}")),
+        status,
+        output: attempt
+            .and_then(|attempt| serde_json::from_str(&attempt.output_json).ok())
+            .unwrap_or_else(|| json!({})),
+        artifact_ids: attempt
+            .and_then(|attempt| serde_json::from_str(&attempt.artifact_ids_json).ok())
+            .unwrap_or_default(),
+        artifacts: vec![],
+        evidence: attempt
+            .and_then(|attempt| serde_json::from_str(&attempt.evidence_json).ok())
+            .unwrap_or_default(),
+        usage: attempt.map_or_else(AgentUsage::default, |attempt| AgentUsage {
+            input_tokens: attempt.input_tokens.max(0) as u64,
+            output_tokens: attempt.output_tokens.max(0) as u64,
+            tool_calls: attempt.tool_calls.max(0) as u64,
+            cost_microunits: attempt.cost_microunits.max(0) as u64,
+        }),
+        agent_session_id: None,
+        child_frame_id: attempt.and_then(|attempt| attempt.child_frame_id.clone()),
+        error: attempt
+            .and_then(|attempt| attempt.error.clone())
+            .or_else(|| Some("The app stopped before this task produced a result.".into())),
+        nested_results: vec![],
+    }
+}
+
+/// The result of a batch that ended without one, from what its tasks
+/// left: each task's newest attempt of this delivery's run.
+async fn reconstruct(store: &Store, delivery: &AgentWorkflowDelivery) -> Result<(), String> {
+    let e = |error: anyhow::Error| error.to_string();
+    let workflow = store
+        .get_agent_workflow(&delivery.workflow_id)
+        .await
+        .map_err(e)?
+        .ok_or("The batch disappeared before its result was delivered.")?;
+    let plan: DelegationPlan = serde_json::from_str(&workflow.plan_json)
+        .map_err(|error| format!("The batch's plan is invalid: {error}"))?;
+    let attempts = store
+        .list_agent_workflow_attempts(&delivery.workflow_id)
+        .await
+        .map_err(e)?;
+    let execution = DelegationExecutionResult {
+        workflow_id: workflow.id.clone(),
+        status: match workflow.status {
+            AgentWorkflowStatus::Succeeded => DelegationExecutionStatus::Succeeded,
+            AgentWorkflowStatus::Cancelled => DelegationExecutionStatus::Cancelled,
+            _ => DelegationExecutionStatus::Failed,
+        },
+        steps: plan
+            .steps
+            .iter()
+            .map(|step| {
+                let latest = attempts
+                    .iter()
+                    .filter(|attempt| {
+                        attempt.step_id == step.id && attempt.attempt <= delivery.generation
+                    })
+                    .max_by_key(|attempt| attempt.attempt);
+                wisp_core::DelegationStepExecution {
+                    step_id: step.id.clone(),
+                    response: attempt_response(latest, &step.id),
+                }
+            })
+            .collect(),
+    };
+    complete_delivery(
+        store,
+        delivery,
+        compact(&execution, &display_task_ids(&plan)),
+    )
+    .await
+}
+
+/// What the resumed agent is told about the batches that came back.
+fn completion_prompt(deliveries: &[AgentWorkflowDelivery]) -> String {
+    let results = deliveries
+        .iter()
+        .filter_map(|delivery| delivery.result_json.as_deref())
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "<background_agent_completions>\n{results}\n</background_agent_completions>\nThese background delegated batches have completed. Synthesize the new evidence into one concise user-facing update. Do not claim that still-running work is complete."
+    )
+}
+
+impl Server {
+    /// Adds the results of `frame`'s finished background batches to it once
+    /// it is idle, and resumes its agent to sum them up.
+    pub(crate) async fn deliver_batches(&self, frame: &str) {
+        // A few rounds at most: results that arrive while one is delivered
+        // are taken by the next.
+        for _ in 0..4 {
+            if !self.0.delivering.lock().unwrap().insert(frame.to_owned()) {
+                return;
+            }
+            let delivered = self.deliver_batches_once(frame).await;
+            self.0.delivering.lock().unwrap().remove(frame);
+            if let Err(error) = &delivered {
+                tracing::warn!(%error, frame, "Could not deliver a background batch");
+                return;
+            }
+            let again = self
+                .0
+                .store
+                .list_ready_agent_workflow_delivery_frames()
+                .await
+                .is_ok_and(|frames| frames.iter().any(|ready| ready == frame));
+            if !again {
+                return;
+            }
+        }
+    }
+
+    async fn deliver_batches_once(&self, frame: &str) -> anyhow::Result<()> {
+        let store = &self.0.store;
+        let session = self.session(frame);
+        // Added once whatever the conversation is doing has ended.
+        loop {
+            if self.0.shutting_down.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+            {
+                let _accept = session.accept.lock().await;
+                if !session.live.lock().unwrap().running {
+                    if !store
+                        .deliver_agent_workflow_completions(frame)
+                        .await?
+                        .is_empty()
+                    {
+                        let mut live = session.live.lock().unwrap();
+                        live.generation = live.generation.wrapping_add(1);
+                    }
+                    break;
+                }
+            }
+            tokio::time::sleep(POLL).await;
+        }
+        let claimed = store.claim_agent_workflow_auto_resumes(frame).await?;
+        if claimed.is_empty() {
+            return Ok(());
+        }
+        let ids: Vec<String> = claimed.iter().map(|delivery| delivery.id.clone()).collect();
+        let started = async {
+            let project = store
+                .frame_project_id(frame)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("The conversation no longer exists"))?;
+            let root = self.project_root(&project).await?;
+            self.0.subagent_resumes.lock().unwrap().insert(
+                frame.to_owned(),
+                (completion_prompt(&claimed), false, String::new()),
+            );
+            let request = wisp_dto::native_conversations::SendRequest {
+                session_id: frame.to_owned(),
+                request_id: uuid::Uuid::new_v4().to_string(),
+                message: String::new(),
+                resume: true,
+                resume_after: None,
+                attachments: Vec::new(),
+                references: Vec::new(),
+                acp_agent_id: None,
+            };
+            let started = self
+                .start_turn(
+                    &project,
+                    &root,
+                    request,
+                    crate::channels::TurnOrigin::Desktop,
+                )
+                .await;
+            if started.is_err() {
+                self.0.subagent_resumes.lock().unwrap().remove(frame);
+            }
+            started.map(drop)
+        }
+        .await;
+        let error = started.as_ref().err().map(|error| format!("{error:#}"));
+        store
+            .finish_agent_workflow_auto_resumes(&ids, started.is_ok(), error.as_deref())
+            .await?;
+        Ok(())
+    }
+
+    /// Settles background batches the app closed on and delivers results
+    /// that were not delivered, now and every half minute. The desktop
+    /// starts this once.
+    pub fn start_batch_deliveries(&self) {
+        if self.0.sweeping_deliveries.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let server = self.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(30));
+            loop {
+                tick.tick().await;
+                if server.0.shutting_down.load(Ordering::Relaxed) {
+                    break;
+                }
+                server.sweep_deliveries().await;
+            }
+        });
+    }
+
+    pub(crate) async fn sweep_deliveries(&self) {
+        let store = &self.0.store;
+        for delivery in store
+            .list_incomplete_agent_workflow_deliveries()
+            .await
+            .unwrap_or_default()
+        {
+            if let Err(error) = reconstruct(store, &delivery).await {
+                tracing::warn!(%error, "Could not settle an interrupted background batch");
+            }
+        }
+        for frame in store
+            .list_ready_agent_workflow_delivery_frames()
+            .await
+            .unwrap_or_default()
+        {
+            let server = self.clone();
+            tokio::spawn(async move { server.deliver_batches(&frame).await });
+        }
+    }
+}
+
 impl Server {
     /// The batch a conversation is a task of, if it is one.
     pub(crate) async fn delegated_batch_of(&self, session: &str) -> Option<String> {
@@ -1519,6 +1846,7 @@ impl Server {
         }
         let (registry, host) = self.delegation_policy(parent).await?;
         let workflow = uuid::Uuid::new_v4().to_string();
+        let background = batch.background;
         let plan = resolve(workflow.clone(), batch, &registry, &host)?;
         if env.project_write_locked()
             && plan
@@ -1593,6 +1921,31 @@ impl Server {
                 depth: 1,
             })
             .with_dynamic_policy(registry, host);
+        if background {
+            // The batch outlives the turn: stopping the turn leaves it
+            // running, and its card's Stop ends it.
+            let delivery = store
+                .create_agent_workflow_delivery(&workflow, true)
+                .await
+                .map_err(|error| error.to_string())?;
+            let handle = background_handle(&workflow, &plan, &display);
+            let server = self.clone();
+            let parent = parent.to_owned();
+            tokio::spawn(async move {
+                let store = server.0.store.clone();
+                let settled = match executor.execute(plan).await {
+                    Ok(execution) => {
+                        complete_delivery(&store, &delivery, compact(&execution, &display)).await
+                    }
+                    Err(error) => settle_failed(&store, &delivery, &error.to_string()).await,
+                };
+                if let Err(error) = settled {
+                    tracing::warn!(%error, batch = %delivery.workflow_id, "Could not keep a background batch's result");
+                }
+                server.deliver_batches(&parent).await;
+            });
+            return Ok(handle);
+        }
         let execution = executor.execute(plan);
         tokio::pin!(execution);
         // Stopping the turn stops the batch and every task in it.
@@ -1804,7 +2157,7 @@ fn delegate_schema() -> ToolSchema {
         "visualization: write files and run Python or R to make figures, when a runtime is installed",
     ]
     .join("; ");
-    ToolSchema::new(
+    let mut schema = ToolSchema::new(
         DELEGATE,
         DESCRIPTION,
         json!({
@@ -1885,7 +2238,12 @@ fn delegate_schema() -> ToolSchema {
             },
             "required": ["goal", "tasks"]
         }),
-    )
+    );
+    schema.function.parameters["properties"]["background"] = json!({
+        "type": "boolean",
+        "description": "Run the batch without blocking this turn, only for long work such as analyses expected to take many minutes. The call returns a handle at once; the result is delivered to this conversation when the batch ends and you are resumed to synthesize it. Do not poll it or claim it finished. Omit to wait for the results in this turn."
+    });
+    schema
 }
 
 struct DelegateTasksTool {
@@ -2119,5 +2477,95 @@ mod tests {
         assert!(parse_result("Looks fine.", reviewer).is_err());
         assert!(parse_result("{\"summary\": \"ok\"}", reviewer).is_err());
         assert!(parse_result("{\"summary\": \"ok\", \"findings\": []}", reviewer).is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_background_batch_the_app_closed_on_is_settled_and_delivered() {
+        let temp = tempfile::tempdir().unwrap();
+        let server = Server::open_with_models(
+            crate::tests::config(temp.path()),
+            crate::tests::models(Default::default(), false),
+        )
+        .await
+        .unwrap();
+        let parent = server.create_conversation(crate::PROJECT).await.unwrap();
+        let root = server.project_root(crate::PROJECT).await.unwrap();
+        let (registry, host) = server.delegation_policy(&parent).await.unwrap();
+        let plan = resolve(
+            "wf-1".into(),
+            batch(json!([{"id": "read", "instruction": "Read", "capabilities": ["project_read"]}])),
+            &registry,
+            &host,
+        )
+        .unwrap();
+        let (record, steps) = records(&plan, crate::PROJECT, &root, &parent, &host).unwrap();
+        let store = &server.0.store;
+        store
+            .create_agent_workflow_plan(&record, &steps)
+            .await
+            .unwrap();
+        assert!(store
+            .approve_agent_workflow_plan("wf-1", record.version)
+            .await
+            .unwrap());
+        store
+            .create_agent_workflow_delivery("wf-1", true)
+            .await
+            .unwrap();
+        assert!(store
+            .transition_agent_workflow_status(
+                "wf-1",
+                AgentWorkflowStatus::Approved,
+                AgentWorkflowStatus::Running,
+            )
+            .await
+            .unwrap());
+        // The app closes mid-batch and opens again.
+        store.recover_interrupted_agent_workflows().await.unwrap();
+        server.sweep_deliveries().await;
+        let messages = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let messages = store.load_messages(&parent).await.unwrap();
+                if messages
+                    .iter()
+                    .any(|message| message.content.as_text() == "Saved result")
+                    && !server.session(&parent).live.lock().unwrap().running
+                {
+                    return messages;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("the settled batch must be delivered and the agent resumed");
+        let delivered = messages
+            .iter()
+            .find(|message| {
+                message.tool_name.as_deref() == Some(wisp_store::AGENT_WORKFLOW_COMPLETION_TOOL)
+            })
+            .unwrap()
+            .content
+            .as_text();
+        assert!(delivered.contains("\"status\":\"failed\""), "{delivered}");
+        assert!(delivered.contains("The app stopped before this task produced a result."));
+        let batches = server
+            .delegated_batches(crate::PROJECT, &parent)
+            .await
+            .unwrap();
+        assert_eq!(batches[0].status, "failed");
+        // Delivered once: a second sweep adds nothing.
+        server.sweep_deliveries().await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let again = store.load_messages(&parent).await.unwrap();
+        let count = |messages: &[wisp_llm::Message]| {
+            messages
+                .iter()
+                .filter(|message| {
+                    message.tool_name.as_deref() == Some(wisp_store::AGENT_WORKFLOW_COMPLETION_TOOL)
+                })
+                .count()
+        };
+        assert_eq!(count(&again), 1);
+        server.shutdown().await;
     }
 }

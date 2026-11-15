@@ -329,12 +329,20 @@ Limits of this slice:
   agent gets back each task's status, summary, small data, evidence and
   usage in the same turn, and reads a full result with
   `get_delegated_result`. Stopping the turn stops the batch and its
-  tasks; a batch the app closed on is marked failed at the next start.
+  tasks. With `background` the agent gets a handle at once and the turn
+  ends; the batch runs on (its card's Stop ends it), and when it is over
+  its result is added to the conversation once nothing runs there, shown
+  as what came back rather than as a message of the researcher's, and
+  the agent is resumed to sum it up. A batch the app closed on is marked
+  failed at the next start; the desktop then delivers what its tasks
+  left, and every half minute delivers any result not yet delivered.
+  The window follows a turn the host started in the open conversation by
+  itself.
   Batches are not offered inside an exploration, and a frozen project
-  lets only read-only tasks run. Not ported: background batches and
-  their delivery, nested delegation, specialists, isolated worktrees,
-  retrying a batch, ACP executors, literature and web research
-  capabilities, and method-search run activities.
+  lets only read-only tasks run. Not ported: nested delegation,
+  specialists, isolated worktrees, retrying a batch, ACP executors,
+  literature and web research capabilities, and method-search run
+  activities.
 - Explorations follow the WebView's `exploration_commands.rs`,
   `exploration_promotion.rs` and `exploration_workspace.rs`, whose
   services and tests are carried over. The first candidate of a round
@@ -1854,6 +1862,10 @@ and each task's chat button opens a conversation named after the task
 whose composer does not send. The answer sums up both. Ask for another
 batch and press Stop on its card: the batch and its running task show
 Stopped.
+Ask for the same work in the background: the turn ends at once saying
+it started; a little later a delegate_tasks_completion row appears in
+the conversation and the agent answers again without a new message of
+yours.
 In a project with a file `notes.txt`, ask something and wait for the
 answer; on it press Start an exploration from here, keep the offered
 name and Start: a conversation opens with the same history and a bar

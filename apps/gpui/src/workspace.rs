@@ -2037,6 +2037,16 @@ impl Workspace {
                         this.branched = list.branched;
                         this.dispatched = list.dispatched;
                         this.picks.keep(&this.sessions);
+                        // The host may start a turn in the open conversation
+                        // by itself (a subagent's report, a background batch's
+                        // result, a scheduled task): follow it.
+                        if present::unfollowed_turn(
+                            this.state.session.as_deref(),
+                            &this.sessions,
+                            this.state.snapshot.as_ref().is_some_and(|s| s.running),
+                        ) {
+                            this.start_poll(window, cx);
+                        }
                         if browsing && this.state.session.is_none() && !this.pending {
                             // The first one on screen, whatever the sections.
                             let shown = organise::visible(&this.session_rows(cx), &this.sessions);

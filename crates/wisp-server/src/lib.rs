@@ -147,6 +147,9 @@ struct Inner {
     /// report: what it is told, whether dispatching is held, and the
     /// original request.
     subagent_resumes: std::sync::Mutex<HashMap<String, (String, bool, String)>>,
+    /// Conversations a background batch's result is being delivered to.
+    delivering: std::sync::Mutex<HashSet<String>>,
+    sweeping_deliveries: AtomicBool,
 }
 
 /// What runs a turn: Wisp's own agent (with the model its side requests
@@ -294,6 +297,8 @@ impl Server {
             device: Default::default(),
             project_locks: Default::default(),
             subagent_resumes: Default::default(),
+            delivering: Default::default(),
+            sweeping_deliveries: AtomicBool::new(false),
         })))
     }
 

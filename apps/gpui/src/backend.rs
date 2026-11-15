@@ -78,6 +78,9 @@ impl Backend {
                 let _ = server.start_device_bridge().await;
                 // Cloud-drive folder projects publish this device's edits.
                 server.start_folder_publisher();
+                // Background task batches the app closed on are settled, and
+                // results not yet delivered reach their conversations.
+                server.start_batch_deliveries();
                 Ok::<_, String>(server)
             })
             .await?;

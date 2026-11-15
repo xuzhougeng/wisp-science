@@ -113,6 +113,21 @@ pub fn same_row(a: &Item, b: &Item) -> bool {
 }
 
 /// Pinned conversations first; the host's order is kept within each group.
+/// Whether the open conversation runs a turn the window is not following:
+/// one the host started by itself, such as a subagent's report, a
+/// background batch's result or a scheduled task.
+pub fn unfollowed_turn(
+    open: Option<&str>,
+    rows: &[SessionSearchInfo],
+    shown_running: bool,
+) -> bool {
+    !shown_running
+        && open.is_some_and(|open| {
+            rows.iter()
+                .any(|row| row.id == open && matches!(row.status.as_str(), "running" | "needs_you"))
+        })
+}
+
 pub fn pinned_first(rows: Vec<SessionSearchInfo>, pinned: &[String]) -> Vec<SessionSearchInfo> {
     let (mut first, rest): (Vec<_>, Vec<_>) =
         rows.into_iter().partition(|row| pinned.contains(&row.id));
@@ -453,6 +468,17 @@ mod tests {
             status: status.into(),
             shelved,
         };
+        // A turn the host started in the open conversation is followed.
+        let listed = vec![row("a", "complete", false), row("b", "running", false)];
+        assert!(unfollowed_turn(Some("b"), &listed, false));
+        assert!(!unfollowed_turn(Some("b"), &listed, true));
+        assert!(!unfollowed_turn(Some("a"), &listed, false));
+        assert!(!unfollowed_turn(None, &listed, false));
+        assert!(unfollowed_turn(
+            Some("q"),
+            &[row("q", "needs_you", false)],
+            false
+        ));
         let rows = vec![
             row("a", "complete", false),
             row("b", "running", false),

@@ -173,14 +173,31 @@ impl Provider for DelegatingModel {
             } else {
                 "Counted.\n```json\n{\"summary\": \"42 reads\", \"evidence\": [\"wc -l\"]}\n```"
             }
+        } else if said("<background_agent_completions>") {
+            if said("total 42") {
+                "Background: total 42"
+            } else {
+                "Background: it did not finish"
+            }
         } else if let Some(result) = last_tool {
-            if result.contains("\"status\":\"denied\"") {
+            if result.contains("\"completion_policy\":\"background\"") {
+                "Started in the background."
+            } else if result.contains("\"status\":\"denied\"") {
                 "The batch was turned down."
             } else if result.contains("total 42") {
                 "Synthesized: total 42"
             } else {
                 "The batch failed."
             }
+        } else if said("in the background") {
+            return delegate(json!({
+                "goal": "Count and add up the reads",
+                "background": true,
+                "tasks": [
+                    {"id": "count", "instruction": "Count the reads in data.fastq", "capabilities": ["project_read"]},
+                    {"id": "sum", "instruction": "Add up the counts", "capabilities": ["reasoning"], "depends_on": ["count"]},
+                ],
+            }));
         } else if said("run the analysis") {
             return delegate(json!({
                 "goal": "Run the analysis",
@@ -8960,6 +8977,57 @@ async fn a_delegated_batch_runs_its_tasks_in_order_and_returns_their_results() {
         .await
         .unwrap()
         .is_empty());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_background_batch_is_delivered_later_and_resumes_its_conversation() {
+    let temp = tempfile::tempdir().unwrap();
+    let factory: ModelFactory = Arc::new(|_| Box::new(DelegatingModel));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let parent = create(&server).await;
+    send(&server, &parent, "count the reads in the background")
+        .await
+        .unwrap();
+    // The turn ends with the batch still going.
+    turn_done(&server, &parent).await;
+    assert!(texts_of(&server, &parent)
+        .await
+        .iter()
+        .any(|text| text == "Started in the background."));
+    // Its result comes back on its own, and the agent sums it up.
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        loop {
+            if texts_of(&server, &parent)
+                .await
+                .iter()
+                .any(|text| text == "Background: total 42")
+            {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the result must be delivered and summed up");
+    turn_done(&server, &parent).await;
+    // The result reads as what came back, not as the researcher's words.
+    let shown = snapshot(&server, &parent).await;
+    let delivered = shown
+        .items
+        .iter()
+        .find(|item| item.tool_name.as_deref() == Some(wisp_store::AGENT_WORKFLOW_COMPLETION_TOOL))
+        .expect("the delivered result is in the transcript");
+    assert_eq!(delivered.role, "tool");
+    assert!(delivered.text.contains("total 42"));
+    assert!(!shown
+        .items
+        .iter()
+        .any(|item| item.role == "user" && item.text.contains("delegated_batch_completion")));
+    let batches = server.delegated_batches(PROJECT, &parent).await.unwrap();
+    assert_eq!(batches[0].status, "succeeded");
     server.shutdown().await;
 }
 

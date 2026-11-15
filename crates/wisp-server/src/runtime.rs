@@ -1131,6 +1131,18 @@ pub fn items(messages: &[Message]) -> Vec<Item> {
     for message in messages {
         match message.role {
             Role::System => {}
+            // A background batch's result, added by the host, reads as
+            // what came back rather than as something the researcher said.
+            Role::User
+                if message.tool_name.as_deref()
+                    == Some(wisp_store::AGENT_WORKFLOW_COMPLETION_TOOL) =>
+            {
+                let mut row = item("tool", &message.content.as_text());
+                row.tool_name = message.tool_name.clone();
+                row.status = Some("complete".into());
+                row.ok = Some(true);
+                items.push(row);
+            }
             Role::User => {
                 let text = message.content.as_text();
                 let mut row = item("user", &text);
