@@ -990,7 +990,17 @@ pub(crate) mod tests {
         let shown = row(second, true);
         assert_eq!(shown.skills, ["find-motifs"]);
         assert_eq!(shown.servers, ["uvx motif-mcp --stdio"]);
-        assert!(shown.enabled && shown.problems.is_empty());
+        assert!(shown.enabled);
+        // Whether `uvx` is installed differs by machine; a missing one is
+        // the only problem the row may show.
+        assert!(
+            shown
+                .problems
+                .iter()
+                .all(|problem| problem.contains("'uvx' was not found in PATH")),
+            "{:?}",
+            shown.problems
+        );
 
         // A package that is refused leaves what is installed alone.
         std::fs::remove_file(folder.join(".claude-plugin/plugin.json")).unwrap();
