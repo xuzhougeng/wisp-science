@@ -31,6 +31,7 @@ mod project_sync_view;
 mod queue_view;
 mod remote_files_view;
 mod review_view;
+mod runtime_console_view;
 mod schedules_view;
 mod settings_acp;
 mod settings_browser;
@@ -187,6 +188,12 @@ pub struct Workspace {
     assistant_plan: Vec<wisp_dto::ResearchAssistantPlanItem>,
     /// The weekly habit tidy, on the Memory tab.
     memory_tidy: Option<wisp_dto::MemoryTidyAutomation>,
+    /// The interpreter the console is on, what it holds, and what was run.
+    console_runtime: Option<String>,
+    console_objects: Option<wisp_server::desktop::RuntimeObjectList>,
+    console_entries: Vec<crate::console::Entry>,
+    console_input: Entity<InputState>,
+    console_busy: bool,
     /// The research mandates page.
     mandates: Option<Vec<wisp_dto::MandateOverview>>,
     /// The mandate the form changes; none for a new one.
@@ -695,6 +702,11 @@ impl Workspace {
         let journey_search =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Filter this month…")));
         let recap_time = cx.new(|cx| InputState::new(window, cx).placeholder("09:00"));
+        let console_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .multi_line(true)
+                .placeholder(tr("Code to run in this interpreter…"))
+        });
         let mandate_fields = [
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Literature watch"))),
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
@@ -1045,6 +1057,11 @@ impl Workspace {
             recap_drafting: None,
             assistant_plan: Vec::new(),
             memory_tidy: None,
+            console_runtime: None,
+            console_objects: None,
+            console_entries: Vec::new(),
+            console_input,
+            console_busy: false,
             mandates: None,
             mandate_editing: None,
             mandate_project: None,
@@ -1439,6 +1456,10 @@ impl Workspace {
             Some(Layer::Schedules) => self.focus_composer(window, cx),
             Some(Layer::ScheduleForm) => {}
             Some(Layer::ConfirmDeleteSchedule) => self.schedule_deleting = None,
+            Some(Layer::RuntimeConsole) => {
+                self.console_runtime = None;
+                self.focus_composer(window, cx);
+            }
             Some(Layer::Mandates) => self.focus_composer(window, cx),
             Some(Layer::MandateForm) => {}
             Some(Layer::ConfirmDeleteMandate) => self.mandate_deleting = None,

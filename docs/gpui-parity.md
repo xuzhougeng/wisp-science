@@ -268,7 +268,7 @@ row says what is there.
 | Previews | DOCX review: accept or reject tracked changes | tauri |
 | Runs | Review a remote run's workspace: download, delete, clean up; remote files pane — an SSH host's folders can be looked at from Files; the rest is Missing | shared |
 | Environments | Add or edit an SSH host (key or password, ProxyJump, test), import WSL, interpreter paths, storage locations | store + shared |
-| Runtimes | Python / R runtime cards: start, stop, restart, object inspector, console, plots — the interpreters a conversation keeps show above the composer and can be stopped; the rest is Missing | shared |
+| Runtimes | Python / R runtime cards: start, stop, restart, object inspector, console, plots — **Done** for the interpreters on this computer a conversation keeps: start from the palette, stop, restart, variables, a console with plots; interpreters on SSH and WSL contexts are not started from the window | shared |
 | Terminal | Several terminals, choose the environment, collapse, close — terminals open in the system's terminal, any number of them, on this computer or an SSH host; one drawn inside the app is Missing | tauri |
 | Agents | Swarm progress, agent workflow runs (draft, approve, run, cancel, retry), method-search runs — swarm progress of `map_items` is shown in the Agents tab while the app runs; an Agents tab lists a conversation's helpers, workflows run as one conversation (section 8), and the agent's delegated batches run with a plan card for approval and are listed there with Stop and Run again, in the turn or in the background; drafts, budget edits and method-search runs are Missing | store |
 | Library | Versions of saved code, edit code, insert into chat | store |

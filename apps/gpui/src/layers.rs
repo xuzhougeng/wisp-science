@@ -64,6 +64,9 @@ pub enum Layer {
     ScheduleForm,
     /// Question before a scheduled task is deleted.
     ConfirmDeleteSchedule,
+    /// A console on one of the conversation's interpreters, over the
+    /// composer.
+    RuntimeConsole,
     /// The research mandates of every project: a page of its own.
     Mandates,
     /// The form on that page for a new mandate or a change to one.
@@ -665,6 +668,10 @@ mod tests {
         stack.open(Layer::ScheduleForm);
         assert!(stack.close(Layer::Schedules));
         assert!(!stack.contains(Layer::ScheduleForm));
+        // An interpreter's console over the composer closes on its own.
+        stack.open(Layer::RuntimeConsole);
+        assert_eq!(stack.dismiss_top(), Some(Layer::RuntimeConsole));
+        assert!(!stack.contains(Layer::RuntimeConsole));
         // The mandates page and what opens on it.
         stack.open(Layer::Mandates);
         stack.open(Layer::MandateForm);

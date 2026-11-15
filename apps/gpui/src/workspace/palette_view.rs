@@ -226,6 +226,16 @@ impl Workspace {
             Command::Schedules => return self.open_schedules(window, cx),
             Command::Assistant => return self.open_assistant(window, cx),
             Command::Mandates => return self.open_mandates(window, cx),
+            Command::PythonConsole => {
+                return self.start_console(
+                    wisp_server::desktop::RuntimeLanguage::Python,
+                    window,
+                    cx,
+                );
+            }
+            Command::RConsole => {
+                return self.start_console(wisp_server::desktop::RuntimeLanguage::R, window, cx);
+            }
             Command::Calendar => return self.open_calendar(window, cx),
             Command::Capabilities => return self.open_capabilities(window, cx),
             Command::Trajectory => return self.open_trajectory(window, cx),

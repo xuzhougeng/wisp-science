@@ -1563,6 +1563,43 @@ impl Backend {
         self.local(move |host| async move { host.join_lab_knowledge_base(&parent).await })
     }
 
+    /// Starts the conversation's Python or R; returns its id.
+    pub fn start_runtime(
+        &self,
+        project: String,
+        session: String,
+        language: wisp_server::desktop::RuntimeLanguage,
+    ) -> Reply<String> {
+        self.local(
+            move |host| async move { host.start_runtime(&project, &session, language).await },
+        )
+    }
+
+    pub fn runtime_objects(
+        &self,
+        project: String,
+        session: String,
+        id: String,
+    ) -> Reply<wisp_server::desktop::RuntimeObjectList> {
+        self.local(move |host| async move { host.runtime_objects(&project, &session, &id).await })
+    }
+
+    pub fn restart_runtime(&self, project: String, session: String, id: String) -> Reply<()> {
+        self.local(move |host| async move { host.restart_runtime(&project, &session, &id).await })
+    }
+
+    pub fn run_in_runtime(
+        &self,
+        project: String,
+        session: String,
+        id: String,
+        code: String,
+    ) -> Reply<wisp_server::desktop::RuntimeOutput> {
+        self.local(
+            move |host| async move { host.run_in_runtime(&project, &session, &id, &code).await },
+        )
+    }
+
     /// What the system's terminal runs to open a shell on a context.
     pub fn terminal_launch(
         &self,

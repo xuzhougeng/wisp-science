@@ -5373,6 +5373,7 @@ pub use crate::remote_dir::RemoteDirectory;
 pub use crate::research_archive::ArchiveDraft;
 pub use crate::review::{Finding as ReviewFinding, Outcome as ReviewOutcome, Review};
 pub use crate::run_log::RunLog;
+pub use crate::runtimes::{RuntimeObject, RuntimeObjectList, RuntimeOutput};
 pub use crate::schedules::{ScheduleInput, ScheduleRow, ScheduleRun, MIN_INTERVAL_SECS};
 pub use crate::subscriptions::{
     CodexAccount, CodexUsage, SignInChallenge, SignInState, SignInStatus, Subscription, UsageWindow,

@@ -466,34 +466,8 @@ pub async fn build(
         runs,
         scope,
     )));
-    let worker = std::env::var_os("WISP_KERNEL_WORKER")
-        .map(PathBuf::from)
-        .or_else(wisp_runtime::bundled_worker_path)
-        .unwrap_or_default();
-    let r_worker = std::env::var_os("WISP_R_KERNEL_WORKER")
-        .map(PathBuf::from)
-        .or_else(wisp_runtime::bundled_r_worker_path)
-        .unwrap_or_default();
-    let runtime = session
-        .runtime
-        .lock()
-        .unwrap()
-        .get_or_insert_with(|| {
-            // The data directory, where the managed Python environment
-            // is looked for first, as in the WebView desktop; and the R it
-            // installed, looked for each time R starts.
-            let data = config.data.clone();
-            wisp_runtime::RuntimeManager::local_with_rscript(
-                config.data.clone(),
-                worker.clone(),
-                Some(r_worker.clone()),
-                vec![],
-                Some(Arc::new(move || {
-                    crate::toolchain::Layout::new(&data).rscript()
-                })),
-            )
-        })
-        .clone();
+    let (worker, r_worker) = workers();
+    let runtime = session_runtimes(config, session);
     if worker.is_file() {
         agent.add_tool(Box::new(wisp_runtime::ReplTool::new(
             runtime.clone(),
@@ -507,6 +481,46 @@ pub async fn build(
         )));
     }
     Ok(agent)
+}
+
+/// The Python and R workers interpreters are started with; a path that
+/// is not a file means that language is not offered.
+pub(crate) fn workers() -> (PathBuf, PathBuf) {
+    let worker = std::env::var_os("WISP_KERNEL_WORKER")
+        .map(PathBuf::from)
+        .or_else(wisp_runtime::bundled_worker_path)
+        .unwrap_or_default();
+    let r_worker = std::env::var_os("WISP_R_KERNEL_WORKER")
+        .map(PathBuf::from)
+        .or_else(wisp_runtime::bundled_r_worker_path)
+        .unwrap_or_default();
+    (worker, r_worker)
+}
+
+/// The interpreters a conversation keeps between its turns, made the first
+/// time they are needed.
+pub(crate) fn session_runtimes(config: &Config, session: &Session) -> wisp_runtime::RuntimeManager {
+    let (worker, r_worker) = workers();
+    session
+        .runtime
+        .lock()
+        .unwrap()
+        .get_or_insert_with(|| {
+            // The data directory, where the managed Python environment
+            // is looked for first, as in the WebView desktop; and the R it
+            // installed, looked for each time R starts.
+            let data = config.data.clone();
+            wisp_runtime::RuntimeManager::local_with_rscript(
+                config.data.clone(),
+                worker,
+                Some(r_worker),
+                vec![],
+                Some(Arc::new(move || {
+                    crate::toolchain::Layout::new(&data).rscript()
+                })),
+            )
+        })
+        .clone()
 }
 
 /// Records the files a turn wrote as artifacts of its conversation: one

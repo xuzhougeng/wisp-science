@@ -1817,6 +1817,9 @@ impl Workspace {
         );
 
         let mut area = div().v_flex().flex_shrink_0().gap_1().px_4().pb_4().pt_1();
+        if let Some(console) = self.render_console(cx) {
+            area = area.child(console);
+        }
         // What the last turn used, and what this conversation may do unasked.
         let allowed = self
             .status
@@ -1854,6 +1857,19 @@ impl Workspace {
                                 }
                             }),
                     );
+                {
+                    let id = row.id.clone();
+                    chip = chip.child(
+                        Button::new(SharedString::from(format!("runtime-console-{}", row.id)))
+                            .label(tr("Console"))
+                            .xsmall()
+                            .ghost()
+                            .tooltip(tr("Its variables, and code of your own to run in it"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_console(id.clone(), window, cx)
+                            })),
+                    );
+                }
                 if let Some((label, hint)) = controls::runtime_action(row) {
                     let id = row.id.clone();
                     chip = chip.child(

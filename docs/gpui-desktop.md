@@ -149,7 +149,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Language | Settings, General, chooses the interface language: System (Chinese on a Chinese system, English otherwise), English or 中文 |
 | Delete a project's folder | Removing a project offers Delete folder too: after you type the project's name, the project is removed and its folder is deleted with every file in it |
 | What the model is sent | Clicking the context percentage by the composer (or the command palette) lists the conversation's working set: the instructions, the summary that stands in for compacted turns, and each message with about how many tokens it takes |
-| Interpreters | The Python and R interpreters a conversation keeps between tool calls show above the composer with their version and state; Stop ends one, Dismiss takes a stopped one off the list |
+| Interpreters | The Python and R interpreters a conversation keeps between tool calls show above the composer with their version and state; Stop ends one, Dismiss takes a stopped one off the list; Console opens one with its variables, code of your own to run (printed output and plots) and Restart, and the command palette starts the conversation's Python or R console |
 | Experts | Settings, Experts, keeps personas (a name and instructions); the composer's Expert menu starts a new conversation as one, and its instructions hold for the whole conversation |
 | Quick actions | Settings, Quick actions, keeps requests you make often under a name; the composer's quick actions menu puts one into the message box, after whatever is already typed, to finish and send |
 | Undo a turn | Going back to the latest message can also undo its files: a file the turn edited gets its earlier content, a file it created goes to the project's trash, and a file changed again since is left and named |
@@ -601,7 +601,14 @@ Limits of this slice:
   keeps the files it wrote; a turn that is using it gets an error from
   that tool call. A stopped interpreter stays listed until dismissed, and
   the model's next call says it was stopped rather than quietly starting
-  a new one. There is no list of variables, no restart button and no
+  a new one. The console follows the WebView's runtime cards: it lists
+  the variables the interpreter holds (name, type, a summary, size),
+  runs code you type in it as your own (outside the approval of the
+  model's tools, but refused while the project is frozen for an
+  exploration and kept to an exploration's copy), shows what it printed
+  and the plots it drew, and Restart starts it afresh. Starting one from
+  the palette starts the same interpreter the model's `python` or `r`
+  tool uses in that conversation, on this computer only. There is no
   memory limit; interpreters are also stopped when the conversation or
   its project is removed and when the app quits.
 - The Agents tab shows first the latest work over many items
@@ -1445,6 +1452,12 @@ In the Files tab go into a folder and press the terminal button: the
 system's terminal opens in that folder. Do the same from the command
 palette. With the project's folder moved away, confirm a message says it
 is not there.
+In a conversation open the command palette and choose Python console:
+the console opens over the composer with an interpreter chip. Run
+`x = 41 + 1` and then `x`: it prints 42 and the variables list shows `x`.
+Run code that draws a matplotlib figure: the plot shows under it. Press
+Restart: the variables list is empty. Press Escape: only the console
+closes.
 With an SSH host saved, press Terminal on its row in Settings,
 Environments: the system's terminal opens and connects to it (a password
 is asked there). Browse the host's folders in Files, go into one and press

@@ -11,6 +11,7 @@ mod calendar;
 mod channels;
 mod codex_pool;
 mod compose;
+mod console;
 mod controls;
 mod decision;
 mod explore;
