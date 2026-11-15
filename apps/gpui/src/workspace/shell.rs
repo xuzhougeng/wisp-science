@@ -763,6 +763,41 @@ impl Workspace {
                 }
                 div().w_full().px_6().py_1().child(card).into_any_element()
             }
+            "reasoning" if item.text.trim().is_empty() => div().into_any_element(),
+            // What the model thought before answering, folded like a tool
+            // call so the answer stays the thing that is read.
+            "reasoning" => {
+                let key = present::tool_key(item, index);
+                let open = self.open_tools.contains(&key);
+                let muted = cx.theme().muted_foreground;
+                let header = div()
+                    .id(SharedString::from(format!("thought-{key}")))
+                    .h_flex()
+                    .gap_2()
+                    .px_3()
+                    .h(px(30.))
+                    .cursor_pointer()
+                    .child(
+                        icon(if open {
+                            "chevron-down"
+                        } else {
+                            "chevron-right"
+                        })
+                        .text_color(muted),
+                    )
+                    .child(icon("brain").text_color(muted))
+                    .child(div().text_sm().text_color(muted).child(tr("Thought")))
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.toggle_tool(key.clone(), index, cx)),
+                    );
+                let mut card = div().v_flex().child(header);
+                if open {
+                    card = card.child(div().px_3().pb_2().text_sm().text_color(muted).child(
+                        TextView::markdown(id, item.text.clone(), window, cx).selectable(true),
+                    ));
+                }
+                div().w_full().px_6().py_1().child(card).into_any_element()
+            }
             _ if item.text.is_empty() => div().into_any_element(),
             _ => div()
                 .w_full()

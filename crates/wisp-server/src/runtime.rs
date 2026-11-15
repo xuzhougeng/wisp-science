@@ -854,6 +854,16 @@ pub fn items(messages: &[Message]) -> Vec<Item> {
                 items.push(row);
             }
             Role::Assistant => {
+                // What the model thought before it answered, as a row of its
+                // own ahead of the answer: the shape the transcript contract
+                // gives it and every client already shows.
+                if let Some(reasoning) = message
+                    .reasoning
+                    .as_deref()
+                    .filter(|text| !text.trim().is_empty())
+                {
+                    items.push(item("reasoning", reasoning));
+                }
                 let text = message.content.as_text();
                 if !text.is_empty() {
                     items.push(item("assistant", &text));
@@ -943,6 +953,18 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].text, "你好");
         assert!(bounded(&"中".repeat(50000)).ends_with("server]"));
+    }
+
+    #[test]
+    fn saved_thinking_comes_back_ahead_of_its_answer() {
+        let mut thought = Message::assistant("The batch effect needs a covariate.");
+        thought.reasoning = Some("First the controls, then the replicates.".into());
+        let mut blank = Message::assistant("No tools were needed.");
+        blank.reasoning = Some("  ".into());
+        let rows = items(&[Message::user("Design it"), thought, blank]);
+        let roles: Vec<_> = rows.iter().map(|row| row.role.as_str()).collect();
+        assert_eq!(roles, ["user", "reasoning", "assistant", "assistant"]);
+        assert_eq!(rows[1].text, "First the controls, then the replicates.");
     }
 
     #[test]

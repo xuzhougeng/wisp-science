@@ -192,7 +192,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Files | Project file browser, available before the first conversation; read-only text and Markdown preview, and pictures (PNG, JPEG, GIF, WebP, SVG, BMP); new folder, new file, rename, and move to the project's trash |
 | Composer | Native multiline input. Return sends and Shift+Return starts a new line, or, with the other choice in Settings, General, Return starts a new line and Cmd/Ctrl+Return sends; Cmd/Ctrl+Return always sends. While an input method is composing, Return goes to it. While a turn runs the same key queues the message: it is sent when the turn ends |
 | Plan first | The model investigates and submits a plan as a card; nothing is changed until you approve it, which leaves plan mode and starts the work |
-| Thinking | What the model is thinking, above the composer, while it thinks |
+| Thinking | What the model is thinking, above the composer, while it thinks; afterwards it stays in the transcript as a folded Thought ahead of the answer, to open when wanted |
 | Conversation options | Ask first or Full access, the model, reasoning effort, and where its work runs (the default, this computer or a saved SSH host), per conversation; all are kept across restarts and apply from the next message |
 | Usage | How full the context is, and the tokens the running or latest turn used |
 | Questions | When the model asks, a card with its options: one click answers, or type the answer |
@@ -821,8 +821,8 @@ Limits of this slice:
 - Storage measures Wisp's own files: the database, the favorites, and each
   project's `.wisp` and `uploads` folders (up to 50,000 entries each). It
   does not measure your data, and nothing can be moved or cleaned from the
-  page. Thinking is shown
-  while it streams and is not kept in the transcript. Fast mode is not ported.
+  page. Thinking is kept as the model reported it; a model that reports
+  none leaves no Thought. Fast mode is not ported.
 - Plan mode uses the WebView's switch (`frame_plan_mode:<conversation>`) and its
   prompt section, which now lives in `wisp_tools::plan` for any host to use;
   `src-tauri` still carries its own copy of the same text. Approving sends
@@ -946,7 +946,9 @@ Full access on, restart, and confirm it and the chosen effort are still set.
 Open the effort menu and press Escape. Copy a message and paste it elsewhere.
 Turn Plan first on and ask for a change: a plan card appears and no file is
 written; approve it and confirm the work then runs and Plan first is off. With a
-model that reports reasoning, confirm the Thinking box appears and goes away.
+model that reports reasoning, confirm the Thinking box appears and goes away,
+and that the answer then has a folded Thought above it that opens to what
+it thought, also after reopening the conversation.
 In Settings add two models, test the connection of one, make the second the
 default, choose the first for one conversation and confirm the header names it;
 ask to remove a model, press Escape (Settings stays), then remove it and confirm

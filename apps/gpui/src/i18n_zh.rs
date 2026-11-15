@@ -1219,4 +1219,6 @@ pub const ZH: &[(&str, &str)] = &[
     // The sidebar.
     ("Show the sidebar", "显示侧边栏"),
     ("Hide the sidebar", "隐藏侧边栏"),
+    // Saved thinking.
+    ("Thought", "思考过程"),
 ];
