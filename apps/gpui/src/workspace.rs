@@ -2270,8 +2270,8 @@ impl Workspace {
                                         if this.status_tick % 7 == 0 {
                                             this.load_status(window, cx);
                                         }
-                                        // A delegated batch moves on while
-                                        // the turn waits for it.
+                                        // A batch the turn delegates shows
+                                        // up while the turn waits for it.
                                         if this.agents_visible() && this.status_tick % 3 == 0 {
                                             this.load_batches(window, cx);
                                         }

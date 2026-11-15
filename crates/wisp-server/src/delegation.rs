@@ -825,19 +825,26 @@ struct Recorder {
     store: Store,
     attempts: tokio::sync::Mutex<HashMap<String, String>>,
     claimed: AtomicBool,
+    /// A rerun numbers its attempts by its delivery's generation, so its
+    /// result is read from its own attempts.
+    generation: Option<i64>,
 }
 
 impl Recorder {
+    async fn attempt_number(&self, step: &str) -> anyhow::Result<i64> {
+        match self.generation {
+            Some(generation) => Ok(generation),
+            None => self.store.next_agent_workflow_attempt_number(step).await,
+        }
+    }
+
     async fn closed_attempt(
         &self,
         request: &AgentDelegationRequest,
         status: AgentWorkflowAttemptStatus,
         reason: &str,
     ) -> anyhow::Result<()> {
-        let number = self
-            .store
-            .next_agent_workflow_attempt_number(&request.step_id)
-            .await?;
+        let number = self.attempt_number(&request.step_id).await?;
         let mut attempt = AgentWorkflowAttempt::queued(
             uuid::Uuid::new_v4().to_string(),
             &request.workflow_id,
@@ -894,10 +901,7 @@ impl DelegationExecutionObserver for Recorder {
     }
 
     async fn step_started(&self, request: &AgentDelegationRequest) -> anyhow::Result<()> {
-        let number = self
-            .store
-            .next_agent_workflow_attempt_number(&request.step_id)
-            .await?;
+        let number = self.attempt_number(&request.step_id).await?;
         let id = uuid::Uuid::new_v4().to_string();
         let mut attempt = AgentWorkflowAttempt::queued(
             &id,
@@ -1396,6 +1400,37 @@ async fn reconstruct(store: &Store, delivery: &AgentWorkflowDelivery) -> Result<
         compact(&execution, &display_task_ids(&plan)),
     )
     .await
+}
+
+/// The tasks of a batch whose latest attempt succeeded, with what they
+/// returned, for a rerun to keep.
+async fn successful_steps(
+    store: &Store,
+    workflow: &str,
+) -> anyhow::Result<Vec<wisp_core::DelegationStepExecution>> {
+    let mut latest = HashMap::<String, AgentWorkflowAttempt>::new();
+    for attempt in store.list_agent_workflow_attempts(workflow).await? {
+        if latest
+            .get(&attempt.step_id)
+            .is_none_or(|kept| kept.attempt < attempt.attempt)
+        {
+            latest.insert(attempt.step_id.clone(), attempt);
+        }
+    }
+    Ok(latest
+        .into_values()
+        .filter(|attempt| attempt.status == AgentWorkflowAttemptStatus::Succeeded)
+        .filter_map(|attempt| {
+            let response: AgentDelegationResponse =
+                serde_json::from_str(attempt.response_json.as_deref()?).ok()?;
+            (response.status == DelegationStatus::Succeeded).then(|| {
+                wisp_core::DelegationStepExecution {
+                    step_id: attempt.step_id,
+                    response,
+                }
+            })
+        })
+        .collect())
 }
 
 /// What the resumed agent is told about the batches that came back.
@@ -1901,26 +1936,8 @@ impl Server {
                 "message": "The turn was stopped before any delegated Agent started.",
             }));
         }
-        let delegator = Arc::new(Delegator {
-            server: self.clone(),
-            project: project.into(),
-            root: root.into(),
-            parent: parent.into(),
-            active: Mutex::new(HashMap::new()),
-        });
-        let recorder = Arc::new(Recorder {
-            store: store.clone(),
-            attempts: Default::default(),
-            claimed: AtomicBool::new(false),
-        });
-        let executor = DelegationExecutor::new(delegator.clone())
-            .with_observer(recorder.clone())
-            .with_lineage(AgentDelegationLineage {
-                root_workflow_id: workflow.clone(),
-                parent_attempt_id: None,
-                depth: 1,
-            })
-            .with_dynamic_policy(registry, host);
+        let (delegator, recorder, executor) =
+            self.batch_executor(project, root, parent, &workflow, registry, host, None);
         if background {
             // The batch outlives the turn: stopping the turn leaves it
             // running, and its card's Stop ends it.
@@ -1929,21 +1946,7 @@ impl Server {
                 .await
                 .map_err(|error| error.to_string())?;
             let handle = background_handle(&workflow, &plan, &display);
-            let server = self.clone();
-            let parent = parent.to_owned();
-            tokio::spawn(async move {
-                let store = server.0.store.clone();
-                let settled = match executor.execute(plan).await {
-                    Ok(execution) => {
-                        complete_delivery(&store, &delivery, compact(&execution, &display)).await
-                    }
-                    Err(error) => settle_failed(&store, &delivery, &error.to_string()).await,
-                };
-                if let Err(error) = settled {
-                    tracing::warn!(%error, batch = %delivery.workflow_id, "Could not keep a background batch's result");
-                }
-                server.deliver_batches(&parent).await;
-            });
+            self.run_in_background(parent, delivery, display, executor, plan, None);
             return Ok(handle);
         }
         let execution = executor.execute(plan);
@@ -1973,6 +1976,133 @@ impl Server {
                 Err(error.to_string())
             }
         }
+    }
+
+    /// What runs a batch of `parent`: its tasks' delegator, the recorder of
+    /// their attempts, and the executor over both.
+    #[allow(clippy::too_many_arguments)]
+    fn batch_executor(
+        &self,
+        project: &str,
+        root: &str,
+        parent: &str,
+        workflow: &str,
+        registry: CapabilityRegistry,
+        host: DelegationHostPolicy,
+        generation: Option<i64>,
+    ) -> (Arc<Delegator>, Arc<Recorder>, DelegationExecutor) {
+        let delegator = Arc::new(Delegator {
+            server: self.clone(),
+            project: project.into(),
+            root: root.into(),
+            parent: parent.into(),
+            active: Mutex::new(HashMap::new()),
+        });
+        let recorder = Arc::new(Recorder {
+            store: self.0.store.clone(),
+            attempts: Default::default(),
+            claimed: AtomicBool::new(false),
+            generation,
+        });
+        let executor = DelegationExecutor::new(delegator.clone())
+            .with_observer(recorder.clone())
+            .with_lineage(AgentDelegationLineage {
+                root_workflow_id: workflow.into(),
+                parent_attempt_id: None,
+                depth: 1,
+            })
+            .with_dynamic_policy(registry, host);
+        (delegator, recorder, executor)
+    }
+
+    /// Runs a batch after the turn; its result is delivered to `parent`.
+    /// With `completed`, those tasks keep their earlier results.
+    fn run_in_background(
+        &self,
+        parent: &str,
+        delivery: AgentWorkflowDelivery,
+        display: HashMap<String, String>,
+        executor: DelegationExecutor,
+        plan: DelegationPlan,
+        completed: Option<Vec<wisp_core::DelegationStepExecution>>,
+    ) {
+        let server = self.clone();
+        let parent = parent.to_owned();
+        tokio::spawn(async move {
+            let store = server.0.store.clone();
+            let executed = match completed {
+                Some(completed) => executor.execute_with_completed_steps(plan, completed).await,
+                None => executor.execute(plan).await,
+            };
+            let settled = match executed {
+                Ok(execution) => {
+                    complete_delivery(&store, &delivery, compact(&execution, &display)).await
+                }
+                Err(error) => settle_failed(&store, &delivery, &error.to_string()).await,
+            };
+            if let Err(error) = settled {
+                tracing::warn!(%error, batch = %delivery.workflow_id, "Could not keep a background batch's result");
+            }
+            server.deliver_batches(&parent).await;
+        });
+    }
+
+    /// Runs a failed or stopped batch of `session` again, in the
+    /// background: tasks that succeeded keep their results, the others run
+    /// anew, and the result is delivered to the conversation, whose agent
+    /// is resumed to sum it up.
+    pub async fn retry_delegated_batch(&self, session: &str, batch: &str) -> anyhow::Result<()> {
+        let store = &self.0.store;
+        let workflow = store
+            .get_agent_workflow(batch)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("The batch no longer exists"))?;
+        anyhow::ensure!(
+            workflow.frame_id.as_deref() == Some(session),
+            "The batch was not started from this conversation"
+        );
+        anyhow::ensure!(
+            matches!(
+                workflow.status,
+                AgentWorkflowStatus::Failed | AgentWorkflowStatus::Cancelled
+            ),
+            "Only a batch that failed or was stopped can be run again"
+        );
+        let plan: DelegationPlan = serde_json::from_str(&workflow.plan_json)?;
+        let (registry, host) = self
+            .delegation_policy(session)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        registry.validate_resolved_plan(&plan, &host).map_err(|_| {
+            anyhow::anyhow!(
+                "The models or tools changed since this batch was planned; ask the agent to delegate it again"
+            )
+        })?;
+        let completed = successful_steps(store, batch).await?;
+        let root = self.project_root(&workflow.project_id).await?;
+        anyhow::ensure!(
+            store
+                .transition_agent_workflow_status(
+                    batch,
+                    workflow.status,
+                    AgentWorkflowStatus::Approved
+                )
+                .await?,
+            "The batch changed meanwhile; try again"
+        );
+        let delivery = store.create_agent_workflow_delivery(batch, true).await?;
+        let display = display_task_ids(&plan);
+        let (_, _, executor) = self.batch_executor(
+            &workflow.project_id,
+            &root,
+            session,
+            batch,
+            registry,
+            host,
+            Some(delivery.generation),
+        );
+        self.run_in_background(session, delivery, display, executor, plan, Some(completed));
+        Ok(())
     }
 
     /// The latest full result of one task of a batch `parent` started.
@@ -2480,7 +2610,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_background_batch_the_app_closed_on_is_settled_and_delivered() {
+    async fn a_batch_the_app_closed_on_is_settled_delivered_and_run_again() {
         let temp = tempfile::tempdir().unwrap();
         let server = Server::open_with_models(
             crate::tests::config(temp.path()),
@@ -2566,6 +2696,39 @@ mod tests {
                 .count()
         };
         assert_eq!(count(&again), 1);
+
+        // Run again, it does the task and delivers a second result.
+        assert!(server.retry_delegated_batch("other", "wf-1").await.is_err());
+        server.retry_delegated_batch(&parent, "wf-1").await.unwrap();
+        let batches = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let batches = server
+                    .delegated_batches(crate::PROJECT, &parent)
+                    .await
+                    .unwrap();
+                let delivered = count(&store.load_messages(&parent).await.unwrap());
+                if batches[0].status == "succeeded"
+                    && delivered == 2
+                    && !server.session(&parent).live.lock().unwrap().running
+                {
+                    return batches;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("the rerun must succeed and be delivered");
+        let task = &batches[0].tasks[0];
+        assert_eq!(task.status, "succeeded");
+        assert_eq!(task.summary.as_deref(), Some("Saved result"));
+        assert!(task.conversation.is_some());
+        // Only what failed or was stopped runs again.
+        let refused = server
+            .retry_delegated_batch(&parent, "wf-1")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("failed or was stopped"), "{refused}");
         server.shutdown().await;
     }
 }

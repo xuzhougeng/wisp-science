@@ -98,6 +98,11 @@ pub fn task_status(status: &str) -> (&'static str, Tone) {
     }
 }
 
+/// Whether a batch can be run again: one that failed or was stopped.
+pub fn can_retry(batch: &wisp_server::desktop::DelegatedBatch) -> bool {
+    matches!(batch.status.as_str(), "failed" | "cancelled")
+}
+
 /// How far a batch has come: its tasks that finished, of all of them.
 pub fn batch_progress(batch: &wisp_server::desktop::DelegatedBatch) -> String {
     let done = batch
@@ -164,6 +169,14 @@ mod tests {
             ],
         };
         assert!(batch.running());
+        assert!(!can_retry(&batch));
+        for (status, again) in [("failed", true), ("cancelled", true), ("succeeded", false)] {
+            let ended = DelegatedBatch {
+                status: status.into(),
+                ..batch.clone()
+            };
+            assert_eq!(can_retry(&ended), again, "{status}");
+        }
         assert_eq!(batch_progress(&batch), "1 of 3 tasks done");
         assert_eq!(batch_status("running"), ("Running", Tone::Active));
         assert_eq!(batch_status("cancelled"), ("Stopped", Tone::Neutral));

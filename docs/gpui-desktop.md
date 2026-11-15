@@ -339,10 +339,14 @@ Limits of this slice:
   The window follows a turn the host started in the open conversation by
   itself.
   Batches are not offered inside an exploration, and a frozen project
-  lets only read-only tasks run. Not ported: nested delegation,
-  specialists, isolated worktrees, retrying a batch, ACP executors,
-  literature and web research capabilities, and method-search run
-  activities.
+  lets only read-only tasks run. A batch that failed or was stopped can
+  be run again from its card: it is checked against the models and tools
+  there are now (and refused if they changed), tasks that succeeded keep
+  their results, the others run again in the background, and the result
+  is delivered like a background batch's. Not ported: nested
+  delegation, specialists, isolated worktrees, changing a task's budget
+  before running it again, ACP executors, literature and web research
+  capabilities, and method-search run activities.
 - Explorations follow the WebView's `exploration_commands.rs`,
   `exploration_promotion.rs` and `exploration_workspace.rs`, whose
   services and tests are carried over. The first candidate of a round
@@ -603,8 +607,9 @@ Limits of this slice:
   tasks are done, its goal, and per task its status, instruction, what
   it waits for, its summary or error, what it used, and a button that
   opens the conversation it worked in. A running batch has Stop, which
-  stops it and its tasks; the list refreshes while the conversation's
-  turn runs and when it ends. Below them come the helpers, a reading of
+  stops it and its tasks, and one that failed or was stopped has Run
+  again; the list refreshes while the conversation's turn or any of its
+  batches runs, and when the turn ends. Below them come the helpers, a reading of
   the loaded transcript like the Notebook: the `explore` calls from the
   messages that are loaded, with a helper's findings once it has
   reported back, not its steps along the way.
@@ -1866,6 +1871,9 @@ Ask for the same work in the background: the turn ends at once saying
 it started; a little later a delegate_tasks_completion row appears in
 the conversation and the agent answers again without a new message of
 yours.
+On the batch you stopped press Run again: its tasks that had finished
+stay Done, the others run, and its result arrives in the conversation
+the same way.
 In a project with a file `notes.txt`, ask something and wait for the
 answer; on it press Start an exploration from here, keep the offered
 name and Start: a conversation opens with the same history and a bar

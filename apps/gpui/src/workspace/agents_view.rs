@@ -33,13 +33,48 @@ impl Workspace {
         let reply = self.backend.delegated_batches(project, session);
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
-            let _ = this.update(cx, |this, cx| {
+            let _ = this.update_in(cx, |this, window, cx| {
                 if !this.state.current(&selection) || this.batches_request != request {
                     return;
                 }
                 // A batch that cannot be read is left out, not an error of
                 // the conversation's.
                 this.batches = result.unwrap_or_default();
+                // A batch may run on after the turn: look again while one
+                // does and the tab is showing.
+                if this.agents_visible() && this.batches.iter().any(DelegatedBatch::running) {
+                    cx.spawn_in(window, async move |this, cx| {
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_secs(2))
+                            .await;
+                        let _ = this.update_in(cx, |this, window, cx| {
+                            if this.batches_request == request {
+                                this.load_batches(window, cx);
+                            }
+                        });
+                    })
+                    .detach();
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Runs a failed or stopped batch again; its result comes back to the
+    /// conversation.
+    fn retry_batch(&mut self, batch: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(session) = self.state.session.clone() else {
+            return;
+        };
+        let reply = self.backend.retry_delegated_batch(session, batch);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if let Err(error) = result {
+                    this.error = Some(error);
+                }
+                this.load_batches(window, cx);
                 cx.notify();
             });
         })
@@ -80,6 +115,18 @@ impl Workspace {
                     .child(agents::batch_progress(batch)),
             )
             .child(div().flex_1());
+        if agents::can_retry(batch) {
+            let id = batch.id.clone();
+            head = head.child(
+                Button::new(("batch-retry", index))
+                    .label(tr("Run again"))
+                    .xsmall()
+                    .ghost()
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.retry_batch(id.clone(), window, cx);
+                    })),
+            );
+        }
         if batch.running() {
             let id = batch.id.clone();
             head = head.child(

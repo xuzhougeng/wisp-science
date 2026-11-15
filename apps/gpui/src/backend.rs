@@ -1511,6 +1511,11 @@ impl Backend {
         self.local(move |host| async move { host.delegated_batches(&project, &session).await })
     }
 
+    /// Runs a failed or stopped batch of the conversation again.
+    pub fn retry_delegated_batch(&self, session: String, batch: String) -> Reply<()> {
+        self.local(move |host| async move { host.retry_delegated_batch(&session, &batch).await })
+    }
+
     /// Stops a running batch of the conversation and the tasks in it.
     pub fn cancel_delegated_batch(&self, session: String, batch: String) -> Reply<()> {
         self.local(move |host| async move { host.cancel_delegated_batch(&session, &batch).await })

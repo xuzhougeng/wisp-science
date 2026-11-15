@@ -1710,4 +1710,5 @@ pub const ZH: &[(&str, &str)] = &[
     ("After {}", "在 {} 之后"),
     ("Delegated tasks", "委派的任务"),
     ("Open its conversation", "打开它的会话"),
+    ("Run again", "再次运行"),
 ];
