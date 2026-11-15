@@ -4899,6 +4899,40 @@ async fn orphan_file_sweep_reclaims_only_expired_unreferenced_entries() {
 }
 
 #[tokio::test]
+async fn a_started_method_search_waits_for_its_coordinator_instead_of_being_lost() {
+    let tmp = std::env::temp_dir().join(format!("wisp_search_wait_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let store = wisp_store::Store::open(&tmp.join("wisp.sqlite"))
+        .await
+        .unwrap();
+    store
+        .create_project("p", "proj", &tmp.to_string_lossy())
+        .await
+        .unwrap();
+    // Started, and not yet taken by its coordinator.
+    let mut waiting = wisp_store::RunRecord::new("search", "p", "local", "Search", "method_search");
+    waiting.status = wisp_store::RunStatus::Submitted;
+    store.create_run(&waiting).await.unwrap();
+    // Running with no one holding it: its coordinator is gone.
+    let mut orphaned =
+        wisp_store::RunRecord::new("search-2", "p", "local", "Search", "method_search");
+    orphaned.status = wisp_store::RunStatus::Running;
+    store.create_run(&orphaned).await.unwrap();
+
+    let manager = RunManager::with_runner(Arc::new(ScriptedRunRunner::new(vec![])));
+    assert_eq!(manager.recover(&store).await.unwrap(), 1);
+    assert_eq!(
+        store.get_run("search").await.unwrap().unwrap().status,
+        wisp_store::RunStatus::Submitted
+    );
+    assert_eq!(
+        store.get_run("search-2").await.unwrap().unwrap().status,
+        wisp_store::RunStatus::Lost
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[tokio::test]
 async fn transfer_without_handle_fails_instead_of_lost_on_reconcile() {
     let tmp = std::env::temp_dir().join(format!("wisp_xfer_reclaim_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&tmp).unwrap();
