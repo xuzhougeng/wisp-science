@@ -539,9 +539,12 @@ fn allowed_tools(spec: &AgentSpec) -> Vec<String> {
             "read" | "search" | "grep" => !spec.permissions.paths.is_empty(),
             "write" | "edit" => spec.permissions.write && !reviewer,
             "view_image" => !spec.permissions.paths.is_empty() && !reviewer,
-            "run_in_context" | "get_run" | "cancel_run" | "python" | "r" => {
-                spec.permissions.execute && !reviewer
-            }
+            "run_in_context"
+            | "get_run"
+            | "cancel_run"
+            | "python"
+            | "r"
+            | "prepare_method_search" => spec.permissions.execute && !reviewer,
             _ => false,
         };
         if permitted && !allowed.iter().any(|kept| kept == name) {
@@ -3355,11 +3358,16 @@ mod tests {
             .map(|step| allowed_tools(&step.spec))
             .collect();
         assert_eq!(tools[0], ["read", "search", "grep"]);
-        for tool in ["run_in_context", "get_run", "cancel_run"] {
+        // Running code includes freezing a method search's contract.
+        for tool in [
+            "run_in_context",
+            "get_run",
+            "cancel_run",
+            "prepare_method_search",
+        ] {
             assert!(tools[1].iter().any(|kept| kept == tool), "{tools:?}");
         }
-        // This host has no method search, and a reviewer changes nothing.
-        assert!(!tools[1].iter().any(|kept| kept == "prepare_method_search"));
+        // A reviewer changes nothing.
         assert!(tools[2]
             .iter()
             .all(|tool| matches!(tool.as_str(), "read" | "search" | "grep")));

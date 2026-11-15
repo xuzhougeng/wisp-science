@@ -373,6 +373,15 @@ Limits of this slice:
   model, the other budget limits (tool calls, cost), ACP executors,
   literature and web research capabilities, and method-search run
   activities.
+- Method search follows the WebView's `method_search.rs`. Its first half
+  is here: `prepare_method_search`, offered to a conversation's agent and
+  to delegated tasks that may run code, freezes a Python target symbol,
+  its evaluator and inputs (and an optional final-verification file) as
+  artifact versions, runs the baseline the asked number of times with the
+  local Python and its `wisp_evaluate:` protocol, proves a candidate is
+  reachable with a failing sentinel, and returns the frozen spec and audit
+  report ids. The search itself (candidates proposed by the model,
+  evaluated, the best promoted) is not ported yet.
 - Explorations follow the WebView's `exploration_commands.rs`,
   `exploration_promotion.rs` and `exploration_workspace.rs`, whose
   services and tests are carried over. The first candidate of a round

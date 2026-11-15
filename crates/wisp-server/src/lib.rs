@@ -26,6 +26,7 @@ mod mandate_report;
 mod mandates;
 pub mod mcp;
 mod memory_tidy;
+mod method_search;
 mod model_view;
 mod network;
 mod origin;

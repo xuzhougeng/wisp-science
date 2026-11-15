@@ -448,6 +448,10 @@ pub async fn build(
         project.into(),
         Some(frame.into()),
     )));
+    // Freezing and auditing a method search's contract, as in the WebView.
+    agent.add_tool(Box::new(
+        crate::method_search::prepare::PrepareMethodSearchTool::new(store.clone(), project, frame),
+    ));
     agent.add_tool(Box::new(MonitorRunTool::new_in_scope(
         store.clone(),
         scope.clone(),
