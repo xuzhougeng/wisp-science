@@ -262,6 +262,8 @@ pub struct Workspace {
     /// where the last trashed entry went.
     file_naming: Option<crate::files::Naming>,
     file_name_input: Entity<InputState>,
+    /// The Files panel's field for finding a file by name.
+    file_search: Entity<InputState>,
     file_trashing: Option<String>,
     file_problem: Option<String>,
     file_notice: Option<String>,
@@ -764,6 +766,9 @@ impl Workspace {
         let find_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Find in this conversation…")));
         let file_name_input = cx.new(|cx| InputState::new(window, cx));
+        let file_search = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(tr("Search by name across the project…"))
+        });
         let aside_input = cx
             .new(|cx| InputState::new(window, cx).placeholder(tr("Ask about this conversation…")));
         let plan_feedback = cx.new(|cx| {
@@ -986,6 +991,11 @@ impl Workspace {
             cx.subscribe_in(&file_name_input, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::PressEnter { .. }) {
                     this.save_file_name(window, cx);
+                }
+            }),
+            cx.subscribe_in(&file_search, window, |this, _, event, window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.search_files_by_name(window, cx);
                 }
             }),
             cx.subscribe_in(&find_input, window, |this, _, event, _, cx| match event {
@@ -1218,6 +1228,7 @@ impl Workspace {
             journal_category: "progress",
             file_naming: None,
             file_name_input,
+            file_search,
             file_trashing: None,
             file_problem: None,
             file_notice: None,
@@ -2246,6 +2257,9 @@ impl Workspace {
         self.composer
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.search
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        // A name looked for in the project being left is not looked for here.
+        self.file_search
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.load_sessions(window, cx);
     }

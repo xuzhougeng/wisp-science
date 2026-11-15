@@ -95,6 +95,47 @@ pub struct FilesState {
     pub error: Option<String>,
     /// How folders are listed; kept when the project changes.
     pub sort: FileSort,
+    /// Files found by name across the project, while a name is typed.
+    pub search: NameSearch,
+}
+
+/// Files found by name across the project. Answers come back out of
+/// order, so each search carries a ticket and only the latest one counts.
+#[derive(Default)]
+pub struct NameSearch {
+    ticket: u64,
+    /// What is being looked for; empty when nothing is.
+    pub query: String,
+    /// The paths found for it, once they are back.
+    pub hits: Option<Vec<String>>,
+}
+
+/// Files listed for one search at most.
+pub const NAME_HITS: usize = 200;
+
+impl NameSearch {
+    /// Starts looking for `typed`. Returns the ticket and the name to look
+    /// for, or nothing when the field was emptied, which ends the search.
+    pub fn begin(&mut self, typed: &str) -> Option<(u64, String)> {
+        self.ticket += 1;
+        self.query = typed.trim().to_owned();
+        self.hits = None;
+        (!self.query.is_empty()).then(|| (self.ticket, self.query.clone()))
+    }
+
+    /// Takes the paths found by search `ticket`, if it is still the latest.
+    pub fn accept(&mut self, ticket: u64, hits: Vec<String>) -> bool {
+        if ticket != self.ticket || self.query.is_empty() {
+            return false;
+        }
+        self.hits = Some(hits);
+        true
+    }
+
+    /// Whether a search is showing in place of the folder.
+    pub fn active(&self) -> bool {
+        !self.query.is_empty()
+    }
 }
 
 impl FilesState {
@@ -1020,6 +1061,31 @@ mod tests {
             assert_eq!(FileSort::from_key(sort.key()), sort);
         }
         assert_eq!(FileSort::from_key("sideways"), FileSort::Name);
+    }
+
+    #[test]
+    fn a_name_search_keeps_only_its_latest_answer() {
+        let mut files = FilesState::default();
+        files.set_project(Some("a"));
+        let (first, query) = files.search.begin("  reads ").unwrap();
+        assert_eq!(query, "reads");
+        assert!(files.search.active());
+        let (second, _) = files.search.begin("reads.csv").unwrap();
+        // An answer to the earlier search arrives late and is not shown.
+        assert!(!files.search.accept(first, vec!["old.csv".into()]));
+        assert!(files.search.accept(second, vec!["data/reads.csv".into()]));
+        assert_eq!(
+            files.search.hits.as_deref(),
+            Some(&["data/reads.csv".to_string()][..])
+        );
+        // Emptied, the folder shows again and a late answer is dropped.
+        assert_eq!(files.search.begin(" "), None);
+        assert!(!files.search.active());
+        assert!(!files.search.accept(second, vec!["x".into()]));
+        // Another project starts without a search.
+        files.search.begin("reads");
+        files.set_project(Some("b"));
+        assert!(!files.search.active());
     }
 
     #[test]

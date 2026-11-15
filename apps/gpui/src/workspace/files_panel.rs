@@ -144,6 +144,94 @@ impl Workspace {
         .detach();
     }
 
+    /// Looks for files named like what is typed in the Files panel, after
+    /// a pause so fast typing costs one search.
+    pub(super) fn search_files_by_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let typed = self.file_search.read(cx).value().to_string();
+        let Some((ticket, query)) = self.files.search.begin(&typed) else {
+            cx.notify();
+            return;
+        };
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        let backend = self.backend.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(150))
+                .await;
+            let current = this
+                .update(cx, |this, _| this.files.search.query == query)
+                .unwrap_or(false);
+            if !current {
+                return;
+            }
+            let found = receive(backend.find_files(Some(project), query, files::NAME_HITS)).await;
+            let _ = this.update(cx, |this, cx| {
+                match found {
+                    Ok(found) => {
+                        let paths = found.into_iter().map(|hit| hit.path).collect();
+                        this.files.search.accept(ticket, paths);
+                    }
+                    Err(error) => this.files.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// One file found by name: its name, and the folder it is in.
+    fn file_hit_row(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+        let Some(path) = self
+            .files
+            .search
+            .hits
+            .as_ref()
+            .and_then(|hits| hits.get(index))
+            .cloned()
+        else {
+            return div().into_any_element();
+        };
+        let folder = files::parent(&path).unwrap_or_default();
+        let hover = cx.theme().list_hover;
+        div()
+            .id(("file-hit", index))
+            .h_flex()
+            .w_full()
+            .h(px(28.))
+            .px_3()
+            .gap_2()
+            .cursor_pointer()
+            .hover(move |style| style.bg(hover))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .max_w(px(180.))
+                    .truncate()
+                    .text_sm()
+                    .child(files::file_name(&path).to_owned()),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(if folder.is_empty() {
+                        tr("Project root").to_owned()
+                    } else {
+                        folder
+                    }),
+            )
+            .on_click(
+                cx.listener(move |this, _, window, cx| this.reveal_file(path.clone(), window, cx)),
+            )
+            .into_any_element()
+    }
+
     pub(super) fn reveal_file(
         &mut self,
         path: String,
@@ -1641,7 +1729,8 @@ impl Workspace {
                                     this.start_naming(Naming::File, window, cx)
                                 })),
                         ),
-                ),
+                )
+                .child(Input::new(&self.file_search).small().cleanable(true)),
         );
         if let Some(problem) = &self.file_problem {
             panel = panel.child(div().px_3().pt_2().child(error_banner(problem, cx)));
@@ -1746,6 +1835,37 @@ impl Workspace {
                     .text_color(cx.theme().danger)
                     .child(crate::i18n::host(error)),
             );
+        }
+        // While a name is looked for, what was found stands in for the folder.
+        if self.files.search.active() {
+            let hits = self.files.search.hits.as_ref().map_or(0, Vec::len);
+            let hint = match &self.files.search.hits {
+                None => Some(tr("Searching…")),
+                Some(found) if found.is_empty() => {
+                    Some(tr("No file in this project has that name."))
+                }
+                Some(_) => None,
+            };
+            if let Some(hint) = hint {
+                return panel
+                    .child(div().p_3().text_sm().text_color(muted).child(hint))
+                    .into_any_element();
+            }
+            return panel
+                .child(
+                    uniform_list(
+                        "file-hits",
+                        hits,
+                        cx.processor(|this, range: Range<usize>, _window, cx| {
+                            range
+                                .map(|index| this.file_hit_row(index, cx))
+                                .collect::<Vec<_>>()
+                        }),
+                    )
+                    .flex_1()
+                    .min_h_0(),
+                )
+                .into_any_element();
         }
         let hint = if self.files.loading && self.files.entries.is_empty() {
             Some(tr("Loading…"))
