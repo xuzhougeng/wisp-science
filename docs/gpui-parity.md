@@ -72,7 +72,7 @@ to find in the running app.
 
 | Feature | WebView | GPUI | Host |
 | --- | --- | --- | --- |
-| Back to home, project name, collapse sidebar | Yes | Partial: no collapse | ui |
+| Back to home, project name, collapse sidebar | Yes | Yes: the sidebar hides and comes back with a button by the conversation's title or ⌘B, and stays as it was left | ui |
 | New conversation [新建会话, ⌘N] | Yes | Done | served |
 | Search conversations by title and message text | Yes | Done | served |
 | Conversation list with status | Yes | Done | served |
@@ -226,7 +226,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Desktop notifications and sound | Yes | Partial: for the open conversation, when a turn ends or a tool waits for approval while the window is in the background; one fixed sound; no notification on Windows, none for conversations that are not open | ui |
 | Update check and install | Yes | Partial: Check for updates in Settings says whether a newer release exists and opens the release page; no automatic check and no in-app install | tauri |
 | Several windows | Yes | Partial: any number on the same host, each with its own page and conversation; not restored at the next start | ui |
-| Keyboard shortcuts (⌘N, ⌘K, ⌘B, ⌘F, ⌘⇧F, ⌘P, ⌘,) | Yes | Partial: ⌘K, ⌘N and ⌘, are wired and unit-tested, not yet pressed in the running app | ui |
+| Keyboard shortcuts (⌘N, ⌘K, ⌘B, ⌘F, ⌘⇧F, ⌘P, ⌘,) | Yes | Partial: ⌘N, ⌘K, ⌘B, ⌘F and ⌘, (Ctrl off macOS); no ⌘⇧F or ⌘P | ui |
 | Import existing WebView data | n/a | Partial: project by project, by exporting an archive there and importing it here; settings, keys and favorites are not carried over | store |
 
 ## 10. Also in the WebView

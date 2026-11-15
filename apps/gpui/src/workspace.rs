@@ -286,6 +286,8 @@ pub struct Workspace {
     launch: crate::settings::Launch,
     /// Which key sends the composer's text.
     send_key: crate::settings::SendKey,
+    /// Whether the project's sidebar is put away, for more room.
+    sidebar_hidden: bool,
     /// The Settings page that is showing.
     settings_section: crate::settings::Section,
     /// How turns run and new conversations start; `None` until read.
@@ -855,6 +857,7 @@ impl Workspace {
             update: None,
             launch: Default::default(),
             send_key: Default::default(),
+            sidebar_hidden: false,
             settings_section: Default::default(),
             turn_defaults: None,
             review_model: String::new(),
@@ -1152,6 +1155,14 @@ impl Workspace {
                     return false;
                 }
                 self.create_session(window, cx);
+                true
+            }
+            Shortcut::Sidebar => {
+                // The sidebar belongs to a project's page.
+                if self.screen != Screen::Project || self.layers.contains(Layer::Settings) {
+                    return false;
+                }
+                self.toggle_sidebar(window, cx);
                 true
             }
         }
@@ -2730,11 +2741,11 @@ impl Render for Workspace {
             match self.screen {
                 Screen::Home => root.child(self.render_home(cx)),
                 Screen::Project => {
-                    let mut row = div()
-                        .h_flex()
-                        .size_full()
-                        .child(self.render_sidebar(cx))
-                        .child(self.render_conversation(cx));
+                    let mut row = div().h_flex().size_full();
+                    if !self.sidebar_hidden {
+                        row = row.child(self.render_sidebar(cx));
+                    }
+                    row = row.child(self.render_conversation(cx));
                     if self.layers.contains(Layer::FilesPanel) {
                         row = row.child(self.render_files(window, cx));
                     }

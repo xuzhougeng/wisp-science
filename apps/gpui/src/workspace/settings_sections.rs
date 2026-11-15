@@ -25,6 +25,7 @@ const APPEARANCE: &str = "appearance";
 const LANGUAGE: &str = "language";
 const LAUNCH: &str = "launch";
 const SEND_KEY: &str = "send_key";
+const SIDEBAR: &str = "sidebar";
 const NOTIFY: &str = "notifications";
 const NOTIFY_SOUND: &str = "notification_sound";
 const LAST_OPEN: &str = "last_open";
@@ -668,23 +669,26 @@ impl Workspace {
             });
         })
         .detach();
-        let (appearance, launch, place, send_key) = (
+        let (appearance, launch, place, send_key, sidebar) = (
             self.backend.preference(APPEARANCE),
             self.backend.preference(LAUNCH),
             self.backend.preference(LAST_OPEN),
             self.backend.preference(SEND_KEY),
+            self.backend.preference(SIDEBAR),
         );
         cx.spawn_in(window, async move |this, cx| {
             let saved = |reply| async move { receive(reply).await.ok().flatten() };
-            let (appearance, launch, place, send_key) = (
+            let (appearance, launch, place, send_key, sidebar) = (
                 saved(appearance).await,
                 saved(launch).await,
                 saved(place).await,
                 saved(send_key).await,
+                saved(sidebar).await,
             );
             let _ = this.update_in(cx, |this, window, cx| {
                 this.send_key =
                     settings::SendKey::from_key(send_key.as_deref().unwrap_or_default());
+                this.sidebar_hidden = sidebar.as_deref() == Some("hidden");
                 this.word_fields(window, cx);
                 this.appearance =
                     crate::theme::Appearance::from_key(appearance.as_deref().unwrap_or_default());
@@ -722,6 +726,19 @@ impl Workspace {
     }
 
     /// Saves one choice of the General page; a failure is shown there.
+    /// Puts the project's sidebar away or brings it back, and remembers
+    /// which for the next start.
+    pub(super) fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sidebar_hidden = !self.sidebar_hidden;
+        let value = if self.sidebar_hidden {
+            "hidden"
+        } else {
+            "shown"
+        };
+        self.save_general(SIDEBAR, value.into(), window, cx);
+        cx.notify();
+    }
+
     fn save_general(
         &mut self,
         name: &'static str,

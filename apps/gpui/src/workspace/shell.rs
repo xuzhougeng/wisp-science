@@ -345,6 +345,17 @@ impl Workspace {
                     .child(snapshot.model_id.clone()),
             );
         }
+        let sidebar = icon_button(
+            "toggle-sidebar",
+            "panel-left",
+            if self.sidebar_hidden {
+                "Show the sidebar"
+            } else {
+                "Hide the sidebar"
+            },
+        )
+        .selected(!self.sidebar_hidden)
+        .on_click(cx.listener(|this, _, window, cx| this.toggle_sidebar(window, cx)));
         div()
             .h_flex()
             .gap_3()
@@ -353,6 +364,7 @@ impl Workspace {
             .flex_shrink_0()
             .border_b_1()
             .border_color(cx.theme().border)
+            .child(sidebar)
             .child(heading)
             .child(
                 div()

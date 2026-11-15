@@ -263,6 +263,7 @@ pub enum Shortcut {
     Settings,
     Palette,
     Find,
+    Sidebar,
 }
 
 /// `primary` is Cmd on macOS and Ctrl elsewhere, held alone: adding Shift,
@@ -276,6 +277,7 @@ pub fn shortcut(key: &str, primary: bool, others: bool) -> Option<Shortcut> {
         "," => Some(Shortcut::Settings),
         "k" => Some(Shortcut::Palette),
         "f" => Some(Shortcut::Find),
+        "b" => Some(Shortcut::Sidebar),
         _ => None,
     }
 }
@@ -348,6 +350,8 @@ mod tests {
         assert_eq!(shortcut("n", true, true), None);
         assert_eq!(shortcut("k", true, false), Some(Shortcut::Palette));
         assert_eq!(shortcut("f", true, false), Some(Shortcut::Find));
+        assert_eq!(shortcut("b", true, false), Some(Shortcut::Sidebar));
+        assert_eq!(shortcut("b", false, false), None);
         // With Shift it is someone else's chord.
         assert_eq!(shortcut("f", true, true), None);
         assert_eq!(shortcut("j", true, false), None);

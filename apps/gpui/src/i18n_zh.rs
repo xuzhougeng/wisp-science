@@ -1216,4 +1216,7 @@ pub const ZH: &[(&str, &str)] = &[
     ("The key that sends your message. When Return sends, Shift+Return starts a new line; when ⌘Return sends, Return does. While an input method is composing, Return still goes to it.", "发送消息所用的键。回车发送时，Shift+回车换行；⌘回车发送时，回车换行。输入法正在输入时，回车仍交给输入法。"),
     ("The key that sends your message. When Enter sends, Shift+Enter starts a new line; when Ctrl+Enter sends, Enter does. While an input method is composing, Enter still goes to it.", "发送消息所用的键。回车发送时，Shift+回车换行；Ctrl+回车发送时，回车换行。输入法正在输入时，回车仍交给输入法。"),
     ("Send with", "发送键"),
+    // The sidebar.
+    ("Show the sidebar", "显示侧边栏"),
+    ("Hide the sidebar", "隐藏侧边栏"),
 ];

@@ -143,6 +143,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Terminal | The Files tab's terminal button (or the command palette) opens the system's terminal in the folder being browsed |
 | Updates | Settings, General, has Check for updates: it says whether a newer release has been published and opens the release page |
 | Tabs | The conversations you open in a window line up as tabs above the conversation, across projects; click one to go back to it, close one to drop it from the strip |
+| Sidebar | The project's sidebar hides for more room and comes back with the button left of the conversation's title or Cmd/Ctrl+B; it stays as it was left, across restarts |
 | Notifications | When a turn ends or a tool waits for approval while Wisp is in the background, a system notification is posted and, if chosen, a sound is played (Settings, General) |
 | Language | Settings, General, chooses the interface language: System (Chinese on a Chinese system, English otherwise), English or 中文 |
 | Delete a project's folder | Removing a project offers Delete folder too: after you type the project's name, the project is removed and its folder is deleted with every file in it |
@@ -1048,6 +1049,9 @@ Start a slow turn, switch to another app and wait: a notification names
 the conversation when the turn ends, and another when a tool asks for
 approval. Stay in Wisp and confirm nothing is posted. Turn Notify me off
 and Play a sound on in Settings, General: only the sound comes.
+In a project, press the button left of the conversation's title: the
+sidebar goes and the conversation fills the window; press Cmd+B and it
+comes back, again and it goes. Quit and start again: it is as it was left.
 In a conversation, type a line, press Shift+Return and type another: the
 composer holds two lines; press Return and both are sent as one message.
 In Settings, General, choose ⌘Return under Send with: the empty composer
