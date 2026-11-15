@@ -200,6 +200,36 @@ impl Workspace {
             )
     }
 
+    /// Approves a drafted workflow, which then runs, or throws it away.
+    fn decide_batch(
+        &mut self,
+        batch: String,
+        approve: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.state.session.clone() else {
+            return;
+        };
+        self.error = None;
+        let reply = if approve {
+            self.backend.approve_delegated_batch(session, batch)
+        } else {
+            self.backend.discard_delegated_batch(session, batch)
+        };
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if let Err(error) = result {
+                    this.error = Some(error);
+                }
+                this.load_batches(window, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Stops a running batch and every task in it.
     fn stop_batch(&mut self, batch: String, window: &mut Window, cx: &mut Context<Self>) {
         let Some(session) = self.state.session.clone() else {
@@ -282,6 +312,28 @@ impl Workspace {
                     .child(agents::batch_progress(batch)),
             )
             .child(div().flex_1());
+        if agents::awaits_approval(batch) {
+            let (approve, discard) = (batch.id.clone(), batch.id.clone());
+            head = head
+                .child(
+                    Button::new(("batch-discard", index))
+                        .label(tr("Discard"))
+                        .xsmall()
+                        .ghost()
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.decide_batch(discard.clone(), false, window, cx);
+                        })),
+                )
+                .child(
+                    Button::new(("batch-approve", index))
+                        .label(tr("Approve and run"))
+                        .xsmall()
+                        .primary()
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.decide_batch(approve.clone(), true, window, cx);
+                        })),
+                );
+        }
         if agents::can_retry(batch) {
             let id = batch.id.clone();
             head = head.child(
@@ -367,6 +419,13 @@ impl Workspace {
                         .text_color(muted)
                         .child(fill(tr("After {}"), &[&task.depends_on.join(", ")])),
                 );
+            }
+            // What is being approved: what each task's agent may do.
+            if agents::awaits_approval(batch) {
+                row = row.child(div().text_xs().text_color(muted).child(fill(
+                    tr("May: {}"),
+                    &[&crate::workflows::capability_line(&task.capabilities)],
+                )));
             }
             if let Some(summary) = &task.summary {
                 row = row.child(div().text_xs().child(summary.clone()));

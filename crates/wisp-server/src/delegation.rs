@@ -118,6 +118,10 @@ struct TaskArgs {
 /// the preparing task returned.
 const SPEC_POINTER: &str = "method_search_spec_artifact_version_id";
 
+/// What a batch the researcher launched (a workflow run as agents) is
+/// recorded as, apart from the batches agents delegate.
+const LAUNCHED: &str = "Workflow run as agents";
+
 /// A method search step, as the WebView's `RunActivityProposal`.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -192,6 +196,9 @@ pub struct DelegatedBatch {
     /// Started by a task of another batch: it runs again only with that
     /// task.
     pub nested: bool,
+    /// A workflow the researcher ran as agents, rather than a batch an
+    /// agent delegated: while a draft, its card approves or discards it.
+    pub launched: bool,
 }
 
 impl DelegatedBatch {
@@ -3182,6 +3189,124 @@ impl Server {
         Ok(())
     }
 
+    /// Plans a batch the researcher launched in `session` (a workflow run
+    /// as agents) and keeps it in Draft for them to approve, as the
+    /// WebView's `create_agent_workflow` does. Without `review`, a batch
+    /// that asks for no approval starts at once. Returns the batch and
+    /// whether it started.
+    pub(crate) async fn draft_batch(
+        &self,
+        project: &str,
+        session: &str,
+        args: Value,
+        review: bool,
+    ) -> anyhow::Result<(String, bool)> {
+        let store = &self.0.store;
+        let batch: BatchArgs = serde_json::from_value(args)
+            .map_err(|error| anyhow::anyhow!("The workflow's tasks: {error}"))?;
+        validate(&batch).map_err(anyhow::Error::msg)?;
+        let (registry, host) = self
+            .delegation_policy(session)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        let workflow = uuid::Uuid::new_v4().to_string();
+        let experts = crate::experts::list(store).await;
+        let local = self.local_context_revision().await;
+        let plan = resolve(
+            workflow.clone(),
+            batch,
+            &registry,
+            &host,
+            &experts,
+            local.as_deref(),
+        )
+        .map_err(anyhow::Error::msg)?;
+        let root = self.project_root(project).await?;
+        let (mut record, steps) = records(&plan, project, &root, session, &host)?;
+        record.requires_confirmation = review || plan.requires_confirmation;
+        record.description = LAUNCHED.into();
+        store.create_agent_workflow_plan(&record, &steps).await?;
+        if record.requires_confirmation {
+            return Ok((workflow, false));
+        }
+        self.approve_delegated_batch(session, &workflow).await?;
+        Ok((workflow, true))
+    }
+
+    /// Approves a drafted batch of `session` and runs it in the
+    /// background; its result is delivered to the conversation.
+    pub async fn approve_delegated_batch(&self, session: &str, batch: &str) -> anyhow::Result<()> {
+        let store = &self.0.store;
+        let workflow = self.drafted_batch(session, batch).await?;
+        let plan: DelegationPlan = serde_json::from_str(&workflow.plan_json)?;
+        let (registry, host) = self
+            .delegation_policy(session)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        registry.validate_resolved_plan(&plan, &host).map_err(|_| {
+            anyhow::anyhow!(
+                "The models or tools changed since this batch was drafted; draft it again"
+            )
+        })?;
+        anyhow::ensure!(
+            store
+                .approve_agent_workflow_plan(batch, workflow.version)
+                .await?,
+            "The batch changed meanwhile; try again"
+        );
+        let root = self.project_root(&workflow.project_id).await?;
+        let display = display_task_ids(&plan);
+        let (_, _, executor) = self.batch_executor(
+            &workflow.project_id,
+            &root,
+            session,
+            batch,
+            registry,
+            host,
+            None,
+            None,
+        );
+        let delivery = store.create_agent_workflow_delivery(batch, true).await?;
+        self.run_in_background(session, delivery, display, executor, plan, None);
+        Ok(())
+    }
+
+    /// Throws away a drafted batch of `session`, which never ran.
+    pub async fn discard_delegated_batch(&self, session: &str, batch: &str) -> anyhow::Result<()> {
+        self.drafted_batch(session, batch).await?;
+        anyhow::ensure!(
+            self.0.store.delete_agent_workflow(batch).await?,
+            "The batch is no longer there"
+        );
+        Ok(())
+    }
+
+    /// A batch of `session` that waits in Draft.
+    async fn drafted_batch(
+        &self,
+        session: &str,
+        batch: &str,
+    ) -> anyhow::Result<wisp_store::AgentWorkflow> {
+        let workflow = self
+            .0
+            .store
+            .get_agent_workflow(batch)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("The batch no longer exists"))?;
+        anyhow::ensure!(
+            workflow.frame_id.as_deref() == Some(session),
+            "The batch was not started from this conversation"
+        );
+        // An agent's own batch is approved on its plan card instead.
+        anyhow::ensure!(
+            workflow.status == AgentWorkflowStatus::Draft
+                && workflow.depth == 0
+                && workflow.description == LAUNCHED,
+            "Only a workflow that waits for approval can be approved or discarded"
+        );
+        Ok(workflow)
+    }
+
     /// The latest full result of one task of a batch `parent` started.
     pub(crate) async fn delegated_result(
         &self,
@@ -3316,6 +3441,7 @@ impl Server {
                 updated_at: workflow.updated_at,
                 tasks,
                 nested: workflow.depth > 0,
+                launched: workflow.description == LAUNCHED,
             });
         }
         batches.sort_by(|left, right| right.created_at.cmp(&left.created_at));

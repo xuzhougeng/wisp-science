@@ -1,5 +1,6 @@
 //! The Workflows page of Settings: templates of a goal broken into tasks,
-//! each run as one conversation of the open project.
+//! run as one conversation of the open project, or as agents, one per
+//! task, after the researcher approves them.
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
@@ -7,12 +8,15 @@ use gpui_component::{
     button::{Button, ButtonVariants},
     input::{Input, InputState},
 };
-use wisp_server::desktop::{WORKFLOW_TASK_LIMIT, Workflow, WorkflowTask};
+use wisp_server::desktop::{
+    WORKFLOW_CAPABILITIES, WORKFLOW_TASK_LIMIT, Workflow, WorkflowApproval, WorkflowTask,
+};
 
 use super::Workspace;
 use crate::{
     backend::{Reply, receive},
     layers::Layer,
+    panel::PanelTab,
     workflows,
 };
 
@@ -22,6 +26,8 @@ pub(super) struct TaskDraft {
     instructions: Entity<InputState>,
     /// The earlier tasks it needs, by their place in the list.
     after: Vec<usize>,
+    /// What its agent may do when the workflow runs as agents.
+    capabilities: Vec<String>,
 }
 
 impl Workspace {
@@ -87,6 +93,7 @@ impl Workspace {
             title: field(&task.title, false, window, cx),
             instructions: field(&task.instructions, true, window, cx),
             after: task.after.clone(),
+            capabilities: task.capabilities.clone(),
         }
     }
 
@@ -114,6 +121,7 @@ impl Workspace {
             .iter()
             .map(|task| self.task_draft(task, window, cx))
             .collect();
+        self.workflow_approval = shown.approval;
         self.workflow_fields[0].update(cx, |input, cx| input.focus(window, cx));
         cx.notify();
     }
@@ -130,6 +138,7 @@ impl Workspace {
                 title: draft.title.read(cx).value().to_string(),
                 instructions: draft.instructions.read(cx).value().to_string(),
                 after: draft.after.clone(),
+                capabilities: draft.capabilities.clone(),
             })
             .collect();
         let reply = self.backend.save_workflow(Workflow {
@@ -137,8 +146,35 @@ impl Workspace {
             name,
             goal,
             tasks,
+            approval: self.workflow_approval,
         });
         self.change_workflows(reply, window, cx);
+    }
+
+    /// Drafts a workflow as agents in the open project and shows its
+    /// conversation with the Agents tab, where it is approved or discarded
+    /// (or already running, when it asked for no approval).
+    fn run_workflow_as_agents(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        self.settings_error = None;
+        let reply = self.backend.draft_workflow(project.clone(), id);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(drafted) => {
+                        this.close_settings(window, cx);
+                        this.open_session(project, drafted.session, window, cx);
+                        this.show_panel_tab(PanelTab::Agents, window, cx);
+                    }
+                    Err(error) => this.settings_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn remove_workflow_task(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -206,7 +242,52 @@ impl Workspace {
                     .h(px(90.))
                     .child(Input::new(&self.workflow_fields[1]).h_full()),
             );
+        // How a run as agents is approved.
+        let mut approval = div()
+            .h_flex()
+            .flex_wrap()
+            .items_center()
+            .gap_1()
+            .child(label(tr("Run as agents:")));
+        for (number, choice) in [WorkflowApproval::ReviewAll, WorkflowApproval::AutoSafe]
+            .into_iter()
+            .enumerate()
+        {
+            approval = approval.child(
+                Button::new(("workflow-approval", number))
+                    .label(workflows::approval_label(choice))
+                    .xsmall()
+                    .selected(self.workflow_approval == choice)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.workflow_approval = choice;
+                        cx.notify();
+                    })),
+            );
+        }
+        form = form.child(approval);
         for (index, draft) in self.workflow_tasks.iter().enumerate() {
+            // What its agent may do; none is reading the project.
+            let mut allowed = div()
+                .h_flex()
+                .flex_wrap()
+                .items_center()
+                .gap_1()
+                .child(label(tr("As an agent it may")));
+            for (number, capability) in WORKFLOW_CAPABILITIES.into_iter().enumerate() {
+                allowed = allowed.child(
+                    Button::new(("workflow-capability", index * 100 + number))
+                        .label(workflows::capability_label(capability))
+                        .xsmall()
+                        .selected(draft.capabilities.iter().any(|kept| kept == capability))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(draft) = this.workflow_tasks.get_mut(index) {
+                                draft.capabilities =
+                                    workflows::toggled_capability(&draft.capabilities, capability);
+                                cx.notify();
+                            }
+                        })),
+                );
+            }
             let mut needs = div().h_flex().flex_wrap().items_center().gap_1();
             if index > 0 {
                 needs = needs.child(label(tr("After task")));
@@ -259,7 +340,8 @@ impl Workspace {
                             .h(px(84.))
                             .child(Input::new(&draft.instructions).h_full()),
                     )
-                    .child(needs),
+                    .child(needs)
+                    .child(allowed),
             );
         }
         form.child(
@@ -356,15 +438,32 @@ impl Workspace {
                 );
         } else {
             let editing = workflow.clone();
-            let (run, removing) = (id.clone(), id.clone());
+            let (run, agents, removing) = (id.clone(), id.clone(), id.clone());
             actions = actions
                 .child(
                     Button::new(SharedString::from(format!("workflow-run-{id}")))
                         .label(tr("Run"))
                         .small()
                         .disabled(self.state.project.is_none())
+                        .tooltip(tr("Run it as one conversation"))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.run_workflow(run.clone(), window, cx)
+                        })),
+                )
+                .child(
+                    Button::new(SharedString::from(format!("workflow-agents-{id}")))
+                        .label(tr("Run as agents"))
+                        .small()
+                        .disabled(
+                            self.state.project.is_none()
+                                || workflow.tasks.len()
+                                    > wisp_server::desktop::WORKFLOW_AGENT_LIMIT,
+                        )
+                        .tooltip(tr(
+                            "Each task as its own agent, with what it may do; approved in the Agents tab",
+                        ))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.run_workflow_as_agents(agents.clone(), window, cx)
                         })),
                 )
                 .child(
@@ -413,7 +512,10 @@ impl Workspace {
                     "A workflow is a goal broken into tasks that say which earlier tasks they \
                      need. Run starts a conversation in the open project and gives the model \
                      the tasks stage by stage; it carries them out in that order itself, as \
-                     one conversation with the usual approvals.",
+                     one conversation with the usual approvals. Run as agents gives each task \
+                     an agent of its own that may do only what the task allows; the plan waits \
+                     in the new conversation's Agents tab to be approved, and the result comes \
+                     back to that conversation.",
                 )),
         );
         if self.state.project.is_none() {

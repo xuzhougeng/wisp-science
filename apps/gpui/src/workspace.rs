@@ -443,6 +443,8 @@ pub struct Workspace {
     workflow_fields: [Entity<InputState>; 2],
     /// The tasks of the workflow in the form.
     workflow_tasks: Vec<settings_workflows::TaskDraft>,
+    /// How the workflow in the form is approved when it runs as agents.
+    workflow_approval: wisp_server::desktop::WorkflowApproval,
     /// Remote web access as the host has it; `None` until it answered.
     remote_access: Option<wisp_server::desktop::RemoteAccess>,
     /// Relay address, relay token.
@@ -1237,6 +1239,7 @@ impl Workspace {
             workflow_editing: None,
             workflow_fields,
             workflow_tasks: Vec::new(),
+            workflow_approval: Default::default(),
             remote_access: None,
             remote_fields,
             remote_watch: 0,

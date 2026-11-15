@@ -157,7 +157,7 @@ folder registers its research root; it does not import existing desktop chats.
 | File actions | A previewed file's path can be copied, the file attached to the message, shown in the file manager or opened with the system's own application |
 | Slash commands | A message that is only a command does something instead of being sent: `/review`, `/trajectory`, `/context`, `/btw <question>`, `/plan`, `/save-as-skill`, `/skills`, `/files`, `/upload`, `/memo`, `/remember`, `/archive`, `/compact`, `/timer 30m <prompt>`, `/fork`, `/rewind`, `/permission`, `/share`, `/help`; the composer's "/" button lists them |
 | Browser | Settings, Browser, switches on a bridge to the Wisp extension in your own Chrome or Chromium; conversations can then open a tab, read it and run a script in it, only in tabs they opened themselves, and hosts can be blocked or preferred |
-| Workflows | Settings, Workflows, keeps templates of a goal broken into tasks, each saying which earlier tasks it needs; Run starts a conversation in the open project and gives the model the tasks stage by stage |
+| Workflows | Settings, Workflows, keeps templates of a goal broken into tasks, each saying which earlier tasks it needs and what it may do as an agent, with an approval policy; Run starts a conversation in the open project and gives the model the tasks stage by stage, and Run as agents drafts them as a batch of agents in a new conversation, approved or discarded in its Agents tab |
 | Chat apps | Settings, Chat apps, binds a WeChat bot by scanning a QR code (and a second one for the research assistant), and a Feishu (or Lark) bot by scanning to make its app or by entering an App ID and App Secret, with its owner confirmed here; the owner's messages then run in the project chats go to and the answer comes back (on Feishu as a card that shows the turn's progress), with `/project`, `/session`, `/new`, `/status`, `/stop` and, in WeChat, approvals answered by code (`/approve`, `/reject`); and Wisp Lab: found a lab on a wisp-relay or ask to join one with an invite code, see the members (the leader approves, refuses or removes them and makes invite codes), choose the project that answers other members' agents, replace the relay token, leave |
 | Remote web access | Settings, Remote access, opens this desktop's projects in a phone or a browser through a wisp-relay of your own: it dials out (no inbound port), shows whether the tunnel is up and how many browsers are connected, and gives a link and a code that can be copied or replaced; the same page turns on the StickS3 desk display's listener (one IPv4 address and port of this computer, a token to show, copy or replace), which shows the device what the agent is doing and the pet, and opens the conversation the device asks for |
 | Plugins | Settings, Plugins, installs a plugin from a folder in the Claude plugin layout (`.claude-plugin/plugin.json`, `skills/*/SKILL.md`) into the app's data without running anything in it, lists what each brings, switches one on for the open project, whose conversations then have its skills, and removes it |
@@ -775,8 +775,8 @@ Limits of this slice:
   has no image-generation tool.
 - A quick action here is a named request put into the message box; it
   sends nothing by itself and starts no workflow. The WebView's quick
-  actions start multi-agent workflows, which this host does not run, so
-  the two lists are separate: this desktop keeps its own under
+  actions start multi-agent workflows; here that is Run as agents in
+  Settings, Workflows, so the two lists are separate: this desktop keeps its own under
   `desktop.quick_actions` and neither reads nor changes the WebView's.
   It starts with four that can be changed or removed; at most 40 are
   kept, a name is at most 60 characters and a request 8,000.
@@ -833,20 +833,28 @@ Limits of this slice:
   WebView's key (`browser_url_filters`); the switch is this desktop's
   own (`desktop.browser.enabled`). The bridge was tested against a
   stand-in for the extension, not against a real browser.
-- A workflow here runs as one conversation: the host lays the tasks out
-  in the stages their dependencies allow and the conversation's model
-  carries them out in that order, with the usual approvals. There are
-  no separate agents per task, no executors or per-task models, no
-  permissions or output contracts per task, no approval policy, no
-  retries of a single task and no run history; tasks of one stage are
-  not run at the same time. A task can only need tasks listed before
-  it, and there is no graph editor and no converting skills into a
-  workflow. Because the WebView's templates describe agents this host
-  cannot run, the two libraries are separate: this desktop keeps its
-  own under `desktop.workflows` and neither reads nor changes the
-  WebView's `workflow_templates`. It starts with two that can be
-  changed or removed; a workflow has at most 20 tasks and there are at
-  most 40.
+- A workflow runs in one of two ways. Run makes it one conversation: the
+  host lays the tasks out in the stages their dependencies allow and the
+  conversation's model carries them out in that order, with the usual
+  approvals. Run as agents follows the WebView's Workflow Studio: each
+  task is its own agent, given only the capabilities the template grants
+  it (think only, read the project, change it, run code, review work;
+  none given is reading the project), and the tasks are drafted as a
+  delegated batch in a new conversation named after the workflow. The
+  batch waits in that conversation's Agents tab, with what each task may
+  do, for Approve and run or Discard; under the approval policy "Start at
+  once when it only reads" (the WebView's auto-safe) a batch that changes
+  nothing and runs no code starts at once. It then runs in the background
+  like a delegated batch (Stop and Run again included) and its result is
+  delivered to the conversation, whose model sums it up. Run as agents
+  takes at most 8 tasks, the delegation limit. Not ported: executors or
+  per-task models, output contracts per task, a graph editor, converting
+  skills into a workflow, and literature and web research capabilities.
+  A task can only need tasks listed before it. The two libraries are
+  separate: this desktop keeps its own under `desktop.workflows` and
+  neither reads nor changes the WebView's `workflow_templates`. It starts
+  with two that can be changed or removed; a workflow has at most 20
+  tasks and there are at most 40.
 - Chat apps follow the WebView (`src-tauri/src/channels/`): a text from
   a chat drives an ordinary conversation through the same turn path as a
   send from the desktop, and its answer (the turn's `attempt_completion`

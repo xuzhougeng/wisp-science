@@ -1041,6 +1041,15 @@ impl Backend {
         self.local(move |host| async move { host.run_workflow(&project, &id).await })
     }
 
+    /// Drafts a workflow as agents in a new conversation of `project`.
+    pub fn draft_workflow(
+        &self,
+        project: String,
+        id: String,
+    ) -> Reply<wisp_server::desktop::DraftedWorkflow> {
+        self.local(move |host| async move { host.draft_workflow(&project, &id).await })
+    }
+
     /// Remote web access as it stands.
     pub fn remote_access(&self) -> Reply<wisp_server::desktop::RemoteAccess> {
         self.local(|host| async move { host.remote_access().await })
@@ -1758,6 +1767,16 @@ impl Backend {
     /// Stops a running batch of the conversation and the tasks in it.
     pub fn cancel_delegated_batch(&self, session: String, batch: String) -> Reply<()> {
         self.local(move |host| async move { host.cancel_delegated_batch(&session, &batch).await })
+    }
+
+    /// Approves a drafted workflow of the conversation and runs it.
+    pub fn approve_delegated_batch(&self, session: String, batch: String) -> Reply<()> {
+        self.local(move |host| async move { host.approve_delegated_batch(&session, &batch).await })
+    }
+
+    /// Throws away a drafted workflow of the conversation.
+    pub fn discard_delegated_batch(&self, session: String, batch: String) -> Reply<()> {
+        self.local(move |host| async move { host.discard_delegated_batch(&session, &batch).await })
     }
 
     pub fn explorations(&self, project: String) -> Reply<Vec<wisp_dto::ExplorationSummary>> {

@@ -142,6 +142,13 @@ pub fn swarm_line(progress: &wisp_dto::SwarmProgress) -> String {
     line
 }
 
+/// Whether the researcher approves or discards a batch from its card: a
+/// workflow they ran as agents that waits in Draft. An agent's own batch
+/// waits on its plan card instead.
+pub fn awaits_approval(batch: &wisp_server::desktop::DelegatedBatch) -> bool {
+    batch.launched && batch.status == "draft"
+}
+
 /// Whether a batch can be run again: one that failed or was stopped.
 pub fn can_retry(batch: &wisp_server::desktop::DelegatedBatch) -> bool {
     // A task's own batch runs again with that task, not on its own.
@@ -290,9 +297,26 @@ mod tests {
                 task("c", "queued"),
             ],
             nested: false,
+            launched: false,
         };
         assert!(batch.running());
         assert!(!can_retry(&batch));
+        // A workflow the researcher ran as agents is approved on its card;
+        // an agent's own draft is approved on its plan card.
+        let drafted = DelegatedBatch {
+            status: "draft".into(),
+            launched: true,
+            ..batch.clone()
+        };
+        assert!(awaits_approval(&drafted));
+        assert!(!awaits_approval(&DelegatedBatch {
+            launched: false,
+            ..drafted.clone()
+        }));
+        assert!(!awaits_approval(&DelegatedBatch {
+            status: "running".into(),
+            ..drafted
+        }));
         for (status, again) in [("failed", true), ("cancelled", true), ("succeeded", false)] {
             let ended = DelegatedBatch {
                 status: status.into(),

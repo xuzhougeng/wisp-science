@@ -9908,6 +9908,13 @@ async fn a_delegated_batch_runs_its_tasks_in_order_and_returns_their_results() {
     assert!(approval
         .message
         .contains("[ ] run: Run the analysis script"));
+    // It waits on its plan card, not in the Agents tab.
+    let waiting = &server.delegated_batches(PROJECT, &other).await.unwrap()[0];
+    assert!(!waiting.launched);
+    assert!(server
+        .approve_delegated_batch(&other, &waiting.id)
+        .await
+        .is_err());
     server
         .answer_with_feedback(PROJECT, &other, &approval.approval_id, "Not now")
         .await
@@ -9974,6 +9981,147 @@ async fn a_background_batch_is_delivered_later_and_resumes_its_conversation() {
         .any(|item| item.role == "user" && item.text.contains("delegated_batch_completion")));
     let batches = server.delegated_batches(PROJECT, &parent).await.unwrap();
     assert_eq!(batches[0].status, "succeeded");
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_workflow_runs_as_agents_once_it_is_approved() {
+    let temp = tempfile::tempdir().unwrap();
+    let factory: ModelFactory = Arc::new(|_| Box::new(DelegatingModel));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let task = |title: &str, instructions: &str, after: &[usize], capabilities: &[&str]| {
+        desktop::WorkflowTask {
+            title: title.into(),
+            instructions: instructions.into(),
+            after: after.to_vec(),
+            capabilities: capabilities.iter().map(|name| name.to_string()).collect(),
+        }
+    };
+    let save = |name: &str, approval, capability: &'static str| {
+        let server = server.clone();
+        let name = name.to_owned();
+        async move {
+            let saved = server
+                .save_workflow(desktop::WorkflowInput {
+                    id: String::new(),
+                    name,
+                    goal: "Count and add up the reads".into(),
+                    tasks: vec![
+                        task(
+                            "Count the reads",
+                            "Count the reads in data.fastq",
+                            &[],
+                            &[capability],
+                        ),
+                        task(
+                            "Add up the counts",
+                            "Add up the counts",
+                            &[0],
+                            &["reasoning"],
+                        ),
+                    ],
+                    approval,
+                })
+                .await
+                .unwrap();
+            saved.last().unwrap().id.clone()
+        }
+    };
+    let delivered = |session: String| {
+        let server = server.clone();
+        async move {
+            tokio::time::timeout(std::time::Duration::from_secs(20), async {
+                loop {
+                    if texts_of(&server, &session)
+                        .await
+                        .iter()
+                        .any(|text| text == "Background: total 42")
+                    {
+                        return;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+            })
+            .await
+            .expect("the workflow's result must reach its conversation");
+            turn_done(&server, &session).await;
+        }
+    };
+
+    // Under review it waits as a draft, in a conversation of its own.
+    let reviewed = save(
+        "Read count",
+        desktop::WorkflowApproval::ReviewAll,
+        "project_read",
+    )
+    .await;
+    let drafted = server.draft_workflow(PROJECT, &reviewed).await.unwrap();
+    assert!(!drafted.started);
+    let batches = server
+        .delegated_batches(PROJECT, &drafted.session)
+        .await
+        .unwrap();
+    assert_eq!(batches.len(), 1);
+    assert_eq!(batches[0].status, "draft");
+    assert!(batches[0].launched);
+    let ids: Vec<&str> = batches[0]
+        .tasks
+        .iter()
+        .map(|task| task.id.as_str())
+        .collect();
+    assert_eq!(ids, ["count-the-reads", "add-up-the-counts"]);
+    assert_eq!(batches[0].tasks[1].depends_on, ["count-the-reads"]);
+    assert_eq!(batches[0].tasks[0].capabilities, ["project_read"]);
+
+    // A second draft is thrown away, and only a draft of its own
+    // conversation can be.
+    let other = server.draft_workflow(PROJECT, &reviewed).await.unwrap();
+    assert!(server
+        .discard_delegated_batch(&other.session, &drafted.batch)
+        .await
+        .is_err());
+    server
+        .discard_delegated_batch(&other.session, &other.batch)
+        .await
+        .unwrap();
+    assert!(server
+        .delegated_batches(PROJECT, &other.session)
+        .await
+        .unwrap()
+        .is_empty());
+
+    // Approved, its agents run and the result comes back to it.
+    server
+        .approve_delegated_batch(&drafted.session, &drafted.batch)
+        .await
+        .unwrap();
+    delivered(drafted.session.clone()).await;
+    let batches = server
+        .delegated_batches(PROJECT, &drafted.session)
+        .await
+        .unwrap();
+    assert_eq!(batches[0].status, "succeeded");
+    assert!(server
+        .approve_delegated_batch(&drafted.session, &drafted.batch)
+        .await
+        .is_err());
+
+    // Under auto-safe approval, one that only reads starts at once, while
+    // one that runs code still waits.
+    let safe = save(
+        "Safe count",
+        desktop::WorkflowApproval::AutoSafe,
+        "project_read",
+    )
+    .await;
+    let started = server.draft_workflow(PROJECT, &safe).await.unwrap();
+    assert!(started.started);
+    delivered(started.session.clone()).await;
+    let risky = save("Run count", desktop::WorkflowApproval::AutoSafe, "code_run").await;
+    let waiting = server.draft_workflow(PROJECT, &risky).await.unwrap();
+    assert!(!waiting.started);
     server.shutdown().await;
 }
 

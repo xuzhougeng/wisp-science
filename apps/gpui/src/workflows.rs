@@ -1,6 +1,6 @@
 //! Workflows as Settings words them, and the bookkeeping of a task list
 //! in which a task may only need tasks listed before it.
-use wisp_server::desktop::Workflow;
+use wisp_server::desktop::{Workflow, WorkflowApproval};
 
 use crate::i18n::{fill, tr};
 
@@ -16,6 +16,54 @@ pub fn shape_line(workflow: &Workflow) -> String {
         format!("{line}{}", fill(tr(" · up to {} independent"), &[&widest]))
     } else {
         line
+    }
+}
+
+/// What a capability lets a task's agent do, in a few words.
+pub fn capability_label(name: &str) -> &'static str {
+    match name {
+        "reasoning" => tr("Think only"),
+        "project_read" => tr("Read the project"),
+        "project_write" => tr("Change the project"),
+        "code_run" => tr("Run code"),
+        "review" => tr("Review work"),
+        "delegation" => tr("Delegate further"),
+        _ => tr("Other"),
+    }
+}
+
+/// What a task run as an agent may do; one given nothing reads the
+/// project.
+pub fn capability_line(capabilities: &[String]) -> String {
+    if capabilities.is_empty() {
+        return capability_label("project_read").to_owned();
+    }
+    capabilities
+        .iter()
+        .map(|name| capability_label(name))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// `capabilities` with `capability` added, or taken out when it was
+/// there, kept in the order the form lists them.
+pub fn toggled_capability(capabilities: &[String], capability: &str) -> Vec<String> {
+    let had = capabilities.iter().any(|kept| kept == capability);
+    wisp_server::desktop::WORKFLOW_CAPABILITIES
+        .iter()
+        .filter(|name| {
+            let kept = capabilities.iter().any(|kept| kept == *name);
+            if **name == capability { !had } else { kept }
+        })
+        .map(|name| name.to_string())
+        .collect()
+}
+
+/// How a run as agents is approved, in words.
+pub fn approval_label(approval: WorkflowApproval) -> &'static str {
+    match approval {
+        WorkflowApproval::ReviewAll => tr("Ask before every run"),
+        WorkflowApproval::AutoSafe => tr("Start at once when it only reads"),
     }
 }
 
@@ -66,7 +114,28 @@ mod tests {
             title: "t".into(),
             instructions: "i".into(),
             after: after.to_vec(),
+            capabilities: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_task_says_what_its_agent_may_do() {
+        assert_eq!(capability_line(&[]), "Read the project");
+        assert_eq!(
+            capability_line(&["project_read".into(), "code_run".into()]),
+            "Read the project, Run code"
+        );
+        // Every capability a template can grant has words of its own.
+        for name in wisp_server::desktop::WORKFLOW_CAPABILITIES {
+            assert_ne!(capability_label(name), "Other", "{name}");
+        }
+        assert_eq!(
+            approval_label(WorkflowApproval::default()),
+            "Ask before every run"
+        );
+        let on = toggled_capability(&["code_run".into()], "project_read");
+        assert_eq!(on, ["project_read", "code_run"]);
+        assert_eq!(toggled_capability(&on, "code_run"), ["project_read"]);
     }
 
     #[test]
@@ -76,6 +145,7 @@ mod tests {
             name: "Screen".into(),
             goal: "Find hits".into(),
             tasks: vec![task(&[]), task(&[0]), task(&[1])],
+            approval: WorkflowApproval::ReviewAll,
         };
         assert_eq!(shape_line(&workflow), "3 tasks · 3 stages");
         workflow.tasks[2].after = vec![0];

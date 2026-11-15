@@ -1,17 +1,20 @@
 //! Workflows: a goal broken into tasks that say which earlier tasks they
 //! need, kept as templates and run in a project.
 //!
-//! The WebView desktop runs a workflow as separate agents with their own
-//! executors, permissions and approval policy. This host has no such
-//! runtime: here a run is one conversation in which the model is given
-//! the goal and the tasks, laid out by the host in the stages their
-//! dependencies allow, and carries them out in that order. The templates
-//! are therefore this desktop's own, kept under its own key; the
+//! A workflow runs in one of two ways. As one conversation, the model is
+//! given the goal and the tasks, laid out by the host in the stages their
+//! dependencies allow, and carries them out in that order. As agents, as
+//! the WebView's Workflow Studio runs it, each task is its own agent with
+//! the capabilities the template grants it: the tasks are drafted as a
+//! delegated batch in a new conversation, which the researcher approves
+//! (or, under auto-safe approval, starts at once when nothing in it asks
+//! for approval), and its result is delivered to that conversation. The
+//! templates are this desktop's own, kept under its own key; the
 //! WebView's (`workflow_templates`) are neither read nor changed.
 
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use wisp_dto::remote_access::RemoteRequest;
 use wisp_store::Store;
 
@@ -24,6 +27,20 @@ const INSTRUCTION_LIMIT: usize = 8_000;
 pub const TASK_LIMIT: usize = 20;
 const LIMIT: usize = 40;
 
+/// What a task run as an agent may be given, as the delegation registry
+/// names it: thinking only, reading the project, changing it, running
+/// code, or reviewing work.
+pub const CAPABILITIES: [&str; 5] = [
+    "reasoning",
+    "project_read",
+    "project_write",
+    "code_run",
+    "review",
+];
+
+/// What a task is given when the template names nothing.
+const DEFAULT_CAPABILITY: &str = "project_read";
+
 /// One task of a workflow.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkflowTask {
@@ -33,6 +50,22 @@ pub struct WorkflowTask {
     /// earlier tasks can be named, so there is never a circle.
     #[serde(default)]
     pub after: Vec<usize>,
+    /// What the task's agent may do when the workflow runs as agents,
+    /// from [`CAPABILITIES`]; none is reading the project.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+}
+
+/// How a workflow run as agents is approved, as the WebView's
+/// `AgentApprovalPolicy`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowApproval {
+    /// The researcher approves every run.
+    #[default]
+    ReviewAll,
+    /// A run that changes nothing and runs no code starts at once.
+    AutoSafe,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +75,17 @@ pub struct Workflow {
     /// What the whole workflow is to achieve.
     pub goal: String,
     pub tasks: Vec<WorkflowTask>,
+    #[serde(default)]
+    pub approval: WorkflowApproval,
+}
+
+/// A workflow drafted as agents: the conversation that holds it, its
+/// batch, and whether the batch already started.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DraftedWorkflow {
+    pub session: String,
+    pub batch: String,
+    pub started: bool,
 }
 
 /// What the form sends: `id` empty adds a workflow.
@@ -115,6 +159,74 @@ impl Workflow {
         }
         text
     }
+
+    /// The tasks as a delegated batch, one agent each, as `delegate_tasks`
+    /// takes it: ids made from the titles, each task's instruction its
+    /// title and instructions, and the capabilities it was given.
+    pub(crate) fn batch(&self) -> Value {
+        let ids = task_ids(&self.tasks);
+        let tasks: Vec<Value> = self
+            .tasks
+            .iter()
+            .enumerate()
+            .map(|(index, task)| {
+                let both = format!("{}: {}", task.title, task.instructions);
+                // The title goes when both together are too long.
+                let instruction = if both.chars().count() <= INSTRUCTION_LIMIT {
+                    both
+                } else {
+                    task.instructions.clone()
+                };
+                let capabilities = if task.capabilities.is_empty() {
+                    vec![DEFAULT_CAPABILITY.to_owned()]
+                } else {
+                    task.capabilities.clone()
+                };
+                json!({
+                    "id": ids[index],
+                    "instruction": instruction,
+                    "depends_on": task.after.iter().map(|needed| &ids[*needed]).collect::<Vec<_>>(),
+                    "capabilities": capabilities,
+                })
+            })
+            .collect();
+        json!({
+            "goal": self.goal,
+            "context": format!("The researcher's workflow \"{}\".", self.name),
+            "background": true,
+            "tasks": tasks,
+        })
+    }
+}
+
+/// A task id for each task, from its title: lower case, words joined by
+/// `-`, at most 31 bytes, starting with a letter, and each one once.
+fn task_ids(tasks: &[WorkflowTask]) -> Vec<String> {
+    let mut ids: Vec<String> = Vec::with_capacity(tasks.len());
+    for (index, task) in tasks.iter().enumerate() {
+        let mut slug = String::new();
+        for ch in task.title.chars() {
+            if ch.is_ascii_alphanumeric() {
+                slug.push(ch.to_ascii_lowercase());
+            } else if !slug.is_empty() && !slug.ends_with('-') {
+                slug.push('-');
+            }
+        }
+        let mut base = slug.trim_end_matches('-').to_owned();
+        if !base.starts_with(|ch: char| ch.is_ascii_lowercase()) {
+            base = format!("task-{}", index + 1);
+        }
+        base.truncate(26);
+        let base = base.trim_end_matches('-').to_owned();
+        let mut id = base.clone();
+        let mut copy = 2;
+        while ids.contains(&id) {
+            id = format!("{base}-{copy}");
+            copy += 1;
+        }
+        ids.push(id);
+    }
+    ids
 }
 
 fn starters() -> Vec<Workflow> {
@@ -122,6 +234,7 @@ fn starters() -> Vec<Workflow> {
         title: title.into(),
         instructions: instructions.into(),
         after: after.to_vec(),
+        capabilities: Vec::new(),
     };
     vec![
         Workflow {
@@ -156,6 +269,7 @@ fn starters() -> Vec<Workflow> {
                     &[2],
                 ),
             ],
+            approval: WorkflowApproval::ReviewAll,
         },
         Workflow {
             id: "starter-design".into(),
@@ -183,6 +297,7 @@ fn starters() -> Vec<Workflow> {
                     &[0, 1],
                 ),
             ],
+            approval: WorkflowApproval::ReviewAll,
         },
     ]
 }
@@ -245,10 +360,22 @@ fn checked(input: &WorkflowInput) -> Result<Workflow> {
             after.iter().all(|needed| *needed < index),
             "Task {number} can only come after tasks listed before it"
         );
+        let mut capabilities: Vec<String> = Vec::new();
+        for capability in &task.capabilities {
+            let capability = capability.trim();
+            ensure!(
+                CAPABILITIES.contains(&capability),
+                "Task {number} names an unknown capability \"{capability}\""
+            );
+            if !capabilities.iter().any(|kept| kept == capability) {
+                capabilities.push(capability.into());
+            }
+        }
         tasks.push(WorkflowTask {
             title: title.into(),
             instructions: instructions.into(),
             after,
+            capabilities,
         });
     }
     Ok(Workflow {
@@ -256,6 +383,7 @@ fn checked(input: &WorkflowInput) -> Result<Workflow> {
         name: name.into(),
         goal: goal.into(),
         tasks,
+        approval: input.approval,
     })
 }
 
@@ -341,6 +469,51 @@ impl Server {
             .await?;
         Ok(session)
     }
+
+    /// Drafts a workflow as agents in `project`: a new conversation named
+    /// after it holds the batch of its tasks, one agent each, waiting in
+    /// its Agents tab for the researcher to approve or discard it. Under
+    /// auto-safe approval a batch that changes nothing and runs no code
+    /// starts at once. Either way its result is delivered to that
+    /// conversation.
+    pub async fn draft_workflow(&self, project: &str, id: &str) -> Result<DraftedWorkflow> {
+        let workflow = list(&self.0.store)
+            .await
+            .into_iter()
+            .find(|workflow| workflow.id == id)
+            .context("That workflow is no longer there")?;
+        ensure!(
+            workflow.tasks.len() <= wisp_core::MAX_DELEGATION_TASKS,
+            "Run as agents takes at most {} tasks; this workflow has {}",
+            wisp_core::MAX_DELEGATION_TASKS,
+            workflow.tasks.len()
+        );
+        let session = self.create_conversation(project).await?;
+        self.0
+            .store
+            .rename_session(&session, project, &workflow.name)
+            .await?;
+        let drafted = self
+            .draft_batch(
+                project,
+                &session,
+                workflow.batch(),
+                workflow.approval == WorkflowApproval::ReviewAll,
+            )
+            .await;
+        match drafted {
+            Ok((batch, started)) => Ok(DraftedWorkflow {
+                session,
+                batch,
+                started,
+            }),
+            Err(error) => {
+                // Nothing was drafted, so the empty conversation goes too.
+                let _ = self.delete_conversation(project, &session).await;
+                Err(error)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -352,6 +525,7 @@ mod tests {
             title: title.into(),
             instructions: format!("Do {title}."),
             after: after.to_vec(),
+            capabilities: Vec::new(),
         }
     }
 
@@ -361,7 +535,54 @@ mod tests {
             name: " Screen ".into(),
             goal: " Find the hits. ".into(),
             tasks,
+            approval: WorkflowApproval::ReviewAll,
         }
+    }
+
+    #[test]
+    fn a_workflow_runs_as_agents_with_ids_from_its_titles() {
+        let mut first = task("Load the data!", &[]);
+        first.capabilities = vec!["code_run".into()];
+        let made = checked(&workflow(vec![
+            first,
+            task("Load the data", &[0]),
+            task("2nd look", &[0, 1]),
+        ]))
+        .unwrap();
+        let batch = made.batch();
+        assert_eq!(batch["goal"], "Find the hits.");
+        assert_eq!(batch["background"], true);
+        let tasks = batch["tasks"].as_array().unwrap();
+        let ids: Vec<&str> = tasks
+            .iter()
+            .map(|task| task["id"].as_str().unwrap())
+            .collect();
+        // Each id once, and one that would start with a digit is named
+        // by its place.
+        assert_eq!(ids, ["load-the-data", "load-the-data-2", "task-3"]);
+        assert_eq!(tasks[0]["capabilities"], json!(["code_run"]));
+        // A task given nothing reads the project.
+        assert_eq!(tasks[1]["capabilities"], json!(["project_read"]));
+        assert_eq!(
+            tasks[2]["depends_on"],
+            json!(["load-the-data", "load-the-data-2"])
+        );
+        assert_eq!(tasks[1]["instruction"], "Load the data: Do Load the data.");
+        let long = task_ids(&[WorkflowTask {
+            title: "A very long title that goes on and on and on".into(),
+            ..Default::default()
+        }]);
+        assert!(long[0].len() <= 31 && !long[0].ends_with('-'));
+        // An unknown capability is refused; a repeated one is kept once.
+        let mut odd = task("odd", &[]);
+        odd.capabilities = vec!["fly".into()];
+        assert!(checked(&workflow(vec![odd])).is_err());
+        let mut twice = task("twice", &[]);
+        twice.capabilities = vec!["review".into(), " review ".into()];
+        assert_eq!(
+            checked(&workflow(vec![twice])).unwrap().tasks[0].capabilities,
+            ["review"]
+        );
     }
 
     #[test]
