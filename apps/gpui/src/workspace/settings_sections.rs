@@ -29,6 +29,8 @@ const SIDEBAR: &str = "sidebar";
 const FILES_SORT: &str = "files_sort";
 /// The Files tab as tiles (`grid`) or rows.
 const FILES_VIEW: &str = "files_view";
+/// The side panel's tabs that have not been taken away.
+const PANEL_TABS: &str = "panel_tabs";
 const NOTIFY: &str = "notifications";
 const NOTIFY_SOUND: &str = "notification_sound";
 const LAST_OPEN: &str = "last_open";
@@ -1106,6 +1108,7 @@ impl Workspace {
             self.backend.preference(FILES_SORT),
         );
         let files_view = self.backend.preference(FILES_VIEW);
+        let panel_tabs = self.backend.preference(PANEL_TABS);
         cx.spawn_in(window, async move |this, cx| {
             let saved = |reply| async move { receive(reply).await.ok().flatten() };
             let (appearance, launch, place, send_key, sidebar, files_sort) = (
@@ -1117,6 +1120,7 @@ impl Workspace {
                 saved(files_sort).await,
             );
             let files_view = saved(files_view).await;
+            let panel_tabs = saved(panel_tabs).await;
             let _ = this.update_in(cx, |this, window, cx| {
                 this.send_key =
                     settings::SendKey::from_key(send_key.as_deref().unwrap_or_default());
@@ -1125,6 +1129,7 @@ impl Workspace {
                     files_sort.as_deref().unwrap_or_default(),
                 ));
                 this.files.grid = files_view.as_deref() == Some("grid");
+                this.kept_tabs = crate::panel::decode_tabs(panel_tabs.as_deref());
                 this.word_fields(window, cx);
                 this.appearance =
                     crate::theme::Appearance::from_key(appearance.as_deref().unwrap_or_default());
@@ -1252,6 +1257,12 @@ impl Workspace {
     pub(super) fn save_files_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let value = if self.files.grid { "grid" } else { "list" };
         self.save_general(FILES_VIEW, value.into(), window, cx);
+    }
+
+    /// Remembers which of the side panel's tabs are kept, for the next start.
+    pub(super) fn save_panel_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let value = crate::panel::encode_tabs(&self.kept_tabs);
+        self.save_general(PANEL_TABS, value, window, cx);
     }
 
     pub(super) fn save_files_sort(&mut self, window: &mut Window, cx: &mut Context<Self>) {

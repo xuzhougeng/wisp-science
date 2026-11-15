@@ -187,7 +187,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Tool calls | One folded line each with outcome and elapsed time; click for the verbatim input and output; interrupted calls stop claiming to run |
 | Runs | A Runs tab: runs started by the conversation with kind, status, exit code, command and output tails; a run that has not ended can be cancelled, and is followed until it ends. In the transcript, a call that started or watched a run shows the run's state now, and Show in Runs opens its output there |
 | Artifacts | Files a turn wrote are recorded when it ends; an Artifacts tab lists them for the conversation or the project and opens them, and lists each one's versions, any of which can be saved as a copy from its snapshot (checked against its checksum, up to 512 MB) |
-| Side panel | Tabs: Files, Runs, Artifacts, Notebook, Provenance (the loaded part's tool calls with how each went, opening to what each was given and returned, with Show in the conversation), Agents, Highlights, Memos, Memory, Aside; the open tab is named, the others are icons |
+| Side panel | Tabs: Files, Runs, Artifacts, Notebook, Provenance (the loaded part's tool calls with how each went, opening to what each was given and returned, with Show in the conversation), Agents, Highlights, Memos, Memory, Aside; the open tab is named, the others are icons. − beside the open tab takes it away and + adds one back; the tabs kept are remembered, and opening a tab from elsewhere brings it back |
 | Agents | The Agents tab lists the helpers the conversation sent off to explore: what each was asked, how it went, and what it found |
 | Aside | The Aside tab (or the command palette) asks the conversation's model a question about the open conversation; the answer shows beside it and nothing is added to the conversation. Ask aside under a message opens it with that message quoted in the question |
 | Quoting | Quote under a message puts it in the message box as a quotation after what you were writing, ready to answer; a selected passage is copied with Cmd/Ctrl+C |
@@ -2192,6 +2192,12 @@ directory: the package shows with its repository and commit; Install puts it
 in `~/.wisp/skills` and it is listed as Your own. Press From GitHub…, then
 Escape: only the form closes. Refresh the directory with the network off:
 the shipped directory stays, with a line saying why.
+Open the side panel on Memos and press − beside it: Memos leaves the row and
+the tab before it shows. Press +, then Escape: only the menu closes, the panel
+stays. Press + and choose Memos: it is back in its place. Take every tab away:
+the panel closes, and the header button opens it again on the last one. Take
+Aside away, quit and start again: it is still away until + or a run's Ask
+brings it back.
 In Settings, Environments, under Where the tools are, each hint shows where
 the search path finds that program. Type a path that does not exist for
 Python and Save paths: it is refused and named; type the real one and save,

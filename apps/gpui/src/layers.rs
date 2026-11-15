@@ -9,6 +9,8 @@ pub enum Layer {
     FilesPanel,
     /// File preview shown over the browser's directory listing.
     FilePreview,
+    /// The side panel's tabs that can be added back, under its tab row.
+    PanelTabMenu,
     /// Settings, shown in place of the transcript.
     Settings,
     /// Inline title editor for the open conversation.
@@ -246,6 +248,7 @@ impl Layer {
     fn parent(self) -> Option<Layer> {
         match self {
             Layer::FilePreview
+            | Layer::PanelTabMenu
             | Layer::FileName
             | Layer::ConfirmTrashFile
             | Layer::MemoEditor
@@ -425,6 +428,15 @@ mod tests {
         assert!(stack.close(Layer::FilePreview));
         assert!(stack.contains(Layer::FilesPanel));
         assert_eq!(stack.dismiss_top(), Some(Layer::FilesPanel));
+
+        // The tabs to add back go with the panel, and alone on Escape.
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::PanelTabMenu);
+        assert_eq!(stack.dismiss_top(), Some(Layer::PanelTabMenu));
+        assert!(stack.contains(Layer::FilesPanel));
+        stack.open(Layer::PanelTabMenu);
+        assert!(stack.close(Layer::FilesPanel));
+        assert!(!stack.contains(Layer::PanelTabMenu));
     }
 
     #[test]

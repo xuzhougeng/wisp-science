@@ -32,9 +32,11 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.layers.close(Layer::FilePreview);
+        self.layers.close(Layer::PanelTabMenu);
         self.files.close_preview();
         self.layers.open(Layer::FilesPanel);
         self.panel_tab = tab;
+        self.keep_panel_tab(tab, window, cx);
         match tab {
             PanelTab::Files => {
                 self.ensure_files(window, cx);
@@ -51,6 +53,72 @@ impl Workspace {
             PanelTab::Runs | PanelTab::Aside | PanelTab::Provenance => {}
         }
         cx.notify();
+    }
+
+    /// Keeps `tab` in the panel's row, remembering it when it had been taken
+    /// away: opening a tab, from its row or from elsewhere, adds it back.
+    pub(super) fn keep_panel_tab(
+        &mut self,
+        tab: PanelTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.kept_tabs.contains(&tab) {
+            self.kept_tabs = panel::visible(&self.kept_tabs, tab);
+            self.save_panel_tabs(window, cx);
+        }
+    }
+
+    /// Takes `tab` out of the panel's row. Taking the last one away closes
+    /// the panel; it opens on that tab again.
+    fn take_away_panel_tab(&mut self, tab: PanelTab, window: &mut Window, cx: &mut Context<Self>) {
+        let (left, next) = panel::take_away(&self.kept_tabs, self.panel_tab, tab);
+        self.kept_tabs = left;
+        self.save_panel_tabs(window, cx);
+        match next {
+            Some(next) if next != self.panel_tab => self.show_panel_tab(next, window, cx),
+            Some(_) => {}
+            None => {
+                if self.layers.contains(Layer::FilesPanel) {
+                    self.toggle_files(window, cx);
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// The tabs that were taken away, to add one back: a menu under the
+    /// row's add button.
+    fn panel_tab_menu(&self, missing: &[PanelTab], cx: &mut Context<Self>) -> Div {
+        let mut menu = div()
+            .absolute()
+            .top(px(30.))
+            .right_0()
+            .w(px(200.))
+            .v_flex()
+            .p_1()
+            .occlude()
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().popover)
+            .shadow_md();
+        for tab in missing.iter().copied() {
+            menu = menu.child(
+                Self::menu_row(
+                    SharedString::from(format!("panel-add-{}", tab.key())),
+                    tab.label(),
+                    "",
+                    false,
+                    cx,
+                )
+                .child(icon(tab.icon()).text_color(cx.theme().muted_foreground))
+                .on_click(
+                    cx.listener(move |this, _, window, cx| this.show_panel_tab(tab, window, cx)),
+                ),
+            );
+        }
+        menu
     }
 
     /// Lists what the conversation produced, or the whole project.
@@ -433,8 +501,8 @@ impl Workspace {
             .snapshot
             .as_ref()
             .map_or(0, |snapshot| panel::active_runs(&snapshot.run_cards));
-        let mut tabs = div().h_flex().gap_1().flex_1().min_w_0();
-        for tab in PanelTab::ALL {
+        let mut tabs = div().h_flex().gap_1().flex_1().min_w_0().overflow_hidden();
+        for tab in panel::visible(&self.kept_tabs, self.panel_tab) {
             let selected = self.panel_tab == tab;
             // Only the open tab spells its name; the rest are icons with a
             // tooltip, so more tabs still fit a narrow panel. Runs that are
@@ -458,6 +526,38 @@ impl Workspace {
                 button = button.label(label);
             }
             tabs = tabs.child(button);
+            // The open tab can be taken out of the row.
+            if selected {
+                tabs = tabs.child(
+                    icon_button(
+                        SharedString::from(format!("panel-take-away-{}", tab.key())),
+                        "minus",
+                        tr("Take this tab away"),
+                    )
+                    .xsmall()
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.take_away_panel_tab(tab, window, cx)
+                    })),
+                );
+            }
+        }
+        let missing = panel::missing(&self.kept_tabs, self.panel_tab);
+        let adding = self.layers.contains(Layer::PanelTabMenu);
+        let mut add = div().relative().flex_shrink_0();
+        if !missing.is_empty() {
+            add = add.child(
+                icon_button("panel-add-tab", "plus", tr("Add a tab"))
+                    .selected(adding)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if !this.layers.close(Layer::PanelTabMenu) {
+                            this.layers.open(Layer::PanelTabMenu);
+                        }
+                        cx.notify();
+                    })),
+            );
+            if adding {
+                add = add.child(deferred(self.panel_tab_menu(&missing, cx)));
+            }
         }
         div()
             .h_flex()
@@ -468,6 +568,7 @@ impl Workspace {
             .border_b_1()
             .border_color(cx.theme().border)
             .child(tabs)
+            .child(add)
             .child(
                 icon_button("panel-close", "close", tr("Close the panel"))
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_files(window, cx))),

@@ -66,6 +66,89 @@ impl PanelTab {
             PanelTab::Provenance => "research-trail",
         }
     }
+
+    /// The name the tab is saved under, which wording does not change.
+    pub fn key(self) -> &'static str {
+        match self {
+            PanelTab::Files => "files",
+            PanelTab::Runs => "runs",
+            PanelTab::Artifacts => "artifacts",
+            PanelTab::Memos => "memos",
+            PanelTab::Memory => "memory",
+            PanelTab::Highlights => "highlights",
+            PanelTab::Notebook => "notebook",
+            PanelTab::Aside => "aside",
+            PanelTab::Agents => "agents",
+            PanelTab::Provenance => "provenance",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<PanelTab> {
+        PanelTab::ALL.into_iter().find(|tab| tab.key() == key)
+    }
+}
+
+/// The tabs the panel shows: the ones kept, in their usual order, and the
+/// one open now even when it had been taken away.
+pub fn visible(kept: &[PanelTab], open: PanelTab) -> Vec<PanelTab> {
+    PanelTab::ALL
+        .into_iter()
+        .filter(|tab| kept.contains(tab) || *tab == open)
+        .collect()
+}
+
+/// The tabs that can be added back.
+pub fn missing(kept: &[PanelTab], open: PanelTab) -> Vec<PanelTab> {
+    let shown = visible(kept, open);
+    PanelTab::ALL
+        .into_iter()
+        .filter(|tab| !shown.contains(tab))
+        .collect()
+}
+
+/// Takes `tab` away: the tabs left, and the one to show next. That is the
+/// open one when another tab goes, else the tab before it, else the first;
+/// `None` when no tab is left and the panel closes.
+pub fn take_away(
+    kept: &[PanelTab],
+    open: PanelTab,
+    tab: PanelTab,
+) -> (Vec<PanelTab>, Option<PanelTab>) {
+    let shown = visible(kept, open);
+    let at = shown.iter().position(|other| *other == tab).unwrap_or(0);
+    let left: Vec<PanelTab> = shown.into_iter().filter(|other| *other != tab).collect();
+    let next = if left.is_empty() {
+        None
+    } else if open != tab {
+        Some(open)
+    } else {
+        left.get(at.saturating_sub(1)).copied()
+    };
+    (left, next)
+}
+
+/// The kept tabs as saved: their keys, comma separated.
+pub fn encode_tabs(tabs: &[PanelTab]) -> String {
+    tabs.iter()
+        .map(|tab| tab.key())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// The kept tabs from what was saved. Nothing saved keeps every tab; a
+/// name this version does not know is left out.
+pub fn decode_tabs(saved: Option<&str>) -> Vec<PanelTab> {
+    let Some(saved) = saved else {
+        return PanelTab::ALL.to_vec();
+    };
+    let named: Vec<PanelTab> = saved
+        .split(',')
+        .filter_map(|key| PanelTab::from_key(key.trim()))
+        .collect();
+    PanelTab::ALL
+        .into_iter()
+        .filter(|tab| named.contains(tab))
+        .collect()
 }
 
 /// The transcript rows the Provenance tab lists: every tool call of the
@@ -270,6 +353,39 @@ mod tests {
         assert!(artifact_detail(&artifact, now, false).starts_with("Not a project file"));
         for tab in PanelTab::ALL {
             assert!(!tab.label().is_empty() && !tab.icon().is_empty());
+        }
+    }
+
+    #[test]
+    fn tabs_are_taken_away_and_added_back_in_their_usual_order() {
+        use PanelTab::*;
+        let all = PanelTab::ALL.to_vec();
+        // The open tab shows even when it had been taken away.
+        assert_eq!(visible(&[Runs, Files], Memos), [Files, Runs, Memos]);
+        assert_eq!(missing(&all, Files), Vec::<PanelTab>::new());
+        assert_eq!(missing(&[Files], Files).len(), PanelTab::ALL.len() - 1);
+        assert!(!missing(&[Files], Runs).contains(&Runs));
+
+        // Another tab goes: the open one stays.
+        let (left, next) = take_away(&[Files, Runs, Artifacts], Files, Runs);
+        assert_eq!((left, next), (vec![Files, Artifacts], Some(Files)));
+        // The open one goes: the tab before it shows, or the first.
+        let (left, next) = take_away(&[Files, Runs, Artifacts], Artifacts, Artifacts);
+        assert_eq!((left, next), (vec![Files, Runs], Some(Runs)));
+        let (left, next) = take_away(&[Files, Runs], Files, Files);
+        assert_eq!((left, next), (vec![Runs], Some(Runs)));
+        // The last one goes: the panel closes.
+        assert_eq!(take_away(&[Runs], Runs, Runs), (vec![], None));
+        assert_eq!(take_away(&[], Memos, Memos), (vec![], None));
+
+        // What is kept is saved by key, and read back.
+        let kept = [Files, Provenance, Aside];
+        assert_eq!(encode_tabs(&kept), "files,provenance,aside");
+        assert_eq!(decode_tabs(Some("aside, files,provenance,later")), kept);
+        assert_eq!(decode_tabs(Some("")), Vec::<PanelTab>::new());
+        assert_eq!(decode_tabs(None), all);
+        for tab in PanelTab::ALL {
+            assert_eq!(PanelTab::from_key(tab.key()), Some(tab));
         }
     }
 }

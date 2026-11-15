@@ -154,7 +154,7 @@ to find in the running app.
 | Research archive [研究归档] | Yes | Partial: the model drafts a report and scripts, you edit title and report, and freezing writes them into the project and makes the conversation read-only; no choice of files to snapshot or delete, no script editing, no continuation link | store |
 | Pending decisions [N 个待处理] | Yes | Done (sidebar inbox) | served |
 | Terminal [打开终端] | Yes | Partial: terminals drawn in the app, in a dock under the conversation, in the project folder or the folder being browsed, on a saved SSH host or a WSL distribution, several at once as tabs, hidden and shown again, closed one by one; the system's terminal is one button away; no input through the system's input method, and no selecting part of the screen | tauri |
-| Toggle right panel [切换面板] | Yes | Partial: the panel opens and closes from the header and keeps Files, Runs, Artifacts, Notebook, Provenance, Memos, Memory, Highlights, Aside and Agents tabs, one showing at a time; no adding or closing tabs | ui |
+| Toggle right panel [切换面板] | Yes | Done: the panel opens and closes from the header with Files, Runs, Artifacts, Notebook, Provenance, Memos, Memory, Highlights, Aside and Agents tabs, one showing at a time; the open tab can be taken away (−) and any taken away added back from + (Escape closes that menu first), opening a tab from elsewhere adds it back, taking the last one away closes the panel, and which tabs are kept is remembered across starts. The WebView keeps them per conversation in memory; GPUI keeps one set | ui |
 
 ## 6. Right panel
 

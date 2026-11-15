@@ -771,6 +771,8 @@ pub struct Workspace {
     expanded_run: Option<String>,
     /// Which tab the side panel shows.
     panel_tab: PanelTab,
+    /// The side panel's tabs that have not been taken away; saved.
+    kept_tabs: Vec<PanelTab>,
     artifacts: Vec<ArtifactRow>,
     /// The Artifacts tab lists the whole project instead of the conversation.
     artifacts_all: bool,
@@ -1636,6 +1638,7 @@ impl Workspace {
             file_view,
             expanded_run: None,
             panel_tab: PanelTab::default(),
+            kept_tabs: PanelTab::ALL.to_vec(),
             artifacts: vec![],
             artifacts_all: false,
             artifacts_request: 0,
@@ -1666,6 +1669,7 @@ impl Workspace {
                 self.ensure_files(window, cx);
             }
             Some(Layer::FilesPanel) => self.restore_focus(window, cx),
+            Some(Layer::PanelTabMenu) => {}
             // These layers own the focused field, which goes away with them.
             Some(Layer::Settings | Layer::Rename | Layer::ConfirmDelete) => {
                 self.focus_composer(window, cx)

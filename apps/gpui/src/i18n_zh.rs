@@ -475,6 +475,8 @@ pub const ZH: &[(&str, &str)] = &[
     ("… the rest is in the conversation", "… 其余内容在会话中"),
     ("Dismiss", "移除"),
     ("Close the panel", "关闭面板"),
+    ("Take this tab away", "移除这个标签页"),
+    ("Add a tab", "添加标签页"),
     ("This conversation has not started any runs.", "这个会话还没有启动任何运行。"),
     ("Open a conversation to see its runs.", "打开一个会话以查看它的运行。"),
     ("Hide output", "隐藏输出"),

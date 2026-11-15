@@ -30,6 +30,8 @@ impl Workspace {
             self.restore_focus(window, cx);
         } else {
             self.layers.open(Layer::FilesPanel);
+            // After its last tab was taken away, it opens on that tab.
+            self.keep_panel_tab(self.panel_tab, window, cx);
             self.ensure_files(window, cx);
             self.reload_artifacts(window, cx);
         }
