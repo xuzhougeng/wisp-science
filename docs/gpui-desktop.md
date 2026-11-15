@@ -499,12 +499,19 @@ Limits of this slice:
   cannot be answered "for this conversation" or "always". A server that
   cannot be reached gives a turn no tools and says why in Settings; it never
   stops the turn. MCP Apps are not ported.
-- Credentials holds the three keys the connectors read: the NCBI key and
-  contact email, and the OpenAlex key. They go to the keychain under this
-  data directory's own names (`desktop.service.<id>.<name>`), never into
-  SQLite, are read at the start of each turn, and are not handed back to the
-  window once saved. The WebView's keys are a separate set and are not read.
-  Its other service keys and custom environment keys are not ported.
+- Credentials holds the keys the connectors read (the NCBI key and contact
+  email, and the OpenAlex key) and the WebView's two for command-line
+  tools: InfiniSynapse (`INFINISYNAPSE_API_KEY`) and SCIMaster
+  (`SCIMASTER_API_KEY`). They go to the keychain under this data directory's
+  own names (`desktop.service.<id>.<name>`), never into SQLite, are read at
+  the start of each turn, given to the interpreters under those names, and
+  are not handed back to the window once saved. As in the WebView, saving
+  the InfiniSynapse key runs `agent_infini init` with it (refused, with how
+  to install it, when the CLI is not found on the PATH or in
+  `~/.infini/bin`), and the SCIMaster key is also written into
+  `~/.scimaster/config.json` (readable by you alone), where `sci` reads it,
+  and taken out of it when cleared. The WebView's keys are a separate set and
+  are not read.
 - Network keeps the WebView's value under its key (`network_settings`). A
   route is empty (follow the system and the environment), `none` (connect
   directly) or an `http`, `https` or `socks5` proxy address; an address with

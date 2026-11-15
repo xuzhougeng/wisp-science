@@ -3549,10 +3549,28 @@ impl Server {
             "{} is one word of at most 512 characters",
             key.label
         );
+        // Two CLIs keep the key where they read it, as the WebView sets up.
+        match key.id {
+            "infinisynapse_api_key" if !value.is_empty() => {
+                init_agent_infini(&self.tools_home()?, !cfg!(test), value).await?
+            }
+            "scimaster_api_key" => sync_scimaster(&self.tools_home()?, value)?,
+            _ => {}
+        }
         let key_id = self.key_id().await?;
         self.0
             .secrets
             .set(&Self::service_secret(&key_id, key.id), value)
+    }
+
+    /// The folder command-line tools keep their settings in: your home
+    /// folder, or one inside the data directory under test, so tests never
+    /// write to the real one.
+    fn tools_home(&self) -> Result<std::path::PathBuf> {
+        if cfg!(test) {
+            return Ok(self.0.config.data.join("home"));
+        }
+        std::env::home_dir().context("The home folder could not be found")
     }
 
     /// Tokens used so far: by project, by model, and by day over the last
@@ -6167,7 +6185,134 @@ const SERVICE_KEYS: &[ServiceKey] = &[
         note: "Literature search through OpenAlex; without a key its shared limits apply.",
         secret: true,
     },
+    ServiceKey {
+        id: "infinisynapse_api_key",
+        env: "INFINISYNAPSE_API_KEY",
+        label: "InfiniSynapse API key",
+        note: "The agent_infini CLI's data analysis over databases and knowledge bases. Saving it runs agent_infini init, which must be installed on this computer.",
+        secret: true,
+    },
+    ServiceKey {
+        id: "scimaster_api_key",
+        env: "SCIMASTER_API_KEY",
+        label: "SCIMaster API key",
+        note: "Literature search with the sci CLI and the bear-* research skills. It is also written into ~/.scimaster/config.json, where sci reads it.",
+        secret: true,
+    },
 ];
+
+/// The SciMaster CLI's settings with `key` as its API key, or without one:
+/// what else is in them stays, and the CLI's defaults are filled in.
+pub(crate) fn scimaster_config(raw: Option<&str>, key: Option<&str>) -> Result<String> {
+    let mut root = raw
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+        .filter(serde_json::Value::is_object)
+        .unwrap_or_else(|| serde_json::json!({}));
+    let settings = root
+        .as_object_mut()
+        .context("SciMaster settings are an object")?;
+    settings
+        .entry("version")
+        .or_insert_with(|| serde_json::json!(1));
+    settings
+        .entry("apiBaseUrl")
+        .or_insert_with(|| serde_json::json!("https://scimaster.bohrium.com"));
+    let defaults = settings
+        .entry("defaults")
+        .or_insert_with(|| serde_json::json!({}));
+    if !defaults.is_object() {
+        *defaults = serde_json::json!({});
+    }
+    if let Some(defaults) = defaults.as_object_mut() {
+        defaults
+            .entry("limit")
+            .or_insert_with(|| serde_json::json!(10));
+        defaults
+            .entry("mode")
+            .or_insert_with(|| serde_json::json!("low"));
+    }
+    match key.map(str::trim).filter(|key| !key.is_empty()) {
+        Some(key) => settings.insert("apiKey".into(), serde_json::json!(key)),
+        None => settings.remove("apiKey"),
+    };
+    Ok(serde_json::to_string_pretty(&root)?)
+}
+
+/// Writes the SciMaster CLI's settings file under `home` with `key`, or
+/// takes the key out; nothing is made when there is no key and no file.
+fn sync_scimaster(home: &std::path::Path, key: &str) -> Result<()> {
+    let path = home.join(".scimaster").join("config.json");
+    if key.is_empty() && !path.is_file() {
+        return Ok(());
+    }
+    let current = std::fs::read_to_string(&path).ok();
+    let merged = scimaster_config(current.as_deref(), Some(key))?;
+    if let Some(folder) = path.parent() {
+        std::fs::create_dir_all(folder)?;
+    }
+    std::fs::write(&path, merged).with_context(|| format!("Could not write {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
+/// Runs `agent_infini init` with the key, as the WebView does when the key
+/// is saved. The CLI is looked for in `home/.infini/bin` and, when
+/// `search_path`, on the PATH.
+async fn init_agent_infini(home: &std::path::Path, search_path: bool, key: &str) -> Result<()> {
+    let exe = if cfg!(windows) {
+        "agent_infini.exe"
+    } else {
+        "agent_infini"
+    };
+    let on_path = std::env::var_os("PATH")
+        .filter(|_| search_path)
+        .map(|paths| {
+            std::env::split_paths(&paths)
+                .map(|dir| dir.join(exe))
+                .collect()
+        })
+        .unwrap_or_else(Vec::new);
+    let Some(program) = on_path
+        .into_iter()
+        .chain([home.join(".infini").join("bin").join(exe)])
+        .find(|path| path.is_file())
+    else {
+        let install = if cfg!(windows) {
+            "irm https://infinisynapse.cn/cli-install/install.ps1 | iex"
+        } else {
+            "curl -fsSL https://infinisynapse.cn/cli-install/install.sh | bash"
+        };
+        bail!("agent_infini was not found. Install it with: {install}");
+    };
+    let mut command = tokio::process::Command::new(&program);
+    command.arg("init").arg("--api-key").arg(key);
+    wisp_tools::process::hide_console_async(&mut command);
+    let out = command
+        .output()
+        .await
+        .with_context(|| format!("Could not run {}", program.display()))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let said = [out.stderr, out.stdout]
+        .iter()
+        .map(|bytes| String::from_utf8_lossy(bytes).trim().to_owned())
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+        // The key is never repeated back.
+        .replace(key, "<redacted>");
+    match said.is_empty() {
+        true => bail!("agent_infini init failed with {}", out.status),
+        false => bail!("agent_infini init failed: {said}"),
+    }
+}
 
 /// Where the WebView keeps the list of credentials of your own.
 const CUSTOM_CREDENTIALS: &str = "custom_credentials";

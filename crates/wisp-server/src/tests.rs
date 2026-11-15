@@ -4116,7 +4116,16 @@ async fn service_keys_live_in_the_secret_store_and_are_never_read_back() {
     // Listed, none saved, and nothing is created just by looking.
     let rows = server.credentials().await.unwrap();
     let ids: Vec<_> = rows.iter().map(|row| row.id).collect();
-    assert_eq!(ids, ["ncbi_api_key", "ncbi_email", "openalex_api_key"]);
+    assert_eq!(
+        ids,
+        [
+            "ncbi_api_key",
+            "ncbi_email",
+            "openalex_api_key",
+            "infinisynapse_api_key",
+            "scimaster_api_key"
+        ]
+    );
     assert!(rows.iter().all(|row| !row.saved));
     assert!(server.service_keys().await.is_empty());
     assert_eq!(
@@ -4151,7 +4160,7 @@ async fn service_keys_live_in_the_secret_store_and_are_never_read_back() {
         .into_iter()
         .map(|row| row.saved)
         .collect();
-    assert_eq!(saved, [true, true, false]);
+    assert_eq!(saved, [true, true, false, false, false]);
     // A turn is given them under the names the services use.
     assert_eq!(
         server.service_keys().await,
@@ -4270,6 +4279,94 @@ async fn service_keys_live_in_the_secret_store_and_are_never_read_back() {
         .await
         .iter()
         .any(|(name, _)| name == "LAB_TOKEN"));
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_sci_and_agent_infini_keys_are_set_up_where_their_clis_read_them() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with(
+        config(temp.path()),
+        models(Arc::default(), false),
+        Arc::new(desktop::MemorySecrets::default()),
+    )
+    .await
+    .unwrap();
+    // Under test the CLIs' home is inside the data directory.
+    let home = temp.path().join("data/home");
+    let settings = home.join(".scimaster/config.json");
+    server
+        .set_credential("scimaster_api_key", "sk-sci-test")
+        .await
+        .unwrap();
+    let written: Value =
+        serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+    assert_eq!(written["apiKey"], "sk-sci-test");
+    assert_eq!(written["defaults"]["limit"], 10);
+    // Taken away, the file stays without the key.
+    server
+        .set_credential("scimaster_api_key", "")
+        .await
+        .unwrap();
+    let written: Value =
+        serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+    assert!(written.get("apiKey").is_none());
+    assert!(server
+        .service_keys()
+        .await
+        .iter()
+        .all(|(name, _)| name != "SCIMASTER_API_KEY"));
+
+    // InfiniSynapse needs its CLI, which is told the key.
+    let missing = server
+        .set_credential("infinisynapse_api_key", "sk-infini-test")
+        .await
+        .unwrap_err();
+    assert!(
+        missing.to_string().contains("agent_infini was not found"),
+        "{missing}"
+    );
+    assert!(server.service_keys().await.is_empty());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let bin = home.join(".infini/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let heard = temp.path().join("heard.txt");
+        let program = bin.join("agent_infini");
+        std::fs::write(
+            &program,
+            format!("#!/bin/sh\necho \"$@\" > '{}'\n", heard.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        server
+            .set_credential("infinisynapse_api_key", "sk-infini-test")
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&heard).unwrap().trim(),
+            "init --api-key sk-infini-test"
+        );
+        assert_eq!(
+            server.service_keys().await,
+            [(
+                "INFINISYNAPSE_API_KEY".to_string(),
+                "sk-infini-test".to_string()
+            )]
+        );
+        // A failure says why without the key.
+        std::fs::write(&program, "#!/bin/sh\necho \"bad key $3\" >&2\nexit 1\n").unwrap();
+        let refused = server
+            .set_credential("infinisynapse_api_key", "sk-other")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refused.contains("bad key <redacted>") && !refused.contains("sk-other"),
+            "{refused}"
+        );
+    }
     server.shutdown().await;
 }
 

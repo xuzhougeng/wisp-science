@@ -1746,7 +1746,7 @@ impl Workspace {
                                 div()
                                     .text_sm()
                                     .font_weight(FontWeight::MEDIUM)
-                                    .child(row.label),
+                                    .child(crate::i18n::host(row.label)),
                             )
                             .child(div().text_xs().text_color(muted).child(if row.saved {
                                 tr("Saved")
@@ -1759,7 +1759,7 @@ impl Workspace {
                             .w(px(NOTE_WIDTH + 80.))
                             .text_xs()
                             .text_color(muted)
-                            .child(row.note),
+                            .child(crate::i18n::host(row.note)),
                     )
                     .child(
                         div()
