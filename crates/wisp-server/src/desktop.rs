@@ -28,6 +28,12 @@ const ENVIRONMENT_PROFILE: &str = "env";
 /// directory, like the settings they belong to.
 const MODEL_KEY_ID: &str = "desktop.model.key_id";
 const NAME_LIMIT: usize = 60;
+/// Set once the first-run guide is finished or put away; the WebView's key.
+const ONBOARDING_DONE: &str = "onboarding_done";
+/// What the first-run guide sets up, as the WebView does.
+const DEEPSEEK_URL: &str = "https://api.deepseek.com";
+const DEEPSEEK_FLASH: &str = "deepseek-v4-flash";
+const DEEPSEEK_PRO: &str = "deepseek-v4-pro";
 const TITLE_LIMIT: usize = 200;
 
 /// Where API keys live. The key never enters SQLite or a snapshot.
@@ -509,6 +515,48 @@ impl Server {
             saved.default = id;
         }
         self.store_models(&saved).await
+    }
+
+    /// Whether the first-run guide was finished or put away, in this
+    /// desktop or the WebView one (the same setting).
+    pub async fn onboarding_done(&self) -> Result<bool> {
+        Ok(self.0.store.get_setting(ONBOARDING_DONE).await?.is_some())
+    }
+
+    pub async fn finish_onboarding(&self) -> Result<()> {
+        self.0.store.set_setting(ONBOARDING_DONE, "1").await
+    }
+
+    /// The first-run guide's model step, as the WebView sets it up: the
+    /// DeepSeek key saved once for both of its models, Flash as the
+    /// default and Pro for heavier work.
+    pub async fn set_up_deepseek(&self, key: &str) -> Result<ModelSettings> {
+        self.editable_models()?;
+        let key = key.trim();
+        ensure!(!key.is_empty(), "Paste the key first");
+        let input = |model: &str| ModelInput {
+            id: None,
+            name: String::new(),
+            fields: ModelFields {
+                provider: "openai".into(),
+                api_url: DEEPSEEK_URL.into(),
+                model: model.into(),
+                max_context: String::new(),
+                max_tokens: "8192".into(),
+                reasoning_effort: String::new(),
+            },
+            api_key: Some(key.to_owned()),
+        };
+        self.save_model_profile(input(DEEPSEEK_PRO)).await?;
+        let saved = self.save_model_profile(input(DEEPSEEK_FLASH)).await?;
+        let flash = saved
+            .profiles
+            .iter()
+            .rev()
+            .find(|profile| profile.fields.model == DEEPSEEK_FLASH)
+            .map(|profile| profile.id.clone())
+            .context("The model was not saved")?;
+        self.set_default_model(&flash).await
     }
 
     /// Conversations that chose nothing, and new ones, use this profile.

@@ -193,6 +193,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Files | Project file browser, available before the first conversation; read-only text and Markdown preview, pictures (PNG, JPEG, GIF, WebP, SVG, BMP), and Jupyter notebooks as their cells with what each printed or returned (a figure is named, not drawn; Show as text gives the file itself); PDF, Word, Excel, PowerPoint, OpenDocument, RTF and EPUB documents as their text and tables, without their layout or pictures; new folder, new file, rename, and move to the project's trash; listed by name, newest first or largest first, folders first, in the order last chosen |
 | Composer | Native multiline input. Return sends and Shift+Return starts a new line, or, with the other choice in Settings, General, Return starts a new line and Cmd/Ctrl+Return sends; Cmd/Ctrl+Return always sends. While an input method is composing, Return goes to it. While a turn runs the same key queues the message: it is sent when the turn ends, or given to the running turn at once with the queue's lightning button |
 | Plan first | The model investigates and submits a plan as a card; nothing is changed until you approve it, which leaves plan mode and starts the work |
+| First-run guide | On a first run a dialog walks through four steps: welcome, what Wisp can do, a model (a DeepSeek key sets up deepseek-v4-flash as the default and deepseek-v4-pro beside it, or a link to Settings, Models for another provider), and the tools on this computer (install Python with uv). Get started or Escape puts it away for good, in this desktop and the WebView one |
 | Import from Codex or Claude Code | The import button in the conversation list's header lists the conversations Codex CLI (`~/.codex/sessions`) and Claude Code (`~/.claude/projects`) keep on this computer, newest first, with the first thing asked and the folder it was had in. Import brings one into the project in a group named `codex` or `claude`, with its messages and tool calls; importing it again brings in only what was added since, and leaves a conversation continued here alone. Only this computer is looked at, not SSH or WSL hosts |
 | Bringing a branch back | In a branch, Bring back in the conversation's toolbar has the model summarise what the branch did since it split off; you read and change the summary, and Bring it back adds it to the conversation the branch came from, which reads it from then on, and opens that conversation. A branch is brought back once |
 | Approving a plan | When the model sets out a new plan it waits for you: the plan's steps show above the composer with Approve, Turn down, and a box to say what should change; Send feedback (or Return in the box) turns the plan down with your words, which the model reads to revise it |
@@ -339,6 +340,14 @@ Limits of this slice:
   scratch and storage locations are not ported. Removing a host keeps the
   records of runs made on it and puts new work back on this computer if it
   was the default.
+- The first-run guide follows the WebView's: it is shown while the
+  shared `onboarding_done` setting is unset, its model step sets up
+  DeepSeek only (the key goes to the system keychain through the same
+  path as Settings, Models) and is skipped when models come from `WISP_*`
+  variables, and Open the DeepSeek console opens the system browser. Its
+  tools step starts the same install as Settings, Environments. With no
+  model at all Settings also opens, underneath the guide. The WebView's
+  local environment panel (tools detected on the system) is not ported.
 - Tools on this computer is the WebView's managed toolchain, ported into
   the host (`src-tauri/src/toolchain.rs`): a checksum-pinned pixi installs
   uv, Python 3.12, R (with jsonlite) and Node.js 24 from conda-forge under
@@ -1395,6 +1404,14 @@ listed, or the reason when it fails. Ask the model to use one of the tools:
 it asks first, then runs. Switch the server off and confirm the model no
 longer has the tool. Change its name and confirm Test lists the new names.
 Press Remove, then Escape (Settings stays), then remove it.
+On a fresh data folder the first-run guide opens over the first screen:
+Next walks through welcome, what Wisp can do, the model step and the
+tools step; Back goes back. With a DeepSeek key typed, Next saves it and
+Settings, Models lists both DeepSeek models with Flash as the default;
+with nothing typed the button reads Set up later. Started with `WISP_*`
+model variables, the model step says there is nothing to do. On the last
+step press Escape: the guide closes and does not come back at the next
+start.
 Open Environments: Tools on this computer says nothing is installed and
 names its folder under the data folder. Untick everything: Install is off.
 Tick R, press Install: the steps count up with a log (Getting pixi, then

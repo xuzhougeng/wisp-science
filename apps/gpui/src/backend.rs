@@ -1178,6 +1178,19 @@ impl Backend {
         self.local(move |host| async move { host.test_acp_agent(&id).await })
     }
 
+    pub fn onboarding_done(&self) -> Reply<bool> {
+        self.local(|host| async move { host.onboarding_done().await })
+    }
+
+    pub fn finish_onboarding(&self) -> Reply<()> {
+        self.local(|host| async move { host.finish_onboarding().await })
+    }
+
+    /// Never logged or kept here: the key goes to the system keychain.
+    pub fn set_up_deepseek(&self, key: String) -> Reply<wisp_server::desktop::ModelSettings> {
+        self.local(move |host| async move { host.set_up_deepseek(&key).await })
+    }
+
     /// The decision model as the form shows it; never its key.
     pub fn decision_model(&self) -> Reply<wisp_dto::DecisionModelSettings> {
         self.local(|host| async move { host.decision_model().await })

@@ -82,6 +82,8 @@ pub enum Layer {
     BranchMerge,
     /// Conversations from Codex or Claude Code to import: a dialog.
     ImportConversations,
+    /// The first-run guide, over whatever the first screen is.
+    Onboarding,
     /// The name field in the Files panel: a new folder or file, or a rename.
     FileName,
     /// Question in the Files panel before an entry goes to the trash.
@@ -651,6 +653,13 @@ mod tests {
         stack.open(Layer::ImportConversations);
         assert_eq!(stack.dismiss_top(), Some(Layer::ImportConversations));
         assert!(stack.close(Layer::FilesPanel));
+        // The first-run guide is put away with one Escape, and a menu
+        // opened above it goes first.
+        stack.open(Layer::Onboarding);
+        stack.open(Layer::Palette);
+        assert_eq!(stack.dismiss_top(), Some(Layer::Palette));
+        assert_eq!(stack.dismiss_top(), Some(Layer::Onboarding));
+        assert!(!stack.contains(Layer::Onboarding));
         // So is bringing a branch back.
         stack.open(Layer::FilesPanel);
         stack.open(Layer::BranchMerge);

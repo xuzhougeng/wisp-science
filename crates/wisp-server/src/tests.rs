@@ -6904,6 +6904,55 @@ async fn a_conversation_given_to_an_acp_agent_streams_asks_and_stops_through_it(
 }
 
 #[tokio::test]
+async fn the_first_run_guide_sets_up_deepseek_and_is_shown_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut cfg = config(temp.path());
+    cfg.model = None;
+    let server = Server::open_with_models(cfg, models(Arc::default(), false))
+        .await
+        .unwrap();
+    assert!(!server
+        .commands()
+        .iter()
+        .any(|command| command.contains("onboarding")));
+    assert!(!server.onboarding_done().await.unwrap());
+    assert!(server.set_up_deepseek("  ").await.is_err());
+    let settings = server.set_up_deepseek(" sk-test-key ").await.unwrap();
+    let saved: Vec<_> = settings
+        .profiles
+        .iter()
+        .map(|profile| profile.fields.model.as_str())
+        .collect();
+    assert_eq!(saved, ["deepseek-v4-pro", "deepseek-v4-flash"]);
+    let flash = &settings.profiles[1];
+    assert!(flash.is_default && flash.has_api_key);
+    assert_eq!(flash.fields.api_url, "https://api.deepseek.com");
+    assert!(settings.profiles[0].has_api_key);
+    // The WebView reads the same setting.
+    server.finish_onboarding().await.unwrap();
+    assert!(server.onboarding_done().await.unwrap());
+    assert_eq!(
+        server
+            .0
+            .store
+            .get_setting("onboarding_done")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("1")
+    );
+    server.shutdown().await;
+
+    // Models set by the environment are not changed from the guide.
+    let other = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(other.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    assert!(server.set_up_deepseek("sk-test-key").await.is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn acp_agents_are_kept_in_the_shared_list_tested_and_removed() {
     use desktop::AcpAgent;
     let temp = tempfile::tempdir().unwrap();

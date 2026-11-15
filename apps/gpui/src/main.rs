@@ -25,6 +25,7 @@ mod memos;
 mod model_view;
 mod notebook;
 mod notify;
+mod onboarding;
 mod organise;
 mod outline;
 mod palette;

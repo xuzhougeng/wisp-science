@@ -59,8 +59,9 @@ impl Workspace {
                             }
                         };
                         cx.notify();
-                        let open = this.layers.contains(Layer::Settings)
-                            && this.settings_section == settings::Section::Environments;
+                        let open = (this.layers.contains(Layer::Settings)
+                            && this.settings_section == settings::Section::Environments)
+                            || this.layers.contains(Layer::Onboarding);
                         let keep = running && open;
                         if !keep {
                             this.toolchain_following = false;
@@ -79,7 +80,7 @@ impl Workspace {
         .detach();
     }
 
-    fn install_toolchain(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn install_toolchain(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let tools = self
             .toolchain_choice
             .iter()

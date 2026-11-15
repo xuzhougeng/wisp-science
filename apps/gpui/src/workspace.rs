@@ -17,6 +17,7 @@ mod memos_view;
 mod merge_view;
 mod model_view_dialog;
 mod notebook_view;
+mod onboarding_view;
 mod organise_view;
 mod palette_view;
 mod panel_tabs;
@@ -337,6 +338,12 @@ pub struct Workspace {
     toolchain: Option<wisp_dto::ToolchainStatus>,
     toolchain_choice: Vec<&'static str>,
     toolchain_following: bool,
+    /// The first-run guide: its step, the key typed on the model step,
+    /// whether the key is being saved, and why it was refused.
+    onboarding_step: usize,
+    onboarding_key: Entity<InputState>,
+    onboarding_saving: bool,
+    onboarding_error: Option<String>,
     /// What the Network page last read from the host, its fields, and
     /// whether the last Save was kept.
     network: Option<wisp_dto::NetworkSettings>,
@@ -639,6 +646,11 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx)),
         ];
         let mcp_token = cx.new(|cx| InputState::new(window, cx).masked(true));
+        let onboarding_key = cx.new(|cx| {
+            InputState::new(window, cx)
+                .masked(true)
+                .placeholder(tr("Paste the DeepSeek API key"))
+        });
         let skills_search =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Find a skill…")));
         let settings_search =
@@ -962,6 +974,10 @@ impl Workspace {
             toolchain: None,
             toolchain_choice: vec!["python"],
             toolchain_following: false,
+            onboarding_step: 0,
+            onboarding_key,
+            onboarding_saving: false,
+            onboarding_error: None,
             network: None,
             network_fields,
             network_saved: false,
@@ -1175,6 +1191,8 @@ impl Workspace {
                 self.merge_error = None;
                 self.focus_composer(window, cx);
             }
+            // Putting the guide away is finishing it, as in the WebView.
+            Some(Layer::Onboarding) => self.finish_onboarding(cx),
             Some(Layer::ImportConversations) => {
                 self.imports = Default::default();
             }
@@ -1475,6 +1493,7 @@ impl Workspace {
                         this.load_recent(window, cx);
                         this.load_inbox(window, cx);
                         this.load_model_settings(true, window, cx);
+                        this.check_onboarding(window, cx);
                         this.load_arrangement(window, cx);
                         this.load_general(window, cx);
                         // The composer offers the saved hosts.
@@ -3028,6 +3047,11 @@ impl Render for Workspace {
         };
         let root = if self.layers.contains(Layer::ImportConversations) {
             root.child(self.render_imports(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::Onboarding) {
+            root.child(self.render_onboarding(cx))
         } else {
             root
         };
