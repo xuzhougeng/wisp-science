@@ -30,16 +30,30 @@ pub fn runtime_label(row: &RuntimeRow) -> String {
 
 /// What the chip says when pointed at: where the interpreter is, how much
 /// it holds, and why it stopped.
-pub fn runtime_detail(row: &RuntimeRow) -> String {
+pub fn runtime_detail(row: &RuntimeRow, now: i64) -> String {
     let mut parts = Vec::new();
     if let Some(path) = row.interpreter.as_deref().filter(|path| !path.is_empty()) {
         parts.push(path.to_owned());
+    }
+    if let Some(pid) = row.process_id {
+        parts.push(crate::i18n::fill(tr("PID {}"), &[&pid]));
+    }
+    if row.generation > 0 {
+        parts.push(crate::i18n::fill(tr("generation {}"), &[&row.generation]));
     }
     if let Some(bytes) = row.memory_bytes {
         parts.push(crate::i18n::fill(
             tr("{} in memory"),
             &[&crate::files::size_label(bytes)],
         ));
+    }
+    if row.started_at_ms > 0 {
+        let started = crate::home::age(now, row.started_at_ms as i64);
+        parts.push(crate::i18n::fill(tr("started {}"), &[&started]));
+    }
+    if row.last_activity_at_ms > row.started_at_ms {
+        let ran = crate::home::age(now, row.last_activity_at_ms as i64);
+        parts.push(crate::i18n::fill(tr("last ran code {}"), &[&ran]));
     }
     if let Some(error) = row.last_error.as_deref().filter(|text| !text.is_empty()) {
         parts.push(error.to_owned());
@@ -341,11 +355,21 @@ mod tests {
             version: Some(" 3.12.4 ".into()),
             memory_bytes: Some(3 * 1024 * 1024),
             last_error: None,
+            process_id: Some(4242),
+            generation: 2,
+            started_at_ms: 1_700_000_000_000,
+            last_activity_at_ms: 1_700_000_000_000,
         };
+        let now = 1_700_000_600;
         assert_eq!(runtime_label(&row), "Python 3.12.4 · ready");
+        // Started and not run since: no second time.
         assert_eq!(
-            runtime_detail(&row),
-            "/opt/py/bin/python3 · 3.0 MB in memory"
+            runtime_detail(&row, now),
+            "/opt/py/bin/python3 · PID 4242 · generation 2 · 3.0 MB in memory · started 10 min ago"
+        );
+        row.last_activity_at_ms = 1_700_000_540_000;
+        assert!(
+            runtime_detail(&row, now).ends_with("started 10 min ago · last ran code 1 min ago")
         );
         assert_eq!(runtime_action(&row).unwrap().0, "Stop");
         row.state = RuntimeState::Busy;
@@ -358,7 +382,7 @@ mod tests {
         row.state = RuntimeState::Stopped;
         row.last_error = Some("killed: out of memory".into());
         assert_eq!(runtime_label(&row), "Python 3.12.4 · stopped");
-        assert!(runtime_detail(&row).ends_with("killed: out of memory"));
+        assert!(runtime_detail(&row, now).ends_with("killed: out of memory"));
         assert_eq!(runtime_action(&row).unwrap().0, "Dismiss");
 
         // Before it has said anything about itself.
@@ -370,10 +394,14 @@ mod tests {
             version: None,
             memory_bytes: None,
             last_error: None,
+            process_id: None,
+            generation: 0,
+            started_at_ms: 0,
+            last_activity_at_ms: 0,
         };
         assert_eq!(runtime_label(&starting), "R · starting");
         assert_eq!(
-            runtime_detail(&starting),
+            runtime_detail(&starting, now),
             "Kept between tool calls, with its variables"
         );
     }

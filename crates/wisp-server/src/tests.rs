@@ -6273,7 +6273,7 @@ async fn a_conversations_interpreters_are_listed_and_can_be_stopped() {
                         .into(),
                     ),
                     version: Some(if python { "3.12.4" } else { "4.4.1" }.into()),
-                    process_id: None,
+                    process_id: python.then_some(4242),
                 },
             ))
         }
@@ -6335,6 +6335,13 @@ async fn a_conversations_interpreters_are_listed_and_can_be_stopped() {
         listed[0].interpreter.as_deref(),
         Some("/opt/py/bin/python3")
     );
+    // Its process, which one of the conversation's interpreters it is,
+    // and when it started and last ran code.
+    assert_eq!(listed[0].process_id, Some(4242));
+    assert_eq!(listed[1].process_id, None);
+    assert_eq!(listed[0].generation, 1);
+    assert!(listed[0].started_at_ms > 0);
+    assert!(listed[0].last_activity_at_ms >= listed[0].started_at_ms);
 
     // Stopped, it stays listed as stopped; the other is untouched.
     let python = listed[0].id.clone();

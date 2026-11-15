@@ -5078,6 +5078,14 @@ pub struct RuntimeRow {
     pub memory_bytes: Option<u64>,
     /// Why it stopped, when it did not stop by itself being asked.
     pub last_error: Option<String>,
+    /// Its process, once it has one.
+    pub process_id: Option<u32>,
+    /// Counts the interpreters started for this conversation and language,
+    /// from 1; a restart is the next one.
+    pub generation: u64,
+    /// When it started and when it last ran code, in Unix milliseconds.
+    pub started_at_ms: u64,
+    pub last_activity_at_ms: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -5118,6 +5126,10 @@ impl From<wisp_runtime::RuntimeInfo> for RuntimeRow {
             version: info.version,
             memory_bytes: info.resident_memory_bytes,
             last_error: info.last_error,
+            process_id: info.process_id,
+            generation: info.generation,
+            started_at_ms: info.started_at_ms,
+            last_activity_at_ms: info.last_activity_at_ms,
         }
     }
 }

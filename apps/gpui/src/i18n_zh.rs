@@ -1095,6 +1095,10 @@ pub const ZH: &[(&str, &str)] = &[
     ("Nothing could be shortened yet; the whole history is archived in the project.", "暂时没有可以缩短的内容；完整历史已归档在项目中。"),
     // Counts, sizes and sentences that carry a value.
     ("{} in memory", "内存占用 {}"),
+    ("PID {}", "进程号 {}"),
+    ("generation {}", "第 {} 代"),
+    ("started {}", "{}启动"),
+    ("last ran code {}", "上次运行代码：{}"),
     ("Input {}", "输入 {}"),
     ("output {}", "输出 {}"),
     ("thinking {}", "思考 {}"),

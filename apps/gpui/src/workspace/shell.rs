@@ -22,6 +22,13 @@ use crate::{
     settings,
 };
 
+/// The time now, in Unix seconds.
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs() as i64)
+}
+
 pub(super) fn glyph(name: &str) -> Icon {
     Icon::empty().path(icon_path(name))
 }
@@ -1869,7 +1876,7 @@ impl Workspace {
                             .id(SharedString::from(format!("runtime-label-{}", row.id)))
                             .child(controls::runtime_label(row))
                             .tooltip({
-                                let detail = controls::runtime_detail(row);
+                                let detail = controls::runtime_detail(row, unix_now());
                                 move |window, cx| {
                                     gpui_component::tooltip::Tooltip::new(detail.clone())
                                         .build(window, cx)

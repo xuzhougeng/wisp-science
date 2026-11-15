@@ -117,7 +117,7 @@ to find in the running app.
 | Request a review of the conversation [请求审查] | Yes | Partial: a Review dialog lists what the reviewer model finds and puts the corrections in the composer; the report is not kept with the conversation | tauri |
 | Share as long image or HTML [分享为长图] | Yes | Partial: Export saves the conversation as a Markdown file; no long image or HTML | ui |
 | Save the conversation as a skill [保存为技能] | Yes | Done: puts the request for the `skill-creator` skill in the composer, after anything already typed | shared |
-| Interactive runtime status (Python / R) [Local · Python · R] | Yes | Partial: the conversation's Python and R interpreters above the composer with their state, Stop, and a console with their variables, code of your own and Restart; no memory limit | shared |
+| Interactive runtime status (Python / R) [Local · Python · R] | Yes | Yes: the conversation's Python and R interpreters above the composer with their state and version, and in the tooltip their path, PID, generation, memory in use, when they started and last ran code, and why they stopped; Stop, and a console with their variables, code of your own and Restart | shared |
 
 ## 4. Transcript
 
