@@ -15,6 +15,13 @@ pub enum Tone {
     Attention,
 }
 
+/// A conversation's title as one line. A title made from a first message
+/// may hold line breaks; shown as they are they break every list row and
+/// header the title is in.
+pub fn one_line(title: &str) -> String {
+    title.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 pub fn heading(item: &Item) -> String {
     item.tool_name
         .clone()
@@ -199,6 +206,17 @@ pub fn should_mark_seen(status: &str, snapshot: Option<&Snapshot>, window_active
 
 #[cfg(test)]
 mod tests {
+    use super::one_line;
+
+    #[test]
+    fn a_title_is_shown_on_one_line() {
+        assert_eq!(
+            one_line("[Scheduled task: 周报]\n\nSummarize  this\tweek "),
+            "[Scheduled task: 周报] Summarize this week"
+        );
+        assert_eq!(one_line("  "), "");
+    }
+
     use super::*;
     use serde_json::json;
 

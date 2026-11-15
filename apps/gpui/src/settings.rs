@@ -717,13 +717,16 @@ pub fn default_profile(settings: &ModelSettings) -> Option<&ModelProfile> {
 /// One line saying which model new conversations use and where it comes from.
 pub fn summary(settings: &ModelSettings) -> String {
     match (settings.source, default_profile(settings)) {
-        (ModelSource::Environment, Some(profile)) => format!(
-            "Using {} from WISP_* environment variables. Unset them to edit models here.",
-            profile.fields.model
+        (ModelSource::Environment, Some(profile)) => crate::i18n::fill(
+            tr("Using {} from WISP_* environment variables. Unset them to edit models here."),
+            &[&profile.fields.model],
         ),
         (_, Some(profile)) => match &profile.problem {
-            Some(problem) => format!("{} cannot be used: {problem}", profile.name),
-            None => format!("New conversations use {}.", profile.name),
+            Some(problem) => crate::i18n::fill(
+                tr("{} cannot be used: {}"),
+                &[&profile.name, &crate::i18n::host(problem)],
+            ),
+            None => crate::i18n::fill(tr("New conversations use {}."), &[&profile.name]),
         },
         (_, None) => {
             tr("No model is configured yet. Messages cannot be sent until one is saved.").into()

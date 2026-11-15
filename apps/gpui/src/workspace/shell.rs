@@ -81,7 +81,7 @@ pub(super) fn error_banner(message: &str, cx: &App) -> Div {
         .text_sm()
         .text_color(danger)
         .child(icon("circle-alert").mt(px(2.)).text_color(danger))
-        .child(div().flex_1().min_w_0().child(message.to_owned()))
+        .child(div().flex_1().min_w_0().child(crate::i18n::host(message)))
 }
 
 impl Workspace {
@@ -274,7 +274,12 @@ impl Workspace {
                     .px_2()
                     .py_1()
                     .rounded(radius)
-                    .child(div().truncate().text_sm().child(row.title.clone()))
+                    .child(
+                        div()
+                            .truncate()
+                            .text_sm()
+                            .child(present::one_line(&row.title)),
+                    )
                     .child(
                         div()
                             .truncate()
@@ -323,7 +328,7 @@ impl Workspace {
     fn render_topbar(&self, cx: &mut Context<Self>) -> Div {
         let title = self
             .current_row()
-            .map(|row| row.title.clone())
+            .map(|row| present::one_line(&row.title))
             .unwrap_or_else(|| tr("New research").into());
         let mut heading = div().v_flex().flex_1().min_w_0().child(
             div()

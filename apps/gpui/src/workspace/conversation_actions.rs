@@ -123,7 +123,10 @@ impl Workspace {
     }
 
     fn begin_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(title) = self.current_row().map(|row| row.title.clone()) else {
+        let Some(title) = self
+            .current_row()
+            .map(|row| crate::present::one_line(&row.title))
+        else {
             return;
         };
         self.layers.switch(Layer::Rename, &Layer::CONVERSATION_BAR);

@@ -940,7 +940,7 @@ impl Workspace {
                 .flex_1()
                 .min_w_0()
                 .truncate()
-                .child(session.title.clone()),
+                .child(crate::present::one_line(&session.title)),
         );
         if let Some((label, tone)) = present::session_badge(session, self.pinned.contains(&id)) {
             row = row.child(chip(label, tone, cx));

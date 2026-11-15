@@ -1215,7 +1215,7 @@ impl Workspace {
         }
         let title = self
             .current_row()
-            .map(|row| row.title.clone())
+            .map(|row| present::one_line(&row.title))
             .unwrap_or_default();
         crate::notify::post(self.notify, event, &title);
     }
@@ -1650,7 +1650,7 @@ impl Workspace {
         if let Some(project) = self.state.project.clone() {
             self.tabs.visit(&project, &id);
             if let Some(row) = self.known.get(&id) {
-                self.tabs.name(&id, &row.title);
+                self.tabs.name(&id, &present::one_line(&row.title));
             }
         }
         self.choose(self.state.project.clone(), Some(id));

@@ -133,6 +133,7 @@ impl Workspace {
                         let next = decision::picked(&this.decision_draft, preset);
                         this.show_decision_draft(next, window, cx);
                         this.decision_note = None;
+                        this.settings_error = None;
                         cx.notify();
                     })),
             );
@@ -147,6 +148,7 @@ impl Workspace {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.decision_draft.think_mode = (*mode).to_owned();
                         this.decision_note = None;
+                        this.settings_error = None;
                         cx.notify();
                     })),
             );
@@ -237,6 +239,7 @@ impl Workspace {
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.decision_draft.enabled = !this.decision_draft.enabled;
                     this.decision_note = None;
+                    this.settings_error = None;
                     cx.notify();
                 })),
             cx,

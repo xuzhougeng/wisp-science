@@ -190,9 +190,11 @@ impl Workspace {
             ));
         if let (Some(link), Some(code)) = (&access.link, &access.code) {
             let asking = self.layers.contains(Layer::ConfirmResetRemoteCode);
+            // One line: wrapping put each button on a line of its own,
+            // past the bottom of the row.
             let mut actions = div()
                 .h_flex()
-                .flex_wrap()
+                .flex_shrink_0()
                 .gap_2()
                 .justify_end()
                 .child(copy("remote-copy-link", tr("Copy link"), link.clone()))

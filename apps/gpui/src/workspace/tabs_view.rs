@@ -39,7 +39,7 @@ impl Workspace {
             let selected = self.state.session.as_deref() == Some(tab.session.as_str());
             // The sidebar knows the current name of the conversations it lists.
             let label = match self.known.get(&tab.session) {
-                Some(row) if !row.title.trim().is_empty() => row.title.clone(),
+                Some(row) if !row.title.trim().is_empty() => crate::present::one_line(&row.title),
                 _ => tabs::label(tab),
             };
             let (project, session) = (tab.project.clone(), tab.session.clone());

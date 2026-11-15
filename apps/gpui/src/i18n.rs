@@ -163,6 +163,22 @@ pub fn fill(template: &str, values: &[&dyn std::fmt::Display]) -> String {
     filled
 }
 
+/// A message the host wrote, such as a refusal, in the language in use:
+/// its translation when the table has this exact message, else itself.
+/// Messages that carry a value (a path, an address) stay as written.
+pub fn host(message: &str) -> String {
+    host_in(current(), message)
+}
+
+fn host_in(locale: Locale, message: &str) -> String {
+    match locale {
+        Locale::En => message.to_owned(),
+        Locale::Zh => chinese()
+            .get(message)
+            .map_or_else(|| message.to_owned(), |zh| (*zh).to_owned()),
+    }
+}
+
 fn chinese() -> &'static HashMap<&'static str, &'static str> {
     static TABLE: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     TABLE.get_or_init(|| crate::i18n_zh::ZH.iter().copied().collect())
@@ -172,6 +188,19 @@ fn chinese() -> &'static HashMap<&'static str, &'static str> {
 mod tests {
     use super::*;
     use crate::i18n_zh::ZH;
+
+    #[test]
+    fn a_host_message_is_translated_when_the_table_has_it_exactly() {
+        let refusal = "This decision model service needs an API key.";
+        assert_eq!(host_in(Locale::En, refusal), refusal);
+        assert_eq!(
+            host_in(Locale::Zh, refusal),
+            "此决策模型服务需要 API 密钥。"
+        );
+        // One that carries a value is left as the host wrote it.
+        let named = "not a host: host is not a valid domain or URL";
+        assert_eq!(host_in(Locale::Zh, named), named);
+    }
 
     #[test]
     fn a_choice_is_saved_read_back_and_resolved_against_the_system() {

@@ -320,10 +320,6 @@ impl Server {
             .find(|workflow| workflow.id == id)
             .context("That workflow is no longer there")?;
         let session = self.create_conversation(project).await?;
-        self.0
-            .store
-            .rename_session(&session, project, &workflow.name)
-            .await?;
         self.execute(RemoteRequest {
             nonce: "workflow".into(),
             seq: 0,
@@ -337,6 +333,12 @@ impl Server {
             }),
         })
         .await?;
+        // Named after the workflow; the send names a new conversation after
+        // its message, so this comes after it.
+        self.0
+            .store
+            .rename_session(&session, project, &workflow.name)
+            .await?;
         Ok(session)
     }
 }

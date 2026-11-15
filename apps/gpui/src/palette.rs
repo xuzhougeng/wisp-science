@@ -383,7 +383,7 @@ impl PaletteState {
                 .map(|row| Entry::Conversation {
                     project: row.project_id.clone(),
                     id: row.id.clone(),
-                    title: row.title.clone(),
+                    title: crate::present::one_line(&row.title),
                     place: if row.shelved {
                         format!("{} · Archived", row.project_name)
                     } else {

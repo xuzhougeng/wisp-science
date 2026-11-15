@@ -265,19 +265,12 @@ impl Server {
     }
 
     async fn send_scheduled(&self, schedule: &ScheduleRecord) -> Result<String> {
+        let fresh = schedule.frame_id.is_none();
         let session = match &schedule.frame_id {
             // A conversation's timer goes into that conversation. While a
             // turn runs there the send is refused and recorded as such.
             Some(session) => session.clone(),
-            None => {
-                let session = self.create_conversation(&schedule.project_id).await?;
-                // Named after the task, so it can be told from the others.
-                self.0
-                    .store
-                    .rename_session(&session, &schedule.project_id, &schedule.name)
-                    .await?;
-                session
-            }
+            None => self.create_conversation(&schedule.project_id).await?,
         };
         self.execute(RemoteRequest {
             nonce: "schedule".into(),
@@ -292,6 +285,15 @@ impl Server {
             }),
         })
         .await?;
+        if fresh {
+            // Named after the task, so it can be told from the others. The
+            // send names a new conversation after its message, so this
+            // comes after it.
+            self.0
+                .store
+                .rename_session(&session, &schedule.project_id, &schedule.name)
+                .await?;
+        }
         Ok(session)
     }
 

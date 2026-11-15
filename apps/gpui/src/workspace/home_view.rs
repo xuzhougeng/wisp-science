@@ -425,7 +425,7 @@ impl Workspace {
                         .v_flex()
                         .flex_1()
                         .min_w_0()
-                        .child(div().truncate().child(row.title.clone()))
+                        .child(div().truncate().child(crate::present::one_line(&row.title)))
                         .child(div().truncate().text_xs().text_color(muted).child(place)),
                 );
             if let Some((label, tone)) = present::session_status(&row.status) {

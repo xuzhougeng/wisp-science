@@ -6241,11 +6241,17 @@ async fn a_scheduled_task_fires_once_per_time_into_a_new_conversation() {
     wait_for(&server, &session, |s| !s.running).await;
     let sent = seen.lock().unwrap().join("\n");
     assert!(sent.contains("[Scheduled task: summarise the queue]\n\nsummarise the queue"));
-    // The conversation is named after the task.
-    let sessions = server.0.store.list_sessions(PROJECT).await.unwrap();
-    assert!(sessions
-        .iter()
-        .any(|row| format!("{row:?}").contains("summarise the queue")));
+    // The conversation is named after the task, not after its message.
+    assert_eq!(
+        server
+            .0
+            .store
+            .session_title(&session)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("summarise the queue")
+    );
 
     // Off, a task whose time comes does not fire; on again, it does once.
     server.set_schedule_enabled(&later, false).await.unwrap();
@@ -6662,11 +6668,17 @@ async fn a_workflow_runs_as_one_conversation_given_its_staged_tasks() {
     assert!(sent.contains("[Workflow: Literature evidence review]"));
     assert!(sent.contains("- Task 3 — Weigh the evidence (after task 1, task 2): "));
     assert!(sent.find("\nStage 1\n").unwrap() < sent.find("\nStage 3\n").unwrap());
-    // The conversation is named after the workflow.
-    let sessions = server.0.store.list_sessions(PROJECT).await.unwrap();
-    assert!(sessions
-        .iter()
-        .any(|row| format!("{row:?}").contains("Literature evidence review")));
+    // The conversation is named after the workflow, not after its message.
+    assert_eq!(
+        server
+            .0
+            .store
+            .session_title(&session)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("Literature evidence review")
+    );
 
     let kept = server.delete_workflow(&review.id).await.unwrap();
     assert_eq!(kept.len(), 1);
@@ -6903,5 +6915,38 @@ async fn undoing_the_latest_turn_puts_its_files_back() {
     );
     // The conversation is rewound all the same.
     assert!(snapshot(&server, &changed).await.items.is_empty());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_conversation_is_named_after_its_first_message_on_one_line() {
+    assert_eq!(
+        crate::title_of("  [Scheduled task: report]\n\nSummarise\tthe   week  "),
+        "[Scheduled task: report] Summarise the week"
+    );
+    assert_eq!(crate::title_of(&"字".repeat(100)).chars().count(), 80);
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    send(
+        &server,
+        &session,
+        "align the reads\nagainst GRCh38\n\nthen count",
+    )
+    .await
+    .unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    assert_eq!(
+        server
+            .0
+            .store
+            .session_title(&session)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("align the reads against GRCh38 then count")
+    );
     server.shutdown().await;
 }

@@ -73,6 +73,19 @@ const COMMANDS: &[&str] = &[
 #[derive(Clone)]
 pub struct Server(Arc<Inner>);
 
+/// What a conversation is called after its first message: the message on
+/// one line, its whitespace and line breaks collapsed, at most 80
+/// characters. A title with a line break in it breaks every list it is in.
+pub(crate) fn title_of(subject: &str) -> String {
+    subject
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(80)
+        .collect()
+}
+
 struct Inner {
     config: Config,
     store: Store,
@@ -531,7 +544,7 @@ impl Server {
             .iter()
             .any(|msg| msg.role == wisp_llm::Role::User)
         {
-            let title: String = subject.chars().take(80).collect();
+            let title = title_of(&subject);
             if let Err(error) = self
                 .0
                 .store
