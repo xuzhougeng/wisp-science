@@ -189,7 +189,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Favorites | A star under any message saves it as it reads now; an image in Artifacts can be saved as a figure. Highlights lists what this conversation saved; the Favorites page lists everything from every project, with search, a kind filter, the item in full, its source conversation and removal after a confirmation |
 | Memory | One switch; habits the model is shown in every project; this project's notes by day, which the model can search; add, edit and delete either, and save any message to one or the other |
 | Memos | Your own notes per project: add, edit, pin, copy, delete after a confirmation, and put one into the message box. The model is never shown them |
-| Files | Project file browser, available before the first conversation; read-only text and Markdown preview, and pictures (PNG, JPEG, GIF, WebP, SVG, BMP); new folder, new file, rename, and move to the project's trash |
+| Files | Project file browser, available before the first conversation; read-only text and Markdown preview, and pictures (PNG, JPEG, GIF, WebP, SVG, BMP); new folder, new file, rename, and move to the project's trash; listed by name, newest first or largest first, folders first, in the order last chosen |
 | Composer | Native multiline input. Return sends and Shift+Return starts a new line, or, with the other choice in Settings, General, Return starts a new line and Cmd/Ctrl+Return sends; Cmd/Ctrl+Return always sends. While an input method is composing, Return goes to it. While a turn runs the same key queues the message: it is sent when the turn ends |
 | Plan first | The model investigates and submits a plan as a card; nothing is changed until you approve it, which leaves plan mode and starts the work |
 | Thinking | What the model is thinking, above the composer, while it thinks; afterwards it stays in the transcript as a folded Thought ahead of the answer, to open when wanted |
@@ -1051,6 +1051,9 @@ Start a slow turn, switch to another app and wait: a notification names
 the conversation when the turn ends, and another when a tool asks for
 approval. Stay in Wisp and confirm nothing is posted. Turn Notify me off
 and Play a sound on in Settings, General: only the sound comes.
+In the Files tab press the order button: By name becomes Newest first (the
+file written last at the top, folders still first), then Largest first, then
+By name again; restart and the last order is kept.
 In a project, press the button left of the conversation's title: the
 sidebar goes and the conversation fills the window; press Cmd+B and it
 comes back, again and it goes. Quit and start again: it is as it was left.

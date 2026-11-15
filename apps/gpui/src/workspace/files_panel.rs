@@ -812,6 +812,20 @@ impl Workspace {
                                     }),
                                 ),
                         )
+                        .child(
+                            Button::new("files-sort")
+                                .icon(glyph("sort"))
+                                .label(self.files.sort.label())
+                                .small()
+                                .ghost()
+                                .tooltip(tr("Change the order"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    let next = this.files.sort.next();
+                                    this.files.set_sort(next);
+                                    this.save_files_sort(window, cx);
+                                    cx.notify();
+                                })),
+                        )
                         .child(div().flex_1())
                         .child(
                             icon_button(

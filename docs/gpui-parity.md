@@ -126,7 +126,7 @@ to find in the running app.
 | Markdown, code, tables, selectable text | Yes | Done | ui |
 | Paginated history | Yes | Done | served |
 | Tool calls: input, output, status, time | Collapsible cards | Done: one folded line each, click to unfold | served |
-| Approvals: allow once / deny | Plus allow for session / always | Partial: once, or for the rest of the conversation (forgotten on restart, can be revoked); no project-wide or permanent rules | served |
+| Approvals: allow once / deny | Plus allow for session / always | Yes: once, for the rest of the conversation (forgotten on restart), or always in this project (listed in Settings, Permissions, where it can be revoked) | served |
 | Agent question card with free-text answer [Agent 需要你的决定] | Yes | Done: options answer with one click, or type the answer | served |
 | Follow-up suggestions | Yes | Done: up to three questions above the composer after an answer; picking one puts it in the composer | served |
 | Thinking blocks | Yes | Yes: shown above the composer while the model thinks, and kept in the transcript as a folded Thought ahead of its answer | served |
@@ -164,7 +164,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | --- | --- | --- | --- |
 | Workspace files [工作区文件]: browse, preview, before any conversation exists | Yes | Done | served |
 | Files: name search | In the panel | Partial: through the command palette, across projects | served |
-| Files: upload, new file, new folder, rename, delete, sort, grid view | Yes | Partial: new folder, new file, rename, and delete as a move to the project's own trash; no upload into a folder, sort or grid | tauri |
+| Files: upload, new file, new folder, rename, delete, sort, grid view | Yes | Partial: new folder, new file, rename, delete as a move to the project's own trash, and sorting by name, time or size; no upload into a folder or grid | tauri |
 | Files: other locations (SSH / WSL contexts) | Yes | Partial: the Files tab lists the folders of a checked SSH host, to look at; no preview, download, upload or change there, and no WSL | shared |
 | Files: image, PDF, Office, notebook, table previews | Yes | Partial: pictures (PNG, JPEG, GIF, WebP, SVG, BMP) up to 32 MB, and CSV and TSV as a table; no PDF, Office or notebook preview | ui |
 | Agents [Agents]: sub-agents, parallel exploration, workflows | Yes | Partial: an Agents tab lists the explore helpers of the loaded conversation with their question, status and findings; no delegated tasks, child conversations or workflows, which this host does not run | store |

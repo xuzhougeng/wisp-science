@@ -1221,4 +1221,9 @@ pub const ZH: &[(&str, &str)] = &[
     ("Hide the sidebar", "隐藏侧边栏"),
     // Saved thinking.
     ("Thought", "思考过程"),
+    // File order.
+    ("By name", "按名称"),
+    ("Newest first", "最新在前"),
+    ("Largest first", "最大在前"),
+    ("Change the order", "更改排序"),
 ];

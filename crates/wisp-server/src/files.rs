@@ -318,11 +318,17 @@ pub async fn read(
                 "Directory is too large; open a smaller subdirectory"
             );
             let metadata = entry.metadata().await?;
+            // When it last changed, so a client can list the newest first.
+            let modified_unix_millis = metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|elapsed| elapsed.as_millis() as u64);
             entries.push(DirEntry {
                 name,
                 is_dir: kind.is_dir(),
                 size: metadata.len(),
-                modified_unix_millis: None,
+                modified_unix_millis,
             });
         }
         entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
@@ -365,6 +371,34 @@ pub async fn read(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_listing_says_when_each_entry_last_changed() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("counts.csv"), "a,b\n").unwrap();
+        std::fs::create_dir(tmp.path().join("figs")).unwrap();
+        let before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let request = serde_json::from_value(serde_json::json!({"path": ""})).unwrap();
+        let listed = read(
+            "lab",
+            &tmp.path().to_string_lossy(),
+            "native_project_file_directory",
+            request,
+        )
+        .await
+        .unwrap();
+        let listed: dto::Directory = serde_json::from_value(listed).unwrap();
+        assert_eq!(listed.entries.len(), 2);
+        for entry in &listed.entries {
+            let modified = entry.modified_unix_millis.expect("a time");
+            // Written a moment ago, give or take the file system's clock.
+            assert!(modified.abs_diff(before) < 60_000, "{}", entry.name);
+        }
+    }
+
     #[tokio::test]
     async fn file_browser_confines_paths_and_hides_metadata() {
         let tmp = tempfile::tempdir().unwrap();

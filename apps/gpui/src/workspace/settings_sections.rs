@@ -26,6 +26,7 @@ const LANGUAGE: &str = "language";
 const LAUNCH: &str = "launch";
 const SEND_KEY: &str = "send_key";
 const SIDEBAR: &str = "sidebar";
+const FILES_SORT: &str = "files_sort";
 const NOTIFY: &str = "notifications";
 const NOTIFY_SOUND: &str = "notification_sound";
 const LAST_OPEN: &str = "last_open";
@@ -669,26 +670,31 @@ impl Workspace {
             });
         })
         .detach();
-        let (appearance, launch, place, send_key, sidebar) = (
+        let (appearance, launch, place, send_key, sidebar, files_sort) = (
             self.backend.preference(APPEARANCE),
             self.backend.preference(LAUNCH),
             self.backend.preference(LAST_OPEN),
             self.backend.preference(SEND_KEY),
             self.backend.preference(SIDEBAR),
+            self.backend.preference(FILES_SORT),
         );
         cx.spawn_in(window, async move |this, cx| {
             let saved = |reply| async move { receive(reply).await.ok().flatten() };
-            let (appearance, launch, place, send_key, sidebar) = (
+            let (appearance, launch, place, send_key, sidebar, files_sort) = (
                 saved(appearance).await,
                 saved(launch).await,
                 saved(place).await,
                 saved(send_key).await,
                 saved(sidebar).await,
+                saved(files_sort).await,
             );
             let _ = this.update_in(cx, |this, window, cx| {
                 this.send_key =
                     settings::SendKey::from_key(send_key.as_deref().unwrap_or_default());
                 this.sidebar_hidden = sidebar.as_deref() == Some("hidden");
+                this.files.set_sort(crate::files::FileSort::from_key(
+                    files_sort.as_deref().unwrap_or_default(),
+                ));
                 this.word_fields(window, cx);
                 this.appearance =
                     crate::theme::Appearance::from_key(appearance.as_deref().unwrap_or_default());
@@ -726,6 +732,12 @@ impl Workspace {
     }
 
     /// Saves one choice of the General page; a failure is shown there.
+    /// Remembers how the Files tab lists a folder, for the next start.
+    pub(super) fn save_files_sort(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let value = self.files.sort.key().to_owned();
+        self.save_general(FILES_SORT, value, window, cx);
+    }
+
     /// Puts the project's sidebar away or brings it back, and remembers
     /// which for the next start.
     pub(super) fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {

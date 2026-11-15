@@ -16,6 +16,70 @@ pub struct Ticket {
     pub path: String,
 }
 
+/// The order a folder's entries are listed in. Folders always come first.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FileSort {
+    #[default]
+    Name,
+    Newest,
+    Largest,
+}
+
+impl FileSort {
+    pub const ALL: [FileSort; 3] = [FileSort::Name, FileSort::Newest, FileSort::Largest];
+
+    /// The one after this, for a button that steps through them.
+    pub fn next(self) -> Self {
+        match self {
+            FileSort::Name => FileSort::Newest,
+            FileSort::Newest => FileSort::Largest,
+            FileSort::Largest => FileSort::Name,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            FileSort::Name => tr("By name"),
+            FileSort::Newest => tr("Newest first"),
+            FileSort::Largest => tr("Largest first"),
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            FileSort::Name => "name",
+            FileSort::Newest => "newest",
+            FileSort::Largest => "largest",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|sort| sort.key() == key.trim())
+            .unwrap_or_default()
+    }
+}
+
+/// Puts `entries` in `sort`'s order: folders first, then by the chosen
+/// measure, ties by name without regard to case.
+pub fn sort_entries(entries: &mut [DirEntry], sort: FileSort) {
+    use std::cmp::Ordering;
+    entries.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| match sort {
+                FileSort::Name => Ordering::Equal,
+                FileSort::Newest => b.modified_unix_millis.cmp(&a.modified_unix_millis),
+                // A folder's size is not its contents'; folders stay by name.
+                FileSort::Largest if a.is_dir => Ordering::Equal,
+                FileSort::Largest => b.size.cmp(&a.size),
+            })
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+}
+
 #[derive(Default)]
 pub struct FilesState {
     generation: u64,
@@ -29,6 +93,8 @@ pub struct FilesState {
     pub preview_path: Option<String>,
     pub preview: Option<FileContent>,
     pub error: Option<String>,
+    /// How folders are listed; kept when the project changes.
+    pub sort: FileSort,
 }
 
 impl FilesState {
@@ -41,6 +107,7 @@ impl FilesState {
         *self = Self {
             generation: self.generation + 1,
             project: project.map(str::to_owned),
+            sort: self.sort,
             ..Self::default()
         };
     }
@@ -83,7 +150,14 @@ impl FilesState {
         self.loaded = true;
         self.path = directory.path;
         self.entries = directory.entries;
+        sort_entries(&mut self.entries, self.sort);
         true
+    }
+
+    /// Lists the folder in another order, at once.
+    pub fn set_sort(&mut self, sort: FileSort) {
+        self.sort = sort;
+        sort_entries(&mut self.entries, sort);
     }
 
     pub fn accept_preview(&mut self, ticket: &Ticket, preview: Preview) -> bool {
@@ -753,5 +827,53 @@ mod tests {
             trashed_note(".wisp/trash/1700-0/counts.csv"),
             "counts.csv is in .wisp/trash/1700-0 in the project folder. Nothing was erased."
         );
+    }
+
+    fn entry(name: &str, is_dir: bool, size: u64, modified: Option<u64>) -> DirEntry {
+        DirEntry {
+            name: name.into(),
+            is_dir,
+            size,
+            modified_unix_millis: modified,
+        }
+    }
+
+    #[test]
+    fn a_folder_is_listed_folders_first_in_the_chosen_order() {
+        let mut entries = vec![
+            entry("b.csv", false, 10, Some(3)),
+            entry("Data", true, 0, Some(1)),
+            entry("a.txt", false, 500, Some(1)),
+            entry("figs", true, 0, Some(9)),
+            entry("C.md", false, 50, None),
+        ];
+        let names = |entries: &[DirEntry]| {
+            entries
+                .iter()
+                .map(|entry| entry.name.clone())
+                .collect::<Vec<_>>()
+        };
+        sort_entries(&mut entries, FileSort::Name);
+        assert_eq!(names(&entries), ["Data", "figs", "a.txt", "b.csv", "C.md"]);
+        sort_entries(&mut entries, FileSort::Newest);
+        // A file with no time goes last among the files.
+        assert_eq!(names(&entries), ["figs", "Data", "b.csv", "a.txt", "C.md"]);
+        sort_entries(&mut entries, FileSort::Largest);
+        assert_eq!(names(&entries), ["Data", "figs", "a.txt", "C.md", "b.csv"]);
+        // The choice steps round and is read back from what is saved.
+        assert_eq!(FileSort::Largest.next(), FileSort::Name);
+        for sort in FileSort::ALL {
+            assert_eq!(FileSort::from_key(sort.key()), sort);
+        }
+        assert_eq!(FileSort::from_key("sideways"), FileSort::Name);
+    }
+
+    #[test]
+    fn the_order_stays_when_the_project_changes() {
+        let mut files = FilesState::default();
+        files.set_project(Some("a"));
+        files.set_sort(FileSort::Largest);
+        files.set_project(Some("b"));
+        assert_eq!(files.sort, FileSort::Largest);
     }
 }
