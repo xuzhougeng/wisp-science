@@ -347,6 +347,8 @@ pub enum Shortcut {
     Sidebar,
     /// Search the project's conversations, their messages included.
     SearchHistory,
+    /// The palette with only its commands.
+    Commands,
 }
 
 /// `primary` is Cmd on macOS and Ctrl elsewhere. Shift makes a chord of its
@@ -363,6 +365,7 @@ pub fn shortcut(key: &str, primary: bool, shift: bool, others: bool) -> Option<S
         "n" => Some(Shortcut::NewConversation),
         "," => Some(Shortcut::Settings),
         "k" => Some(Shortcut::Palette),
+        "p" => Some(Shortcut::Commands),
         "f" => Some(Shortcut::Find),
         "b" => Some(Shortcut::Sidebar),
         _ => None,
@@ -439,6 +442,7 @@ mod tests {
         assert_eq!(shortcut("n", false, false, false), None);
         assert_eq!(shortcut("n", true, false, true), None);
         assert_eq!(shortcut("k", true, false, false), Some(Shortcut::Palette));
+        assert_eq!(shortcut("p", true, false, false), Some(Shortcut::Commands));
         assert_eq!(shortcut("f", true, false, false), Some(Shortcut::Find));
         assert_eq!(shortcut("b", true, false, false), Some(Shortcut::Sidebar));
         assert_eq!(shortcut("b", false, false, false), None);

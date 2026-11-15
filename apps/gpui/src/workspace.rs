@@ -1617,6 +1617,10 @@ impl Workspace {
                 self.toggle_palette(window, cx);
                 true
             }
+            Shortcut::Commands => {
+                self.toggle_command_palette(window, cx);
+                true
+            }
             Shortcut::Find => {
                 // Only where a conversation is what is showing.
                 if self.screen != Screen::Project

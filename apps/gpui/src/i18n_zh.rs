@@ -922,6 +922,7 @@ pub const ZH: &[(&str, &str)] = &[
     ),
     ("Approve and run", "批准并运行"),
     ("May: {}", "可以：{}"),
+    ("Run a command…", "运行一个命令…"),
     ("Open a project to open a terminal in it.", "打开一个项目后才能在其中打开终端。"),
     ("No SSH host is saved; add one in Settings, Environments.", "还没有保存 SSH 主机；请在“设置 → 环境”中添加。"),
     ("{} (ended)", "{}（已结束）"),

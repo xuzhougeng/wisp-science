@@ -22,6 +22,8 @@ pub enum Mode {
     Open,
     /// Add the row to the message being written.
     Attach,
+    /// Commands only, as the WebView's action palette (⌘P) lists them.
+    Commands,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -376,6 +378,13 @@ impl PaletteState {
     ) -> Vec<Entry> {
         let query = self.query.as_str();
         let attach = self.mode == Mode::Attach;
+        if self.mode == Mode::Commands {
+            return Command::ALL
+                .into_iter()
+                .filter(|command| command.available(screen) && matches(command.label(), query))
+                .map(Entry::Command)
+                .collect();
+        }
         let mut entries: Vec<Entry> = projects
             .iter()
             .filter(|project| {
@@ -607,6 +616,23 @@ mod tests {
         // Reopening the palette also invalidates what was in flight.
         state.reset(Mode::Open);
         assert!(!state.current(cleared));
+    }
+
+    #[test]
+    fn the_command_palette_lists_only_commands() {
+        let mut state = PaletteState::default();
+        state.reset(Mode::Commands);
+        let ticket = state.begin("o");
+        state.accept_files(ticket, vec![file("notes.txt")]);
+        state.accept_conversations(ticket, vec![conversation("1", "notes", false)]);
+        let projects = vec![project("notes", "/x")];
+        let entries = state.entries(&projects, &[], Screen::Home);
+        assert!(!entries.is_empty());
+        assert!(
+            entries
+                .iter()
+                .all(|entry| entry.section() == Section::Commands)
+        );
     }
 
     #[test]

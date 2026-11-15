@@ -24,6 +24,11 @@ impl Workspace {
         self.show_palette(Mode::Open, window, cx);
     }
 
+    /// The same box with only its commands (⌘P).
+    pub(super) fn toggle_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_palette(Mode::Commands, window, cx);
+    }
+
     /// The same box, but picking a row adds it to the message being written.
     pub(super) fn toggle_attach_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.state.session.is_some() {
@@ -40,6 +45,7 @@ impl Workspace {
             let placeholder = match mode {
                 Mode::Open => tr("Search conversations, projects and files…"),
                 Mode::Attach => tr("Add a file, a conversation or a skill to this message…"),
+                Mode::Commands => tr("Run a command…"),
             };
             self.palette_input.update(cx, |input, cx| {
                 input.set_placeholder(placeholder, window, cx);
@@ -93,6 +99,10 @@ impl Workspace {
         self.palette_scroll.scroll_to_item(0);
         cx.notify();
         let query = self.palette.query.clone();
+        // Commands are listed here; nothing is asked of the host.
+        if self.palette.mode == Mode::Commands {
+            return;
+        }
         let attach = self.palette.mode == Mode::Attach;
         // To attach, files and skills are this project's; skills are listed
         // even before anything is typed.
@@ -453,7 +463,9 @@ impl Workspace {
                     .text_xs()
                     .text_color(muted)
                     .child(match self.palette.mode {
-                        Mode::Open => "↑ ↓ to move · Return to open · Esc to close",
+                        Mode::Open | Mode::Commands => {
+                            "↑ ↓ to move · Return to open · Esc to close"
+                        }
                         Mode::Attach => "↑ ↓ to move · Return to add · Esc to close",
                     }),
             );
