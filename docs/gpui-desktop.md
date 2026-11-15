@@ -385,10 +385,16 @@ Limits of this slice:
   model (the host supplies the provider), evaluates each in a fresh
   workspace, keeps its budgets of candidates, cost and wall time, pauses,
   resumes and cancels at candidate boundaries, runs the final
-  verification and promotes the top candidates as artifacts. Nothing
-  starts it yet: the workflow run activity that starts it from a batch,
-  its Start, Pause, Resume and Cancel, recovery at startup, and the GPUI
-  run card are not ported.
+  verification and promotes the top candidates as artifacts. The host
+  answers for its Run as the WebView's commands do: its details (the
+  frozen contract and audit, candidates, strategies, outputs), Start once
+  the contract was read (refused without the model the starting batch
+  step approved, and inside an exploration), Pause at the next candidate
+  boundary, Resume from the checkpoint, and Cancel (also the Runs tab's
+  Cancel); candidates are proposed by the conversation's sub-agent model,
+  or its own, capped at 8192 output tokens. A search the app closed on is
+  paused at the next start, and one running at shutdown pauses. Still to
+  port: the batch step that starts a search, and its GPUI run card.
 - Explorations follow the WebView's `exploration_commands.rs`,
   `exploration_promotion.rs` and `exploration_workspace.rs`, whose
   services and tests are carried over. The first candidate of a round

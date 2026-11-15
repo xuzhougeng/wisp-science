@@ -166,6 +166,10 @@ struct Inner {
     tidying: AtomicBool,
     /// Serializes making the research assistant's project.
     assistant_lock: tokio::sync::Mutex<()>,
+    /// What evaluates a method search's candidates in place of the local
+    /// Python; set by tests only.
+    method_search_evaluator:
+        std::sync::RwLock<Option<Arc<dyn method_search::prepare::MethodSearchEvaluator>>>,
 }
 
 /// What runs a turn: Wisp's own agent (with the model its side requests
@@ -272,6 +276,11 @@ impl Server {
         if let Err(error) = store.recover_interrupted_agent_workflows().await {
             tracing::warn!(%error, "Could not settle interrupted delegated batches");
         }
+        // A method search the app closed on waits paused, before the Runs
+        // are reconciled, which would otherwise mark it lost.
+        if let Err(error) = store.recover_interrupted_method_search_runs().await {
+            tracing::warn!(%error, "Could not pause interrupted method searches");
+        }
         let runs = wisp_runs::RunManager::new();
         runs.recover(&store).await.map_err(anyhow::Error::msg)?;
         let routes = network::load(&store).await;
@@ -318,6 +327,7 @@ impl Server {
             recapping: AtomicBool::new(false),
             tidying: AtomicBool::new(false),
             assistant_lock: Default::default(),
+            method_search_evaluator: Default::default(),
         })))
     }
 
@@ -1330,6 +1340,10 @@ impl Server {
         self.0.mcp.close_all().await;
         for runtime in runtimes {
             runtime.shutdown_all().await;
+        }
+        // A method search under way resumes from its checkpoint later.
+        if let Err(error) = self.0.store.pause_method_searches_for_shutdown().await {
+            tracing::warn!(%error, "Could not pause method searches for shutdown");
         }
     }
 }

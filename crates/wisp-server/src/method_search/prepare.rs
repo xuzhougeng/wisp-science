@@ -184,14 +184,14 @@ pub(crate) struct PrepareMethodSearchRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ProtectedFileAudit {
+pub struct ProtectedFileAudit {
     pub path: String,
     pub sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct MethodSearchAuditReport {
+pub struct MethodSearchAuditReport {
     pub schema: String,
     pub preparation_id: String,
     pub baseline: BaselineAuditSummary,

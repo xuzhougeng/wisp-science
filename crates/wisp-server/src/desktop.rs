@@ -3309,6 +3309,10 @@ impl Server {
             record.project_id == project,
             "Run does not belong to the selected project"
         );
+        // A method search ends through its own coordinator, as in the WebView.
+        if record.kind == "method_search" {
+            return self.cancel_method_search(project, run).await.map(drop);
+        }
         self.0
             .runs
             .cancel(&self.0.store, run)
@@ -5377,6 +5381,8 @@ pub use crate::delegation::{DelegatedBatch, DelegatedTask};
 pub use crate::device_bridge::{DeviceBridge, DeviceBridgeState};
 pub use crate::experts::{Expert, ExpertInput};
 pub use crate::explorations::{FileChange, PromotionPreview, StartedExploration};
+pub use crate::method_search::control::MethodSearchRunDetails;
+pub use crate::method_search::prepare::{MethodSearchAuditReport, ProtectedFileAudit};
 pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow};
 pub use crate::origin::FileOrigin;
 pub use crate::papers::{
