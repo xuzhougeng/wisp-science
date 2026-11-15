@@ -477,8 +477,8 @@ Limits of this slice:
   desktop without the variable had no bundled skills. A headless host is
   unchanged. Turning a skill off uses the WebView's list (`disabled_skills`)
   and applies to every project from the next turn: the model's skill tools
-  and the add-context box no longer offer it. Editing tags, per-project
-  enabling, the community catalog and installing from GitHub are not ported.
+  and the add-context box no longer offer it. Per-project enabling is
+  not ported.
 - The host now gives every turn the bundled literature and biology
   connectors (`wisp-bio`: PubMed, bioRxiv, UniProt and the rest), which the
   WebView has always had. They only read, so they never ask for approval, and
@@ -2187,6 +2187,11 @@ with a wrong SHA-256 and confirm it is refused.
 Install a plugin whose `.mcp.json` names a server inside it, switch it on
 for one project, and ask for its tool there: it asks, then answers; in
 another project it is not offered.
+In Settings, Skills, under Get skills, press Look at it on an entry of the
+directory: the package shows with its repository and commit; Install puts it
+in `~/.wisp/skills` and it is listed as Your own. Press From GitHub…, then
+Escape: only the form closes. Refresh the directory with the network off:
+the shipped directory stays, with a line saying why.
 In Settings, Environments, under Where the tools are, each hint shows where
 the search path finds that program. Type a path that does not exist for
 Python and Save paths: it is refused and named; type the real one and save,

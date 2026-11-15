@@ -49,6 +49,7 @@ mod settings_plugins;
 mod settings_quick;
 mod settings_remote;
 mod settings_sections;
+mod settings_skill_store;
 mod settings_subscriptions;
 mod settings_view;
 mod settings_workflows;
@@ -546,6 +547,16 @@ pub struct Workspace {
     /// The installed plugins; `None` until the host answered.
     plugins: Option<Vec<wisp_server::desktop::PluginRow>>,
     plugin_installing: bool,
+    /// The community directory of skills, once read.
+    community_skills: Option<wisp_dto::CommunitySkillCatalog>,
+    /// The skill packages found at the address asked about.
+    skill_candidates: Vec<wisp_dto::SkillStoreCandidate>,
+    /// A skill directory, preview or install is under way.
+    skill_store_busy: bool,
+    /// What the last of those said.
+    skill_store_note: Option<String>,
+    /// A GitHub address and the exact ref, for skills.
+    github_skill_fields: [Entity<InputState>; 2],
     /// The address and SHA-256 of a plugin to download.
     plugin_address: [Entity<InputState>; 2],
     /// The plugin the remove question is about.
@@ -1003,6 +1014,12 @@ impl Workspace {
         ];
         let mcp_token = cx.new(|cx| InputState::new(window, cx).masked(true));
         let mcp_pairs = cx.new(|cx| InputState::new(window, cx).multi_line(true));
+        let github_skill_fields = [
+            cx.new(|cx| {
+                InputState::new(window, cx).placeholder("https://github.com/owner/repository")
+            }),
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Branch, tag or commit"))),
+        ];
         let plugin_address = [
             cx.new(|cx| InputState::new(window, cx).placeholder("https://example.org/plugin.zip")),
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Its SHA-256, as published"))),
@@ -1494,6 +1511,11 @@ impl Workspace {
             device_note: None,
             plugins: None,
             plugin_installing: false,
+            community_skills: None,
+            skill_candidates: vec![],
+            skill_store_busy: false,
+            skill_store_note: None,
+            github_skill_fields,
             plugin_address,
             plugin_removing: None,
             pet: None,
@@ -1721,7 +1743,7 @@ impl Workspace {
             Some(Layer::TerminalHosts) => {}
             Some(Layer::SkillTags) => self.skill_tags_editing = None,
             Some(Layer::HookForm) => self.hook_editing = None,
-            Some(Layer::PluginAddress) => {}
+            Some(Layer::PluginAddress | Layer::SkillFromGithub) => {}
             Some(Layer::QuickActionForm | Layer::ConfirmRemoveQuickAction) => {
                 self.quick_editing = None
             }

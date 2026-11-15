@@ -174,6 +174,8 @@ pub enum Layer {
     TerminalHosts,
     /// A skill's tags being changed, on the Skills page of Settings.
     SkillTags,
+    /// The address of skills on GitHub, on the Skills page of Settings.
+    SkillFromGithub,
     /// The form for a quick action, on its page of Settings.
     QuickActionForm,
     /// The form for a command hook, on the Hooks page of Settings.
@@ -272,6 +274,7 @@ impl Layer {
             | Layer::ConfirmRemoveWorkflow
             | Layer::WorkflowFromSkills
             | Layer::SkillTags
+            | Layer::SkillFromGithub
             | Layer::ConfirmRemovePlugin
             | Layer::PluginAddress
             | Layer::ConfirmResetRemoteCode
@@ -861,6 +864,15 @@ mod tests {
         stack.open(Layer::Settings);
         stack.open(Layer::PluginAddress);
         assert_eq!(stack.dismiss_top(), Some(Layer::PluginAddress));
+        assert!(stack.contains(Layer::Settings));
+    }
+
+    #[test]
+    fn the_github_skill_form_closes_before_settings() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::Settings);
+        stack.open(Layer::SkillFromGithub);
+        assert_eq!(stack.dismiss_top(), Some(Layer::SkillFromGithub));
         assert!(stack.contains(Layer::Settings));
     }
 

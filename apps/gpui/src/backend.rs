@@ -2302,6 +2302,33 @@ impl Backend {
         self.local(move |host| async move { host.set_review_model(&profile).await })
     }
 
+    /// The community directory of skills, as published now when `refresh`.
+    pub fn community_skills(&self, refresh: bool) -> Reply<wisp_dto::CommunitySkillCatalog> {
+        self.local(move |host| async move { host.community_skills(refresh).await })
+    }
+
+    /// The skill packages at a GitHub address, for `project`.
+    pub fn preview_github_skills(
+        &self,
+        project: String,
+        address: String,
+        exact_ref: String,
+    ) -> Reply<Vec<wisp_dto::SkillStoreCandidate>> {
+        self.local(move |host| async move {
+            host.preview_github_skills(&project, &address, &exact_ref)
+                .await
+        })
+    }
+
+    /// Installs one package into your own skills folder.
+    pub fn install_github_skill(
+        &self,
+        project: String,
+        source: wisp_dto::SkillInstallSource,
+    ) -> Reply<wisp_dto::SkillInstallResult> {
+        self.local(move |host| async move { host.install_github_skill(&project, source).await })
+    }
+
     /// Where the local environment's executables are.
     pub fn tool_paths(&self) -> Reply<Vec<wisp_server::desktop::ToolPath>> {
         self.local(|host| async move { host.tool_paths().await })

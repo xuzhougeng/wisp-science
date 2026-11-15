@@ -96,7 +96,12 @@ impl Workspace {
         match section {
             Section::Models => self.load_subscriptions(window, cx),
             Section::General => {}
-            Section::Skills => self.load_skills(window, cx),
+            Section::Skills => {
+                self.load_skills(window, cx);
+                if self.community_skills.is_none() {
+                    self.load_community_skills(false, window, cx);
+                }
+            }
             Section::Connections => {
                 self.load_connectors(window, cx);
                 self.load_mcp_servers(window, cx);
@@ -587,7 +592,7 @@ impl Workspace {
     }
 
     /// Lists every skill: the open project's and the ones for all projects.
-    fn load_skills(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn load_skills(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let reply = self.backend.skills(self.state.project.clone());
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
@@ -837,7 +842,7 @@ impl Workspace {
                     ),
             );
         }
-        page
+        page.child(self.skill_store_section(cx))
     }
 
     fn load_connectors(&mut self, window: &mut Window, cx: &mut Context<Self>) {

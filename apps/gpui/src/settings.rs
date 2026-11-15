@@ -490,6 +490,8 @@ pub fn skill_source(source: &str) -> &'static str {
     match source {
         "bundled" => tr("Ships with Wisp"),
         "project" => tr("This project"),
+        "global" => tr("Your own"),
+        "plugin" => tr("A plugin"),
         _ => tr("Added folder"),
     }
 }
@@ -1268,6 +1270,8 @@ mod tests {
         assert_eq!(skill_source("bundled"), "Ships with Wisp");
         assert_eq!(skill_source("project"), "This project");
         assert_eq!(skill_source("extra"), "Added folder");
+        assert_eq!(skill_source("global"), "Your own");
+        assert_eq!(skill_source("plugin"), "A plugin");
     }
 
     #[test]
