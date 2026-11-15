@@ -303,8 +303,38 @@ Limits of this slice:
   unless the conversation has full access; a subagent's turns keep that
   asking when its parent's turn came from a chat. Not ported: the side
   model's automatic answer to a subagent's approvals (its own approval
-  card is answered in its conversation), and `delegate_tasks` with its
-  workflow cards.
+  card is answered in its conversation).
+- Delegated task batches follow the WebView's `delegation_tool.rs`,
+  `dynamic_workflow.rs` and the native path of `delegation_runtime.rs`.
+  A top-level conversation's agent gets `delegate_tasks`: a goal, shared
+  context and up to eight tasks, each with an id, an instruction, the
+  tasks it depends on and the capabilities it needs (reasoning, reading
+  the project, also writing it, running code in an execution context,
+  an independent review; looking at images when a vision model is set
+  up, and making figures with Python or R when the runtime is
+  installed). The batch is resolved by the same capability policy as the
+  WebView's and kept in the same agent-workflow tables. Independent
+  tasks run two at a time and a task runs once what it depends on has
+  succeeded, with their results passed in; one whose prerequisite failed
+  is blocked. Each task works in a conversation of its own under the
+  one that started the batch, named after its id and instruction,
+  watched and not written to, on the subagent model (or the
+  conversation's own with `inherit`). It has only the tools its
+  capabilities grant and uses them without asking; before anything runs
+  the researcher approves the batch on a plan card listing each task
+  and why it needs approval (changing files, running code, a remote
+  model), unless the conversation has full access, and `delegate_tasks`
+  is not asked about a second time. A refused batch is not kept. The
+  agent gets back each task's status, summary, small data, evidence and
+  usage in the same turn, and reads a full result with
+  `get_delegated_result`. Stopping the turn stops the batch and its
+  tasks; a batch the app closed on is marked failed at the next start.
+  Batches are not offered inside an exploration, and a frozen project
+  lets only read-only tasks run. Not ported: background batches and
+  their delivery, nested delegation, specialists, isolated worktrees,
+  retrying a batch, ACP executors, literature and web research
+  capabilities, and method-search run activities. The window does not
+  list batches yet.
 - Explorations follow the WebView's `exploration_commands.rs`,
   `exploration_promotion.rs` and `exploration_workspace.rs`, whose
   services and tests are carried over. The first candidate of a round
@@ -564,15 +594,16 @@ Limits of this slice:
   Notebook: it lists `explore` calls, the only kind of sub-agent this
   host runs, from the messages that are loaded, and shows a helper's
   findings once it has reported back, not its steps along the way.
-  Delegated tasks, child conversations and workflows are not run here,
-  so they have nothing to list.
+  Delegated task batches run (see above) but are not listed here yet.
 - The sub-agent model is the model the `explore` helper works on, the
   only sub-agent this host has. The order is the WebView's: a
   conversation's own choice for its sub-agents (its `frames` column,
   which this desktop reads but cannot set), then the choice in Settings
   (`subagent_model_id`), then the conversation's model. A choice naming
   a profile that is gone or unusable falls through to the next. It
-  applies from a conversation's next turn.
+  applies from a conversation's next turn. Subagents and delegated tasks
+  use the choice in Settings, or the conversation's model when there is
+  none or they ask to inherit it.
 - ACP agents keeps the WebView's list (`acp_agent_profiles`, same
   shape), so an agent added in either desktop is in both. A program is
   shown as not found when it is neither a path to a file nor a name on

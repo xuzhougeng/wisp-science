@@ -113,6 +113,97 @@ impl Provider for DispatchingModel {
     }
 }
 
+/// A model that, asked to count reads, delegates a two-task batch; asked to
+/// run an analysis, delegates a task that runs code; as each task, answers
+/// it; and sums up what came back.
+struct DelegatingModel;
+
+#[async_trait]
+impl Provider for DelegatingModel {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+        Ok(Completion {
+            content: "ok".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        messages: &[Message],
+        _tools: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        let said = |needle: &str| {
+            messages
+                .iter()
+                .any(|m| m.content.as_text().contains(needle))
+        };
+        let delegate = |args: serde_json::Value| {
+            Ok(Completion {
+                tool_calls: vec![ToolCall {
+                    id: "delegate-1".into(),
+                    kind: "function".into(),
+                    function: wisp_llm::FunctionCall {
+                        name: "delegate_tasks".into(),
+                        arguments: args.to_string(),
+                    },
+                }],
+                finish_reason: Some("tool_calls".into()),
+                ..Default::default()
+            })
+        };
+        let last_tool = messages
+            .iter()
+            .rev()
+            .find(|m| m.role == wisp_llm::Role::Tool)
+            .map(|m| m.content.as_text());
+        let text = if said("[From the parent conversation's agent: a delegated task]") {
+            if said("Task: Add up the counts") {
+                if said("42 reads") {
+                    "{\"summary\": \"total 42\"}"
+                } else {
+                    "{\"summary\": \"no input\"}"
+                }
+            } else {
+                "Counted.\n```json\n{\"summary\": \"42 reads\", \"evidence\": [\"wc -l\"]}\n```"
+            }
+        } else if let Some(result) = last_tool {
+            if result.contains("\"status\":\"denied\"") {
+                "The batch was turned down."
+            } else if result.contains("total 42") {
+                "Synthesized: total 42"
+            } else {
+                "The batch failed."
+            }
+        } else if said("run the analysis") {
+            return delegate(json!({
+                "goal": "Run the analysis",
+                "tasks": [{"id": "run", "instruction": "Run the analysis script", "capabilities": ["code_run"]}],
+            }));
+        } else {
+            return delegate(json!({
+                "goal": "Count and add up the reads",
+                "tasks": [
+                    {"id": "count", "instruction": "Count the reads in data.fastq", "capabilities": ["project_read"]},
+                    {"id": "sum", "instruction": "Add up the counts", "capabilities": ["reasoning"], "depends_on": ["count"]},
+                ],
+            }));
+        };
+        sink.on_text(text);
+        Ok(Completion {
+            content: text.into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+}
+
 pub(crate) fn config(root: &Path) -> Config {
     Config {
         data: root.join("data"),
@@ -8767,6 +8858,108 @@ async fn a_subagent_works_in_its_own_conversation_and_reports_back() {
         .subagent_status(&project, &child, Some(&parent))
         .await
         .is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_delegated_batch_runs_its_tasks_in_order_and_returns_their_results() {
+    let temp = tempfile::tempdir().unwrap();
+    let factory: ModelFactory = Arc::new(|_| Box::new(DelegatingModel));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let parent = create(&server).await;
+    send(&server, &parent, "count the reads please")
+        .await
+        .unwrap();
+    turn_done(&server, &parent).await;
+    let texts = texts_of(&server, &parent).await;
+    assert!(
+        texts.iter().any(|text| text == "Synthesized: total 42"),
+        "{texts:?}"
+    );
+
+    // The batch and its tasks are kept, each task with its conversation.
+    let batches = server.delegated_batches(PROJECT, &parent).await.unwrap();
+    assert_eq!(batches.len(), 1);
+    let batch = &batches[0];
+    assert_eq!(batch.goal, "Count and add up the reads");
+    assert_eq!(batch.status, "succeeded");
+    assert!(!batch.running());
+    let ids: Vec<_> = batch.tasks.iter().map(|task| task.id.as_str()).collect();
+    assert_eq!(ids, ["count", "sum"]);
+    assert_eq!(batch.tasks[1].depends_on, ["count"]);
+    assert!(batch.tasks.iter().all(|task| task.status == "succeeded"));
+    // The dependent task was given what the first one found.
+    assert_eq!(batch.tasks[0].summary.as_deref(), Some("42 reads"));
+    assert_eq!(batch.tasks[1].summary.as_deref(), Some("total 42"));
+
+    // Each task worked in a conversation of its own under the parent,
+    // which is watched, not written to, and is no subagent.
+    let child = batch.tasks[0].conversation.clone().unwrap();
+    let list = server.conversations(PROJECT, "", false).await.unwrap();
+    assert_eq!(list.dispatched.get(&child), Some(&parent));
+    let row = list.rows.iter().find(|row| row.id == child).unwrap();
+    assert_eq!(row.title, "count · Count the reads in data.fastq");
+    let asked = texts_of(&server, &child).await;
+    assert!(asked.iter().any(|text| text
+        .starts_with("[From the parent conversation's agent: a delegated task]")
+        && text.contains("Task: Count the reads in data.fastq")));
+    assert!(send(&server, &child, "hello").await.is_err());
+    let status = server
+        .subagent_status(PROJECT, &parent, None)
+        .await
+        .unwrap();
+    assert!(!status.contains(&child), "{status}");
+    assert_eq!(
+        server.delegated_batch_of(&child).await,
+        Some(batch.id.clone())
+    );
+
+    // The full result of a task is read back, by its own conversation only.
+    let full = server
+        .delegated_result(
+            &parent,
+            &json!({"workflow_id": batch.id, "task_id": "count"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(full["status"], "succeeded");
+    assert_eq!(full["response"]["output"]["summary"], "42 reads");
+    let other = create(&server).await;
+    assert!(server
+        .delegated_result(
+            &other,
+            &json!({"workflow_id": batch.id, "task_id": "count"})
+        )
+        .await
+        .is_err());
+
+    // A batch that runs code is approved first; turned down, nothing runs.
+    send(&server, &other, "run the analysis").await.unwrap();
+    let pending = wait_for(&server, &other, |s| !s.approvals.is_empty()).await;
+    let approval = &pending.approvals[0];
+    assert!(approval
+        .message
+        .starts_with(wisp_tools::plan::PLAN_APPROVAL_PREFIX));
+    assert!(approval
+        .message
+        .contains("[ ] run: Run the analysis script"));
+    server
+        .answer_with_feedback(PROJECT, &other, &approval.approval_id, "Not now")
+        .await
+        .unwrap();
+    turn_done(&server, &other).await;
+    assert!(texts_of(&server, &other)
+        .await
+        .iter()
+        .any(|text| text == "The batch was turned down."));
+    // Nothing ran, so nothing is kept.
+    assert!(server
+        .delegated_batches(PROJECT, &other)
+        .await
+        .unwrap()
+        .is_empty());
     server.shutdown().await;
 }
 

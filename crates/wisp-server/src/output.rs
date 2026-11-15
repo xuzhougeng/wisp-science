@@ -346,6 +346,15 @@ impl Output for ServerOutput {
                 if allowed && message == tool_question(&tool) {
                     return ConfirmDecision::Approved;
                 }
+                // A delegated batch puts its own plan to the researcher when
+                // any task can change something, so it is not asked about
+                // twice. Another member's mail still asks first.
+                if !self.lab_mail
+                    && tool == crate::delegation::DELEGATE
+                    && message == tool_question(&tool)
+                {
+                    return ConfirmDecision::Approved;
+                }
                 let preview = live.preview.clone();
                 live.approvals.insert(
                     id.clone(),

@@ -9,6 +9,7 @@ mod channels;
 mod compact;
 pub mod config;
 mod decision_model;
+mod delegation;
 pub mod desktop;
 mod device_bridge;
 mod excerpt;
@@ -246,6 +247,11 @@ impl Server {
                 .sweep_disposal_quarantine()
         {
             tracing::warn!(%error, "Could not sweep quarantined exploration workspaces");
+        }
+        // A delegated batch cut off by the app closing ends as failed; its
+        // tasks are not started again.
+        if let Err(error) = store.recover_interrupted_agent_workflows().await {
+            tracing::warn!(%error, "Could not settle interrupted delegated batches");
         }
         let runs = wisp_runs::RunManager::new();
         runs.recover(&store).await.map_err(anyhow::Error::msg)?;
@@ -874,6 +880,10 @@ impl Server {
         match subagents {
             Some(setup) => {
                 for tool in self.subagent_tools(project, &request.session_id, setup) {
+                    agent.add_tool(tool);
+                }
+                // And hand bounded work to temporary agents.
+                for tool in self.delegation_tools(project, root, &request.session_id) {
                     agent.add_tool(tool);
                 }
             }

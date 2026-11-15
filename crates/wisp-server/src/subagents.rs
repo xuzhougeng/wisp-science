@@ -96,6 +96,13 @@ impl Server {
     /// stop it, and both must be live in the same project.
     async fn require_owned(&self, parent: &str, child: &str) -> Result<(), String> {
         let store = &self.0.store;
+        // A task of a delegated batch belongs to its batch, not to the
+        // subagent tools.
+        if self.delegated_batch_of(child).await.is_some() {
+            return Err(format!(
+                "'{child}' is a task of a delegated batch, not a subagent. Read its result with get_delegated_result."
+            ));
+        }
         match store.session_dispatched_from(child).await {
             Ok(Some(owner)) if owner == parent => {}
             Ok(_) => {
@@ -129,7 +136,12 @@ impl Server {
     /// The child follows the parent at each dispatch: its execution contexts,
     /// its default compute target, and a model (the configured subagent
     /// model, or the parent's own with `inherit`).
-    async fn prepare_child(&self, parent: &str, child: &str, inherit: bool) -> Result<(), String> {
+    pub(crate) async fn prepare_child(
+        &self,
+        parent: &str,
+        child: &str,
+        inherit: bool,
+    ) -> Result<(), String> {
         let store = &self.0.store;
         let e = |error: anyhow::Error| error.to_string();
         let enabled = store
@@ -457,7 +469,7 @@ impl Server {
                 .await
                 .map_err(|error| error.to_string())?
             {
-                if owner != parent {
+                if owner != parent || self.delegated_batch_of(&session).await.is_some() {
                     continue;
                 }
                 let title = store
