@@ -1289,4 +1289,7 @@ pub const ZH: &[(&str, &str)] = &[
     ("Turning the document into text…", "正在把文档转换为文字…"),
     ("The document's text and tables, to read; its layout and pictures are not shown. Open it with the system's application for the original.", "这里显示文档的文字和表格，便于阅读；不显示版式和图片。要看原样，请用系统应用打开。"),
     ("Documents of more than 32 MB are not shown here", "超过 32 MB 的文档不在这里显示"),
+    // Quoting a message.
+    ("Quote in the composer", "在输入框中引用"),
+    ("Ask aside about this", "就此侧边提问"),
 ];

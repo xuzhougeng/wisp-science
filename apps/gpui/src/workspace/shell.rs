@@ -457,6 +457,27 @@ impl Workspace {
             .xsmall()
             .on_click(cx.listener(move |this, _, window, cx| this.star_row(index, window, cx))),
         );
+        // A selection can be copied with Cmd+C; the whole message can be
+        // quoted here, or asked about aside.
+        let actions = actions
+            .child(
+                icon_button(("quote-row", index), "bubble", tr("Quote in the composer"))
+                    .xsmall()
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| this.quote_row(index, window, cx)),
+                    ),
+            )
+            .child(
+                icon_button(
+                    ("aside-row", index),
+                    "circle-help",
+                    tr("Ask aside about this"),
+                )
+                .xsmall()
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.ask_aside_about_row(index, window, cx)
+                })),
+            );
         // Rewinding and branching work on saved turns of a conversation
         // that is at rest and still part of everyday work.
         let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);

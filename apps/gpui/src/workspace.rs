@@ -2729,6 +2729,49 @@ impl Workspace {
     }
 
     /// Copies a transcript row's text and shows a tick on it for a moment.
+    /// What a row says, without the files a user message carried.
+    fn row_text(&self, index: usize) -> Option<String> {
+        let item = self.rows.get(index)?;
+        Some(if item.role == "user" {
+            compose::user_text(item)
+        } else {
+            item.text.clone()
+        })
+    }
+
+    /// Puts a message in the composer as a quote, after what is being
+    /// written, with the caret ready below it.
+    fn quote_row(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(text) = self.row_text(index) else {
+            return;
+        };
+        let filled = compose::with_quote(&self.composer.read(cx).value(), &text);
+        self.state.save_draft(filled.clone());
+        self.fill_composer(filled, window, cx);
+        cx.notify();
+    }
+
+    /// Opens the aside with a message quoted in its question field.
+    fn ask_aside_about_row(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(text) = self.row_text(index) else {
+            return;
+        };
+        // The aside's field is one line: a line break there would not draw.
+        let filled = compose::with_inline_quote(&self.aside_input.read(cx).value(), &text);
+        self.open_aside(window, cx);
+        self.aside_input.update(cx, |input, cx| {
+            let (line, character) = compose::end_of(&filled);
+            input.set_value(filled, window, cx);
+            input.set_cursor_position(
+                gpui_component::input::Position { line, character },
+                window,
+                cx,
+            );
+            input.focus(window, cx);
+        });
+        cx.notify();
+    }
+
     fn copy_row(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(item) = self.rows.get(index) else {
             return;

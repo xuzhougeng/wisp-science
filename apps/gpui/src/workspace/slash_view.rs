@@ -50,6 +50,9 @@ impl Workspace {
             Slash::Btw => {
                 self.open_aside(window, cx);
                 if !rest.is_empty() {
+                    // The aside's field is one line; a line break there
+                    // would not draw.
+                    let rest = crate::present::one_line(&rest);
                     self.aside_input
                         .update(cx, |input, cx| input.set_value(rest, window, cx));
                     self.ask_aside(window, cx);

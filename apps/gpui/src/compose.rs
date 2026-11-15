@@ -222,6 +222,60 @@ pub fn end_of(text: &str) -> (u32, u32) {
     (line as u32, last.chars().count() as u32)
 }
 
+/// How much of a message a quote keeps.
+const QUOTE_CHARS: usize = 1_500;
+
+/// A message's text as a Markdown quote, cut to leave room for what is
+/// said about it.
+pub fn quote(text: &str) -> String {
+    let text = text.trim();
+    let mut kept: String = text.chars().take(QUOTE_CHARS).collect();
+    if text.chars().count() > QUOTE_CHARS {
+        kept.truncate(kept.trim_end().len());
+        kept.push('…');
+    }
+    kept.lines()
+        .map(|line| {
+            if line.trim().is_empty() {
+                ">".to_owned()
+            } else {
+                format!("> {line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A message quoted on one line, for a single-line field such as the
+/// aside's question (which cannot hold a line break), after what is
+/// already written there.
+pub fn with_inline_quote(typed: &str, message: &str) -> String {
+    const SHORT: usize = 280;
+    let line = message.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut kept: String = line.chars().take(SHORT).collect();
+    if line.chars().count() > SHORT {
+        kept.truncate(kept.trim_end().len());
+        kept.push('…');
+    }
+    let typed = typed.trim_end();
+    if typed.is_empty() {
+        format!("“{kept}” ")
+    } else {
+        format!("{typed} “{kept}” ")
+    }
+}
+
+/// The text of a field once a quote of `message` is added after what was
+/// being written there, ready for the words about it.
+pub fn with_quote(typed: &str, message: &str) -> String {
+    let typed = typed.trim_end();
+    if typed.is_empty() {
+        format!("{}\n\n", quote(message))
+    } else {
+        format!("{typed}\n\n{}\n\n", quote(message))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -403,5 +457,24 @@ mod tests {
                 .starts_with("3 items were not attached")
         );
         assert_eq!(dropped_files(&[], is_file), (vec![], 0));
+    }
+
+    #[test]
+    fn a_message_is_quoted_line_by_line_after_what_is_written() {
+        assert_eq!(quote("First line\n\nSecond"), "> First line\n>\n> Second");
+        assert_eq!(with_quote("", "S1 is low."), "> S1 is low.\n\n");
+        assert_eq!(
+            with_quote("Why?  \n", "S1 is low."),
+            "Why?\n\n> S1 is low.\n\n"
+        );
+        // A long answer is cut, and says so.
+        let long = "word ".repeat(1_000);
+        let cut = quote(&long);
+        assert!(cut.ends_with('…') && cut.chars().count() < 1_600);
+        // On one line for a field that cannot hold a line break.
+        let inline = with_inline_quote("", "S1 is low.\n\nCheck it.");
+        assert_eq!(inline, "“S1 is low. Check it.” ");
+        assert!(!with_inline_quote("Why", &long).contains('\n'));
+        assert!(with_inline_quote("Why", &long).starts_with("Why “"));
     }
 }

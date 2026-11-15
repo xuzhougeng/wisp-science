@@ -185,7 +185,8 @@ folder registers its research root; it does not import existing desktop chats.
 | Artifacts | Files a turn wrote are recorded when it ends; an Artifacts tab lists them for the conversation or the project and opens them |
 | Side panel | Tabs: Files, Runs, Artifacts, Notebook, Agents, Highlights, Memos, Memory, Aside; the open tab is named, the others are icons |
 | Agents | The Agents tab lists the helpers the conversation sent off to explore: what each was asked, how it went, and what it found |
-| Aside | The Aside tab (or the command palette) asks the conversation's model a question about the open conversation; the answer shows beside it and nothing is added to the conversation |
+| Aside | The Aside tab (or the command palette) asks the conversation's model a question about the open conversation; the answer shows beside it and nothing is added to the conversation. Ask aside under a message opens it with that message quoted in the question |
+| Quoting | Quote under a message puts it in the message box as a quotation after what you were writing, ready to answer; a selected passage is copied with Cmd/Ctrl+C |
 | Favorites | A star under any message saves it as it reads now; an image in Artifacts can be saved as a figure. Highlights lists what this conversation saved; the Favorites page lists everything from every project, with search, a kind filter, the item in full, its source conversation and removal after a confirmation |
 | Memory | One switch; habits the model is shown in every project; this project's notes by day, which the model can search; add, edit and delete either, and save any message to one or the other |
 | Memos | Your own notes per project: add, edit, pin, copy, delete after a confirmation, and put one into the message box. The model is never shown them |
@@ -1277,6 +1278,10 @@ transcript is unchanged. Ask a second question that leans on the first
 back and the first thread is still there. Clear empties it. Ask while a
 turn runs and confirm the turn is undisturbed. Press Escape with the caret
 in the question field: the panel closes.
+Under an answer press Quote: the message box keeps what was typed and
+adds the answer as a quotation with the caret below it. Press Ask aside
+under a multi-line answer: the Aside tab opens with the answer quoted on
+one line in the question field, and nothing is sent until you press Ask.
 After an answer, wait a moment: up to three questions show above the
 composer. Click one: it is in the composer, not sent. Send it and confirm
 the list is gone while the turn runs and a new one follows the answer. Put

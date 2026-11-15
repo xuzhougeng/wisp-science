@@ -90,7 +90,9 @@ impl Workspace {
                         ArchiveDraft::default()
                     }
                 };
-                for (field, text) in this.archive_fields.iter().zip([draft.title, draft.report]) {
+                // The title's field is one line, whatever the model wrote.
+                let title = crate::present::one_line(&draft.title);
+                for (field, text) in this.archive_fields.iter().zip([title, draft.report]) {
                     field.update(cx, |input, cx| input.set_value(text, window, cx));
                 }
                 this.archive = Some(ArchiveView::Reviewing(draft.scripts));
