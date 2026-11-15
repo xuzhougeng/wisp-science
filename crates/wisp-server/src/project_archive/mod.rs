@@ -26,23 +26,54 @@ const WORKSPACE_PREFIX: &str = "workspace";
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 const COPY_PROGRESS_INTERVAL: u64 = 1024 * 1024;
 
-/// Where progress would be reported. This host shows none yet, so the
-/// calls the archive code makes go nowhere.
-#[derive(Clone)]
-pub(crate) struct TransferReporter;
+/// How far an export or import has got: the step it is on, how many of
+/// how many files and bytes, and the file it is at.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ArchiveProgress {
+    /// `preparing`, `scanning`, `writing`, `copying`, `validating`,
+    /// `extracting`, `publishing`, `registering` or `complete`.
+    pub stage: String,
+    pub files: u64,
+    pub total_files: Option<u64>,
+    pub bytes: u64,
+    pub total_bytes: Option<u64>,
+    pub path: Option<String>,
+}
+
+/// Where the archive code reports how far it has got: the latest step,
+/// read by the app while it waits. Exports and imports run one at a time.
+#[derive(Clone, Default)]
+pub(crate) struct TransferReporter(std::sync::Arc<std::sync::Mutex<Option<ArchiveProgress>>>);
 
 impl TransferReporter {
     fn set_project_id(&self, _project_id: String) {}
 
     fn report(
         &self,
-        _stage: &'static str,
-        _completed_files: u64,
-        _total_files: Option<u64>,
-        _completed_bytes: u64,
-        _total_bytes: Option<u64>,
-        _current_path: Option<&str>,
+        stage: &'static str,
+        completed_files: u64,
+        total_files: Option<u64>,
+        completed_bytes: u64,
+        total_bytes: Option<u64>,
+        current_path: Option<&str>,
     ) {
+        *self.0.lock().unwrap() = Some(ArchiveProgress {
+            stage: stage.to_owned(),
+            files: completed_files,
+            total_files,
+            bytes: completed_bytes,
+            total_bytes,
+            path: current_path.map(str::to_owned),
+        });
+    }
+
+    /// The step reported last, while an export or import goes on.
+    pub(crate) fn latest(&self) -> Option<ArchiveProgress> {
+        self.0.lock().unwrap().clone()
+    }
+
+    pub(crate) fn clear(&self) {
+        *self.0.lock().unwrap() = None;
     }
 }
 
@@ -600,8 +631,9 @@ pub(crate) async fn import_project_folder(
     store: &wisp_store::Store,
     app_data: &Path,
     package: &Path,
+    reporter: Option<&TransferReporter>,
 ) -> Result<String, String> {
-    import_project_directory(store, app_data, package, None).await
+    import_project_directory(store, app_data, package, reporter).await
 }
 
 async fn import_project_directory(
@@ -1102,8 +1134,9 @@ pub(crate) async fn import_archived_project(
     app_data: &Path,
     archive_path: &Path,
     parent: &Path,
+    reporter: Option<&TransferReporter>,
 ) -> Result<String, String> {
-    import_archived_project_with_reporter(store, app_data, archive_path, parent, None).await
+    import_archived_project_with_reporter(store, app_data, archive_path, parent, reporter).await
 }
 
 async fn import_archived_project_with_reporter(
@@ -1199,16 +1232,21 @@ mod tests {
             } else {
                 "native.zip"
             });
+            let progress = TransferReporter::default();
             export_project_contents(
                 &source,
                 base.path(),
                 "project",
                 &destination,
                 directory,
-                None,
+                Some(progress.clone()),
             )
             .await
             .unwrap();
+            // Each step was reported, the last being the end.
+            assert_eq!(progress.latest().unwrap().stage, "complete");
+            progress.clear();
+            assert_eq!(progress.latest(), None);
             let target = wisp_store::Store::open_application(&base.path().join(if directory {
                 "directory.sqlite"
             } else {
@@ -1221,10 +1259,19 @@ mod tests {
                     .await
                     .unwrap()
             } else {
-                import_archived_project(&target, base.path(), &destination, base.path())
-                    .await
-                    .unwrap()
+                import_archived_project(
+                    &target,
+                    base.path(),
+                    &destination,
+                    base.path(),
+                    Some(&progress),
+                )
+                .await
+                .unwrap()
             };
+            if !directory {
+                assert_eq!(progress.latest().unwrap().stage, "registering");
+            }
             assert_eq!(imported, "project");
             assert_eq!(target.list_sessions(&imported).await.unwrap().len(), 3);
             let workspace =
@@ -1464,6 +1511,7 @@ mod tests {
             &base.path().join("app"),
             &base.path().join("project.zip"),
             &base.path().join("unzipped"),
+            None,
         )
         .await
         .unwrap();

@@ -1162,16 +1162,24 @@ impl Server {
         crate::project_archive::ensure_project_export_idle(&self.0.store, project, &running)
             .await
             .map_err(anyhow::Error::msg)?;
-        crate::project_archive::export_project_contents(
+        self.0.archive.clear();
+        let written = crate::project_archive::export_project_contents(
             &self.0.store,
             &self.0.config.data,
             project,
             destination,
             folder,
-            None,
+            Some(self.0.archive.clone()),
         )
-        .await
-        .map_err(anyhow::Error::msg)
+        .await;
+        self.0.archive.clear();
+        written.map_err(anyhow::Error::msg)
+    }
+
+    /// How far the project export or import under way has got; `None`
+    /// when none is.
+    pub fn archive_progress(&self) -> Option<ArchiveProgress> {
+        self.0.archive.latest()
     }
 
     /// Opens a project folder package where it is: one exported as a
@@ -1191,9 +1199,16 @@ impl Server {
             !package.starts_with(&self.0.config.data),
             "Keep project files separate from the host data directory"
         );
-        crate::project_archive::import_project_folder(&self.0.store, &self.0.config.data, &package)
-            .await
-            .map_err(anyhow::Error::msg)
+        self.0.archive.clear();
+        let opened = crate::project_archive::import_project_folder(
+            &self.0.store,
+            &self.0.config.data,
+            &package,
+            Some(&self.0.archive),
+        )
+        .await;
+        self.0.archive.clear();
+        opened.map_err(anyhow::Error::msg)
     }
 
     /// Reads a project archive, puts the project in a new folder under
@@ -1218,14 +1233,17 @@ impl Server {
             !parent.starts_with(&self.0.config.data),
             "Keep project files separate from the host data directory"
         );
-        crate::project_archive::import_archived_project(
+        self.0.archive.clear();
+        let imported = crate::project_archive::import_archived_project(
             &self.0.store,
             &self.0.config.data,
             archive,
             &parent,
+            Some(&self.0.archive),
         )
-        .await
-        .map_err(anyhow::Error::msg)
+        .await;
+        self.0.archive.clear();
+        imported.map_err(anyhow::Error::msg)
     }
 
     /// Makes a sample project in a new folder under `parent`: made-up
@@ -7132,6 +7150,7 @@ pub use crate::papers::{
 };
 pub use crate::pet::{Pet, PetLook, SHEET_HEIGHT, SHEET_WIDTH};
 pub use crate::plugins::PluginRow;
+pub use crate::project_archive::ArchiveProgress;
 pub use crate::project_sync::{ProjectSyncInfo, ProjectSyncResult, SyncSettings};
 pub use crate::queue::QueuedMessage;
 pub use crate::quick_actions::{QuickAction, QuickActionInput};

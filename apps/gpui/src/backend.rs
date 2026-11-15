@@ -256,6 +256,11 @@ impl Backend {
     }
 
     /// Reads an archive and puts its project in a new folder under `parent`.
+    /// How far the project export or import under way has got.
+    pub fn archive_progress(&self) -> Reply<Option<wisp_server::desktop::ArchiveProgress>> {
+        self.local(|host| async move { Ok(host.archive_progress()) })
+    }
+
     /// Writes a project as a folder package under `parent`; answers the
     /// folder made.
     pub fn export_project_folder(&self, project: String, parent: PathBuf) -> Reply<PathBuf> {

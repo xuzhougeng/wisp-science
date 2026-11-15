@@ -138,6 +138,8 @@ struct Inner {
     /// The loop that fires scheduled tasks was started.
     scheduling: AtomicBool,
     admission: RwLock<()>,
+    /// How far the project export or import under way has got.
+    archive: crate::project_archive::TransferReporter,
     _lock: File,
     models: ModelFactory,
     /// The model new turns use. A desktop can replace it while running.
@@ -413,6 +415,7 @@ impl Server {
             remote: Default::default(),
             scheduling: AtomicBool::new(false),
             admission: RwLock::new(()),
+            archive: Default::default(),
             _lock: lock,
             models,
             model: std::sync::RwLock::new(model),

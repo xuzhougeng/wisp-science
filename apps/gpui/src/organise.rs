@@ -441,6 +441,41 @@ pub fn archive_name(project: &str) -> String {
     format!("{}.zip", name.trim_end_matches(".md"))
 }
 
+/// How far a project export or import has got, in a line: the step, the
+/// files and bytes done of all, and the file it is at.
+pub fn archive_line(progress: &wisp_server::desktop::ArchiveProgress) -> String {
+    let step = match progress.stage.as_str() {
+        "preparing" => tr("Preparing"),
+        "scanning" => tr("Looking through the files"),
+        "writing" => tr("Writing"),
+        "copying" => tr("Copying"),
+        "validating" => tr("Checking"),
+        "extracting" => tr("Unpacking"),
+        "publishing" => tr("Finishing"),
+        "registering" => tr("Adding the project"),
+        "complete" => tr("Done"),
+        _ => tr("Working…"),
+    };
+    let mut parts = vec![step.to_owned()];
+    if let Some(total) = progress.total_files.filter(|total| *total > 0) {
+        parts.push(crate::i18n::fill(
+            tr("{}/{} files"),
+            &[&progress.files, &total],
+        ));
+    }
+    if let Some(total) = progress.total_bytes.filter(|total| *total > 0) {
+        parts.push(format!(
+            "{} / {}",
+            crate::files::size_label(progress.bytes),
+            crate::files::size_label(total)
+        ));
+    }
+    if let Some(path) = progress.path.as_deref().filter(|path| !path.is_empty()) {
+        parts.push(path.to_owned());
+    }
+    parts.join(" · ")
+}
+
 /// One line saying how a batch went: `done` conversations were `verb`
 /// ("Archived", "Deleted"), and the first refusal says why the rest were not.
 pub fn report(verb: &str, done: usize, refused: &[(String, String)]) -> String {
@@ -867,5 +902,33 @@ mod tests {
         assert_eq!(archive_name("Screens 2026"), "Screens 2026.zip");
         assert_eq!(archive_name("a/b"), "a-b.zip");
         assert_eq!(archive_name("  "), "project.zip");
+    }
+
+    #[test]
+    fn an_export_says_how_far_it_has_got() {
+        use wisp_server::desktop::ArchiveProgress;
+        let writing = ArchiveProgress {
+            stage: "writing".into(),
+            files: 3,
+            total_files: Some(10),
+            bytes: 2048,
+            total_bytes: Some(4096),
+            path: Some("data/counts.csv".into()),
+        };
+        assert_eq!(
+            archive_line(&writing),
+            "Writing · 3/10 files · 2.0 KB / 4.0 KB · data/counts.csv"
+        );
+        // A step without counts says only what it is.
+        let preparing = ArchiveProgress {
+            stage: "preparing".into(),
+            ..Default::default()
+        };
+        assert_eq!(archive_line(&preparing), "Preparing");
+        let other = ArchiveProgress {
+            stage: "later".into(),
+            ..Default::default()
+        };
+        assert_eq!(archive_line(&other), "Working…");
     }
 }

@@ -9495,6 +9495,8 @@ async fn a_project_is_exported_as_a_folder_package_and_opened_elsewhere() {
         .is_err());
     let package = source.export_project_folder(&lab, &parent).await.unwrap();
     assert!(package.starts_with(&parent) && package.is_dir());
+    // How far it got is only kept while it goes on.
+    assert_eq!(source.archive_progress(), None);
     // A second export makes a second folder rather than writing over it.
     let second = source.export_project_folder(&lab, &parent).await.unwrap();
     assert_ne!(second, package);

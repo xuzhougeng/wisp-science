@@ -9,6 +9,34 @@ use super::Workspace;
 use crate::{backend::receive, organise};
 
 impl Workspace {
+    /// Says how far the export or import under way has got, read from the
+    /// host every moment until it ends.
+    fn follow_archive(&mut self, cx: &mut Context<Self>) {
+        let backend = self.backend.clone();
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(300))
+                    .await;
+                let progress = receive(backend.archive_progress()).await.ok().flatten();
+                let going = this.update(cx, |this, cx| {
+                    if !this.pending {
+                        return false;
+                    }
+                    if let Some(progress) = &progress {
+                        this.notice = Some(organise::archive_line(progress));
+                        cx.notify();
+                    }
+                    true
+                });
+                if !matches!(going, Ok(true)) {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
     /// Asks where to save and writes the project there as one zip.
     pub(super) fn export_project(
         &mut self,
@@ -39,6 +67,7 @@ impl Workspace {
             };
             let _ = this.update(cx, |this, cx| {
                 this.pending = true;
+                this.follow_archive(cx);
                 this.notice = Some(crate::i18n::fill(tr("Writing {}…"), &[&path.display()]));
                 cx.notify();
             });
@@ -90,6 +119,7 @@ impl Workspace {
             };
             let _ = this.update(cx, |this, cx| {
                 this.pending = true;
+                this.follow_archive(cx);
                 this.notice = Some(crate::i18n::fill(tr("Writing {}…"), &[&parent.display()]));
                 cx.notify();
             });
@@ -139,6 +169,7 @@ impl Workspace {
             if archive.is_dir() {
                 let _ = this.update(cx, |this, cx| {
                     this.pending = true;
+                    this.follow_archive(cx);
                     this.notice = Some(crate::i18n::fill(tr("Reading {}…"), &[&archive.display()]));
                     cx.notify();
                 });
@@ -178,6 +209,7 @@ impl Workspace {
             };
             let _ = this.update(cx, |this, cx| {
                 this.pending = true;
+                this.follow_archive(cx);
                 this.notice = Some(crate::i18n::fill(tr("Reading {}…"), &[&archive.display()]));
                 cx.notify();
             });
