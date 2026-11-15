@@ -5024,6 +5024,55 @@ async fn a_conversation_runs_only_on_the_hosts_attached_to_it() {
         .is_err());
     assert!(server.conversation_hosts(PROJECT, "missing").await.is_err());
 
+    // Where the project keeps things there: the defaults until saved.
+    let shown = server.host_storage(PROJECT, "gpu").await.unwrap();
+    assert!(!shown.saved);
+    assert_eq!(shown.workdir_root, ".wisp-science/runs");
+    assert!(shown.data_root.starts_with("~/wisp/") && shown.data_root.ends_with("/data"));
+    assert_eq!(shown.results_dir, "remote/gpu");
+    let saved = server
+        .set_host_storage(
+            PROJECT,
+            "gpu",
+            desktop::HostStorage {
+                data_root: " /scratch/lab/data ".into(),
+                workdir_root: "runs".into(),
+                results_dir: "results/gpu".into(),
+                saved: false,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(saved.saved);
+    assert_eq!(
+        (saved.data_root.as_str(), saved.workdir_root.as_str()),
+        ("/scratch/lab/data", "runs")
+    );
+    // Paths the run manager could not use safely are refused.
+    for (data, workdir, results) in [
+        ("/scratch/$HOME", "runs", "results"),
+        ("/scratch", "/abs/runs", "results"),
+        ("/scratch", "runs", "../outside"),
+        ("", "runs", "results"),
+    ] {
+        assert!(server
+            .set_host_storage(
+                PROJECT,
+                "gpu",
+                desktop::HostStorage {
+                    data_root: data.into(),
+                    workdir_root: workdir.into(),
+                    results_dir: results.into(),
+                    saved: false,
+                },
+            )
+            .await
+            .is_err());
+    }
+    assert_eq!(server.host_storage(PROJECT, "gpu").await.unwrap(), saved);
+    assert!(server.host_storage(PROJECT, "ghost").await.is_err());
+    assert!(server.host_storage("missing", "gpu").await.is_err());
+
     // Files go to and from a saved host that has passed a check, never to
     // one that is not saved or was never reached.
     let place = temp.path().join("copy.csv");

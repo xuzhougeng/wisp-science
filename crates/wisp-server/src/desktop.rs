@@ -3310,6 +3310,56 @@ impl Server {
         .collect())
     }
 
+    /// Where a project's work keeps things on a saved SSH host: the folder
+    /// data is uploaded to, the root of run folders there, and the
+    /// project folder results come back into. What was never saved reads
+    /// as the defaults the run manager uses, and says so.
+    pub async fn host_storage(&self, project: &str, alias: &str) -> Result<HostStorage> {
+        self.known_project(project).await?;
+        let context = format!("ssh:{}", alias.trim());
+        self.0
+            .store
+            .get_execution_context(&context)
+            .await?
+            .context("That host is no longer saved")?;
+        let (prefs, saved) =
+            wisp_runs::storage_prefs::effective_prefs(&self.0.store, project, &context)
+                .await
+                .map_err(anyhow::Error::msg)?;
+        Ok(HostStorage {
+            data_root: prefs.remote_data_root,
+            workdir_root: prefs.remote_workdir_root,
+            results_dir: prefs.local_results_dir,
+            saved,
+        })
+    }
+
+    /// Keeps where a project's work keeps things on a saved SSH host. The
+    /// paths are checked as the run manager needs them.
+    pub async fn set_host_storage(
+        &self,
+        project: &str,
+        alias: &str,
+        storage: HostStorage,
+    ) -> Result<HostStorage> {
+        // The project and the host are checked the same way.
+        self.host_storage(project, alias).await?;
+        let now = chrono::Utc::now().timestamp();
+        self.0
+            .store
+            .upsert_context_storage_prefs(&wisp_store::ContextStoragePrefs {
+                project_id: project.to_owned(),
+                context_id: format!("ssh:{}", alias.trim()),
+                remote_data_root: storage.data_root.trim().to_owned(),
+                remote_workdir_root: storage.workdir_root.trim().to_owned(),
+                local_results_dir: storage.results_dir.trim().to_owned(),
+                created_at: now,
+                updated_at: now,
+            })
+            .await?;
+        self.host_storage(project, alias).await
+    }
+
     /// Forgets an SSH host. Runs that were made on it keep their records.
     pub async fn remove_ssh_host(&self, alias: &str) -> Result<()> {
         use wisp_runs::ssh_hosts;
@@ -7151,6 +7201,19 @@ pub use crate::papers::{
 pub use crate::pet::{Pet, PetLook, SHEET_HEIGHT, SHEET_WIDTH};
 pub use crate::plugins::PluginRow;
 pub use crate::project_archive::ArchiveProgress;
+
+/// Where a project's work keeps things on one SSH host.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HostStorage {
+    /// Where uploaded data goes there: a whole path or one under `~/`.
+    pub data_root: String,
+    /// Where run folders are made there, under the home folder.
+    pub workdir_root: String,
+    /// The project folder results from there come back into.
+    pub results_dir: String,
+    /// Chosen and kept, rather than the defaults.
+    pub saved: bool,
+}
 pub use crate::project_sync::{ProjectSyncInfo, ProjectSyncResult, SyncSettings};
 pub use crate::queue::QueuedMessage;
 pub use crate::quick_actions::{QuickAction, QuickActionInput};

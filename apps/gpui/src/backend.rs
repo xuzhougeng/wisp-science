@@ -762,6 +762,26 @@ impl Backend {
         self.local(move |host| async move { host.cancel_run(&project, &run).await })
     }
 
+    /// Where a project's work keeps things on a saved SSH host.
+    pub fn host_storage(
+        &self,
+        project: String,
+        alias: String,
+    ) -> Reply<wisp_server::desktop::HostStorage> {
+        self.local(move |host| async move { host.host_storage(&project, &alias).await })
+    }
+
+    pub fn set_host_storage(
+        &self,
+        project: String,
+        alias: String,
+        storage: wisp_server::desktop::HostStorage,
+    ) -> Reply<wisp_server::desktop::HostStorage> {
+        self.local(
+            move |host| async move { host.set_host_storage(&project, &alias, storage).await },
+        )
+    }
+
     /// The SSH hosts a conversation's work may run on, by alias.
     pub fn conversation_hosts(&self, project: String, session: String) -> Reply<Vec<String>> {
         self.local(move |host| async move { host.conversation_hosts(&project, &session).await })

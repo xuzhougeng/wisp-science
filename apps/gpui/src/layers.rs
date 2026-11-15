@@ -13,6 +13,9 @@ pub enum Layer {
     PanelTabMenu,
     /// Question under a run's card before its workspace is deleted.
     ConfirmCleanRun,
+    /// Where the project keeps things on one SSH host, in the
+    /// Environments tab.
+    HostStorageForm,
     /// What a finished run left on its SSH host: a dialog over everything.
     RunReview,
     /// Question in that dialog before files there are deleted.
@@ -256,6 +259,7 @@ impl Layer {
             Layer::FilePreview
             | Layer::PanelTabMenu
             | Layer::ConfirmCleanRun
+            | Layer::HostStorageForm
             | Layer::FileName
             | Layer::ConfirmTrashFile
             | Layer::MemoEditor
@@ -455,6 +459,13 @@ mod tests {
         stack.open(Layer::ConfirmRunFilesDelete);
         assert!(stack.close(Layer::RunReview));
         assert!(!stack.contains(Layer::ConfirmRunFilesDelete));
+
+        // So does a host's storage form.
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::HostStorageForm);
+        assert_eq!(stack.dismiss_top(), Some(Layer::HostStorageForm));
+        assert!(stack.contains(Layer::FilesPanel));
+        stack.close(Layer::FilesPanel);
 
         // So does the question before a run's workspace is cleaned.
         stack.open(Layer::FilesPanel);

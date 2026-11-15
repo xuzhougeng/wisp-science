@@ -9,6 +9,7 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
+    input::Input,
 };
 
 use super::{
@@ -17,6 +18,7 @@ use super::{
 };
 use crate::{
     backend::receive,
+    layers::Layer,
     panel::PanelTab,
     present::Tone,
     settings::{self, Section},
@@ -84,6 +86,144 @@ impl Workspace {
         })
         .detach();
         cx.notify();
+    }
+
+    /// Opens the storage form on `alias`, filled with what the project
+    /// keeps there, or closes it when it is open on that host.
+    fn toggle_host_storage(&mut self, alias: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .storage_host
+            .as_ref()
+            .is_some_and(|(open, _)| *open == alias)
+        {
+            self.storage_host = None;
+            self.layers.close(Layer::HostStorageForm);
+            cx.notify();
+            return;
+        }
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        self.error = None;
+        let reply = self.backend.host_storage(project, alias.clone());
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(storage) => this.show_host_storage(alias, storage, window, cx),
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn show_host_storage(
+        &mut self,
+        alias: String,
+        storage: wisp_server::desktop::HostStorage,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for (field, value) in self.storage_fields.iter().zip([
+            storage.data_root,
+            storage.workdir_root,
+            storage.results_dir,
+        ]) {
+            field.update(cx, |input, cx| input.set_value(value, window, cx));
+        }
+        self.storage_host = Some((alias, storage.saved));
+        self.layers.open(Layer::HostStorageForm);
+    }
+
+    fn save_host_storage(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(project), Some((alias, _))) =
+            (self.state.project.clone(), self.storage_host.clone())
+        else {
+            return;
+        };
+        let [data_root, workdir_root, results_dir] =
+            [0, 1, 2].map(|at| self.storage_fields[at].read(cx).value().to_string());
+        self.error = None;
+        let reply = self.backend.set_host_storage(
+            project,
+            alias.clone(),
+            wisp_server::desktop::HostStorage {
+                data_root,
+                workdir_root,
+                results_dir,
+                saved: true,
+            },
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(storage) => {
+                        this.show_host_storage(alias, storage, window, cx);
+                        this.notice =
+                            Some(tr("Where the project keeps things there is saved.").into());
+                    }
+                    // The form stays open with what was typed.
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Where the project keeps things on the host whose form is open.
+    fn host_storage_form(&self, saved: bool, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let label = |text: &'static str| div().text_xs().text_color(muted).child(text);
+        div()
+            .v_flex()
+            .gap_1()
+            .p_2()
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(cx.theme().border)
+            .child(div().text_xs().text_color(muted).child(if saved {
+                tr("Saved for this project.")
+            } else {
+                tr("The defaults, until saved for this project.")
+            }))
+            .child(label(tr(
+                "Uploaded data goes to (a whole path, or under ~/)",
+            )))
+            .child(Input::new(&self.storage_fields[0]).small())
+            .child(label(tr("Run folders are made under (in the home folder)")))
+            .child(Input::new(&self.storage_fields[1]).small())
+            .child(label(tr("Results come back into (in the project)")))
+            .child(Input::new(&self.storage_fields[2]).small())
+            .child(
+                div()
+                    .h_flex()
+                    .gap_1()
+                    .pt_1()
+                    .child(
+                        Button::new("host-storage-save")
+                            .label(tr("Save"))
+                            .xsmall()
+                            .primary()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.save_host_storage(window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("host-storage-cancel")
+                            .label(tr("Cancel"))
+                            .xsmall()
+                            .ghost()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.storage_host = None;
+                                this.layers.close(Layer::HostStorageForm);
+                                cx.notify();
+                            })),
+                    ),
+            )
     }
 
     /// One place work can run: what it is, how its last check went, and
@@ -196,10 +336,11 @@ impl Workspace {
                             .child(tr(caution)),
                     );
                 }
-                let (toggled, checked, terminal, browsed) = (
+                let (toggled, checked, terminal, browsed, stored) = (
                     alias.to_owned(),
                     alias.to_owned(),
                     format!("ssh:{alias}"),
+                    alias.to_owned(),
                     alias.to_owned(),
                 );
                 let mut attach = Button::new(("host-attach", index))
@@ -239,6 +380,19 @@ impl Workspace {
                             })),
                     )
                     .child(
+                        icon_button(
+                            ("host-storage", index),
+                            "database",
+                            tr("Where the project keeps things there"),
+                        )
+                        .xsmall()
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.toggle_host_storage(stored.clone(), window, cx)
+                            },
+                        )),
+                    )
+                    .child(
                         icon_button(("host-files", index), "folder", tr("Look at its folders"))
                             .xsmall()
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -246,6 +400,16 @@ impl Workspace {
                                 this.browse_host(browsed.clone(), String::new(), window, cx)
                             })),
                     );
+                let storage_open = self
+                    .storage_host
+                    .as_ref()
+                    .filter(|(open, _)| open == alias)
+                    .map(|(_, saved)| *saved);
+                if let Some(saved) = storage_open
+                    && self.layers.contains(Layer::HostStorageForm)
+                {
+                    return card.child(actions).child(self.host_storage_form(saved, cx));
+                }
             }
         }
         card.child(actions)

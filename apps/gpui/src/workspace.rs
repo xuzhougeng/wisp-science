@@ -797,6 +797,11 @@ pub struct Workspace {
     conversation_hosts: Option<Vec<String>>,
     /// A host is being attached or taken away.
     hosts_busy: bool,
+    /// The host whose storage form is open, and whether what it shows was
+    /// saved rather than the defaults.
+    storage_host: Option<(String, bool)>,
+    /// Data folder, run folders, results folder.
+    storage_fields: [Entity<InputState>; 3],
     artifacts: Vec<ArtifactRow>,
     /// The Artifacts tab lists the whole project instead of the conversation.
     artifacts_all: bool,
@@ -1061,6 +1066,11 @@ impl Workspace {
                     .unwrap_or_default(),
             )
         });
+        let storage_fields = [
+            cx.new(|cx| InputState::new(window, cx).placeholder("~/wisp/project/data")),
+            cx.new(|cx| InputState::new(window, cx).placeholder(".wisp-science/runs")),
+            cx.new(|cx| InputState::new(window, cx).placeholder("remote/host")),
+        ];
         let run_review_filter =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Names containing…")));
         let plugin_address = [
@@ -1696,6 +1706,8 @@ impl Workspace {
             transfers_folded: false,
             conversation_hosts: None,
             hosts_busy: false,
+            storage_host: None,
+            storage_fields,
             artifacts: vec![],
             artifacts_all: false,
             artifacts_by_folder: false,
@@ -1730,6 +1742,7 @@ impl Workspace {
             Some(Layer::FilesPanel) => self.restore_focus(window, cx),
             Some(Layer::PanelTabMenu) => {}
             Some(Layer::ConfirmCleanRun) => self.run_cleaning = None,
+            Some(Layer::HostStorageForm) => self.storage_host = None,
             Some(Layer::RunReview) => self.run_review = None,
             Some(Layer::ConfirmRunFilesDelete) => {
                 if let Some(review) = &mut self.run_review {
