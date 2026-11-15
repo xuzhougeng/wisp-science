@@ -588,6 +588,8 @@ pub const ZH: &[(&str, &str)] = &[
         "Wisp 会为模型缩小一份临时副本，原文件不会被修改。",
     ),
     ("Resize and continue", "缩小并继续"),
+    ("Which sound", "提示音"),
+    ("One of the system's sounds; choosing one plays it.", "系统自带的声音之一；选择时会播放它。"),
     (
         "The conversation's work no longer runs on this host",
         "此对话的工作不再在这台主机上运行",

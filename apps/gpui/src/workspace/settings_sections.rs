@@ -40,6 +40,8 @@ const TEXT_FONT: &str = "text_font";
 const CODE_FONT: &str = "code_font";
 const NOTIFY: &str = "notifications";
 const NOTIFY_SOUND: &str = "notification_sound";
+/// Which of the system's sounds is played.
+const NOTIFY_TONE: &str = "notification_tone";
 const LAST_OPEN: &str = "last_open";
 
 /// Set once the check at start has been made, so a second window does not
@@ -1055,16 +1057,20 @@ impl Workspace {
     /// chosen palette and, if asked to, reopens the conversation that was
     /// open last time.
     pub(super) fn load_general(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (banner, sound) = (
+        let (banner, sound, tone) = (
             self.backend.preference(NOTIFY),
             self.backend.preference(NOTIFY_SOUND),
+            self.backend.preference(NOTIFY_TONE),
         );
         cx.spawn_in(window, async move |this, cx| {
             let saved = |reply| async move { receive(reply).await.ok().flatten() };
-            let (banner, sound) = (saved(banner).await, saved(sound).await);
+            let (banner, sound, tone) =
+                (saved(banner).await, saved(sound).await, saved(tone).await);
             let _ = this.update(cx, |this, cx| {
                 this.notify =
                     crate::notify::Choice::from_saved(banner.as_deref(), sound.as_deref());
+                this.notify_tone =
+                    crate::notify::sound_of(crate::notify::System::current(), tone.as_deref());
                 cx.notify();
             });
         })
@@ -1852,6 +1858,41 @@ impl Workspace {
                     })),
                 cx,
             ))
+            .child({
+                // Each name plays its sound when chosen, so it can be heard.
+                let mut tones = div().h_flex().flex_wrap().gap_1().max_w(px(380.));
+                for (index, tone) in crate::notify::sounds(crate::notify::System::current())
+                    .iter()
+                    .copied()
+                    .enumerate()
+                {
+                    tones = tones.child(
+                        Button::new(("notify-tone", index))
+                            .label(tone)
+                            .xsmall()
+                            .selected(self.notify_tone == tone)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.notify_tone = tone;
+                                crate::notify::post(
+                                    crate::notify::Choice {
+                                        banner: false,
+                                        sound: true,
+                                    },
+                                    tone,
+                                    crate::notify::Event::Done,
+                                    "",
+                                );
+                                this.save_general(NOTIFY_TONE, tone.into(), window, cx);
+                            })),
+                    );
+                }
+                setting(
+                    tr("Which sound"),
+                    tr("One of the system's sounds; choosing one plays it."),
+                    tones,
+                    cx,
+                )
+            })
             .child({
                 let (note, available) =
                     settings::update_note(self.update.as_ref(), self.update_at_start);

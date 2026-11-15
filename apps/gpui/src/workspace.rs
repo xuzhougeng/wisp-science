@@ -394,6 +394,8 @@ pub struct Workspace {
     language: crate::i18n::Language,
     /// How the user is told that a conversation needs them.
     notify: crate::notify::Choice,
+    /// Which of the system's sounds is played.
+    notify_tone: &'static str,
     /// The check for a newer version, once one was asked for.
     update: Option<crate::settings::Update>,
     /// Look for a newer version when the app starts.
@@ -1502,6 +1504,7 @@ impl Workspace {
             font_fields,
             language: Default::default(),
             notify: Default::default(),
+            notify_tone: crate::notify::sound_of(crate::notify::System::current(), None),
             update: None,
             update_at_start: true,
             update_banner: None,
@@ -2154,7 +2157,7 @@ impl Workspace {
             .current_row()
             .map(|row| present::one_line(&row.title))
             .unwrap_or_default();
-        crate::notify::post(self.notify, event, &title);
+        crate::notify::post(self.notify, self.notify_tone, event, &title);
     }
 
     fn focus_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2326,7 +2329,7 @@ impl Workspace {
                             crate::notify::elsewhere(&this.recent, &recent, open.as_deref())
                         {
                             if crate::notify::wanted(this.notify, window.is_window_active()) {
-                                crate::notify::post(this.notify, event, &title);
+                                crate::notify::post(this.notify, this.notify_tone, event, &title);
                             }
                         }
                         this.recent = recent;

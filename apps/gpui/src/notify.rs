@@ -141,10 +141,67 @@ impl System {
 /// A program and what it is given.
 pub type Command = (&'static str, Vec<String>);
 
+/// The sounds a system offers, as the WebView desktop offers them, its
+/// default first: the alert sounds macOS ships, freedesktop sound-theme
+/// ids on Linux, and the sounds .NET plays by name on Windows. A saved
+/// choice only ever names one of these, never a file or an argument.
+pub fn sounds(system: System) -> &'static [&'static str] {
+    match system {
+        System::Mac => &[
+            "Glass",
+            "Basso",
+            "Blow",
+            "Bottle",
+            "Frog",
+            "Funk",
+            "Hero",
+            "Morse",
+            "Ping",
+            "Pop",
+            "Purr",
+            "Sosumi",
+            "Submarine",
+            "Tink",
+        ],
+        System::Linux => &[
+            "complete",
+            "message",
+            "message-new-instant",
+            "bell",
+            "dialog-information",
+            "dialog-warning",
+        ],
+        System::Windows => &["Asterisk", "Beep", "Exclamation", "Hand", "Question"],
+    }
+}
+
+/// The sound to play for a saved choice: one the system has, else its
+/// default, as a choice made on another system falls back.
+pub fn sound_of(system: System, saved: Option<&str>) -> &'static str {
+    let offered = sounds(system);
+    saved
+        .map(str::trim)
+        .and_then(|saved| offered.iter().copied().find(|sound| *sound == saved))
+        .unwrap_or(offered[0])
+}
+
 /// What is run to tell the user, in order. Title and body are handed over
 /// as data: on macOS inside a quoted AppleScript string with its quotes
 /// and backslashes escaped, elsewhere as arguments of their own.
+#[cfg(test)]
 pub fn commands(system: System, choice: Choice, title: &str, body: &str) -> Vec<Command> {
+    commands_with(system, choice, sound_of(system, None), title, body)
+}
+
+/// [`commands`] with the sound chosen in Settings, one of [`sounds`].
+pub fn commands_with(
+    system: System,
+    choice: Choice,
+    sound: &str,
+    title: &str,
+    body: &str,
+) -> Vec<Command> {
+    let sound = sound_of(system, Some(sound));
     let mut run = Vec::new();
     match system {
         System::Mac => {
@@ -172,7 +229,7 @@ pub fn commands(system: System, choice: Choice, title: &str, body: &str) -> Vec<
             if choice.sound {
                 run.push((
                     "/usr/bin/afplay",
-                    vec!["/System/Library/Sounds/Glass.aiff".into()],
+                    vec![format!("/System/Library/Sounds/{sound}.aiff")],
                 ));
             }
         }
@@ -191,7 +248,7 @@ pub fn commands(system: System, choice: Choice, title: &str, body: &str) -> Vec<
             if choice.sound {
                 run.push((
                     "canberra-gtk-play",
-                    vec!["--id=complete".into(), "--description=Wisp".into()],
+                    vec![format!("--id={sound}"), "--description=Wisp".into()],
                 ));
             }
         }
@@ -203,8 +260,9 @@ pub fn commands(system: System, choice: Choice, title: &str, body: &str) -> Vec<
                         "-NoProfile".into(),
                         "-NonInteractive".into(),
                         "-Command".into(),
-                        "[System.Media.SystemSounds]::Asterisk.Play(); Start-Sleep -Milliseconds 600"
-                            .into(),
+                        format!(
+                            "[System.Media.SystemSounds]::{sound}.Play(); Start-Sleep -Milliseconds 600"
+                        ),
                     ],
                 ));
             }
@@ -215,10 +273,14 @@ pub fn commands(system: System, choice: Choice, title: &str, body: &str) -> Vec<
 
 /// Tells the user. A system without the program simply does not tell; the
 /// app goes on either way.
-pub fn post(choice: Choice, event: Event, conversation: &str) {
-    for (program, arguments) in
-        commands(System::current(), choice, title(event), &body(conversation))
-    {
+pub fn post(choice: Choice, sound: &str, event: Event, conversation: &str) {
+    for (program, arguments) in commands_with(
+        System::current(),
+        choice,
+        sound,
+        title(event),
+        &body(conversation),
+    ) {
         let _ = std::process::Command::new(program)
             .args(arguments)
             .stdin(std::process::Stdio::null())
@@ -304,6 +366,41 @@ mod tests {
             Choice::from_saved(Some("maybe"), Some("")),
             Choice::default()
         );
+    }
+
+    #[test]
+    fn the_chosen_sound_is_played_and_only_a_known_one() {
+        let chosen = |system, sound| {
+            commands_with(
+                system,
+                Choice {
+                    banner: false,
+                    sound: true,
+                },
+                sound,
+                "t",
+                "b",
+            )
+            .remove(0)
+        };
+        assert_eq!(
+            chosen(System::Mac, "Submarine").1,
+            ["/System/Library/Sounds/Submarine.aiff"]
+        );
+        // A name the system does not have, or a path, falls back to its
+        // default rather than reaching the player.
+        assert_eq!(
+            chosen(System::Mac, "../../etc/passwd").1,
+            ["/System/Library/Sounds/Glass.aiff"]
+        );
+        assert_eq!(chosen(System::Linux, "bell").1[0], "--id=bell");
+        assert_eq!(chosen(System::Linux, "Glass").1[0], "--id=complete");
+        assert!(chosen(System::Windows, "Exclamation").1[3].contains("::Exclamation.Play()"));
+        assert_eq!(sound_of(System::Mac, None), "Glass");
+        assert_eq!(sound_of(System::Mac, Some(" Ping ")), "Ping");
+        for system in [System::Mac, System::Linux, System::Windows] {
+            assert!(!sounds(system).is_empty());
+        }
     }
 
     #[test]
