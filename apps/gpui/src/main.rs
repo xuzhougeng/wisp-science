@@ -28,6 +28,7 @@ mod links;
 mod mandates;
 mod memory;
 mod memos;
+mod method_search;
 mod model_view;
 mod molecules;
 mod notebook;

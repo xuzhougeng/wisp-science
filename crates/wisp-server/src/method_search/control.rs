@@ -28,6 +28,9 @@ use crate::Server;
 /// The most a candidate proposal may write, as in the WebView.
 const CANDIDATE_MAX_TOKENS: u64 = 8_192;
 
+/// The most of one promoted output the card reads.
+const OUTPUT_MAX_BYTES: usize = 512 * 1024;
+
 /// A method search as its card shows it: the Run, its durable state, the
 /// frozen contract and audit, its candidates, strategies and outputs, and
 /// the batch step that started it, if one did.
@@ -157,6 +160,45 @@ impl Server {
         let root = self.project_root(project).await?;
         self.method_search_details(Path::new(&root), project, run)
             .await
+    }
+
+    /// One file the search promoted (a method's source, its history or the
+    /// verification report), as text for its card. Only the run's own
+    /// outputs are read, from their checksummed snapshots.
+    pub async fn method_search_output(
+        &self,
+        project: &str,
+        run_id: &str,
+        version_id: &str,
+    ) -> Result<String> {
+        let root = self.project_root(project).await?;
+        let store = &self.0.store;
+        let run = store
+            .get_run(run_id)
+            .await?
+            .context("Method-search Run does not exist")?;
+        anyhow::ensure!(
+            run.project_id == project && run.kind == "method_search",
+            "Method-search Run does not belong to this project"
+        );
+        anyhow::ensure!(
+            store
+                .list_run_outputs(run_id)
+                .await?
+                .iter()
+                .any(|output| output.artifact_version_id == version_id),
+            "This file is not one of the search's outputs"
+        );
+        let (_, bytes) = coordinator::load_artifact_bytes(
+            store,
+            Path::new(&root),
+            project,
+            version_id,
+            OUTPUT_MAX_BYTES,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        String::from_utf8(bytes).context("The output is not text")
     }
 
     async fn method_search_details(

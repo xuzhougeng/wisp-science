@@ -590,7 +590,7 @@ fn exact_artifact_path(root: &Path, context: &ArtifactVersionContext) -> Result<
     Ok(path)
 }
 
-async fn load_artifact_bytes(
+pub(crate) async fn load_artifact_bytes(
     store: &Store,
     root: &Path,
     project_id: &str,

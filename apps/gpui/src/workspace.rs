@@ -285,6 +285,17 @@ pub struct Workspace {
     remote: Option<crate::files::RemoteBrowse>,
     /// Whole logs that were asked for, by run: the log, or why not.
     run_logs: HashMap<String, Result<wisp_server::desktop::RunLog, String>>,
+    /// The method search whose card is open in the Runs tab.
+    open_search: Option<String>,
+    /// What its card last read.
+    search_details: Option<wisp_dto::MethodSearchRunDetails>,
+    /// A read or control of it is under way.
+    search_busy: bool,
+    /// Why its last read or control did not happen.
+    search_problem: Option<String>,
+    /// One of its promoted files being read: the version, and its text or
+    /// why not.
+    search_output: Option<(String, Result<String, String>)>,
     /// Where the previewed file came from, once asked: its path, and the
     /// call that wrote it, none known, or why it could not be looked up.
     file_origin: Option<(
@@ -1144,6 +1155,11 @@ impl Workspace {
             tabs: Default::default(),
             remote: None,
             run_logs: HashMap::new(),
+            open_search: None,
+            search_details: None,
+            search_busy: false,
+            search_problem: None,
+            search_output: None,
             file_origin: None,
             pinned: vec![],
             show_archived: false,
@@ -2151,6 +2167,7 @@ impl Workspace {
         self.loading_history = false;
         self.error = None;
         self.expanded_run = None;
+        self.close_search();
         self.open_tools.clear();
         self.list.reset(0);
     }
@@ -2420,6 +2437,8 @@ impl Workspace {
                                     }
                                     this.update_rows();
                                     this.load_inline_images(window, cx);
+                                    // An open search card follows its run.
+                                    this.refresh_search(window, cx);
                                     if running {
                                         this.watch_activity(window, cx);
                                         // Usage grows while the turn runs.

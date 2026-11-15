@@ -402,7 +402,20 @@ Limits of this slice:
   context and the batch's default model, so such a batch is always
   approved first; when the step is reached its Run waits in Draft until it
   is started, and when the search ends the batch carries on from it and
-  its result reaches the conversation. Still to port: the GPUI run card.
+  its result reaches the conversation. In the Runs tab a method search
+  has a Search card, as the WebView's: its frozen contract (objective,
+  target, evaluator, metric and direction, the audited baseline and noise
+  floor, whether a candidate is reachable, budgets, protected files,
+  guardrails, constraints and whether a held-out check follows), Start
+  for a draft, Pause while it runs and Resume once paused (Cancel is the
+  run's own), its progress (phase, best score, candidates scored and
+  failed, cost, strategy, last checkpoint), the files it promoted (the
+  selected method, the top candidates, the candidate history and the
+  verification report, each readable in place from its checksummed
+  snapshot), every candidate with its rationale or error, the strategies
+  it leans on, and the durable record's state. The card reads the host
+  through the shared `wisp-dto` details and follows its run as the
+  conversation's snapshot moves on.
 - Explorations follow the WebView's `exploration_commands.rs`,
   `exploration_promotion.rs` and `exploration_workspace.rs`, whose
   services and tests are carried over. The first candidate of a round

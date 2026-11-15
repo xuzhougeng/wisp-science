@@ -9648,6 +9648,27 @@ async fn a_delegated_method_search_waits_for_start_then_runs_and_reports_back() 
     assert!(proposals.load(Ordering::SeqCst) >= 1);
     assert!(!details.candidates.is_empty());
     assert!(!details.outputs.is_empty());
+    // The card reads the details through the shared DTO.
+    let card: wisp_dto::MethodSearchRunDetails =
+        serde_json::from_value(serde_json::to_value(&details).unwrap()).unwrap();
+    assert_eq!(card.run.status, "succeeded");
+    assert_eq!(card.candidates.len(), details.candidates.len());
+    assert_eq!(card.spec.target.symbol, "fit_model");
+    // Its promoted files read back as text; nothing else does.
+    let selected = details
+        .outputs
+        .iter()
+        .find(|output| output.role == "selected_method")
+        .unwrap();
+    let source = server
+        .method_search_output(PROJECT, &run_id, &selected.artifact_version_id)
+        .await
+        .unwrap();
+    assert!(source.starts_with("def fit_model(rows):"));
+    assert!(server
+        .method_search_output(PROJECT, &run_id, &details.state.spec_artifact_version_id)
+        .await
+        .is_err());
     let batch = &server.delegated_batches(PROJECT, &parent).await.unwrap()[0];
     assert_eq!(batch.status, "succeeded");
     let search = batch.tasks.iter().find(|task| task.id == "search").unwrap();

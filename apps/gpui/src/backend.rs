@@ -658,6 +658,38 @@ impl Backend {
         self.local(move |host| async move { host.cancel_run(&project, &run).await })
     }
 
+    /// A method search's card: read as it is, or after one of its controls.
+    pub fn method_search(
+        &self,
+        project: String,
+        run: String,
+        control: Option<crate::method_search::Control>,
+    ) -> Reply<wisp_dto::MethodSearchRunDetails> {
+        use crate::method_search::Control;
+        self.local(move |host| async move {
+            let details = match control {
+                None => host.method_search_run(&project, &run).await?,
+                Some(Control::Start) => host.start_method_search(&project, &run).await?,
+                Some(Control::Pause) => host.pause_method_search(&project, &run).await?,
+                Some(Control::Resume) => host.resume_method_search(&project, &run).await?,
+            };
+            // Read through the shared DTO, as the WebView reads it.
+            Ok(serde_json::from_value(serde_json::to_value(&details)?)?)
+        })
+    }
+
+    /// One file a method search promoted, as text.
+    pub fn method_search_output(
+        &self,
+        project: String,
+        run: String,
+        version: String,
+    ) -> Reply<String> {
+        self.local(
+            move |host| async move { host.method_search_output(&project, &run, &version).await },
+        )
+    }
+
     pub fn conversation_status(
         &self,
         project: String,

@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Selectable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     text::TextView,
 };
@@ -18,6 +18,7 @@ use crate::{
     assets::icon,
     backend::receive,
     layers::Layer,
+    method_search,
     panel::{self, PanelTab},
     present::{self, Tone},
 };
@@ -114,6 +115,314 @@ impl Workspace {
             });
         })
         .detach();
+    }
+
+    /// Forgets the open method search card.
+    pub(super) fn close_search(&mut self) {
+        self.open_search = None;
+        self.search_details = None;
+        self.search_busy = false;
+        self.search_problem = None;
+        self.search_output = None;
+    }
+
+    fn toggle_search(&mut self, run: String, window: &mut Window, cx: &mut Context<Self>) {
+        let open = self.open_search.as_ref() != Some(&run);
+        self.close_search();
+        if open {
+            self.open_search = Some(run);
+            self.load_search(None, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Reads the open search's card, or applies one of its controls and
+    /// reads the card it leaves.
+    fn load_search(
+        &mut self,
+        control: Option<method_search::Control>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selection = self.state.selection();
+        let (Some(project), Some(run)) = (selection.project.clone(), self.open_search.clone())
+        else {
+            return;
+        };
+        if self.search_busy {
+            return;
+        }
+        self.search_busy = true;
+        self.search_problem = None;
+        let reply = self.backend.method_search(project, run.clone(), control);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if !this.state.current(&selection) || this.open_search.as_ref() != Some(&run) {
+                    return;
+                }
+                this.search_busy = false;
+                match result {
+                    Ok(details) => this.search_details = Some(details),
+                    // A refused control leaves the card as it was.
+                    Err(error) => this.search_problem = Some(error),
+                }
+                // The run's new status arrives with the next snapshot.
+                if control.is_some() {
+                    this.start_poll(window, cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Reads the open search's card again once its run has moved on.
+    pub(super) fn refresh_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(open), Some(details)) = (&self.open_search, &self.search_details) else {
+            return;
+        };
+        let moved = self
+            .state
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.run_cards.iter().find(|run| &run.id == open))
+            .is_some_and(|run| method_search::stale(details, run));
+        if moved && !self.search_busy {
+            self.load_search(None, window, cx);
+        }
+    }
+
+    /// Shows one file the search promoted, or hides it when it is showing.
+    fn toggle_search_output(
+        &mut self,
+        version: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .search_output
+            .as_ref()
+            .is_some_and(|(shown, _)| *shown == version)
+        {
+            self.search_output = None;
+            cx.notify();
+            return;
+        }
+        let selection = self.state.selection();
+        let (Some(project), Some(run)) = (selection.project.clone(), self.open_search.clone())
+        else {
+            return;
+        };
+        self.search_output = None;
+        let reply = self
+            .backend
+            .method_search_output(project, run.clone(), version.clone());
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.state.current(&selection) && this.open_search.as_ref() == Some(&run) {
+                    this.search_output = Some((version, result));
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// The open search's card: its frozen contract, what can be done with
+    /// it, how far it has got, what it kept and what it tried.
+    fn render_method_search(
+        &self,
+        run: &wisp_dto::RunRecord,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let danger = cx.theme().danger;
+        let mut card = div().v_flex().gap_2().pt_1();
+        if let Some(problem) = &self.search_problem {
+            card = card.child(
+                div()
+                    .text_xs()
+                    .text_color(danger)
+                    .child(crate::i18n::host(problem)),
+            );
+        }
+        let Some(details) = &self.search_details else {
+            if self.search_busy {
+                card = card.child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(tr("Reading the search…")),
+                );
+            }
+            return card;
+        };
+        let rows = |rows: Vec<(&'static str, String)>| {
+            let mut grid = div().v_flex().gap_0p5();
+            for (label, value) in rows {
+                grid = grid.child(
+                    div()
+                        .h_flex()
+                        .items_start()
+                        .gap_2()
+                        .text_xs()
+                        .child(
+                            div()
+                                .w(px(104.))
+                                .flex_shrink_0()
+                                .text_color(muted)
+                                .child(label),
+                        )
+                        .child(div().flex_1().min_w_0().child(value)),
+                );
+            }
+            grid
+        };
+        let heading = |text: String| div().text_xs().font_semibold().child(text);
+
+        // What the researcher approves by starting it.
+        card = card
+            .child(heading(tr("Contract").into()))
+            .child(div().text_sm().child(details.spec.objective.clone()))
+            .child(rows(method_search::contract(details)));
+        let guardrails = method_search::guardrails(details);
+        if !guardrails.is_empty() {
+            card = card.child(rows(vec![(tr("Guardrails"), guardrails.join(", "))]));
+        }
+        for constraint in &details.spec.constraints {
+            card = card.child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(format!("· {constraint}")),
+            );
+        }
+        let mut actions = div().h_flex().gap_1();
+        if let Some(control) = method_search::control(&details.run.status) {
+            let mut button = Button::new(SharedString::from(format!(
+                "search-{}-{}",
+                control.key(),
+                run.id
+            )))
+            .icon(glyph(control.icon()))
+            .label(control.label())
+            .xsmall()
+            .disabled(self.search_busy)
+            .on_click(
+                cx.listener(move |this, _, window, cx| this.load_search(Some(control), window, cx)),
+            );
+            if control != method_search::Control::Pause {
+                button = button.primary();
+            }
+            actions = actions.child(button);
+        }
+        actions = actions.child(
+            icon_button(
+                SharedString::from(format!("search-refresh-{}", run.id)),
+                "refresh",
+                tr("Read the search again"),
+            )
+            .xsmall()
+            .disabled(self.search_busy)
+            .on_click(cx.listener(|this, _, window, cx| this.load_search(None, window, cx))),
+        );
+        card = card.child(actions);
+
+        // How far it has got.
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs() as i64)
+            .unwrap_or(0);
+        card =
+            card.child(heading(tr("Progress").into()))
+                .child(rows(method_search::progress_rows(
+                    &method_search::progress(&details.run),
+                    now,
+                )));
+
+        // What it kept.
+        if !details.outputs.is_empty() {
+            let mut files = div().h_flex().flex_wrap().gap_1();
+            for output in &details.outputs {
+                let version = output.artifact_version_id.clone();
+                let shown = self
+                    .search_output
+                    .as_ref()
+                    .is_some_and(|(open, _)| *open == version);
+                files = files.child(
+                    Button::new(SharedString::from(format!("search-output-{version}")))
+                        .icon(glyph("doc"))
+                        .label(method_search::output_name(output))
+                        .xsmall()
+                        .ghost()
+                        .selected(shown)
+                        .tooltip(output.source_path.clone())
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.toggle_search_output(version.clone(), window, cx)
+                        })),
+                );
+            }
+            card = card.child(heading(tr("Outputs").into())).child(files);
+            if let Some((version, text)) = &self.search_output {
+                let path = details
+                    .outputs
+                    .iter()
+                    .find(|output| output.artifact_version_id == *version)
+                    .map(|output| output.source_path.as_str())
+                    .unwrap_or_default();
+                card = card.child(match text {
+                    Ok(text) => TextView::markdown(
+                        SharedString::from(format!("search-output-text-{version}")),
+                        method_search::output_markdown(path, text),
+                        window,
+                        cx,
+                    )
+                    .selectable(true)
+                    .into_any_element(),
+                    Err(problem) => div()
+                        .text_xs()
+                        .text_color(danger)
+                        .child(crate::i18n::host(problem))
+                        .into_any_element(),
+                });
+            }
+        }
+
+        // What it tried, and what it leans on now.
+        if !details.candidates.is_empty() {
+            card = card.child(heading(crate::i18n::fill(
+                tr("Candidates ({})"),
+                &[&details.candidates.len()],
+            )));
+            for candidate in &details.candidates {
+                let mut line = div()
+                    .v_flex()
+                    .text_xs()
+                    .child(method_search::candidate(candidate));
+                if let Some(rationale) = &candidate.rationale {
+                    line = line.child(div().text_color(muted).child(rationale.clone()));
+                }
+                if let Some(error) = &candidate.error {
+                    line = line.child(div().text_color(danger).child(error.clone()));
+                }
+                card = card.child(line);
+            }
+        }
+        if !details.strategies.is_empty() {
+            card = card.child(heading(tr("Strategies").into()));
+            for strategy in &details.strategies {
+                card = card.child(div().text_xs().child(method_search::strategy(strategy)));
+            }
+        }
+        card.child(
+            div()
+                .text_xs()
+                .text_color(muted)
+                .child(method_search::integrity(details)),
+        )
     }
 
     /// The row of tabs at the top of the side panel.
@@ -234,6 +543,26 @@ impl Workspace {
                         cx.notify();
                     })),
             );
+            let searching = run.kind == "method_search";
+            if searching {
+                let open = self.open_search.as_ref() == Some(&id);
+                let wanted = id.clone();
+                actions = actions.child(
+                    Button::new(SharedString::from(format!("run-search-{id}")))
+                        .label(if open {
+                            tr("Hide search")
+                        } else {
+                            tr("Search")
+                        })
+                        .xsmall()
+                        .ghost()
+                        .selected(open)
+                        .tooltip(tr("The search's contract, progress and candidates"))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.toggle_search(wanted.clone(), window, cx)
+                        })),
+                );
+            }
             if panel::can_cancel(&run.status) {
                 let cancel = id.clone();
                 actions = actions.child(
@@ -263,6 +592,9 @@ impl Workspace {
                         .child(div().flex_1())
                         .child(actions),
                 );
+            if searching && self.open_search.as_ref() == Some(&id) {
+                card = card.child(self.render_method_search(run, window, cx));
+            }
             if expanded {
                 let whole = self.run_logs.get(&run.id);
                 let shown = match whole {
