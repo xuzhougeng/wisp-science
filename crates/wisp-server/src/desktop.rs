@@ -2679,7 +2679,14 @@ impl Server {
             default: ssh_hosts::stored_default_execution_context(store)
                 .await
                 .and_then(|id| id.strip_prefix("ssh:").map(str::to_owned)),
-            hosts: hosts.into_iter().map(SshHostRow::from).collect(),
+            hosts: hosts
+                .into_iter()
+                .map(|host| {
+                    let mut row = SshHostRow::from(host);
+                    row.has_password = self.ssh_password(&row.alias).is_some();
+                    row
+                })
+                .collect(),
             config_aliases: aliases,
         })
     }
@@ -2689,11 +2696,38 @@ impl Server {
     pub async fn save_ssh_host(&self, input: SshHostRow) -> Result<()> {
         use wisp_runs::ssh_hosts;
         let _admission = self.0.admission.read().await;
+        let typed = input
+            .password
+            .clone()
+            .filter(|password| !password.is_empty());
+        let password_sign_in = input.password_sign_in;
         let host = input.into_host()?;
+        let alias = host.alias.clone();
+        // A password host needs one, typed now or saved before.
+        ensure!(
+            !password_sign_in || typed.is_some() || self.ssh_password(&alias).is_some(),
+            "Give the password to sign in with"
+        );
         let hosts = ssh_hosts::upsert_host(ssh_hosts::load(&self.0.store).await, host);
         ssh_hosts::save_and_sync_contexts(&self.0.store, &hosts)
             .await
-            .map_err(anyhow::Error::msg)
+            .map_err(anyhow::Error::msg)?;
+        let name = ssh_hosts::password_secret_name(&alias);
+        match (password_sign_in, typed) {
+            (true, Some(password)) => self.0.secrets.set(&name, &password)?,
+            (true, None) => {}
+            // Signing in by key: no password is kept for it.
+            (false, _) => self.0.secrets.set(&name, "")?,
+        }
+        Ok(())
+    }
+
+    /// The password saved for the SSH host `alias`, from the keyring.
+    fn ssh_password(&self, alias: &str) -> Option<String> {
+        self.0
+            .secrets
+            .get(&wisp_runs::ssh_hosts::password_secret_name(alias))
+            .filter(|password| !password.is_empty())
     }
 
     /// Adds the hosts of `~/.ssh/config` that are named here and not added
@@ -2853,6 +2887,10 @@ impl Server {
         ssh_hosts::save(&self.0.store, &ssh_hosts::remove_host(hosts, alias))
             .await
             .map_err(anyhow::Error::msg)?;
+        // Its password goes with it.
+        self.0
+            .secrets
+            .set(&ssh_hosts::password_secret_name(alias), "")?;
         // A default that pointed at it is cleared when it is next read.
         ssh_hosts::remove_context_for_alias(&self.0.store, alias)
             .await
@@ -5084,9 +5122,9 @@ impl From<wisp_runtime::RuntimeInfo> for RuntimeRow {
     }
 }
 
-/// An SSH host as Settings shows and edits it. Signing in is by key or by
-/// whatever the user's SSH config and agent provide; a password is never
-/// part of it.
+/// An SSH host as Settings shows and edits it. Signing in is by key (or
+/// whatever the user's SSH config and agent provide) or by a password kept
+/// in the OS keyring, never in the database.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SshHostRow {
     /// What the host is called here and in tool calls.
@@ -5100,6 +5138,12 @@ pub struct SshHostRow {
     /// A jump host, as OpenSSH's ProxyJump takes it.
     pub proxy_jump: String,
     pub notes: String,
+    /// Signs in with a password instead of a key.
+    pub password_sign_in: bool,
+    /// A password is saved for it. Read only.
+    pub has_password: bool,
+    /// A new password to save; none keeps the saved one. Never listed.
+    pub password: Option<String>,
 }
 
 impl From<wisp_runs::ssh_hosts::SshHost> for SshHostRow {
@@ -5112,6 +5156,9 @@ impl From<wisp_runs::ssh_hosts::SshHost> for SshHostRow {
             identity_file: host.identity_file.unwrap_or_default(),
             proxy_jump: host.proxy_jump.unwrap_or_default(),
             notes: host.notes.unwrap_or_default(),
+            password_sign_in: host.auth_method.as_deref() == Some("password"),
+            has_password: false,
+            password: None,
         }
     }
 }
@@ -5133,8 +5180,9 @@ impl SshHostRow {
             identity_file: filled(self.identity_file),
             proxy_jump: filled(self.proxy_jump),
             notes: filled(self.notes),
-            auth_method: None,
+            auth_method: self.password_sign_in.then(|| "password".to_owned()),
             has_password: false,
+            // Kept in the keyring by the host, never with the host here.
             password: None,
         };
         // The same rules a connection is held to, before anything is saved.

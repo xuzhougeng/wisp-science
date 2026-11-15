@@ -3690,6 +3690,59 @@ async fn ssh_hosts_are_registered_as_execution_contexts_without_their_keys() {
     assert_eq!(view.hosts[0].host_name, "gpu.lab.example");
     assert_eq!(view.hosts[0].user, "");
 
+    // Signing in by password needs one; it is kept as a secret, said to
+    // be saved, never listed or written to the database, and dropped when
+    // the host goes back to a key.
+    let by_password = SshHostRow {
+        alias: "gpu".into(),
+        host_name: "gpu.lab.example".into(),
+        password_sign_in: true,
+        ..Default::default()
+    };
+    assert!(server.save_ssh_host(by_password.clone()).await.is_err());
+    server
+        .save_ssh_host(SshHostRow {
+            password: Some("made-up-pass".into()),
+            ..by_password.clone()
+        })
+        .await
+        .unwrap();
+    let secret = wisp_runs::ssh_hosts::password_secret_name("gpu");
+    assert_eq!(
+        server.0.secrets.get(&secret).as_deref(),
+        Some("made-up-pass")
+    );
+    let listed = &server.environments().await.unwrap().hosts[0];
+    assert!(listed.password_sign_in && listed.has_password);
+    assert_eq!(listed.password, None);
+    let saved = server
+        .0
+        .store
+        .get_execution_context("ssh:gpu")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!saved.config_json.contains("made-up-pass"));
+    // Saved again without typing it, the password stays.
+    server.save_ssh_host(by_password.clone()).await.unwrap();
+    assert!(server.environments().await.unwrap().hosts[0].has_password);
+    server
+        .save_ssh_host(SshHostRow {
+            password_sign_in: false,
+            ..by_password.clone()
+        })
+        .await
+        .unwrap();
+    assert!(!server.environments().await.unwrap().hosts[0].has_password);
+    assert_eq!(server.0.secrets.get(&secret).unwrap_or_default(), "");
+    server
+        .save_ssh_host(SshHostRow {
+            password: Some("made-up-pass".into()),
+            ..by_password
+        })
+        .await
+        .unwrap();
+
     // New work can be sent there by default, and back to this computer.
     server.set_default_environment(Some("gpu")).await.unwrap();
     assert_eq!(
@@ -3710,6 +3763,15 @@ async fn ssh_hosts_are_registered_as_execution_contexts_without_their_keys() {
     let view = server.environments().await.unwrap();
     assert!(view.hosts.is_empty());
     assert_eq!(view.default, None);
+    // Its password goes with it.
+    assert_eq!(
+        server
+            .0
+            .secrets
+            .get(&wisp_runs::ssh_hosts::password_secret_name("gpu"))
+            .unwrap_or_default(),
+        ""
+    );
     assert!(server
         .0
         .store

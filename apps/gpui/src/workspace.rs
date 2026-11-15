@@ -422,6 +422,11 @@ pub struct Workspace {
     /// The host form's fields: name, address, user, port, key file, jump
     /// host, notes.
     env_fields: [Entity<InputState>; 7],
+    /// The host in the form signs in with a password, which is typed here
+    /// (masked) and kept in the keyring; whether one is saved already.
+    env_password_sign_in: bool,
+    env_password: Entity<InputState>,
+    env_has_password: bool,
     /// The user's MCP servers; `None` until read.
     /// Requests kept under a name, for the composer's menu.
     quick_actions: Vec<wisp_server::desktop::QuickAction>,
@@ -730,6 +735,7 @@ impl Workspace {
         let mcp_name = cx.new(|cx| InputState::new(window, cx).placeholder(tr("Lab notebook")));
         let env_fields = ["gpu", "10.0.0.8", "", "22", "~/.ssh/id_ed25519", "", ""]
             .map(|hint| cx.new(|cx| InputState::new(window, cx).placeholder(hint)));
+        let env_password = cx.new(|cx| InputState::new(window, cx).masked(true));
         let network_fields = [
             "http://127.0.0.1:7890",
             "http://127.0.0.1:7890",
@@ -1287,6 +1293,9 @@ impl Workspace {
             project_form_ready: false,
             project_form_error: None,
             env_fields,
+            env_password_sign_in: false,
+            env_password,
+            env_has_password: false,
             quick_actions: Vec::new(),
             quick_editing: None,
             quick_fields,

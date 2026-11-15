@@ -519,9 +519,14 @@ Limits of this slice:
   one new work goes to, in a conversation that was started earlier too. A
   host is a name plus either an address or nothing at all, in which case
   OpenSSH resolves the name from `~/.ssh/config`. Wisp keeps the path of a
-  key file, never the key, and signs in with your keys, agent and config;
-  password sign-in is not ported, so a host that needs one cannot be used
-  from here. Work is refused on a host until a check of it has passed: Check
+  key file, never the key, and signs in with your keys, agent and config,
+  or with a password: Sign in with, A password keeps it in the system's
+  keyring under the WebView's name (`ssh_password:<name>`), never in the
+  database, and the WebView's one-shot askpass answers the host's prompt
+  with it for runs, checks and terminals; the list says whether one is
+  saved, the form never shows it, a password left empty keeps the saved
+  one, and going back to a key or removing the host drops it. Work is
+  refused on a host until a check of it has passed: Check
   connects once, without prompting, and records the system, processors,
   GPUs, scheduler and the Python and R it found, which is also what the
   model is told about the host; a check that fails records why, and the
@@ -1594,8 +1599,11 @@ Run code that draws a matplotlib figure: the plot shows under it. Press
 Restart: the variables list is empty. Press Escape: only the console
 closes.
 With an SSH host saved, press Terminal on its row in Settings,
-Environments: the system's terminal opens and connects to it (a password
-is asked there). Browse the host's folders in Files, go into one and press
+Environments: a terminal opens in the dock and connects to it (a password
+is asked there, unless the host signs in with a saved one). Change the
+host to sign in with A password and type one: the row reads password;
+open it again and confirm the field is empty with Saved in it; switch it
+back to A key and confirm the row no longer says password. Browse the host's folders in Files, go into one and press
 Terminal: the shell starts in that folder. Press it again: a second
 terminal opens.
 Have the model start a run on this computer that prints more than a

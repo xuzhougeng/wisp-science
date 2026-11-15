@@ -459,7 +459,13 @@ pub fn ssh_target(host: &SshHostRow) -> String {
     if let Some(port) = host.port {
         line.push_str(&format!(":{port}"));
     }
-    if !host.identity_file.is_empty() {
+    if host.password_sign_in {
+        line.push_str(if host.has_password {
+            tr(" · password")
+        } else {
+            tr(" · password not saved")
+        });
+    } else if !host.identity_file.is_empty() {
         line.push_str(&crate::i18n::fill(tr(" · key {}"), &[&host.identity_file]));
     }
     if !host.proxy_jump.is_empty() {
@@ -1074,6 +1080,17 @@ mod tests {
         assert_eq!(
             ssh_target(&host),
             "lab@10.0.0.8:2222 · key ~/.ssh/id_lab · via bastion"
+        );
+        // A host signing in by password says so, and whether it is saved.
+        host.password_sign_in = true;
+        assert_eq!(
+            ssh_target(&host),
+            "lab@10.0.0.8:2222 · password not saved · via bastion"
+        );
+        host.has_password = true;
+        assert_eq!(
+            ssh_target(&host),
+            "lab@10.0.0.8:2222 · password · via bastion"
         );
         assert_eq!(port(""), Ok(None));
         assert_eq!(port(" 22 "), Ok(Some(22)));

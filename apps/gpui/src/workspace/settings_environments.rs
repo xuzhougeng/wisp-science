@@ -263,6 +263,21 @@ impl Workspace {
         for (field, value) in self.env_fields.iter().zip(values) {
             field.update(cx, |input, cx| input.set_value(value, window, cx));
         }
+        // A saved password is never shown; typing one replaces it.
+        self.env_password_sign_in = row.password_sign_in;
+        self.env_has_password = row.has_password;
+        self.env_password.update(cx, |input, cx| {
+            input.set_value("", window, cx);
+            input.set_placeholder(
+                if row.has_password {
+                    tr("Saved; type a new one to change it")
+                } else {
+                    tr("The password for this host")
+                },
+                window,
+                cx,
+            );
+        });
         self.env_fields[0].update(cx, |input, cx| input.focus(window, cx));
         cx.notify();
     }
@@ -279,6 +294,7 @@ impl Workspace {
                 return cx.notify();
             }
         };
+        let typed = self.env_password.read(cx).value().to_string();
         let row = SshHostRow {
             // A host being changed keeps the name it is known by.
             alias: self.env_target.clone().unwrap_or_else(|| text(0)),
@@ -288,6 +304,9 @@ impl Workspace {
             identity_file: text(4),
             proxy_jump: text(5),
             notes: text(6),
+            password_sign_in: self.env_password_sign_in,
+            has_password: false,
+            password: (!typed.is_empty()).then_some(typed),
         };
         let reply = self.backend.save_ssh_host(row);
         self.change_environments(
@@ -380,9 +399,44 @@ impl Workspace {
             if index == 0 && changing {
                 continue;
             }
+            // A host that signs in by password has no key file.
+            if index == 4 && self.env_password_sign_in {
+                continue;
+            }
             form = form
                 .child(div().text_xs().text_color(muted).child(tr(label)))
                 .child(Input::new(field).small());
+        }
+        // How it signs in: with a key, or with a password kept in the
+        // system's keyring.
+        let mut sign_in = div()
+            .h_flex()
+            .gap_1()
+            .items_center()
+            .child(div().text_xs().text_color(muted).child(tr("Sign in with")));
+        for (number, (password, label)) in [(false, tr("A key")), (true, tr("A password"))]
+            .into_iter()
+            .enumerate()
+        {
+            sign_in = sign_in.child(
+                Button::new(("environment-sign-in", number))
+                    .label(label)
+                    .xsmall()
+                    .selected(self.env_password_sign_in == password)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.env_password_sign_in = password;
+                        cx.notify();
+                    })),
+            );
+        }
+        form = form.child(sign_in);
+        if self.env_password_sign_in {
+            form = form
+                .child(div().text_xs().text_color(muted).child(tr(
+                    "Password: kept in the system's keyring, never in Wisp's files. It answers \
+                     the host's prompt for runs, checks and terminals.",
+                )))
+                .child(Input::new(&self.env_password).small());
         }
         form.child(
             div()
