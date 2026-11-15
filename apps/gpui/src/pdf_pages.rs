@@ -65,6 +65,15 @@ pub fn draw(bytes: Vec<u8>, limit: usize, scale: f32) -> Result<Drawn, String> {
     })
 }
 
+/// A PNG's width and height, from its header.
+pub fn png_size(png: &[u8]) -> Option<(u32, u32)> {
+    if png.get(1..4)? != b"PNG" {
+        return None;
+    }
+    let number = |at: usize| Some(u32::from_be_bytes(png.get(at..at + 4)?.try_into().ok()?));
+    Some((number(16)?, number(20)?))
+}
+
 /// The line over the pages: how many there are, and how many are shown.
 pub fn note(drawn: &Drawn) -> String {
     match (drawn.total, drawn.pages.len()) {
@@ -126,19 +135,14 @@ mod tests {
         out
     }
 
-    fn png_size(png: &[u8]) -> (u32, u32) {
-        assert_eq!(&png[1..4], b"PNG");
-        let number = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().unwrap());
-        (number(16), number(20))
-    }
-
     #[test]
     fn the_first_pages_are_drawn_at_the_scale_asked() {
         let drawn = draw(pdf(3), 2, 2.).unwrap();
         assert_eq!(drawn.total, 3);
         assert_eq!(drawn.pages.len(), 2);
         // A 100 × 200 point page at twice its size.
-        assert_eq!(png_size(&drawn.pages[0]), (200, 400));
+        assert_eq!(png_size(&drawn.pages[0]), Some((200, 400)));
+        assert_eq!(png_size(b"not a png"), None);
         assert_eq!(
             note(&drawn),
             "The first 2 of 3 pages; open it with the system's application for the rest."

@@ -337,7 +337,14 @@ impl Workspace {
                             .pages
                             .into_iter()
                             .map(|png| {
-                                std::sync::Arc::new(Image::from_bytes(ImageFormat::Png, png))
+                                let ratio = crate::pdf_pages::png_size(&png)
+                                    .map_or(1.414, |(width, height)| {
+                                        height as f32 / width.max(1) as f32
+                                    });
+                                (
+                                    std::sync::Arc::new(Image::from_bytes(ImageFormat::Png, png)),
+                                    ratio,
+                                )
                             })
                             .collect();
                         (images, note)
@@ -1072,18 +1079,29 @@ impl Workspace {
             .gap_3()
             .p_3()
             .overflow_y_scroll();
-        for (index, image) in images.iter().enumerate() {
+        for (index, (image, ratio)) in images.iter().enumerate() {
             list = list.child(
                 div()
                     .v_flex()
                     .items_center()
                     .gap_1()
                     .child(
-                        img(image.clone())
+                        // As wide as the panel and as tall as the page is
+                        // for that width: padding in a fraction of the width.
+                        div()
                             .w_full()
-                            .object_fit(ObjectFit::Contain)
+                            .relative()
+                            .pb(relative(*ratio))
                             .border_1()
-                            .border_color(cx.theme().border),
+                            .border_color(cx.theme().border)
+                            .child(
+                                img(image.clone())
+                                    .absolute()
+                                    .top_0()
+                                    .left_0()
+                                    .size_full()
+                                    .object_fit(ObjectFit::Contain),
+                            ),
                     )
                     .child(
                         div()

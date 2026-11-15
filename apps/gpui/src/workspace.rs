@@ -598,7 +598,11 @@ pub struct Workspace {
     file_document: Option<(String, Result<String, String>)>,
     /// The PDF being previewed, its first pages drawn, with its path and
     /// the line that says how many there are.
-    file_pages: Option<(String, Result<(Vec<std::sync::Arc<Image>>, String), String>)>,
+    /// Each page with its height over its width.
+    file_pages: Option<(
+        String,
+        Result<(Vec<(std::sync::Arc<Image>, f32)>, String), String>,
+    )>,
     /// The alignment or FASTA file being previewed, read once, and the
     /// page of columns shown.
     file_sequences: Option<(String, std::sync::Arc<crate::sequences::Alignment>)>,
