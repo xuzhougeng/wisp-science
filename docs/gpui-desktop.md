@@ -344,7 +344,7 @@ Limits of this slice:
   lets only read-only tasks run. A task can be done as one of the
   researcher's experts (`specialist_id`), which gives it the expert's name
   and instructions, as the WebView's specialists do; it runs on the
-  task's own model, since this host does not use an expert's model, and
+  task's own model rather than the expert's, and
   its card says which expert it was. A batch that failed or was stopped can
   be run again from its card: it is checked against the models and tools
   there are now (and refused if they changed), tasks that succeeded keep
@@ -793,10 +793,12 @@ Limits of this slice:
   prompt with the first turn and stay as they were then, also if the
   expert is later changed or removed. The list and each conversation's
   choice are kept under the WebView's keys (`specialists`,
-  `frame_specialist:<id>`), and what the WebView keeps on an expert that
-  this desktop does not use (its own model, skill and connector lists) is
-  left as it is but not applied here: a conversation started as an expert
-  runs on the conversation's model with every enabled skill. The
+  `frame_specialist:<id>`). An expert can have a model of its own (the
+  WebView's `model_id`), chosen in its form: a conversation started as it
+  runs on that model, and its header says so, as long as the model is
+  still saved; otherwise it runs on the conversation's model. Its skill and
+  connector lists are left as the WebView keeps them but not applied here:
+  a conversation started as an expert has every enabled skill. The
   WebView's one-shot built-ins (reviewer, reader, archivist, recap) are
   not offered. The built-in Scientific Illustrator draws SVG; this host
   has no image-generation tool.

@@ -4285,7 +4285,45 @@ impl Server {
     /// Adds an expert, or changes the one `input.id` names. One that ships
     /// with Wisp keeps its instructions.
     pub async fn save_expert(&self, input: ExpertInput) -> Result<Vec<Expert>> {
+        let model = input.model.trim();
+        ensure!(
+            model.is_empty()
+                || self
+                    .0
+                    .model
+                    .read()
+                    .unwrap()
+                    .settings()
+                    .profiles
+                    .iter()
+                    .any(|profile| profile.id == model),
+            "That model was removed; choose another"
+        );
         crate::experts::upsert(&self.0.store, input).await
+    }
+
+    /// The model profile a conversation's turns run on: the expert's own
+    /// when the conversation was started as an expert that has one still
+    /// saved, as the WebView runs its specialists, or else the
+    /// conversation's choice (empty is the default).
+    pub(crate) async fn turn_profile(&self, options: &ConversationOptions) -> String {
+        if !options.expert.is_empty() {
+            if let Some(expert) = crate::experts::get(&self.0.store, &options.expert).await {
+                let saved = self
+                    .0
+                    .model
+                    .read()
+                    .unwrap()
+                    .settings()
+                    .profiles
+                    .iter()
+                    .any(|profile| profile.id == expert.model);
+                if !expert.model.is_empty() && saved {
+                    return expert.model;
+                }
+            }
+        }
+        options.model.clone()
     }
 
     /// Removes an expert of the user's own. Conversations started as it go

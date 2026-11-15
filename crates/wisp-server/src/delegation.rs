@@ -3953,6 +3953,7 @@ mod tests {
             description: "Checks the tests".into(),
             instructions: "Report effect sizes with intervals.".into(),
             builtin: false,
+            model: String::new(),
         };
         let experts = [expert];
         let resolved = resolve(

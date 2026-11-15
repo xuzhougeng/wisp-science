@@ -258,6 +258,18 @@ pub fn expert_label(experts: &[wisp_server::desktop::Expert], chosen: &str) -> S
         .map_or_else(|| tr("Expert").to_owned(), |expert| expert.name.clone())
 }
 
+/// What an expert's row says about the model it runs on, when it has one
+/// of its own that is still saved.
+pub fn expert_model_note(settings: Option<&ModelSettings>, model: &str) -> Option<String> {
+    let name = settings?
+        .profiles
+        .iter()
+        .find(|profile| !model.is_empty() && profile.id == model)?
+        .name
+        .clone();
+    Some(crate::i18n::fill(tr("Runs on {}"), &[&name]))
+}
+
 /// The pages that have to do with what was typed, in the order they are
 /// listed. Every word has to be found, in the page's name or in what it is
 /// about; a word may be the beginning of one. Nothing typed lists them all.
@@ -1219,6 +1231,22 @@ mod tests {
 
     fn settings(source: ModelSource, profiles: Vec<ModelProfile>) -> ModelSettings {
         ModelSettings { profiles, source }
+    }
+
+    #[test]
+    fn an_expert_says_which_model_of_its_own_it_runs_on() {
+        let saved = settings(
+            ModelSource::Saved,
+            vec![profile("a", true, None), profile("b", false, None)],
+        );
+        assert_eq!(
+            expert_model_note(Some(&saved), "b").as_deref(),
+            Some("Runs on Name b")
+        );
+        // Following the conversation's, or a model removed since: nothing.
+        assert_eq!(expert_model_note(Some(&saved), ""), None);
+        assert_eq!(expert_model_note(Some(&saved), "gone"), None);
+        assert_eq!(expert_model_note(None, "b"), None);
     }
 
     #[test]

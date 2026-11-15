@@ -69,6 +69,10 @@ pub struct Expert {
     pub instructions: String,
     /// Ships with Wisp: its instructions cannot be changed or removed.
     pub builtin: bool,
+    /// The model profile a conversation started as this expert runs on;
+    /// empty follows the conversation's own. Kept as the WebView's
+    /// `model_id`.
+    pub model: String,
 }
 
 /// What the form sends: `id` empty adds an expert.
@@ -78,7 +82,11 @@ pub struct ExpertInput {
     pub name: String,
     pub description: String,
     pub instructions: String,
+    pub model: String,
 }
+
+/// Where the WebView desktop keeps a specialist's own model.
+const MODEL: &str = "model_id";
 
 fn illustrator() -> Row {
     Row {
@@ -124,6 +132,13 @@ fn shown(row: &Row) -> Option<Expert> {
         description: row.description.clone(),
         instructions: row.instructions.clone(),
         builtin: row.builtin,
+        model: row
+            .rest
+            .get(MODEL)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_owned(),
     })
 }
 
@@ -141,6 +156,7 @@ pub(crate) async fn upsert(store: &Store, input: ExpertInput) -> Result<Vec<Expe
     let name = input.name.trim();
     let description = input.description.trim();
     let instructions = input.instructions.trim();
+    let model = serde_json::Value::String(input.model.trim().to_owned());
     ensure!(!name.is_empty(), "Give the expert a name");
     ensure!(
         name.chars().count() <= NAME_LIMIT,
@@ -172,7 +188,7 @@ pub(crate) async fn upsert(store: &Store, input: ExpertInput) -> Result<Vec<Expe
             description: description.into(),
             instructions: instructions.into(),
             builtin: false,
-            rest: Default::default(),
+            rest: [(MODEL.to_owned(), model)].into_iter().collect(),
         });
     } else {
         let Some(row) = rows
@@ -183,6 +199,7 @@ pub(crate) async fn upsert(store: &Store, input: ExpertInput) -> Result<Vec<Expe
         };
         row.name = name.into();
         row.description = description.into();
+        row.rest.insert(MODEL.to_owned(), model);
         if !row.builtin {
             ensure!(
                 !instructions.is_empty(),
@@ -255,6 +272,7 @@ mod tests {
             name: name.into(),
             description: "For the lab".into(),
             instructions: instructions.into(),
+            model: String::new(),
         }
     }
 
@@ -331,14 +349,23 @@ mod tests {
              "skills":["stats"],"connectors":null,"builtin":false}
         ]);
         store.set_setting(KEY, &saved.to_string()).await.unwrap();
-        // The reviewer is not a persona; the user's expert is.
+        // The reviewer is not a persona; the user's expert is, with its
+        // own model.
         let names: Vec<_> = list(&store).await.into_iter().map(|e| e.name).collect();
         assert_eq!(names, ["Scientific Illustrator", "Statistician"]);
+        assert_eq!(get(&store, "sp-1").await.unwrap().model, "m9");
+        assert_eq!(get(&store, ILLUSTRATOR).await.unwrap().model, "");
         assert!(upsert(&store, input("reviewer", "R", "x")).await.is_err());
 
-        upsert(&store, input("sp-1", "Statistician", "Report means."))
-            .await
-            .unwrap();
+        upsert(
+            &store,
+            ExpertInput {
+                model: " m9 ".into(),
+                ..input("sp-1", "Statistician", "Report means.")
+            },
+        )
+        .await
+        .unwrap();
         let raw: serde_json::Value =
             serde_json::from_str(&store.get_setting(KEY).await.unwrap().unwrap()).unwrap();
         let rows = raw.as_array().unwrap();
@@ -349,6 +376,12 @@ mod tests {
         assert_eq!(row("sp-1")["skills"], serde_json::json!(["stats"]));
         assert_eq!(row("sp-1")["icon"], "chart");
         assert_eq!(row("reviewer")["review_backend"]["profile_id"], "m2");
+        // Following the conversation's model again is saved as the WebView
+        // saves it.
+        upsert(&store, input("sp-1", "Statistician", "Report means."))
+            .await
+            .unwrap();
+        assert_eq!(get(&store, "sp-1").await.unwrap().model, "");
     }
 
     #[tokio::test]
@@ -376,6 +409,7 @@ mod tests {
             description: "not for the model".into(),
             instructions: " Report medians. ".into(),
             builtin: false,
+            model: String::new(),
         };
         let mut prompt = String::from("You are Wisp.");
         seed(&mut prompt, &expert);

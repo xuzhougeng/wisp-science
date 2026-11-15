@@ -694,13 +694,15 @@ impl Server {
         let model = match &acp {
             Some(_) => None,
             None => {
-                let mut model = self.0.model.read().unwrap().pick(&options.model)?;
+                // An expert with a model of its own runs on it.
+                let profile = self.turn_profile(&options).await;
+                let mut model = self.0.model.read().unwrap().pick(&profile)?;
                 // Priority processing, where the model's service offers it.
                 if options.fast && desktop::fast_available(&model.provider) {
                     model.provider.service_tier = Some(desktop::FAST_TIER.into());
                 }
                 // A subscription's token is refreshed before the turn.
-                self.fresh_subscription(&mut model, &self.provider_of(&options.model))
+                self.fresh_subscription(&mut model, &self.provider_of(&profile))
                     .await?;
                 Some(model)
             }
@@ -1259,7 +1261,7 @@ impl Server {
     ) -> Result<Option<Value>> {
         let options = self.stored_options(&request.session_id).await?;
         let archived = self.archived(&request.session_id).await?;
-        let profile = options.model;
+        let profile = self.turn_profile(&options).await;
         let page = self
             .0
             .store

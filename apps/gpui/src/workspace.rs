@@ -508,6 +508,9 @@ pub struct Workspace {
     expert_editing: Option<String>,
     /// Name, description, instructions.
     expert_fields: [Entity<InputState>; 3],
+    /// The model profile the expert in the form runs on; empty follows the
+    /// conversation's.
+    expert_model: String,
     /// The ACP agents, the one in the form or the remove question (empty
     /// is a new one), its name, program and arguments, the one being
     /// tested, and what each test found.
@@ -1367,6 +1370,7 @@ impl Workspace {
             pet_view,
             experts: Vec::new(),
             expert_editing: None,
+            expert_model: String::new(),
             expert_fields,
             acp_agents: None,
             acp_editing: None,

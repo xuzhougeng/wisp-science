@@ -57,6 +57,8 @@ pub const ZH: &[(&str, &str)] = &[
     ("Branch from here", "从这里分支"),
     ("Review this turn", "审查这一轮"),
     ("Open in a new window", "在新窗口打开"),
+    ("Model: a conversation started as this expert runs on it.", "模型：以这个专家开始的对话使用它。"),
+    ("Runs on {}", "使用 {}"),
     ("New project", "新建项目"),
     ("Project name", "项目名称"),
     ("What the project is about (optional)", "项目简介（可选）"),

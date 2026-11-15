@@ -2405,6 +2405,47 @@ async fn desktop_model_profiles_are_validated_saved_and_chosen_per_conversation(
     wait_for(&server, &session, |s| !s.running).await;
     assert_eq!(last_used(&used), ("deep-model".into(), "second-key".into()));
 
+    // An expert with a model of its own runs on it, in a conversation that
+    // follows the default; one that names a removed model is refused.
+    let thinker = desktop::ExpertInput {
+        id: String::new(),
+        name: "Deep thinker".into(),
+        description: String::new(),
+        instructions: "Think it through.".into(),
+        model: deep.id.clone(),
+    };
+    assert!(server
+        .save_expert(desktop::ExpertInput {
+            model: "ghost".into(),
+            ..thinker.clone()
+        })
+        .await
+        .is_err());
+    let thinker = server
+        .save_expert(thinker)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|expert| expert.name == "Deep thinker")
+        .unwrap();
+    assert_eq!(thinker.model, deep.id);
+    let as_expert = create(&server).await;
+    server
+        .set_conversation_options(
+            PROJECT,
+            &as_expert,
+            ConversationOptions {
+                expert: thinker.id.clone(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(snapshot(&server, &as_expert).await.model_id, "deep-model");
+    send(&server, &as_expert, "think").await.unwrap();
+    wait_for(&server, &as_expert, |s| !s.running).await;
+    assert_eq!(last_used(&used), ("deep-model".into(), "second-key".into()));
+
     // Sub-agents work on the conversation's model until another is chosen
     // for them: in Settings for all, or by a conversation for itself,
     // which outranks Settings.
@@ -6854,6 +6895,7 @@ async fn a_conversation_started_as_an_expert_works_under_its_instructions() {
             name: "Statistician".into(),
             description: "Numbers".into(),
             instructions: "Always report medians with the interquartile range.".into(),
+            model: String::new(),
         })
         .await
         .unwrap();

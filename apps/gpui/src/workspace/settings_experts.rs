@@ -3,7 +3,7 @@
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Sizable, StyledExt,
+    ActiveTheme, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     input::Input,
 };
@@ -69,6 +69,7 @@ impl Workspace {
         let blank = Expert::default();
         let shown = expert.unwrap_or(&blank);
         self.expert_editing = Some(shown.id.clone());
+        self.expert_model = shown.model.clone();
         self.layers.close(Layer::ConfirmRemoveExpert);
         self.layers.open(Layer::ExpertForm);
         self.settings_error = None;
@@ -91,6 +92,7 @@ impl Workspace {
             name,
             description,
             instructions,
+            model: self.expert_model.clone(),
         });
         self.change_experts(reply, window, cx);
     }
@@ -126,6 +128,40 @@ impl Workspace {
                     .child(Input::new(&self.expert_fields[2]).h_full()),
             )
         };
+        // The model it runs on: the conversation's, or one of its own.
+        let mut models = div().h_flex().flex_wrap().gap_1().child(
+            Button::new("expert-model-own")
+                .label(tr("The conversation's"))
+                .small()
+                .selected(self.expert_model.is_empty())
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.expert_model.clear();
+                    cx.notify();
+                })),
+        );
+        let profiles = self
+            .settings
+            .current()
+            .map(|settings| settings.profiles.clone())
+            .unwrap_or_default();
+        for (index, profile) in profiles.into_iter().enumerate() {
+            let id = profile.id.clone();
+            models = models.child(
+                Button::new(("expert-model", index))
+                    .label(profile.name.clone())
+                    .small()
+                    .selected(self.expert_model == profile.id)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.expert_model = id.clone();
+                        cx.notify();
+                    })),
+            );
+        }
+        let form = form
+            .child(label(tr(
+                "Model: a conversation started as this expert runs on it.",
+            )))
+            .child(models);
         form.child(
             div()
                 .h_flex()
@@ -167,6 +203,11 @@ impl Workspace {
             (true, true) => tr("Ships with Wisp").into(),
             (true, false) => String::new(),
         };
+        if let Some(note) =
+            crate::settings::expert_model_note(self.settings.current(), &expert.model)
+        {
+            about = about.child(div().text_xs().text_color(muted).child(note));
+        }
         if !description.is_empty() {
             about = about.child(div().text_xs().text_color(muted).child(description));
         }
