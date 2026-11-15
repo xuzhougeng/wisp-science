@@ -1170,6 +1170,36 @@ impl Backend {
         self.local(move |host| async move { host.remote_directory(&alias, &path).await })
     }
 
+    /// Copies a host's file to `destination` as a run; answers its id.
+    pub fn download_from_host(
+        &self,
+        project: String,
+        session: Option<String>,
+        alias: String,
+        path: String,
+        destination: std::path::PathBuf,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.download_from_host(&project, session.as_deref(), &alias, &path, destination)
+                .await
+        })
+    }
+
+    /// Copies files of this computer into a host's folder, a run each.
+    pub fn upload_to_host(
+        &self,
+        project: String,
+        session: Option<String>,
+        alias: String,
+        folder: String,
+        sources: Vec<String>,
+    ) -> Reply<Vec<String>> {
+        self.local(move |host| async move {
+            host.upload_to_host(&project, session.as_deref(), &alias, &folder, sources)
+                .await
+        })
+    }
+
     /// The tool call that last wrote a project file, if one is known.
     pub fn file_origin(
         &self,

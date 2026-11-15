@@ -1,14 +1,136 @@
 //! Folders on an SSH host, in the Files tab: a look around a saved host
-//! that has passed a check. It only lists; nothing on the host is opened,
-//! changed or copied from here.
+//! that has passed a check. A file there can be copied to this computer,
+//! and files of this computer sent into the folder shown; each copy goes
+//! on as a run, with its progress, and nothing there is replaced.
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{ActiveTheme, Disableable, Selectable, Sizable, StyledExt, button::Button};
 
-use super::{Workspace, shell::glyph};
+use super::{
+    Workspace,
+    shell::{glyph, icon_button},
+};
 use crate::{backend::receive, files};
 
 impl Workspace {
+    /// Asks where on this computer a host's file goes, then copies it there.
+    fn download_remote(
+        &mut self,
+        alias: String,
+        path: String,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selection = self.state.selection();
+        let Some(project) = selection.project.clone() else {
+            return;
+        };
+        let folder = dirs::download_dir()
+            .or_else(dirs::home_dir)
+            .unwrap_or_default();
+        let place = cx.prompt_for_new_path(&folder, Some(&name));
+        let backend = self.backend.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = async {
+                let Some(destination) = place
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .map_err(|error| error.to_string())?
+                else {
+                    return Ok(None);
+                };
+                receive(backend.download_from_host(
+                    project,
+                    selection.session.clone(),
+                    alias,
+                    path,
+                    destination.clone(),
+                ))
+                .await?;
+                Ok::<_, String>(Some(destination))
+            }
+            .await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(Some(destination)) => {
+                        this.notice = Some(crate::i18n::fill(
+                            tr("Copying to {}; the Runs tab shows how far it has got."),
+                            &[&destination.display()],
+                        ));
+                        this.start_poll(window, cx);
+                    }
+                    Ok(None) => {}
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Asks for files of this computer and sends them into the folder shown.
+    fn upload_remote(
+        &mut self,
+        alias: String,
+        folder: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selection = self.state.selection();
+        let Some(project) = selection.project.clone() else {
+            return;
+        };
+        let picker = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some(tr("Send").into()),
+        });
+        let backend = self.backend.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = async {
+                let picked = picker
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .map_err(|error| error.to_string())?;
+                match picked.filter(|paths| !paths.is_empty()) {
+                    Some(paths) => receive(
+                        backend.upload_to_host(
+                            project,
+                            selection.session.clone(),
+                            alias,
+                            folder,
+                            paths
+                                .iter()
+                                .map(|path| path.to_string_lossy().into_owned())
+                                .collect(),
+                        ),
+                    )
+                    .await
+                    .map(|runs| Some(runs.len())),
+                    None => Ok(None),
+                }
+            }
+            .await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(Some(count)) => {
+                        this.notice = Some(crate::i18n::fill(
+                            tr("Sending {} file(s); reload the folder once they are there."),
+                            &[&count],
+                        ));
+                        this.start_poll(window, cx);
+                    }
+                    Ok(None) => {}
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Lists `path` on `alias`; an empty path is the home folder.
     pub(super) fn browse_host(
         &mut self,
@@ -127,6 +249,18 @@ impl Workspace {
                                 })),
                         )
                         .child({
+                            let (to, folder) = (alias.clone(), shown.to_owned());
+                            Button::new("remote-send")
+                                .icon(glyph("arrow-up"))
+                                .label(tr("Send files here…"))
+                                .small()
+                                .disabled(browse.listing.is_none())
+                                .tooltip(tr("Copy files of this computer into this folder"))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.upload_remote(to.clone(), folder.clone(), window, cx)
+                                }))
+                        })
+                        .child({
                             let (context, folder) = (format!("ssh:{alias}"), shown.to_owned());
                             Button::new("remote-terminal")
                                 .label(tr("Terminal"))
@@ -198,6 +332,32 @@ impl Workspace {
                                 files::size_label(entry.size)
                             },
                         ));
+                    if !entry.is_dir {
+                        let (from, path, name) = (
+                            alias.clone(),
+                            files::remote_child(&listing.path, &entry.name),
+                            entry.name.clone(),
+                        );
+                        row = row.child(
+                            icon_button(
+                                ("remote-download", index),
+                                "download",
+                                tr("Copy it to this computer…"),
+                            )
+                            .xsmall()
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| {
+                                    this.download_remote(
+                                        from.clone(),
+                                        path.clone(),
+                                        name.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                },
+                            )),
+                        );
+                    }
                     if entry.is_dir {
                         let (alias, into) = (
                             alias.clone(),

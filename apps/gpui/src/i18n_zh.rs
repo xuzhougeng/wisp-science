@@ -480,6 +480,17 @@ pub const ZH: &[(&str, &str)] = &[
     ("Clean up", "清理"),
     ("Clean up anyway", "仍然清理"),
     ("Names containing…", "名称包含…"),
+    (
+        "Copying to {}; the Runs tab shows how far it has got.",
+        "正在复制到 {}；运行标签页会显示进度。",
+    ),
+    (
+        "Sending {} file(s); reload the folder once they are there.",
+        "正在发送 {} 个文件；完成后请重新载入文件夹。",
+    ),
+    ("Send files here…", "发送文件到这里…"),
+    ("Copy files of this computer into this folder", "把本机的文件复制到这个文件夹"),
+    ("Copy it to this computer…", "复制到本机…"),
     ("Python, R and the shell run here.", "Python、R 和 shell 在这里运行。"),
     ("New work runs here", "新工作在此运行"),
     ("Attached", "已接入"),

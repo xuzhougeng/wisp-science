@@ -5023,6 +5023,44 @@ async fn a_conversation_runs_only_on_the_hosts_attached_to_it() {
         .await
         .is_err());
     assert!(server.conversation_hosts(PROJECT, "missing").await.is_err());
+
+    // Files go to and from a saved host that has passed a check, never to
+    // one that is not saved or was never reached.
+    let place = temp.path().join("copy.csv");
+    let unknown = server
+        .download_from_host(
+            PROJECT,
+            Some(&session),
+            "ghost",
+            "/data/a.csv",
+            place.clone(),
+        )
+        .await
+        .unwrap_err();
+    assert!(unknown.to_string().contains("no longer saved"), "{unknown}");
+    assert!(server
+        .download_from_host(PROJECT, Some(&session), "gpu", "/data/a.csv", place.clone())
+        .await
+        .is_err());
+    assert!(!place.exists());
+    let none = server
+        .upload_to_host(PROJECT, None, "gpu", "/data", vec![])
+        .await
+        .unwrap_err();
+    assert!(none.to_string().contains("Choose"), "{none}");
+    assert!(server
+        .upload_to_host(PROJECT, None, "gpu", "/data", vec!["/tmp/x".into()])
+        .await
+        .is_err());
+    // Only a conversation of the project, and only the project's.
+    assert!(server
+        .upload_to_host("missing", None, "gpu", "/data", vec!["/tmp/x".into()])
+        .await
+        .is_err());
+    assert!(server
+        .download_from_host(PROJECT, Some("missing"), "gpu", "/a", place.clone())
+        .await
+        .is_err());
     server.shutdown().await;
 }
 

@@ -3156,6 +3156,86 @@ impl Server {
         crate::remote_dir::parse(alias, output)
     }
 
+    /// A saved SSH host's execution context, ready for work, and `session`
+    /// checked to be `project`'s when one is given.
+    async fn host_for_transfer(
+        &self,
+        project: &str,
+        session: Option<&str>,
+        alias: &str,
+    ) -> Result<wisp_store::ExecutionContext> {
+        match session {
+            Some(session) => self.own_conversation(project, session).await?,
+            None => drop(self.project_root(project).await?),
+        }
+        let context = self
+            .0
+            .store
+            .get_execution_context(&format!("ssh:{}", alias.trim()))
+            .await?
+            .context("That host is no longer saved")?;
+        wisp_runs::ssh_hosts::require_managed_ssh_ready(&context).map_err(anyhow::Error::msg)?;
+        Ok(context)
+    }
+
+    /// Copies a file of a saved SSH host to `destination` on this computer.
+    /// It goes on as a run of the conversation, when one is given, whose
+    /// progress shows with its runs; `destination` is only replaced once the
+    /// whole file has come. Answers the run's id.
+    pub async fn download_from_host(
+        &self,
+        project: &str,
+        session: Option<&str>,
+        alias: &str,
+        path: &str,
+        destination: std::path::PathBuf,
+    ) -> Result<String> {
+        let context = self.host_for_transfer(project, session, alias).await?;
+        let _admission = self.0.admission.read().await;
+        self.0
+            .runs
+            .submit_ssh_file_download(
+                &self.0.store,
+                project,
+                session,
+                &context,
+                path,
+                &destination,
+            )
+            .await
+            .map_err(anyhow::Error::msg)
+    }
+
+    /// Copies files of this computer into `folder` of a saved SSH host, one
+    /// run each, which go on as the conversation's runs when one is given.
+    /// A name already there is not replaced. Answers the runs' ids.
+    pub async fn upload_to_host(
+        &self,
+        project: &str,
+        session: Option<&str>,
+        alias: &str,
+        folder: &str,
+        sources: Vec<String>,
+    ) -> Result<Vec<String>> {
+        ensure!(!sources.is_empty(), "Choose the files to send");
+        let context = self.host_for_transfer(project, session, alias).await?;
+        let _admission = self.0.admission.read().await;
+        Ok(wisp_runs::submit_local_uploads_to_context(
+            &self.0.store,
+            &self.0.runs,
+            project,
+            session,
+            &context.id,
+            folder,
+            &sources,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?
+        .into_iter()
+        .map(|item| item.run_id)
+        .collect())
+    }
+
     /// Forgets an SSH host. Runs that were made on it keep their records.
     pub async fn remove_ssh_host(&self, alias: &str) -> Result<()> {
         use wisp_runs::ssh_hosts;

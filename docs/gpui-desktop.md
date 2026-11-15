@@ -139,7 +139,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Capabilities | A dialog for the open project: how many skills, connectors, MCP servers and SSH hosts are on or usable, the state of memory, and which command-line tools were found on this computer |
 | Follow-up questions | After an answer, up to three questions you could ask next show above the composer; picking one puts it in the composer to send or change, and the list can be put away |
 | Sample project | The home page's flask button makes a small sample project in a folder you choose and opens it: made-up counts for twelve samples, a script, and a README of things to ask. Its play-file button opens Example conversations: the research recorded with Wisp that ships with it, read only, and Copy to a project, which adds one to a project as a conversation to go on with |
-| Host folders | With an SSH host saved, the Files tab offers it beside the project: its folders are listed, to walk through and see what is there |
+| Host folders | With an SSH host saved, the Files tab offers it beside the project: its folders are listed, to walk through; a file's download button copies it to a place on this computer you choose, and Send files here… copies files of this computer into the folder shown, each as a run of the open conversation whose progress the transfer tray shows; nothing there is replaced |
 | File origin | A file's preview has Origin: which tool call last wrote it, with the code it ran, the project files it read and the conversation, which it can open |
 | Terminal | Terminals drawn in the window, in a dock at the foot of the conversation (Terminals in the top bar shows or hides it; hidden, they keep running): the Files tab's terminal button (or the command palette) opens one in the folder being browsed, + one in the project's folder, the host button one on a saved SSH host, and Terminal on a host's row in Environments or over a host's folder in Files one there; several at once as tabs, each closed with its ×; the dock's last button opens the system's terminal instead |
 | Updates | Wisp looks for a newer release when it starts (unless turned off) and shows a note only when there is one; Settings, General, has Check for updates and the At start switch, says whether a newer release has been published and opens the release page |
@@ -1747,6 +1747,11 @@ the host is offered beside This project. Choose it: its home folder is
 listed, folders first; go into one and back Up; Reload. Choose This
 project: the project's files are back as they were. With a host that has
 not been checked, confirm the tab says a check is needed.
+On the host, press a file's download button and choose a place: the
+Transfers tray shows it coming, and the file is there when it ends. Press
+Send files here…, pick two small files: they show as uploads, and Reload
+lists them in the folder. Send one of them again: it is refused, not
+replaced.
 Have a turn write a file, open the file in the Files tab and press
 Origin: the line names the tool and the conversation, the code is shown,
 and Open the conversation goes there. For a file you made yourself it
