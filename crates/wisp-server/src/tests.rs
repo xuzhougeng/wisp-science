@@ -9017,6 +9017,7 @@ async fn a_subagent_works_in_its_own_conversation_and_reports_back() {
     let child = child.clone();
     let titled = list.rows.iter().find(|row| row.id == child).unwrap();
     assert_eq!(titled.title, "Counting");
+    turn_done(&server, &child).await;
     let asked = texts_of(&server, &child).await;
     assert!(asked.iter().any(
         |text| text.starts_with("[From the parent conversation's agent]")
