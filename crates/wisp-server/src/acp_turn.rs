@@ -722,6 +722,8 @@ pub(crate) async fn run(
         plan_mode: false,
         always,
         lab_mail: false,
+        write_locked: false,
+        isolation: None,
     };
     out.on_message(&Message::user(&request.message));
     let prompt = handle.prompt(

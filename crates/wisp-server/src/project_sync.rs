@@ -1669,6 +1669,12 @@ impl crate::Server {
 
     async fn sync_project_inner(&self, id: &str) -> Result<ProjectSyncResult, String> {
         let store = &self.0.store;
+        crate::explorations::service::reject_private_exploration_project_mutation(
+            store,
+            id,
+            "Project synchronization",
+        )
+        .await?;
         if is_folder_project(store, id).await? {
             return self.sync_folder_project(id, None).await;
         }
@@ -1743,6 +1749,12 @@ impl crate::Server {
 
     async fn resolve_inner(&self, id: &str, use_remote: bool) -> Result<ProjectSyncResult, String> {
         let store = &self.0.store;
+        crate::explorations::service::reject_private_exploration_project_mutation(
+            store,
+            id,
+            "Project synchronization conflict resolution",
+        )
+        .await?;
         if is_folder_project(store, id).await? {
             let strategy = if use_remote { "remote" } else { "local" };
             return self.sync_folder_project(id, Some(strategy)).await;

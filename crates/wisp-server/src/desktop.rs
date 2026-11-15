@@ -1015,7 +1015,7 @@ impl Server {
         crate::files::trash(std::path::Path::new(&root), path, now).await
     }
 
-    async fn known_project(&self, project: &str) -> Result<()> {
+    pub(crate) async fn known_project(&self, project: &str) -> Result<()> {
         ensure!(
             !self.0.shutting_down.load(Ordering::Relaxed),
             "Host is shutting down"
@@ -1470,6 +1470,13 @@ impl Server {
         folder: Option<crate::project_folder::Target>,
     ) -> Result<()> {
         self.known_project(project).await?;
+        crate::explorations::service::reject_private_exploration_project_mutation(
+            &self.0.store,
+            project,
+            "Removing the project",
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
         ensure!(
             removable(project),
             "The built-in workspace cannot be removed"
@@ -2111,6 +2118,8 @@ impl Server {
         self.own_conversation(project, session).await?;
         self.known_project(target).await?;
         self.ensure_idle(session, if keep { "copy" } else { "move" })?;
+        self.ensure_not_exploring(session, if keep { "copy" } else { "move" })
+            .await?;
         let options = self.stored_options(session).await?;
         let id = uuid::Uuid::new_v4().to_string();
         if keep {
@@ -2149,7 +2158,11 @@ impl Server {
 
     /// Finds the user message `turn` names: its sequence number and that of
     /// the next user message, if there is one.
-    async fn locate_turn(&self, session: &str, turn: &TurnRef) -> Result<(i64, Option<i64>)> {
+    pub(crate) async fn locate_turn(
+        &self,
+        session: &str,
+        turn: &TurnRef,
+    ) -> Result<(i64, Option<i64>)> {
         ensure!(turn.from_end < TURN_LIMIT, TURN_NOT_FOUND);
         // The last `from_end + 1` turns, starting at the one that is meant.
         let page = self
@@ -2193,6 +2206,7 @@ impl Server {
     /// turn's message is in.
     pub(crate) async fn rewind_target(&self, session: &str, turn: &TurnRef) -> Result<i64> {
         self.ensure_idle(session, "rewind")?;
+        self.ensure_not_exploring(session, "rewind").await?;
         let store = &self.0.store;
         store.require_unarchived_session(session).await?;
         ensure!(
@@ -2259,6 +2273,7 @@ impl Server {
         let _admission = self.0.admission.read().await;
         self.own_conversation(project, session).await?;
         self.ensure_idle(session, "branch")?;
+        self.ensure_not_exploring(session, "branch").await?;
         let store = &self.0.store;
         let cut = match upto {
             Some(turn) => self.locate_turn(session, turn).await?.1,
@@ -2412,6 +2427,22 @@ impl Server {
         Ok(())
     }
 
+    /// An exploration's conversation is kept or discarded, and the source
+    /// of an open round stays as it is until the round ends.
+    async fn ensure_not_exploring(&self, session: &str, action: &str) -> Result<()> {
+        let store = &self.0.store;
+        if matches!(
+            store.frame_state_scope(session).await?,
+            Some(wisp_store::StateScope::Exploration { .. })
+        ) {
+            bail!("You cannot {action} an exploration's conversation; keep or discard the exploration instead");
+        }
+        if store.mainline_frame_is_frozen(session).await? {
+            bail!("exploration_mainline_frozen: you cannot {action} this conversation until its exploration round is resolved");
+        }
+        Ok(())
+    }
+
     fn ensure_idle(&self, session: &str, action: &str) -> Result<()> {
         if self.session(session).live.lock().unwrap().running {
             bail!("Stop the running turn before you {action} this conversation");
@@ -2430,6 +2461,7 @@ impl Server {
         self.own_conversation(project, session).await?;
         if archived {
             self.ensure_idle(session, "archive")?;
+            self.ensure_not_exploring(session, "archive").await?;
         }
         self.0
             .store
@@ -4655,6 +4687,7 @@ impl Server {
         let _admission = self.0.admission.read().await;
         self.own_conversation(project, session).await?;
         self.ensure_idle(session, "delete")?;
+        self.ensure_not_exploring(session, "delete").await?;
         self.without_branches(project, session, "delete").await?;
         self.0.store.delete_session(session, project).await?;
         self.forget(session, &live).await
@@ -5204,6 +5237,7 @@ pub use crate::channels::{
 pub use crate::compact::Compacted;
 pub use crate::device_bridge::{DeviceBridge, DeviceBridgeState};
 pub use crate::experts::{Expert, ExpertInput};
+pub use crate::explorations::{FileChange, PromotionPreview, StartedExploration};
 pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow};
 pub use crate::origin::FileOrigin;
 pub use crate::papers::{
@@ -5433,11 +5467,11 @@ fn plan_mode_key(session: &str) -> String {
     format!("frame_plan_mode:{session}")
 }
 
-fn model_choice_key(session: &str) -> String {
+pub(crate) fn model_choice_key(session: &str) -> String {
     format!("desktop.conversation.model.{session}")
 }
 
-fn full_access_key(session: &str) -> String {
+pub(crate) fn full_access_key(session: &str) -> String {
     format!("desktop.conversation.full_access.{session}")
 }
 

@@ -185,6 +185,12 @@ pub struct ServerOutput {
     /// Another lab member's mail started the turn: it asks before every
     /// tool outside a short list and reads only inside the project.
     pub lab_mail: bool,
+    /// An exploration round froze the project: this conversation keeps to
+    /// tools that change nothing.
+    pub write_locked: bool,
+    /// The turn runs in an exploration: local code may not name the
+    /// mainline's folder.
+    pub isolation: Option<wisp_runs::exploration_isolation::ExplorationIsolationBoundary>,
 }
 
 impl Output for ServerOutput {
@@ -300,7 +306,16 @@ impl Output for ServerOutput {
             .then_some(crate::channels::lab_mail::UNATTENDED_TOOLS)
     }
     fn restrict_read_paths_to_project(&self) -> bool {
-        self.lab_mail
+        self.lab_mail || self.isolation.is_some()
+    }
+    fn project_write_locked(&self) -> bool {
+        self.write_locked
+    }
+    fn preflight_local_execution(&self, source: &str) -> Result<(), String> {
+        match &self.isolation {
+            Some(boundary) => boundary.check_local_source(source),
+            None => Ok(()),
+        }
     }
     fn approval_bypass(&self) -> bool {
         // Dangerous shell commands keep their own question either way.
@@ -381,6 +396,8 @@ mod tests {
             plan_mode: false,
             always: Default::default(),
             lab_mail: false,
+            write_locked: false,
+            isolation: None,
         };
         assert!(out.force_ask_mutations());
         assert!(!out.approval_bypass());
@@ -407,6 +424,8 @@ mod tests {
             plan_mode: false,
             always: Default::default(),
             lab_mail: false,
+            write_locked: false,
+            isolation: None,
         }
     }
 

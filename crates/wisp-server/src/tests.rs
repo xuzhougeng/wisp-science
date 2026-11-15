@@ -8421,6 +8421,207 @@ async fn projects_sync_between_devices_and_a_lab_shares_its_knowledge_base() {
     lin.shutdown().await;
 }
 
+fn send_text(session: &str, id: &str, text: &str) -> dto::SendRequest {
+    dto::SendRequest {
+        session_id: session.into(),
+        request_id: id.into(),
+        message: text.into(),
+        resume: false,
+        resume_after: None,
+        attachments: vec![],
+        references: vec![],
+        acp_agent_id: None,
+    }
+}
+
+async fn turn_done(server: &Server, session: &str) {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while server.session(session).live.lock().unwrap().running {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the turn must end");
+}
+
+#[tokio::test]
+async fn explorations_branch_a_turn_into_copies_and_keep_one() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    assert!(!server
+        .commands()
+        .iter()
+        .any(|command| command.contains("exploration")));
+    let folder = temp.path().join("study");
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::write(folder.join("notes.txt"), "v1").unwrap();
+    let project = server.register_local_project(&folder).await.unwrap();
+    let source = server.create_conversation(&project).await.unwrap();
+    server
+        .send(&project, send_text(&source, "r1", "what now?"))
+        .await
+        .unwrap();
+    turn_done(&server, &source).await;
+    assert!(server.explorations(&project).await.unwrap().is_empty());
+
+    // A first candidate freezes the source and copies the project.
+    let first = server
+        .start_exploration(&project, &source, None, "Try A")
+        .await
+        .unwrap();
+    let rows = server.explorations(&project).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].source_frame_id, source);
+    assert_eq!(rows[0].exploration.frame_id, first.session);
+    let copy = std::path::PathBuf::from(&rows[0].exploration.workspace_dir);
+    assert_eq!(
+        std::fs::read_to_string(copy.join("notes.txt")).unwrap(),
+        "v1"
+    );
+    let state = server.exploration_state(&project, &source).await.unwrap();
+    assert!(state.source_frozen);
+    // The source is frozen; its history is the exploration's too.
+    let refused = server
+        .send(&project, send_text(&source, "r2", "more"))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(refused.contains("exploration_mainline_frozen"), "{refused}");
+    assert!(server.delete_conversation(&project, &source).await.is_err());
+    let cloned = texts_of(&server, &first.session).await;
+    assert!(cloned.iter().any(|text| text == "what now?"));
+    // The exploration's turns work in its copy.
+    server
+        .send(&project, send_text(&first.session, "e1", "try it"))
+        .await
+        .unwrap();
+    turn_done(&server, &first.session).await;
+    assert!(texts_of(&server, &first.session)
+        .await
+        .iter()
+        .any(|text| text == "try it"));
+    std::fs::write(copy.join("notes.txt"), "v2").unwrap();
+    std::fs::write(copy.join("new.txt"), "found").unwrap();
+    // Mainline files are untouched meanwhile.
+    assert_eq!(
+        std::fs::read_to_string(folder.join("notes.txt")).unwrap(),
+        "v1"
+    );
+    // An exploration's conversation is kept or discarded, not deleted.
+    assert!(server
+        .delete_conversation(&project, &first.session)
+        .await
+        .is_err());
+
+    // A second candidate shares the checkpoint; another conversation cannot
+    // start a round of its own.
+    let second = server
+        .start_exploration(&project, &source, None, "Try B")
+        .await
+        .unwrap();
+    let rows = server.explorations(&project).await.unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        rows[0].exploration.checkpoint_id,
+        rows[1].exploration.checkpoint_id
+    );
+    let other = server.create_conversation(&project).await.unwrap();
+    server
+        .send(&project, send_text(&other, "o1", "hello"))
+        .await
+        .unwrap();
+    turn_done(&server, &other).await;
+    let busy = server
+        .start_exploration(&project, &other, None, "Elsewhere")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(busy.contains("exploration_round_active"), "{busy}");
+
+    // Keeping one brings its files in and ends the round.
+    let preview = server
+        .preview_exploration(&project, &first.id)
+        .await
+        .unwrap();
+    assert!(preview.eligible, "{:?}", preview.blockers);
+    let changed: Vec<(&str, &str)> = preview
+        .files
+        .iter()
+        .map(|file| (file.path.as_str(), file.kind))
+        .collect();
+    assert!(changed.contains(&("notes.txt", "modified")));
+    assert!(changed.contains(&("new.txt", "added")));
+    assert!(server
+        .promote_exploration(&project, &first.id, "stale")
+        .await
+        .is_err());
+    let mainline = server
+        .promote_exploration(&project, &first.id, &preview.guard)
+        .await
+        .unwrap();
+    assert_eq!(mainline, source);
+    assert_eq!(
+        std::fs::read_to_string(folder.join("notes.txt")).unwrap(),
+        "v2"
+    );
+    assert_eq!(
+        std::fs::read_to_string(folder.join("new.txt")).unwrap(),
+        "found"
+    );
+    assert!(server.explorations(&project).await.unwrap().is_empty());
+    assert!(!copy.exists());
+    let _ = second;
+    // The kept exploration's turn continues the source conversation.
+    assert!(texts_of(&server, &source)
+        .await
+        .iter()
+        .any(|text| text == "try it"));
+    server
+        .send(&project, send_text(&source, "r3", "and next"))
+        .await
+        .unwrap();
+    turn_done(&server, &source).await;
+
+    // Discarding the only candidate, and abandoning a round, keep the
+    // mainline as it is.
+    let third = server
+        .start_exploration(&project, &source, None, "Try C")
+        .await
+        .unwrap();
+    server
+        .discard_exploration(&project, &third.id)
+        .await
+        .unwrap();
+    assert!(server.explorations(&project).await.unwrap().is_empty());
+    assert!(server
+        .abandon_exploration_round(&project, &source)
+        .await
+        .is_err());
+    let fourth = server
+        .start_exploration(&project, &source, None, "Try D")
+        .await
+        .unwrap();
+    let rows = server.explorations(&project).await.unwrap();
+    std::fs::write(
+        std::path::Path::new(&rows[0].exploration.workspace_dir).join("notes.txt"),
+        "never kept",
+    )
+    .unwrap();
+    server
+        .abandon_exploration_round(&project, &source)
+        .await
+        .unwrap();
+    assert!(server.explorations(&project).await.unwrap().is_empty());
+    assert_eq!(
+        std::fs::read_to_string(folder.join("notes.txt")).unwrap(),
+        "v2"
+    );
+    let _ = fourth;
+    server.shutdown().await;
+}
+
 /// A ChatGPT access token as Codex CLI keeps it (unsigned; claims only).
 fn chatgpt_token(account: &str, exp: i64, email: &str) -> String {
     use base64::Engine;

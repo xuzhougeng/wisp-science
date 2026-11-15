@@ -13,9 +13,8 @@ pub mod desktop;
 mod device_bridge;
 mod excerpt;
 mod experts;
-// Used by the explorations service that comes with the next step.
-#[allow(dead_code)]
 mod exploration_workspace;
+mod explorations;
 mod export;
 mod files;
 mod follow_ups;
@@ -70,6 +69,10 @@ use wisp_store::Store;
 use wisp_sync::DirectRemoteHost;
 
 const PROJECT: &str = "server";
+
+/// What a conversation is told while an exploration round froze its
+/// project, as the WebView says it.
+const EXPLORATION_FROZEN_NOTE: &str = "An active isolated exploration has frozen project state for possible promotion. This separate mainline conversation remains available for normal discussion and read-only inspection, but project-mutating tools are unavailable. Do not attempt to write files, run commands or jobs, change project records, or call mutating external tools until the exploration round finishes.";
 const COMMANDS: &[&str] = &[
     "list_projects",
     "remote_sessions",
@@ -136,6 +139,8 @@ struct Inner {
     channels: channels::Channels,
     /// The StickS3 desk display's listener on the local network.
     device: device_bridge::Slot,
+    /// Per project: what turns hold shared and exploration changes alone.
+    project_locks: explorations::ProjectActivityLocks,
 }
 
 /// What runs a turn: Wisp's own agent (with the model its side requests
@@ -228,6 +233,15 @@ impl Server {
         for (id, ..) in store.list_projects().await? {
             store.interrupt_server_turns(&id).await?;
         }
+        // A promotion cut off mid-way is rolled back or finished before any
+        // tool can touch a workspace, and disposed workspaces are swept.
+        explorations::promotion::recover_incomplete_promotions(&store, &config.data).await;
+        if let Err(error) =
+            exploration_workspace::PersistentExplorationWorkspace::new(config.data.clone())
+                .sweep_disposal_quarantine()
+        {
+            tracing::warn!(%error, "Could not sweep quarantined exploration workspaces");
+        }
         let runs = wisp_runs::RunManager::new();
         runs.recover(&store).await.map_err(anyhow::Error::msg)?;
         let routes = network::load(&store).await;
@@ -267,6 +281,7 @@ impl Server {
             sign_ins: Default::default(),
             channels: Default::default(),
             device: Default::default(),
+            project_locks: Default::default(),
         })))
     }
 
@@ -522,6 +537,39 @@ impl Server {
             !self.archived(&request.session_id).await?,
             "This conversation's research is archived and it is read-only; continue in a new conversation"
         );
+        // An exploration's turns work in its own copy of the project. The
+        // source of an exploration round is frozen; other conversations in
+        // the project keep to tools that change nothing until it ends.
+        let (working, scope) = explorations::service::working_project_in(
+            &self.0.store,
+            &self.0.config.data,
+            &request.session_id,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        let write_locked = explorations::service::conversation_project_write_locked(
+            &self.0.store,
+            &scope,
+            Some(&request.session_id),
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        let working_root = working.root.to_string_lossy().into_owned();
+        let in_exploration = matches!(scope, wisp_store::StateScope::Exploration { .. });
+        let root: &str = if in_exploration { &working_root } else { root };
+        let mut notes = Vec::new();
+        if let Some(note) =
+            explorations::service::exploration_runtime_injection(std::path::Path::new(root), &scope)
+                .map_err(anyhow::Error::msg)?
+        {
+            notes.push(note);
+        }
+        if write_locked {
+            notes.push(EXPLORATION_FROZEN_NOTE.to_owned());
+        }
+        let isolation = wisp_runs::exploration_isolation::boundary_for_scope(&self.0.store, &scope)
+            .await
+            .map_err(anyhow::Error::msg)?;
         // Read once here: a change made while the turn runs applies to the next.
         let options = self.stored_options(&request.session_id).await?;
         // A conversation an ACP agent runs needs no model of Wisp's.
@@ -558,6 +606,18 @@ impl Server {
             !session.live.lock().unwrap().running,
             "A turn is already running in this conversation"
         );
+        // Held while the turn runs, so an exploration is not started or
+        // ended under it.
+        let activity = self
+            .0
+            .project_locks
+            .project(project)
+            .try_read_owned()
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "This project is busy. Try again when the current project operation finishes."
+                )
+            })?;
         let permit = self
             .0
             .turns
@@ -577,7 +637,7 @@ impl Server {
             (None, Some(model)) => {
                 let agent = self
                     .wisp_agent(
-                        project, root, &request, &session, &options, &model, lab_mail,
+                        project, root, &request, &session, &options, &model, lab_mail, notes,
                     )
                     .await?;
                 Engine::Wisp(Box::new(agent), model.provider.clone())
@@ -637,7 +697,12 @@ impl Server {
                             full_access,
                             plan_mode,
                             root,
-                            lab_mail,
+                            runtime::TurnScope {
+                                lab_mail,
+                                write_locked,
+                                isolation,
+                                state: scope,
+                            },
                         )
                         .await
                     }),
@@ -663,6 +728,7 @@ impl Server {
             server
                 .end_turn(&request, &session, task, permit, side_model, auto_review)
                 .await;
+            drop(activity);
         });
         Ok(reply)
     }
@@ -712,6 +778,7 @@ impl Server {
         options: &desktop::ConversationOptions,
         model: &config::ModelConfig,
         lab_mail: bool,
+        notes: Vec<String>,
     ) -> Result<wisp_core::Agent> {
         let subagent = self.subagent_model_for(&request.session_id, model).await;
         // A lab member's agent can list the lab and write to its members.
@@ -725,6 +792,7 @@ impl Server {
         let lab = runtime::LabTurn {
             context: member.then(|| channels::lab_mail::turn_context(knowledge_base.as_deref())),
             mail: lab_mail,
+            notes,
         };
         let mut agent = runtime::build(
             &self.0.config,
@@ -991,6 +1059,7 @@ impl Server {
                 .map(|agent| agent.label)
                 .unwrap_or_else(|| "ACP agent".into()),
         };
+        let exploration = self.exploration_state(project, &request.session_id).await;
         let live = session.live.lock().unwrap();
         // Completion clears the live transcript only after persisting it. If it
         // crossed these store reads, reload instead of returning an old page as
@@ -1026,7 +1095,7 @@ impl Server {
             sequence: self.0.sequence.fetch_add(1, Ordering::Relaxed),
             project_id: project.into(),
             session_id: request.session_id.clone(),
-            exploration: None,
+            exploration,
             branches: vec![],
             items,
             next_before_seq: if use_live {

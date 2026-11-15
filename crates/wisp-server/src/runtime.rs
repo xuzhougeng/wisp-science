@@ -243,12 +243,22 @@ fn sync_compute_contexts(prompt: &mut String, compute: &str) {
     };
 }
 
-/// What a turn of a lab member's agent is told, and whether another
-/// member's mail started it.
+/// What a turn of a lab member's agent is told, whether another
+/// member's mail started it, and other notes for this turn only.
 #[derive(Default)]
 pub struct LabTurn {
     pub context: Option<String>,
     pub mail: bool,
+    pub notes: Vec<String>,
+}
+
+/// Where a turn may act: the conversation's scope, whether the project is
+/// frozen for it, and an exploration's isolation.
+pub struct TurnScope {
+    pub lab_mail: bool,
+    pub write_locked: bool,
+    pub isolation: Option<wisp_runs::exploration_isolation::ExplorationIsolationBoundary>,
+    pub state: wisp_store::StateScope,
 }
 
 pub async fn build(
@@ -418,6 +428,9 @@ pub async fn build(
     if let Some(context) = lab.context {
         agent.ctx.inject_user(context);
     }
+    for note in lab.notes {
+        agent.ctx.inject_user(note);
+    }
     // The user's habits, for this turn only, like the references above. A
     // turn another member's mail started is not the user's and gets none.
     if remembering && !lab.mail {
@@ -503,6 +516,7 @@ pub async fn build(
 async fn record_artifacts(
     store: &Store,
     project: &str,
+    scope_key: &str,
     root: &std::path::Path,
     frame: &str,
     written: Vec<String>,
@@ -562,7 +576,8 @@ async fn record_artifacts(
         let logical_key = format!("path:{relative}");
         let draft = wisp_store::ArtifactVersionDraft {
             version_id: None,
-            artifact_id: wisp_store::logical_artifact_id(project, &logical_key),
+            // An exploration's own artifact ids, so they never move scope.
+            artifact_id: wisp_store::scoped_logical_artifact_id(project, scope_key, &logical_key),
             project_id: project.into(),
             root_frame_id: frame.into(),
             filename: real
@@ -801,11 +816,12 @@ pub async fn run(
     full_access: bool,
     plan_mode: bool,
     root: PathBuf,
-    lab_mail: bool,
+    scope: TurnScope,
 ) -> Result<()> {
     let start_seq = store.max_message_seq(&request.session_id).await?;
     let (tx, persist) = persisting(&store, &request.session_id, &session).await?;
     let artifact_project = project.clone();
+    let scope_key = scope.state.scope_key().to_owned();
     let out = ServerOutput {
         session: session.clone(),
         frame: request.session_id.clone(),
@@ -818,7 +834,9 @@ pub async fn run(
             .await
             .into_iter()
             .collect(),
-        lab_mail,
+        lab_mail: scope.lab_mail,
+        write_locked: scope.write_locked,
+        isolation: scope.isolation,
     };
     let guidance = Some(&session.guidance);
     let mut result = agent
@@ -912,6 +930,7 @@ pub async fn run(
     record_artifacts(
         &store,
         &artifact_project,
+        &scope_key,
         &root,
         &request.session_id,
         written,
