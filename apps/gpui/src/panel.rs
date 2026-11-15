@@ -84,6 +84,16 @@ pub fn provenance_open(row: &wisp_dto::native_conversations::Item) -> bool {
     row.ok != Some(true)
 }
 
+/// One kept version of an artifact, in a line: which, how large, when.
+pub fn version_line(version: &wisp_server::desktop::ArtifactVersionRow, now: i64) -> String {
+    let mut parts = vec![crate::i18n::fill(tr("Version {}"), &[&version.number])];
+    if let Some(size) = version.size_bytes {
+        parts.push(size_label(size));
+    }
+    parts.push(age(now, version.created_at));
+    parts.join(" · ")
+}
+
 /// Whether a run can still be asked to stop. A run that is already stopping
 /// or has ended cannot.
 pub fn can_cancel(status: &str) -> bool {
@@ -140,6 +150,26 @@ pub fn artifact_detail(artifact: &ArtifactRow, now: i64, name_conversation: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_kept_version_says_which_how_large_and_when() {
+        let version = wisp_server::desktop::ArtifactVersionRow {
+            id: "v2".into(),
+            number: 2,
+            kind: "text/csv".into(),
+            size_bytes: Some(2_048),
+            created_at: 1_000,
+        };
+        assert_eq!(
+            version_line(&version, 1_000 + 120),
+            "Version 2 · 2.0 KB · 2 min ago"
+        );
+        let no_size = wisp_server::desktop::ArtifactVersionRow {
+            size_bytes: None,
+            ..version
+        };
+        assert_eq!(version_line(&no_size, 1_030), "Version 2 · just now");
+    }
 
     #[test]
     fn the_provenance_tab_lists_the_tool_calls_and_opens_the_ones_in_doubt() {

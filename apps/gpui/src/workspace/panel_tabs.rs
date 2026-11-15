@@ -647,6 +647,84 @@ impl Workspace {
 
     /// Files conversations produced. One that is a project file opens in the
     /// Files tab.
+    /// Shows or hides an artifact's versions, reading them the first time.
+    fn toggle_artifact_versions(
+        &mut self,
+        artifact: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.artifact_open.as_deref() == Some(artifact.as_str()) {
+            self.artifact_open = None;
+            cx.notify();
+            return;
+        }
+        self.artifact_open = Some(artifact.clone());
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        let reply = self.backend.artifact_versions(project, artifact.clone());
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(versions) => {
+                        this.artifact_versions.insert(artifact, versions);
+                    }
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Asks where to save a copy of one version, under the artifact's own
+    /// name, and saves it from its snapshot.
+    fn save_artifact_copy(
+        &mut self,
+        version: String,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        let folder = dirs::download_dir()
+            .or_else(dirs::home_dir)
+            .unwrap_or_default();
+        let place = cx.prompt_for_new_path(&folder, Some(&name));
+        let backend = self.backend.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = async {
+                let Some(path) = place
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .map_err(|error| error.to_string())?
+                else {
+                    return Ok(None);
+                };
+                receive(backend.save_artifact_version(project, version, path.clone())).await?;
+                Ok::<_, String>(Some(path))
+            }
+            .await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(Some(path)) => {
+                        this.notice =
+                            Some(crate::i18n::fill(tr("Saved to {}"), &[&path.display()]));
+                    }
+                    Ok(None) => {}
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     pub(super) fn render_artifacts_tab(&self, cx: &mut Context<Self>) -> AnyElement {
         let muted = cx.theme().muted_foreground;
         let hover = cx.theme().list_hover;
@@ -752,7 +830,72 @@ impl Workspace {
                     })),
                 );
             }
+            let id = artifact.id.clone();
+            let open = self.artifact_open.as_deref() == Some(artifact.id.as_str());
+            row = row.child(
+                icon_button(
+                    ("artifact-versions", index),
+                    "history",
+                    tr("Its versions, to save a copy of one"),
+                )
+                .xsmall()
+                .selected(open)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.toggle_artifact_versions(id.clone(), window, cx)
+                })),
+            );
             list = list.child(row);
+            if open {
+                match self.artifact_versions.get(&artifact.id) {
+                    None => {
+                        list = list.child(
+                            div()
+                                .px_6()
+                                .pb_2()
+                                .text_xs()
+                                .text_color(muted)
+                                .child(tr("Reading…")),
+                        );
+                    }
+                    Some(versions) => {
+                        for (number, version) in versions.iter().enumerate().rev() {
+                            let (version_id, name) = (version.id.clone(), artifact.name.clone());
+                            list = list.child(
+                                div()
+                                    .h_flex()
+                                    .gap_2()
+                                    .pl(px(36.))
+                                    .pr_3()
+                                    .py_1()
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .truncate()
+                                            .text_xs()
+                                            .text_color(muted)
+                                            .child(panel::version_line(version, now)),
+                                    )
+                                    .child(
+                                        Button::new(("artifact-save", index * 1_000 + number))
+                                            .icon(super::shell::glyph("download"))
+                                            .label(tr("Save a copy…"))
+                                            .xsmall()
+                                            .ghost()
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.save_artifact_copy(
+                                                    version_id.clone(),
+                                                    name.clone(),
+                                                    window,
+                                                    cx,
+                                                )
+                                            })),
+                                    ),
+                            );
+                        }
+                    }
+                }
+            }
         }
         div()
             .v_flex()

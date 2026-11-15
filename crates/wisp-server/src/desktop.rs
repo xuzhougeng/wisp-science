@@ -3486,6 +3486,62 @@ impl Server {
 
     /// Files the project's conversations produced, newest first; those of
     /// one conversation when `session` is given. `query` filters by name.
+    /// The versions kept of one of the project's artifacts, oldest first:
+    /// a snapshot each time a turn wrote the file.
+    pub async fn artifact_versions(
+        &self,
+        project: &str,
+        artifact: &str,
+    ) -> Result<Vec<ArtifactVersionRow>> {
+        self.project_root(project).await?;
+        let versions = self.0.store.list_artifact_versions(artifact).await?;
+        let first = versions.first().context("That artifact has no versions")?;
+        let context = self
+            .0
+            .store
+            .get_artifact_version_context(&first.id)
+            .await?
+            .context("That artifact has no versions")?;
+        ensure!(
+            context.project_id == project,
+            "That artifact belongs to another project"
+        );
+        Ok(versions
+            .into_iter()
+            .map(|version| ArtifactVersionRow {
+                id: version.id,
+                number: version.version_number,
+                kind: version.content_type,
+                size_bytes: version.size_bytes.and_then(|size| u64::try_from(size).ok()),
+                created_at: version.created_at,
+            })
+            .collect())
+    }
+
+    /// Saves a copy of one version of an artifact where the researcher
+    /// chose, from its snapshot, after checking it is what was kept.
+    pub async fn save_artifact_version(
+        &self,
+        project: &str,
+        version: &str,
+        destination: &std::path::Path,
+    ) -> Result<()> {
+        const LIMIT: usize = 512 * 1024 * 1024;
+        let root = std::path::PathBuf::from(self.project_root(project).await?);
+        let (_, bytes) = crate::method_search::coordinator::load_artifact_bytes(
+            &self.0.store,
+            &root,
+            project,
+            version,
+            LIMIT,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        tokio::fs::write(destination, bytes)
+            .await
+            .with_context(|| format!("Could not save {}", destination.display()))
+    }
+
     pub async fn artifacts(
         &self,
         project: &str,
@@ -5234,6 +5290,19 @@ pub struct ArtifactRow {
     pub size_bytes: Option<u64>,
     pub session_id: String,
     pub session_title: String,
+}
+
+/// One kept version of an artifact.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArtifactVersionRow {
+    pub id: String,
+    /// From 1, the first time the file was written.
+    pub number: i64,
+    /// MIME type.
+    pub kind: String,
+    pub size_bytes: Option<u64>,
+    /// Unix seconds.
+    pub created_at: i64,
 }
 
 /// Reasoning efforts a conversation may ask for. Empty is the model's default.

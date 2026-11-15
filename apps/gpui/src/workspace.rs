@@ -139,6 +139,9 @@ pub struct Workspace {
     status: Option<ConversationStatus>,
     /// Counts snapshot polls, so the status is refreshed about once a second.
     status_tick: u8,
+    /// The artifact whose versions are shown, and the versions read.
+    artifact_open: Option<String>,
+    artifact_versions: HashMap<String, Vec<wisp_server::desktop::ArtifactVersionRow>>,
     /// The Provenance tab's calls a click opened or closed, by their key.
     provenance_open: HashMap<String, bool>,
     /// What each saved turn of the open conversation used, read when it
@@ -1183,6 +1186,8 @@ impl Workspace {
             status_tick: 0,
             turn_tokens: Vec::new(),
             provenance_open: HashMap::new(),
+            artifact_open: None,
+            artifact_versions: HashMap::new(),
             copied: None,
             palette: PaletteState::default(),
             palette_input,

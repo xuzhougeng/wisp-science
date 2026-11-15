@@ -680,6 +680,26 @@ impl Backend {
         self.local(move |host| async move { host.set_preference(name, &value).await })
     }
 
+    pub fn artifact_versions(
+        &self,
+        project: String,
+        artifact: String,
+    ) -> Reply<Vec<wisp_server::desktop::ArtifactVersionRow>> {
+        self.local(move |host| async move { host.artifact_versions(&project, &artifact).await })
+    }
+
+    pub fn save_artifact_version(
+        &self,
+        project: String,
+        version: String,
+        destination: PathBuf,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.save_artifact_version(&project, &version, &destination)
+                .await
+        })
+    }
+
     pub fn artifacts(
         &self,
         project: String,

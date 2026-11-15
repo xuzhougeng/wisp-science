@@ -5251,6 +5251,36 @@ async fn files_a_turn_writes_become_artifacts_of_its_conversation() {
         .is_empty());
     assert!(server.artifacts("missing", None, "", 10).await.is_err());
 
+    // Its versions, and a copy of one saved elsewhere from its snapshot,
+    // even after the file in the project changed.
+    let versions = server
+        .artifact_versions(PROJECT, &artifact.id)
+        .await
+        .unwrap();
+    assert_eq!(versions.len(), 1);
+    assert_eq!(versions[0].number, 1);
+    assert_eq!(versions[0].size_bytes, Some("offline result".len() as u64));
+    std::fs::write(cfg.workspace.join("answer.txt"), "changed by hand").unwrap();
+    let copy = temp.path().join("copy.txt");
+    server
+        .save_artifact_version(PROJECT, &versions[0].id, &copy)
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read_to_string(&copy).unwrap(), "offline result");
+    // Only through its own project; an unknown artifact has none.
+    let other = temp.path().join("other-project");
+    std::fs::create_dir_all(&other).unwrap();
+    let other = server.register_local_project(&other).await.unwrap();
+    assert!(server
+        .artifact_versions(&other, &artifact.id)
+        .await
+        .is_err());
+    assert!(server
+        .save_artifact_version(&other, &versions[0].id, &temp.path().join("x"))
+        .await
+        .is_err());
+    assert!(server.artifact_versions(PROJECT, "ghost").await.is_err());
+
     // A run that does not exist, or is not this project's, is not cancelled.
     assert!(server.cancel_run(PROJECT, "ghost").await.is_err());
     assert!(server.cancel_run("missing", "ghost").await.is_err());

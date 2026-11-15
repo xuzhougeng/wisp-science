@@ -57,6 +57,8 @@ pub const ZH: &[(&str, &str)] = &[
     ("Branch from here", "从这里分支"),
     ("Review this turn", "审查这一轮"),
     ("Open in a new window", "在新窗口打开"),
+    ("Its versions, to save a copy of one", "查看它的版本，可保存其中任一版本的副本"),
+    ("Save a copy…", "保存副本…"),
     ("Python, R and Node.js", "Python、R 和 Node.js"),
     ("What Settings, Environments installed into the data folder.", "在设置的环境页安装到数据文件夹的内容。"),
     ("Installed plugins, every version kept.", "已安装的插件，保留了每个版本。"),
