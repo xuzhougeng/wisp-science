@@ -5202,6 +5202,7 @@ pub use crate::channels::{
     ChannelState,
 };
 pub use crate::compact::Compacted;
+pub use crate::device_bridge::{DeviceBridge, DeviceBridgeState};
 pub use crate::experts::{Expert, ExpertInput};
 pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow};
 pub use crate::origin::FileOrigin;

@@ -103,7 +103,10 @@ impl Workspace {
             Section::Pet => self.load_pet(window, cx),
             Section::Browser => self.load_browser(window, cx),
             Section::Workflows => self.load_workflows(window, cx),
-            Section::Remote => self.load_remote_access(window, cx),
+            Section::Remote => {
+                self.load_remote_access(window, cx);
+                self.load_device_bridge(window, cx);
+            }
             Section::Channels => self.load_channels(window, cx),
             Section::Plugins => self.load_plugins(window, cx),
             Section::DecisionModel => self.load_decision_model(window, cx),

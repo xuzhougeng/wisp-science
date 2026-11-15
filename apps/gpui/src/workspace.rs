@@ -401,6 +401,12 @@ pub struct Workspace {
     remote_fields: [Entity<InputState>; 2],
     /// Names the latest round of looks at the tunnel.
     remote_watch: u64,
+    /// The StickS3 desk display on the same page: its listener, the address
+    /// and port typed, and the token once shown.
+    device: Option<wisp_server::desktop::DeviceBridge>,
+    device_fields: [Entity<InputState>; 2],
+    device_token: Option<String>,
+    device_note: Option<Result<String, String>>,
     /// The installed plugins; `None` until the host answered.
     plugins: Option<Vec<wisp_server::desktop::PluginRow>>,
     plugin_installing: bool,
@@ -675,6 +681,10 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx).placeholder("cli_…")),
             cx.new(|cx| InputState::new(window, cx).masked(true)),
             cx.new(|cx| InputState::new(window, cx).placeholder("ou_…")),
+        ];
+        let device_fields = [
+            cx.new(|cx| InputState::new(window, cx).placeholder("192.168.1.20")),
+            cx.new(|cx| InputState::new(window, cx).placeholder("18766")),
         ];
         let remote_fields = [
             cx.new(|cx| InputState::new(window, cx).placeholder("https://relay.example")),
@@ -1074,6 +1084,10 @@ impl Workspace {
             remote_access: None,
             remote_fields,
             remote_watch: 0,
+            device: None,
+            device_fields,
+            device_token: None,
+            device_note: None,
             plugins: None,
             plugin_installing: false,
             plugin_removing: None,
@@ -1605,11 +1619,32 @@ impl Workspace {
                         this.load_general(window, cx);
                         // The composer offers the saved hosts.
                         this.load_environments(window, cx);
+                        // The desk display can ask for a conversation.
+                        this.follow_device_focus(window, cx);
                     }
                     Err(error) => this.error = Some(error),
                 }
                 cx.notify();
             });
+        })
+        .detach();
+    }
+
+    /// Opens each conversation the StickS3 desk display asks for, and
+    /// brings the window forward.
+    fn follow_device_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let backend = self.backend.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            while let Ok((project, session)) = receive(backend.next_device_focus()).await {
+                let open = this.update_in(cx, |this, window, cx| {
+                    window.activate_window();
+                    this.open_session(project, session, window, cx);
+                    cx.notify();
+                });
+                if open.is_err() {
+                    return;
+                }
+            }
         })
         .detach();
     }

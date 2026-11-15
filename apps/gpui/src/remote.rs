@@ -1,5 +1,5 @@
-//! Remote web access as Settings words it.
-use wisp_server::desktop::{RemoteAccess, RemoteState};
+//! Remote web access and the StickS3 desk display as Settings words them.
+use wisp_server::desktop::{DeviceBridge, DeviceBridgeState, RemoteAccess, RemoteState};
 
 use crate::{
     i18n::{fill, tr},
@@ -44,9 +44,45 @@ pub fn changed(access: &RemoteAccess, url: &str, token: &str) -> bool {
     url.trim() != access.relay_url || !token.trim().is_empty()
 }
 
+/// Where the desk display's listener stands, in a line.
+pub fn device_line(bridge: &DeviceBridge) -> (String, Tone) {
+    match (bridge.state, &bridge.url) {
+        (DeviceBridgeState::Listening, Some(url)) => {
+            (fill(tr("Listening at {}"), &[url]), Tone::Success)
+        }
+        (DeviceBridgeState::Error, _) if !bridge.detail.is_empty() => (
+            fill(
+                tr("Not listening: {}"),
+                &[&crate::i18n::host(&bridge.detail)],
+            ),
+            Tone::Danger,
+        ),
+        (DeviceBridgeState::Error, _) => (tr("Not listening").to_owned(), Tone::Danger),
+        _ if bridge.enabled => (tr("Starting…").to_owned(), Tone::Active),
+        _ => (tr("Off").to_owned(), Tone::Neutral),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_desk_display_says_where_it_listens() {
+        let mut bridge = DeviceBridge::default();
+        assert_eq!(device_line(&bridge).0, "Off");
+        bridge.state = DeviceBridgeState::Listening;
+        bridge.url = Some("http://192.168.1.20:18766".into());
+        assert_eq!(
+            device_line(&bridge).0,
+            "Listening at http://192.168.1.20:18766"
+        );
+        bridge.state = DeviceBridgeState::Error;
+        bridge.detail = "Cannot listen on 192.168.1.20:18766: in use".into();
+        let (line, tone) = device_line(&bridge);
+        assert!(line.starts_with("Not listening: Cannot listen"));
+        assert!(matches!(tone, Tone::Danger));
+    }
 
     #[test]
     fn the_tunnel_says_where_it_stands() {

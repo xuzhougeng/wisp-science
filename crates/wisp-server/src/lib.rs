@@ -10,6 +10,7 @@ mod compact;
 pub mod config;
 mod decision_model;
 pub mod desktop;
+mod device_bridge;
 mod excerpt;
 mod experts;
 mod export;
@@ -129,6 +130,8 @@ struct Inner {
     sign_ins: subscriptions::Attempts,
     /// Chat apps that talk to Wisp, and the target they share.
     channels: channels::Channels,
+    /// The StickS3 desk display's listener on the local network.
+    device: device_bridge::Slot,
 }
 
 /// What runs a turn: Wisp's own agent (with the model its side requests
@@ -259,6 +262,7 @@ impl Server {
             bridge: Default::default(),
             sign_ins: Default::default(),
             channels: Default::default(),
+            device: Default::default(),
         })))
     }
 
@@ -1062,6 +1066,7 @@ impl Server {
     pub async fn shutdown(&self) {
         self.0.remote.stop();
         self.0.channels.stop_all();
+        self.0.device.stop().await;
         self.0.browser.stop();
         {
             let _admission = self.0.admission.write().await;

@@ -73,6 +73,9 @@ impl Backend {
                 server.start_remote_access().await;
                 // The chat apps that were left on.
                 server.start_channels().await;
+                // The StickS3 desk display's listener, when it was left on;
+                // a failure shows on its page and never stops the app.
+                let _ = server.start_device_bridge().await;
                 Ok::<_, String>(server)
             })
             .await?;
@@ -1396,6 +1399,33 @@ impl Backend {
 
     pub fn remove_lab_member(&self, member: String) -> Reply<()> {
         self.local(move |host| async move { host.remove_lab_member(&member).await })
+    }
+
+    /// The StickS3 desk display's listener as it stands.
+    pub fn device_bridge(&self) -> Reply<wisp_server::desktop::DeviceBridge> {
+        self.local(|host| async move { Ok(host.device_bridge().await) })
+    }
+
+    pub fn set_device_bridge(
+        &self,
+        enabled: bool,
+        address: String,
+        port: u32,
+    ) -> Reply<wisp_server::desktop::DeviceBridge> {
+        self.local(move |host| async move { host.set_device_bridge(enabled, &address, port).await })
+    }
+
+    pub fn device_bridge_token(&self) -> Reply<String> {
+        self.local(|host| async move { host.device_bridge_token() })
+    }
+
+    pub fn rotate_device_bridge_token(&self) -> Reply<String> {
+        self.local(|host| async move { host.rotate_device_bridge_token() })
+    }
+
+    /// Waits until the desk display asks for a conversation.
+    pub fn next_device_focus(&self) -> Reply<(String, String)> {
+        self.local(|host| async move { Ok(host.next_device_focus().await) })
     }
 
     pub fn onboarding_done(&self) -> Reply<bool> {

@@ -158,7 +158,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Browser | Settings, Browser, switches on a bridge to the Wisp extension in your own Chrome or Chromium; conversations can then open a tab, read it and run a script in it, only in tabs they opened themselves, and hosts can be blocked or preferred |
 | Workflows | Settings, Workflows, keeps templates of a goal broken into tasks, each saying which earlier tasks it needs; Run starts a conversation in the open project and gives the model the tasks stage by stage |
 | Chat apps | Settings, Chat apps, binds a WeChat bot by scanning a QR code, and a Feishu (or Lark) bot by scanning to make its app or by entering an App ID and App Secret, with its owner confirmed here; the owner's messages then run in the project chats go to and the answer comes back (on Feishu as a card that shows the turn's progress), with `/project`, `/session`, `/new`, `/status`, `/stop` and, in WeChat, approvals answered by code (`/approve`, `/reject`); and Wisp Lab: found a lab on a wisp-relay or ask to join one with an invite code, see the members (the leader approves, refuses or removes them and makes invite codes), choose the project that answers other members' agents, replace the relay token, leave |
-| Remote web access | Settings, Remote access, opens this desktop's projects in a phone or a browser through a wisp-relay of your own: it dials out (no inbound port), shows whether the tunnel is up and how many browsers are connected, and gives a link and a code that can be copied or replaced |
+| Remote web access | Settings, Remote access, opens this desktop's projects in a phone or a browser through a wisp-relay of your own: it dials out (no inbound port), shows whether the tunnel is up and how many browsers are connected, and gives a link and a code that can be copied or replaced; the same page turns on the StickS3 desk display's listener (one IPv4 address and port of this computer, a token to show, copy or replace), which shows the device what the agent is doing and the pet, and opens the conversation the device asks for |
 | Plugins | Settings, Plugins, installs a plugin from a folder in the Claude plugin layout (`.claude-plugin/plugin.json`, `skills/*/SKILL.md`) into the app's data without running anything in it, lists what each brings, switches one on for the open project, whose conversations then have its skills, and removes it |
 | Decision model | Settings, Decision model, sets up one fast endpoint (TypeSafe Jev, StartLux-Decision hosted or self-hosted, or a custom System One server) with its key, thinking mode and timeout, and tests it; while one is in use the model's `map_items` tool, which runs one step over many items, also offers its `decide` step |
 | Pet | Settings, Pet, turns on an animated companion drawn from a folder you choose (pet.json and a sprite sheet, Codex-compatible version 2); it stands in the transcript's corner and shows whether the conversation is working, being reviewed, waiting for you, done or failed |
@@ -699,9 +699,9 @@ Limits of this slice:
   the keychain as `feishu_app_secret`, the rest under `feishu_app_id`,
   `feishu_international`, `feishu_enabled`, `feishu_owner_binding` and
   `feishu_pending_owner`. Not ported yet: the research assistant's own
-  WeChat, `/mandates`, notices to the owner of work that finished
-  unasked, and Feishu's interactive approval cards (the WebView has none
-  either).
+  WeChat, and `/mandates` with the notices research mandates send the
+  owner (mandates themselves are not ported). Feishu answers approvals
+  nowhere but the desktop, as in the WebView.
 - Wisp Lab follows `lab.rs` and `lab_mail.rs` (docs/wisp-lab.md): the
   identity (relay, member key, lab key, name) is one keychain secret,
   `lab_identity`, and the relay token `lab_relay_token`, both under the
@@ -721,8 +721,25 @@ Limits of this slice:
   MiB each travel along, encrypted, and arrive under `uploads/lab/`. Not
   ported: the lab's knowledge base, a project shared through project
   sync (its name shows when the leader published one).
+- The StickS3 desk display follows `device_bridge.rs` and `device_hub.rs`:
+  an opt-in HTTP listener on one concrete IPv4 address (never 0.0.0.0),
+  port 18766 unless another is given, whose routes but `/health` want
+  the token in the `x-wisp-device-token` header; the token is kept in
+  the keychain as `sticks3_device_bridge_token` and the address under
+  `device_bridge_enabled`, `device_bridge_bind_ipv4` and
+  `device_bridge_port`, the WebView's names. `/state` says what the
+  agent is doing (idle, working, review, needs you, done, failed, the
+  conversation that most needs attention first); the WebView folds live
+  events into it, this host reads each conversation's live state when the
+  device asks, and a turn that ended since it last asked shows done or
+  failed until the device acknowledges it. `/pet/manifest` and
+  `/pet/frame` draw the chosen pet's frames at 120×130 as PNG. The
+  actions are `ping`, `focus_session` (the window comes forward on that
+  conversation) and `acknowledge`; the last 50 are listed at `/actions`.
+  Turning the listener off forgets the token. The relay transport the
+  WebView reserves is not offered there either.
 - Remote web access is the only tunnel ported: there is no project
-  sync through the relay, StickS3 or Wisp-Lab. A browser
+  sync through the relay. A browser
   gets the commands a headless `wisp-server` offers (projects,
   conversations, messages, stopping a turn, answering an approval
   once), which is fewer than the WebView desktop's tunnel: no research
@@ -1472,7 +1489,13 @@ and token and switch it on: the line reads Connecting, then Connected,
 and a code shows. Copy the link and open it in a browser: the projects
 are listed and the line counts one browser. Press Reset code, then
 Escape: only the question closes. Reset it: the browser is dropped and
-the old link no longer works. Give a wrong token: the line says why it
+the old link no longer works. Under StickS3 desk display give 0.0.0.0
+and turn it on: it is refused. Give this computer's LAN address and turn
+it on: the line reads Listening at that address; Show token and enter it
+on the device (or `curl -H 'x-wisp-device-token: …' http://<address>:18766/state`):
+the state is idle, working while a turn runs, done after it. Send the
+device's focus action for that conversation: the window comes forward on
+it. New token: the old one is refused. Turn it off: the line reads Off. Give a wrong token: the line says why it
 is not connected. Switch it off: the line reads Off. Confirm with
 `sqlite3` that neither the token nor the code is in the settings table.
 In Settings, Plugins, press Install from a folder and choose a folder

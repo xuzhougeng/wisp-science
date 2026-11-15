@@ -8883,6 +8883,7 @@ dependencies = [
  "futures-util",
  "hex",
  "ignore",
+ "image",
  "qrcode",
  "regex",
  "reqwest",

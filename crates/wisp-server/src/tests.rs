@@ -8062,6 +8062,216 @@ Saved result"
     lin.shutdown().await;
 }
 
+#[tokio::test]
+async fn the_desk_display_reads_the_agent_and_the_pet_only_with_its_token() {
+    use desktop::{DeviceBridgeState, SecretStore};
+    let temp = tempfile::tempdir().unwrap();
+    let secrets = Arc::new(desktop::MemorySecrets::default());
+    let server = Server::open_with(
+        config(temp.path()),
+        models(Arc::default(), false),
+        secrets.clone(),
+    )
+    .await
+    .unwrap();
+    assert!(!server
+        .commands()
+        .iter()
+        .any(|command| command.contains("device")));
+    // Off, and only one concrete address.
+    let bridge = server.device_bridge().await;
+    assert!(!bridge.enabled && bridge.state == DeviceBridgeState::Stopped);
+    assert!(server
+        .set_device_bridge(true, "0.0.0.0", 18766)
+        .await
+        .is_err());
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let bridge = server
+        .set_device_bridge(true, "127.0.0.1", u32::from(port))
+        .await
+        .unwrap();
+    assert_eq!(bridge.state, DeviceBridgeState::Listening);
+    let url = bridge.url.clone().unwrap();
+    assert!(bridge.has_token);
+    let token = server.device_bridge_token().unwrap();
+    // The WebView's keychain name.
+    assert_eq!(secrets.get("sticks3_device_bridge_token").unwrap(), token);
+
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    let get = |path: &str, token: &str| {
+        http.get(format!("{url}{path}"))
+            .header("x-wisp-device-token", token)
+            .send()
+    };
+    let health: serde_json::Value = http
+        .get(format!("{url}/health"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(health["service"], "wisp-device-bridge");
+    assert_eq!(
+        get("/state", "wrong").await.unwrap().status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    let state: serde_json::Value = get("/state", &token).await.unwrap().json().await.unwrap();
+    assert_eq!(state["type"], "pet_state");
+    assert_eq!(state["state"], "idle");
+
+    // A turn ends: the device shows it done until it is put away.
+    let folder = temp.path().join("desk");
+    std::fs::create_dir(&folder).unwrap();
+    let project = server.register_local_project(&folder).await.unwrap();
+    let session = server.create_conversation(&project).await.unwrap();
+    server
+        .send(
+            &project,
+            dto::SendRequest {
+                session_id: session.clone(),
+                request_id: "r1".into(),
+                message: "hello".into(),
+                resume: false,
+                resume_after: None,
+                attachments: vec![],
+                references: vec![],
+                acp_agent_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while server.session(&session).live.lock().unwrap().running {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let state: serde_json::Value = get("/state", &token).await.unwrap().json().await.unwrap();
+    assert_eq!(state["state"], "done", "{state}");
+    assert_eq!(state["sessionId"], session.as_str());
+    let post = |body: serde_json::Value, token: &str| {
+        http.post(format!("{url}/action"))
+            .header("x-wisp-device-token", token)
+            .json(&body)
+            .send()
+    };
+    let acknowledged: serde_json::Value =
+        post(json!({"id": "a1", "action": "acknowledge"}), &token)
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+    assert_eq!(acknowledged["acknowledged"], true);
+    let state: serde_json::Value = get("/state", &token).await.unwrap().json().await.unwrap();
+    assert_eq!(state["state"], "idle");
+
+    // Asking for a conversation hands it to the window.
+    let waiting = tokio::spawn({
+        let server = server.clone();
+        async move { server.next_device_focus().await }
+    });
+    tokio::task::yield_now().await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let focused = post(
+        json!({"id": "a2", "action": "focus_session", "sessionId": session}),
+        &token,
+    )
+    .await
+    .unwrap();
+    assert!(focused.status().is_success());
+    assert_eq!(waiting.await.unwrap(), (project.clone(), session.clone()));
+    assert_eq!(
+        post(
+            json!({"id": "a3", "action": "focus_session", "sessionId": "gone"}),
+            &token
+        )
+        .await
+        .unwrap()
+        .status(),
+        reqwest::StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        post(json!({"id": "a4", "action": "run_shell"}), &token)
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::BAD_REQUEST
+    );
+    let actions: serde_json::Value = get("/actions", &token).await.unwrap().json().await.unwrap();
+    assert_eq!(actions["actions"].as_array().unwrap().len(), 4);
+
+    // The pet is drawn frame by frame once there is one.
+    let manifest: serde_json::Value = get("/pet/manifest", &token)
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(manifest["enabled"], false);
+    let pet = temp.path().join("pet");
+    std::fs::create_dir(&pet).unwrap();
+    let sheet = image::RgbaImage::from_pixel(1536, 2288, image::Rgba([200, 80, 40, 255]));
+    sheet.save(pet.join("sheet.png")).unwrap();
+    std::fs::write(
+        pet.join("pet.json"),
+        r#"{"id":"mochi","displayName":"Mochi","spriteVersionNumber":2,"spritesheetPath":"sheet.png"}"#,
+    )
+    .unwrap();
+    crate::pet::save(&server.0.store, true, pet.to_str().unwrap())
+        .await
+        .unwrap();
+    let manifest: serde_json::Value = get("/pet/manifest", &token)
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(manifest["enabled"], true);
+    assert_eq!(manifest["id"], "mochi");
+    assert_eq!(manifest["frameCounts"]["idle"], 7);
+    let revision = manifest["revision"].as_str().unwrap().to_owned();
+    let frame = get(
+        &format!("/pet/frame?revision={revision}&state=idle&frame=0"),
+        &token,
+    )
+    .await
+    .unwrap();
+    assert_eq!(frame.headers()["content-type"], "image/png");
+    let png = frame.bytes().await.unwrap();
+    let drawn = image::load_from_memory(&png).unwrap();
+    assert_eq!((drawn.width(), drawn.height()), (120, 130));
+    assert_eq!(
+        get("/pet/frame?revision=old&state=idle&frame=0", &token)
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::CONFLICT
+    );
+
+    // A new token locks the old one out; off forgets it.
+    let fresh = server.rotate_device_bridge_token().unwrap();
+    assert_ne!(fresh, token);
+    assert_eq!(
+        get("/state", &token).await.unwrap().status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    assert!(get("/state", &fresh).await.unwrap().status().is_success());
+    let bridge = server
+        .set_device_bridge(false, "127.0.0.1", u32::from(port))
+        .await
+        .unwrap();
+    assert!(!bridge.enabled && !bridge.has_token);
+    assert_eq!(bridge.state, DeviceBridgeState::Stopped);
+    server.shutdown().await;
+}
+
 /// A ChatGPT access token as Codex CLI keeps it (unsigned; claims only).
 fn chatgpt_token(account: &str, exp: i64, email: &str) -> String {
     use base64::Engine;

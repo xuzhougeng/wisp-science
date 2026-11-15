@@ -264,5 +264,206 @@ impl Workspace {
              asks before writing files or running commands.",
                 )),
         )
+        .child(self.render_device_bridge(cx))
+    }
+}
+
+/// The StickS3 desk display: a small device on the local network that
+/// shows what the agent is doing and the pet, and can open a conversation.
+impl Workspace {
+    pub(super) fn load_device_bridge(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let reply = self.backend.device_bridge();
+        self.receive_device(reply, true, window, cx);
+    }
+
+    fn receive_device(
+        &mut self,
+        reply: Reply<wisp_server::desktop::DeviceBridge>,
+        fill: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(bridge) => {
+                        if fill {
+                            let (address, port) =
+                                (bridge.bind_ipv4.clone(), bridge.port.to_string());
+                            this.device_fields[0]
+                                .update(cx, |input, cx| input.set_value(address, window, cx));
+                            this.device_fields[1]
+                                .update(cx, |input, cx| input.set_value(port, window, cx));
+                        }
+                        if !bridge.has_token {
+                            this.device_token = None;
+                        }
+                        this.device = Some(bridge);
+                    }
+                    Err(error) => this.device_note = Some(Err(error)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn save_device_bridge(&mut self, enabled: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.device_note = None;
+        let [address, port] = self
+            .device_fields
+            .each_ref()
+            .map(|field| field.read(cx).value().trim().to_string());
+        let Ok(port) = port.parse::<u32>() else {
+            self.device_note = Some(Err(
+                tr("Device Bridge port must be between 1 and 65535.").into()
+            ));
+            cx.notify();
+            return;
+        };
+        let reply = self.backend.set_device_bridge(enabled, address, port);
+        self.receive_device(reply, true, window, cx);
+    }
+
+    fn show_device_token(&mut self, rotate: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.device_note = None;
+        let reply = if rotate {
+            self.backend.rotate_device_bridge_token()
+        } else {
+            self.backend.device_bridge_token()
+        };
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(token) => this.device_token = Some(token),
+                    Err(error) => this.device_note = Some(Err(error)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn render_device_bridge(&self, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let mut card = div()
+            .v_flex()
+            .gap_2()
+            .pt_6()
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(tr("StickS3 desk display")),
+            )
+            .child(div().w(px(640.)).text_xs().text_color(muted).child(tr(
+                "A small device on your local network that shows what the agent is doing and \
+                 the pet, and can open the conversation that needs you. It reads only with its \
+                 token, and nothing it sends reaches an agent or a tool. Experimental.",
+            )));
+        let Some(bridge) = &self.device else {
+            return card.child(div().text_sm().text_color(muted).child(tr("Loading…")));
+        };
+        let (line, tone) = remote::device_line(bridge);
+        let enabled = bridge.enabled;
+        card = card
+            .child(div().text_sm().text_color(tone_color(tone, cx)).child(line))
+            .child(setting(
+                tr("Listen for the device"),
+                tr("On, the address below is listened on while the app runs."),
+                Button::new("device-enabled")
+                    .label(if enabled { tr("On") } else { tr("Off") })
+                    .small()
+                    .selected(enabled)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.save_device_bridge(!enabled, window, cx)
+                    })),
+                cx,
+            ))
+            .child(setting(
+                tr("Address and port"),
+                tr("One IPv4 address of this computer on the network the device is on."),
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .w(px(160.))
+                            .child(Input::new(&self.device_fields[0]).small()),
+                    )
+                    .child(
+                        div()
+                            .w(px(80.))
+                            .child(Input::new(&self.device_fields[1]).small()),
+                    )
+                    .child(
+                        Button::new("device-save")
+                            .label(tr("Save"))
+                            .small()
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.save_device_bridge(enabled, window, cx)
+                            })),
+                    ),
+                cx,
+            ));
+        if bridge.has_token {
+            let mut token = div().h_flex().gap_2();
+            match &self.device_token {
+                Some(shown) => {
+                    let copied = shown.clone();
+                    token = token
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_family(cx.theme().mono_font_family.clone())
+                                .child(shown.clone()),
+                        )
+                        .child(
+                            Button::new("device-token-copy")
+                                .label(tr("Copy"))
+                                .small()
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()))
+                                })),
+                        );
+                }
+                None => {
+                    token = token.child(
+                        Button::new("device-token-show")
+                            .label(tr("Show token"))
+                            .small()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.show_device_token(false, window, cx)
+                            })),
+                    );
+                }
+            }
+            token = token.child(
+                Button::new("device-token-new")
+                    .label(tr("New token"))
+                    .small()
+                    .ghost()
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.show_device_token(true, window, cx)),
+                    ),
+            );
+            card = card.child(setting(
+                tr("Device token"),
+                tr("Enter it on the device. A new one locks the old one out."),
+                token,
+                cx,
+            ));
+        }
+        if let Some(note) = &self.device_note {
+            card = card.child(match note {
+                Ok(said) => super::chip(said.clone(), crate::present::Tone::Success, cx),
+                Err(error) => {
+                    super::chip(crate::i18n::host(error), crate::present::Tone::Danger, cx)
+                }
+            });
+        }
+        card
     }
 }
