@@ -1269,7 +1269,7 @@ impl Workspace {
     }
 
     /// Asks the release page whether a newer version has been published.
-    fn check_for_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn check_for_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.update = Some(settings::Update::Checking);
         let reply = self.backend.check_for_update();
         cx.spawn_in(window, async move |this, cx| {
@@ -1386,6 +1386,18 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Wears light, dark or the system's appearance and keeps the choice.
+    pub(super) fn set_appearance(
+        &mut self,
+        choice: crate::theme::Appearance,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.appearance = choice;
+        crate::theme::apply(choice, window, cx);
+        self.save_general(APPEARANCE, choice.key().into(), window, cx);
+    }
+
     /// Wears `look` at once and keeps it for the next start.
     fn change_look(
         &mut self,
@@ -1430,7 +1442,7 @@ impl Workspace {
 
     /// Makes a text size a pixel smaller or larger, starting from 14 when
     /// it was Wisp's own; `by` 0 goes back to Wisp's own.
-    fn step_size(
+    pub(super) fn step_size(
         &mut self,
         size: f32,
         by: f32,
@@ -1614,9 +1626,7 @@ impl Workspace {
                     .small()
                     .selected(self.appearance == choice)
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.appearance = choice;
-                        crate::theme::apply(choice, window, cx);
-                        this.save_general(APPEARANCE, choice.key().into(), window, cx);
+                        this.set_appearance(choice, window, cx)
                     })),
             );
         }

@@ -35,6 +35,15 @@ impl Workspace {
         .detach();
     }
 
+    /// Shows the guide again from its first step, as the WebView's Setup
+    /// command does.
+    pub(super) fn open_onboarding(&mut self, cx: &mut Context<Self>) {
+        self.onboarding_step = 0;
+        self.onboarding_error = None;
+        self.layers.open(Layer::Onboarding);
+        cx.notify();
+    }
+
     /// Whether the model step can save a key: not while models come from
     /// the environment.
     fn onboarding_model_settable(&self) -> bool {

@@ -3,6 +3,8 @@
 
 /// The tutorials.
 pub const DOCS: &str = "https://wispscience.com/tutorials.html";
+/// The project's own page, to star it.
+pub const REPOSITORY: &str = "https://github.com/xuzhougeng/wisp-science";
 /// Where problems are reported and can be searched first.
 pub const ISSUES: &str = "https://github.com/xuzhougeng/wisp-science/issues";
 /// Where a new problem report is written; the model adds the title and

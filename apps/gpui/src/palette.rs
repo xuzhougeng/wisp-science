@@ -62,6 +62,27 @@ pub enum Command {
     PythonConsole,
     RConsole,
     ResearchArchive,
+    Notebook,
+    Provenance,
+    Agents,
+    Environments,
+    ClosePanel,
+    ToggleSidebar,
+    ExportProject,
+    ImportConversations,
+    NewProject,
+    ImportProject,
+    Skills,
+    CheckUpdates,
+    StarUs,
+    LightTheme,
+    DarkTheme,
+    SystemTheme,
+    LargerText,
+    SmallerText,
+    LargerCode,
+    SmallerCode,
+    Setup,
 }
 
 impl Command {
@@ -101,6 +122,27 @@ impl Command {
             Command::PythonConsole => tr("Python console for this conversation"),
             Command::RConsole => tr("R console for this conversation"),
             Command::ResearchArchive => tr("Archive this conversation's research"),
+            Command::Notebook => tr("Show the notebook"),
+            Command::Provenance => tr("Show the provenance of this conversation"),
+            Command::Agents => tr("Show the agents"),
+            Command::Environments => tr("Show where this conversation's work may run"),
+            Command::ClosePanel => tr("Close the side panel"),
+            Command::ToggleSidebar => tr("Show or hide the sidebar"),
+            Command::ExportProject => tr("Export this project as an archive"),
+            Command::ImportConversations => tr("Import conversations from Codex or Claude Code"),
+            Command::NewProject => tr("New project…"),
+            Command::ImportProject => tr("Import a project archive or folder package"),
+            Command::Skills => tr("Manage skills"),
+            Command::CheckUpdates => tr("Check for updates"),
+            Command::StarUs => tr("Star Wisp on GitHub"),
+            Command::LightTheme => tr("Light appearance"),
+            Command::DarkTheme => tr("Dark appearance"),
+            Command::SystemTheme => tr("Appearance follows the system"),
+            Command::LargerText => tr("Larger text"),
+            Command::SmallerText => tr("Smaller text"),
+            Command::LargerCode => tr("Larger code"),
+            Command::SmallerCode => tr("Smaller code"),
+            Command::Setup => tr("Show the first-run guide"),
         }
     }
 
@@ -139,6 +181,27 @@ impl Command {
             Command::PythonConsole => "code",
             Command::RConsole => "runtime-panel",
             Command::ResearchArchive => "archive-export",
+            Command::Notebook => "notebook",
+            Command::Provenance => "research-trail",
+            Command::Agents => "swarm",
+            Command::Environments => "server",
+            Command::ClosePanel => "close",
+            Command::ToggleSidebar => "panel-left",
+            Command::ExportProject => "download",
+            Command::ImportConversations => "conversation-import",
+            Command::NewProject => "square-pen",
+            Command::ImportProject => "archive-import",
+            Command::Skills => "lightbulb",
+            Command::CheckUpdates => "sync",
+            Command::StarUs => "external-link",
+            Command::LightTheme => "sun",
+            Command::DarkTheme => "moon",
+            Command::SystemTheme => "monitor",
+            Command::LargerText => "expand",
+            Command::SmallerText => "compact",
+            Command::LargerCode => "code-increase",
+            Command::SmallerCode => "code-decrease",
+            Command::Setup => "compass",
         }
     }
 
@@ -167,7 +230,15 @@ impl Command {
             | Command::Terminal
             | Command::PythonConsole
             | Command::RConsole
-            | Command::ResearchArchive => screen == Screen::Project,
+            | Command::ResearchArchive
+            | Command::Notebook
+            | Command::Provenance
+            | Command::Agents
+            | Command::Environments
+            | Command::ClosePanel
+            | Command::ToggleSidebar
+            | Command::ExportProject
+            | Command::ImportConversations => screen == Screen::Project,
             Command::OpenFolder
             | Command::Refresh
             | Command::Settings
@@ -178,11 +249,24 @@ impl Command {
             | Command::Schedules
             | Command::Assistant
             | Command::Mandates
-            | Command::NewWindow => true,
+            | Command::NewWindow
+            | Command::NewProject
+            | Command::ImportProject
+            | Command::Skills
+            | Command::CheckUpdates
+            | Command::StarUs
+            | Command::LightTheme
+            | Command::DarkTheme
+            | Command::SystemTheme
+            | Command::LargerText
+            | Command::SmallerText
+            | Command::LargerCode
+            | Command::SmallerCode
+            | Command::Setup => true,
         }
     }
 
-    const ALL: [Command; 34] = [
+    const ALL: [Command; 55] = [
         Command::NewConversation,
         Command::OpenFolder,
         Command::Home,
@@ -217,6 +301,27 @@ impl Command {
         Command::PythonConsole,
         Command::RConsole,
         Command::ResearchArchive,
+        Command::Notebook,
+        Command::Provenance,
+        Command::Agents,
+        Command::Environments,
+        Command::ClosePanel,
+        Command::ToggleSidebar,
+        Command::ExportProject,
+        Command::ImportConversations,
+        Command::NewProject,
+        Command::ImportProject,
+        Command::Skills,
+        Command::CheckUpdates,
+        Command::StarUs,
+        Command::LightTheme,
+        Command::DarkTheme,
+        Command::SystemTheme,
+        Command::LargerText,
+        Command::SmallerText,
+        Command::LargerCode,
+        Command::SmallerCode,
+        Command::Setup,
     ];
 }
 
@@ -600,25 +705,18 @@ mod tests {
         let projects = [project("Lab", "/data/lab"), project("Field", "/data/field")];
         let recent = [conversation("a", "Alignment", false)];
         let home = state.entries(&projects, &recent, Screen::Home);
-        assert_eq!(
-            sections(&home),
-            [
-                Section::Projects,
-                Section::Projects,
-                Section::Conversations,
-                Section::Commands,
-                Section::Commands,
-                Section::Commands,
-                Section::Commands,
-                Section::Commands,
-                Section::Commands,
-                Section::Commands,
-                Section::Commands,
-                Section::Commands,
-                Section::Commands,
-                Section::Commands
-            ]
-        );
+        let everywhere = Command::ALL
+            .into_iter()
+            .filter(|command| command.available(Screen::Home))
+            .count();
+        let mut expected = vec![Section::Projects, Section::Projects, Section::Conversations];
+        expected.extend(std::iter::repeat_n(Section::Commands, everywhere));
+        assert_eq!(sections(&home), expected);
+        // The WebView's commands are here: appearance and text size from
+        // anywhere, the side panel's tabs inside a project.
+        for command in [Command::DarkTheme, Command::LargerText, Command::Skills] {
+            assert!(home.contains(&Entry::Command(command)));
+        }
         // Scheduled tasks span projects, so they are offered at home too,
         // and so is the research assistant.
         assert!(home.contains(&Entry::Command(Command::Schedules)));
@@ -642,6 +740,19 @@ mod tests {
         assert!(home.contains(&Entry::Command(Command::Favorites)));
         assert!(!home.contains(&Entry::Command(Command::Highlights)));
         assert!(inside.contains(&Entry::Command(Command::Highlights)));
+        for command in [
+            Command::Environments,
+            Command::Provenance,
+            Command::ExportProject,
+        ] {
+            assert!(inside.contains(&Entry::Command(command)));
+            assert!(!home.contains(&Entry::Command(command)));
+        }
+        // Each command has a name and an icon of its own.
+        let mut labels: Vec<&str> = Command::ALL.iter().map(|command| command.label()).collect();
+        labels.sort_unstable();
+        labels.dedup();
+        assert_eq!(labels.len(), Command::ALL.len());
     }
 
     #[test]

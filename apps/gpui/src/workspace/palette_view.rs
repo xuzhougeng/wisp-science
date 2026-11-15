@@ -296,6 +296,75 @@ impl Workspace {
                 return;
             }
             Command::Favorites => return self.open_favorites(window, cx),
+            Command::StarUs => return cx.open_url(crate::links::REPOSITORY),
+            Command::CheckUpdates => {
+                self.open_settings(window, cx);
+                self.show_settings_section(crate::settings::Section::General, window, cx);
+                return self.check_for_update(window, cx);
+            }
+            Command::Skills => {
+                self.open_settings(window, cx);
+                return self.show_settings_section(crate::settings::Section::Skills, window, cx);
+            }
+            Command::NewProject => return self.open_new_project(window, cx),
+            Command::Setup => {
+                self.layers.close(Layer::Palette);
+                return self.open_onboarding(cx);
+            }
+            Command::ImportProject => return self.import_project(window, cx),
+            Command::ExportProject => {
+                if let Some(project) = self.state.project.clone() {
+                    self.export_project(project, window, cx);
+                }
+                return;
+            }
+            Command::ImportConversations => return self.open_imports(window, cx),
+            Command::LightTheme | Command::DarkTheme | Command::SystemTheme => {
+                let choice = match command {
+                    Command::LightTheme => crate::theme::Appearance::Light,
+                    Command::DarkTheme => crate::theme::Appearance::Dark,
+                    _ => crate::theme::Appearance::System,
+                };
+                self.set_appearance(choice, window, cx);
+            }
+            Command::LargerText | Command::SmallerText => {
+                let by = if command == Command::LargerText {
+                    1.
+                } else {
+                    -1.
+                };
+                self.step_size(
+                    self.look.text_size,
+                    by,
+                    |look, size| look.text_size = size,
+                    window,
+                    cx,
+                );
+            }
+            Command::LargerCode | Command::SmallerCode => {
+                let by = if command == Command::LargerCode {
+                    1.
+                } else {
+                    -1.
+                };
+                self.step_size(
+                    self.look.code_size,
+                    by,
+                    |look, size| look.code_size = size,
+                    window,
+                    cx,
+                );
+            }
+            Command::ToggleSidebar => self.toggle_sidebar(window, cx),
+            Command::ClosePanel => {
+                if self.layers.contains(Layer::FilesPanel) {
+                    self.toggle_files(window, cx);
+                }
+            }
+            Command::Notebook => self.show_panel_tab(PanelTab::Notebook, window, cx),
+            Command::Provenance => self.show_panel_tab(PanelTab::Provenance, window, cx),
+            Command::Agents => self.show_panel_tab(PanelTab::Agents, window, cx),
+            Command::Environments => self.show_panel_tab(PanelTab::Environments, window, cx),
             Command::OpenFolder => return self.open_project(window, cx),
             Command::Refresh => {
                 self.error = None;
