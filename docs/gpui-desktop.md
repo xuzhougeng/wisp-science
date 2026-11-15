@@ -604,7 +604,13 @@ Limits of this slice:
   a new one. There is no list of variables, no restart button and no
   memory limit; interpreters are also stopped when the conversation or
   its project is removed and when the app quits.
-- The Agents tab lists the open conversation's delegated batches first,
+- The Agents tab shows first the latest work over many items
+  (`map_items`) the conversation ran, as the host follows it from the
+  tool's progress (the WebView's swarm progress, merged the same way):
+  its phase, how many items are done and failed, each part's status and,
+  once done, its summary. It is kept while the app runs, until the next
+  such work, and is not saved.
+- The Agents tab then lists the open conversation's delegated batches,
   newest first, from the host's records: each with its status, how many
   tasks are done, its goal, and per task its status, instruction, what
   it waits for, its summary or error, what it used, and a button that

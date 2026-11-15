@@ -534,6 +534,8 @@ pub struct Workspace {
     explorations: Vec<wisp_dto::ExplorationSummary>,
     /// The task batches the open conversation's agent delegated.
     batches: Vec<wisp_server::desktop::DelegatedBatch>,
+    /// The latest work over many items the open conversation ran.
+    swarm: Option<wisp_dto::SwarmProgress>,
     batches_request: u64,
     explore_name: Entity<InputState>,
     explore_from: Option<TurnRef>,
@@ -1233,6 +1235,7 @@ impl Workspace {
             join_note: None,
             explorations: Vec::new(),
             batches: Vec::new(),
+            swarm: None,
             batches_request: 0,
             explore_name,
             explore_from: None,
@@ -2046,6 +2049,7 @@ impl Workspace {
         self.poll = None;
         self.rows.clear();
         self.batches.clear();
+        self.swarm = None;
         self.history.clear();
         self.before = None;
         self.loading_history = false;

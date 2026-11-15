@@ -2153,6 +2153,11 @@ impl Server {
         }))
     }
 
+    /// The latest work over many items the conversation ran, as it went.
+    pub fn swarm_progress(&self, session: &str) -> Option<wisp_dto::SwarmProgress> {
+        self.session(session).live.lock().unwrap().swarm.clone()
+    }
+
     /// The batches a conversation started, newest first, with each task's
     /// latest attempt.
     pub async fn delegated_batches(

@@ -1774,4 +1774,8 @@ pub const ZH: &[(&str, &str)] = &[
     ("Newer version in folder", "文件夹中有更新的版本"),
     ("Folder version conflict", "文件夹版本冲突"),
     ("Waiting for the cloud drive", "等待网盘同步完成"),
+    ("Summing up", "正在汇总"),
+    ("Partly done", "部分完成"),
+    ("{} of {} items done", "已完成 {} / {} 项"),
+    (" · {} failed", " · {} 项失败"),
 ];

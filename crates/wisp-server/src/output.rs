@@ -82,6 +82,9 @@ pub fn tool_question(tool: &str) -> String {
 #[derive(Default)]
 pub struct Live {
     pub running: bool,
+    /// The latest work over many items (`map_items`) the conversation ran,
+    /// as it went; kept after its turn until another one starts.
+    pub swarm: Option<wisp_dto::SwarmProgress>,
     /// Whether the running turn still reads guidance. It stops once the turn
     /// has looked for the last time, so nothing is put in after that.
     pub guidable: bool,
@@ -197,6 +200,25 @@ pub struct ServerOutput {
 }
 
 impl Output for ServerOutput {
+    fn tool_presentation(
+        &self,
+        kind: &str,
+        payload: &serde_json::Value,
+        _server: Option<std::sync::Arc<dyn wisp_tools::McpAppServer>>,
+    ) {
+        if kind != wisp_dto::SWARM_PRESENTATION {
+            return;
+        }
+        let Ok(progress) = serde_json::from_value::<wisp_dto::SwarmProgress>(payload.clone())
+        else {
+            return;
+        };
+        let mut live = self.session.live.lock().unwrap();
+        match &mut live.swarm {
+            Some(current) => current.merge(progress),
+            None => live.swarm = Some(progress),
+        }
+    }
     fn pre_tool_use<'a>(
         &'a self,
         tool: &'a str,
@@ -439,6 +461,57 @@ mod tests {
             write_locked: false,
             isolation: None,
         }
+    }
+
+    #[test]
+    fn work_over_many_items_is_followed_as_it_goes() {
+        let session = Arc::new(Session::default());
+        let out = output(&session, true);
+        let task = |id: &str, status: &str, revision: u64, done: usize| {
+            serde_json::json!({
+                "id": id, "title": id, "instruction": "", "status": status,
+                "revision": revision, "completed_units": done, "total_units": 1,
+                "failed_units": 0, "log": [], "result": "",
+            })
+        };
+        let progress = |id: &str, revision: u64, phase: &str, tasks: Vec<serde_json::Value>| {
+            serde_json::json!({
+                "id": id, "source": "map_items", "title": "Read the papers",
+                "model": "m", "started_at_ms": revision as i64, "revision": revision,
+                "phase": phase, "total": 2, "tasks": tasks, "summary": "",
+            })
+        };
+        // Something else shown by a tool is not work over items.
+        out.tool_presentation("mcp_app", &serde_json::json!({}), None);
+        assert!(session.live.lock().unwrap().swarm.is_none());
+        out.tool_presentation(
+            wisp_dto::SWARM_PRESENTATION,
+            &progress(
+                "s1",
+                1,
+                "running",
+                vec![task("a", "queued", 0, 0), task("b", "queued", 0, 0)],
+            ),
+            None,
+        );
+        // A live update carries the tasks that changed.
+        out.tool_presentation(
+            wisp_dto::SWARM_PRESENTATION,
+            &progress("s1", 2, "running", vec![task("a", "completed", 1, 1)]),
+            None,
+        );
+        let swarm = session.live.lock().unwrap().swarm.clone().unwrap();
+        assert_eq!(swarm.tasks.len(), 2);
+        assert_eq!(swarm.tasks[0].status, wisp_dto::SwarmTaskStatus::Completed);
+        assert_eq!(swarm.tasks[1].status, wisp_dto::SwarmTaskStatus::Queued);
+        // A newer run replaces it.
+        out.tool_presentation(
+            wisp_dto::SWARM_PRESENTATION,
+            &progress("s2", 5, "starting", vec![task("c", "queued", 0, 0)]),
+            None,
+        );
+        let swarm = session.live.lock().unwrap().swarm.clone().unwrap();
+        assert_eq!((swarm.id.as_str(), swarm.tasks.len()), ("s2", 1));
     }
 
     #[tokio::test]

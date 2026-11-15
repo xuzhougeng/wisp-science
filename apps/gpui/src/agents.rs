@@ -98,6 +98,50 @@ pub fn task_status(status: &str) -> (&'static str, Tone) {
     }
 }
 
+/// How work over many items stands, as its chip says.
+pub fn swarm_phase(phase: wisp_dto::SwarmPhase) -> (&'static str, Tone) {
+    use crate::i18n::tr;
+    use wisp_dto::SwarmPhase::*;
+    match phase {
+        Starting | Running => (tr("Running"), Tone::Active),
+        Summarizing => (tr("Summing up"), Tone::Active),
+        Completed => (tr("Done"), Tone::Success),
+        Partial => (tr("Partly done"), Tone::Attention),
+        Failed => (tr("Failed"), Tone::Danger),
+        Paused => (tr("Paused"), Tone::Neutral),
+        Cancelled => (tr("Stopped"), Tone::Neutral),
+    }
+}
+
+/// How one of its tasks stands.
+pub fn swarm_task(status: wisp_dto::SwarmTaskStatus) -> (&'static str, Tone) {
+    use crate::i18n::tr;
+    use wisp_dto::SwarmTaskStatus::*;
+    match status {
+        Queued => (tr("Waiting"), Tone::Neutral),
+        Running => (tr("Running"), Tone::Active),
+        Completed => (tr("Done"), Tone::Success),
+        Failed => (tr("Failed"), Tone::Danger),
+        Paused => (tr("Paused"), Tone::Neutral),
+        Cancelled => (tr("Stopped"), Tone::Neutral),
+    }
+}
+
+/// How far it has come: items done of all of them, and those that failed.
+pub fn swarm_line(progress: &wisp_dto::SwarmProgress) -> String {
+    use crate::i18n::{fill, tr};
+    let done: usize = progress.tasks.iter().map(|task| task.completed_units).sum();
+    let failed: usize = progress.tasks.iter().map(|task| task.failed_units).sum();
+    let total = progress
+        .total
+        .max(progress.tasks.iter().map(|task| task.total_units).sum());
+    let mut line = fill(tr("{} of {} items done"), &[&done, &total]);
+    if failed > 0 {
+        line.push_str(&fill(tr(" · {} failed"), &[&failed]));
+    }
+    line
+}
+
 /// Whether a batch can be run again: one that failed or was stopped.
 pub fn can_retry(batch: &wisp_server::desktop::DelegatedBatch) -> bool {
     matches!(batch.status.as_str(), "failed" | "cancelled")
@@ -138,6 +182,31 @@ mod tests {
             whole[key] = changed.clone();
         }
         serde_json::from_value(whole).unwrap()
+    }
+
+    #[test]
+    fn work_over_many_items_reads_as_how_far_it_came() {
+        let progress: wisp_dto::SwarmProgress = serde_json::from_value(json!({
+            "id": "s", "source": "map_items", "title": "Read", "model": "m",
+            "started_at_ms": 1, "revision": 2, "phase": "running", "total": 3,
+            "summary": "",
+            "tasks": [
+                {"id": "a", "title": "a", "instruction": "", "status": "completed", "revision": 1,
+                 "completed_units": 1, "total_units": 1, "failed_units": 0, "log": [], "result": ""},
+                {"id": "b", "title": "b", "instruction": "", "status": "failed", "revision": 1,
+                 "completed_units": 0, "total_units": 1, "failed_units": 1, "log": [], "result": ""},
+            ],
+        }))
+        .unwrap();
+        assert_eq!(swarm_line(&progress), "1 of 3 items done · 1 failed");
+        assert_eq!(
+            swarm_phase(wisp_dto::SwarmPhase::Partial),
+            ("Partly done", Tone::Attention)
+        );
+        assert_eq!(
+            swarm_task(wisp_dto::SwarmTaskStatus::Queued),
+            ("Waiting", Tone::Neutral)
+        );
     }
 
     #[test]

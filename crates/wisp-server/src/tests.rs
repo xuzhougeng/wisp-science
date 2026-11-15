@@ -9273,6 +9273,7 @@ async fn the_research_assistant_dispatches_to_a_project_and_gets_the_report() {
         .iter()
         .find(|row| row.title == "Counting")
         .unwrap();
+    turn_done(&server, &counting.id).await;
     let asked = texts_of(&server, &counting.id).await;
     assert!(asked
         .iter()

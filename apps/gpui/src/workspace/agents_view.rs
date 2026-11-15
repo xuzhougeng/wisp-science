@@ -30,19 +30,28 @@ impl Workspace {
         };
         self.batches_request += 1;
         let request = self.batches_request;
+        let swarm = self.backend.swarm_progress(session.clone());
         let reply = self.backend.delegated_batches(project, session);
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
+            let swarm = receive(swarm).await.ok().flatten();
             let _ = this.update_in(cx, |this, window, cx| {
                 if !this.state.current(&selection) || this.batches_request != request {
                     return;
                 }
+                this.swarm = swarm;
                 // A batch that cannot be read is left out, not an error of
                 // the conversation's.
                 this.batches = result.unwrap_or_default();
                 // A batch may run on after the turn: look again while one
                 // does and the tab is showing.
-                if this.agents_visible() && this.batches.iter().any(DelegatedBatch::running) {
+                let swarming = this
+                    .swarm
+                    .as_ref()
+                    .is_some_and(|swarm| !swarm.phase.terminal());
+                if this.agents_visible()
+                    && (swarming || this.batches.iter().any(DelegatedBatch::running))
+                {
                     cx.spawn_in(window, async move |this, cx| {
                         cx.background_executor()
                             .timer(std::time::Duration::from_secs(2))
@@ -98,6 +107,53 @@ impl Workspace {
             });
         })
         .detach();
+    }
+
+    /// Work over many items: what it is, how far it came, and each part.
+    fn render_swarm(&self, progress: &wisp_dto::SwarmProgress, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let (phase, tone) = agents::swarm_phase(progress.phase);
+        let mut card = div()
+            .v_flex()
+            .gap_1()
+            .px_3()
+            .py_2()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .child(
+                div().h_flex().gap_2().child(chip(phase, tone, cx)).child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_sm()
+                        .font_semibold()
+                        .child(progress.title.clone()),
+                ),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(agents::swarm_line(progress)),
+            );
+        for task in progress.tasks.iter().take(50) {
+            let (status, tone) = agents::swarm_task(task.status);
+            card = card.child(
+                div().h_flex().gap_2().child(chip(status, tone, cx)).child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_xs()
+                        .child(task.title.clone()),
+                ),
+            );
+        }
+        if !progress.summary.is_empty() {
+            card = card.child(div().text_xs().child(progress.summary.clone()));
+        }
+        card
     }
 
     /// One delegated batch: its goal, how far it came, and each task.
@@ -225,6 +281,9 @@ impl Workspace {
             .flex_1()
             .min_h_0()
             .overflow_y_scroll();
+        if let Some(progress) = &self.swarm {
+            list = list.child(self.render_swarm(progress, cx));
+        }
         if !self.batches.is_empty() {
             list = list.child(
                 div()
@@ -242,7 +301,7 @@ impl Workspace {
         }
         // The helpers' line says there are none only when nothing else is
         // listed.
-        if !helpers.is_empty() || self.batches.is_empty() {
+        if !helpers.is_empty() || (self.batches.is_empty() && self.swarm.is_none()) {
             list = list.child(
                 div()
                     .p_3()

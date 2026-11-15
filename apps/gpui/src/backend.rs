@@ -1631,6 +1631,11 @@ impl Backend {
         self.local(move |host| async move { host.retry_delegated_batch(&session, &batch).await })
     }
 
+    /// The latest work over many items the conversation ran.
+    pub fn swarm_progress(&self, session: String) -> Reply<Option<wisp_dto::SwarmProgress>> {
+        self.local(move |host| async move { Ok(host.swarm_progress(&session)) })
+    }
+
     /// Stops a running batch of the conversation and the tasks in it.
     pub fn cancel_delegated_batch(&self, session: String, batch: String) -> Reply<()> {
         self.local(move |host| async move { host.cancel_delegated_batch(&session, &batch).await })
