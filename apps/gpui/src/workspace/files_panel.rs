@@ -301,7 +301,51 @@ impl Workspace {
         self.layers.open(Layer::FilePreview);
         self.file_image = None;
         self.file_document = None;
+        self.file_pages = None;
         self.file_problem = None;
+        self.file_as_text = false;
+        // A PDF's first pages are drawn, off the window's thread.
+        if crate::pdf_pages::is_pdf(&path) {
+            let reply = self
+                .backend
+                .project_pdf(ticket.project.clone(), path.clone());
+            let wanted = path.clone();
+            cx.spawn_in(window, async move |this, cx| {
+                let drawn = match receive(reply).await {
+                    Ok(bytes) => {
+                        cx.background_executor()
+                            .spawn(async move {
+                                crate::pdf_pages::draw(
+                                    bytes,
+                                    crate::pdf_pages::SHOWN,
+                                    crate::pdf_pages::SCALE,
+                                )
+                            })
+                            .await
+                    }
+                    Err(error) => Err(error),
+                };
+                let _ = this.update(cx, |this, cx| {
+                    if this.files.preview_path.as_deref() != Some(wanted.as_str()) {
+                        return;
+                    }
+                    let pages = drawn.map(|drawn| {
+                        let note = crate::pdf_pages::note(&drawn);
+                        let images = drawn
+                            .pages
+                            .into_iter()
+                            .map(|png| {
+                                std::sync::Arc::new(Image::from_bytes(ImageFormat::Png, png))
+                            })
+                            .collect();
+                        (images, note)
+                    });
+                    this.file_pages = Some((wanted, pages));
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
         // A document is turned into text by the host, beside the preview
         // that tells its size.
         if files::is_document(&path) {
@@ -525,6 +569,11 @@ impl Workspace {
                     None => message(tr("Loading the picture…")),
                 }
             }
+            PreviewMode::Binary
+                if crate::pdf_pages::is_pdf(&content.path) && !self.file_as_text =>
+            {
+                self.render_pdf_pages(&content.path, cx)
+            }
             PreviewMode::Binary if files::is_document(&content.path) => {
                 match self
                     .file_document
@@ -544,13 +593,33 @@ impl Workspace {
                         .min_h_0()
                         .child(
                             div()
+                                .h_flex()
+                                .gap_2()
                                 .px_4()
                                 .pt_2()
-                                .text_xs()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(tr(
-                                    "The document's text and tables, to read; its layout and pictures are not shown. Open it with the system's application for the original.",
-                                )),
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(if crate::pdf_pages::is_pdf(path) {
+                                            tr("The PDF's text and tables, to read and copy.")
+                                        } else {
+                                            tr("The document's text and tables, to read; its layout and pictures are not shown. Open it with the system's application for the original.")
+                                        }),
+                                )
+                                .when(crate::pdf_pages::is_pdf(path), |bar| {
+                                    bar.child(
+                                        Button::new("file-pdf-pages")
+                                            .label(tr("Show the pages"))
+                                            .xsmall()
+                                            .ghost()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.file_as_text = false;
+                                                cx.notify();
+                                            })),
+                                    )
+                                }),
                         )
                         .child(
                             div().flex_1().min_h_0().p_4().child(
@@ -603,6 +672,99 @@ impl Workspace {
             .flex_1()
             .min_h_0()
             .child(Input::new(&self.file_view).disabled(true).h_full())
+            .into_any_element()
+    }
+
+    /// A PDF's first pages, drawn, with a switch to its text.
+    fn render_pdf_pages(&self, path: &str, cx: &mut Context<Self>) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        let switch = Button::new("file-pdf-switch")
+            .label(tr("Show the text"))
+            .xsmall()
+            .ghost()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.file_as_text = true;
+                cx.notify();
+            }));
+        let pages = self
+            .file_pages
+            .as_ref()
+            .filter(|(shown, _)| shown == path)
+            .map(|(_, pages)| pages);
+        let (images, note) = match pages {
+            None => {
+                return div()
+                    .p_4()
+                    .text_sm()
+                    .text_color(muted)
+                    .child(tr("Drawing the pages…"))
+                    .into_any_element();
+            }
+            Some(Err(problem)) => {
+                return div()
+                    .v_flex()
+                    .gap_2()
+                    .p_4()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().danger)
+                            .child(crate::i18n::host(problem)),
+                    )
+                    .child(div().child(switch))
+                    .into_any_element();
+            }
+            Some(Ok(drawn)) => drawn,
+        };
+        let mut list = div()
+            .id("file-pdf-pages")
+            .v_flex()
+            .flex_1()
+            .min_h_0()
+            .gap_3()
+            .p_3()
+            .overflow_y_scroll();
+        for (index, image) in images.iter().enumerate() {
+            list = list.child(
+                div()
+                    .v_flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        img(image.clone())
+                            .w_full()
+                            .object_fit(ObjectFit::Contain)
+                            .border_1()
+                            .border_color(cx.theme().border),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(crate::i18n::fill(tr("Page {}"), &[&(index + 1)])),
+                    ),
+            );
+        }
+        div()
+            .v_flex()
+            .flex_1()
+            .min_h_0()
+            .child(
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .px_3()
+                    .py_1()
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(note.clone()),
+                    )
+                    .child(switch),
+            )
+            .child(list)
             .into_any_element()
     }
 

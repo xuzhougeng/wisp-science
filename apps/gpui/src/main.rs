@@ -37,6 +37,7 @@ mod outline;
 mod palette;
 mod panel;
 mod papers;
+mod pdf_pages;
 mod pet;
 mod plugins;
 mod present;

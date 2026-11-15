@@ -194,7 +194,7 @@ folder registers its research root; it does not import existing desktop chats.
 | Favorites | A star under any message saves it as it reads now; an image in Artifacts can be saved as a figure. Highlights lists what this conversation saved; the Favorites page lists everything from every project, with search, a kind filter, the item in full, its source conversation and removal after a confirmation |
 | Memory | One switch; habits the model is shown in every project; this project's notes by day, which the model can search; add, edit and delete either, and save any message to one or the other; a weekly tidy that proposes merging or retiring habits for you to apply or dismiss |
 | Memos | Your own notes per project: add, edit, pin, copy, delete after a confirmation, and put one into the message box. The model is never shown them |
-| Files | Project file browser, available before the first conversation; read-only text and Markdown preview, pictures (PNG, JPEG, GIF, WebP, SVG, BMP), and Jupyter notebooks as their cells with what each printed or returned (a figure is named, not drawn; Show as text gives the file itself); PDF, Word, Excel, PowerPoint, OpenDocument, RTF and EPUB documents as their text and tables, without their layout or pictures; new folder, new file, rename, and move to the project's trash; listed by name, newest first or largest first, folders first, in the order last chosen |
+| Files | Project file browser, available before the first conversation; read-only text and Markdown preview, pictures (PNG, JPEG, GIF, WebP, SVG, BMP), and Jupyter notebooks as their cells with what each printed or returned (a figure is named, not drawn; Show as text gives the file itself); a PDF as its first twelve pages, drawn on the CPU by `hayro` (pure Rust, the same on macOS and Windows; a protected PDF is opened with the system's application), with Show the text for its text and tables; Word, Excel, PowerPoint, OpenDocument, RTF and EPUB documents as their text and tables, without their layout or pictures; new folder, new file, rename, and move to the project's trash; listed by name, newest first or largest first, folders first, in the order last chosen |
 | Composer | Native multiline input. Return sends and Shift+Return starts a new line, or, with the other choice in Settings, General, Return starts a new line and Cmd/Ctrl+Return sends; Cmd/Ctrl+Return always sends. While an input method is composing, Return goes to it. While a turn runs the same key queues the message: it is sent when the turn ends, or given to the running turn at once with the queue's lightning button |
 | Plan first | The model investigates and submits a plan as a card; nothing is changed until you approve it, which leaves plan mode and starts the work |
 | First-run guide | On a first run a dialog walks through four steps: welcome, what Wisp can do, a model (a DeepSeek key sets up deepseek-v4-flash as the default and deepseek-v4-pro beside it, or a link to Settings, Models for another provider), and the tools on this computer (install Python with uv). Get started or Escape puts it away for good, in this desktop and the WebView one |
@@ -1539,9 +1539,12 @@ and names the current one; it goes once every step is done.
 After a turn that started a run, the run call in the transcript has a line
 with the run's state that changes as the run does; Show in Runs opens the
 Runs tab with that run's output open.
-Open a PDF and a Word file in the Files tab: after a moment each shows its
-text (and a spreadsheet its sheets as tables) under a note that layout and
-pictures are not shown; a scanned PDF with no text says it could not be read.
+Open a PDF in the Files tab: after a moment its pages show as they look,
+each labelled, under a line that says how many there are (a long one says
+only the first twelve are drawn); Show the text gives its text and tables,
+and Show the pages brings the pages back. Open a Word file: after a moment
+it shows its text (and a spreadsheet its sheets as tables) under a note
+that layout and pictures are not shown.
 Open a Jupyter notebook in the Files tab: its text cells read as text, each
 code cell shows its run number, its code and what it printed or returned, a
 figure is named in its place and an error shows its name and message; Show

@@ -184,6 +184,11 @@ impl Backend {
         self.local(move |host| async move { host.project_image(&project, &path).await })
     }
 
+    /// A PDF of the project, whole, for its pages to be drawn.
+    pub fn project_pdf(&self, project: String, path: String) -> Reply<Vec<u8>> {
+        self.local(move |host| async move { host.project_pdf(&project, &path).await })
+    }
+
     /// Makes an empty folder or file in a project folder.
     pub fn create_project_entry(
         &self,

@@ -5234,6 +5234,18 @@ async fn the_desktop_makes_renames_and_trashes_project_files() {
     ] {
         assert!(server.project_image(PROJECT, path).await.is_err(), "{path}");
     }
+    // A PDF is handed over whole for its pages to be drawn; nothing else is.
+    std::fs::write(workspace.join("figures/paper.PDF"), b"%PDF-1.4 fake").unwrap();
+    assert_eq!(
+        server
+            .project_pdf(PROJECT, "figures/paper.PDF")
+            .await
+            .unwrap(),
+        b"%PDF-1.4 fake"
+    );
+    for path in ["figures/notes.txt", "figures/plot.PNG", "../x.pdf"] {
+        assert!(server.project_pdf(PROJECT, path).await.is_err(), "{path}");
+    }
     server.shutdown().await;
 }
 

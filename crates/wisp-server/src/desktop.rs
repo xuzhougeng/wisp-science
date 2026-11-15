@@ -943,6 +943,26 @@ impl Server {
         Ok((content_type.to_owned(), tokio::fs::read(&real).await?))
     }
 
+    /// A PDF of the project, whole, for the window to draw its pages; the
+    /// WebView shows them with pdf.js.
+    pub async fn project_pdf(&self, project: &str, path: &str) -> Result<Vec<u8>> {
+        let root = std::path::PathBuf::from(self.project_root(project).await?);
+        let real = crate::files::resolve(&root, path).await?;
+        ensure!(
+            real.extension()
+                .and_then(|kind| kind.to_str())
+                .is_some_and(|kind| kind.eq_ignore_ascii_case("pdf")),
+            "That file is not a PDF"
+        );
+        let meta = tokio::fs::metadata(&real).await?;
+        ensure!(meta.is_file(), "That is not a file");
+        ensure!(
+            meta.len() <= FIGURE_LIMIT,
+            "PDFs of more than 32 MB are not drawn here"
+        );
+        Ok(tokio::fs::read(&real).await?)
+    }
+
     /// A document of the project (PDF, Word, Excel, PowerPoint, OpenDocument,
     /// RTF, EPUB) as Markdown to read: its text and tables, not its layout
     /// or pictures. The converter is the one the model's `read` tool uses.
