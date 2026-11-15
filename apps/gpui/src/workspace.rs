@@ -440,7 +440,14 @@ pub struct Workspace {
     /// The workflow in the form or the remove question; empty is a new one.
     workflow_editing: Option<String>,
     /// Name, goal.
-    workflow_fields: [Entity<InputState>; 2],
+    workflow_fields: [Entity<InputState>; 3],
+    /// What a workflow written from skills is for.
+    workflow_request: Entity<InputState>,
+    /// The skills that can be turned into a workflow, and those picked.
+    workflow_skills: Vec<wisp_server::desktop::SkillRow>,
+    workflow_skill_picks: Vec<String>,
+    /// A workflow is being written from skills.
+    workflow_converting: bool,
     /// The tasks of the workflow in the form.
     workflow_tasks: Vec<settings_workflows::TaskDraft>,
     /// How the workflow in the form is approved when it runs as agents.
@@ -790,7 +797,13 @@ impl Workspace {
         let workflow_fields = [
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
+            cx.new(|cx| InputState::new(window, cx).multi_line(true)),
         ];
+        let workflow_request = cx.new(|cx| {
+            InputState::new(window, cx)
+                .multi_line(true)
+                .placeholder(tr("What the workflow is for"))
+        });
         let sync_fields = [
             cx.new(|cx| InputState::new(window, cx).placeholder("https://relay.example")),
             cx.new(|cx| InputState::new(window, cx).masked(true)),
@@ -1241,6 +1254,10 @@ impl Workspace {
             workflows: Vec::new(),
             workflow_editing: None,
             workflow_fields,
+            workflow_request,
+            workflow_skills: Vec::new(),
+            workflow_skill_picks: Vec::new(),
+            workflow_converting: false,
             workflow_tasks: Vec::new(),
             workflow_approval: Default::default(),
             workflow_pick: None,
@@ -1453,6 +1470,7 @@ impl Workspace {
                 self.workflow_tasks.clear();
             }
             Some(Layer::ConfirmRemoveWorkflow) => self.workflow_editing = None,
+            Some(Layer::WorkflowFromSkills) => self.workflow_skill_picks.clear(),
             Some(Layer::QuickActionForm | Layer::ConfirmRemoveQuickAction) => {
                 self.quick_editing = None
             }

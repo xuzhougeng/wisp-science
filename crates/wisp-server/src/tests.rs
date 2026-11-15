@@ -221,6 +221,81 @@ impl Provider for DelegatingModel {
     }
 }
 
+/// Picks the skill to convert when asked, and writes a workflow of two
+/// agents from it.
+struct ConvertingModel;
+
+#[async_trait]
+impl Provider for ConvertingModel {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _: &[ToolSchema],
+    ) -> wisp_llm::Result<Completion> {
+        let system = messages[0].content.as_text();
+        let contract = json!({
+            "type": "object",
+            "required": ["summary", "status", "artifacts"],
+            "properties": {
+                "summary": {"type": "string"},
+                "status": {"const": "succeeded"},
+                "artifacts": {"type": "array", "items": {"type": "string"}},
+            },
+        });
+        let content = if system.contains("Select the smallest sufficient set") {
+            json!({"skill_ids": ["read-counting"], "rationale": "It counts reads."}).to_string()
+        } else if system.contains("Convert the supplied Skill method documents") {
+            // It was given the skill's own words.
+            assert!(messages[1]
+                .content
+                .as_text()
+                .contains("Divide the line count by four"));
+            json!({
+                "goal": "Count the reads and report them",
+                "context": "Report counts per file.",
+                "approval_policy": "review_all",
+                "tasks": [
+                    {"id": "count_reads", "instruction": "Count the reads in every FASTQ file.",
+                     "depends_on": [], "capabilities": ["project_read"], "skill_ids": [],
+                     "specialist_id": null, "output_schema": contract, "isolated": false,
+                     "model_id": null, "executor": null, "budget": null, "timeout_secs": null},
+                    {"id": "report", "instruction": "Write the counts as a table.",
+                     "depends_on": ["count_reads"], "capabilities": ["reasoning"], "skill_ids": [],
+                     "specialist_id": null, "output_schema": contract, "isolated": false,
+                     "model_id": null, "executor": null, "budget": null, "timeout_secs": null},
+                ],
+            })
+            .to_string()
+        } else {
+            "{}".into()
+        };
+        Ok(Completion {
+            content,
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        _: &[Message],
+        _: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        sink.on_text("ok");
+        Ok(Completion {
+            content: "ok".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+}
+
 /// Delegates, in the background, a task that hands back a frozen method
 /// search contract and a search over it; proposes candidates when asked.
 struct SearchingModel {
@@ -10024,6 +10099,7 @@ async fn a_workflow_runs_as_agents_once_it_is_approved() {
                         ),
                     ],
                     approval,
+                    context: String::new(),
                 })
                 .await
                 .unwrap();
@@ -10141,6 +10217,7 @@ async fn a_workflow_runs_as_agents_once_it_is_approved() {
             goal: "Count the reads".into(),
             tasks: tasks.clone(),
             approval: desktop::WorkflowApproval::ReviewAll,
+            context: String::new(),
         })
         .await
         .unwrap();
@@ -10164,6 +10241,7 @@ async fn a_workflow_runs_as_agents_once_it_is_approved() {
             goal: "Count the reads".into(),
             tasks,
             approval: desktop::WorkflowApproval::ReviewAll,
+            context: String::new(),
         })
         .await
         .unwrap();
@@ -11634,5 +11712,71 @@ async fn a_conversation_is_named_after_its_first_message_on_one_line() {
             .as_deref(),
         Some("align the reads against GRCh38 then count")
     );
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_skill_is_turned_into_a_workflow_to_review() {
+    let temp = tempfile::tempdir().unwrap();
+    let factory: ModelFactory = Arc::new(|_| Box::new(ConvertingModel));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let root = std::path::PathBuf::from(server.project_root(PROJECT).await.unwrap());
+    let skill = |name: &str, body: &str| {
+        let folder = root.join("skills").join(name);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: {name} method\n---\n{body}\n"),
+        )
+        .unwrap();
+        folder
+    };
+    skill(
+        "read-counting",
+        "# Read counting\n\nDivide the line count by four.",
+    );
+    let scripted = skill("scripted", "# Scripted\n\nRun the script.");
+    std::fs::create_dir_all(scripted.join("scripts")).unwrap();
+    std::fs::write(scripted.join("scripts/run.py"), "print(1)\n").unwrap();
+    let before = server.workflows().await.unwrap();
+
+    // With no skill picked, the model picks one; the workflow it writes
+    // comes back as a template to review.
+    let drafted = server
+        .workflow_from_skills(PROJECT, "Count the reads in my FASTQ files", &[])
+        .await
+        .unwrap();
+    assert!(drafted.id.is_empty());
+    assert_eq!(drafted.name, "From read-counting");
+    assert_eq!(drafted.goal, "Count the reads and report them");
+    assert_eq!(drafted.context, "Report counts per file.");
+    let titles: Vec<&str> = drafted
+        .tasks
+        .iter()
+        .map(|task| task.title.as_str())
+        .collect();
+    assert_eq!(titles, ["Count reads", "Report"]);
+    assert_eq!(drafted.tasks[1].after, [0]);
+    assert_eq!(drafted.tasks[0].capabilities, ["project_read"]);
+    assert!(drafted.tasks[0].agent.output_schema.is_some());
+    // Nothing is kept until it is saved.
+    assert_eq!(server.workflows().await.unwrap(), before);
+    let saved = server.save_workflow(drafted).await.unwrap();
+    assert_eq!(saved.len(), before.len() + 1);
+
+    // A skill that runs scripts of its own cannot be turned into one, nor
+    // can one that is not there.
+    for picked in ["scripted", "absent"] {
+        assert!(server
+            .workflow_from_skills(PROJECT, "Run it", &[picked.to_string()])
+            .await
+            .is_err());
+    }
+    assert!(server
+        .workflow_from_skills(PROJECT, "  ", &["read-counting".to_string()])
+        .await
+        .is_err());
     server.shutdown().await;
 }

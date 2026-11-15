@@ -287,6 +287,7 @@ mod tests {
             goal: "Find hits".into(),
             tasks: vec![task(&[]), task(&[0]), task(&[1])],
             approval: WorkflowApproval::ReviewAll,
+            context: String::new(),
         };
         assert_eq!(shape_line(&workflow), "3 tasks · 3 stages");
         workflow.tasks[2].after = vec![0];

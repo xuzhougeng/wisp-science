@@ -145,7 +145,11 @@ impl Workspace {
         self.layers.close(Layer::ConfirmRemoveWorkflow);
         self.layers.open(Layer::WorkflowForm);
         self.settings_error = None;
-        for (field, value) in self.workflow_fields.iter().zip([&shown.name, &shown.goal]) {
+        for (field, value) in
+            self.workflow_fields
+                .iter()
+                .zip([&shown.name, &shown.goal, &shown.context])
+        {
             field.update(cx, |input, cx| input.set_value(value.clone(), window, cx));
         }
         self.workflow_tasks = shown
@@ -165,7 +169,8 @@ impl Workspace {
         let Some(id) = self.workflow_editing.clone() else {
             return;
         };
-        let [name, goal] = [0, 1].map(|at| self.workflow_fields[at].read(cx).value().to_string());
+        let [name, goal, context] =
+            [0, 1, 2].map(|at| self.workflow_fields[at].read(cx).value().to_string());
         let mut tasks = Vec::with_capacity(self.workflow_tasks.len());
         for (index, draft) in self.workflow_tasks.iter().enumerate() {
             let typed = workflows::agent_fields(
@@ -204,6 +209,7 @@ impl Workspace {
             goal,
             tasks,
             approval: self.workflow_approval,
+            context,
         });
         self.change_workflows(reply, window, cx);
     }
@@ -300,6 +306,15 @@ impl Workspace {
                 div()
                     .h(px(90.))
                     .child(Input::new(&self.workflow_fields[1]).h_full()),
+            )
+            .child(label(tr(
+                "Context (optional): scope, conventions and how results are reported, \
+                 told to every task.",
+            )))
+            .child(
+                div()
+                    .h(px(60.))
+                    .child(Input::new(&self.workflow_fields[2]).h_full()),
             );
         // How a run as agents is approved.
         let mut approval = div()
@@ -858,17 +873,199 @@ impl Workspace {
         }
         if form_open && editing == Some("") {
             page.child(div().py_2().child(self.workflow_form(cx)))
+        } else if self.layers.contains(Layer::WorkflowFromSkills) {
+            page.child(div().py_2().child(self.from_skills_form(cx)))
         } else {
             page.child(
-                div().pt_3().h_flex().child(
-                    Button::new("workflow-add")
-                        .label(tr("New workflow"))
-                        .small()
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.edit_workflow(None, window, cx)),
-                        ),
-                ),
+                div()
+                    .pt_3()
+                    .h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("workflow-add")
+                            .label(tr("New workflow"))
+                            .small()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.edit_workflow(None, window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("workflow-from-skills")
+                            .label(tr("From skills"))
+                            .small()
+                            .disabled(self.state.project.is_none())
+                            .tooltip(tr(
+                                "Have the sub-agent model write a workflow of agents from skills' method documents",
+                            ))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_from_skills(window, cx)
+                            })),
+                    ),
             )
         }
+    }
+
+    /// Opens the panel that writes a workflow from skills, with the open
+    /// project's skills to pick from.
+    fn open_from_skills(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        self.layers.close(Layer::WorkflowForm);
+        self.layers.close(Layer::ConfirmRemoveWorkflow);
+        self.workflow_editing = None;
+        self.workflow_skill_picks.clear();
+        self.settings_error = None;
+        self.layers.open(Layer::WorkflowFromSkills);
+        self.workflow_request
+            .update(cx, |input, cx| input.focus(window, cx));
+        let reply = self.backend.skills(Some(project));
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(skills) => {
+                        this.workflow_skills =
+                            skills.into_iter().filter(|skill| skill.enabled).collect()
+                    }
+                    Err(error) => this.settings_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Has the workflow written, then opens it in the form to review and
+    /// save; nothing is kept before that.
+    fn write_from_skills(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        if self.workflow_converting {
+            return;
+        }
+        let request = self.workflow_request.read(cx).value().to_string();
+        self.workflow_converting = true;
+        self.settings_error = None;
+        let reply =
+            self.backend
+                .workflow_from_skills(project, request, self.workflow_skill_picks.clone());
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.workflow_converting = false;
+                // Closed meanwhile: what came back is not wanted.
+                if !this.layers.contains(Layer::WorkflowFromSkills) {
+                    return;
+                }
+                match result {
+                    Ok(workflow) => {
+                        this.layers.close(Layer::WorkflowFromSkills);
+                        this.workflow_skill_picks.clear();
+                        this.edit_workflow(Some(&workflow), window, cx);
+                    }
+                    Err(error) => this.settings_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// What the workflow is for, and the skills whose method documents it
+    /// is written from; none picked lets the model pick at most three.
+    fn from_skills_form(&self, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let mut skills = div().h_flex().flex_wrap().gap_1();
+        for (index, skill) in self.workflow_skills.iter().enumerate() {
+            let name = skill.name.clone();
+            let picked = self.workflow_skill_picks.contains(&name);
+            skills = skills.child(
+                Button::new(("workflow-skill", index))
+                    .label(skill.name.clone())
+                    .xsmall()
+                    .selected(picked)
+                    .tooltip(SharedString::from(skill.description.clone()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let picks = &mut this.workflow_skill_picks;
+                        match picks.iter().position(|kept| *kept == name) {
+                            Some(at) => {
+                                picks.remove(at);
+                            }
+                            None => picks.push(name.clone()),
+                        }
+                        cx.notify();
+                    })),
+            );
+        }
+        if self.workflow_skills.is_empty() {
+            skills = skills.child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(tr("This project has no skills turned on.")),
+            );
+        }
+        div()
+            .v_flex()
+            .gap_2()
+            .p_3()
+            .w(px(660.))
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(cx.theme().border)
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(tr("A workflow from skills")),
+            )
+            .child(div().text_xs().text_color(muted).child(tr(
+                "The sub-agent model reads the skills' method documents and writes a workflow of \
+                 agents from them, each task with its own instructions and result shape. It opens \
+                 here to review before it is saved. Skills that bring scripts of their own cannot \
+                 be turned into a workflow yet.",
+            )))
+            .child(
+                div()
+                    .h(px(70.))
+                    .child(Input::new(&self.workflow_request).h_full()),
+            )
+            .child(div().text_xs().text_color(muted).child(tr(
+                "Skills to write it from; pick none and the model picks at most three.",
+            )))
+            .child(skills)
+            .child(
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("workflow-skills-write")
+                            .label(if self.workflow_converting {
+                                tr("Writing the workflow…")
+                            } else {
+                                tr("Write the workflow")
+                            })
+                            .small()
+                            .primary()
+                            .disabled(self.workflow_converting)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.write_from_skills(window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("workflow-skills-cancel")
+                            .label(tr("Cancel"))
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.layers.close(Layer::WorkflowFromSkills);
+                                this.workflow_skill_picks.clear();
+                                cx.notify();
+                            })),
+                    ),
+            )
     }
 }

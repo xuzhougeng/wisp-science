@@ -1041,6 +1041,18 @@ impl Backend {
         self.local(move |host| async move { host.run_workflow(&project, &id).await })
     }
 
+    /// Writes a workflow from skills' method documents, to review.
+    pub fn workflow_from_skills(
+        &self,
+        project: String,
+        request: String,
+        skills: Vec<String>,
+    ) -> Reply<wisp_server::desktop::Workflow> {
+        self.local(move |host| async move {
+            host.workflow_from_skills(&project, &request, &skills).await
+        })
+    }
+
     /// Drafts a workflow as agents in a new conversation of `project`.
     pub fn draft_workflow(
         &self,

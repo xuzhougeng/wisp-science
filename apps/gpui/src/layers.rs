@@ -159,6 +159,8 @@ pub enum Layer {
     WorkflowForm,
     /// Question before a workflow is removed.
     ConfirmRemoveWorkflow,
+    /// Writing a workflow from skills, on the Workflows page of Settings.
+    WorkflowFromSkills,
     /// The form for a quick action, on its page of Settings.
     QuickActionForm,
     /// Question before a quick action is removed.
@@ -252,6 +254,7 @@ impl Layer {
             | Layer::QuickActionForm
             | Layer::WorkflowForm
             | Layer::ConfirmRemoveWorkflow
+            | Layer::WorkflowFromSkills
             | Layer::ConfirmRemovePlugin
             | Layer::ConfirmResetRemoteCode
             | Layer::ConfirmRemoveQuickAction => Some(Layer::Settings),
@@ -631,6 +634,15 @@ mod tests {
         stack.open(Layer::WorkflowForm);
         assert!(stack.close(Layer::Settings));
         assert!(!stack.contains(Layer::WorkflowForm));
+        // Writing one from skills is inside Settings too: Escape closes it
+        // and leaves Settings open.
+        stack.open(Layer::Settings);
+        stack.open(Layer::WorkflowFromSkills);
+        assert_eq!(stack.dismiss_top(), Some(Layer::WorkflowFromSkills));
+        assert!(stack.contains(Layer::Settings));
+        stack.open(Layer::WorkflowFromSkills);
+        assert!(stack.close(Layer::Settings));
+        assert!(!stack.contains(Layer::WorkflowFromSkills));
         // So is the quick action form, and the question before removing one.
         stack.open(Layer::Settings);
         stack.open(Layer::QuickActionForm);

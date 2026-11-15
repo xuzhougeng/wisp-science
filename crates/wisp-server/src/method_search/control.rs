@@ -83,6 +83,20 @@ impl Server {
         model_profile_id: &str,
         frame: Option<&str>,
     ) -> Result<Box<dyn wisp_llm::Provider>> {
+        self.profile_provider(model_profile_id, frame, Some(CANDIDATE_MAX_TOKENS))
+            .await
+    }
+
+    /// A provider for host-side model work: `worker` is the delegation
+    /// worker (the configured sub-agent model, or `frame`'s own),
+    /// `conversation` is `frame`'s model, and anything else names a model.
+    /// With `cap`, its output is held to that many tokens.
+    pub(crate) async fn profile_provider(
+        &self,
+        model_profile_id: &str,
+        frame: Option<&str>,
+        cap: Option<u64>,
+    ) -> Result<Box<dyn wisp_llm::Provider>> {
         let store = &self.0.store;
         let own = match frame {
             Some(frame) => store
@@ -114,10 +128,12 @@ impl Server {
         if let Some(route) = crate::network::route(&routes.model_proxy_url) {
             provider.proxy = Some(route);
         }
-        provider.max_tokens = match provider.max_tokens {
-            0 => CANDIDATE_MAX_TOKENS,
-            cap => cap.min(CANDIDATE_MAX_TOKENS),
-        };
+        if let Some(cap) = cap {
+            provider.max_tokens = match provider.max_tokens {
+                0 => cap,
+                own => own.min(cap),
+            };
+        }
         Ok((self.0.models)(provider))
     }
 

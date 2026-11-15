@@ -853,13 +853,20 @@ Limits of this slice:
   takes at most 8 tasks, the delegation limit. Not ported: ACP executors
   and a named model profile per task (a task picks the sub-agent model or
   the conversation's), tool-call and cost budgets, dragging tasks about on the map,
-  converting skills into a workflow, and literature and web research
+  skills that bring scripts of their own as conversion sources, and literature and web research
   capabilities.
   A task can only need tasks listed before it; besides the numbered
   After task buttons, the form shows the workflow as a map, each task in
   the column of its stage with an edge to each task that needs it, where
   clicking a task and then another makes the later one need the earlier
-  one (or no longer need it). The two libraries are
+  one (or no longer need it). A workflow can also carry a context
+  (scope, conventions, how results are reported) that every task is
+  told. From skills follows the WebView's `plan_skill_portfolio`: the
+  sub-agent model reads the picked skills' method documents in full
+  (or first picks at most three for the request) and writes a workflow
+  of agents from them through the shared `workflow_conversion` checks,
+  repaired once if the host rejects it; it opens in the form to review,
+  and nothing is kept until it is saved. The two libraries are
   separate: this desktop keeps its own under `desktop.workflows` and
   neither reads nor changes the WebView's `workflow_templates`. It starts
   with two that can be changed or removed; a workflow has at most 20
