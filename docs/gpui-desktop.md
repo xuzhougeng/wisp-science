@@ -470,8 +470,10 @@ Limits of this slice:
   conversation has one that adds it to the message being written.
 - The desktop now loads the skills that ship with Wisp (`skills/` in a
   checkout; an installed build has to name its resource directory) after any
-  directory in `WISP_SKILLS_PATH`, then the project's own `skills/` and
-  `.wisp/skills/`. Before, only the last two and the variable were read, so a
+  directory in `WISP_SKILLS_PATH` and your own skills in `~/.wisp/skills`
+  (the WebView's personal folder, which wins over the bundled ones), then
+  the project's own `skills/` and `.wisp/skills/`. A headless host reads
+  no personal folder. Before, only the last two and the variable were read, so a
   desktop without the variable had no bundled skills. A headless host is
   unchanged. Turning a skill off uses the WebView's list (`disabled_skills`)
   and applies to every project from the next turn: the model's skill tools

@@ -29,6 +29,10 @@ pub struct Config {
     pub model: Option<ModelConfig>,
     pub max_iterations: usize,
     pub skills: Vec<PathBuf>,
+    /// Your own skills, as the WebView desktop keeps them (`~/.wisp/skills`):
+    /// read, and where skills from the community directory or GitHub are
+    /// installed. A headless host has none.
+    pub personal_skills: Option<PathBuf>,
 }
 
 fn positive(get: &impl Fn(&str) -> Option<String>, key: &str) -> Result<Option<u64>> {
@@ -136,6 +140,7 @@ impl Config {
                 config.skills.push(bundled);
             }
         }
+        config.personal_skills = std::env::home_dir().map(|home| home.join(".wisp").join("skills"));
         Ok(config)
     }
 
@@ -212,6 +217,7 @@ impl Config {
             skills: get("WISP_SKILLS_PATH")
                 .map(|v| std::env::split_paths(&v).collect())
                 .unwrap_or_default(),
+            personal_skills: None,
         })
     }
 }

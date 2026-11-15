@@ -55,6 +55,7 @@ mod runtimes;
 mod sample;
 mod schedules;
 mod session_import;
+mod skill_store;
 mod subagents;
 mod subscriptions;
 mod terminals;

@@ -831,6 +831,7 @@ pub(crate) fn config(root: &Path) -> Config {
         }),
         max_iterations: 5,
         skills: vec![],
+        personal_skills: None,
     }
 }
 
@@ -4422,6 +4423,107 @@ done
     assert!(said.contains(&format!("cwd={}", root.display())), "{said}");
     assert!(said.contains(&format!("root={}", root.display())), "{said}");
     assert!(said.contains("token=none"), "{said}");
+    server.shutdown().await;
+}
+
+/// GitHub as a test sees it: one repository at one commit.
+struct FakeGithub {
+    archive: Vec<u8>,
+}
+#[async_trait]
+impl wisp_skills::distribution::GithubApi for FakeGithub {
+    async fn json(&self, path: &str) -> Result<Option<Value>, String> {
+        Ok(path
+            .starts_with("/repos/author/research/commits/")
+            .then(|| json!({"sha": "a".repeat(40)})))
+    }
+}
+#[async_trait]
+impl crate::skill_store::Fetch for FakeGithub {
+    async fn archive(&self, _: &wisp_dto::SkillInstallSource) -> Result<Vec<u8>, String> {
+        Ok(self.archive.clone())
+    }
+    async fn index(&self) -> Result<Vec<u8>, String> {
+        Err("No network here.".into())
+    }
+}
+
+#[tokio::test]
+async fn a_skill_from_github_goes_into_your_own_skills_once() {
+    use std::io::Write;
+    let temp = tempfile::tempdir().unwrap();
+    let mut cfg = config(temp.path());
+    let personal = temp.path().join("home/.wisp/skills");
+    cfg.personal_skills = Some(personal.clone());
+    let server = Server::open_with_models(cfg, models(Arc::default(), false))
+        .await
+        .unwrap();
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for (path, text) in [
+        (
+            "research-main/skills/sample/SKILL.md",
+            "---\nname: sample\ndescription: Count reads the lab way\n---\nDo it.\n",
+        ),
+        ("research-main/skills/sample/references/guide.md", "guide"),
+    ] {
+        zip.start_file(path, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(text.as_bytes()).unwrap();
+    }
+    let github = FakeGithub {
+        archive: zip.finish().unwrap().into_inner(),
+    };
+    let found = server
+        .preview_with(
+            &github,
+            PROJECT,
+            "https://github.com/author/research",
+            "main",
+        )
+        .await
+        .unwrap();
+    let sample = found
+        .iter()
+        .find(|candidate| candidate.name == "sample")
+        .unwrap()
+        .clone();
+    assert!(sample.conflict.is_none(), "{:?}", sample.conflict);
+    assert_eq!(sample.source.commit, "a".repeat(40));
+
+    let installed = server
+        .install_with(&github, PROJECT, sample.source.clone())
+        .await
+        .unwrap();
+    assert_eq!(installed.name, "sample");
+    assert!(personal.join("sample/SKILL.md").is_file());
+    // Every project has it, as one of your own.
+    let skills = server.skills(Some(PROJECT)).await.unwrap();
+    let mine = skills.iter().find(|skill| skill.name == "sample").unwrap();
+    assert_eq!(mine.source, "global");
+    // Asked again, the name is taken and nothing is replaced.
+    std::fs::write(
+        personal.join("sample/SKILL.md"),
+        "---\nname: sample\ndescription: mine\n---\n",
+    )
+    .unwrap();
+    let again = server
+        .install_with(&github, PROJECT, sample.source)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(again.contains("taken"), "{again}");
+    assert!(std::fs::read_to_string(personal.join("sample/SKILL.md"))
+        .unwrap()
+        .contains("mine"));
+
+    // The community directory: as shipped, and said so when it cannot be
+    // read anew.
+    let shipped = crate::skill_store::community(&github, false).await.unwrap();
+    assert!(!shipped.entries.is_empty());
+    assert!(shipped.notice.is_none());
+    let offline = crate::skill_store::community(&github, true).await.unwrap();
+    assert_eq!(offline.entries.len(), shipped.entries.len());
+    assert!(offline.notice.unwrap().contains("No network here."));
     server.shutdown().await;
 }
 

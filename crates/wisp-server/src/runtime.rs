@@ -30,18 +30,36 @@ fn skill_paths(
 ) -> Vec<(PathBuf, wisp_skills::SkillSource)> {
     use wisp_skills::SkillSource;
     let bundled = wisp_skills::bundled_dir();
-    let mut paths: Vec<_> = config
-        .skills
+    let mut paths: Vec<(PathBuf, SkillSource)> = Vec::new();
+    for path in &config.skills {
+        let source = if Some(path) == bundled.as_ref() {
+            SkillSource::Bundled
+        } else {
+            SkillSource::Extra
+        };
+        // Your own skills win over the bundled ones, as in the WebView;
+        // directories you name win over both.
+        if source == SkillSource::Bundled {
+            paths.extend(
+                config
+                    .personal_skills
+                    .clone()
+                    .map(|dir| (dir, SkillSource::Global)),
+            );
+        }
+        paths.push((path.clone(), source));
+    }
+    if !paths
         .iter()
-        .map(|path| {
-            let source = if Some(path) == bundled.as_ref() {
-                SkillSource::Bundled
-            } else {
-                SkillSource::Extra
-            };
-            (path.clone(), source)
-        })
-        .collect();
+        .any(|(_, source)| *source == SkillSource::Global)
+    {
+        paths.extend(
+            config
+                .personal_skills
+                .clone()
+                .map(|dir| (dir, SkillSource::Global)),
+        );
+    }
     if let Some(root) = root {
         paths.push((root.join(".wisp/skills"), SkillSource::Project));
         paths.push((root.join("skills"), SkillSource::Project));
