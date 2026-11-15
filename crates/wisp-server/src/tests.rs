@@ -340,6 +340,80 @@ impl Provider for SlowAfterwardsModel {
     }
 }
 
+/// A mandate's agent: in a round it asks the researcher for the reference
+/// genome; told where it is, it ends the round saying what it did.
+struct MandateModel;
+
+#[async_trait]
+impl Provider for MandateModel {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+        Ok(Completion {
+            content: "ok".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        messages: &[Message],
+        _tools: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        let last_user = messages
+            .iter()
+            .rev()
+            .find(|m| m.role == wisp_llm::Role::User)
+            .map(|m| m.content.as_text())
+            .unwrap_or_default();
+        let answered = messages
+            .iter()
+            .rev()
+            .take_while(|m| m.role != wisp_llm::Role::User)
+            .any(|m| m.role == wisp_llm::Role::Tool);
+        let call = |name: &str, args: serde_json::Value| {
+            Ok(Completion {
+                tool_calls: vec![ToolCall {
+                    id: format!("{name}-1"),
+                    kind: "function".into(),
+                    function: wisp_llm::FunctionCall {
+                        name: name.into(),
+                        arguments: args.to_string(),
+                    },
+                }],
+                finish_reason: Some("tool_calls".into()),
+                ..Default::default()
+            })
+        };
+        let text = if answered {
+            "Done for now."
+        } else if last_user.contains("data/genome.fa") {
+            return call(
+                "end_round",
+                json!({"done": "Indexed the genome", "next_step": "Align the reads"}),
+            );
+        } else if last_user.contains("Continue this mandate") {
+            return call(
+                "request_assistance",
+                json!({"kind": "materials", "what": "Upload the reference genome"}),
+            );
+        } else {
+            "ok"
+        };
+        sink.on_text(text);
+        Ok(Completion {
+            content: text.into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+}
+
 pub(crate) fn config(root: &Path) -> Config {
     Config {
         data: root.join("data"),
@@ -9268,6 +9342,104 @@ async fn an_exploration_starts_from_an_answer_while_follow_ups_are_still_asked_f
         .start_exploration(&project, &source, None, "Try A")
         .await
         .unwrap();
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_mandate_asks_for_what_it_needs_and_goes_on_once_answered() {
+    let temp = tempfile::tempdir().unwrap();
+    let factory: ModelFactory = Arc::new(|_| Box::new(MandateModel));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let mandate = server
+        .create_mandate(wisp_dto::MandateDraft {
+            project_id: PROJECT.into(),
+            goal: "Keep the alignment up to date.".into(),
+            interval_secs: 86_400,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(server
+        .create_mandate(wisp_dto::MandateDraft {
+            project_id: "missing".into(),
+            goal: "x".into(),
+            interval_secs: 86_400,
+            ..Default::default()
+        })
+        .await
+        .is_err());
+    server.run_mandate_now(&mandate.id).await.unwrap();
+    // The round asks for the genome: the mandate waits, and the research
+    // assistant is told.
+    let waiting = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        loop {
+            let all = server.mandates().await.unwrap();
+            if all[0].request.is_some() && all[0].mandate.status == "waiting" {
+                let (_, frame) = server.open_assistant().await.unwrap();
+                if texts_of(&server, &frame)
+                    .await
+                    .iter()
+                    .any(|text| text.starts_with("职责需要你 / A mandate needs you"))
+                {
+                    return all;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the mandate must ask and the assistant be told");
+    let frame = waiting[0].mandate.frame_id.clone().unwrap();
+    turn_done(&server, &frame).await;
+    let list = server.conversations(PROJECT, "", false).await.unwrap();
+    let row = list.rows.iter().find(|row| row.id == frame).unwrap();
+    assert_eq!(row.title, waiting[0].mandate.name);
+    // Its turns are given the brief.
+    assert_eq!(
+        waiting[0].request.as_ref().unwrap().what,
+        "Upload the reference genome"
+    );
+
+    // Answered, it goes on and ends the round with what it did.
+    let replied = server
+        .reply_to_mandate(&mandate.id, "It is in data/genome.fa")
+        .await
+        .unwrap();
+    assert_eq!(replied.status, "active");
+    let done = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        loop {
+            let all = server.mandates().await.unwrap();
+            if all[0]
+                .last_round
+                .as_ref()
+                .is_some_and(|round| round.done == "Indexed the genome")
+            {
+                return all;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the round must be recorded");
+    assert!(done[0].request.is_none());
+    turn_done(&server, &frame).await;
+
+    // Closed, it runs no more and its conversation is an ordinary one.
+    let closed = server
+        .set_mandate_status(&mandate.id, "done")
+        .await
+        .unwrap();
+    assert_eq!(closed.status, "done");
+    assert!(server.run_mandate_now(&mandate.id).await.is_err());
+    assert!(server.reply_to_mandate(&mandate.id, "more").await.is_err());
+    assert!(server
+        .set_mandate_status(&mandate.id, "gone")
+        .await
+        .is_err());
+    server.delete_mandate(&mandate.id).await.unwrap();
+    assert!(server.mandates().await.unwrap().is_empty());
     server.shutdown().await;
 }
 

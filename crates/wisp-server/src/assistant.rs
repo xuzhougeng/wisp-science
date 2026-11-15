@@ -10,7 +10,8 @@
 //! Plan items live in `assistant_tasks`, outside the context, so
 //! compaction never loses them. Dispatched work reports back into the
 //! assistant's conversation once it ends, reviewed by the assistant's
-//! model, without resuming it. Research mandates are not ported yet.
+//! model, without resuming it. Research mandates are listed and answered
+//! through it.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -55,7 +56,11 @@ Send a complete instruction and pass `plan_item_id` when appropriate. After the 
 the researcher the task has started and you will report its result, then end your turn. Completion is delivered \
 automatically: do not repeatedly poll or keep the assistant turn open waiting for project work.\n\
 - Follow up: `project_session_result` tells whether a dispatched conversation is still running and what it \
-answered.\n\n\
+answered.\n\
+- Mandates: `research_mandates` lists the long-running research mandates across projects with their status, \
+KPIs, latest round and anything they are waiting on. Notices headed '职责需要你 / A mandate needs you' in this \
+conversation come from them. When the researcher answers what a mandate asked for, or gives it feedback, pass \
+their words on with `reply_to_mandate`; never answer a mandate's request yourself.\n\n\
 Rules:\n\
 - You cannot read or write files, run code, commands or analyses, or search literature. When the researcher \
 asks for such work, dispatch it to the right project (ask which one if unclear) instead of attempting it.\n\
@@ -502,6 +507,8 @@ impl Server {
             tool(Kind::Plan),
             tool(Kind::Dispatch),
             tool(Kind::Result),
+            tool(Kind::Mandates),
+            tool(Kind::MandateReply),
         ]
     }
 
@@ -713,6 +720,31 @@ impl Server {
         }
     }
 
+    /// Passes the researcher's words on to a mandate.
+    async fn assistant_mandate_reply(&self, args: &Value) -> Result<String, String> {
+        let id = args["mandate_id"].as_str().unwrap_or_default().trim();
+        let overview = crate::mandates::all_mandates(&self.0.store)
+            .await
+            .map_err(|error| format!("{error:#}"))?
+            .into_iter()
+            .find(|overview| overview.mandate.id == id)
+            .ok_or_else(|| format!("No mandate has id '{id}'. Call research_mandates first."))?;
+        let had_request = overview.request.is_some();
+        let mandate = self
+            .reply_to_mandate(id, args["text"].as_str().unwrap_or_default())
+            .await
+            .map_err(|error| format!("{error:#}"))?;
+        Ok(format!(
+            "Passed on to '{}'. {} Its next round has started in its own conversation; tell the researcher it was passed on and finish this turn.",
+            mandate.name,
+            if had_request {
+                "Its open request is answered."
+            } else {
+                "It had no open request, so this is feedback for its next round."
+            }
+        ))
+    }
+
     /// Status and answer of a project conversation, for the assistant.
     async fn session_result(&self, session: &str) -> Result<String, String> {
         let reference = self
@@ -753,6 +785,8 @@ enum Kind {
     Plan,
     Dispatch,
     Result,
+    Mandates,
+    MandateReply,
 }
 
 struct AssistantTool {
@@ -771,6 +805,8 @@ impl Tool for AssistantTool {
             Kind::Plan => "research_plan",
             Kind::Dispatch => "dispatch_to_project",
             Kind::Result => "project_session_result",
+            Kind::Mandates => "research_mandates",
+            Kind::MandateReply => "reply_to_mandate",
         }
     }
 
@@ -842,6 +878,21 @@ impl Tool for AssistantTool {
                     "required": ["project_id", "instruction"]
                 }),
             ),
+            Kind::Mandates => (
+                "List the researcher's long-running research mandates across projects: status, KPI values against targets, the latest round, the next round, and any request waiting on the researcher. Each line carries the mandate id for reply_to_mandate.",
+                json!({"type": "object", "properties": {}}),
+            ),
+            Kind::MandateReply => (
+                "Pass the researcher's own words to a research mandate: their answer to what it asked for, or feedback on how it should work. An open request is closed with the answer and the mandate's next round starts at once in its own conversation. Returns once that round has been started; do not wait for it.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "mandate_id": {"type": "string", "description": "From research_mandates."},
+                        "text": {"type": "string", "description": "What the researcher said, in their words. Do not add instructions of your own."}
+                    },
+                    "required": ["mandate_id", "text"]
+                }),
+            ),
             Kind::Result => (
                 "Check a project conversation (e.g. one started with dispatch_to_project): whether it is still running and its latest answer.",
                 json!({
@@ -855,7 +906,7 @@ impl Tool for AssistantTool {
     }
 
     fn read_only(&self) -> bool {
-        !matches!(self.kind, Kind::Plan | Kind::Dispatch)
+        !matches!(self.kind, Kind::Plan | Kind::Dispatch | Kind::MandateReply)
     }
 
     fn preview(&self, args: &Value) -> String {
@@ -882,7 +933,8 @@ impl Tool for AssistantTool {
                 .map(|text| clip(text, 80))
                 .unwrap_or_default(),
             Kind::Result => args["session_id"].as_str().unwrap_or_default().into(),
-            Kind::Projects => String::new(),
+            Kind::MandateReply => clip(args["text"].as_str().unwrap_or_default(), 80),
+            Kind::Projects | Kind::Mandates => String::new(),
         }
     }
 
@@ -940,6 +992,10 @@ impl Tool for AssistantTool {
                     .session_result(args["session_id"].as_str().unwrap_or_default())
                     .await
             }
+            Kind::Mandates => crate::mandates::summary_text(store)
+                .await
+                .map_err(|error| format!("{error:#}")),
+            Kind::MandateReply => self.server.assistant_mandate_reply(args).await,
         };
         match outcome {
             Ok(text) => ToolResult::ok(text),

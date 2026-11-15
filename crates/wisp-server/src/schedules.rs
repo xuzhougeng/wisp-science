@@ -319,6 +319,8 @@ impl Server {
                 server.daily_recap_tick().await;
                 // And the habits are looked over once a week.
                 server.memory_tidy_tick().await;
+                // Research mandates run their due rounds.
+                server.fire_due_mandates().await;
             }
         });
     }

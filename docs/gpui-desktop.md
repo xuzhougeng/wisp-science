@@ -1026,8 +1026,23 @@ Limits of this slice:
   to a week of days per run, and only the assistant reads it. Not
   ported: privacy mode (every project is visible to the assistant),
   the side model that answers approvals of dispatched work, a selected
-  project as the message's scope, the assistant on WeChat, mandates and
-  the weekly memory tidy.
+  project as the message's scope, and the assistant on WeChat. Its
+  `research_mandates` and `reply_to_mandate` list the mandates and pass
+  the researcher's words on.
+- Research mandates follow the WebView's `mandates.rs` and reuse
+  `wisp-app`'s mandate logic: a mandate is a standing goal of a project
+  whose agent works in rounds, on its cadence and daily cap, in one
+  conversation of the project named after it. Every turn there, a due
+  round or one the researcher writes, is given the mandate's brief and
+  its `end_round` and `request_assistance` tools, and asks before
+  anything that changes state unless the mandate allows it. A message
+  the researcher writes there while it waits answers its request. A
+  request is added to the research assistant's conversation; chat apps
+  are not told. A round that ends without `end_round` is still recorded
+  from its last answer, an ended period closes the mandate, and closing
+  withdraws an open request. Rounds run while the app is open, looked
+  for with the scheduled tasks. The window has no mandates page yet, and
+  mandate reports are not written yet.
 - Scheduled tasks and the daily recap are the other parts of the
   WebView's research assistant that are ported. Tasks fire only while the app is open, looked for
   every 30 seconds; a time that was missed fires once at the next look

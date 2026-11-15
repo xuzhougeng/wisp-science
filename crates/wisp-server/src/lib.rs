@@ -20,6 +20,7 @@ mod explorations;
 mod export;
 mod files;
 mod follow_ups;
+mod mandates;
 pub mod mcp;
 mod memory_tidy;
 mod model_view;
@@ -663,7 +664,20 @@ impl Server {
             .context("Server is busy; at most four turns can run concurrently")?;
         // Only the desktop's own turns (and its subagents') may run with the
         // conversation's full access.
+        // A mandate's conversation is given its brief and tools on every
+        // turn; a message the researcher wrote answers its open request.
+        let mandate = mandates::turn_context(
+            &self.0.store,
+            project,
+            &request.session_id,
+            (!request.resume).then_some(request.message.as_str()),
+        )
+        .await;
+        let mandate_reviews = mandate
+            .as_ref()
+            .is_some_and(|mandate| mandate.review_mutations);
         let full_access = options.full_access
+            && !mandate_reviews
             && matches!(
                 origin,
                 channels::TurnOrigin::Desktop
@@ -714,12 +728,21 @@ impl Server {
                     .await?,
             ),
             (None, Some(model)) => {
-                let agent = self
+                let mut notes = notes;
+                if let Some(mandate) = &mandate {
+                    notes.push(mandate.brief.clone());
+                }
+                let mut agent = self
                     .wisp_agent(
                         project, root, &request, &session, &options, &model, lab_mail, notes,
                         subagents,
                     )
                     .await?;
+                if let Some(mandate) = &mandate {
+                    for tool in self.mandate_tools(&mandate.mandate_id) {
+                        agent.add_tool(tool);
+                    }
+                }
                 Engine::Wisp(Box::new(agent), model.provider.clone())
             }
             (None, None) => unreachable!("a model is picked when no ACP agent runs"),
