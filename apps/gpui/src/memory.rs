@@ -10,8 +10,12 @@ pub const LIMIT: usize = 4_000;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
     /// Text taken from a message of this conversation, to be kept either for
-    /// the project or as a habit.
-    Remember { session: Option<String> },
+    /// the project or as a habit; `turn` is the turn it is from, which the
+    /// model can draft a memory of.
+    Remember {
+        session: Option<String>,
+        turn: Option<wisp_server::desktop::TurnRef>,
+    },
     /// A habit: a new one, or the one with this id.
     Habit(Option<String>),
     /// One of the project's notes, by file name.
@@ -49,6 +53,15 @@ impl Target {
     /// Whether the entry is held to [`LIMIT`]. A note is a whole file.
     fn limited(&self) -> bool {
         !matches!(self, Target::Note(_))
+    }
+}
+
+/// What the editor says of where the model suggested keeping its draft.
+pub fn suggested_scope(scope: &str) -> &'static str {
+    if scope == "global" {
+        tr("The model suggests keeping it as a habit.")
+    } else {
+        tr("The model suggests keeping it for this project.")
     }
 }
 
@@ -250,6 +263,18 @@ mod tests {
     }
 
     #[test]
+    fn the_suggested_place_is_said_in_words() {
+        assert_eq!(
+            suggested_scope("global"),
+            "The model suggests keeping it as a habit."
+        );
+        assert_eq!(
+            suggested_scope("project"),
+            "The model suggests keeping it for this project."
+        );
+    }
+
+    #[test]
     fn a_preview_is_one_line_cut_on_characters() {
         assert_eq!(preview("  one\n\ntwo   three ", 40), "one two three");
         let long = preview(&"基因 ".repeat(50), 20);
@@ -261,7 +286,10 @@ mod tests {
     fn an_entry_is_held_to_the_limit_and_a_note_is_not() {
         let long = "x".repeat(LIMIT + 5);
         assert_eq!(offered(&format!("  {long}  ")).chars().count(), LIMIT);
-        let remember = Target::Remember { session: None };
+        let remember = Target::Remember {
+            session: None,
+            turn: None,
+        };
         assert_eq!(
             problem(&remember, "  "),
             Some("Write something first.".into())

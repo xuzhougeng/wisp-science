@@ -12117,3 +12117,98 @@ async fn usage_ranks_the_skills_and_mcp_tools_the_model_called() {
     );
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_memory_is_drafted_from_a_turn_for_the_researcher_to_keep() {
+    /// Answers, and drafts a memory when asked for one.
+    struct Drafting;
+    #[async_trait]
+    impl Provider for Drafting {
+        fn name(&self) -> &str {
+            "offline"
+        }
+        fn model(&self) -> &str {
+            "offline"
+        }
+        async fn complete(
+            &self,
+            messages: &[Message],
+            _: &[ToolSchema],
+        ) -> wisp_llm::Result<Completion> {
+            let drafting = messages[0]
+                .content
+                .as_text()
+                .contains("You prepare a memory draft");
+            let evidence = messages
+                .last()
+                .map(|m| m.content.as_text())
+                .unwrap_or_default();
+            let content = if drafting && evidence.contains("log scale") {
+                r#"{"scope": "global", "content": "Plot counts on a log scale."}"#
+            } else {
+                "{}"
+            };
+            Ok(Completion {
+                content: content.into(),
+                finish_reason: Some("stop".into()),
+                ..Default::default()
+            })
+        }
+        async fn stream(
+            &self,
+            _: &[Message],
+            _: &[ToolSchema],
+            sink: &mut dyn StreamSink,
+        ) -> wisp_llm::Result<Completion> {
+            sink.on_text("Noted.");
+            Ok(Completion {
+                content: "Noted.".into(),
+                finish_reason: Some("stop".into()),
+                ..Default::default()
+            })
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let factory: ModelFactory = Arc::new(|_| Box::new(Drafting));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    send(&server, &session, "Always plot counts on a log scale")
+        .await
+        .unwrap();
+    turn_done(&server, &session).await;
+    let draft = server
+        .suggest_memory(PROJECT, &session, None)
+        .await
+        .unwrap();
+    assert_eq!(draft.scope, "global");
+    assert_eq!(draft.content, "Plot counts on a log scale.");
+    let named = desktop::TurnRef {
+        from_end: 0,
+        text: "Always plot counts on a log scale".into(),
+    };
+    assert_eq!(
+        server
+            .suggest_memory(PROJECT, &session, Some(&named))
+            .await
+            .unwrap(),
+        draft
+    );
+    // Nothing was kept, a turn that is not there has no draft, and only
+    // the conversation's project asks.
+    assert!(server.memory(PROJECT).await.unwrap().habits.is_empty());
+    let absent = desktop::TurnRef {
+        from_end: 3,
+        text: "Never said".into(),
+    };
+    assert!(server
+        .suggest_memory(PROJECT, &session, Some(&absent))
+        .await
+        .is_err());
+    assert!(server
+        .suggest_memory("other", &session, None)
+        .await
+        .is_err());
+    server.shutdown().await;
+}

@@ -1240,7 +1240,10 @@ impl Server {
 
     /// Every saved message of a conversation with its sequence number,
     /// oldest first.
-    async fn numbered_transcript(&self, session: &str) -> Result<Vec<(i64, wisp_llm::Message)>> {
+    pub(crate) async fn numbered_transcript(
+        &self,
+        session: &str,
+    ) -> Result<Vec<(i64, wisp_llm::Message)>> {
         // Pages come newest first.
         let mut pages = Vec::new();
         let mut before = None;
@@ -5511,6 +5514,7 @@ pub use crate::schedules::{ScheduleInput, ScheduleRow, ScheduleRun, MIN_INTERVAL
 pub use crate::subscriptions::{
     CodexAccount, CodexUsage, SignInChallenge, SignInState, SignInStatus, Subscription, UsageWindow,
 };
+pub use crate::turn_memory::MemorySuggestion;
 pub use crate::turn_undo::TurnFiles;
 pub use crate::updates::UpdateCheck;
 pub use crate::workflows::{

@@ -346,6 +346,9 @@ pub struct Workspace {
     memory_request: u64,
     /// What the memory editor is writing, or the delete question is about.
     memory_target: Option<crate::memory::Target>,
+    /// The model is drafting a memory, and where it said to keep the last draft.
+    memory_suggesting: bool,
+    memory_suggested: Option<String>,
     memory_text: Entity<InputState>,
     /// Which palette the window wears.
     appearance: crate::theme::Appearance,
@@ -1241,6 +1244,8 @@ impl Workspace {
             memory: None,
             memory_request: 0,
             memory_target: None,
+            memory_suggesting: false,
+            memory_suggested: None,
             memory_text,
             appearance: Default::default(),
             language: Default::default(),

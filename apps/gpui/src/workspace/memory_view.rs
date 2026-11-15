@@ -270,6 +270,52 @@ impl Workspace {
         self.change_memory(reply, |_, _, _| {}, window, cx);
     }
 
+    /// Has the model draft what is worth keeping from the turn being
+    /// remembered, in place of the text in the editor.
+    fn suggest_memory(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (
+            Some(project),
+            Some(Target::Remember {
+                session: Some(session),
+                turn,
+            }),
+        ) = (self.state.project.clone(), self.memory_target.clone())
+        else {
+            return;
+        };
+        if self.memory_suggesting {
+            return;
+        }
+        self.memory_suggesting = true;
+        self.error = None;
+        let reply = self.backend.suggest_memory(project, session.clone(), turn);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.memory_suggesting = false;
+                // Only into the editor it was asked from.
+                let still = matches!(
+                    &this.memory_target,
+                    Some(Target::Remember { session: Some(open), .. }) if *open == session
+                ) && this.layers.contains(Layer::MemoryEditor);
+                if !still {
+                    return;
+                }
+                match result {
+                    Ok(draft) => {
+                        this.memory_text
+                            .update(cx, |input, cx| input.set_value(draft.content, window, cx));
+                        this.memory_suggested = Some(draft.scope);
+                    }
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     /// Opens the editor on `target` with `text` in it.
     fn open_memory_editor(
         &mut self,
@@ -279,6 +325,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.memory_target = Some(target);
+        self.memory_suggested = None;
         self.layers.close(Layer::ConfirmDeleteMemory);
         self.layers.open(Layer::MemoryEditor);
         self.memory_text.update(cx, |input, cx| {
@@ -334,8 +381,9 @@ impl Workspace {
             return;
         };
         let session = self.state.session.clone();
+        let turn = crate::controls::turn_of(&self.rows, index);
         self.show_panel_tab(PanelTab::Memory, window, cx);
-        self.open_memory_editor(Target::Remember { session }, text, window, cx);
+        self.open_memory_editor(Target::Remember { session, turn }, text, window, cx);
     }
 
     /// Saves the editor. `everywhere` matters only for remembered text: it
@@ -357,7 +405,7 @@ impl Workspace {
             this.focus_composer(window, cx);
         };
         match target {
-            Target::Remember { session } => {
+            Target::Remember { session, .. } => {
                 let reply = self.backend.remember(project, session, text, everywhere);
                 self.change_memory(reply, close, window, cx);
             }
@@ -432,9 +480,28 @@ impl Workspace {
             };
         let mut buttons = div().h_flex().flex_wrap().gap_2();
         buttons = match target {
-            Target::Remember { .. } => buttons
+            Target::Remember { session, .. } => buttons
                 .child(save("memory-save-project", tr("Save for this project"), false).primary())
-                .child(save("memory-save-habit", tr("Save as a habit"), true)),
+                .child(save("memory-save-habit", tr("Save as a habit"), true))
+                .when(session.is_some(), |buttons| {
+                    buttons.child(
+                        Button::new("memory-suggest")
+                            .label(if self.memory_suggesting {
+                                tr("Drafting…")
+                            } else {
+                                tr("Suggest")
+                            })
+                            .small()
+                            .ghost()
+                            .disabled(self.memory_suggesting)
+                            .tooltip(tr(
+                                "Have the model draft what is worth keeping from this turn",
+                            ))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.suggest_memory(window, cx)),
+                            ),
+                    )
+                }),
             _ => buttons.child(save("memory-save", tr("Save"), false).primary()),
         };
         let mut editor = div()
@@ -455,7 +522,13 @@ impl Workspace {
                     .min_h(px(160.))
                     .child(Input::new(&self.memory_text).h_full()),
             )
-            .child(div().text_xs().text_color(muted).child(target.hint()));
+            .child(div().text_xs().text_color(muted).child(target.hint()))
+            .children(self.memory_suggested.as_deref().map(|scope| {
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(memory::suggested_scope(scope))
+            }));
         // An empty editor needs no telling; an over-long entry does.
         if let Some(problem) =
             problem.filter(|_| !self.memory_text.read(cx).value().trim().is_empty())

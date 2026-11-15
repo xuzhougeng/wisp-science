@@ -59,6 +59,7 @@ mod tests;
 mod toolchain;
 mod tools_found;
 mod trajectory;
+mod turn_memory;
 mod turn_undo;
 mod updates;
 mod workflows;

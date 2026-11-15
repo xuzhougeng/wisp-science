@@ -1046,6 +1046,18 @@ impl Backend {
         self.local(move |host| async move { host.run_workflow(&project, &id).await })
     }
 
+    /// Has the model draft a memory of one turn (none is the latest).
+    pub fn suggest_memory(
+        &self,
+        project: String,
+        session: String,
+        turn: Option<wisp_server::desktop::TurnRef>,
+    ) -> Reply<wisp_server::desktop::MemorySuggestion> {
+        self.local(move |host| async move {
+            host.suggest_memory(&project, &session, turn.as_ref()).await
+        })
+    }
+
     /// Keeps a pasted picture in the project's `uploads` as `name`.
     pub fn import_pasted(&self, project: String, name: String, bytes: Vec<u8>) -> Reply<String> {
         self.local(move |host| async move { host.import_pasted(&project, &name, &bytes).await })

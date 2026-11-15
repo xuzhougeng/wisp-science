@@ -136,7 +136,7 @@ to find in the running app.
 | Copy message [复制] | Yes | Done: copies the message as Markdown | ui |
 | Rewind to a message [回溯 / 撤销] | Yes | Yes: goes back and returns the text to the composer, and the latest turn can be undone with the files it wrote | store |
 | Branch from a message [分支] | Yes | Partial: a copy through that turn, nested under its source, that can be brought back: Bring back has the model summarise what the branch did, you read and change the summary, and it is added to the source conversation; no branch card | store |
-| Save to memory [记忆] | Yes | Partial: the message is opened for trimming and saved for the project or as a habit; no model-written suggestion | store |
+| Save to memory [记忆] | Yes | Done: the message is opened for trimming and saved for the project or as a habit, and Suggest has the reviewer model draft what is worth keeping from its turn and say where | store |
 | Review a turn [审查] | Yes | Partial: a review button under each answer reviews the conversation as it stood when that turn ended; the report is not kept with the turn | tauri |
 | Select text: add to chat, ask aside, highlight | Yes | Partial: per message rather than per selection — Quote puts a message in the composer, Ask aside opens the aside with it quoted, the star saves it; a selected passage can only be copied (the text view's selection is private to gpui-component) | store |
 | Full record / model view toggles [完整记录 / 模型视角] | Yes | Partial: the transcript is the full record; What the model is sent lists the model's working set in a dialog, with each message's share; no context breakdown by kind and no undo of a compaction | served |
