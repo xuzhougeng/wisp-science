@@ -36,13 +36,197 @@ const LAUNCH_TIMEOUT: Duration = Duration::from_secs(60);
 pub(crate) const PLAN_TOOL_NAME: &str = "wisp:plan";
 const TOOL_PREFIX: &str = "acp:";
 
-/// The agent process a conversation is talking to, kept between turns.
+/// The agent process a conversation is talking to, kept between turns,
+/// with the modes and options the agent last reported.
 pub(crate) struct AcpLive {
     agent: String,
     fingerprint: String,
     cwd: PathBuf,
     session: SessionId,
     handle: Arc<AcpSessionHandle>,
+    modes: Option<serde_json::Value>,
+    options: serde_json::Value,
+}
+
+/// One choice of a mode or an option.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AcpChoice {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AcpValue {
+    /// One of a list.
+    Choice {
+        current: String,
+        choices: Vec<AcpChoice>,
+    },
+    /// On or off.
+    Flag(bool),
+}
+
+/// A mode or an option the agent offers for the conversation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AcpSetting {
+    pub id: String,
+    pub name: String,
+    pub value: AcpValue,
+}
+
+/// What the agent running a conversation lets the user set: its mode
+/// (planning, asking before edits, and the like) and its options (often
+/// the model). Known once the agent has started.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AcpControls {
+    pub mode: Option<AcpSetting>,
+    pub options: Vec<AcpSetting>,
+}
+
+/// A value to give an option.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AcpPick {
+    Choice(String),
+    Flag(bool),
+}
+
+fn choices(list: &serde_json::Value, id: &str) -> Vec<AcpChoice> {
+    let text = |item: &serde_json::Value, key: &str| {
+        item.get(key)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let mut found = Vec::new();
+    for item in list.as_array().into_iter().flatten() {
+        // A group carries its own list.
+        if let Some(inner) = item.get("options") {
+            found.extend(choices(inner, id));
+            continue;
+        }
+        found.push(AcpChoice {
+            id: text(item, id),
+            name: text(item, "name"),
+            description: text(item, "description"),
+        });
+    }
+    found
+}
+
+/// The modes and options as the agent reported them, in the wire shapes.
+fn controls_of(modes: Option<&serde_json::Value>, options: &serde_json::Value) -> AcpControls {
+    let mode = modes.and_then(|modes| {
+        let available = choices(modes.get("availableModes")?, "id");
+        (!available.is_empty()).then(|| AcpSetting {
+            id: "mode".into(),
+            name: "Mode".into(),
+            value: AcpValue::Choice {
+                current: modes
+                    .get("currentModeId")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                choices: available,
+            },
+        })
+    });
+    let options = options
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|option| {
+            let id = option.get("id")?.as_str()?.to_owned();
+            let name = option
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(&id)
+                .to_owned();
+            let current = option.get("currentValue")?;
+            let value = match current {
+                serde_json::Value::Bool(on) => AcpValue::Flag(*on),
+                current => AcpValue::Choice {
+                    current: current.as_str()?.to_owned(),
+                    choices: choices(option.get("options")?, "value"),
+                },
+            };
+            Some(AcpSetting { id, name, value })
+        })
+        .collect();
+    AcpControls { mode, options }
+}
+
+/// What the running agent offers to set, when an agent runs the
+/// conversation and has started.
+pub(crate) async fn controls(session: &Session) -> Option<AcpControls> {
+    let slot = session.acp.lock().await;
+    let live = slot.as_ref().filter(|live| live.handle.is_alive())?;
+    Some(controls_of(live.modes.as_ref(), &live.options))
+}
+
+/// Keeps what the agent reports about its mode and options.
+async fn remember(session: &Session, kind: AcpUpdateKind, payload: &serde_json::Value) {
+    let mut slot = session.acp.lock().await;
+    let Some(live) = slot.as_mut() else {
+        return;
+    };
+    match kind {
+        AcpUpdateKind::CurrentMode => {
+            if let (Some(modes), Some(current)) =
+                (live.modes.as_mut(), payload.get("currentModeId").cloned())
+            {
+                modes["currentModeId"] = current;
+            }
+        }
+        AcpUpdateKind::ConfigOptions => {
+            if let Some(options) = payload.get("configOptions") {
+                live.options = options.clone();
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Puts the running agent in `mode`.
+pub(crate) async fn set_mode(session: &Session, mode: &str) -> Result<AcpControls> {
+    let mut slot = session.acp.lock().await;
+    let live = slot
+        .as_mut()
+        .filter(|live| live.handle.is_alive())
+        .context("The agent is not running; send a message first")?;
+    live.handle
+        .set_mode(live.session.clone(), mode)
+        .await
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    if let Some(modes) = live.modes.as_mut() {
+        modes["currentModeId"] = mode.into();
+    }
+    Ok(controls_of(live.modes.as_ref(), &live.options))
+}
+
+/// Sets one of the running agent's options.
+pub(crate) async fn set_option(
+    session: &Session,
+    option: &str,
+    pick: AcpPick,
+) -> Result<AcpControls> {
+    let mut slot = session.acp.lock().await;
+    let live = slot
+        .as_mut()
+        .filter(|live| live.handle.is_alive())
+        .context("The agent is not running; send a message first")?;
+    let value: wisp_acp::acp::schema::v1::SessionConfigOptionValue =
+        serde_json::from_value(match pick {
+            AcpPick::Choice(value) => serde_json::json!({ "value": value }),
+            AcpPick::Flag(on) => serde_json::json!({ "type": "boolean", "value": on }),
+        })?;
+    let options = live
+        .handle
+        .set_config(live.session.clone(), option, value)
+        .await
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    live.options = serde_json::to_value(options)?;
+    Ok(controls_of(live.modes.as_ref(), &live.options))
 }
 
 /// The same fingerprint the WebView keeps on a binding: a hash of the
@@ -153,14 +337,14 @@ async fn connect(
     .context("The agent did not start within a minute")?
     .map_err(|error| anyhow::anyhow!("The agent could not be started: {error}"))?;
     let handle = Arc::new(handle);
-    let id = match &binding {
+    let (id, state) = match &binding {
         Some(binding) => {
             let id = SessionId::new(binding.agent_session_id.clone());
             match handle.resume_session(id.clone(), cwd, vec![]).await {
-                Ok(_) => id,
+                Ok(state) => (id, state),
                 Err(AcpError::Unsupported(_)) => {
                     match handle.load_session(id.clone(), cwd, vec![]).await {
-                        Ok(_) => id,
+                        Ok(state) => (id, state),
                         Err(AcpError::Unsupported(_)) => {
                             bail!("This ACP agent cannot pick up its earlier session")
                         }
@@ -200,7 +384,7 @@ async fn connect(
                     updated_at: now,
                 })
                 .await?;
-            started.session_id
+            (started.session_id, started.state)
         }
     };
     *slot = Some(AcpLive {
@@ -209,6 +393,11 @@ async fn connect(
         cwd: cwd.to_path_buf(),
         session: id.clone(),
         handle: handle.clone(),
+        modes: state.modes,
+        options: state
+            .config_options
+            .and_then(|options| serde_json::to_value(options).ok())
+            .unwrap_or_default(),
     });
     Ok((handle, id))
 }
@@ -453,7 +642,10 @@ pub(crate) async fn run(
                 }
             }
             event = handle.next_event() => match event {
-                Some(AcpSessionEvent::Update { kind, payload, .. }) => turn.apply(&out, kind, &payload),
+                Some(AcpSessionEvent::Update { kind, payload, .. }) => {
+                    remember(&session, kind, &payload).await;
+                    turn.apply(&out, kind, &payload)
+                }
                 Some(AcpSessionEvent::Permission(request)) => {
                     if let Err(error) = answer(&out, &handle, request).await {
                         break Err(error);
@@ -471,6 +663,7 @@ pub(crate) async fn run(
     while outcome.is_ok() && tokio::time::Instant::now() < deadline {
         match tokio::time::timeout(Duration::from_millis(75), handle.next_event()).await {
             Ok(Some(AcpSessionEvent::Update { kind, payload, .. })) => {
+                remember(&session, kind, &payload).await;
                 turn.apply(&out, kind, &payload)
             }
             Ok(Some(AcpSessionEvent::Permission(request))) => {

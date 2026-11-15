@@ -1191,6 +1191,94 @@ impl Workspace {
         menu
     }
 
+    /// The ACP agent's modes and options, each a button with its list or,
+    /// for one that is on or off, a switch.
+    fn acp_settings(&self, cx: &mut Context<Self>) -> Vec<Div> {
+        use wisp_server::desktop::{AcpPick, AcpValue};
+        let Some(controls) = self.status.as_ref().and_then(|status| status.acp.as_ref()) else {
+            return vec![];
+        };
+        let mut shown = Vec::new();
+        for setting in controls.mode.iter().chain(&controls.options) {
+            let id = setting.id.clone();
+            let name = if id == "mode" && controls.mode.as_ref() == Some(setting) {
+                tr("Mode").to_owned()
+            } else {
+                setting.name.clone()
+            };
+            let button = match &setting.value {
+                AcpValue::Flag(on) => {
+                    let (target, on) = (id.clone(), *on);
+                    Button::new(SharedString::from(format!("acp-setting-{id}")))
+                        .icon(glyph(if on { "check-square" } else { "square" }))
+                        .label(name)
+                        .small()
+                        .ghost()
+                        .selected(on)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.set_acp_setting(target.clone(), AcpPick::Flag(!on), window, cx)
+                        }))
+                }
+                AcpValue::Choice { current, choices } => {
+                    let label = choices
+                        .iter()
+                        .find(|choice| &choice.id == current)
+                        .map(|choice| choice.name.clone())
+                        .filter(|label| !label.is_empty())
+                        .unwrap_or_else(|| current.clone());
+                    let target = id.clone();
+                    Button::new(SharedString::from(format!("acp-setting-{id}")))
+                        .icon(glyph(if setting.id == "mode" {
+                            "controls"
+                        } else {
+                            "adjustments"
+                        }))
+                        .label(format!("{name}: {label}"))
+                        .small()
+                        .ghost()
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.toggle_acp_setting(target.clone(), window, cx)
+                        }))
+                }
+            };
+            let mut place = div().relative().child(button);
+            let open = self.layers.contains(Layer::AcpSettingMenu)
+                && self.acp_setting_open.as_deref() == Some(setting.id.as_str());
+            if let (true, AcpValue::Choice { current, choices }) = (open, &setting.value) {
+                let mut menu = Self::composer_menu(280., cx);
+                for choice in choices {
+                    let (target, value) = (setting.id.clone(), choice.id.clone());
+                    menu = menu.child(
+                        Self::menu_row(
+                            SharedString::from(format!("acp-choice-{}-{}", setting.id, choice.id)),
+                            if choice.name.is_empty() {
+                                choice.id.clone()
+                            } else {
+                                choice.name.clone()
+                            },
+                            choice.description.clone(),
+                            &choice.id == current,
+                            cx,
+                        )
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.set_acp_setting(
+                                    target.clone(),
+                                    AcpPick::Choice(value.clone()),
+                                    window,
+                                    cx,
+                                )
+                            },
+                        )),
+                    );
+                }
+                place = place.child(deferred(menu));
+            }
+            shown.push(place);
+        }
+        shown
+    }
+
     /// Wisp, then the ACP agents that could run a new conversation.
     fn agent_menu(&self, cx: &mut Context<Self>) -> Div {
         let mut menu = Self::composer_menu(320., cx).child(
@@ -1937,6 +2025,7 @@ impl Workspace {
                                 .children(quick)
                                 .child(self.slash_button(cx))
                                 .children(agent)
+                                .children(self.acp_settings(cx))
                                 .when(!by_agent, |row| row.child(plan))
                                 .child(access)
                                 .when(!by_agent, |row| {

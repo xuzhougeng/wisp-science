@@ -506,6 +506,12 @@ Limits of this slice:
   project's folder or the home folder (on macOS through a `.command` file
   in the temporary folder, every word quoted). A key read from an
   environment variable is only named; it is set outside Wisp.
+- Once the agent has answered, the modes and options it reports (such as
+  a plan mode or a choice of model) are buttons in the composer: a list
+  for one of several values, a switch for one that is on or off. They are
+  set through the agent and kept as it reports them while its process
+  runs; before the first answer and after a restart until the next one
+  they are not shown, as nothing is cached between runs.
 - A conversation is given to an ACP agent from the composer's agent
   button before its first message, for good (the store refuses another
   choice; Wisp needs a new conversation). Its first message starts the
@@ -521,7 +527,7 @@ Limits of this slice:
   first, expert, where work runs and turn review do not apply and are not
   shown; follow-up questions and reviews are not asked for. Not ported
   from the WebView: the MCP bridge that gives the agent Wisp's tools,
-  the agent's modes and configuration options, its slash commands,
+  its slash commands,
   questions it asks the user, file and conversation
   references sent as resource links, and a conversation run by an agent
   inside an exploration.
@@ -1198,7 +1204,10 @@ as a checklist with the plan line above the composer, and the title bar
 names the agent. Ask it to do something that needs permission: the
 approval card shows its tool and input; Reject, and the agent is told so.
 Send something long and press Stop: it stops and nothing is added; send
-again and it answers in the same session.
+again and it answers in the same session. With an agent that reports
+modes or options, after its first answer the composer shows Mode and its
+options; choose another mode or value: the button follows, and the next
+message runs that way.
 In Settings, ACP agents, add an agent with a name and a program that is
 not installed: it is listed with Program not found, and Test says its
 program was not found on this computer. Change it to an installed ACP agent (or adapter)

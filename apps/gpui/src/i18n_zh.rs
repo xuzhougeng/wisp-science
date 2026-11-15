@@ -1398,4 +1398,6 @@ pub const ZH: &[(&str, &str)] = &[
     ("The agent no longer offers this way to sign in", "该智能体已不再提供这种登录方式"),
     ("Signing in did not finish within five minutes", "登录未在五分钟内完成"),
     ("This agent reads its key from an environment variable; set it where the agent's documentation says, then test again", "该智能体从环境变量读取密钥；请按其文档设置后再测试"),
+    ("Mode", "模式"),
+    ("The agent is not running; send a message first", "智能体尚未运行，请先发送一条消息"),
 ];

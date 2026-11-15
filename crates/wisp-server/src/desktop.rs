@@ -3096,6 +3096,7 @@ impl Server {
         self.own_conversation(project, session).await?;
         let options = self.stored_options(session).await?;
         let session = self.session(session);
+        let acp = crate::acp_turn::controls(&session).await;
         let runtimes = session
             .runtime
             .lock()
@@ -3122,6 +3123,7 @@ impl Server {
             reasoning: live.reasoning.clone(),
             runtimes,
             review,
+            acp,
         })
     }
 
@@ -3603,6 +3605,29 @@ impl Server {
     /// Starts the agent, reads how it introduces itself, and stops it.
     pub async fn test_acp_agent(&self, id: &str) -> Result<AcpAgentReport> {
         crate::acp_agents::test(&self.0.store, id).await
+    }
+
+    /// Puts the ACP agent running a conversation in another of its modes.
+    pub async fn set_acp_mode(
+        &self,
+        project: &str,
+        session: &str,
+        mode: &str,
+    ) -> Result<AcpControls> {
+        self.own_conversation(project, session).await?;
+        crate::acp_turn::set_mode(&self.session(session), mode).await
+    }
+
+    /// Sets one of the options of the ACP agent running a conversation.
+    pub async fn set_acp_option(
+        &self,
+        project: &str,
+        session: &str,
+        option: &str,
+        pick: AcpPick,
+    ) -> Result<AcpControls> {
+        self.own_conversation(project, session).await?;
+        crate::acp_turn::set_option(&self.session(session), option, pick).await
     }
 
     /// Signs in to an agent with one of the ways it offers, or says what
@@ -4557,6 +4582,9 @@ pub struct ConversationStatus {
     /// The review that followed the latest turn, when the conversation
     /// has turns reviewed; gone when the next turn starts.
     pub review: Option<ReviewOutcome>,
+    /// The mode and options of the ACP agent running the conversation,
+    /// once it has started.
+    pub acp: Option<AcpControls>,
 }
 
 /// An interpreter a conversation started and keeps, with what it has in
@@ -4962,6 +4990,7 @@ pub struct ProjectGrants {
 pub use crate::acp_agents::{
     AcpAgent, AcpAgentReport, AcpAgentRow, AcpSignIn, AcpSignInKind, AcpSignInOutcome,
 };
+pub use crate::acp_turn::{AcpChoice, AcpControls, AcpPick, AcpSetting, AcpValue};
 pub use crate::aside::Exchange as AsideExchange;
 pub use crate::browser::{BrowserSettings, BrowserStatus};
 pub use crate::browser_filters::{BrowserFilters, BrowserHostRule};

@@ -423,6 +423,8 @@ pub struct Workspace {
     acp_testing: Option<String>,
     /// How signing in to each agent went.
     acp_signed: std::collections::HashMap<String, Result<String, String>>,
+    /// The ACP mode or option whose list is open in the composer.
+    acp_setting_open: Option<String>,
     acp_reports:
         std::collections::HashMap<String, Result<wisp_server::desktop::AcpAgentReport, String>>,
     mcp_servers: Option<Vec<wisp_server::desktop::McpServerRow>>,
@@ -1021,6 +1023,7 @@ impl Workspace {
             acp_fields,
             acp_testing: None,
             acp_signed: Default::default(),
+            acp_setting_open: None,
             acp_reports: Default::default(),
             mcp_servers: None,
             mcp_editing: None,
@@ -1105,6 +1108,10 @@ impl Workspace {
                 | Layer::QuickMenu
                 | Layer::SlashMenu,
             ) => self.focus_composer(window, cx),
+            Some(Layer::AcpSettingMenu) => {
+                self.acp_setting_open = None;
+                self.focus_composer(window, cx)
+            }
             // Settings stays open underneath and keeps its focus.
             Some(Layer::ConfirmDeleteModel) => {}
             Some(Layer::SelectMode) => self.picks.clear(),
@@ -1445,6 +1452,7 @@ impl Workspace {
             Layer::RunsOnMenu,
             Layer::ExpertMenu,
             Layer::AgentMenu,
+            Layer::AcpSettingMenu,
             Layer::QuickMenu,
             Layer::SlashMenu,
             Layer::Find,
@@ -2566,6 +2574,60 @@ impl Workspace {
             ..self.options()
         };
         self.set_options(options, window, cx);
+        self.focus_composer(window, cx);
+        cx.notify();
+    }
+
+    /// Opens the list of one of the agent's modes or options, or closes it.
+    fn toggle_acp_setting(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let same = self.acp_setting_open.as_deref() == Some(id.as_str())
+            && self.layers.contains(Layer::AcpSettingMenu);
+        self.toggle_composer_menu(Layer::AcpSettingMenu, window, cx);
+        self.acp_setting_open = (!same).then_some(id);
+        cx.notify();
+    }
+
+    /// Sets the agent's mode (`setting` is "mode") or one of its options,
+    /// and shows what it reports back.
+    fn set_acp_setting(
+        &mut self,
+        setting: String,
+        pick: wisp_server::desktop::AcpPick,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.layers.close(Layer::AcpSettingMenu);
+        self.acp_setting_open = None;
+        let selection = self.state.selection();
+        let (Some(project), Some(session)) = (selection.project.clone(), selection.session.clone())
+        else {
+            return;
+        };
+        let reply = match (setting.as_str(), pick) {
+            ("mode", wisp_server::desktop::AcpPick::Choice(mode)) => {
+                self.backend.set_acp_mode(project, session, mode)
+            }
+            (_, pick) => self.backend.set_acp_option(project, session, setting, pick),
+        };
+        self.error = None;
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                if !this.state.current(&selection) {
+                    return;
+                }
+                match result {
+                    Ok(controls) => {
+                        if let Some(status) = this.status.as_mut() {
+                            status.acp = Some(controls);
+                        }
+                    }
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
         self.focus_composer(window, cx);
         cx.notify();
     }

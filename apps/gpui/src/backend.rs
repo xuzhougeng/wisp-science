@@ -1174,6 +1174,27 @@ impl Backend {
         self.local(move |host| async move { host.remove_acp_agent(&id).await })
     }
 
+    pub fn set_acp_mode(
+        &self,
+        project: String,
+        session: String,
+        mode: String,
+    ) -> Reply<wisp_server::desktop::AcpControls> {
+        self.local(move |host| async move { host.set_acp_mode(&project, &session, &mode).await })
+    }
+
+    pub fn set_acp_option(
+        &self,
+        project: String,
+        session: String,
+        option: String,
+        pick: wisp_server::desktop::AcpPick,
+    ) -> Reply<wisp_server::desktop::AcpControls> {
+        self.local(move |host| async move {
+            host.set_acp_option(&project, &session, &option, pick).await
+        })
+    }
+
     pub fn sign_in_acp_agent(
         &self,
         id: String,

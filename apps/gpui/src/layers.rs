@@ -32,6 +32,8 @@ pub enum Layer {
     /// The composer's choice of who runs a new conversation: Wisp or an
     /// ACP agent.
     AgentMenu,
+    /// The list of one of the ACP agent's modes or options.
+    AcpSettingMenu,
     /// The slash commands, above the composer.
     SlashMenu,
     /// The quick actions, above the composer.
@@ -155,12 +157,13 @@ pub enum Layer {
 
 impl Layer {
     /// Menus that open above the composer; only one shows at a time.
-    pub const COMPOSER_MENUS: [Layer; 7] = [
+    pub const COMPOSER_MENUS: [Layer; 8] = [
         Layer::EffortMenu,
         Layer::ModelMenu,
         Layer::RunsOnMenu,
         Layer::ExpertMenu,
         Layer::AgentMenu,
+        Layer::AcpSettingMenu,
         Layer::QuickMenu,
         Layer::SlashMenu,
     ];

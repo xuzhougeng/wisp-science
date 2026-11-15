@@ -246,7 +246,7 @@ row says what is there.
 | Composer | Conversation timer: repeat a prompt on an interval, pause, resume, cancel — `/timer 30m <prompt>` and `/timer off` are there, each firing a new turn; no pause or resume, and the turn before is not replaced | store |
 | Composer | Queue panel: edit, remove, reorder, "guide now" — a waiting message can be taken back to change, removed, moved earlier, and given to the running turn now | tauri |
 | Composer | Plan progress strip; read-only states (sample, archived notebook, sub-agent, frozen branch) | served |
-| Composer | ACP agent conversations and their mode / config options — conversations run by an ACP agent are **Done** (text, thoughts, tool calls, plan, permission questions, stop); signing in is **Done** from Settings, ACP agents; the MCP bridge, modes, config options and slash commands are Missing | tauri |
+| Composer | ACP agent conversations and their mode / config options — conversations run by an ACP agent are **Done** (text, thoughts, tool calls, plan, permission questions, stop); signing in is **Done** from Settings, ACP agents, and modes and config options are **Done** in the composer once the agent runs; the MCP bridge and slash commands are Missing | tauri |
 | Transcript | Equations, table copy, internal file links, confirm before opening an external link | ui |
 | Transcript | Generated-artifact strip (the files are in the Artifacts tab, not yet under the message); image and video generation cards | store |
 | Transcript | Run cards: send to background, cancel, harvest outputs, details — a call that started or watched a run shows the run's state under it and opens its output in the Runs tab, where it can be cancelled; no send to background or harvest | shared |

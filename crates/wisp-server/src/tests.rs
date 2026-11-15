@@ -6753,7 +6753,13 @@ while IFS= read -r line; do
       printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[],"agentInfo":{"name":"fake-agent","version":"0.1.0"}}}\n' "$id"
       ;;
     session/new)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"s1"}}\n' "$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"s1","modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default"},{"id":"plan","name":"Plan","description":"Plan before changing anything"}]},"configOptions":[{"id":"model","name":"Model","type":"select","currentValue":"fast","options":[{"value":"fast","name":"Fast"},{"value":"deep","name":"Deep"}]}]}}\n' "$id"
+      ;;
+    session/set_mode)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"
+      ;;
+    session/set_config_option)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"configOptions":[{"id":"model","name":"Model","type":"select","currentValue":"deep","options":[{"value":"fast","name":"Fast"},{"value":"deep","name":"Deep"}]}]}}\n' "$id"
       ;;
     session/prompt)
       case "$line" in
@@ -6824,6 +6830,14 @@ async fn a_conversation_given_to_an_acp_agent_streams_asks_and_stops_through_it(
         .await
         .is_err());
 
+    // Its modes and options are known once it has started.
+    assert!(server
+        .conversation_status(PROJECT, &id)
+        .await
+        .unwrap()
+        .acp
+        .is_none());
+    assert!(server.set_acp_mode(PROJECT, &id, "plan").await.is_err());
     send(&server, &id, "look at the data").await.unwrap();
     let done = wait_for(&server, &id, |s| !s.running).await;
     assert!(done.error.is_none(), "{:?}", done.error);
@@ -6857,6 +6871,50 @@ async fn a_conversation_given_to_an_acp_agent_streams_asks_and_stops_through_it(
     assert_eq!(binding.agent_session_id, "s1");
     // Wisp's own model was never asked.
     assert_eq!(calls.load(Ordering::Relaxed), 0);
+
+    let controls = server
+        .conversation_status(PROJECT, &id)
+        .await
+        .unwrap()
+        .acp
+        .expect("the agent's mode and options are known");
+    let current = |setting: &desktop::AcpSetting| match &setting.value {
+        desktop::AcpValue::Choice { current, choices } => (
+            current.clone(),
+            choices
+                .iter()
+                .map(|choice| choice.id.clone())
+                .collect::<Vec<_>>(),
+        ),
+        desktop::AcpValue::Flag(on) => (on.to_string(), vec![]),
+    };
+    let mode = controls.mode.as_ref().unwrap();
+    assert_eq!(
+        current(mode),
+        ("default".into(), vec!["default".into(), "plan".into()])
+    );
+    assert_eq!(controls.options[0].name, "Model");
+    assert_eq!(current(&controls.options[0]).0, "fast");
+    let controls = server.set_acp_mode(PROJECT, &id, "plan").await.unwrap();
+    assert_eq!(current(controls.mode.as_ref().unwrap()).0, "plan");
+    let controls = server
+        .set_acp_option(
+            PROJECT,
+            &id,
+            "model",
+            desktop::AcpPick::Choice("deep".into()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(current(&controls.options[0]).0, "deep");
+    let kept = server
+        .conversation_status(PROJECT, &id)
+        .await
+        .unwrap()
+        .acp
+        .unwrap();
+    assert_eq!(current(kept.mode.as_ref().unwrap()).0, "plan");
+    assert_eq!(current(&kept.options[0]).0, "deep");
 
     // A permission question waits for the user, as a tool approval does.
     send(&server, &id, "ask before writing").await.unwrap();
