@@ -906,9 +906,12 @@ pub async fn run(
         isolation: scope.isolation,
     };
     let guidance = Some(&session.guidance);
-    // A model that can see is given the attached pictures themselves.
+    // A model that can see is given the attached pictures themselves; one
+    // that cannot is given what the picture model saw in them, when there
+    // is one.
     let sees = agent.ctx.supports_vision;
-    let images = if request.resume || !sees || request.attachments.is_empty() {
+    let read = sees || agent.vision_provider.is_some();
+    let images = if request.resume || !read || request.attachments.is_empty() {
         Vec::new()
     } else {
         let (folder, attached) = (root.clone(), request.attachments.clone());

@@ -106,6 +106,8 @@ pub struct ModelProfile {
     pub is_default: bool,
     /// Why this profile cannot be used as it is saved, if it cannot.
     pub problem: Option<String>,
+    /// Whether the model reads pictures, by the model catalog.
+    pub sees: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -327,9 +329,31 @@ impl ModelState {
                     has_api_key: loaded.has_api_key,
                     is_default: Some(&loaded.profile.id) == default.as_ref(),
                     problem: loaded.model.as_ref().err().cloned(),
+                    sees: loaded
+                        .model
+                        .as_ref()
+                        .is_ok_and(|model| model.supports_vision),
                 })
                 .collect(),
         }
+    }
+
+    /// The saved model that describes pictures for a model that cannot see
+    /// them: `chosen` while it is saved, usable and can see, else the first
+    /// saved model that can. None when none can.
+    pub(crate) fn picture_reader(&self, chosen: &str) -> Option<ModelConfig> {
+        let sees = |loaded: &&Loaded| {
+            loaded
+                .model
+                .as_ref()
+                .is_ok_and(|model| model.supports_vision)
+        };
+        let mut seeing = self.profiles.iter().filter(sees);
+        let first = seeing.clone().next();
+        seeing
+            .find(|loaded| loaded.profile.id == chosen)
+            .or(first)
+            .and_then(|loaded| loaded.model.clone().ok())
     }
 }
 
@@ -4740,6 +4764,50 @@ impl Server {
         self.subagent_model().await
     }
 
+    /// The model profile that describes pictures for a conversation whose
+    /// model cannot see them; empty is the first saved one that can.
+    pub async fn picture_model(&self) -> Result<String> {
+        Ok(self
+            .0
+            .store
+            .get_setting(PICTURE_MODEL)
+            .await?
+            .unwrap_or_default())
+    }
+
+    /// Chooses that profile, or with an empty id goes back to the first
+    /// saved one that can see. One that cannot see is refused.
+    pub async fn set_picture_model(&self, profile: &str) -> Result<String> {
+        let store = &self.0.store;
+        if profile.is_empty() {
+            store.delete_setting(PICTURE_MODEL).await?;
+        } else {
+            let found = self
+                .0
+                .model
+                .read()
+                .unwrap()
+                .settings()
+                .profiles
+                .into_iter()
+                .find(|saved| saved.id == profile);
+            let found = found.context("That model was removed; choose another")?;
+            ensure!(
+                found.sees,
+                "That model cannot read pictures; choose one that can"
+            );
+            store.set_setting(PICTURE_MODEL, profile).await?;
+        }
+        self.picture_model().await
+    }
+
+    /// The model that describes the pictures attached for a conversation
+    /// whose model cannot see them, if any saved model can.
+    pub(crate) async fn picture_reader(&self) -> Option<ModelConfig> {
+        let chosen = self.picture_model().await.unwrap_or_default();
+        self.0.model.read().unwrap().picture_reader(chosen.trim())
+    }
+
     /// The model a conversation's sub-agents work on: the conversation's
     /// own choice for them when it has one, else the one chosen in
     /// Settings, else `own`, the conversation's model. A choice that names
@@ -6347,6 +6415,8 @@ async fn skill_tags(store: &wisp_store::Store) -> std::collections::BTreeMap<Str
 }
 /// The WebView desktop's key for the model sub-agents work on.
 pub(crate) const SUBAGENT_MODEL: &str = "subagent_model_id";
+/// The saved model that describes pictures for a model that cannot see.
+const PICTURE_MODEL: &str = "desktop.picture_model";
 
 /// A saved item in full.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -4910,6 +4910,130 @@ async fn a_model_that_can_see_is_given_attached_pictures() {
     }
 }
 
+/// Says what a picture shows, as a model that can see would.
+struct Describer;
+#[async_trait]
+impl Provider for Describer {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "gpt-4o"
+    }
+    async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+        Ok(Completion {
+            content: "A blue square.".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        sink.on_text("A blue square.");
+        self.complete(messages, tools).await
+    }
+}
+
+#[tokio::test]
+async fn a_model_that_cannot_see_is_told_what_a_saved_one_saw() {
+    use desktop::{ModelFields, ModelInput};
+    let temp = tempfile::tempdir().unwrap();
+    let mut cfg = config(temp.path());
+    cfg.model = None;
+    let uploads = cfg.workspace.join("uploads");
+    std::fs::create_dir_all(&uploads).unwrap();
+    image::RgbImage::from_pixel(4, 3, image::Rgb([20, 120, 200]))
+        .save(uploads.join("plot.png"))
+        .unwrap();
+    let shown: Arc<std::sync::Mutex<Vec<Vec<String>>>> = Arc::default();
+    let record = shown.clone();
+    // No request leaves the test: every model is a fake, by its ID.
+    let factory: ModelFactory = Arc::new(move |provider| match provider.model.as_str() {
+        "gpt-4o" => Box::new(Describer),
+        _ => Box::new(Recorder(record.clone())),
+    });
+    let server = Server::open_with(cfg, factory, Arc::new(desktop::MemorySecrets::default()))
+        .await
+        .unwrap();
+    let input = |name: &str, api_url: &str, model: &str| ModelInput {
+        id: None,
+        name: name.into(),
+        fields: ModelFields {
+            provider: "openai".into(),
+            api_url: api_url.into(),
+            model: model.into(),
+            max_context: "32000".into(),
+            max_tokens: "4000".into(),
+            reasoning_effort: String::new(),
+        },
+        api_key: Some("made-up-key".into()),
+    };
+    // The conversation's model is the first saved, and cannot see.
+    let saved = server
+        .save_model_profile(input("Text", "http://127.0.0.1:9/v1", "lab-model"))
+        .await
+        .unwrap();
+    let text = saved.profiles[0].clone();
+    assert!(!text.sees);
+    let session = create(&server).await;
+    let ask = |request: &str| dto::SendRequest {
+        session_id: session.clone(),
+        request_id: request.into(),
+        message: "What does this show?".into(),
+        resume: false,
+        resume_after: None,
+        attachments: vec!["uploads/plot.png".into()],
+        references: vec![],
+        acp_agent_id: None,
+    };
+    let last_shown = || {
+        shown
+            .lock()
+            .unwrap()
+            .last()
+            .cloned()
+            .unwrap_or_default()
+            .join("\n")
+    };
+    // With no model that can see, the path is all it gets, and the turn
+    // goes on.
+    server.send(PROJECT, ask("r1")).await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    let first = last_shown();
+    assert!(first.contains("uploads/plot.png"), "{first}");
+    assert!(!first.contains("image_observations"), "{first}");
+
+    // A saved model that can see describes the picture for it.
+    let saved = server
+        .save_model_profile(input("Eyes", "https://api.openai.com/v1", "gpt-4o"))
+        .await
+        .unwrap();
+    let eyes = saved
+        .profiles
+        .iter()
+        .find(|profile| profile.name == "Eyes")
+        .unwrap()
+        .clone();
+    assert!(eyes.sees);
+    server.send(PROJECT, ask("r2")).await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    let second = last_shown();
+    assert!(second.contains("image_observations"), "{second}");
+    assert!(second.contains("A blue square."), "{second}");
+
+    // Only a model that can see can be chosen to read pictures.
+    assert_eq!(server.picture_model().await.unwrap(), "");
+    assert!(server.set_picture_model(&text.id).await.is_err());
+    assert!(server.set_picture_model("gone").await.is_err());
+    assert_eq!(server.set_picture_model(&eyes.id).await.unwrap(), eyes.id);
+    assert_eq!(server.set_picture_model("").await.unwrap(), "");
+    server.shutdown().await;
+}
+
 #[tokio::test]
 async fn desktop_messages_carry_project_files_and_turn_scoped_references() {
     use wisp_dto::ComposerReferenceArg as Reference;

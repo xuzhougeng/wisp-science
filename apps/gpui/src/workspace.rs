@@ -401,6 +401,9 @@ pub struct Workspace {
     review_model: String,
     /// The model profile sub-agents work on; empty is the conversation's.
     subagent_model: String,
+    /// The model profile that describes pictures for a model that cannot
+    /// see; empty is the first saved one that can.
+    picture_model: String,
     steps_input: Entity<InputState>,
     /// Tools that are always allowed, project by project.
     grants: Vec<wisp_server::desktop::ProjectGrants>,
@@ -1368,6 +1371,7 @@ impl Workspace {
             failure_analysis: None,
             review_model: String::new(),
             subagent_model: String::new(),
+            picture_model: String::new(),
             steps_input,
             grants: vec![],
             settings_error: None,

@@ -149,6 +149,23 @@ impl Workspace {
         .detach();
     }
 
+    /// Chooses the model that describes pictures and shows what was kept.
+    fn save_picture_model(&mut self, profile: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings_error = None;
+        let reply = self.backend.set_picture_model(profile);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(kept) => this.picture_model = kept,
+                    Err(error) => this.settings_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Chooses the model reviews are made with and shows what was kept.
     fn save_review_model(&mut self, profile: String, window: &mut Window, cx: &mut Context<Self>) {
         self.settings_error = None;
@@ -192,6 +209,16 @@ impl Workspace {
             if let Ok(worker) = receive(worker).await {
                 let _ = this.update(cx, |this, cx| {
                     this.subagent_model = worker;
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+        let reader = self.backend.picture_model();
+        cx.spawn_in(window, async move |this, cx| {
+            if let Ok(reader) = receive(reader).await {
+                let _ = this.update(cx, |this, cx| {
+                    this.picture_model = reader;
                     cx.notify();
                 });
             }
@@ -1726,6 +1753,15 @@ impl Workspace {
             self.subagent_model_choices(cx),
             cx,
         ))
+        .child(setting(
+            tr("Picture model"),
+            tr(
+                "When the conversation's model cannot see, this one looks at the pictures you \
+                 attach and tells it what they show. Only models that can see are listed.",
+            ),
+            self.picture_model_choices(cx),
+            cx,
+        ))
     }
 
     /// The Conversation page's row for drafting a memory when tools fail:
@@ -1877,6 +1913,39 @@ impl Workspace {
                     .selected(profile.id == current)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.save_subagent_model(id.clone(), window, cx)
+                    })),
+            );
+        }
+        choices
+    }
+
+    /// The first saved model that can see, or one of those that can.
+    fn picture_model_choices(&self, cx: &mut Context<Self>) -> Div {
+        let current = self.picture_model.as_str();
+        let (profiles, first) = crate::settings::picture_choices(self.settings.current(), current);
+        let mut choices = div().h_flex().flex_wrap().gap_1().justify_end().child(
+            Button::new("picture-model-first")
+                .label(if profiles.is_empty() {
+                    tr("None can see")
+                } else {
+                    tr("The first that can see")
+                })
+                .small()
+                .selected(first)
+                .disabled(profiles.is_empty())
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.save_picture_model(String::new(), window, cx)
+                })),
+        );
+        for profile in profiles {
+            let id = profile.id.clone();
+            choices = choices.child(
+                Button::new(SharedString::from(format!("picture-model-{}", profile.id)))
+                    .label(profile.name.clone())
+                    .small()
+                    .selected(profile.id == current)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.save_picture_model(id.clone(), window, cx)
                     })),
             );
         }

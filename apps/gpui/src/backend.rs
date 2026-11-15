@@ -2251,6 +2251,16 @@ impl Backend {
         self.local(move |host| async move { host.set_review_model(&profile).await })
     }
 
+    /// The model profile that describes pictures for a model that cannot
+    /// see them; empty is the first saved one that can.
+    pub fn picture_model(&self) -> Reply<String> {
+        self.local(|host| async move { host.picture_model().await })
+    }
+
+    pub fn set_picture_model(&self, profile: String) -> Reply<String> {
+        self.local(move |host| async move { host.set_picture_model(&profile).await })
+    }
+
     /// Puts away the questions suggested after the latest answer.
     pub fn dismiss_follow_ups(&self, project: String, session: String) -> Reply<()> {
         self.local(move |host| async move { host.dismiss_follow_ups(&project, &session).await })

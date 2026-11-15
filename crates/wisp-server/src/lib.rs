@@ -1101,6 +1101,16 @@ impl Server {
             lab,
         )
         .await?;
+        // A model that cannot see is told what attached pictures show by
+        // one that can, as the WebView's image model does.
+        if !model.supports_vision {
+            if let Some(reader) = self.picture_reader().await {
+                let mut cfg = reader.provider.with_session_id(&request.session_id);
+                let network = network::load(&self.0.store).await;
+                cfg.proxy = network::route(&network.model_proxy_url);
+                agent.vision_provider = Some((self.0.models)(cfg));
+            }
+        }
         // A top-level conversation can run subagents; a subagent cannot,
         // and asks its parent rather than the researcher.
         match subagents {

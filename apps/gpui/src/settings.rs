@@ -258,6 +258,26 @@ pub fn expert_label(experts: &[wisp_server::desktop::Expert], chosen: &str) -> S
         .map_or_else(|| tr("Expert").to_owned(), |expert| expert.name.clone())
 }
 
+/// The saved models that can be chosen to read pictures: those that can
+/// see. And whether "the first that can see" is the choice: nothing chosen,
+/// or a choice that is gone or no longer sees.
+pub fn picture_choices<'a>(
+    settings: Option<&'a ModelSettings>,
+    current: &str,
+) -> (Vec<&'a ModelProfile>, bool) {
+    let seeing: Vec<_> = settings
+        .map(|models| {
+            models
+                .profiles
+                .iter()
+                .filter(|profile| profile.sees)
+                .collect()
+        })
+        .unwrap_or_default();
+    let first = !seeing.iter().any(|profile| profile.id == current);
+    (seeing, first)
+}
+
 /// What an expert's row says about the model it runs on, when it has one
 /// of its own that is still saved.
 pub fn expert_model_note(settings: Option<&ModelSettings>, model: &str) -> Option<String> {
@@ -1256,7 +1276,24 @@ mod tests {
             has_api_key: true,
             is_default,
             problem: problem.map(str::to_owned),
+            sees: false,
         }
+    }
+
+    #[test]
+    fn only_models_that_see_can_read_pictures() {
+        let mut eyes = profile("eyes", false, None);
+        eyes.sees = true;
+        let saved = settings(ModelSource::Saved, vec![profile("text", true, None), eyes]);
+        let (seeing, first) = picture_choices(Some(&saved), "");
+        assert_eq!(seeing.len(), 1);
+        assert_eq!(seeing[0].id, "eyes");
+        assert!(first);
+        assert!(!picture_choices(Some(&saved), "eyes").1);
+        // A choice that cannot see, or is gone, reads as the first.
+        assert!(picture_choices(Some(&saved), "text").1);
+        assert!(picture_choices(Some(&saved), "gone").1);
+        assert!(picture_choices(None, "eyes").0.is_empty());
     }
 
     fn settings(source: ModelSource, profiles: Vec<ModelProfile>) -> ModelSettings {
