@@ -4630,6 +4630,58 @@ impl Provider for Recorder {
 }
 
 #[tokio::test]
+async fn a_model_that_can_see_is_given_attached_pictures() {
+    for sees in [true, false] {
+        let temp = tempfile::tempdir().unwrap();
+        let mut cfg = config(temp.path());
+        cfg.model.as_mut().unwrap().supports_vision = sees;
+        let uploads = cfg.workspace.join("uploads");
+        std::fs::create_dir_all(&uploads).unwrap();
+        image::RgbImage::from_pixel(4, 3, image::Rgb([20, 120, 200]))
+            .save(uploads.join("plot.png"))
+            .unwrap();
+        let server = Server::open_with_models(cfg, models(Arc::default(), false))
+            .await
+            .unwrap();
+        let session = create(&server).await;
+        server
+            .send(
+                PROJECT,
+                dto::SendRequest {
+                    session_id: session.clone(),
+                    request_id: "r1".into(),
+                    message: "What does this show?".into(),
+                    resume: false,
+                    resume_after: None,
+                    attachments: vec!["uploads/plot.png".into()],
+                    references: vec![],
+                    acp_agent_id: None,
+                },
+            )
+            .await
+            .unwrap();
+        wait_for(&server, &session, |s| !s.running).await;
+        let saved = server.0.store.load_messages(&session).await.unwrap();
+        let asked = saved
+            .iter()
+            .find(|message| message.role == wisp_llm::Role::User)
+            .unwrap();
+        // The path is in the message either way; the picture only for a
+        // model that can see it.
+        assert!(asked.content.as_text().contains("uploads/plot.png"));
+        let pictures = match &asked.content {
+            wisp_llm::Content::Parts(parts) => parts
+                .iter()
+                .filter(|part| matches!(part, wisp_llm::Part::Image { .. }))
+                .count(),
+            wisp_llm::Content::Text(_) => 0,
+        };
+        assert_eq!(pictures, usize::from(sees), "{:?}", asked.content);
+        server.shutdown().await;
+    }
+}
+
+#[tokio::test]
 async fn desktop_messages_carry_project_files_and_turn_scoped_references() {
     use wisp_dto::ComposerReferenceArg as Reference;
     let temp = tempfile::tempdir().unwrap();

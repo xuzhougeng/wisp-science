@@ -1388,7 +1388,11 @@ Limits of this slice:
 - A file attached from outside the project is copied into the project's
   `uploads` folder (up to 100 MB, never overwriting); a file inside it is used
   where it is. The model receives project-relative paths and reads the files
-  with its tools; image pixels are not sent. A referenced conversation is
+  with its tools. A model marked as seeing pictures also gets the attached
+  pictures themselves (PNG, JPEG, GIF, WebP), as the WebView sends them:
+  one over 5 MB is sent smaller without asking first, and the file is not
+  changed. A model that cannot see gets the paths only; the WebView's
+  separate model that describes pictures is not used. A referenced conversation is
   passed as its most recent exchange (about 12,000 bytes), and a skill as its
   instructions, for that turn only: neither is saved with the message. Paste,
   drag and drop, and typing `@`, `#` or `/` in the composer are not ported.

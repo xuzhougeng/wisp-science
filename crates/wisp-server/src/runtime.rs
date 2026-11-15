@@ -5,7 +5,7 @@ use crate::{
 use anyhow::Result;
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{atomic::Ordering, Arc},
 };
 use wisp_core::{Agent, MemoryManager};
@@ -844,6 +844,29 @@ pub(crate) async fn bridge_tools(
     (tools, hidden)
 }
 
+/// The pictures among a turn's attached files, read for a model that can
+/// see them, as the WebView desktop reads them. A picture larger than a
+/// model takes is sent smaller; the file itself is not changed. One that
+/// cannot be read, or is outside the project, is left to its path in the
+/// message.
+pub(crate) fn attached_images(root: &Path, attachments: &[String]) -> Vec<wisp_tools::ImageData> {
+    attachments
+        .iter()
+        .filter(|attachment| wisp_tools::image::is_supported_image(Path::new(attachment)))
+        .filter_map(|attachment| {
+            let path = wisp_tools::safety::validate_file_path(root, attachment).ok()?;
+            let shown = path.to_string_lossy();
+            let result = match wisp_tools::image::needs_resize(&path).ok()? {
+                true => wisp_tools::image::view_image_resized(&shown),
+                false => wisp_tools::image::view_image(&shown),
+            };
+            let mut image = result.images.into_iter().next()?;
+            image.label = format!("Attached image: {attachment}. {}", image.label);
+            Some(image)
+        })
+        .collect()
+}
+
 pub async fn run(
     store: Store,
     mut agent: Agent,
@@ -876,6 +899,16 @@ pub async fn run(
         isolation: scope.isolation,
     };
     let guidance = Some(&session.guidance);
+    // A model that can see is given the attached pictures themselves.
+    let sees = agent.ctx.supports_vision;
+    let images = if request.resume || !sees || request.attachments.is_empty() {
+        Vec::new()
+    } else {
+        let (folder, attached) = (root.clone(), request.attachments.clone());
+        tokio::task::spawn_blocking(move || attached_images(&folder, &attached))
+            .await
+            .unwrap_or_default()
+    };
     // A resumed turn goes on from the history, with no new message.
     let mut result = if request.resume {
         agent
@@ -885,8 +918,8 @@ pub async fn run(
         agent
             .run_with_images(
                 &request.message,
-                &[],
-                false,
+                &images,
+                sees,
                 &out,
                 Some(&session.cancel),
                 guidance,
@@ -1260,6 +1293,35 @@ pub fn items(messages: &[Message]) -> Vec<Item> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attached_pictures_are_read_and_other_files_left_to_their_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let uploads = temp.path().join("uploads");
+        std::fs::create_dir_all(&uploads).unwrap();
+        image::RgbImage::from_pixel(4, 3, image::Rgb([200, 30, 30]))
+            .save(uploads.join("plot.png"))
+            .unwrap();
+        std::fs::write(uploads.join("notes.csv"), "a,b\n1,2\n").unwrap();
+        std::fs::write(uploads.join("broken.png"), "not a picture").unwrap();
+        let images = attached_images(
+            temp.path(),
+            &[
+                "uploads/plot.png".into(),
+                "uploads/notes.csv".into(),
+                "uploads/broken.png".into(),
+                "uploads/missing.png".into(),
+                "../outside.png".into(),
+            ],
+        );
+        assert_eq!(images.len(), 1, "{images:?}");
+        assert_eq!(images[0].mime, "image/png");
+        assert!(images[0].data_url.starts_with("data:image/png;base64,"));
+        assert!(images[0]
+            .label
+            .starts_with("Attached image: uploads/plot.png."));
+        assert!(attached_images(temp.path(), &[]).is_empty());
+    }
 
     #[test]
     fn the_compute_contexts_in_a_saved_prompt_follow_what_is_registered_now() {
