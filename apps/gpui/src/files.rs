@@ -99,6 +99,32 @@ pub struct FilesState {
     pub search: NameSearch,
 }
 
+/// What an upload did, in a line: how many files were copied in, and the
+/// first that was not, with why.
+pub fn upload_note(results: &[wisp_dto::LocalFileUploadResult]) -> String {
+    let copied = results
+        .iter()
+        .filter(|result| result.path.is_some())
+        .count();
+    let mut note = crate::i18n::fill(
+        tr("Copied {} of {} files here."),
+        &[&copied, &results.len()],
+    );
+    if let Some(failed) = results.iter().find(|result| result.path.is_none()) {
+        let name = std::path::Path::new(&failed.source)
+            .file_name()
+            .map_or(failed.source.clone(), |name| {
+                name.to_string_lossy().into_owned()
+            });
+        note.push(' ');
+        note.push_str(&crate::i18n::fill(
+            tr("{}: {}"),
+            &[&name, &failed.error.clone().unwrap_or_default()],
+        ));
+    }
+    note
+}
+
 /// Files found by name across the project. Answers come back out of
 /// order, so each search carries a ticket and only the latest one counts.
 #[derive(Default)]
@@ -1061,6 +1087,28 @@ mod tests {
             assert_eq!(FileSort::from_key(sort.key()), sort);
         }
         assert_eq!(FileSort::from_key("sideways"), FileSort::Name);
+    }
+
+    #[test]
+    fn an_upload_says_what_it_copied_and_what_it_could_not() {
+        let result = |source: &str, path: Option<&str>, error: Option<&str>| {
+            wisp_dto::LocalFileUploadResult {
+                source: source.into(),
+                path: path.map(str::to_owned),
+                error: error.map(str::to_owned),
+            }
+        };
+        assert_eq!(
+            upload_note(&[result("/a/x.csv", Some("data/x.csv"), None)]),
+            "Copied 1 of 1 files here."
+        );
+        assert_eq!(
+            upload_note(&[
+                result("/a/x.csv", Some("data/x.csv"), None),
+                result("/a/gone.csv", None, Some("not found")),
+            ]),
+            "Copied 1 of 2 files here. gone.csv: not found"
+        );
     }
 
     #[test]

@@ -1013,6 +1013,21 @@ impl Server {
         crate::files::create(std::path::Path::new(&root), parent, name, folder).await
     }
 
+    /// Copies files chosen elsewhere into the project folder `folder`
+    /// (empty is the project's own), as the WebView's Upload does: never
+    /// over a file that is there, and each with its own outcome.
+    pub async fn upload_files(
+        &self,
+        project: &str,
+        folder: &str,
+        sources: Vec<std::path::PathBuf>,
+    ) -> Result<Vec<wisp_dto::LocalFileUploadResult>> {
+        let _admission = self.0.admission.read().await;
+        let root = std::path::PathBuf::from(self.project_root(project).await?);
+        let folder = folder.to_owned();
+        tokio::task::spawn_blocking(move || crate::files::upload(&root, &folder, &sources)).await?
+    }
+
     /// Renames a project file or folder where it is; the reply is its new
     /// project-relative path.
     pub async fn rename_project_entry(

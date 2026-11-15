@@ -224,6 +224,87 @@ pub async fn import(root: &Path, sources: &[PathBuf]) -> Result<Vec<String>> {
     Ok(imported)
 }
 
+/// Copies one file into `destination`, under its own name or, when that
+/// is taken, `name_1`, `name_2`… as the WebView does; nothing is
+/// overwritten. Gives its project-relative path.
+fn copy_in(root: &Path, destination: &Path, source: &Path) -> std::result::Result<String, String> {
+    if !std::fs::metadata(source)
+        .map_err(|error| error.to_string())?
+        .is_file()
+    {
+        return Err("Only regular files can be uploaded".into());
+    }
+    let mut input = std::fs::File::open(source).map_err(|error| error.to_string())?;
+    let name = source.file_name().ok_or("That is not a file name")?;
+    let stem = source.file_stem().unwrap_or(name);
+    for index in 0..10_000 {
+        let candidate = if index == 0 {
+            name.to_os_string()
+        } else {
+            let mut candidate = stem.to_os_string();
+            candidate.push(format!("_{index}"));
+            if let Some(extension) = source.extension() {
+                candidate.push(".");
+                candidate.push(extension);
+            }
+            candidate
+        };
+        let target = destination.join(candidate);
+        let mut output = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&target)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        };
+        if let Err(error) = std::io::copy(&mut input, &mut output) {
+            drop(output);
+            let _ = std::fs::remove_file(&target);
+            return Err(error.to_string());
+        }
+        return Ok(target
+            .strip_prefix(root)
+            .map_err(|error| error.to_string())?
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/"));
+    }
+    Err("Too many files with the same name in this folder".into())
+}
+
+/// Copies files chosen elsewhere into the project folder `destination`
+/// (project-relative; empty is the project's own folder), each on its own:
+/// one that cannot be copied says why and the others are still copied.
+pub fn upload(
+    root: &Path,
+    destination: &str,
+    sources: &[PathBuf],
+) -> Result<Vec<wisp_dto::LocalFileUploadResult>> {
+    let root = wisp_tools::safety::resolve_under_root(root, ".").map_err(anyhow::Error::msg)?;
+    let folder = match destination.trim() {
+        "" => ".",
+        folder => folder,
+    };
+    let destination =
+        wisp_tools::safety::resolve_under_root(&root, folder).map_err(anyhow::Error::msg)?;
+    ensure!(
+        destination.is_dir(),
+        "Files are uploaded into a folder of the project"
+    );
+    Ok(sources
+        .iter()
+        .map(|source| {
+            let copied = copy_in(&root, &destination, source);
+            wisp_dto::LocalFileUploadResult {
+                source: source.to_string_lossy().into_owned(),
+                path: copied.as_ref().ok().cloned(),
+                error: copied.err(),
+            }
+        })
+        .collect())
+}
+
 /// Keeps pasted content as `uploads/<name>`, numbered when that name is
 /// taken, and gives its path for a message to carry.
 pub async fn import_bytes(root: &Path, name: &str, bytes: &[u8]) -> Result<String> {
@@ -400,6 +481,43 @@ pub async fn read(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uploads_go_into_the_folder_shown_and_never_over_a_file() {
+        let project = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join("data")).unwrap();
+        std::fs::write(project.path().join("data/reads.fq"), "old").unwrap();
+        let reads = elsewhere.path().join("reads.fq");
+        std::fs::write(&reads, "new").unwrap();
+        let notes = elsewhere.path().join("notes");
+        std::fs::write(&notes, "n").unwrap();
+        let missing = elsewhere.path().join("missing.csv");
+        let done = upload(project.path(), "data", &[reads.clone(), notes, missing]).unwrap();
+        let paths: Vec<_> = done.iter().map(|result| result.path.clone()).collect();
+        assert_eq!(
+            paths,
+            [
+                Some("data/reads_1.fq".to_string()),
+                Some("data/notes".to_string()),
+                None
+            ]
+        );
+        assert!(done[2].error.is_some());
+        assert_eq!(
+            std::fs::read_to_string(project.path().join("data/reads.fq")).unwrap(),
+            "old"
+        );
+        assert_eq!(
+            std::fs::read_to_string(project.path().join("data/reads_1.fq")).unwrap(),
+            "new"
+        );
+        // The project's own folder, and nothing outside or not a folder.
+        let top = upload(project.path(), "", &[reads.clone()]).unwrap();
+        assert_eq!(top[0].path.as_deref(), Some("reads.fq"));
+        assert!(upload(project.path(), "../", &[reads.clone()]).is_err());
+        assert!(upload(project.path(), "data/reads.fq", &[reads]).is_err());
+    }
 
     #[tokio::test]
     async fn a_listing_says_when_each_entry_last_changed() {

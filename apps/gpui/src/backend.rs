@@ -138,6 +138,15 @@ impl Backend {
         })
     }
 
+    pub fn upload_files(
+        &self,
+        project: String,
+        folder: String,
+        sources: Vec<PathBuf>,
+    ) -> Reply<Vec<wisp_dto::LocalFileUploadResult>> {
+        self.local(move |host| async move { host.upload_files(&project, &folder, sources).await })
+    }
+
     pub fn register_project(&self, path: PathBuf) -> Reply<String> {
         self.local(move |host| async move { host.register_local_project(&path).await })
     }

@@ -182,6 +182,51 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Asks which files to copy into the folder shown, copies them, and
+    /// says how it went.
+    fn upload_into_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        let folder = self.files.path.clone();
+        self.file_notice = None;
+        self.file_problem = None;
+        let picker = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some(tr("Upload").into()),
+        });
+        let backend = self.backend.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = async {
+                let picked = picker
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .map_err(|error| error.to_string())?;
+                match picked.filter(|paths| !paths.is_empty()) {
+                    Some(paths) => receive(backend.upload_files(project, folder, paths))
+                        .await
+                        .map(Some),
+                    None => Ok(None),
+                }
+            }
+            .await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(Some(results)) => {
+                        this.file_notice = Some(files::upload_note(&results));
+                        this.reload_files(window, cx);
+                    }
+                    Ok(None) => {}
+                    Err(error) => this.file_problem = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// One file found by name: its name, and the folder it is in.
     fn file_hit_row(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
         let Some(path) = self
@@ -1827,6 +1872,16 @@ impl Workspace {
                             )
                             .on_click(cx.listener(
                                 |this, _, window, cx| this.open_terminal_here(window, cx),
+                            )),
+                        )
+                        .child(
+                            icon_button(
+                                "files-upload",
+                                "upload",
+                                tr("Upload files into this folder"),
+                            )
+                            .on_click(cx.listener(
+                                |this, _, window, cx| this.upload_into_folder(window, cx),
                             )),
                         )
                         .child(
