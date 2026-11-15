@@ -1062,9 +1062,13 @@ Limits of this slice:
   and the code differs from the WebView's. The page looks at the
   tunnel for a few seconds after a change, not continuously: open it
   again to see the present state.
-- A plugin is installed from a folder only: not from a zip archive or
-  an address, and with no published checksum to compare against, so it
-  is recorded as unverified. One version of a plugin is kept; a newer
+- A plugin is installed from a folder, from a `.zip` (at most 256 MB,
+  unpacked under the same limits; an entry that leaves the package or is
+  a symbolic link refuses it), or from an HTTPS address with the SHA-256
+  its publisher gives: downloaded on the connector route, following only
+  HTTPS redirects, and installed only when the archive has that checksum,
+  when it is recorded as checksum-verified; otherwise it is unverified.
+  One version of a plugin is kept; a newer
   one replaces its files, and a project that had the older one on has
   to switch the new one on. A package with a symbolic link, more than
   10,000 files or 512 MB is refused. The MCP servers a plugin declares
@@ -2175,6 +2179,9 @@ again: the line reads `X-Api-Key:` with no value, and saving it so keeps the
 key. Remove the line and save: the header is no longer sent. For a server
 that is a program, add `LAB_TOKEN=<a made-up value>` and confirm the program
 sees it.
+On the Plugins page install the same plugin from a `.zip` of its folder; press
+From an address…, then Escape: only the form closes; give an HTTPS address
+with a wrong SHA-256 and confirm it is refused.
 Install a plugin whose `.mcp.json` names a server inside it, switch it on
 for one project, and ask for its tool there: it asks, then answers; in
 another project it is not offered.

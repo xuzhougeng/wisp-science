@@ -4793,6 +4793,41 @@ impl Server {
         crate::plugins::install(&self.0.store, &self.0.config.data, folder).await
     }
 
+    /// Downloads a plugin's `.zip` from an HTTPS address, on the connector
+    /// route, and installs it once its SHA-256 is the one given.
+    pub async fn install_plugin_from_address(
+        &self,
+        address: &str,
+        sha256: &str,
+    ) -> Result<PluginRow> {
+        let _admission = self.0.admission.read().await;
+        let routes = crate::network::load(&self.0.store).await;
+        let mut client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .timeout(std::time::Duration::from_secs(120))
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                // HTTPS all the way, and not round in circles.
+                if attempt.url().scheme() == "https" && attempt.previous().len() < 6 {
+                    attempt.follow()
+                } else {
+                    attempt.stop()
+                }
+            }));
+        match routes.mcp_proxy_url.trim() {
+            "" => {}
+            "none" => client = client.no_proxy(),
+            proxy => client = client.proxy(reqwest::Proxy::all(proxy)?),
+        }
+        crate::plugins::install_from_address(
+            &self.0.store,
+            &self.0.config.data,
+            address,
+            sha256,
+            client.build()?,
+        )
+        .await
+    }
+
     /// Switches a plugin on or off for one project. Its skills are there
     /// from the project's next turn.
     pub async fn set_plugin_enabled(

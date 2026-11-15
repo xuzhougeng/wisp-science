@@ -546,6 +546,8 @@ pub struct Workspace {
     /// The installed plugins; `None` until the host answered.
     plugins: Option<Vec<wisp_server::desktop::PluginRow>>,
     plugin_installing: bool,
+    /// The address and SHA-256 of a plugin to download.
+    plugin_address: [Entity<InputState>; 2],
     /// The plugin the remove question is about.
     plugin_removing: Option<String>,
     /// The pet as the host keeps it; `None` until it answered.
@@ -1001,6 +1003,10 @@ impl Workspace {
         ];
         let mcp_token = cx.new(|cx| InputState::new(window, cx).masked(true));
         let mcp_pairs = cx.new(|cx| InputState::new(window, cx).multi_line(true));
+        let plugin_address = [
+            cx.new(|cx| InputState::new(window, cx).placeholder("https://example.org/plugin.zip")),
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Its SHA-256, as published"))),
+        ];
         let mcp_route =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Follows the Network page")));
         let sign_in_redirect = cx.new(|cx| {
@@ -1488,6 +1494,7 @@ impl Workspace {
             device_note: None,
             plugins: None,
             plugin_installing: false,
+            plugin_address,
             plugin_removing: None,
             pet: None,
             pet_folder,
@@ -1714,6 +1721,7 @@ impl Workspace {
             Some(Layer::TerminalHosts) => {}
             Some(Layer::SkillTags) => self.skill_tags_editing = None,
             Some(Layer::HookForm) => self.hook_editing = None,
+            Some(Layer::PluginAddress) => {}
             Some(Layer::QuickActionForm | Layer::ConfirmRemoveQuickAction) => {
                 self.quick_editing = None
             }

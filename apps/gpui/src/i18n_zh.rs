@@ -785,6 +785,11 @@ pub const ZH: &[(&str, &str)] = &[
     ("It read:", "它读取了："),
     // Sample project.
     ("Make a sample project to try Wisp on", "创建一个示例项目来试用 Wisp"),
+    ("From an address…", "从地址安装…"),
+    ("From a .zip…", "从 .zip 安装…"),
+    ("Download and install", "下载并安装"),
+    ("The address of the plugin's .zip, over HTTPS, and the SHA-256 its publisher gives. It is installed only when the download has that checksum.", "插件 .zip 的 HTTPS 地址，以及发布者给出的 SHA-256。只有下载内容的校验和一致时才会安装。"),
+    ("Its SHA-256, as published", "发布者给出的 SHA-256"),
     ("Save paths", "保存路径"),
     ("The full path of each program on this computer. Empty looks for it on the search path, shown as the hint. A path is checked to be a file; nothing is run.", "这台电脑上每个程序的完整路径。留空则在搜索路径上查找，结果显示在提示里。只检查路径是否为文件，不会运行任何程序。"),
     ("Where the tools are", "工具在哪里"),

@@ -30,6 +30,103 @@ const MAX_EXPANDED_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_FILE_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_FILES: usize = 10_000;
 const MAX_PATH_BYTES: usize = 768;
+/// The largest archive a plugin comes in.
+const MAX_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Where a plugin came from, as it is recorded.
+struct Origin {
+    source: String,
+    sha256: String,
+    /// `unverified`, or `checksum_verified` when a published checksum
+    /// matched.
+    trust: &'static str,
+}
+
+/// Whether `expected` (when given) is the archive's SHA-256: the trust a
+/// plugin is recorded with.
+fn checked(expected: Option<&str>, actual: &str) -> Result<&'static str> {
+    let Some(expected) = expected.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok("unverified");
+    };
+    ensure!(
+        expected.len() == 64 && expected.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "A SHA-256 is 64 hexadecimal characters"
+    );
+    ensure!(
+        expected.eq_ignore_ascii_case(actual),
+        "The plugin's SHA-256 is {actual}, not {}",
+        expected.to_ascii_lowercase()
+    );
+    Ok("checksum_verified")
+}
+
+/// Unpacks a plugin archive into `destination`, refusing what could reach
+/// outside it or be too large, as the WebView's installer does.
+fn extract_zip(archive: &Path, destination: &Path) -> Result<()> {
+    let size = std::fs::metadata(archive)
+        .context("Choose a plugin archive")?
+        .len();
+    ensure!(
+        size <= MAX_ARCHIVE_BYTES,
+        "A plugin archive is at most {} MB",
+        MAX_ARCHIVE_BYTES / 1024 / 1024
+    );
+    let mut zip = zip::ZipArchive::new(std::fs::File::open(archive)?)
+        .context("The plugin archive is not a ZIP file")?;
+    ensure!(
+        zip.len() <= MAX_FILES,
+        "The plugin archive has more than {MAX_FILES} entries"
+    );
+    let mut seen = HashSet::new();
+    let mut expanded = 0u64;
+    for index in 0..zip.len() {
+        let mut entry = zip.by_index(index)?;
+        let enclosed = entry.enclosed_name().with_context(|| {
+            format!("The archive's entry '{}' leaves the package", entry.name())
+        })?;
+        let normalized = enclosed.to_string_lossy().replace('\\', "/");
+        ensure!(
+            !normalized.is_empty() && normalized.len() <= MAX_PATH_BYTES,
+            "The archive has an empty or overly long path"
+        );
+        ensure!(
+            seen.insert(normalized.clone()),
+            "The archive has '{normalized}' twice"
+        );
+        ensure!(
+            !entry
+                .unix_mode()
+                .is_some_and(|mode| mode & 0o170000 == 0o120000),
+            "The archive has a symbolic link: {normalized}"
+        );
+        ensure!(
+            entry.size() <= MAX_FILE_BYTES,
+            "The archive's '{normalized}' is too large"
+        );
+        expanded = expanded.saturating_add(entry.size());
+        ensure!(
+            expanded <= MAX_EXPANDED_BYTES,
+            "The archive is too large once unpacked"
+        );
+        let output = destination.join(&enclosed);
+        if entry.is_dir() {
+            std::fs::create_dir_all(&output)?;
+            continue;
+        }
+        if let Some(parent) = output.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut target = std::fs::File::create(&output)?;
+        std::io::copy(&mut entry, &mut target)?;
+        // A program the plugin starts keeps being one.
+        #[cfg(unix)]
+        if let Some(mode) = entry.unix_mode() {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&output, std::fs::Permissions::from_mode(mode & 0o755))?;
+        }
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct McpServer {
@@ -347,10 +444,17 @@ fn tree_sha256(files: &[(String, PathBuf, u64)]) -> Result<String> {
 
 /// Checks the folder and copies it to `data/plugins/<id>/<version>`,
 /// replacing whatever version of the plugin was there. Runs nothing.
-fn install_files(source: &Path, data: &Path) -> Result<PluginInstallation> {
+fn install_files(source: &Path, data: &Path, origin: Option<Origin>) -> Result<PluginInstallation> {
     ensure!(source.is_dir(), "Choose the folder of a plugin");
     let listed = files(source)?;
-    let sha256 = tree_sha256(&listed)?;
+    let origin = match origin {
+        Some(origin) => origin,
+        None => Origin {
+            source: source.to_string_lossy().into_owned(),
+            sha256: tree_sha256(&listed)?,
+            trust: "unverified",
+        },
+    };
     let root = package_root(source)?;
     let manifest = parse(&root)?;
     let plugin_root = data.join("plugins").join(&manifest.id);
@@ -391,12 +495,11 @@ fn install_files(source: &Path, data: &Path) -> Result<PluginInstallation> {
         description: manifest.description.clone(),
         author: manifest.author.clone(),
         license: manifest.license.clone(),
-        source_uri: source.to_string_lossy().into_owned(),
+        source_uri: origin.source,
         install_root: install_root.to_string_lossy().into_owned(),
-        archive_sha256: sha256,
+        archive_sha256: origin.sha256,
         manifest_json: serde_json::to_string(&manifest)?,
-        // No published checksum was given to compare with.
-        trust_state: "unverified".into(),
+        trust_state: origin.trust.into(),
         installed_at: now,
         updated_at: now,
     })
@@ -628,8 +731,53 @@ pub(crate) async fn list(store: &Store, project: Option<&str>) -> Result<Vec<Plu
 /// replaced. A project that had it on keeps it on only at the version it
 /// chose, so a new version has to be switched on again.
 pub(crate) async fn install(store: &Store, data: &Path, folder: &Path) -> Result<PluginRow> {
-    let (source, data) = (folder.to_path_buf(), data.to_path_buf());
-    let installation = tokio::task::spawn_blocking(move || install_files(&source, &data)).await??;
+    let source = folder.to_string_lossy().into_owned();
+    install_checked(store, data, folder, None, source).await
+}
+
+/// Installs from a folder, or from a `.zip` checked against `expected`
+/// (its SHA-256, when given) before anything in it is read. `source` is
+/// what the record says it came from.
+async fn install_checked(
+    store: &Store,
+    data: &Path,
+    path: &Path,
+    expected: Option<String>,
+    source: String,
+) -> Result<PluginRow> {
+    let (path, data) = (path.to_path_buf(), data.to_path_buf());
+    let installation = tokio::task::spawn_blocking(move || -> Result<PluginInstallation> {
+        if path.is_dir() {
+            ensure!(expected.is_none(), "A checksum is for an archive");
+            return install_files(&path, &data, None);
+        }
+        ensure!(
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("zip")),
+            "Choose a plugin folder or a .zip archive"
+        );
+        let sha256 = hex::encode(Sha256::digest(std::fs::read(&path)?));
+        let trust = checked(expected.as_deref(), &sha256)?;
+        let unpacked = data
+            .join("plugin-downloads")
+            .join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&unpacked)?;
+        let installed = extract_zip(&path, &unpacked).and_then(|()| {
+            install_files(
+                &unpacked,
+                &data,
+                Some(Origin {
+                    source,
+                    sha256,
+                    trust,
+                }),
+            )
+        });
+        let _ = std::fs::remove_dir_all(&unpacked);
+        installed
+    })
+    .await??;
     // One version of a plugin is kept: its files were replaced above.
     for other in store.list_plugin_installations().await? {
         if other.plugin_id == installation.plugin_id && other.version != installation.version {
@@ -640,6 +788,67 @@ pub(crate) async fn install(store: &Store, data: &Path, folder: &Path) -> Result
     }
     store.replace_plugin_installation(&installation).await?;
     Ok(row(installation, false))
+}
+
+/// Downloads a plugin archive over HTTPS and installs it once its SHA-256
+/// is the one given, as the WebView does for an address.
+pub(crate) async fn install_from_address(
+    store: &Store,
+    data: &Path,
+    address: &str,
+    expected: &str,
+    client: reqwest::Client,
+) -> Result<PluginRow> {
+    let url = url::Url::parse(address.trim()).context("Enter the plugin's address")?;
+    ensure!(
+        url.scheme() == "https" && url.host_str().is_some(),
+        "A plugin's address uses HTTPS"
+    );
+    // The checksum's form is looked at before anything is downloaded.
+    let expected = expected.trim();
+    ensure!(
+        expected.len() == 64 && expected.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "A SHA-256 is 64 hexadecimal characters"
+    );
+    let mut response = client
+        .get(url.clone())
+        .send()
+        .await
+        .context("Could not download the plugin")?
+        .error_for_status()
+        .context("Could not download the plugin")?;
+    ensure!(
+        response
+            .content_length()
+            .is_none_or(|length| length <= MAX_ARCHIVE_BYTES),
+        "The plugin archive is too large"
+    );
+    let folder = data.join("plugin-downloads");
+    tokio::fs::create_dir_all(&folder).await?;
+    let archive = folder.join(format!("{}.zip", uuid::Uuid::new_v4()));
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .context("Could not download the plugin")?
+    {
+        bytes.extend_from_slice(&chunk);
+        ensure!(
+            bytes.len() as u64 <= MAX_ARCHIVE_BYTES,
+            "The plugin archive is too large"
+        );
+    }
+    tokio::fs::write(&archive, bytes).await?;
+    let installed = install_checked(
+        store,
+        data,
+        &archive,
+        Some(expected.to_owned()),
+        url.to_string(),
+    )
+    .await;
+    let _ = tokio::fs::remove_file(&archive).await;
+    installed
 }
 
 pub(crate) async fn set_enabled(
@@ -754,7 +963,7 @@ pub(crate) mod tests {
         let temp = tempfile::tempdir().unwrap();
         let (folder, data) = (temp.path().join("motif"), temp.path().join("data"));
         write_plugin(&folder, "motif-tools", "1.2.0");
-        let first = install_files(&folder, &data).unwrap();
+        let first = install_files(&folder, &data, None).unwrap();
         let root = data.join("plugins/motif-tools/1.2.0");
         assert_eq!(Path::new(&first.install_root), root);
         assert!(root.join("skills/find-motifs/SKILL.md").is_file());
@@ -763,12 +972,12 @@ pub(crate) mod tests {
         assert_eq!(skill_folders(&first), [root.join("skills/find-motifs")]);
         // The same files give the same hash; a changed file another.
         assert_eq!(
-            install_files(&folder, &data).unwrap().archive_sha256,
+            install_files(&folder, &data, None).unwrap().archive_sha256,
             first.archive_sha256
         );
 
         write_plugin(&folder, "motif-tools", "1.3.0");
-        let second = install_files(&folder, &data).unwrap();
+        let second = install_files(&folder, &data, None).unwrap();
         assert_ne!(second.archive_sha256, first.archive_sha256);
         assert!(!root.exists());
         assert!(data.join("plugins/motif-tools/1.3.0/.mcp.json").is_file());
@@ -785,18 +994,171 @@ pub(crate) mod tests {
 
         // A package that is refused leaves what is installed alone.
         std::fs::remove_file(folder.join(".claude-plugin/plugin.json")).unwrap();
-        assert!(install_files(&folder, &data).is_err());
+        assert!(install_files(&folder, &data, None).is_err());
         assert!(data.join("plugins/motif-tools/1.3.0").is_dir());
     }
 
     #[cfg(unix)]
+    /// A zip of `folder`, with its files under `prefix`, and any extra
+    /// entries as `(name, mode)`.
+    fn zip_of(folder: &Path, prefix: &str, extra: &[(&str, u32)]) -> Vec<u8> {
+        use std::io::Write;
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        let mut zip = zip::ZipWriter::new(&mut bytes);
+        for entry in walkdir_files(folder) {
+            let name = format!(
+                "{prefix}{}",
+                entry
+                    .strip_prefix(folder)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            );
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(&std::fs::read(&entry).unwrap()).unwrap();
+        }
+        for (name, mode) in extra {
+            // A mode of a link is written as a link.
+            if mode & 0o170000 == 0o120000 {
+                zip.add_symlink(
+                    *name,
+                    "/etc/passwd",
+                    zip::write::SimpleFileOptions::default(),
+                )
+                .unwrap();
+                continue;
+            }
+            zip.start_file(
+                *name,
+                zip::write::SimpleFileOptions::default().unix_permissions(*mode),
+            )
+            .unwrap();
+            zip.write_all(b"x").unwrap();
+        }
+        zip.finish().unwrap();
+        bytes.into_inner()
+    }
+
+    fn walkdir_files(folder: &Path) -> Vec<PathBuf> {
+        let mut out = vec![];
+        for entry in std::fs::read_dir(folder).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                out.extend(walkdir_files(&path));
+            } else {
+                out.push(path);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_plugin_is_installed_from_a_zip_and_a_checksum_must_match() {
+        let temp = tempfile::tempdir().unwrap();
+        let folder = temp.path().join("motif");
+        write_plugin(&folder, "motif-tools", "2.0.0");
+        let archive = temp.path().join("motif.zip");
+        let bytes = zip_of(&folder, "motif-tools-2.0.0/", &[]);
+        std::fs::write(&archive, &bytes).unwrap();
+        let sha = hex::encode(Sha256::digest(&bytes));
+        let data = temp.path().join("data");
+        // A checksum that does not match stops it before anything is read.
+        let wrong = "0".repeat(64);
+        let refused = install_checked_blocking(&data, &archive, Some(wrong), "motif.zip");
+        assert!(refused.unwrap_err().to_string().contains("SHA-256"));
+        assert!(!data.join("plugins/motif-tools").exists());
+        let installed =
+            install_checked_blocking(&data, &archive, Some(sha.to_uppercase()), "https://x/m.zip")
+                .unwrap();
+        assert_eq!(installed.trust_state, "checksum_verified");
+        assert_eq!(installed.archive_sha256, sha);
+        assert_eq!(installed.source_uri, "https://x/m.zip");
+        assert!(data
+            .join("plugins/motif-tools/2.0.0/skills/find-motifs/SKILL.md")
+            .is_file());
+        // Without one it is unverified; what it was unpacked into is gone.
+        let unverified = install_checked_blocking(&data, &archive, None, "motif.zip").unwrap();
+        assert_eq!(unverified.trust_state, "unverified");
+        assert_eq!(
+            std::fs::read_dir(data.join("plugin-downloads"))
+                .unwrap()
+                .count(),
+            0
+        );
+        assert!(checked(Some("not-hex"), &sha).is_err());
+    }
+
+    #[test]
+    fn an_archive_that_reaches_out_or_links_is_refused() {
+        let temp = tempfile::tempdir().unwrap();
+        let folder = temp.path().join("motif");
+        write_plugin(&folder, "motif-tools", "2.0.0");
+        for (extra, what) in [
+            (("../escape.txt", 0o644), "leaves"),
+            (("motif-tools/link", 0o120777), "symbolic link"),
+        ] {
+            let archive = temp.path().join("bad.zip");
+            std::fs::write(&archive, zip_of(&folder, "", &[extra])).unwrap();
+            let error = extract_zip(&archive, &temp.path().join("out"))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(what), "{error}");
+        }
+        assert!(!temp.path().join("escape.txt").exists());
+    }
+
+    fn install_checked_blocking(
+        data: &Path,
+        archive: &Path,
+        expected: Option<String>,
+        source: &str,
+    ) -> Result<PluginInstallation> {
+        let sha256 = hex::encode(Sha256::digest(std::fs::read(archive)?));
+        let trust = checked(expected.as_deref(), &sha256)?;
+        let unpacked = data.join("plugin-downloads").join("test");
+        std::fs::create_dir_all(&unpacked)?;
+        let installed = extract_zip(archive, &unpacked).and_then(|()| {
+            install_files(
+                &unpacked,
+                data,
+                Some(Origin {
+                    source: source.into(),
+                    sha256,
+                    trust,
+                }),
+            )
+        });
+        let _ = std::fs::remove_dir_all(&unpacked);
+        installed
+    }
+
+    #[tokio::test]
+    async fn an_address_must_be_https_with_a_checksum_before_anything_is_fetched() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(&temp.path().join("wisp.sqlite")).await.unwrap();
+        let client = reqwest::Client::new();
+        let sha = "a".repeat(64);
+        for (address, sum, said) in [
+            ("http://example.test/p.zip", sha.as_str(), "HTTPS"),
+            ("not an address", sha.as_str(), "address"),
+            ("https://example.test/p.zip", "abc", "64 hexadecimal"),
+        ] {
+            let error = install_from_address(&store, temp.path(), address, sum, client.clone())
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(said), "{address}: {error}");
+        }
+    }
+
     #[test]
     fn a_package_with_a_symbolic_link_is_refused() {
         let temp = tempfile::tempdir().unwrap();
         let (folder, data) = (temp.path().join("motif"), temp.path().join("data"));
         write_plugin(&folder, "motif-tools", "1.2.0");
         std::os::unix::fs::symlink(temp.path(), folder.join("outside")).unwrap();
-        let refused = install_files(&folder, &data).unwrap_err().to_string();
+        let refused = install_files(&folder, &data, None).unwrap_err().to_string();
         assert!(refused.contains("symbolic link"), "{refused}");
         assert!(!data.join("plugins").exists());
     }

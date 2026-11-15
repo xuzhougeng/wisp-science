@@ -162,6 +162,8 @@ pub enum Layer {
     ConfirmResetRemoteCode,
     /// Question before a plugin is removed, on its page of Settings.
     ConfirmRemovePlugin,
+    /// The address and checksum of a plugin to download, on its page.
+    PluginAddress,
     /// The form for a workflow, on its page of Settings.
     WorkflowForm,
     /// Question before a workflow is removed.
@@ -271,6 +273,7 @@ impl Layer {
             | Layer::WorkflowFromSkills
             | Layer::SkillTags
             | Layer::ConfirmRemovePlugin
+            | Layer::PluginAddress
             | Layer::ConfirmResetRemoteCode
             | Layer::ConfirmRemoveQuickAction => Some(Layer::Settings),
             Layer::ConfirmRemoveFavorite => Some(Layer::Favorites),
@@ -850,6 +853,15 @@ mod tests {
         stack.open(Layer::NewProject);
         assert_eq!(stack.dismiss_top(), Some(Layer::NewProject));
         assert_eq!(stack.dismiss_top(), None);
+    }
+
+    #[test]
+    fn the_plugin_address_form_closes_before_settings() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::Settings);
+        stack.open(Layer::PluginAddress);
+        assert_eq!(stack.dismiss_top(), Some(Layer::PluginAddress));
+        assert!(stack.contains(Layer::Settings));
     }
 
     #[test]

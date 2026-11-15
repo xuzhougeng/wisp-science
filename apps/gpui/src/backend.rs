@@ -1308,6 +1308,18 @@ impl Backend {
         self.local(move |host| async move { host.install_plugin(&folder).await })
     }
 
+    /// Downloads a plugin's archive from an HTTPS address and installs it
+    /// once its SHA-256 is the one given.
+    pub fn install_plugin_from_address(
+        &self,
+        address: String,
+        sha256: String,
+    ) -> Reply<wisp_server::desktop::PluginRow> {
+        self.local(
+            move |host| async move { host.install_plugin_from_address(&address, &sha256).await },
+        )
+    }
+
     pub fn set_plugin_enabled(
         &self,
         project: String,

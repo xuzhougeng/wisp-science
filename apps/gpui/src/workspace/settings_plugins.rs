@@ -5,6 +5,7 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
+    input::Input,
 };
 use wisp_server::desktop::PluginRow;
 
@@ -56,13 +57,14 @@ impl Workspace {
         cx.notify();
     }
 
-    fn install_plugin(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Installs from a folder, or from a `.zip` when `archive`.
+    fn install_plugin(&mut self, archive: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.plugin_installing {
             return;
         }
         let picker = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
+            files: archive,
+            directories: !archive,
             multiple: false,
             prompt: Some(tr("Install").into()),
         });
@@ -80,6 +82,61 @@ impl Workspace {
             });
         })
         .detach();
+    }
+
+    fn install_plugin_from_address(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.plugin_installing {
+            return;
+        }
+        let [address, sha256] =
+            [0, 1].map(|at| self.plugin_address[at].read(cx).value().to_string());
+        self.plugin_installing = true;
+        let reply = self.backend.install_plugin_from_address(address, sha256);
+        self.layers.close(Layer::PluginAddress);
+        self.change_plugins(reply, window, cx);
+    }
+
+    /// The form for a plugin to download: its address and published
+    /// checksum.
+    fn plugin_address_form(&self, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        div()
+            .v_flex()
+            .gap_2()
+            .p_3()
+            .w(px(620.))
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(cx.theme().border)
+            .child(div().text_xs().text_color(muted).child(tr(
+                "The address of the plugin's .zip, over HTTPS, and the SHA-256 its publisher gives. \
+                 It is installed only when the download has that checksum.",
+            )))
+            .child(Input::new(&self.plugin_address[0]).small())
+            .child(Input::new(&self.plugin_address[1]).small())
+            .child(
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("plugin-address-install")
+                            .label(tr("Download and install"))
+                            .small()
+                            .primary()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.install_plugin_from_address(window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("plugin-address-cancel")
+                            .label(tr("Cancel"))
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.layers.close(Layer::PluginAddress);
+                                cx.notify();
+                            })),
+                    ),
+            )
     }
 
     fn plugin_row(&self, row: &PluginRow, cx: &mut Context<Self>) -> Div {
@@ -224,9 +281,33 @@ impl Workspace {
                             })
                             .small()
                             .disabled(self.plugin_installing)
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.install_plugin(window, cx)),
-                            ),
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.install_plugin(false, window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("plugin-install-zip")
+                            .label(tr("From a .zip…"))
+                            .small()
+                            .disabled(self.plugin_installing)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.install_plugin(true, window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("plugin-install-address")
+                            .label(tr("From an address…"))
+                            .small()
+                            .selected(self.layers.contains(Layer::PluginAddress))
+                            .disabled(self.plugin_installing)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                if !this.layers.close(Layer::PluginAddress) {
+                                    this.layers.open(Layer::PluginAddress);
+                                    this.plugin_address[0]
+                                        .update(cx, |input, cx| input.focus(window, cx));
+                                }
+                                cx.notify();
+                            })),
                     )
                     .child(
                         div()
@@ -235,6 +316,9 @@ impl Workspace {
                             .child(plugins::switch_note(project_name)),
                     ),
             );
+        if self.layers.contains(Layer::PluginAddress) {
+            page = page.child(div().pb_2().child(self.plugin_address_form(cx)));
+        }
         let Some(rows) = &self.plugins else {
             return page.child(div().text_sm().text_color(muted).child(tr("Loading…")));
         };
