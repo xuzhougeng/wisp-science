@@ -4,4 +4,8 @@
 //! candidate implementations with the model, evaluates each with the frozen
 //! evaluator, and promotes the best.
 
+// Started by the workflow run activity and the Run's controls, which are
+// ported after it; until then nothing calls it but its tests.
+#[allow(dead_code)]
+pub(crate) mod coordinator;
 pub(crate) mod prepare;

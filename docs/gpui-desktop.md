@@ -380,8 +380,15 @@ Limits of this slice:
   artifact versions, runs the baseline the asked number of times with the
   local Python and its `wisp_evaluate:` protocol, proves a candidate is
   reachable with a failing sentinel, and returns the frozen spec and audit
-  report ids. The search itself (candidates proposed by the model,
-  evaluated, the best promoted) is not ported yet.
+  report ids. The search coordinator follows `method_search_coordinator.rs`
+  too: a durable `method_search` Run that proposes candidates with the
+  model (the host supplies the provider), evaluates each in a fresh
+  workspace, keeps its budgets of candidates, cost and wall time, pauses,
+  resumes and cancels at candidate boundaries, runs the final
+  verification and promotes the top candidates as artifacts. Nothing
+  starts it yet: the workflow run activity that starts it from a batch,
+  its Start, Pause, Resume and Cancel, recovery at startup, and the GPUI
+  run card are not ported.
 - Explorations follow the WebView's `exploration_commands.rs`,
   `exploration_promotion.rs` and `exploration_workspace.rs`, whose
   services and tests are carried over. The first candidate of a round
