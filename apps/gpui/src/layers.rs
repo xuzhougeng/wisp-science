@@ -9,6 +9,13 @@ pub enum Layer {
     FilesPanel,
     /// File preview shown over the browser's directory listing.
     FilePreview,
+    /// Marking regions on a previewed picture: a drag draws a region
+    /// instead of moving the picture, and a click on a note's number
+    /// removes it.
+    PictureSelect,
+    /// A region just marked on the picture, with the field for its note and
+    /// the actions that put it on the message.
+    PictureRegion,
     /// Question over the preview when an edited script changed on disk
     /// after the edit began: keep editing, reload, or overwrite.
     FileChangedOnDisk,
@@ -21,6 +28,15 @@ pub enum Layer {
     /// Where the project keeps things on one SSH host, in the
     /// Environments tab.
     HostStorageForm,
+    /// A file of an SSH host shown in the Files tab, in place of its
+    /// folder's listing.
+    RemotePreview,
+    /// One SSH host's runs, or the files the project placed there, under
+    /// its card in the Environments tab.
+    HostDetail,
+    /// Question, as a dialog, before a file the project placed on a host
+    /// is deleted from it.
+    ConfirmRemoveStaged,
     /// What a finished run left on its SSH host: a dialog over everything.
     RunReview,
     /// The projects to hide while recording: a dialog over everything.
@@ -88,6 +104,10 @@ pub enum Layer {
     JournalForm,
     /// A day's recap being changed, on the journey page.
     RecapForm,
+    /// The details of one relation in the journey's relation graph.
+    JourneyEdge,
+    /// A run's record, as a dialog over the journey page.
+    JourneyRun,
     /// The scheduled tasks of every project: a page of its own.
     Schedules,
     /// The form on that page for a new task.
@@ -136,8 +156,18 @@ pub enum Layer {
     /// Handing the open conversation off to a new one: a dialog over it,
     /// or over What the model is sent when opened from there.
     Handoff,
+    /// The first of a range of the open conversation's turns is chosen
+    /// (Quote / reuse): a bar above the composer until the last is.
+    ReuseRange,
+    /// The chosen turns, to quote in another conversation or distill into
+    /// an experience: a dialog over the conversation, with the range under
+    /// it.
+    SessionReuse,
     /// The research archive of the open conversation: a dialog over it.
     ResearchArchive,
+    /// Question over that dialog before the changes to its draft are
+    /// given up.
+    ConfirmDiscardArchive,
     /// The messages of the open conversation to put into its shared page:
     /// a dialog over it.
     ShareMessages,
@@ -191,6 +221,9 @@ pub enum Layer {
     Favorites,
     /// Question on the Favorites page before a saved item is removed.
     ConfirmRemoveFavorite,
+    /// A saved item's code being edited into a new version, on the
+    /// Favorites page.
+    FavoriteCode,
     /// The form for an MCP server, on the Connections page of Settings.
     McpForm,
     /// Question before an MCP server is removed.
@@ -290,6 +323,8 @@ impl Layer {
             | Layer::PanelTabMenu
             | Layer::ConfirmCleanRun
             | Layer::HostStorageForm
+            | Layer::RemotePreview
+            | Layer::HostDetail
             | Layer::FileName
             | Layer::ConfirmTrashFile
             | Layer::MemoEditor
@@ -324,9 +359,11 @@ impl Layer {
             | Layer::PluginAddress
             | Layer::ConfirmResetRemoteCode
             | Layer::ConfirmRemoveQuickAction => Some(Layer::Settings),
-            Layer::ConfirmRemoveFavorite => Some(Layer::Favorites),
+            Layer::ConfirmRemoveFavorite | Layer::FavoriteCode => Some(Layer::Favorites),
             Layer::ConfirmSyncReplace => Some(Layer::ProjectSettings),
-            Layer::JournalForm | Layer::RecapForm => Some(Layer::Journey),
+            Layer::JournalForm | Layer::RecapForm | Layer::JourneyEdge | Layer::JourneyRun => {
+                Some(Layer::Journey)
+            }
             Layer::ScheduleForm | Layer::ConfirmDeleteSchedule => Some(Layer::Schedules),
             Layer::MandateForm | Layer::ConfirmDeleteMandate => Some(Layer::Mandates),
             Layer::PaperForm
@@ -339,7 +376,11 @@ impl Layer {
             Layer::GroupMenu | Layer::TransferMenu => Some(Layer::ConversationMenu),
             Layer::ExampleCopy => Some(Layer::Examples),
             Layer::ConfirmRunFilesDelete => Some(Layer::RunReview),
-            Layer::FileChangedOnDisk => Some(Layer::FilePreview),
+            Layer::FileChangedOnDisk | Layer::PictureSelect => Some(Layer::FilePreview),
+            Layer::ConfirmRemoveStaged => Some(Layer::HostDetail),
+            Layer::PictureRegion => Some(Layer::PictureSelect),
+            Layer::SessionReuse => Some(Layer::ReuseRange),
+            Layer::ConfirmDiscardArchive => Some(Layer::ResearchArchive),
             _ => None,
         }
     }
@@ -508,6 +549,32 @@ mod tests {
     }
 
     #[test]
+    fn a_marked_region_goes_first_then_marking_then_the_picture() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::FilePreview);
+        stack.open(Layer::PictureSelect);
+        stack.open(Layer::PictureRegion);
+        // Escape, pressed at once, gives up the region and its note; the
+        // picture is still being marked, and its preview is open.
+        assert_eq!(stack.dismiss_top(), Some(Layer::PictureRegion));
+        assert!(stack.contains(Layer::PictureSelect) && stack.contains(Layer::FilePreview));
+        assert_eq!(stack.dismiss_top(), Some(Layer::PictureSelect));
+        assert!(stack.contains(Layer::FilePreview));
+        // Leaving marking takes a region waiting for its note along, and
+        // leaving the picture takes both.
+        stack.open(Layer::PictureSelect);
+        stack.open(Layer::PictureRegion);
+        assert!(stack.close(Layer::PictureSelect));
+        assert!(!stack.contains(Layer::PictureRegion));
+        stack.open(Layer::PictureSelect);
+        stack.open(Layer::PictureRegion);
+        assert!(stack.close(Layer::FilePreview));
+        assert!(!stack.contains(Layer::PictureSelect) && !stack.contains(Layer::PictureRegion));
+        assert!(stack.contains(Layer::FilesPanel));
+    }
+
+    #[test]
     fn closing_a_parent_closes_its_children_and_reopening_does_not_duplicate() {
         let mut stack = EscapeStack::default();
         stack.open(Layer::FilesPanel);
@@ -548,6 +615,29 @@ mod tests {
         assert_eq!(stack.dismiss_top(), Some(Layer::HostStorageForm));
         assert!(stack.contains(Layer::FilesPanel));
         stack.close(Layer::FilesPanel);
+
+        // So does a host's file, shown in place of its folder.
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::RemotePreview);
+        assert_eq!(stack.dismiss_top(), Some(Layer::RemotePreview));
+        assert!(stack.contains(Layer::FilesPanel));
+        stack.close(Layer::FilesPanel);
+
+        // The question before a placed file is deleted closes first, then
+        // the host's list under its card, then the panel.
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::HostDetail);
+        stack.open(Layer::ConfirmRemoveStaged);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmRemoveStaged));
+        assert!(stack.contains(Layer::HostDetail));
+        assert_eq!(stack.dismiss_top(), Some(Layer::HostDetail));
+        assert!(stack.contains(Layer::FilesPanel));
+        // The list going takes its question with it.
+        stack.open(Layer::HostDetail);
+        stack.open(Layer::ConfirmRemoveStaged);
+        assert!(stack.close(Layer::FilesPanel));
+        assert!(!stack.contains(Layer::HostDetail));
+        assert!(!stack.contains(Layer::ConfirmRemoveStaged));
 
         // So does the question before a run's workspace is cleaned.
         stack.open(Layer::FilesPanel);
@@ -754,6 +844,15 @@ mod tests {
         assert!(stack.close(Layer::Favorites));
         assert!(!stack.contains(Layer::ConfirmRemoveFavorite));
         assert!(stack.contains(Layer::FilesPanel));
+        // An edit of saved code is inside the page: Escape gives it up and
+        // leaves the page, and leaving the page takes it along.
+        stack.open(Layer::Favorites);
+        stack.open(Layer::FavoriteCode);
+        assert_eq!(stack.dismiss_top(), Some(Layer::FavoriteCode));
+        assert!(stack.contains(Layer::Favorites));
+        stack.open(Layer::FavoriteCode);
+        assert!(stack.close(Layer::Favorites));
+        assert!(!stack.contains(Layer::FavoriteCode));
     }
 
     #[test]
@@ -806,6 +905,25 @@ mod tests {
         assert!(stack.contains(Layer::ModelView));
         assert_eq!(stack.dismiss_top(), Some(Layer::ModelView));
         assert_eq!(stack.dismiss_top(), None);
+    }
+
+    #[test]
+    fn the_reuse_dialog_closes_first_and_leaves_the_range_chosen() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::ReuseRange);
+        stack.open(Layer::SessionReuse);
+        // One Escape closes the dialog; the range stays, as in the WebView.
+        assert_eq!(stack.dismiss_top(), Some(Layer::SessionReuse));
+        assert!(stack.contains(Layer::ReuseRange));
+        // The next gives up the range.
+        assert_eq!(stack.dismiss_top(), Some(Layer::ReuseRange));
+        assert_eq!(stack.dismiss_top(), None);
+        // Giving up the range, or leaving the conversation, takes the
+        // dialog along.
+        stack.open(Layer::ReuseRange);
+        stack.open(Layer::SessionReuse);
+        assert!(stack.close(Layer::ReuseRange));
+        assert!(!stack.contains(Layer::SessionReuse));
     }
 
     #[test]
@@ -948,7 +1066,18 @@ mod tests {
         stack.open(Layer::RecapForm);
         assert_eq!(stack.dismiss_top(), Some(Layer::RecapForm));
         assert!(stack.contains(Layer::Journey));
-        stack.close(Layer::Journey);
+        // A relation's details and a run's record are inside the page:
+        // one press closes the topmost, and the page stays.
+        stack.open(Layer::JourneyEdge);
+        stack.open(Layer::JourneyRun);
+        assert_eq!(stack.dismiss_top(), Some(Layer::JourneyRun));
+        assert_eq!(stack.dismiss_top(), Some(Layer::JourneyEdge));
+        assert!(stack.contains(Layer::Journey));
+        // Leaving the page takes both along.
+        stack.open(Layer::JourneyEdge);
+        stack.open(Layer::JourneyRun);
+        assert!(stack.close(Layer::Journey));
+        assert!(!stack.contains(Layer::JourneyEdge) && !stack.contains(Layer::JourneyRun));
         // The scheduled tasks page has a form and a question inside it.
         stack.open(Layer::Schedules);
         stack.open(Layer::ScheduleForm);
@@ -1024,6 +1153,16 @@ mod tests {
         stack.open(Layer::FilesPanel);
         stack.open(Layer::ResearchArchive);
         assert_eq!(stack.dismiss_top(), Some(Layer::ResearchArchive));
+        // The question before its draft's changes are given up goes first,
+        // and leaves the draft open under it.
+        stack.open(Layer::ResearchArchive);
+        stack.open(Layer::ConfirmDiscardArchive);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmDiscardArchive));
+        assert!(stack.contains(Layer::ResearchArchive));
+        // Closing the dialog closes the question with it.
+        stack.open(Layer::ConfirmDiscardArchive);
+        assert!(stack.close(Layer::ResearchArchive));
+        assert!(!stack.contains(Layer::ConfirmDiscardArchive));
         assert!(stack.close(Layer::FilesPanel));
         // So is importing conversations.
         stack.open(Layer::FilesPanel);

@@ -9,7 +9,7 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
+    input::{Input, InputState},
     text::TextView,
 };
 
@@ -17,6 +17,7 @@ use super::{
     Workspace,
     favorites_view::image_format,
     shell::{error_banner, glyph, icon_button},
+    surfaces,
 };
 use crate::{
     backend::{Reply, receive},
@@ -245,13 +246,9 @@ impl Workspace {
         };
         let folder = files::parent(&path).unwrap_or_default();
         let hover = cx.theme().list_hover;
-        div()
-            .id(("file-hit", index))
-            .h_flex()
+        surfaces::panel_row(("file-hit", index), cx)
             .w_full()
-            .h(px(28.))
-            .px_3()
-            .gap_2()
+            .h(px(surfaces::PANEL_ROW_HEIGHT))
             .cursor_pointer()
             .hover(move |style| style.bg(hover))
             .child(
@@ -259,7 +256,7 @@ impl Workspace {
                     .flex_shrink_0()
                     .max_w(px(180.))
                     .truncate()
-                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
                     .child(files::file_name(&path).to_owned()),
             )
             .child(
@@ -287,19 +284,19 @@ impl Workspace {
     fn render_provenance_tab(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         let muted = cx.theme().muted_foreground;
         let mono = cx.theme().mono_font_family.clone();
+        let hover = cx.theme().list_hover;
         let mut list = div()
             .id("provenance-list")
             .v_flex()
             .flex_1()
             .min_h_0()
-            .overflow_y_scroll()
-            .p_2()
-            .gap_1();
+            .overflow_y_scroll();
         let calls = crate::panel::provenance(&self.rows);
         if calls.is_empty() {
-            return list.child(div().p_2().text_sm().text_color(muted).child(tr(
-                "No tool has run in the loaded part of this conversation.",
-            )));
+            return list.child(surfaces::panel_empty(
+                tr("No tool has run in the loaded part of this conversation."),
+                cx,
+            ));
         }
         let block = |label: &'static str, text: &str| {
             let shown: String = text.chars().take(4_000).collect();
@@ -331,14 +328,13 @@ impl Workspace {
                 None => ("loader", crate::present::Tone::Active),
             };
             let toggled = key.clone();
-            let mut item = div().v_flex().gap_1().child(
-                div()
-                    .id(SharedString::from(format!("provenance-{key}")))
-                    .h_flex()
-                    .gap_2()
-                    .px_1()
-                    .h(px(26.))
+            // An open call keeps the hairline under what it was given and
+            // returned.
+            list = list.child(
+                surfaces::panel_row(SharedString::from(format!("provenance-{key}")), cx)
+                    .when(open, |row| row.border_b_0())
                     .cursor_pointer()
+                    .hover(move |style| style.bg(hover))
                     .child(
                         crate::assets::icon(if open {
                             "chevron-down"
@@ -347,14 +343,9 @@ impl Workspace {
                         })
                         .text_color(muted),
                     )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_sm()
-                            .child(row.tool_name.clone().unwrap_or_default()),
-                    )
+                    .child(surfaces::panel_label(
+                        row.tool_name.clone().unwrap_or_default(),
+                    ))
                     .child(crate::assets::icon(mark).text_color(super::tone_color(tone, cx)))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.provenance_open.insert(toggled.clone(), !open);
@@ -362,6 +353,7 @@ impl Workspace {
                     })),
             );
             if open {
+                let mut item = surfaces::panel_entry(cx).pt_0();
                 if let Some(input) = row
                     .input
                     .as_deref()
@@ -373,17 +365,19 @@ impl Workspace {
                     item = item.child(block(tr("Output"), &row.text));
                 }
                 item = item.child(
-                    Button::new(SharedString::from(format!("provenance-show-{key}")))
-                        .label(tr("Show in the conversation"))
-                        .xsmall()
-                        .ghost()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.list.scroll_to_reveal_item(index);
-                            cx.notify();
-                        })),
+                    div().h_flex().child(
+                        Button::new(SharedString::from(format!("provenance-show-{key}")))
+                            .label(tr("Show in the conversation"))
+                            .xsmall()
+                            .ghost()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.list.scroll_to_reveal_item(index);
+                                cx.notify();
+                            })),
+                    ),
                 );
+                list = list.child(item);
             }
-            list = list.child(item);
         }
         list
     }
@@ -539,9 +533,11 @@ impl Workspace {
     }
 
     pub(super) fn open_file(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        let same_file = self.files.preview_path.as_deref() == Some(path.as_str());
         let Some(ticket) = self.files.begin_preview(&path) else {
             return;
         };
+        self.reset_picture(same_file);
         // An edit of the file shown before stays as its draft.
         self.file_edit = None;
         self.layers.close(Layer::FileChangedOnDisk);
@@ -707,7 +703,7 @@ impl Workspace {
         cx.notify();
     }
 
-    fn close_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn close_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.layers.close(Layer::FilePreview) {
             // An unsaved edit stays as the file's draft.
             self.file_edit = None;
@@ -738,17 +734,13 @@ impl Workspace {
             (entry.name.clone(), files::size_label(entry.size))
         };
         let (renamed, trashed) = (path.clone(), path.clone());
-        div()
-            .id(("file-entry", index))
-            .h_flex()
+        surfaces::panel_row(("file-entry", index), cx)
             .w_full()
-            .h(px(28.))
-            .px_3()
-            .gap_2()
+            .h(px(surfaces::PANEL_ROW_HEIGHT))
             .justify_between()
             .cursor_pointer()
             .hover(move |style| style.bg(hover))
-            .child(div().flex_1().min_w_0().truncate().text_sm().child(name))
+            .child(surfaces::panel_label(name))
             .child(
                 div()
                     .flex_shrink_0()
@@ -795,39 +787,18 @@ impl Workspace {
     }
 
     fn render_preview(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let muted = cx.theme().muted_foreground;
-        let message = |text: &'static str| {
-            div()
-                .p_4()
-                .text_sm()
-                .text_color(muted)
-                .child(text)
-                .into_any_element()
-        };
-        if let Some((_, image)) = self
+        let message = |text: &'static str| surfaces::panel_empty(text, cx).into_any_element();
+        if let Some((path, image)) = self
             .file_image
             .as_ref()
             .filter(|(path, _)| self.files.preview_path.as_deref() == Some(path.as_str()))
         {
-            return div()
-                .flex_1()
-                .min_h_0()
-                .p_3()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    img(image.clone())
-                        .max_w_full()
-                        .max_h_full()
-                        .object_fit(ObjectFit::Contain),
-                )
-                .into_any_element();
+            return self.render_picture(path, image.clone(), window, cx);
         }
         let Some(content) = &self.files.preview else {
             return match &self.files.error {
                 Some(error) => div()
-                    .p_4()
+                    .p_3()
                     .text_sm()
                     .text_color(cx.theme().danger)
                     .child(crate::i18n::host(error))
@@ -839,7 +810,7 @@ impl Workspace {
             PreviewMode::Binary if crate::favorites::is_image(&content.path) => {
                 match &self.file_problem {
                     Some(problem) => div()
-                        .p_4()
+                        .p_3()
                         .text_sm()
                         .text_color(cx.theme().danger)
                         .child(crate::i18n::host(problem))
@@ -860,7 +831,7 @@ impl Workspace {
                 {
                     None => message(tr("Turning the document into text…")),
                     Some((_, Err(problem))) => div()
-                        .p_4()
+                        .p_3()
                         .text_sm()
                         .text_color(cx.theme().danger)
                         .child(crate::i18n::host(problem))
@@ -873,7 +844,7 @@ impl Workspace {
                             div()
                                 .h_flex()
                                 .gap_2()
-                                .px_4()
+                                .px_3()
                                 .pt_2()
                                 .child(
                                     div()
@@ -900,7 +871,7 @@ impl Workspace {
                                 }),
                         )
                         .child(
-                            div().flex_1().min_h_0().p_4().child(
+                            div().flex_1().min_h_0().p_3().child(
                                 TextView::markdown(
                                     SharedString::from(format!("document-{path}")),
                                     text.clone(),
@@ -918,7 +889,7 @@ impl Workspace {
             PreviewMode::Markdown => div()
                 .flex_1()
                 .min_h_0()
-                .p_4()
+                .p_3()
                 .child(
                     TextView::markdown(
                         SharedString::from(format!("file-preview-{}", content.path)),
@@ -953,7 +924,7 @@ impl Workspace {
                     return self.render_notebook(&content.path, book, window, cx);
                 }
                 match files::table(&content.path, text) {
-                    Some(table) => self.render_table(&table, cx),
+                    Some(table) => self.render_table(&table, &self.file_view, cx),
                     None if self.live_edit().is_some() => {
                         self.render_file_editor(cx).into_any_element()
                     }
@@ -1016,7 +987,7 @@ impl Workspace {
             div()
                 .flex_1()
                 .min_h_0()
-                .p_4()
+                .p_3()
                 .child(
                     TextView::html(
                         SharedString::from(format!("file-html-{path}")),
@@ -1416,18 +1387,13 @@ impl Workspace {
             .map(|(_, pages)| pages);
         let (images, note) = match pages {
             None => {
-                return div()
-                    .p_4()
-                    .text_sm()
-                    .text_color(muted)
-                    .child(tr("Drawing the pages…"))
-                    .into_any_element();
+                return surfaces::panel_empty(tr("Drawing the pages…"), cx).into_any_element();
             }
             Some(Err(problem)) => {
                 return div()
                     .v_flex()
                     .gap_2()
-                    .p_4()
+                    .p_3()
                     .child(
                         div()
                             .text_sm()
@@ -1530,7 +1496,7 @@ impl Workspace {
             div()
                 .flex_1()
                 .min_h_0()
-                .p_4()
+                .p_3()
                 .child(
                     TextView::markdown(
                         SharedString::from(format!("notebook-{path}")),
@@ -1552,8 +1518,14 @@ impl Workspace {
             .into_any_element()
     }
 
-    /// A delimited file as a grid, with a switch to its text.
-    fn render_table(&self, table: &files::Table, cx: &mut Context<Self>) -> AnyElement {
+    /// A delimited file as a grid, with a switch to its text, which
+    /// `text` holds: a project file's or a host's.
+    pub(super) fn render_table(
+        &self,
+        table: &files::Table,
+        text: &Entity<InputState>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let muted = cx.theme().muted_foreground;
         let border = cx.theme().border;
         let mut bar = div().h_flex().gap_3().px_3().py_1().child(
@@ -1576,7 +1548,12 @@ impl Workspace {
                 .flex_1()
                 .min_h_0()
                 .child(bar)
-                .child(self.render_text_preview())
+                .child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .child(Input::new(text).disabled(true).h_full()),
+                )
                 .into_any_element();
         }
         if let Some(note) = files::table_note(table) {
@@ -1715,13 +1692,9 @@ impl Workspace {
         let previewing = self.layers.contains(Layer::FilePreview);
         let muted = cx.theme().muted_foreground;
         let border = cx.theme().border;
-        let panel = div()
-            .v_flex()
+        let panel = surfaces::side_panel(cx)
             .w(px(if previewing { 480. } else { 340. }))
-            .min_w(px(240.))
-            .h_full()
-            .border_l_1()
-            .border_color(border);
+            .min_w(px(240.));
 
         if previewing {
             let name = self.files.preview_path.as_deref().unwrap_or_default();
@@ -1740,40 +1713,25 @@ impl Workspace {
                 }
                 note.push_str(tr("Not saved"));
             }
+            let note = (!note.is_empty()).then(|| note.into());
             return panel
                 .child(
-                    div()
-                        .h_flex()
-                        .gap_2()
-                        .p_3()
-                        .justify_between()
-                        .border_b_1()
-                        .border_color(border)
-                        .child(
-                            div()
-                                .v_flex()
-                                .flex_1()
-                                .min_w_0()
-                                .child(div().truncate().text_sm().child(name))
-                                .child(div().text_xs().text_color(muted).child(note)),
-                        )
+                    surfaces::panel_header(name, note, cx)
                         .children(self.file_actions(cx))
                         .child(
-                            Button::new("file-preview-origin")
-                                .label(tr("Origin"))
-                                .small()
-                                .ghost()
-                                .tooltip(tr(
-                                    "Which tool call wrote this file, and in which conversation",
-                                ))
-                                .on_click(cx.listener(|this, _, window, cx| {
+                            icon_button(
+                                "file-preview-origin",
+                                "research-trail",
+                                "Which tool call wrote this file, and in which conversation",
+                            )
+                            .on_click(
+                                cx.listener(|this, _, window, cx| {
                                     this.load_file_origin(window, cx)
-                                })),
+                                }),
+                            ),
                         )
                         .child(
-                            Button::new("file-preview-back")
-                                .label(tr("Back to files"))
-                                .small()
+                            icon_button("file-preview-back", "arrow-left", "Back to files")
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.close_preview(window, cx)
                                 })),
@@ -1790,6 +1748,7 @@ impl Workspace {
                         .child(notice.clone())
                 }))
                 .children(self.render_file_editor_bar(cx))
+                .children(self.render_picture_bar(cx))
                 .child(self.render_preview(window, cx))
                 .into_any_element();
         }
@@ -1843,7 +1802,7 @@ impl Workspace {
             PanelTab::Files => {}
         }
         let panel = panel.children(self.render_locations(cx));
-        if let Some(remote) = self.render_remote_files(cx) {
+        if let Some(remote) = self.render_remote_files(window, cx) {
             return panel.child(remote).into_any_element();
         }
         let location = if self.files.path.is_empty() {
@@ -1852,107 +1811,107 @@ impl Workspace {
             self.files.path.clone()
         };
         let parent = files::parent(&self.files.path);
-        let mut panel = panel.child(
-            div()
-                .v_flex()
-                .gap_2()
-                .p_3()
-                .border_b_1()
-                .border_color(border)
-                .child(div().truncate().text_xs().text_color(muted).child(location))
-                .child(
-                    div()
-                        .h_flex()
-                        .gap_2()
-                        .child(
-                            Button::new("files-up")
-                                .label(tr("Up"))
-                                .small()
-                                .disabled(parent.is_none())
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    if let Some(parent) = parent.clone() {
-                                        this.load_directory(parent, window, cx);
-                                    }
-                                })),
-                        )
-                        .child(
-                            Button::new("files-reload")
-                                .label(tr("Reload"))
-                                .small()
-                                .on_click(
-                                    cx.listener(|this, _, window, cx| {
-                                        this.reload_files(window, cx)
-                                    }),
-                                ),
-                        )
-                        .child(
-                            icon_button(
-                                "files-view",
-                                if self.files.grid { "list" } else { "grid" },
-                                if self.files.grid {
-                                    tr("Show as a list")
-                                } else {
-                                    tr("Show as tiles")
-                                },
-                            )
-                            .on_click(cx.listener(
-                                |this, _, window, cx| {
-                                    this.files.grid = !this.files.grid;
-                                    this.save_files_view(window, cx);
-                                    cx.notify();
-                                },
-                            )),
-                        )
-                        .child(
-                            Button::new("files-sort")
-                                .icon(glyph("sort"))
-                                .label(self.files.sort.label())
-                                .small()
-                                .ghost()
-                                .tooltip(tr("Change the order"))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    let next = this.files.sort.next();
-                                    this.files.set_sort(next);
-                                    this.save_files_sort(window, cx);
-                                    cx.notify();
-                                })),
-                        )
-                        .child(div().flex_1())
-                        .child(
-                            icon_button(
-                                "files-terminal",
-                                "terminal",
-                                "Open a terminal in this folder",
-                            )
-                            .on_click(cx.listener(
-                                |this, _, window, cx| this.open_terminal_here(window, cx),
-                            )),
-                        )
-                        .child(
-                            icon_button(
-                                "files-upload",
-                                "upload",
-                                tr("Upload files into this folder"),
-                            )
-                            .on_click(cx.listener(
-                                |this, _, window, cx| this.upload_into_folder(window, cx),
-                            )),
-                        )
-                        .child(
-                            icon_button("files-new-folder", "folder-plus", tr("New folder here"))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.start_naming(Naming::Folder, window, cx)
-                                })),
-                        )
-                        .child(
-                            icon_button("files-new-file", "note-plus", tr("New file here"))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.start_naming(Naming::File, window, cx)
-                                })),
+        // The folder shown is the header's title; going up, reading it
+        // again and adding to it are its actions. How the folder is laid
+        // out and the name to look for are the line under it.
+        let mut panel = panel
+            .child(
+                surfaces::panel_header(location, None, cx)
+                    .child(
+                        icon_button("files-up", "up", "Up")
+                            .disabled(parent.is_none())
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                if let Some(parent) = parent.clone() {
+                                    this.load_directory(parent, window, cx);
+                                }
+                            })),
+                    )
+                    .child(
+                        icon_button("files-reload", "refresh", "Reload").on_click(
+                            cx.listener(|this, _, window, cx| this.reload_files(window, cx)),
                         ),
-                )
-                .child(Input::new(&self.file_search).small().cleanable(true)),
-        );
+                    )
+                    .child(
+                        icon_button(
+                            "files-terminal",
+                            "terminal",
+                            "Open a terminal in this folder",
+                        )
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.open_terminal_here(window, cx)),
+                        ),
+                    )
+                    .child(
+                        icon_button(
+                            "files-upload",
+                            "upload",
+                            tr("Upload files into this folder"),
+                        )
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.upload_into_folder(window, cx)),
+                        ),
+                    )
+                    .child(
+                        icon_button("files-new-folder", "folder-plus", tr("New folder here"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.start_naming(Naming::Folder, window, cx)
+                            })),
+                    )
+                    .child(
+                        icon_button("files-new-file", "note-plus", tr("New file here")).on_click(
+                            cx.listener(|this, _, window, cx| {
+                                this.start_naming(Naming::File, window, cx)
+                            }),
+                        ),
+                    ),
+            )
+            .child(
+                div()
+                    .h_flex()
+                    .items_center()
+                    .gap_1()
+                    .px_3()
+                    .py_2()
+                    .flex_shrink_0()
+                    .border_b_1()
+                    .border_color(border)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(Input::new(&self.file_search).small().cleanable(true)),
+                    )
+                    .child(
+                        icon_button(
+                            "files-view",
+                            if self.files.grid { "list" } else { "grid" },
+                            if self.files.grid {
+                                tr("Show as a list")
+                            } else {
+                                tr("Show as tiles")
+                            },
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.files.grid = !this.files.grid;
+                            this.save_files_view(window, cx);
+                            cx.notify();
+                        })),
+                    )
+                    .child(
+                        Button::new("files-sort")
+                            .icon(glyph("sort"))
+                            .label(self.files.sort.label())
+                            .small()
+                            .ghost()
+                            .tooltip(tr("Change the order"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                let next = this.files.sort.next();
+                                this.files.set_sort(next);
+                                this.save_files_sort(window, cx);
+                                cx.notify();
+                            })),
+                    ),
+            );
         if let Some(problem) = &self.file_problem {
             panel = panel.child(div().px_3().pt_2().child(error_banner(problem, cx)));
         }
@@ -2051,8 +2010,8 @@ impl Workspace {
         if let Some(error) = &self.files.error {
             panel = panel.child(
                 div()
-                    .p_3()
-                    .text_sm()
+                    .px_3()
+                    .py_3()
                     .text_color(cx.theme().danger)
                     .child(crate::i18n::host(error)),
             );
@@ -2069,7 +2028,7 @@ impl Workspace {
             };
             if let Some(hint) = hint {
                 return panel
-                    .child(div().p_3().text_sm().text_color(muted).child(hint))
+                    .child(surfaces::panel_empty(hint, cx))
                     .into_any_element();
             }
             return panel
@@ -2097,7 +2056,7 @@ impl Workspace {
         };
         if let Some(hint) = hint {
             return panel
-                .child(div().p_3().text_sm().text_color(muted).child(hint))
+                .child(surfaces::panel_empty(hint, cx))
                 .into_any_element();
         }
         if self.files.grid {

@@ -474,7 +474,15 @@ impl Workspace {
     /// line after it is not one) and one just copied.
     fn message_actions(&self, index: usize, cx: &mut Context<Self>) -> Div {
         let actions = self.message_action_items(index, cx);
-        if controls::latest_message(&self.rows) == Some(index) || self.copied == Some(index) {
+        // The turn a range of turns to quote starts at stays marked.
+        let starts_range = self
+            .reuse_start()
+            .and_then(|selection| selection.row(&self.rows))
+            == Some(index);
+        if controls::latest_message(&self.rows) == Some(index)
+            || self.copied == Some(index)
+            || starts_range
+        {
             return actions;
         }
         actions
@@ -545,6 +553,25 @@ impl Workspace {
         // Rewinding and branching work on saved turns of a conversation
         // that is at rest and still part of everyday work.
         let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
+        // Quote / reuse only reads the turns, so it is offered in a
+        // read-only conversation too, on the user's messages.
+        let actions = if crate::reuse::offered(&self.rows, index, self.reuse_acp(), running) {
+            let start = self
+                .reuse_start()
+                .and_then(|selection| selection.row(&self.rows));
+            let (name, tooltip) = crate::reuse::action(start.is_some());
+            actions.child(
+                icon_button(("reuse-row", index), name, tooltip)
+                    .xsmall()
+                    .selected(start == Some(index))
+                    .disabled(self.reuse_loading)
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| this.reuse_turn(index, window, cx)),
+                    ),
+            )
+        } else {
+            actions
+        };
         let archived = self.current_row().is_none_or(|row| row.shelved);
         let idle = !running && !self.pending;
         // What the turn cost, after its last answer.
@@ -2701,6 +2728,8 @@ impl Workspace {
             self.render_follow_ups(cx)
                 .map(IntoElement::into_any_element),
             self.render_transfers(cx).map(IntoElement::into_any_element),
+            self.render_reuse_range(cx)
+                .map(IntoElement::into_any_element),
         ];
         // The composer sits in the same column as what it answers.
         content

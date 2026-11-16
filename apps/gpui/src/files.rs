@@ -433,6 +433,100 @@ pub struct RemoteBrowse {
     pub path: String,
     pub listing: Option<wisp_server::desktop::RemoteDirectory>,
     pub error: Option<String>,
+    /// A file of the folder being looked at, in place of the listing.
+    pub look: Option<RemoteLook>,
+}
+
+/// A file of a host being looked at in the Files tab. Its bytes are only
+/// read, never kept: a picture lives in the window while it is shown.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteLook {
+    pub alias: String,
+    pub path: String,
+    /// Its size, as the listing said and then as the host answered.
+    pub size: Option<u64>,
+    /// What can be shown of it, once the host has answered.
+    pub shown: Option<Result<RemoteShown, String>>,
+}
+
+/// What a file of a host is shown as.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RemoteShown {
+    /// Text, cut to its first megabyte when `truncated`.
+    Text { text: String, truncated: bool },
+    /// A picture; the window holds it.
+    Picture,
+    /// A picture larger than a preview fetches, which was not fetched.
+    TooLarge(u64),
+    /// Not text and not a picture.
+    NotShown,
+}
+
+impl RemoteLook {
+    pub fn new(alias: String, path: String, listed: Option<u64>) -> Self {
+        Self {
+            alias,
+            path,
+            size: listed,
+            shown: None,
+        }
+    }
+
+    /// Takes what the host answered; a picture's bytes stay with the
+    /// caller.
+    pub fn answered(&mut self, file: &wisp_server::desktop::RemoteFile) {
+        use wisp_server::desktop::RemoteFileBody;
+        self.size = file.size.or(self.size);
+        self.shown = Some(Ok(match &file.body {
+            RemoteFileBody::Text { text, truncated } => RemoteShown::Text {
+                text: text.clone(),
+                truncated: *truncated,
+            },
+            RemoteFileBody::Picture { .. } => RemoteShown::Picture,
+            RemoteFileBody::TooLarge { limit } => RemoteShown::TooLarge(*limit),
+            RemoteFileBody::NotShown => RemoteShown::NotShown,
+        }));
+    }
+
+    /// The line under its name: its size, and that only its head is
+    /// shown when it was cut.
+    pub fn note(&self) -> String {
+        let cut = matches!(
+            self.shown,
+            Some(Ok(RemoteShown::Text {
+                truncated: true,
+                ..
+            }))
+        );
+        match (self.size.map(size_label), cut) {
+            (Some(size), true) => crate::i18n::fill(tr("{} · showing the first 1 MB"), &[&size]),
+            (Some(size), false) => size,
+            (None, true) => tr("Showing the first 1 MB").into(),
+            (None, false) => String::new(),
+        }
+    }
+
+    /// What is said in place of the file when it is not drawn.
+    pub fn message(&self) -> Option<String> {
+        match self.shown.as_ref()? {
+            Ok(RemoteShown::TooLarge(limit)) => Some(crate::i18n::fill(
+                tr("This picture is larger than {}, so it was not fetched. Copy it to this computer to look at it."),
+                &[&size_label(*limit)],
+            )),
+            Ok(RemoteShown::NotShown) => Some(
+                tr("This kind of file is not shown from a host. Copy it to this computer to look at it.")
+                    .into(),
+            ),
+            Ok(_) => None,
+            Err(error) => Some(error.clone()),
+        }
+    }
+}
+
+/// Whether text of a file is laid out as Markdown: a Markdown file small
+/// enough to parse in full, as a project file is.
+pub fn shows_as_markdown(path: &str, text: &str) -> bool {
+    is_markdown(path) && text.len() <= MARKDOWN_LIMIT
 }
 
 /// The folder above `path` on a host, or none at the top of its disk. The
@@ -1033,6 +1127,65 @@ mod tests {
         assert_eq!(remote_child("/", "scratch"), "/scratch");
         // A name is taken as it is, whatever is in it.
         assert_eq!(remote_child("/data/", "run 1; x"), "/data/run 1; x");
+    }
+
+    #[test]
+    fn a_hosts_file_says_how_much_of_it_is_shown_and_why_not() {
+        use wisp_server::desktop::{RemoteFile, RemoteFileBody};
+        let answer = |size, body| RemoteFile {
+            alias: "gpu".into(),
+            path: "/data/a.csv".into(),
+            size,
+            body,
+        };
+        let mut look = RemoteLook::new("gpu".into(), "/data/a.csv".into(), Some(2048));
+        // Before the host answers, the listing's size.
+        assert_eq!(look.note(), "2.0 KB");
+        assert_eq!(look.message(), None);
+        look.answered(&answer(
+            Some(5 * 1024 * 1024),
+            RemoteFileBody::Text {
+                text: "a,b\n".into(),
+                truncated: true,
+            },
+        ));
+        assert_eq!(look.note(), "5.0 MB · showing the first 1 MB");
+        assert_eq!(look.message(), None);
+        look.answered(&answer(
+            Some(3),
+            RemoteFileBody::Text {
+                text: "a\n".into(),
+                truncated: false,
+            },
+        ));
+        assert_eq!(look.note(), "3 B");
+        // A picture's bytes stay with the window, not in the look.
+        look.answered(&answer(
+            Some(4),
+            RemoteFileBody::Picture {
+                content_type: "image/png".into(),
+                bytes: vec![1, 2, 3, 4],
+            },
+        ));
+        assert_eq!(look.shown, Some(Ok(RemoteShown::Picture)));
+        // An answer without a size keeps the listing's.
+        let mut big = RemoteLook::new("gpu".into(), "/fig/big.png".into(), Some(40 << 20));
+        big.answered(&answer(None, RemoteFileBody::TooLarge { limit: 32 << 20 }));
+        assert_eq!(big.note(), "40.0 MB");
+        assert!(big.message().unwrap().contains("larger than 32.0 MB"));
+        big.answered(&answer(Some(9), RemoteFileBody::NotShown));
+        assert!(big.message().unwrap().contains("Copy it to this computer"));
+        big.shown = Some(Err("Remote file request failed (exit 66)".into()));
+        assert_eq!(
+            big.message().as_deref(),
+            Some("Remote file request failed (exit 66)")
+        );
+        assert!(shows_as_markdown("/n/README.md", "# x"));
+        assert!(!shows_as_markdown("/n/README.txt", "# x"));
+        assert!(!shows_as_markdown(
+            "/n/big.md",
+            &"x".repeat(MARKDOWN_LIMIT + 1)
+        ));
     }
 
     #[test]

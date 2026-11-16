@@ -20,6 +20,7 @@ mod home_view;
 mod hosts_view;
 mod import_view;
 mod inline_view;
+mod journey_graph_view;
 mod journey_view;
 mod mandates_view;
 mod memory_view;
@@ -34,11 +35,13 @@ mod palette_view;
 mod panel_tabs;
 mod papers_view;
 mod pet_view;
+mod picture_view;
 mod privacy_view;
 mod project_settings;
 mod project_sync_view;
 mod queue_view;
 mod remote_files_view;
+mod reuse_view;
 mod review_view;
 mod run_cards_view;
 mod run_review_view;
@@ -114,6 +117,7 @@ use wisp_server::desktop::{
 };
 
 use crate::{
+    archive,
     backend::{Backend, receive},
     compose::{self, Chip, Pending},
     controls,
@@ -188,8 +192,8 @@ pub struct Workspace {
     /// The import dialog.
     imports: import_view::Imports,
     webview_imports: webview_import_view::WebViewImports,
-    /// Title, report.
-    archive_fields: [Entity<InputState>; 2],
+    /// Title, report, and the name and text of the script shown.
+    archive_fields: [Entity<InputState>; 4],
     model_view: Option<wisp_server::desktop::ModelView>,
     model_view_error: Option<String>,
     /// The rows opened to show their whole text.
@@ -211,6 +215,17 @@ pub struct Workspace {
     handoff_error: Option<String>,
     /// The handoff note's instruction and the note.
     handoff_fields: [Entity<InputState>; 2],
+    /// The first turn of a range of the open conversation being chosen to
+    /// quote or distill (Quote / reuse).
+    reuse_selection: Option<crate::reuse::Selection>,
+    /// The chosen turns are being read for the dialog.
+    reuse_loading: bool,
+    /// The dialog over the chosen turns, and why its last step failed.
+    reuse: Option<crate::reuse::Dialog>,
+    reuse_error: Option<String>,
+    /// Its focus for the experience, the experience draft, and the search
+    /// for a destination.
+    reuse_fields: [Entity<InputState>; 3],
     /// The turn the review dialog is about; `None` is the whole conversation.
     review_turn: Option<wisp_server::desktop::TurnRef>,
     /// The review the dialog is showing or waiting for.
@@ -237,6 +252,22 @@ pub struct Workspace {
     journey_search: Entity<InputState>,
     /// The local day whose recap is being drafted, by its midnight.
     recap_drafting: Option<i64>,
+    /// The journey's Relationships view: shown in place of the days, the
+    /// project's research graph once read, drawn as a graph rather than
+    /// listed, and the relation whose details are open.
+    journey_graph_shown: bool,
+    journey_graph: Option<wisp_dto::ResearchGraph>,
+    journey_graph_drawn: bool,
+    journey_edge: Option<wisp_dto::ResearchEdge>,
+    /// The output whose source is shown beside the days, and that source
+    /// once read.
+    journey_output: Option<wisp_dto::ResearchJourneyEntry>,
+    journey_source: Option<Result<wisp_server::desktop::JourneySource, String>>,
+    /// The run whose record is open over the page, and the record once read.
+    journey_run: Option<(
+        String,
+        Option<Result<wisp_server::desktop::JourneyRun, String>>,
+    )>,
     /// The research assistant's plan for today.
     assistant_plan: Vec<wisp_dto::ResearchAssistantPlanItem>,
     /// The weekly habit tidy, on the Memory tab.
@@ -807,6 +838,12 @@ pub struct Workspace {
     /// The item open on the Favorites page, and its picture if it has one.
     favorite: Option<Favorite>,
     favorite_image: Option<std::sync::Arc<Image>>,
+    /// The open item's code versions, the original first, the one shown,
+    /// the editor for a new one and the code that edit started from.
+    favorite_versions: Vec<wisp_server::desktop::LibraryItemVersion>,
+    favorite_shown: usize,
+    favorite_code: Entity<InputState>,
+    favorite_edit_base: String,
     /// Pictures the open project's answers point at, by path. `None` is a
     /// picture that is being read or could not be.
     inline_images: HashMap<String, Option<std::sync::Arc<Image>>>,
@@ -842,6 +879,23 @@ pub struct Workspace {
     file_structure: Option<(String, std::sync::Arc<crate::molecules::Structure>)>,
     structure_turn: (f32, f32),
     structure_drag: Option<Point<Pixels>>,
+    /// How the previewed picture is zoomed and scrolled; back to the
+    /// preview's width for each picture opened, as in the WebView.
+    picture: crate::picture::View,
+    /// The picture preview's place in the window and the picture's own
+    /// size in pixels, as last drawn, for the pointer's events.
+    picture_geometry: std::rc::Rc<std::cell::Cell<Option<(Bounds<Pixels>, (f32, f32))>>>,
+    /// Where a drag that moves the picture last was.
+    picture_pan: Option<Point<Pixels>>,
+    /// The region being marked on the picture, or marked and waiting for
+    /// its note.
+    picture_mark: Option<crate::picture::Mark>,
+    /// Notes on regions of pictures, while the window is open.
+    picture_pins: crate::picture::Pins,
+    /// The note being written for the marked region.
+    pin_note: Entity<InputState>,
+    /// A marked region is being cut out of the picture for the message.
+    picture_cutting: bool,
     favorite_request: u64,
     rename: Entity<InputState>,
     settings: settings_view::SettingsForm,
@@ -850,6 +904,13 @@ pub struct Workspace {
     rows: Vec<Item>,
     history: Vec<Item>,
     before: Option<i64>,
+    /// Where the latest page started (its `next_before_seq` and how many
+    /// of the user's messages came before it) when `history` was loaded
+    /// behind it; see [`crate::outline::earlier_pages_hold`].
+    history_under: (Option<i64>, usize),
+    /// Counts the times `history` was dropped, so an earlier page asked
+    /// for before that is not put in front of rows it no longer joins.
+    history_epoch: u64,
     list: ListState,
     /// The example conversations that ship with Wisp, once listed.
     demos: Vec<wisp_server::desktop::DemoInfo>,
@@ -865,6 +926,10 @@ pub struct Workspace {
     layers: EscapeStack,
     files: FilesState,
     file_view: Entity<InputState>,
+    /// The text of a host's file being looked at, read only.
+    remote_text: Entity<InputState>,
+    /// The picture of a host's file being looked at, by its key.
+    remote_image: Option<(String, std::sync::Arc<Image>)>,
     /// The script being edited in the preview, when the previewed file is
     /// one that can be.
     file_edit: Option<crate::files::Editing>,
@@ -895,6 +960,11 @@ pub struct Workspace {
     storage_host: Option<(String, bool)>,
     /// Data folder, run folders, results folder.
     storage_fields: [Entity<InputState>; 3],
+    /// One host's runs, or the files the project placed there, under its
+    /// card in the Environments tab.
+    host_detail: Option<hosts_view::HostDetail>,
+    /// The placed file whose deletion is being asked about.
+    staged_removing: Option<wisp_server::desktop::StagedFile>,
     artifacts: Vec<ArtifactRow>,
     /// The Artifacts tab lists the whole project instead of the conversation.
     artifacts_all: bool,
@@ -946,6 +1016,8 @@ impl Workspace {
         let search =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Search conversations…")));
         let rename = cx.new(|cx| InputState::new(window, cx).placeholder(tr("Conversation title")));
+        let pin_note =
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Write a short comment…")));
         let folder_name = cx.new(|cx| InputState::new(window, cx).placeholder(tr("Group name")));
         let delete_name_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Type the project's name")));
@@ -967,7 +1039,17 @@ impl Workspace {
                 .code_editor("text")
                 .searchable(false)
         });
+        let remote_text = cx.new(|cx| {
+            InputState::new(window, cx)
+                .code_editor("text")
+                .searchable(false)
+        });
         let memory_text = cx.new(|cx| InputState::new(window, cx).multi_line(true));
+        let favorite_code = cx.new(|cx| {
+            InputState::new(window, cx)
+                .code_editor("text")
+                .searchable(false)
+        });
         let steps_input = cx.new(|cx| InputState::new(window, cx));
         let mcp_name = cx.new(|cx| InputState::new(window, cx).placeholder(tr("Lab notebook")));
         let env_fields = ["gpu", "10.0.0.8", "", "22", "~/.ssh/id_ed25519", "", ""]
@@ -1140,6 +1222,13 @@ impl Workspace {
         let archive_fields = [
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
+            cx.new(|cx| InputState::new(window, cx)),
+            // In-editor search would be a nested surface outside the Escape stack.
+            cx.new(|cx| {
+                InputState::new(window, cx)
+                    .code_editor("text")
+                    .searchable(false)
+            }),
         ];
         let merge_summary = cx.new(|cx| InputState::new(window, cx).multi_line(true));
         let handoff_fields = [
@@ -1152,6 +1241,13 @@ impl Workspace {
                 InputState::new(window, cx).multi_line(true).placeholder(tr(
                     "The generated note appears here. Edit it freely before starting.",
                 ))
+            }),
+        ];
+        let reuse_fields = [
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx).multi_line(true)),
+            cx.new(|cx| {
+                InputState::new(window, cx).placeholder(tr("Find a conversation in this project"))
             }),
         ];
         let expert_fields = [
@@ -1273,6 +1369,33 @@ impl Workspace {
                     cx.notify();
                 }
             }),
+            // The archive's draft follows its fields as they are typed in.
+            cx.subscribe_in(&archive_fields[0], window, |this, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.note_archive_edit(cx);
+                }
+            }),
+            cx.subscribe_in(&archive_fields[1], window, |this, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.note_archive_edit(cx);
+                }
+            }),
+            cx.subscribe_in(&archive_fields[2], window, |this, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.note_archive_edit(cx);
+                }
+            }),
+            cx.subscribe_in(&archive_fields[3], window, |this, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.note_archive_edit(cx);
+                }
+            }),
+            // Whether an edit of saved code can be saved shows as it is typed.
+            cx.subscribe_in(&favorite_code, window, |_, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            }),
             cx.subscribe_in(&aside_input, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::PressEnter { .. }) {
                     this.ask_aside(window, cx);
@@ -1286,6 +1409,22 @@ impl Workspace {
             }),
             // And Start follows whether there is a handoff note.
             cx.subscribe_in(&handoff_fields[1], window, |_, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            }),
+            // An edited experience draft is not the one kept, and the
+            // buttons follow whether there is one.
+            cx.subscribe_in(&reuse_fields[1], window, |this, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    if let Some(dialog) = this.reuse.as_mut() {
+                        dialog.edited();
+                    }
+                    cx.notify();
+                }
+            }),
+            // The destinations follow the search.
+            cx.subscribe_in(&reuse_fields[2], window, |_, _, event, _, cx| {
                 if matches!(event, InputEvent::Change) {
                     cx.notify();
                 }
@@ -1339,6 +1478,12 @@ impl Workspace {
             cx.subscribe_in(&rename, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::PressEnter { .. }) {
                     this.save_rename(window, cx);
+                }
+            }),
+            // Return keeps the note on the marked region.
+            cx.subscribe_in(&pin_note, window, |this, _, event, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    this.add_picture_pin(window, cx);
                 }
             }),
             // Filtering is done here, over the list already read.
@@ -1518,6 +1663,11 @@ impl Workspace {
             handoff: None,
             handoff_error: None,
             handoff_fields,
+            reuse_selection: None,
+            reuse_loading: false,
+            reuse: None,
+            reuse_error: None,
+            reuse_fields,
             review: None,
             review_turn: None,
             trajectory: None,
@@ -1533,6 +1683,13 @@ impl Workspace {
             journey_request: 0,
             journey_search,
             recap_drafting: None,
+            journey_graph_shown: false,
+            journey_graph: None,
+            journey_graph_drawn: false,
+            journey_edge: None,
+            journey_output: None,
+            journey_source: None,
+            journey_run: None,
             assistant_plan: Vec::new(),
             memory_tidy: None,
             console_runtime: None,
@@ -1832,6 +1989,10 @@ impl Workspace {
             favorites_search,
             favorite: None,
             favorite_image: None,
+            favorite_versions: Vec::new(),
+            favorite_shown: 0,
+            favorite_code,
+            favorite_edit_base: String::new(),
             file_image: None,
             file_document: None,
             file_pages: None,
@@ -1840,6 +2001,13 @@ impl Workspace {
             file_structure: None,
             structure_turn: (0.0, 0.0),
             structure_drag: None,
+            picture: crate::picture::View::default(),
+            picture_geometry: std::rc::Rc::default(),
+            picture_pan: None,
+            picture_mark: None,
+            picture_pins: crate::picture::Pins::default(),
+            pin_note,
+            picture_cutting: false,
             inline_images: HashMap::new(),
             reply_artifacts: Vec::new(),
             generated: HashMap::new(),
@@ -1853,6 +2021,8 @@ impl Workspace {
             rows: vec![],
             history: vec![],
             before: None,
+            history_under: (None, 0),
+            history_epoch: 0,
             list: ListState::new(0, ListAlignment::Bottom, px(300.)),
             demos: vec![],
             demo: None,
@@ -1862,6 +2032,8 @@ impl Workspace {
             layers: EscapeStack::default(),
             files: FilesState::default(),
             file_view,
+            remote_text,
+            remote_image: None,
             file_edit: None,
             file_drafts: Default::default(),
             close_confirmed: false,
@@ -1875,6 +2047,8 @@ impl Workspace {
             conversation_hosts: None,
             hosts_busy: false,
             storage_host: None,
+            host_detail: None,
+            staged_removing: None,
             storage_fields,
             artifacts: vec![],
             artifacts_all: false,
@@ -1913,6 +2087,12 @@ impl Workspace {
             Some(Layer::PanelTabMenu) => {}
             Some(Layer::ConfirmCleanRun) => self.run_cleaning = None,
             Some(Layer::HostStorageForm) => self.storage_host = None,
+            Some(Layer::RemotePreview) => self.close_remote_look(),
+            Some(Layer::HostDetail) => {
+                self.host_detail = None;
+                self.staged_removing = None;
+            }
+            Some(Layer::ConfirmRemoveStaged) => self.staged_removing = None,
             Some(Layer::RunReview) => self.run_review = None,
             Some(Layer::PrivacyMode) => self.privacy_picks.clear(),
             Some(Layer::ConfirmRunFilesDelete) => {
@@ -1974,8 +2154,11 @@ impl Workspace {
             Some(Layer::Favorites) => {
                 self.favorite = None;
                 self.favorite_image = None;
+                self.favorite_versions.clear();
                 self.focus_composer(window, cx);
             }
+            // The edit is given up; the version shown stays.
+            Some(Layer::FavoriteCode) => {}
             // The page stays open underneath and keeps its focus.
             Some(Layer::ConfirmRemoveFavorite) => {}
             Some(Layer::McpForm | Layer::ConfirmRemoveMcp) => self.mcp_editing = None,
@@ -2028,6 +2211,7 @@ impl Workspace {
             Some(Layer::Outline) => self.focus_composer(window, cx),
             Some(Layer::Journey) => {
                 self.journey = None;
+                self.forget_journey_extras();
                 self.focus_composer(window, cx);
             }
             Some(Layer::Calendar) => {
@@ -2064,11 +2248,29 @@ impl Workspace {
                     self.focus_composer(window, cx);
                 }
             }
-            Some(Layer::ResearchArchive) => {
-                self.archive = None;
-                self.archive_error = None;
-                self.focus_composer(window, cx);
+            // The range stays chosen under the dialog, as in the WebView.
+            Some(Layer::SessionReuse) => {
+                self.reuse = None;
+                self.reuse_error = None;
             }
+            Some(Layer::ReuseRange) => {
+                self.reuse_selection = None;
+                self.reuse_loading = false;
+                self.reuse = None;
+                self.reuse_error = None;
+            }
+            // A draft with changes asks before they are given up.
+            Some(Layer::ResearchArchive) => {
+                if self.archive_needs_asking(cx) {
+                    self.layers.open(Layer::ResearchArchive);
+                    self.ask_before_leaving_archive(archive::Leaving::Close, cx);
+                } else {
+                    self.archive = None;
+                    self.archive_error = None;
+                    self.focus_composer(window, cx);
+                }
+            }
+            Some(Layer::ConfirmDiscardArchive) => self.stop_asking_about_archive(),
             Some(Layer::BranchMerge) => {
                 self.merge = None;
                 self.merge_error = None;
@@ -2088,6 +2290,8 @@ impl Workspace {
             // The page stays open underneath.
             Some(Layer::JournalForm) => {}
             Some(Layer::RecapForm) => self.recap_editing = None,
+            Some(Layer::JourneyEdge) => self.journey_edge = None,
+            Some(Layer::JourneyRun) => self.journey_run = None,
             Some(Layer::Schedules) => self.focus_composer(window, cx),
             Some(Layer::ScheduleForm) => {}
             Some(Layer::ConfirmDeleteSchedule) => self.schedule_deleting = None,
@@ -2119,6 +2323,9 @@ impl Workspace {
             Some(Layer::ConfirmTrashFile) => self.file_trashing = None,
             // The edit stays as it was, unsaved.
             Some(Layer::FileChangedOnDisk | Layer::ConfirmCloseUnsaved) => {}
+            // The region and its note are given up; marking goes on.
+            Some(Layer::PictureRegion) => self.drop_picture_mark(window, cx),
+            Some(Layer::PictureSelect) => self.picture_mark = None,
             // Menus and questions that hold no focus of their own.
             Some(
                 Layer::SortMenu
@@ -2348,6 +2555,10 @@ impl Workspace {
     fn choose(&mut self, project: Option<String>, session: Option<String>) {
         if self.state.project != project {
             self.layers.close(Layer::FilePreview);
+            // A host's runs and placed files are the project's.
+            self.host_detail = None;
+            self.staged_removing = None;
+            self.layers.close(Layer::HostDetail);
             // The list, its groups and the picks belong to the project.
             self.layers.close(Layer::SelectMode);
             for layer in Layer::SIDEBAR {
@@ -2425,6 +2636,13 @@ impl Workspace {
             self.copied = None;
             // The list belonged to the conversation, or project, being left.
             self.artifacts.clear();
+            // A range of turns is chosen in one conversation; its dialog
+            // goes with it.
+            self.layers.close(Layer::ReuseRange);
+            self.reuse_selection = None;
+            self.reuse_loading = false;
+            self.reuse = None;
+            self.reuse_error = None;
         }
         if self.state.project != project {
             // Paths are the project's own; another project's mean others.
@@ -2814,9 +3032,8 @@ impl Workspace {
         self.run_card_rows.clear();
         self.backgrounded_runs.clear();
         self.swarm = None;
-        self.history.clear();
+        self.drop_history();
         self.before = None;
-        self.loading_history = false;
         self.error = None;
         self.expanded_run = None;
         self.close_search();
@@ -3194,12 +3411,34 @@ impl Workspace {
         }));
     }
 
+    /// Forgets the earlier pages loaded behind the latest one; they are
+    /// asked for again as the user scrolls up.
+    pub(super) fn drop_history(&mut self) {
+        self.history.clear();
+        self.history_epoch = self.history_epoch.wrapping_add(1);
+        self.loading_history = false;
+    }
+
     fn update_rows(&mut self) {
+        let Some(snapshot) = &self.state.snapshot else {
+            return;
+        };
+        // The latest page moved under the earlier pages loaded behind it (a
+        // turn ended, or a timer's firing took rows away): they would leave
+        // a gap or show rows that are gone, so they go, as the web client's
+        // do. Everything placed by row index is placed again below.
+        let latest = (snapshot.next_before_seq, snapshot.user_offset);
+        if !self.history.is_empty()
+            && !crate::outline::earlier_pages_hold(self.history_under, latest)
+        {
+            self.drop_history();
+        }
         let Some(snapshot) = &self.state.snapshot else {
             return;
         };
         if self.history.is_empty() {
             self.before = snapshot.next_before_seq;
+            self.history_under = latest;
         }
         let mut rows = self.history.clone();
         rows.extend(snapshot.items.clone());
@@ -3231,6 +3470,7 @@ impl Workspace {
             return;
         }
         self.loading_history = true;
+        let epoch = self.history_epoch;
         let selection = self.state.selection();
         let reply = self.backend.snapshot(
             selection.project.clone(),
@@ -3240,7 +3480,9 @@ impl Workspace {
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
             let _ = this.update_in(cx, |this, window, cx| {
-                if !this.state.current(&selection) {
+                // Read before the loaded pages were dropped: it no longer
+                // joins what is shown.
+                if !this.state.current(&selection) || this.history_epoch != epoch {
                     return;
                 }
                 this.loading_history = false;
@@ -3270,6 +3512,7 @@ impl Workspace {
             return;
         }
         self.loading_history = true;
+        let epoch = self.history_epoch;
         let selection = self.state.selection();
         let backend = self.backend.clone();
         let mut before = self.before;
@@ -3297,7 +3540,7 @@ impl Workspace {
                 }
             }
             let _ = this.update_in(cx, |this, window, cx| {
-                if !this.state.current(&selection) {
+                if !this.state.current(&selection) || this.history_epoch != epoch {
                     return;
                 }
                 this.loading_history = false;
@@ -3519,7 +3762,7 @@ impl Workspace {
                             this.state.save_draft(String::new());
                             this.chips.remove(&session);
                         }
-                        this.history.clear();
+                        this.drop_history();
                         if let Some(snapshot) = &mut this.state.snapshot {
                             snapshot.running = true;
                         }
@@ -3538,12 +3781,14 @@ impl Workspace {
     /// Why the open conversation cannot be written to, when it cannot.
     pub(super) fn read_only(&self) -> Option<compose::ReadOnly> {
         let snapshot = self.state.snapshot.as_ref()?;
-        let parent = self
-            .state
-            .session
-            .as_ref()
-            .and_then(|session| self.dispatched.get(session));
-        compose::read_only(snapshot, parent.map(String::as_str))
+        let session = self.state.session.as_ref();
+        let parent = session.and_then(|session| self.dispatched.get(session));
+        let source = session.and_then(|session| self.branched.get(session));
+        compose::read_only(
+            snapshot,
+            parent.map(String::as_str),
+            source.map(String::as_str),
+        )
     }
 
     /// What is attached to the message being written in this conversation.
@@ -4527,6 +4772,12 @@ impl Render for Workspace {
         } else {
             root
         };
+        let root = match &self.journey_run {
+            Some(open) if self.layers.contains(Layer::JourneyRun) => {
+                root.child(self.render_journey_run(open, cx))
+            }
+            _ => root,
+        };
         let root = if self.layers.contains(Layer::Trajectory) {
             root.child(self.render_trajectory(cx))
         } else {
@@ -4554,8 +4805,18 @@ impl Render for Workspace {
         } else {
             root
         };
+        let root = if self.layers.contains(Layer::SessionReuse) {
+            root.child(self.render_session_reuse(cx))
+        } else {
+            root
+        };
         let root = if self.layers.contains(Layer::ResearchArchive) {
             root.child(self.render_research_archive(window, cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::ConfirmDiscardArchive) {
+            root.child(self.render_discard_archive(cx))
         } else {
             root
         };
@@ -4588,6 +4849,10 @@ impl Render for Workspace {
             root.child(self.render_clear_memory(cx))
         } else {
             root
+        };
+        let root = match self.render_remove_staged(cx) {
+            Some(dialog) => root.child(dialog),
+            None => root,
         };
         let root = if self.layers.contains(Layer::FileChangedOnDisk) {
             root.child(self.render_file_changed(cx))

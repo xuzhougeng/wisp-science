@@ -2,7 +2,7 @@
 //! saves it; the side panel's Highlights tab lists what this conversation
 //! saved; the Favorites page, a layer shown in place of the window like
 //! Settings, lists everything from every project.
-use crate::i18n::tr;
+use crate::i18n::{fill, tr};
 use std::{
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -178,50 +178,37 @@ impl Workspace {
     /// What this conversation saved, newest first.
     pub(super) fn render_highlights_tab(&self, cx: &mut Context<Self>) -> AnyElement {
         let muted = cx.theme().muted_foreground;
+        let count = (!self.saved.is_empty()).then(|| self.saved.len().to_string().into());
+        let header = surfaces::panel_header(tr("Highlights"), count, cx).child(
+            icon_button("highlights-all", "star", "Favorites")
+                .on_click(cx.listener(|this, _, window, cx| this.open_favorites(window, cx))),
+        );
         let mut list = div()
             .id("highlights")
             .v_flex()
             .flex_1()
             .min_h_0()
             .gap_2()
-            .p_3()
+            .pb_3()
             .overflow_y_scroll()
-            .child(
-                div()
-                    .h_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(tr(
-                                "What you saved from this conversation. Everything you saved, \
+            .child(surfaces::panel_note(
+                tr(
+                    "What you saved from this conversation. Everything you saved, \
                          from every project, is in Favorites.",
-                            )),
-                    )
-                    .child(
-                        Button::new("highlights-all")
-                            .icon(glyph("star"))
-                            .label(tr("Favorites"))
-                            .small()
-                            .flex_shrink_0()
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.open_favorites(window, cx)),
-                            ),
-                    ),
-            );
+                ),
+                cx,
+            ));
         if let Some(error) = &self.error {
-            list = list.child(error_banner(error, cx));
+            list = list.child(div().px_3().child(error_banner(error, cx)));
         }
         if self.saved.is_empty() {
-            list = list.child(div().text_sm().text_color(muted).child(
+            list = list.child(surfaces::panel_empty(
                 if self.state.session.is_some() {
                     tr("Nothing saved yet. Press the star under a message to keep it.")
                 } else {
                     tr("Open a conversation to see what was saved from it.")
                 },
+                cx,
             ));
         }
         for (index, item) in self.saved.iter().enumerate() {
@@ -277,27 +264,14 @@ impl Workspace {
                     })),
                 );
             list = list.child(
-                div()
-                    .v_flex()
-                    .gap_1()
-                    .p_2()
-                    .rounded(cx.theme().radius)
-                    .border_1()
-                    .border_color(cx.theme().border)
+                surfaces::panel_card(("saved", index), cx)
+                    .mx_3()
                     .child(
                         div()
                             .h_flex()
                             .gap_1()
                             .child(icon(favorites::icon(&item.kind)).text_color(muted))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_sm()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child(item.title.clone()),
-                            ),
+                            .child(surfaces::panel_label(item.title.clone())),
                     )
                     .child(div().text_xs().text_color(muted).child(if words {
                         crate::memory::preview(&item.code, 220)
@@ -307,7 +281,13 @@ impl Workspace {
                     .child(actions),
             );
         }
-        list.into_any_element()
+        div()
+            .v_flex()
+            .flex_1()
+            .min_h_0()
+            .child(header)
+            .child(list)
+            .into_any_element()
     }
 
     pub(super) fn open_favorites(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -324,6 +304,7 @@ impl Workspace {
         if self.layers.close(Layer::Favorites) {
             self.favorite = None;
             self.favorite_image = None;
+            self.favorite_versions.clear();
             self.focus_composer(window, cx);
             cx.notify();
         }
@@ -368,6 +349,9 @@ impl Workspace {
     /// Reads one item in full and shows it beside the list.
     fn open_favorite(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         self.layers.close(Layer::ConfirmRemoveFavorite);
+        self.layers.close(Layer::FavoriteCode);
+        self.favorite_versions.clear();
+        self.favorite_shown = 0;
         self.favorite_request += 1;
         let request = self.favorite_request;
         self.error = None;
@@ -384,6 +368,9 @@ impl Workspace {
                         this.favorite_image = image_format(item.content_type.as_deref())
                             .zip(image.clone())
                             .map(|(format, bytes)| Arc::new(Image::from_bytes(format, bytes)));
+                        if favorites::has_versions(&item.kind, &item.code) {
+                            this.load_favorite_versions(item.id.clone(), cx);
+                        }
                         this.favorite = Some(favorite);
                     }
                     Err(error) => this.error = Some(error),
@@ -392,6 +379,250 @@ impl Workspace {
             });
         })
         .detach();
+    }
+
+    /// Reads the versions of the open item's code and shows the newest.
+    fn load_favorite_versions(&mut self, id: String, cx: &mut Context<Self>) {
+        let reply = self.backend.favorite_versions(id.clone());
+        cx.spawn(async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.favorite.as_ref().is_none_or(|open| open.item.id != id) {
+                    return;
+                }
+                match result {
+                    Ok(versions) => {
+                        this.favorite_shown = favorites::newest(&versions);
+                        this.favorite_versions = versions;
+                    }
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// The version of the open item's code that is shown: one read from
+    /// its versions, or the item as saved while they are being read.
+    fn shown_version(&self) -> Option<wisp_server::desktop::LibraryItemVersion> {
+        if let Some(version) = self
+            .favorite_versions
+            .get(self.favorite_shown)
+            .or_else(|| self.favorite_versions.last())
+        {
+            return Some(version.clone());
+        }
+        let item = &self.favorite.as_ref()?.item;
+        Some(wisp_server::desktop::LibraryItemVersion {
+            id: item.id.clone(),
+            item_id: item.id.clone(),
+            version_number: 1,
+            parent_version_id: None,
+            language: item.language.clone(),
+            code: item.code.clone(),
+            origin: "original".into(),
+            created_at: item.created_at,
+        })
+    }
+
+    /// Opens the editor on the version shown; saving makes the next one.
+    fn edit_favorite_code(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(version) = self.shown_version() else {
+            return;
+        };
+        let language = version
+            .language
+            .clone()
+            .map(|language| language.trim().to_lowercase())
+            .filter(|language| !language.is_empty())
+            .unwrap_or_else(|| "text".into());
+        self.favorite_edit_base = version.code.clone();
+        self.favorite_code.update(cx, |input, cx| {
+            input.set_highlighter(language, cx);
+            input.set_value(version.code.clone(), window, cx);
+            input.focus(window, cx);
+        });
+        self.layers.open(Layer::FavoriteCode);
+        cx.notify();
+    }
+
+    /// Keeps what the editor holds as the item's next version, unless it
+    /// is the code it started from.
+    fn save_favorite_code(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.favorite.as_ref().map(|open| open.item.id.clone()) else {
+            return;
+        };
+        let draft = self.favorite_code.read(cx).value().to_string();
+        if !favorites::edit_to_save(&self.favorite_edit_base, &draft) {
+            if draft == self.favorite_edit_base {
+                self.layers.close(Layer::FavoriteCode);
+                cx.notify();
+            }
+            return;
+        }
+        let reply = self.backend.save_favorite_code(id.clone(), draft);
+        self.change_favorites(
+            reply,
+            move |this, _, _, cx| {
+                this.layers.close(Layer::FavoriteCode);
+                this.load_favorite_versions(id, cx);
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// Puts the request to run the shown version again, with its code,
+    /// into the open conversation's message box, as the WebView's Insert
+    /// into chat does. Not in a conversation that cannot be written to.
+    fn insert_favorite(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(open), Some(version)) = (self.favorite.as_ref(), self.shown_version()) else {
+            return;
+        };
+        if self.state.session.is_none() || self.read_only().is_some() {
+            return;
+        }
+        let request = favorites::rerun_request(&open.item.title, &version);
+        self.close_favorites(window, cx);
+        self.use_saved(&request, window, cx);
+    }
+
+    /// The open item's code: its versions to choose from, the one shown or
+    /// the editor on it, and what can be done with it.
+    fn favorite_code_panel(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let Some(version) = self.shown_version() else {
+            return div();
+        };
+        let mut panel = div().v_flex().gap_2();
+        let editing = self.layers.contains(Layer::FavoriteCode);
+        if self.favorite_versions.len() > 1 {
+            let mut chips = div().h_flex().flex_wrap().gap_1().child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .pr_1()
+                    .child(tr("Versions")),
+            );
+            for (index, each) in self.favorite_versions.iter().enumerate() {
+                chips = chips.child(
+                    Button::new(("favorite-version", index))
+                        .label(favorites::version_label(each))
+                        .xsmall()
+                        .ghost()
+                        .selected(index == self.favorite_shown)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.layers.close(Layer::FavoriteCode);
+                            this.favorite_shown = index;
+                            cx.notify();
+                        })),
+                );
+            }
+            panel = panel.child(chips);
+        }
+        if editing {
+            let draft = self.favorite_code.read(cx).value().to_string();
+            let changed = favorites::edit_to_save(&self.favorite_edit_base, &draft);
+            return panel
+                .child(div().text_xs().text_color(muted).child(fill(
+                    tr("Editing from v{}. Saving adds a new version; the ones before stay."),
+                    &[&version.version_number],
+                )))
+                .child(
+                    div()
+                        .h(px(320.))
+                        .key_context(super::file_editor_view::CONTEXT)
+                        .on_action(cx.listener(
+                            |this, _: &super::file_editor_view::SaveFile, window, cx| {
+                                this.save_favorite_code(window, cx)
+                            },
+                        ))
+                        .child(Input::new(&self.favorite_code).h_full()),
+                )
+                .child(
+                    div()
+                        .h_flex()
+                        .gap_2()
+                        .child(
+                            Button::new("favorite-code-save")
+                                .icon(glyph("save"))
+                                .label(tr("Save as new version"))
+                                .small()
+                                .primary()
+                                .disabled(!changed)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.save_favorite_code(window, cx)
+                                })),
+                        )
+                        .child(
+                            Button::new("favorite-code-cancel")
+                                .label(tr("Cancel"))
+                                .small()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.layers.close(Layer::FavoriteCode);
+                                    cx.notify();
+                                })),
+                        )
+                        .child(div().text_xs().text_color(muted).child(if changed {
+                            tr("Not saved yet")
+                        } else {
+                            ""
+                        })),
+                );
+        }
+        let writable = self.state.session.is_some() && self.read_only().is_none();
+        let copying = version.code.clone();
+        panel = panel
+            .child(
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(format!("v{}", version.version_number)),
+                    )
+                    .child(
+                        Button::new("favorite-insert")
+                            .icon(glyph("arrow-right"))
+                            .label(tr("Insert into chat"))
+                            .small()
+                            .disabled(!writable)
+                            .tooltip(if writable {
+                                tr("Ask the open conversation to run this version again")
+                            } else {
+                                tr("Open a conversation you can write in first")
+                            })
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.insert_favorite(window, cx)),
+                            ),
+                    )
+                    .child(
+                        icon_button("favorite-code-copy", "copy", tr("Copy")).on_click(
+                            cx.listener(move |_, _, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(copying.clone()))
+                            }),
+                        ),
+                    )
+                    .child(
+                        icon_button("favorite-code-edit", "edit", tr("Edit code")).on_click(
+                            cx.listener(|this, _, window, cx| this.edit_favorite_code(window, cx)),
+                        ),
+                    ),
+            )
+            .child(
+                TextView::markdown(
+                    SharedString::from(format!("favorite-version-{}", version.id)),
+                    favorites::as_markdown("code", version.language.as_deref(), &version.code),
+                    window,
+                    cx,
+                )
+                .selectable(true),
+            );
+        panel
     }
 
     /// Goes to the conversation an item was saved from.
@@ -508,8 +739,9 @@ impl Workspace {
                     .child(path.clone()),
             );
         }
+        let versioned = favorites::has_versions(&item.kind, &item.code);
         if !words {
-            return detail.child(match &self.favorite_image {
+            detail = detail.child(match &self.favorite_image {
                 Some(image) => div().child(
                     img(image.clone())
                         .max_w_full()
@@ -521,6 +753,20 @@ impl Workspace {
                     .text_color(muted)
                     .child(tr("This picture cannot be shown here.")),
             });
+            if versioned {
+                detail = detail
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(tr("Generating code")),
+                    )
+                    .child(self.favorite_code_panel(window, cx));
+            }
+            return detail;
+        }
+        if versioned {
+            return detail.child(self.favorite_code_panel(window, cx));
         }
         detail.child(
             TextView::markdown(

@@ -112,16 +112,16 @@ impl Workspace {
     }
 
     /// The weekly tidy: its switch, how it last went, and what it proposes.
-    fn tidy_card(&self, cx: &mut Context<Self>) -> Div {
+    fn tidy_card(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         let muted = cx.theme().muted_foreground;
-        let mut card = div()
-            .v_flex()
+        let mut card = surfaces::panel_card("memory-tidy", cx)
+            .mx_3()
             .gap_2()
-            .p_2()
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(cx.theme().border)
-            .child(div().text_sm().font_semibold().child(tr("Tidy habits")))
+            .child(
+                div()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(tr("Tidy habits")),
+            )
             .child(div().text_xs().text_color(muted).child(tr(
                 "Once a week the model looks over the habits and proposes merging ones that say \
                  the same thing or retiring one a newer one replaces. Nothing changes until you \
@@ -176,7 +176,7 @@ impl Workspace {
                 .child(
                     div()
                         .text_xs()
-                        .font_semibold()
+                        .font_weight(FontWeight::MEDIUM)
                         .child(memory::tidy_action(&proposal.action)),
                 );
             for habit in &proposal.memories {
@@ -691,12 +691,6 @@ impl Workspace {
             .p_3()
             .child(
                 div()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(target.title()),
-            )
-            .child(
-                div()
                     .flex_1()
                     .min_h(px(160.))
                     .child(Input::new(&self.memory_text).h_full()),
@@ -714,7 +708,7 @@ impl Workspace {
         {
             editor = editor.child(div().text_xs().text_color(cx.theme().danger).child(problem));
         }
-        editor.child(
+        let editor = editor.child(
             buttons.child(
                 Button::new("memory-cancel")
                     .label(tr("Cancel"))
@@ -723,7 +717,13 @@ impl Workspace {
                         this.close_memory_layer(Layer::MemoryEditor, window, cx)
                     })),
             ),
-        )
+        );
+        div()
+            .v_flex()
+            .flex_1()
+            .min_h_0()
+            .child(surfaces::panel_header(target.title(), None, cx))
+            .child(editor)
     }
 
     /// One habit or note in the list, with its actions or its delete question.
@@ -734,25 +734,13 @@ impl Workspace {
         detail: String,
         target: Target,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> Stateful<Div> {
         let muted = cx.theme().muted_foreground;
         let asking = self.layers.contains(Layer::ConfirmDeleteMemory)
             && self.memory_target.as_ref() == Some(&target);
-        let mut card = div()
-            .v_flex()
-            .gap_1()
-            .p_2()
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(cx.theme().border);
+        let mut card = surfaces::panel_card(id.clone(), cx).mx_3();
         if let Some(heading) = heading {
-            card = card.child(
-                div()
-                    .truncate()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(heading),
-            );
+            card = card.child(surfaces::panel_label(heading));
         }
         if !detail.is_empty() {
             card = card.child(div().text_xs().text_color(muted).child(detail));
@@ -821,27 +809,6 @@ impl Workspace {
         )
     }
 
-    fn memory_heading(title: &'static str, note: &'static str, button: Button, cx: &App) -> Div {
-        div()
-            .h_flex()
-            .gap_2()
-            .pt_2()
-            .child(
-                div()
-                    .v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(title))
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(note),
-                    ),
-            )
-            .child(button.small().flex_shrink_0())
-    }
-
     pub(super) fn render_memory_tab(&self, cx: &mut Context<Self>) -> AnyElement {
         if let Some(target) = self
             .memory_target
@@ -863,24 +830,22 @@ impl Workspace {
             .flex_1()
             .min_h_0()
             .gap_2()
-            .p_3()
+            .py_3()
             .overflow_y_scroll();
         if let Some(error) = &self.error {
-            list = list.child(error_banner(error, cx));
+            list = list.child(div().px_3().child(error_banner(error, cx)));
         }
         let Some(view) = &self.memory else {
             return list
-                .child(div().text_sm().text_color(muted).child(tr("Loading…")))
+                .child(surfaces::panel_empty(tr("Loading…"), cx))
                 .into_any_element();
         };
         let enabled = view.enabled;
         list = list.child(
-            div()
+            surfaces::panel_card("memory-status", cx)
+                .mx_3()
                 .h_flex()
                 .gap_2()
-                .p_2()
-                .rounded(cx.theme().radius)
-                .bg(cx.theme().muted)
                 .child(icon("memory").text_color(if enabled { cx.theme().primary } else { muted }))
                 .child(
                     div()
@@ -909,19 +874,24 @@ impl Workspace {
                 ),
         );
 
-        list = list.child(Self::memory_heading(
-            tr("Habits"),
-            tr("Shown to the model in every project."),
-            Button::new("habit-new")
-                .icon(glyph("plus"))
-                .label(tr("Add"))
-                .on_click(cx.listener(|this, _, window, cx| this.edit_habit(None, window, cx))),
-            cx,
-        ));
+        let count = |n: usize| (n > 0).then(|| n.to_string().into());
+        list = list
+            .child(
+                surfaces::panel_header(tr("Habits"), count(view.habits.len()), cx).child(
+                    icon_button("habit-new", "plus", "Add").on_click(
+                        cx.listener(|this, _, window, cx| this.edit_habit(None, window, cx)),
+                    ),
+                ),
+            )
+            .child(surfaces::panel_note(
+                tr("Shown to the model in every project."),
+                cx,
+            ));
         if view.habits.is_empty() {
-            list = list.child(div().text_xs().text_color(muted).child(tr(
-                "None yet. For example: \"Report medians with the interquartile range.\"",
-            )));
+            list = list.child(surfaces::panel_empty(
+                tr("None yet. For example: \"Report medians with the interquartile range.\""),
+                cx,
+            ));
         }
         for habit in &view.habits {
             list = list.child(self.memory_card(
@@ -935,22 +905,26 @@ impl Workspace {
 
         list = list.child(self.tidy_card(cx));
         let today = view.today.clone();
-        list = list.child(Self::memory_heading(
-            tr("This project's notes"),
-            tr("One per day, in .wisp/memory. The model searches them when it needs to."),
-            Button::new("note-new")
-                .icon(glyph("note-plus"))
-                .label(tr("Today"))
-                .tooltip(tr("Open today's note"))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.edit_note(today.clone(), window, cx)
-                })),
-            cx,
-        ));
+        list = list
+            .child(
+                surfaces::panel_header(tr("This project's notes"), count(view.notes.len()), cx)
+                    .child(
+                        icon_button("note-new", "note-plus", "Open today's note").on_click(
+                            cx.listener(move |this, _, window, cx| {
+                                this.edit_note(today.clone(), window, cx)
+                            }),
+                        ),
+                    ),
+            )
+            .child(surfaces::panel_note(
+                tr("One per day, in .wisp/memory. The model searches them when it needs to."),
+                cx,
+            ));
         if view.notes.is_empty() {
-            list = list.child(div().text_xs().text_color(muted).child(tr(
-                "None yet. Save a finding from a message with the memory button under it.",
-            )));
+            list = list.child(surfaces::panel_empty(
+                tr("None yet. Save a finding from a message with the memory button under it."),
+                cx,
+            ));
         }
         for note in &view.notes {
             list = list.child(self.memory_card(
@@ -968,7 +942,7 @@ impl Workspace {
         // Under the notes, as the WebView has it under its list of them.
         if !view.notes.is_empty() {
             list = list.child(
-                div().h_flex().justify_end().child(
+                div().h_flex().justify_end().px_3().child(
                     Button::new("memory-clear-all")
                         .icon(glyph("trash"))
                         .label(tr("Clear all"))

@@ -6,12 +6,6 @@ use std::path::{Path, PathBuf};
 use tauri::{ipc::Response, State};
 
 const REMOTE_DIR_PROTOCOL: &[u8] = b"WISP_REMOTE_DIR_V1\0";
-const REMOTE_FILE_PROTOCOL: &[u8] = b"WISP_REMOTE_FILE_V1\0";
-/// Text-oriented remote reads: size + truncated head so multi-GB logs never
-/// cross the wire just for a UI preview.
-const REMOTE_FILE_TEXT_PROTOCOL: &[u8] = b"WISP_REMOTE_FILE_TEXT_V1\0";
-/// Remote previews stay capped at 32 MB: the bytes cross an SSH connection.
-const REMOTE_FILE_MAX_BYTES: u64 = 32 * 1024 * 1024;
 /// Local previews match the 100 MB upload cap — a 38 MB journal PDF is routine
 /// and pdf.js renders one page at a time, so memory stays bounded (#485).
 const LOCAL_FILE_MAX_BYTES: u64 = 100 * 1024 * 1024;
@@ -25,66 +19,16 @@ const OOXML_MAX_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 const OOXML_MAX_COMPRESSION_RATIO: u64 = 100;
 
 pub(super) use wisp_dto::{DirEntry, DirectoryListing};
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RemoteCommand {
-    context_id: String,
-    program: String,
-    args: Vec<String>,
-    envs: Vec<(String, String)>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RemoteOutput {
-    status: i32,
-    stdout: Vec<u8>,
-    stderr: String,
-}
-
-trait RemoteRunner: Send {
-    fn run(&mut self, command: &RemoteCommand) -> Result<RemoteOutput, String>;
-}
-
-struct ProcessRemoteRunner;
-
-impl RemoteRunner for ProcessRemoteRunner {
-    fn run(&mut self, command: &RemoteCommand) -> Result<RemoteOutput, String> {
-        if let Some(payload) =
-            crate::ssh_master::eligible_payload(&command.program, &command.args, None)
-        {
-            let ssh_args = command.args[..command.args.len() - 1].to_vec();
-            let result = crate::ssh_master::run_blocking(
-                &command.context_id,
-                ssh_args,
-                &command.envs,
-                payload,
-                std::time::Duration::from_secs(120),
-            )
-            .map(|output| RemoteOutput {
-                status: output.exit_code as i32,
-                stdout: output.stdout,
-                stderr: output.stderr,
-            });
-            crate::ssh_hosts::cleanup_password_auth_env(&command.envs);
-            return result;
-        }
-        let mut process = std::process::Command::new(&command.program);
-        process.args(&command.args);
-        if !command.envs.is_empty() {
-            process.envs(command.envs.iter().cloned());
-        }
-        wisp_tools::process::hide_console(&mut process);
-        let output = process
-            .output()
-            .map_err(|e| format!("failed to run {}: {e}", command.program))?;
-        crate::ssh_hosts::cleanup_password_auth_env(&command.envs);
-        Ok(RemoteOutput {
-            status: output.status.code().unwrap_or(-1),
-            stdout: output.stdout,
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        })
-    }
-}
+// The remote file reads are shared with the GPUI host.
+use wisp_runs::mime::{is_text_mime, is_text_preview_bytes};
+#[cfg(test)]
+use wisp_runs::remote_file::{
+    build_remote_file_command, build_remote_text_file_command, RemoteOutput,
+};
+use wisp_runs::remote_file::{
+    protocol_payload, read_remote_file_whole, read_remote_text_head, remote_path_expression,
+    ProcessRemoteRunner, RemoteCommand, RemoteRunner, REMOTE_FILE_MAX_BYTES,
+};
 
 pub(super) use wisp_dto::FileContent;
 
@@ -126,13 +70,6 @@ fn read_path_prefix(path: &Path, cap: u64) -> Result<(Vec<u8>, u64), String> {
         .read_to_end(&mut bytes)
         .map_err(|e| format!("{e}"))?;
     Ok((bytes, total))
-}
-
-fn is_text_preview_bytes(mime: &str, bytes: &[u8]) -> bool {
-    is_text_mime(mime)
-        || mime == "chemical/x-pdb"
-        || mime == "chemical/x-mdl-molfile"
-        || (mime == "application/octet-stream" && looks_like_text(bytes))
 }
 
 fn is_ooxml_path(path: &Path) -> bool {
@@ -359,20 +296,6 @@ fn tiff_to_png(tiff: &[u8]) -> Result<Vec<u8>, String> {
         .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
         .map_err(|error| error.to_string())?;
     Ok(png)
-}
-
-fn is_text_mime(mime: &str) -> bool {
-    mime.starts_with("text/")
-        || mime == "application/json"
-        || mime == "application/x-ipynb+json"
-        || mime == "text/markdown"
-}
-
-/// An extension allowlist always lags reality — `.toml`, `.lock`, `.yaml`, `.R`
-/// and friends previewed as "unsupported" purely because nothing named them.
-/// For anything without an explicit mime, let the bytes decide instead.
-fn looks_like_text(bytes: &[u8]) -> bool {
-    !bytes.contains(&0) && std::str::from_utf8(bytes).is_ok()
 }
 
 /// Skip bulky or hidden trees during project-wide filename search.
@@ -868,35 +791,6 @@ pub(super) async fn delete_entry(
     Ok(())
 }
 
-fn validate_remote_path(path: &str) -> Result<(), String> {
-    if path.len() > 4096 {
-        return Err("Remote path exceeds 4096 bytes".into());
-    }
-    if path.contains(['\0', '\n', '\r']) {
-        return Err("Remote path must not contain NUL or line breaks".into());
-    }
-    Ok(())
-}
-
-fn shell_single_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
-}
-
-fn remote_path_expression(path: Option<&str>) -> Result<String, String> {
-    let path = path
-        .map(str::trim)
-        .filter(|path| !path.is_empty())
-        .unwrap_or("~");
-    validate_remote_path(path)?;
-    if path == "~" {
-        Ok("\"$HOME\"".into())
-    } else if let Some(rest) = path.strip_prefix("~/") {
-        Ok(format!("\"$HOME\"/{}", shell_single_quote(rest)))
-    } else {
-        Ok(shell_single_quote(path))
-    }
-}
-
 fn remote_directory_script(path: Option<&str>) -> Result<String, String> {
     let path = remote_path_expression(path)?;
     Ok(format!(
@@ -943,16 +837,6 @@ fn build_remote_directory_command(
         args,
         envs: crate::ssh_hosts::auth_envs_for_connection(&connection)?,
     })
-}
-
-/// Slice off everything before (and including) the protocol marker, so login
-/// banners and motd noise never reach the parser.
-fn protocol_payload<'a>(stdout: &'a [u8], marker: &[u8]) -> Result<&'a [u8], String> {
-    stdout
-        .windows(marker.len())
-        .position(|window| window == marker)
-        .map(|start| &stdout[start + marker.len()..])
-        .ok_or_else(|| "Remote response did not contain the expected protocol marker".into())
 }
 
 fn parse_remote_directory(stdout: &[u8]) -> Result<DirectoryListing, String> {
@@ -1041,136 +925,6 @@ fn list_remote_dir_with_runner(
     parse_remote_directory(&output.stdout)
 }
 
-/// POSIX-sh script that size-checks then streams one remote file in full.
-/// Binary / office previews need an intact payload, so oversized files are
-/// rejected on the remote before any bytes cross the wire.
-fn remote_file_script(path: &str, cap: u64) -> Result<String, String> {
-    let path = remote_path_expression(Some(path))?;
-    Ok(format!(
-        r#"LC_ALL=C
-f={path}
-case "$f" in -*) f="./$f" ;; esac
-if [ ! -f "$f" ]; then
-  printf 'Cannot read remote file: %s\n' "$f" >&2
-  exit 66
-fi
-size=$(stat -c '%s' "$f" 2>/dev/null) ||
-  size=$(stat -f '%z' "$f" 2>/dev/null) ||
-  size=0
-if [ "$size" -gt {cap} ]; then
-  printf 'Remote file exceeds {cap} byte limit: %s\n' "$f" >&2
-  exit 67
-fi
-printf 'WISP_REMOTE_FILE_V1\000'
-cat "$f""#
-    ))
-}
-
-/// POSIX-sh script that returns a bounded head of a remote text-ish file plus
-/// the real size, so multi-GB MEDLINE dumps preview without a full transfer.
-fn remote_text_file_script(path: &str, cap: u64) -> Result<String, String> {
-    let path = remote_path_expression(Some(path))?;
-    Ok(format!(
-        r#"LC_ALL=C
-f={path}
-case "$f" in -*) f="./$f" ;; esac
-if [ ! -f "$f" ]; then
-  printf 'Cannot read remote file: %s\n' "$f" >&2
-  exit 66
-fi
-size=$(stat -c '%s' "$f" 2>/dev/null) ||
-  size=$(stat -f '%z' "$f" 2>/dev/null) ||
-  size=0
-printf 'WISP_REMOTE_FILE_TEXT_V1\000'
-printf '%s\000' "$size"
-if [ "$size" -eq 0 ] || [ {cap} -eq 0 ]; then
-  :
-elif command -v head >/dev/null 2>&1; then
-  head -c {cap} "$f"
-else
-  dd if="$f" bs={cap} count=1 2>/dev/null
-fi"#
-    ))
-}
-
-fn build_remote_file_command(
-    context: &wisp_store::ExecutionContext,
-    path: &str,
-    cap: u64,
-) -> Result<RemoteCommand, String> {
-    let connection = crate::ssh_hosts::SshConnection::from_execution_context(context)?;
-    let mut args = connection.ssh_args()?;
-    args.push(remote_file_script(path, cap)?);
-    Ok(RemoteCommand {
-        context_id: context.id.clone(),
-        program: "ssh".into(),
-        args,
-        envs: crate::ssh_hosts::auth_envs_for_connection(&connection)?,
-    })
-}
-
-fn build_remote_text_file_command(
-    context: &wisp_store::ExecutionContext,
-    path: &str,
-    cap: u64,
-) -> Result<RemoteCommand, String> {
-    let connection = crate::ssh_hosts::SshConnection::from_execution_context(context)?;
-    let mut args = connection.ssh_args()?;
-    args.push(remote_text_file_script(path, cap)?);
-    Ok(RemoteCommand {
-        context_id: context.id.clone(),
-        program: "ssh".into(),
-        args,
-        envs: crate::ssh_hosts::auth_envs_for_connection(&connection)?,
-    })
-}
-
-fn run_remote_command(
-    context: &wisp_store::ExecutionContext,
-    command: &RemoteCommand,
-    runner: &mut dyn RemoteRunner,
-) -> Result<RemoteOutput, String> {
-    match runner.run(command) {
-        Ok(output) => Ok(output),
-        Err(error) => {
-            if crate::ssh_guard::is_authentication_failure(&error) {
-                crate::ssh_guard::record_failure(&context.id, &error);
-            }
-            Err(error)
-        }
-    }
-}
-
-fn remote_command_failed(context: &wisp_store::ExecutionContext, output: &RemoteOutput) -> String {
-    let detail = if output.stderr.is_empty() {
-        "no error details returned".to_string()
-    } else {
-        output.stderr.clone()
-    };
-    let error = format!(
-        "Remote file request failed (exit {}): {detail}",
-        output.status
-    );
-    if crate::ssh_guard::is_authentication_failure(&error) {
-        crate::ssh_guard::record_failure(&context.id, &error);
-    }
-    error
-}
-
-/// Payload shape: `total_size\0<body>` after the text-protocol marker.
-fn parse_remote_text_payload(stdout: &[u8]) -> Result<(Vec<u8>, u64), String> {
-    let payload = protocol_payload(stdout, REMOTE_FILE_TEXT_PROTOCOL)?;
-    let zero = payload
-        .iter()
-        .position(|b| *b == 0)
-        .ok_or_else(|| "Remote text response omitted its size field".to_string())?;
-    let total = std::str::from_utf8(&payload[..zero])
-        .map_err(|_| "Remote text response size was not UTF-8".to_string())?
-        .parse::<u64>()
-        .map_err(|_| "Remote text response size was not a number".to_string())?;
-    Ok((payload[zero + 1..].to_vec(), total))
-}
-
 fn read_remote_file_bytes_with_runner(
     context: &wisp_store::ExecutionContext,
     path: &str,
@@ -1179,16 +933,7 @@ fn read_remote_file_bytes_with_runner(
 ) -> Result<Vec<u8>, String> {
     crate::ssh_hosts::require_managed_ssh_ready(context)?;
     let cap = preview_byte_cap(max_bytes).min(REMOTE_FILE_MAX_BYTES);
-    let command = build_remote_file_command(context, path, cap)?;
-    let output = run_remote_command(context, &command, runner)?;
-    if output.status != 0 {
-        return Err(remote_command_failed(context, &output));
-    }
-    crate::ssh_guard::record_success(&context.id);
-    let mut bytes = protocol_payload(&output.stdout, REMOTE_FILE_PROTOCOL)?.to_vec();
-    if bytes.len() as u64 > cap {
-        return Err(format!("remote file exceeds {cap} byte limit"));
-    }
+    let mut bytes = read_remote_file_whole(context, path, cap, runner)?;
     if is_ooxml_path(Path::new(path)) {
         validate_ooxml_archive(&bytes)?;
         bytes = transcode_ooxml_tiff_media(bytes);
@@ -1204,16 +949,7 @@ fn read_remote_file_with_runner(
 ) -> Result<FileContent, String> {
     crate::ssh_hosts::require_managed_ssh_ready(context)?;
     let cap = text_preview_byte_cap(max_bytes).min(REMOTE_FILE_MAX_BYTES);
-    let command = build_remote_text_file_command(context, path, cap)?;
-    let output = run_remote_command(context, &command, runner)?;
-    if output.status != 0 {
-        return Err(remote_command_failed(context, &output));
-    }
-    crate::ssh_guard::record_success(&context.id);
-    let (bytes, total) = parse_remote_text_payload(&output.stdout)?;
-    if bytes.len() as u64 > cap {
-        return Err(format!("remote file exceeds {cap} byte limit"));
-    }
+    let (bytes, total) = read_remote_text_head(context, path, cap, runner)?;
     let mime = mime_for_path(Path::new(path));
     if !is_text_preview_bytes(mime, &bytes) {
         // Binary: require a full, under-budget transfer via the bytes path.

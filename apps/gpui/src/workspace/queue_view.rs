@@ -147,7 +147,7 @@ impl Workspace {
             |backend, project, session| backend.send_queued_now(project, session),
             |this, sent, window, cx| {
                 if sent {
-                    this.history.clear();
+                    this.drop_history();
                     if let Some(snapshot) = &mut this.state.snapshot {
                         snapshot.running = true;
                     }

@@ -546,19 +546,14 @@ pub(super) async fn generate_session_experience(
     let _activity = state.begin_project_activity(&project_id)?;
     let messages =
         load_excerpt_messages(&state, frame_id, start_user_index, end_user_index).await?;
-    let (evidence, truncated) = crate::session_experience::evidence(&messages)?;
-    let focus = instruction.as_deref().unwrap_or("").trim();
-    if focus.chars().count() > 1000 {
-        return Err("Experience focus cannot exceed 1000 characters.".into());
-    }
-    let prompt = serde_json::json!({
-        "focus": focus,
-        "first_turn": start_user_index + 1,
-        "last_turn": end_user_index + 1,
-        "evidence_shortened": truncated,
-        "transcript": evidence,
-    })
-    .to_string();
+    let (evidence, truncated) = wisp_core::session_experience::evidence(&messages)?;
+    let prompt = wisp_core::session_experience::request(
+        instruction.as_deref(),
+        start_user_index + 1,
+        end_user_index + 1,
+        &evidence,
+        truncated,
+    )?;
     let completion = tokio::time::timeout(
         BRANCH_SUMMARY_TIMEOUT,
         turn_hooks::side_complete(
@@ -566,7 +561,7 @@ pub(super) async fn generate_session_experience(
             frame_id,
             "session_experience",
             turn_hooks::SideModel::Session { max_tokens: 4096 },
-            crate::session_experience::SYSTEM_PROMPT,
+            wisp_core::session_experience::SYSTEM_PROMPT,
             &prompt,
             None,
         ),
@@ -1834,14 +1829,12 @@ pub(crate) async fn rewind_locked(
         .require_unarchived_session(&frame_id)
         .await
         .map_err(|e| e.to_string())?;
-    if matches!(
-        state
-            .store
-            .session_branch_state(&frame_id)
-            .await
-            .map_err(|error| error.to_string())?,
-        Some("merged" | "orphaned")
-    ) {
+    if state
+        .store
+        .session_branch_frozen(&frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+    {
         return Err("Frozen conversation branches cannot be rewound.".into());
     }
     let scope = state
@@ -1901,14 +1894,12 @@ pub(super) async fn undo_compaction(
         .require_unarchived_session(&frame_id)
         .await
         .map_err(|e| e.to_string())?;
-    if matches!(
-        state
-            .store
-            .session_branch_state(&frame_id)
-            .await
-            .map_err(|error| error.to_string())?,
-        Some("merged" | "orphaned")
-    ) {
+    if state
+        .store
+        .session_branch_frozen(&frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+    {
         return Err("Frozen conversation branches cannot undo compaction.".into());
     }
     let scope = state
@@ -2755,14 +2746,11 @@ pub(crate) async fn native_transcript(
         .await
         .map_err(|e| e.to_string())?
         .is_some_and(|a| a.frozen_at.is_some())
-        || matches!(
-            state
-                .store
-                .session_branch_state(id)
-                .await
-                .map_err(|e| e.to_string())?,
-            Some("merged" | "orphaned")
-        );
+        || state
+            .store
+            .session_branch_frozen(id)
+            .await
+            .map_err(|e| e.to_string())?;
     Ok((items, page.next_before_seq, frozen, page.user_offset))
 }
 

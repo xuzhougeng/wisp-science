@@ -10,6 +10,21 @@ use sqlx::{Row, Sqlite, Transaction};
 use std::collections::{HashMap, HashSet};
 use wisp_llm::Message;
 
+/// Whether a branch state from [`Store::session_branch_state`] or
+/// [`Store::list_session_branch_states`] is frozen as read-only history:
+/// `merged` (brought back into its source) or `orphaned` (its source lost
+/// the turn it split from). An `active` branch and a conversation that is
+/// no branch (`None`) take new messages.
+pub fn branch_state_is_frozen(state: Option<&str>) -> bool {
+    matches!(state, Some("merged" | "orphaned"))
+}
+
+/// What a host answers when something tries to start or add to a turn in
+/// a frozen branch: the WebView desktop's wording, shared so both hosts say
+/// the same.
+pub const FROZEN_BRANCH_REFUSAL: &str =
+    "This conversation branch is frozen and cannot accept new messages.";
+
 /// Synthetic model-context checkpoints are not user-authored questions.
 /// Keep both markers for archives written before semantic compaction existed.
 pub fn is_compaction_checkpoint(text: &str) -> bool {
@@ -3537,6 +3552,15 @@ impl Store {
             })
         })
         .transpose()
+    }
+
+    /// Whether `frame_id` is a branch frozen as read-only history: one
+    /// that was brought back into its source, or one whose source lost the
+    /// turn it split from. Both desktops refuse to write to one.
+    pub async fn session_branch_frozen(&self, frame_id: &str) -> Result<bool> {
+        Ok(branch_state_is_frozen(
+            self.session_branch_state(frame_id).await?,
+        ))
     }
 
     pub async fn preview_session_branch_merge(

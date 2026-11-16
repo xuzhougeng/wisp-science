@@ -1224,6 +1224,137 @@ async fn a_branch_is_brought_back_as_a_summary_the_user_approved() {
     server.shutdown().await;
 }
 
+#[tokio::test]
+async fn a_merged_or_orphaned_branch_is_read_only_history_and_its_source_is_not() {
+    let tmp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(tmp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let main = create(&server).await;
+    send(&server, &main, "Look at the counts").await.unwrap();
+    wait_for(&server, &main, |s| !s.running && !s.items.is_empty()).await;
+    // One branch after the first turn, one after the second.
+    let merged = server
+        .branch_conversation(PROJECT, &main, None)
+        .await
+        .unwrap();
+    send(&server, &main, "Now plot them").await.unwrap();
+    wait_for(&server, &main, |s| !s.running && s.items.len() >= 4).await;
+    let orphaned = server
+        .branch_conversation(PROJECT, &main, None)
+        .await
+        .unwrap();
+    // An active branch takes messages as any conversation does.
+    let active = snapshot(&server, &merged).await;
+    assert!(!active.read_only, "{:?}", active.read_only_reason);
+    assert_eq!(active.read_only_reason, None);
+    send(&server, &merged, "Try a log scale").await.unwrap();
+    wait_for(&server, &merged, |s| !s.running && s.items.len() >= 4).await;
+    // The source loses the turn the second branch split after...
+    server
+        .rewind_conversation(
+            PROJECT,
+            &main,
+            &desktop::TurnRef {
+                from_end: 0,
+                text: "Now plot them".into(),
+            },
+        )
+        .await
+        .unwrap();
+    // ...and the first is brought back into it.
+    let ready = server.branch_merge(PROJECT, &merged).await.unwrap();
+    server
+        .merge_branch(
+            PROJECT,
+            &merged,
+            &ready.guard,
+            "Log scale shows the outlier.",
+        )
+        .await
+        .unwrap();
+    let store = &server.0.store;
+    assert_eq!(
+        store.session_branch_state(&merged).await.unwrap(),
+        Some("merged")
+    );
+    assert_eq!(
+        store.session_branch_state(&orphaned).await.unwrap(),
+        Some("orphaned")
+    );
+
+    for (branch, last) in [(&merged, "Try a log scale"), (&orphaned, "Now plot them")] {
+        // The snapshot says it is read-only, and why.
+        let shown = snapshot(&server, branch).await;
+        assert!(shown.read_only, "{branch}");
+        assert_eq!(
+            shown.read_only_reason,
+            Some(dto::ReadOnlyReason::FrozenBranch)
+        );
+        // Nothing starts or waits to start a turn there, in the WebView's
+        // words for a send.
+        let refused = send(&server, branch, "one more thing").await.unwrap_err();
+        assert!(
+            refused.contains(wisp_store::FROZEN_BRANCH_REFUSAL),
+            "{refused}"
+        );
+        let request = dto::SendRequest {
+            session_id: branch.clone(),
+            request_id: String::new(),
+            message: "later".into(),
+            resume: false,
+            resume_after: None,
+            attachments: vec![],
+            references: vec![],
+            acp_agent_id: None,
+        };
+        assert!(server.queue_message(PROJECT, request).await.is_err());
+        assert!(server
+            .queued_messages(PROJECT, branch)
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(server.guide(PROJECT, branch, "look again").await.is_err());
+        assert!(server
+            .compact_conversation(PROJECT, branch, desktop::CompactKind::Regular)
+            .await
+            .is_err());
+        assert!(server
+            .rewind_conversation(
+                PROJECT,
+                branch,
+                &desktop::TurnRef {
+                    from_end: 0,
+                    text: last.into(),
+                },
+            )
+            .await
+            .is_err());
+        // It is still read and quoted.
+        let turn = desktop::TurnRef {
+            from_end: 0,
+            text: last.into(),
+        };
+        let quoted = server
+            .render_session_excerpt(PROJECT, branch, &turn, &turn)
+            .await
+            .unwrap();
+        assert!(quoted.text.contains(last), "{}", quoted.text);
+        assert!(!server.whole_transcript(branch).await.unwrap().is_empty());
+    }
+
+    // The conversation they came from is not frozen with them.
+    let source = snapshot(&server, &main).await;
+    assert!(!source.read_only);
+    assert_eq!(source.read_only_reason, None);
+    send(&server, &main, "Carry on").await.unwrap();
+    wait_for(&server, &main, |s| {
+        !s.running && s.items.iter().any(|item| item.text == "Carry on")
+    })
+    .await;
+    server.shutdown().await;
+}
+
 /// Proposes a fresh plan, then answers whatever the plan tool said.
 struct Planner;
 #[async_trait]
@@ -7845,6 +7976,85 @@ async fn project_settings_name_the_project_and_give_the_model_its_rules() {
 }
 
 #[tokio::test]
+async fn the_desktop_cuts_a_marked_region_of_a_picture_into_uploads() {
+    use wisp_dto::image_pins::ImageRegion;
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let workspace = temp.path().join("workspace");
+    std::fs::create_dir_all(workspace.join("figures")).unwrap();
+    // Four pixels by three, each a colour of its own.
+    let picture =
+        image::RgbImage::from_fn(4, 3, |x, y| image::Rgb([x as u8 * 60, y as u8 * 100, 7]));
+    picture.save(workspace.join("figures/plot.png")).unwrap();
+    picture.save(workspace.join("figures/photo.jpg")).unwrap();
+
+    // The right half of the top row, in fractions of the picture, is its
+    // own two pixels, whatever zoom it was marked at.
+    let region = ImageRegion {
+        x: 0.5,
+        y: 0.0,
+        w: 0.5,
+        h: 1.0 / 3.0,
+    };
+    let kept = server
+        .import_image_region(
+            PROJECT,
+            "figures/plot.png",
+            region,
+            "region_20261116090000.png",
+        )
+        .await
+        .unwrap();
+    assert_eq!(kept, "uploads/region_20261116090000.png");
+    let cut = image::open(workspace.join(&kept)).unwrap().into_rgb8();
+    assert_eq!(cut.dimensions(), (2, 1));
+    assert_eq!(cut.get_pixel(0, 0), &image::Rgb([120, 0, 7]));
+    assert_eq!(cut.get_pixel(1, 0), &image::Rgb([180, 0, 7]));
+    // A second cut under the same name keeps the first.
+    assert_eq!(
+        server
+            .import_image_region(
+                PROJECT,
+                "figures/plot.png",
+                region,
+                "region_20261116090000.png"
+            )
+            .await
+            .unwrap(),
+        "uploads/region_20261116090000-2.png"
+    );
+    // A JPEG is cut the same way, into a PNG.
+    let photo = server
+        .import_image_region(PROJECT, "figures/photo.jpg", region, "region_photo.png")
+        .await
+        .unwrap();
+    let cut = image::open(workspace.join(&photo)).unwrap();
+    assert_eq!((cut.width(), cut.height()), (2, 1));
+
+    // An SVG, a file that is not a picture, and anything outside the
+    // project are refused, and nothing is kept for them.
+    std::fs::write(
+        workspace.join("figures/plot.svg"),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="3"/>"#,
+    )
+    .unwrap();
+    std::fs::write(workspace.join("figures/notes.txt"), "words").unwrap();
+    for path in ["figures/plot.svg", "figures/notes.txt", "../x.png"] {
+        assert!(
+            server
+                .import_image_region(PROJECT, path, region, "refused.png")
+                .await
+                .is_err(),
+            "{path}"
+        );
+    }
+    assert!(!workspace.join("uploads/refused.png").exists());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn the_desktop_makes_renames_and_trashes_project_files() {
     let temp = tempfile::tempdir().unwrap();
     let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
@@ -8031,6 +8241,228 @@ async fn a_projects_journey_lists_what_happened_and_what_the_researcher_recorded
     expected.sort();
     assert_eq!(seen, expected);
     assert!(server.calendar(now - 40 * 86_400, now).await.is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn saved_code_is_edited_into_versions_and_the_original_stays() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    let code = server
+        .star_text(PROJECT, &session, "code", Some("python"), "print(1)\n")
+        .await
+        .unwrap();
+    let versions = server.favorite_versions(&code.id).await.unwrap();
+    assert_eq!(versions.len(), 1);
+    assert_eq!(
+        (versions[0].version_number, versions[0].origin.as_str()),
+        (1, "original")
+    );
+    let edited = server
+        .save_favorite_code(&code.id, "print(2)\n")
+        .await
+        .unwrap();
+    assert_eq!(edited.version_number, 2);
+    assert_eq!(edited.language.as_deref(), Some("python"));
+    // Saving it unchanged adds nothing; an empty edit is refused.
+    assert_eq!(
+        server
+            .save_favorite_code(&code.id, "print(2)\n")
+            .await
+            .unwrap()
+            .id,
+        edited.id
+    );
+    assert!(server.save_favorite_code(&code.id, "  ").await.is_err());
+    let versions = server.favorite_versions(&code.id).await.unwrap();
+    assert_eq!(
+        versions
+            .iter()
+            .map(|version| version.code.as_str())
+            .collect::<Vec<_>>(),
+        ["print(1)\n", "print(2)\n"]
+    );
+    // The item as saved is unchanged.
+    assert_eq!(
+        server.favorite(&code.id).await.unwrap().item.code,
+        "print(1)\n"
+    );
+    // A passage stays as it was saved.
+    let text = server
+        .star_text(PROJECT, &session, "text", None, "The reads are clean.")
+        .await
+        .unwrap();
+    assert!(server
+        .save_favorite_code(&text.id, "changed")
+        .await
+        .is_err());
+    assert!(server
+        .favorite_versions("missing")
+        .await
+        .unwrap()
+        .is_empty());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_journey_reads_the_research_graph_and_where_an_output_came_from() {
+    use wisp_store::{
+        ArtifactVersionDraft, LineageBasis, LineageConfidence, ResearchEdge, ResearchNode,
+        ResearchNodeKind, RunInput, RunRecord, RunStatus,
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let store = &server.0.store;
+    assert_eq!(
+        server.research_graph(PROJECT).await.unwrap(),
+        wisp_dto::ResearchGraph::default()
+    );
+    let mut decision =
+        ResearchNode::new("d1", PROJECT, ResearchNodeKind::Decision, "Use DESeq2").unwrap();
+    decision.metadata_json = r#"{"why":"counts"}"#.into();
+    store.save_research_node(&decision).await.unwrap();
+    store
+        .save_research_node(
+            &ResearchNode::new("a1", PROJECT, ResearchNodeKind::DataAsset, "counts.tsv").unwrap(),
+        )
+        .await
+        .unwrap();
+    store
+        .save_research_edge(&ResearchEdge::new("e1", PROJECT, "d1", "a1", "uses").unwrap())
+        .await
+        .unwrap();
+    let graph = server.research_graph(PROJECT).await.unwrap();
+    // In stored order: when each was made, then by id.
+    assert_eq!(
+        graph
+            .nodes
+            .iter()
+            .map(|node| (node.id.as_str(), node.kind.as_str()))
+            .collect::<Vec<_>>(),
+        [("a1", "data_asset"), ("d1", "decision")]
+    );
+    assert_eq!(graph.nodes[1].metadata_json, r#"{"why":"counts"}"#);
+    assert_eq!(
+        (
+            graph.edges[0].source_id.as_str(),
+            graph.edges[0].target_id.as_str(),
+            graph.edges[0].relation.as_str()
+        ),
+        ("d1", "a1", "uses")
+    );
+    assert!(server.research_graph("missing").await.is_err());
+
+    // An output a run produced, from an input that is itself a file here.
+    let session = create(&server).await;
+    let mut run = RunRecord::new("r1", PROJECT, "local", "Count reads", "command");
+    run.status = RunStatus::Succeeded;
+    run.exit_code = Some(0);
+    run.ended_at = Some(1_000);
+    run.stdout_tail = Some("done".into());
+    store.create_run(&run).await.unwrap();
+    let draft = |artifact: &str, path: &str, producer: Option<&str>| ArtifactVersionDraft {
+        version_id: None,
+        artifact_id: artifact.into(),
+        project_id: PROJECT.into(),
+        root_frame_id: session.clone(),
+        filename: path.rsplit('/').next().unwrap().into(),
+        content_type: "text/csv".into(),
+        storage_path: path.into(),
+        logical_key: Some(format!("path:{path}")),
+        size_bytes: None,
+        checksum: None,
+        producing_run_id: producer.map(str::to_owned),
+        env_snapshot_hash: None,
+        materialization: wisp_store::ArtifactMaterialization::Reference,
+        capture_timing: wisp_store::ArtifactCaptureTiming::AtCreation,
+    };
+    for (artifact, path) in [("in", "data/reads.csv"), ("out", "results/counts.csv")] {
+        store
+            .save_artifact(artifact, PROJECT, &session, path, "text/csv", path)
+            .await
+            .unwrap();
+    }
+    let input = store
+        .save_artifact_version(&draft("in", "data/reads.csv", None))
+        .await
+        .unwrap();
+    let output = store
+        .save_artifact_version(&draft("out", "results/counts.csv", Some("r1")))
+        .await
+        .unwrap();
+    for (id, version, reference, confidence) in [
+        (
+            "i1",
+            Some(input.clone()),
+            "data/reads.csv",
+            LineageConfidence::Exact,
+        ),
+        (
+            "i2",
+            None,
+            "s3://bucket/genome.fa",
+            LineageConfidence::Uncertain,
+        ),
+    ] {
+        store
+            .save_run_input(&RunInput {
+                id: id.into(),
+                run_id: "r1".into(),
+                artifact_version_id: version,
+                external_resource_id: None,
+                source_ref: reference.into(),
+                role: "input".into(),
+                required: true,
+                basis: LineageBasis::Declared,
+                confidence,
+                created_at: 1,
+            })
+            .await
+            .unwrap();
+    }
+    let found = server.journey_source(PROJECT, &output).await.unwrap();
+    assert_eq!(found.source.run_id.as_deref(), Some("r1"));
+    assert_eq!(found.source.run_title, "Count reads");
+    assert_eq!(found.source.run_status, "succeeded");
+    assert_eq!(found.path.as_deref(), Some("results/counts.csv"));
+    assert_eq!(
+        found
+            .source
+            .inputs
+            .iter()
+            .map(|input| input.title.as_str())
+            .collect::<Vec<_>>(),
+        ["data/reads.csv", "s3://bucket/genome.fa"]
+    );
+    assert_eq!(found.input_paths, [Some("data/reads.csv".to_owned()), None]);
+    // An input of no run says so with an empty source.
+    let plain = server.journey_source(PROJECT, &input).await.unwrap();
+    assert_eq!(plain.source, wisp_dto::ResearchJourneySource::default());
+    assert_eq!(plain.path.as_deref(), Some("data/reads.csv"));
+
+    let record = server.journey_run(PROJECT, "r1").await.unwrap();
+    assert_eq!(
+        (
+            record.title.as_str(),
+            record.status.as_str(),
+            record.exit_code
+        ),
+        ("Count reads", "succeeded", Some(0))
+    );
+    assert_eq!(record.stdout_tail.as_deref(), Some("done"));
+
+    // Nothing of one project is read through another.
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    assert!(server.journey_source(&lab, &output).await.is_err());
+    assert!(server.journey_run(&lab, "r1").await.is_err());
+    assert!(server.research_graph(&lab).await.unwrap().nodes.is_empty());
     server.shutdown().await;
 }
 
@@ -9495,6 +9927,7 @@ async fn an_example_is_read_and_copied_into_a_project_to_go_on_with() {
 
 #[tokio::test]
 async fn a_conversations_research_is_drafted_reviewed_and_frozen() {
+    use desktop::{ArchiveFileChoice, ConfirmResearchArchive, ResearchArchive};
     // A model that answers a turn, and drafts an archive when asked to.
     struct Archivist;
     #[async_trait]
@@ -9512,9 +9945,13 @@ async fn a_conversations_research_is_drafted_reviewed_and_frozen() {
         ) -> wisp_llm::Result<Completion> {
             let system = messages[0].content.as_text();
             let content = if system.starts_with("Prepare a research notebook archive") {
-                assert!(messages[1].content.as_text().contains("count the reads"));
+                let asked = messages[1].content.as_text();
+                assert!(asked.contains("count the reads"));
+                // It is told which files the conversation recorded.
+                assert!(asked.contains("tmp.csv"), "{asked}");
                 r###"{"title":"Read counts","report":"## Findings\n100 reads.",
-                    "scripts":[{"filename":"count.sh","content":"wc -l reads.fq"}]}"###
+                    "scripts":[{"filename":"count.sh","content":"wc -l reads.fq"}],
+                    "delete_paths":["tmp.csv","reads.fq"]}"###
             } else {
                 "[]"
             };
@@ -9538,6 +9975,26 @@ async fn a_conversations_research_is_drafted_reviewed_and_frozen() {
             })
         }
     }
+    /// The researcher's review: `action` for each file the draft lists.
+    fn review(
+        draft: &ResearchArchive,
+        action: impl Fn(&str) -> &'static str,
+    ) -> ConfirmResearchArchive {
+        ConfirmResearchArchive {
+            id: draft.id.clone(),
+            title: draft.title.clone(),
+            report: draft.report.clone(),
+            scripts: draft.scripts.clone(),
+            files: draft
+                .files
+                .iter()
+                .map(|file| ArchiveFileChoice {
+                    path: file.path.clone(),
+                    action: action(&file.path).into(),
+                })
+                .collect(),
+        }
+    }
     let temp = tempfile::tempdir().unwrap();
     let factory: ModelFactory = Arc::new(|_| Box::new(Archivist));
     let server = Server::open_with_models(config(temp.path()), factory)
@@ -9555,48 +10012,166 @@ async fn a_conversations_research_is_drafted_reviewed_and_frozen() {
         server.research_archive(PROJECT, &session).await.unwrap(),
         None
     );
+    // The files the conversation recorded: the input it read, a result
+    // and a scratch file it made.
+    let workspace = temp.path().join("workspace");
+    for (name, existed) in [
+        ("reads.fq", true),
+        ("counts.csv", false),
+        ("tmp.csv", false),
+    ] {
+        std::fs::write(workspace.join(name), format!("original {name}")).unwrap();
+        let (hash, _) =
+            wisp_store::research_archive_files::file_hash(&workspace.join(name)).unwrap();
+        server
+            .0
+            .store
+            .save_turn_file_undo(
+                &session,
+                1,
+                name,
+                existed,
+                None,
+                None,
+                Some(&hash),
+                true,
+                None,
+            )
+            .await
+            .unwrap();
+    }
+    std::fs::write(workspace.join("notes.txt"), "not recorded").unwrap();
 
-    // The draft is the model's; nothing is saved by drafting.
-    let mut draft = server
+    // The draft is the model's, with a choice for each recorded file: a
+    // snapshot, unless the model would delete one that may be deleted.
+    // It is kept to be reviewed; the conversation is not frozen by it.
+    let draft = server
         .draft_research_archive(PROJECT, &session)
         .await
         .unwrap();
     assert_eq!(draft.title, "Read counts");
     assert_eq!(draft.scripts.len(), 1);
+    let listed: Vec<_> = draft
+        .files
+        .iter()
+        .map(|file| (file.path.as_str(), file.action.as_str(), file.can_delete))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("counts.csv", "snapshot", true),
+            ("reads.fq", "snapshot", false),
+            ("tmp.csv", "delete", true),
+        ]
+    );
     assert_eq!(
         server.research_archive(PROJECT, &session).await.unwrap(),
         None
     );
+    assert_eq!(
+        server
+            .research_archive_draft(PROJECT, &session)
+            .await
+            .unwrap(),
+        Some(draft.clone())
+    );
     assert!(!snapshot(&server, &session).await.read_only);
     assert_eq!(snapshot(&server, &session).await.read_only_reason, None);
+    for name in ["reads.fq", "counts.csv", "tmp.csv"] {
+        assert!(workspace.join(name).is_file());
+    }
+
+    // What is refused freezes nothing and deletes nothing: an empty
+    // title, the input chosen for deletion, a file the draft did not list.
+    let mut refused = review(&draft, |path| match path {
+        "tmp.csv" => "delete",
+        _ => "snapshot",
+    });
+    refused.title = " ".into();
+    let input = review(&draft, |_| "delete");
+    let mut forged = review(&draft, |_| "snapshot");
+    forged.files[0].path = "../outside.txt".into();
+    let mut renamed = review(&draft, |_| "snapshot");
+    renamed.scripts[0].filename = "../count.sh".into();
+    for refused in [refused, input, forged, renamed] {
+        assert!(server
+            .freeze_research_archive(PROJECT, &session, refused)
+            .await
+            .is_err());
+    }
+    assert_eq!(
+        server.research_archive(PROJECT, &session).await.unwrap(),
+        None
+    );
+    for name in ["reads.fq", "counts.csv", "tmp.csv"] {
+        assert!(workspace.join(name).is_file(), "{name}");
+    }
 
     // What is frozen is what the researcher made of it.
-    draft.report.push_str("\n\nChecked by hand.");
-    let refused = desktop::ArchiveDraft {
-        title: " ".into(),
-        ..draft.clone()
-    };
-    assert!(server
-        .freeze_research_archive(PROJECT, &session, refused)
-        .await
-        .is_err());
+    let mut reviewed = review(&draft, |path| match path {
+        "counts.csv" => "snapshot",
+        "reads.fq" => "reference",
+        _ => "delete",
+    });
+    reviewed.report.push_str("\n\nChecked by hand.");
+    reviewed.scripts[0].content = "wc -l reads.fq > counts.csv\n".into();
     let frozen = server
-        .freeze_research_archive(PROJECT, &session, draft)
+        .freeze_research_archive(PROJECT, &session, reviewed)
         .await
         .unwrap();
     assert!(frozen.frozen_at.is_some());
-    let folder = temp
-        .path()
-        .join("workspace/.wisp/research-archives")
-        .join(&frozen.id);
+    let file = |path: &str| frozen.files.iter().find(|f| f.path == path).unwrap();
+    // The scratch file is gone for good; the input and the result stay.
+    assert!(!workspace.join("tmp.csv").exists());
+    assert_eq!(file("tmp.csv").cleanup_status, "deleted");
     assert_eq!(
-        std::fs::read_to_string(folder.join("REPORT.md")).unwrap(),
-        "# Read counts\n\n## Findings\n100 reads.\n\nChecked by hand.\n"
+        std::fs::read_to_string(workspace.join("reads.fq")).unwrap(),
+        "original reads.fq"
     );
-    assert!(folder.join("scripts/count.sh").is_file());
+    assert_eq!(file("reads.fq").snapshot_path, None);
+    assert_eq!(
+        std::fs::read_to_string(workspace.join("counts.csv")).unwrap(),
+        "original counts.csv"
+    );
+    assert_eq!(
+        std::fs::read_to_string(workspace.join("notes.txt")).unwrap(),
+        "not recorded"
+    );
+    // The result's snapshot and the edited script are in the archive.
+    let copy = workspace.join(file("counts.csv").snapshot_path.as_ref().unwrap());
+    assert_eq!(
+        std::fs::read_to_string(&copy).unwrap(),
+        "original counts.csv"
+    );
+    assert_eq!(
+        std::fs::read_to_string(copy.parent().unwrap().join("script-count.sh")).unwrap(),
+        "wc -l reads.fq > counts.csv\n"
+    );
+    let folder = workspace.join(".wisp/research-archives").join(&frozen.id);
+    let report = std::fs::read_to_string(folder.join("REPORT.md")).unwrap();
+    assert!(
+        report.starts_with("# Read counts\n\n## Findings\n100 reads.\n\nChecked by hand.\n"),
+        "{report}"
+    );
+    assert!(report.contains("- tmp.csv — delete\n"), "{report}");
     assert_eq!(
         server.research_archive(PROJECT, &session).await.unwrap(),
         Some(frozen.clone())
+    );
+    assert_eq!(
+        server
+            .research_archive_draft(PROJECT, &session)
+            .await
+            .unwrap(),
+        None
+    );
+    // Nothing is left to delete; trying again changes nothing.
+    assert_eq!(
+        server
+            .retry_research_archive_cleanup(PROJECT, &session)
+            .await
+            .unwrap(),
+        frozen
     );
 
     // From now on it is a record: read, not continued or archived again.
@@ -9622,6 +10197,10 @@ async fn a_conversations_research_is_drafted_reviewed_and_frozen() {
     assert!(!snapshot(&server, &continued).await.read_only);
     // Only from a frozen archive.
     assert!(server.continue_research(PROJECT, &continued).await.is_err());
+    assert!(server
+        .retry_research_archive_cleanup(PROJECT, &continued)
+        .await
+        .is_err());
     // Another conversation of the project is untouched.
     let next = create(&server).await;
     send(&server, &next, "count the reads again").await.unwrap();
@@ -14151,6 +14730,7 @@ async fn a_scheduled_task_fires_once_per_time_into_a_new_conversation() {
         last_run_at: None,
         created_at: now,
         updated_at: now,
+        host: None,
     };
     server.0.store.create_schedule(&timer).await.unwrap();
     assert_eq!(server.schedules().await.unwrap().len(), 2);
@@ -14328,7 +14908,7 @@ async fn a_conversation_keeps_one_timer_that_waits_while_the_conversation_is_bus
         .lock()
         .unwrap()
         .join("\n")
-        .contains("[Scheduled task: look again]"));
+        .contains("[Timer: look again]"));
 
     assert_eq!(
         server
@@ -14342,6 +14922,539 @@ async fn a_conversation_keeps_one_timer_that_waits_while_the_conversation_is_bus
         .await
         .unwrap()
         .is_none());
+    server.shutdown().await;
+}
+
+/// Answers each turn after the last thing the user said; a turn whose last
+/// message is the user's and says "slow" waits until the test lets it go.
+struct HeldTurns {
+    gate: Arc<tokio::sync::Semaphore>,
+}
+#[async_trait]
+impl Provider for HeldTurns {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+        Ok(Completion {
+            content: "noted".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        messages: &[Message],
+        _: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        let last = messages
+            .last()
+            .filter(|message| message.role == wisp_llm::Role::User)
+            .map(|message| message.content.as_text())
+            .unwrap_or_default();
+        if last.contains("slow") {
+            self.gate.acquire().await.unwrap().forget();
+        }
+        let answer = format!("answer to {}", last.lines().next().unwrap_or_default());
+        sink.on_text(&answer);
+        Ok(Completion {
+            content: answer,
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+}
+
+fn held_turns(gate: Arc<tokio::sync::Semaphore>) -> ModelFactory {
+    Arc::new(move |_| Box::new(HeldTurns { gate: gate.clone() }))
+}
+
+/// What the user said in a conversation, as its model reads it now.
+async fn said(server: &Server, session: &str) -> Vec<String> {
+    server
+        .0
+        .store
+        .load_messages(session)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|message| message.role == wisp_llm::Role::User)
+        .map(|message| message.content.as_text())
+        .collect()
+}
+
+async fn idle(server: &Server, session: &str) {
+    wait_for(server, session, |s| !s.running).await;
+}
+
+#[tokio::test]
+async fn a_conversation_timer_replaces_its_previous_turn_and_keeps_what_came_between() {
+    let temp = tempfile::tempdir().unwrap();
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let server = Server::open_with_models(config(temp.path()), held_turns(gate.clone()))
+        .await
+        .unwrap();
+    let main = server.create_conversation(PROJECT).await.unwrap();
+    let other = server.create_conversation(PROJECT).await.unwrap();
+    send(&server, &main, "first question").await.unwrap();
+    idle(&server, &main).await;
+
+    // Set here: the embedded host's own row, which replaces its turn.
+    server
+        .set_conversation_timer(PROJECT, &main, "check the queue", 600)
+        .await
+        .unwrap();
+    let row = |id: String| {
+        let server = server.clone();
+        async move { server.0.store.get_schedule(&id).await.unwrap().unwrap() }
+    };
+    let timer = server
+        .conversation_timer(PROJECT, &main)
+        .await
+        .unwrap()
+        .unwrap();
+    let stored = row(timer.id.clone()).await;
+    assert!(stored.replace_previous_turn);
+    assert_eq!(
+        stored.host.as_deref(),
+        Some(wisp_store::EMBEDDED_SCHEDULE_HOST)
+    );
+
+    // The other conversation has a timer and a turn of its own.
+    server
+        .set_conversation_timer(PROJECT, &other, "other check", 600)
+        .await
+        .unwrap();
+    send(&server, &other, "other question").await.unwrap();
+    idle(&server, &other).await;
+    let other_timer = server
+        .conversation_timer(PROJECT, &other)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        server
+            .fire_due_schedules(other_timer.next_run_at)
+            .await
+            .unwrap(),
+        2,
+        "both timers are due by then"
+    );
+    idle(&server, &main).await;
+    idle(&server, &other).await;
+    // Paused from here on, so what fires next is the first one's alone.
+    server
+        .set_schedule_enabled(&other_timer.id, false)
+        .await
+        .unwrap();
+    let rows_of = |session: String| {
+        let server = server.clone();
+        async move {
+            server
+                .0
+                .store
+                .load_messages_with_seq(&session)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|(seq, message)| (seq, serde_json::to_string(&message).unwrap()))
+                .collect::<Vec<_>>()
+        }
+    };
+    let other_before = rows_of(other.clone()).await;
+    assert_eq!(
+        said(&server, &other).await,
+        ["other question", "[Timer: other check]\n\nother check"]
+    );
+
+    // A human turn after the first firing, then a compaction made after it.
+    send(&server, &main, "between").await.unwrap();
+    idle(&server, &main).await;
+    assert_eq!(
+        said(&server, &main).await,
+        [
+            "first question",
+            "[Timer: check the queue]\n\ncheck the queue",
+            "between"
+        ]
+    );
+    let compacted = vec![
+        Message::system("rules"),
+        Message::user("summary that still holds the timer's turn"),
+    ];
+    server
+        .0
+        .store
+        .open_context_epoch(
+            &main,
+            wisp_store::OpenContextEpoch {
+                messages: &compacted,
+                strategy: "auto",
+                kind: "semantic",
+                before_tokens: 100,
+                after_tokens: 20,
+                checkpoint_index: Some(1),
+                first_kept_seq: None,
+                archive_ref: None,
+                ui_event_seq: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(!server
+        .0
+        .store
+        .context_epochs(&main)
+        .await
+        .unwrap()
+        .is_empty());
+
+    // Busy with a turn of its own: the timer waits, still due, unclaimed.
+    let due = row(timer.id.clone()).await.next_run_at;
+    send(&server, &main, "slow work").await.unwrap();
+    wait_for(&server, &main, |s| s.running).await;
+    assert_eq!(server.fire_due_schedules(due).await.unwrap(), 0);
+    let waiting = row(timer.id.clone()).await;
+    assert_eq!(waiting.next_run_at, due);
+    gate.add_permits(1);
+    idle(&server, &main).await;
+
+    // Idle again, it fires and takes its previous turn away: what the user
+    // said in between stays, and so does the turn it waited for. The
+    // compaction that held the old turn goes with it, as the store does.
+    assert_eq!(server.fire_due_schedules(due).await.unwrap(), 1);
+    idle(&server, &main).await;
+    assert_eq!(
+        said(&server, &main).await,
+        [
+            "first question",
+            "between",
+            "slow work",
+            "[Timer: check the queue]\n\ncheck the queue"
+        ]
+    );
+    assert!(server
+        .0
+        .store
+        .context_epochs(&main)
+        .await
+        .unwrap()
+        .is_empty());
+    let answers: Vec<String> = server
+        .0
+        .store
+        .load_messages(&main)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|message| message.role == wisp_llm::Role::Assistant)
+        .map(|message| message.content.as_text())
+        .collect();
+    assert_eq!(
+        answers,
+        [
+            "answer to first question",
+            "answer to between",
+            "answer to slow work",
+            "answer to [Timer: check the queue]"
+        ]
+    );
+
+    // While a timer's turn runs it takes no guidance, as in the WebView;
+    // what is said then waits for a turn of its own.
+    server
+        .set_conversation_timer(PROJECT, &main, "slow check", 600)
+        .await
+        .unwrap();
+    let changed = row(timer.id.clone()).await;
+    assert_eq!(changed.prompt, "slow check", "the same row, changed");
+    assert_eq!(
+        server
+            .fire_due_schedules(changed.next_run_at)
+            .await
+            .unwrap(),
+        1
+    );
+    wait_for(&server, &main, |s| s.running).await;
+    assert!(!server.guide(PROJECT, &main, "look here").await.unwrap());
+    gate.add_permits(1);
+    idle(&server, &main).await;
+    // Two firings since the human turns: one timer turn.
+    let now_said = said(&server, &main).await;
+    assert_eq!(
+        now_said,
+        [
+            "first question",
+            "between",
+            "slow work",
+            "[Timer: slow check]\n\nslow check"
+        ]
+    );
+    let runs = server
+        .conversation_timer(PROJECT, &main)
+        .await
+        .unwrap()
+        .unwrap()
+        .runs;
+    assert!(runs.iter().all(|run| run.error.is_none()), "{runs:?}");
+
+    // Nothing of the other conversation was touched.
+    assert_eq!(rows_of(other.clone()).await, other_before);
+    server.shutdown().await;
+}
+
+/// Waits until the conversation's turn and whatever goes on with its
+/// timer's turn (a Stop hook's continuation) are over.
+async fn settled(server: &Server, session: &str) {
+    let live = server.session(session);
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            {
+                let live = live.live.lock().unwrap();
+                if !live.running && !live.timer_open {
+                    return;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the timer's turn must end");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn what_goes_on_with_a_timer_turn_is_replaced_with_it() {
+    use wisp_dto::HookEvent;
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(
+        config(temp.path()),
+        held_turns(Arc::new(tokio::sync::Semaphore::new(0))),
+    )
+    .await
+    .unwrap();
+    // Every turn is kept going once, as the WebView's Stop hooks do inside
+    // its timer's turn.
+    server
+        .set_command_hooks(vec![command_hook(
+            HookEvent::Stop,
+            "",
+            r#"grep -q '"stop_hook_active":false' && { echo "run the tests" >&2; exit 2; }; exit 0"#,
+        )])
+        .await
+        .unwrap();
+    let session = server.create_conversation(PROJECT).await.unwrap();
+    server
+        .set_conversation_timer(PROJECT, &session, "check", 600)
+        .await
+        .unwrap();
+    let mut due = server
+        .conversation_timer(PROJECT, &session)
+        .await
+        .unwrap()
+        .unwrap()
+        .next_run_at;
+    let mut rows = Vec::new();
+    for _ in 0..2 {
+        assert_eq!(server.fire_due_schedules(due).await.unwrap(), 1);
+        settled(&server, &session).await;
+        let saved = server.0.store.load_messages(&session).await.unwrap();
+        rows.push(saved.len());
+        due += 600;
+    }
+    // The continuation was the timer's: the second firing took it away
+    // with the turn, so the conversation is as long as after the first.
+    assert_eq!(rows[0], rows[1], "{rows:?}");
+    assert!(rows[0] >= 4, "a turn and its continuation: {rows:?}");
+    assert_eq!(said(&server, &session).await.len(), 1);
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_webviews_own_timer_is_never_fired_or_changed_here() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(
+        config(temp.path()),
+        held_turns(Arc::new(tokio::sync::Semaphore::new(0))),
+    )
+    .await
+    .unwrap();
+    let session = server.create_conversation(PROJECT).await.unwrap();
+    let now = chrono::Utc::now().timestamp();
+    // As the WebView saves its /timer: no owner mark, replacing its turn.
+    let webview = wisp_store::ScheduleRecord {
+        id: "webview-timer".into(),
+        project_id: PROJECT.into(),
+        frame_id: Some(session.clone()),
+        replace_previous_turn: true,
+        name: "check".into(),
+        prompt: "check".into(),
+        interval_secs: 600,
+        enabled: true,
+        next_run_at: now - 60,
+        created_at: now,
+        updated_at: now,
+        ..Default::default()
+    };
+    server.0.store.create_schedule(&webview).await.unwrap();
+    assert_eq!(server.fire_due_schedules(now).await.unwrap(), 0);
+    let kept = server
+        .0
+        .store
+        .get_schedule("webview-timer")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.next_run_at, now - 60, "not claimed");
+    assert!(server
+        .0
+        .store
+        .list_schedule_runs("webview-timer", 5)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(said(&server, &session).await.is_empty());
+    // Not this host's to list, run, change or cancel.
+    assert!(server.schedules().await.unwrap().is_empty());
+    assert!(server
+        .conversation_timer(PROJECT, &session)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(server.run_schedule_now("webview-timer").await.is_err());
+    assert!(server
+        .set_conversation_timer(PROJECT, &session, "mine", 600)
+        .await
+        .is_err());
+    assert_eq!(
+        server
+            .cancel_conversation_schedules(PROJECT, &session)
+            .await
+            .unwrap(),
+        0
+    );
+
+    // A timer set here before timers replaced their turn adds a turn each
+    // time until it is set again, which makes it this host's replacing one.
+    let other = server.create_conversation(PROJECT).await.unwrap();
+    let older = wisp_store::ScheduleRecord {
+        id: "older-timer".into(),
+        frame_id: Some(other.clone()),
+        replace_previous_turn: false,
+        enabled: false,
+        ..webview.clone()
+    };
+    server.0.store.create_schedule(&older).await.unwrap();
+    assert_eq!(
+        server
+            .conversation_timer(PROJECT, &other)
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        "older-timer"
+    );
+    server
+        .set_conversation_timer(PROJECT, &other, "converted", 600)
+        .await
+        .unwrap();
+    let converted = server
+        .conversation_timer(PROJECT, &other)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(converted.id, "older-timer");
+    assert!(!converted.enabled, "a paused timer stays paused");
+    let stored = server
+        .0
+        .store
+        .get_schedule(&converted.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(stored.replace_previous_turn);
+    assert_eq!(
+        stored.host.as_deref(),
+        Some(wisp_store::EMBEDDED_SCHEDULE_HOST)
+    );
+    assert!(server
+        .0
+        .store
+        .get_schedule("older-timer")
+        .await
+        .unwrap()
+        .is_none());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_timer_turn_a_closed_app_left_open_is_sealed_by_the_next_turn() {
+    let temp = tempfile::tempdir().unwrap();
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let server = Server::open_with_models(config(temp.path()), held_turns(gate.clone()))
+        .await
+        .unwrap();
+    let session = server.create_conversation(PROJECT).await.unwrap();
+    send(&server, &session, "first question").await.unwrap();
+    idle(&server, &session).await;
+    server
+        .set_conversation_timer(PROJECT, &session, "check", 600)
+        .await
+        .unwrap();
+    // The app closed in the middle of the timer's turn: its range is open.
+    let store = &server.0.store;
+    store.begin_session_timer_turn(&session).await.unwrap();
+    let seq = store.max_message_seq(&session).await.unwrap();
+    store
+        .append_message(&session, seq + 1, &Message::user("[Timer: check]\n\ncheck"))
+        .await
+        .unwrap();
+    store
+        .append_message(&session, seq + 2, &Message::assistant("half an answer"))
+        .await
+        .unwrap();
+    server.shutdown().await;
+    drop(server);
+
+    let server = Server::open_with_models(config(temp.path()), held_turns(gate.clone()))
+        .await
+        .unwrap();
+    // The next turn is the user's: it seals that range before it adds a row.
+    send(&server, &session, "after restart").await.unwrap();
+    idle(&server, &session).await;
+    let timer = server
+        .conversation_timer(PROJECT, &session)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        server.fire_due_schedules(timer.next_run_at).await.unwrap(),
+        1
+    );
+    idle(&server, &session).await;
+    // The timer's next firing took only the unfinished turn away.
+    assert_eq!(
+        said(&server, &session).await,
+        ["first question", "after restart", "[Timer: check]\n\ncheck"]
+    );
+    let answers: Vec<String> = server
+        .0
+        .store
+        .load_messages(&session)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|message| message.role == wisp_llm::Role::Assistant)
+        .map(|message| message.content.as_text())
+        .collect();
+    assert!(!answers.iter().any(|answer| answer == "half an answer"));
+    assert!(answers
+        .iter()
+        .any(|answer| answer == "answer to after restart"));
     server.shutdown().await;
 }
 
@@ -15821,6 +16934,178 @@ async fn a_memory_is_drafted_from_a_turn_for_the_researcher_to_keep() {
 }
 
 #[tokio::test]
+async fn chosen_turns_are_quoted_or_distilled_and_only_a_kept_draft_is_saved() {
+    /// Answers every turn, and distills an experience when asked in the
+    /// WebView's words, saying which turns and evidence it was given.
+    struct Distilling;
+    #[async_trait]
+    impl Provider for Distilling {
+        fn name(&self) -> &str {
+            "offline"
+        }
+        fn model(&self) -> &str {
+            "offline"
+        }
+        async fn complete(
+            &self,
+            messages: &[Message],
+            _: &[ToolSchema],
+        ) -> wisp_llm::Result<Completion> {
+            let asked = messages.first().is_some_and(|m| {
+                m.content.as_text() == wisp_core::session_experience::SYSTEM_PROMPT
+            });
+            let content = if asked {
+                let request: Value = serde_json::from_str(&messages[1].content.as_text()).unwrap();
+                let transcript = request["transcript"].as_str().unwrap_or_default();
+                let seen: Vec<&str> =
+                    ["count the reads", "normalize the counts", "plot the result"]
+                        .into_iter()
+                        .filter(|said| transcript.contains(said))
+                        .collect();
+                format!(
+                    "## Steps\nturns {}–{}; focus: {}; from: {}",
+                    request["first_turn"],
+                    request["last_turn"],
+                    request["focus"].as_str().unwrap_or_default(),
+                    seen.join(", ")
+                )
+            } else {
+                "{}".to_owned()
+            };
+            Ok(Completion {
+                content,
+                finish_reason: Some("stop".into()),
+                ..Default::default()
+            })
+        }
+        async fn stream(
+            &self,
+            _: &[Message],
+            _: &[ToolSchema],
+            sink: &mut dyn StreamSink,
+        ) -> wisp_llm::Result<Completion> {
+            sink.on_text("Done.");
+            Ok(Completion {
+                content: "Done.".into(),
+                finish_reason: Some("stop".into()),
+                ..Default::default()
+            })
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let factory: ModelFactory = Arc::new(|_| Box::new(Distilling));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    for said in ["count the reads", "normalize the counts", "plot the result"] {
+        send(&server, &session, said).await.unwrap();
+        turn_done(&server, &session).await;
+    }
+    let turn = |from_end: usize, text: &str| desktop::TurnRef {
+        from_end,
+        text: text.into(),
+    };
+    let (second, third) = (turn(1, "normalize the counts"), turn(0, "plot the result"));
+    let saved = server.whole_transcript(&session).await.unwrap().len();
+
+    // The excerpt holds exactly the chosen turns, chosen in either order.
+    let excerpt = server
+        .render_session_excerpt(PROJECT, &session, &third, &second)
+        .await
+        .unwrap();
+    assert_eq!(excerpt.session_id, session);
+    assert_eq!((excerpt.start_user_index, excerpt.end_user_index), (1, 2));
+    assert!(
+        excerpt.text.contains("normalize the counts"),
+        "{}",
+        excerpt.text
+    );
+    assert!(excerpt.text.contains("plot the result"));
+    assert!(!excerpt.text.contains("count the reads"));
+    assert!(!excerpt.truncated);
+    let one = server
+        .render_session_excerpt(
+            PROJECT,
+            &session,
+            &turn(2, "count the reads"),
+            &turn(2, "count the reads"),
+        )
+        .await
+        .unwrap();
+    assert_eq!((one.start_user_index, one.end_user_index), (0, 0));
+    assert!(one.text.contains("count the reads"));
+    assert!(!one.text.contains("normalize the counts"));
+    // Another project's, a missing conversation, or a turn it does not
+    // have, quotes nothing.
+    for (project, id, last) in [
+        ("missing", session.as_str(), &third),
+        (PROJECT, "no-such-conversation", &third),
+        (PROJECT, session.as_str(), &turn(0, "never said")),
+        (PROJECT, session.as_str(), &turn(5, "plot the result")),
+    ] {
+        assert!(server
+            .render_session_excerpt(project, id, &second, last)
+            .await
+            .is_err());
+        assert!(server
+            .draft_session_experience(project, id, &second, last, None)
+            .await
+            .is_err());
+    }
+
+    // The draft is distilled from the chosen turns alone, with the focus.
+    let draft = server
+        .draft_session_experience(
+            PROJECT,
+            &session,
+            &second,
+            &third,
+            Some(" the normalization "),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        draft.content,
+        "## Steps\nturns 2–3; focus: the normalization; from: normalize the counts, plot the result"
+    );
+    assert!(!draft.truncated);
+    assert!(server
+        .draft_session_experience(
+            PROJECT,
+            &session,
+            &second,
+            &third,
+            Some(&"研".repeat(wisp_core::session_experience::FOCUS_LIMIT + 1)),
+        )
+        .await
+        .is_err());
+
+    // Quoting and drafting (and so a draft given up) keep nothing: the
+    // memory is empty and the conversation as it was.
+    let memory = server.memory(PROJECT).await.unwrap();
+    assert!(memory.notes.is_empty() && memory.habits.is_empty());
+    assert_eq!(
+        server.whole_transcript(&session).await.unwrap().len(),
+        saved
+    );
+    // A draft that is kept goes where Save to memory puts it.
+    server
+        .remember(PROJECT, Some(&session), &draft.content, false)
+        .await
+        .unwrap();
+    let memory = server.memory(PROJECT).await.unwrap();
+    assert_eq!(memory.notes.len(), 1);
+    assert!(
+        memory.notes[0].preview.contains("## Steps"),
+        "{:?}",
+        memory.notes[0]
+    );
+    assert!(memory.habits.is_empty());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_new_project_can_keep_its_own_database_and_such_a_folder_opens_in_place() {
     let temp = tempfile::tempdir().unwrap();
     let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
@@ -16429,5 +17714,133 @@ async fn a_run_moved_to_the_background_frees_the_turn_and_reports_its_end() {
         .await
         .unwrap()
         .is_empty());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_hosts_files_and_runs_are_listed_and_only_unused_files_deleted() {
+    use desktop::{SshHostRow, StagedState};
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let key = temp.path().join("id_lab");
+    std::fs::write(&key, b"test-key\n").unwrap();
+    server
+        .save_ssh_host(SshHostRow {
+            alias: "gpu".into(),
+            host_name: "10.0.0.8".into(),
+            user: "lab".into(),
+            identity_file: key.to_string_lossy().into_owned(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let store = &server.0.store;
+
+    // A file of a host is read only from a saved host, and only one named.
+    let ghost = server
+        .remote_file("ghost", "/a.txt", None)
+        .await
+        .unwrap_err();
+    assert!(ghost.to_string().contains("no longer saved"), "{ghost}");
+    let nothing = server.remote_file("gpu", "  ", None).await.unwrap_err();
+    assert!(nothing.to_string().contains("Choose a file"), "{nothing}");
+
+    // Runs on the host, newest first, and none from elsewhere.
+    let mut older = wisp_store::RunRecord::new("r-old", PROJECT, "ssh:gpu", "Align", "ssh_direct");
+    older.created_at = 100;
+    older.status = wisp_store::RunStatus::Succeeded;
+    let mut newer = wisp_store::RunRecord::new("r-new", PROJECT, "ssh:gpu", "Call", "ssh_direct");
+    newer.created_at = 200;
+    let local = wisp_store::RunRecord::new("r-local", PROJECT, "local", "Plot", "command");
+    for run in [&older, &newer, &local] {
+        store.create_run(run).await.unwrap();
+    }
+    let runs = server.host_runs(PROJECT, "gpu").await.unwrap();
+    let ids: Vec<_> = runs.iter().map(|run| run.id.as_str()).collect();
+    assert_eq!(ids, ["r-new", "r-old"]);
+    assert_eq!(runs[1].status, "succeeded");
+    assert!(server.host_runs(PROJECT, "ghost").await.is_err());
+    assert!(server.host_runs("missing", "gpu").await.is_err());
+
+    // What the project placed there: one a running run still needs, one
+    // nothing needs any more, with a name that is not shell-safe.
+    let needed = wisp_store::RemoteStagingEntry::new(
+        PROJECT,
+        "ssh:gpu",
+        Some("r-new".into()),
+        "~/wisp/in.fq",
+        "run_input",
+    );
+    let mut unused = wisp_store::RemoteStagingEntry::new(
+        PROJECT,
+        "ssh:gpu",
+        None,
+        "/scratch/it's; $(rm -rf ~)/old.bam",
+        "harvest_persist",
+    );
+    unused.created_at = needed.created_at + 1;
+    store.record_remote_staging(&needed).await.unwrap();
+    store.record_remote_staging(&unused).await.unwrap();
+    let staged = server.host_staged_files(PROJECT, "gpu").await.unwrap();
+    let state = |id: &str| staged.iter().find(|file| file.id == id).unwrap().state;
+    assert_eq!(state(&needed.id), StagedState::Active);
+    assert_eq!(state(&unused.id), StagedState::Orphan);
+
+    struct Deleting(std::sync::Mutex<Vec<wisp_runs::RunCommand>>, String);
+    #[async_trait]
+    impl wisp_runs::RunCommandRunner for Deleting {
+        async fn run(
+            &self,
+            command: wisp_runs::RunCommand,
+            _: std::time::Duration,
+        ) -> Result<wisp_runs::RunCommandOutput, String> {
+            self.0.lock().unwrap().push(command);
+            Ok(wisp_runs::RunCommandOutput {
+                exit_code: 0,
+                stdout: format!("__WISP_RM__:{}\n", self.1),
+                stderr: String::new(),
+            })
+        }
+    }
+    // One a run still needs is refused before anything is asked.
+    let deleting = Deleting(Default::default(), needed.id.clone());
+    let refused = server
+        .remove_host_staged_file_with(PROJECT, "gpu", &needed.id, &deleting)
+        .await
+        .unwrap_err();
+    assert!(
+        refused.to_string().contains("still referenced"),
+        "{refused}"
+    );
+    assert!(deleting.0.lock().unwrap().is_empty());
+    // Nor one that is not in the record, whatever path it names.
+    assert!(server
+        .remove_host_staged_file_with(PROJECT, "gpu", "/", &deleting)
+        .await
+        .is_err());
+    assert!(deleting.0.lock().unwrap().is_empty());
+
+    // The unused one is deleted with its path quoted as data.
+    let deleting = Deleting(Default::default(), unused.id.clone());
+    let left = server
+        .remove_host_staged_file_with(PROJECT, "gpu", &unused.id, &deleting)
+        .await
+        .unwrap();
+    assert_eq!(
+        left.iter().map(|file| file.id.as_str()).collect::<Vec<_>>(),
+        [needed.id.as_str()]
+    );
+    let asked = deleting.0.lock().unwrap();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].program, "ssh");
+    assert_eq!(asked[0].args.last().map(String::as_str), Some("sh -s"));
+    let script = asked[0].stdin.as_deref().unwrap();
+    assert!(
+        script.contains("path='/scratch/it'\\''s; $(rm -rf ~)/old.bam'\nrm -rf \"$path\"\n"),
+        "{script}"
+    );
+    assert_eq!(script.matches("rm -rf \"$path\"").count(), 1);
     server.shutdown().await;
 }

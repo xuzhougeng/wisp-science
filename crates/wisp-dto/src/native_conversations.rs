@@ -1145,6 +1145,10 @@ pub enum ReadOnlyReason {
     /// A subagent's conversation: it takes instructions only from the
     /// conversation that started it.
     Subagent,
+    /// A branch frozen as read-only history: brought back into the
+    /// conversation it came from, or its source lost the turn it split
+    /// from. It is read and quoted, not written to.
+    FrozenBranch,
     /// A reason this client does not know yet.
     #[serde(other)]
     Other,
@@ -1267,6 +1271,22 @@ mod tests {
         assert_eq!(
             serde_json::from_value::<TurnErrorKind>(serde_json::json!("quota_spent")).unwrap(),
             TurnErrorKind::Other
+        );
+    }
+    #[test]
+    fn a_frozen_branch_is_its_own_read_only_reason_and_older_readers_see_other() {
+        use super::ReadOnlyReason;
+        assert_eq!(
+            serde_json::to_value(ReadOnlyReason::FrozenBranch).unwrap(),
+            serde_json::json!("frozen_branch")
+        );
+        assert_eq!(
+            serde_json::from_value::<ReadOnlyReason>(serde_json::json!("frozen_branch")).unwrap(),
+            ReadOnlyReason::FrozenBranch
+        );
+        assert_eq!(
+            serde_json::from_value::<ReadOnlyReason>(serde_json::json!("a_later_reason")).unwrap(),
+            ReadOnlyReason::Other
         );
     }
     #[test]

@@ -2024,6 +2024,8 @@ impl Server {
             {
                 let _accept = session.accept.lock().await;
                 if !session.live.lock().unwrap().running {
+                    // Not the timer's to take away with its turn.
+                    self.seal_timer_turn(&session, frame).await?;
                     if !store
                         .deliver_agent_workflow_completions(frame)
                         .await?

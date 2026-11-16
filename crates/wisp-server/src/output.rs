@@ -111,6 +111,10 @@ pub fn tool_question(tool: &str) -> String {
 #[derive(Default)]
 pub struct Live {
     pub running: bool,
+    /// The conversation timer's turn is open: it runs, or it ended and a
+    /// correction or Stop-hook continuation is to go on with it. No timer
+    /// fires and no guidance is taken meanwhile.
+    pub timer_open: bool,
     /// The latest work over many items (`map_items`) the conversation ran,
     /// as it went; kept after its turn until another one starts.
     pub swarm: Option<wisp_dto::SwarmProgress>,
@@ -128,6 +132,9 @@ pub struct Live {
     /// after it belongs to the running turn.
     pub saved_through: i64,
     pub next_before_seq: Option<i64>,
+    /// How many of the user's messages come before the page the running
+    /// turn started from.
+    pub user_offset: usize,
     pub draft: String,
     pub error: Option<String>,
     pub tool: String,

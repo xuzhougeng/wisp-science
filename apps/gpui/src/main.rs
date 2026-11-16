@@ -2,6 +2,7 @@
 
 mod acp;
 mod agents;
+mod archive;
 mod aside;
 mod assets;
 mod assistant;
@@ -47,11 +48,13 @@ mod panel;
 mod papers;
 mod pdf_pages;
 mod pet;
+mod picture;
 mod plugins;
 mod present;
 mod project_windows;
 mod queue;
 mod remote;
+mod reuse;
 mod review;
 mod run_cards;
 mod run_review;

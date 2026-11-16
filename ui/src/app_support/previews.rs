@@ -546,17 +546,10 @@ pub(crate) fn WorkspaceFilePreview(
     }
 }
 
-/// A comment on a selected image region: the rect in fractional coordinates
-/// of the image box (all values in 0..=1, measured from the top-left corner)
-/// plus the note text.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ImagePin {
-    pub(crate) x: f64,
-    pub(crate) y: f64,
-    pub(crate) w: f64,
-    pub(crate) h: f64,
-    pub(crate) note: String,
-}
+// A comment on a selected image region (`ImagePin`: the rect in fractions of
+// the image box plus the note), the region a drag marks and the revision
+// message the pins become are shared with the GPUI desktop.
+pub(crate) use wisp_dto::image_pins::{pin_review_message, ImagePin, ImageRegion};
 
 thread_local! {
     // ponytail: pins live in this session-scoped map only and are never
@@ -588,29 +581,8 @@ pub(crate) fn remember_pdf_zoom(path: &str, zoom: u16) {
 /// content box, so markers track the image through zoom and pan exactly like
 /// the crop rectangle.
 pub(crate) fn pin_marker_style(pin: &ImagePin) -> String {
-    format!(
-        "left:{:.4}%;top:{:.4}%",
-        (pin.x + pin.w / 2.0) * 100.0,
-        (pin.y + pin.h / 2.0) * 100.0
-    )
-}
-
-/// The "send for AI revision" composer text: the localized head line naming
-/// the file, then one numbered line per pin with its fractional region rect.
-pub(crate) fn pin_review_message(head: &str, pins: &[ImagePin]) -> String {
-    let mut out = String::from(head);
-    for (index, pin) in pins.iter().enumerate() {
-        out.push_str(&format!(
-            "\n{}. (x={:.3}, y={:.3}, w={:.3}, h={:.3}) {}",
-            index + 1,
-            pin.x,
-            pin.y,
-            pin.w,
-            pin.h,
-            pin.note
-        ));
-    }
-    out
+    let (x, y) = pin.region().centre();
+    format!("left:{:.4}%;top:{:.4}%", x * 100.0, y * 100.0)
 }
 
 /// Hand the assembled pin message to the chat shell, which lands it in the
@@ -810,9 +782,8 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
         let Some((l, t, r, b)) = crop_rect.get_untracked() else {
             return;
         };
-        let (w, h) = ((l - r).abs(), (t - b).abs());
         // Ignore stray clicks; require a real region.
-        if w * layer_w < 8.0 || h * layer_h < 8.0 {
+        if !ImageRegion::between((l, t), (r, b)).is_marked(layer_w, layer_h) {
             crop_rect.set(None);
             return;
         }
@@ -832,9 +803,8 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
         let Some((l, t, r, b)) = crop_rect.get_untracked() else {
             return;
         };
-        let (x, y) = (l.min(r), t.min(b));
-        let (w, h) = ((l - r).abs(), (t - b).abs());
-        pins.update(|list| list.push(ImagePin { x, y, w, h, note }));
+        let region = ImageRegion::between((l, t), (r, b));
+        pins.update(|list| list.push(ImagePin::new(region, note)));
         pin_note.set(String::new());
         crop_rect.set(None);
         crop_ready.set(false);

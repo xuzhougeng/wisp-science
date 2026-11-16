@@ -147,8 +147,8 @@ which it only reads.
 | Capabilities | A dialog for the open project: how many skills, connectors, MCP servers and SSH hosts are on or usable, the state of memory, and which command-line tools were found on this computer |
 | Follow-up questions | After an answer, up to three questions you could ask next show above the composer; picking one puts it in the composer to send or change, and the list can be put away |
 | Sample project | The home page's flask button makes a small sample project in a folder you choose and opens it: made-up counts for twelve samples, a script, and a README of things to ask. Its play-file button opens Example conversations: the research recorded with Wisp that ships with it, read only, and Copy to a project, which adds one to a project as a conversation to go on with |
-| Host folders | With an SSH host saved, the Files tab offers it beside the project: its folders are listed, to walk through; a file's download button copies it to a place on this computer you choose, and Send files here… copies files of this computer into the folder shown, each as a run of the open conversation whose progress the transfer tray shows; nothing there is replaced |
-| File origin | A file's preview has Origin: which tool call last wrote it, with the code it ran, the project files it read and the conversation, which it can open |
+| Host folders | With an SSH host saved, the Files tab offers it beside the project: its folders are listed, to walk through; a file opens in place of the listing as the WebView's preview reads it (text as its first megabyte, laid out as Markdown or a table where a project file would be; a picture whole up to 32 MB, with zoom; anything else says to copy it here), and Escape or the back button returns to the folder; a file's download button copies it to a place on this computer you choose, and the upload button in the folder's header copies files of this computer into the folder shown, each as a run of the open conversation whose progress the transfer tray shows; nothing there is replaced, renamed or deleted from the Files tab |
+| File origin | A file's preview has a trail button in its header: which tool call last wrote it, with the code it ran, the project files it read and the conversation, which it can open |
 | Terminal | Terminals drawn in the window, in a dock at the foot of the conversation (Terminals in the top bar shows or hides it; hidden, they keep running): the Files tab's terminal button (or the command palette) opens one in the folder being browsed, + one in the project's folder, the host button one on a saved SSH host, and Terminal on a host's row in Environments or over a host's folder in Files one there; several at once as tabs, each closed with its ×; the dock's last button opens the system's terminal instead |
 | Updates | Wisp looks for a newer release when it starts (unless turned off) and shows a note only when there is one; Settings, General, has Check for updates and the At start switch, says whether a newer release has been published and opens the release page |
 | Tabs | The conversations you open in a window line up as tabs above the conversation, across projects; click one to go back to it, close one to drop it from the strip |
@@ -175,7 +175,7 @@ which it only reads.
 | Plugins | Settings, Plugins, installs a plugin from a folder in the Claude plugin layout (`.claude-plugin/plugin.json`, `skills/*/SKILL.md`) into the app's data without running anything in it, lists what each brings, switches one on for the open project, whose conversations then have its skills, and removes it |
 | Decision model | Settings, Decision model, sets up one fast endpoint (TypeSafe Jev, StartLux-Decision hosted or self-hosted, or a custom System One server) with its key, thinking mode and timeout, and tests it; while one is in use the model's `map_items` tool, which runs one step over many items, also offers its `decide` step, and an MCP server whose tools are Cua Driver's also gives `desktop_autopilot`, which drives the computer step by step with the decision model (asking before it runs) |
 | Pet | Settings, Pet, turns on an animated companion drawn from a folder you choose (pet.json and a sprite sheet, Codex-compatible version 2); it stands in the transcript's corner and shows whether the conversation is working, being reviewed, waiting for you, done or failed |
-| Research archive | A conversation's Research archive button (or the command palette) has the model draft a report of its findings with the scripts behind them; you change the draft and freeze it, which writes it into the project and makes the conversation read-only; Continue research then opens a new conversation, linked to the archive, that starts from its report |
+| Research archive | A conversation's Research archive button (or the command palette) has the model draft a report of its findings with the scripts behind them and a choice for each local file the conversation recorded (Keep snapshot, Keep in place, Permanently delete); the draft is kept, so the dialog reopens on it. You change the title, the report, each script's name and text in the code editor and each file's choice, the dialog names every file that will be deleted, and once you say you reviewed the materials Freeze writes the report, scripts and snapshots into the project, makes the conversation read-only and then deletes the chosen files for good, the rules and code the WebView uses; Continue research then opens a new conversation, linked to the archive, that starts from its report |
 | Review turns | The composer's Review turns switch has each turn that used a tool, or said a good deal, reviewed when it ends; the result shows above the composer, and See opens the findings |
 | Review | A conversation's Review button (or the command palette) has the model read the conversation as a reviewer and lists claims its own tool output does not support, each with the evidence and a fix; Ask Wisp to correct puts the corrections in the composer |
 | Save as skill | Save as skill in a conversation's More menu (or the command palette) puts a request in the composer that asks Wisp to distill the conversation into a reusable skill; you send it, changed or not |
@@ -188,7 +188,7 @@ which it only reads.
 | Paper evidence | A page for the open project (Papers in the sidebar, or the command palette): the papers it is writing, each with its versions and, in a draft version, figures, tables and claims with the project results and runs they rest on and why each was chosen. Finalize… checks a draft for whom the evidence is for (private, restricted or public, with the reviews public needs) and lists what stands in the way, warnings and what the record leaves out; a finding that may stand is kept with a reason; when nothing is left in the way the version is locked under a SHA-256 fingerprint. New version starts a draft from any version with its items and evidence |
 | Research mandates | A page of standing goals (the gauge on the home page, or the command palette): each project's agent works on its mandate in rounds on a cadence in one conversation, asks you through the research assistant when it needs something only you can give, and writes reports; answer, run now, pause, report, edit, close or delete from its card |
 | Research assistant | One conversation of its own (the robot on the home page, or the command palette) that reads what was recorded across projects and each project's progress, keeps your dated plan, and hands work to a project conversation, whose outcome it reports back; a bar over it shows today's plan to tick off or drop |
-| Research journey | A page for the open project: one month of what happened, by day (what you asked, runs, files, decisions, your own records), a filter, and a form to add a record of your own. Each day can have a recap the model drafts from its records, with what was done, found, went wrong and comes next, which you change, confirm or dismiss; Scheduled tasks drafts the last days' recaps each morning |
+| Research journey | A page for the open project: one month of what happened, by day (what you asked, runs, files, decisions, your own records), a filter, and a form to add a record of your own. A file's source details (the run that made it, what that run read, the run's record) show beside the days, and Relationships shows the project's research graph as a list or drawn. Each day can have a recap the model drafts from its records, with what was done, found, went wrong and comes next, which you change, confirm or dismiss; Scheduled tasks drafts the last days' recaps each morning |
 | Outline | A button in the conversation's header lists what you asked, in order; choosing one scrolls to it |
 | Find in conversation | Cmd/Ctrl+F, or the command palette: a bar over the transcript marks every message, and every tool call, that contains the words; Return and the arrows move between them |
 | Help | Documentation (home page, Settings, palette) opens the tutorials and Known problems (Settings) the issue tracker in the system's browser; Report a problem (Settings, palette) starts a conversation, in the open project or the built-in one, with the app's version, system and model in the composer, for the model to draft the report and a prefilled GitHub link |
@@ -200,21 +200,22 @@ which it only reads.
 | Agent cards | A call that hands work to other agents is a card in its place: `explore` with its question, status and folded findings; `dispatch_subagent` with the subagent conversation's title, status and task, and a button that opens it; `delegate_tasks` with the batch's goal, status, task counts and a line per task (status, instruction, its conversation), Show in Agents and Stop while it runs. `subagent_status`, `stop_subagent`, `get_delegated_result` and a background batch's result coming back are one folded line naming the subagent or batch. Until the batches or the conversation list are read the call stays a tool row |
 | Runs | A Runs tab: runs started by the conversation with kind, status, exit code, command and output tails; a run that has not ended can be cancelled, and is followed until it ends. One that has ended and kept a workspace where it ran can have it deleted after a question (its logs are saved into the project first, and outputs never brought back are not lost without a second question); a cleaned run, or one whose cleanup failed, says so. A run that moves files between machines shows its phase, file, bytes, rate and time left on its card, and while it moves (and a few seconds after) in a Transfers tray above the composer that folds to one line. A finished run on an SSH host has a folder button: a dialog lists what it left there a folder at a time, with a name filter and More… for long folders, and the files and folders chosen (across folders) are brought into the project as the conversation's results, a folder as one archive, or deleted there after a question; the whole workspace can be deleted from it too. In the transcript each run has one card, under the call that waits on it while it goes on (a `run_in_context` still waiting on its run included) and under the call that submitted it once it has ended, so an explicit `monitor_run` leaves no second card: its state as an icon and a word, where and how long it ran, a transfer's meter, and, with the call opened, its remote folder, command and output tails; Ask, Move to background (a turn waiting on the run stops waiting with `wait_backgrounded` and finishes its reply while the run goes on; the conversation gets one message when the run ends, even after a restart), Cancel, the review dialog for a finished run on an SSH host, and Show in Runs for its whole output, log and clean-up |
 | Artifacts | Files a turn wrote are recorded when it ends; an Artifacts tab lists them for the conversation or the project and opens them, and lists each one's versions, any of which can be saved as a copy from its snapshot (checked against its checksum, up to 512 MB); By folder puts them under their folders, and each one's trail button says which tool call wrote it, with the code and Open the conversation |
-| Side panel | Tabs: Files, Runs, Environments (this computer and the saved SSH hosts: attach one to the conversation so its runs may go there, take it away, check it, open a terminal or its folders, and set where the project keeps things there: uploaded data, run folders and the results folder), Artifacts, Notebook, Provenance (the loaded part's tool calls with how each went, opening to what each was given and returned, with Show in the conversation), Agents, Highlights, Memos, Memory, Aside; the open tab is named, the others are icons. − beside the open tab takes it away and + adds one back; the tabs kept are remembered, and opening a tab from elsewhere brings it back |
+| Side panel | Tabs: Files, Runs, Environments (this computer and the saved SSH hosts: attach one to the conversation so its runs may go there, take it away, check it, open a terminal or its folders, see the Python and R its last check found, list the project's runs there, list the files the project placed there and delete one no run needs after a question, and set where the project keeps things there: uploaded data, run folders and the results folder), Artifacts, Notebook, Provenance (the loaded part's tool calls with how each went, opening to what each was given and returned, with Show in the conversation), Agents, Highlights, Memos, Memory, Aside, each named in words, the open one in ink with a short teal line under it. − beside the open tab takes it away and + adds one back; the tabs kept are remembered, and opening a tab from elsewhere brings it back |
 | Agents | The Agents tab lists the helpers the conversation sent off to explore: what each was asked, how it went, and what it found; the transcript draws those calls, and the subagents and batches the agent started, as cards |
 | Aside | The Aside tab (or the command palette) asks the conversation's model a question about the open conversation; the answer shows beside it and nothing is added to the conversation. The latest turns are quoted whole; passages from before them that match the question go along labelled [E1]… and are listed under the answer, with who said them and the words they matched. Ask aside under a message opens it with that message quoted in the question |
 | Quoting | Quote under a message puts it in the message box as a quotation after what you were writing, ready to answer; a selected passage is copied with Cmd/Ctrl+C |
-| Favorites | A star under any message saves it as it reads now; an image in Artifacts can be saved as a figure. Highlights lists what this conversation saved; the Favorites page lists everything from every project, with search, a kind filter, the item in full, its source conversation and removal after a confirmation |
+| Quote / reuse | Under a message of yours, Quote / reuse starts a range of turns and End quote here on the same or a later (or earlier) one of yours ends it; a bar above the composer says where it starts until then, and Escape or Cancel gives it up. The dialog shows the turns (Original turns) or has the conversation's model distill them into an experience draft to edit (Distill experience, with an optional focus and Regenerate) and keep for this project or as a habit. Add to conversation puts the turns or the draft, as a quote naming the conversation and its turns, in front of the draft of a new conversation or another one of the project, and opens it to be sent from there. Not offered on a turn still running or in a conversation an ACP agent runs |
+| Favorites | A star under any message saves it as it reads now; an image in Artifacts can be saved as a figure. Highlights lists what this conversation saved; the Favorites page lists everything from every project, with search, a kind filter, the item in full, its source conversation and removal after a confirmation; saved code has versions, is edited into a new one, and is inserted into the open conversation as a request to run it again |
 | Memory | One switch; habits the model is shown in every project; this project's notes by day, which the model can search; add, edit and delete either, and save any message to one or the other, or press Suggest for the reviewer model's draft of what is worth keeping from its turn (the WebView's `turn_memory` prompt), with where it suggests keeping it; a weekly tidy that proposes merging or retiring habits for you to apply or dismiss; Clear all under the notes deletes every note of this project's memory after a question that names them (habits and other projects' notes stay) |
 | Memos | Your own notes per project: add, edit, pin, copy, delete after a confirmation, and put one into the message box; a search field narrows the list to the memos whose title or text holds what is typed. `/memo`, typed or picked from the "/" menu, opens a picker of the project's memos, filtered by any words after it, that puts the one picked into the message after what is written there (one row opens the Memos tab when the project has none). The model is never shown them |
-| Files | Project file browser, available before the first conversation, with a field that finds the project's files by name and Upload, which copies files you pick into the folder shown (never over a file that is there: a taken name gets `_1`, `_2`…); read-only text and Markdown preview, pictures (PNG, JPEG, GIF, WebP, SVG, BMP), and Jupyter notebooks as their cells with what each printed or returned (a figure is named, not drawn; Show as text gives the file itself); a PDF as its first twelve pages, drawn on the CPU by `hayro` (pure Rust, the same on macOS and Windows; a protected PDF is opened with the system's application), with Show the text for its text and tables; an alignment (Clustal, Stockholm, aligned FASTA) or a FASTA file as its sequences, one per row, residues coloured by kind (amino acids by property, nucleotides by base), a hundred columns at a time, with Show as text; a molecule (MOL, SDF, MOL2, a crystal's CIF with its asymmetric unit placed in its cell, or SMILES laid out flat from the notation, implicit hydrogens left out) as its bonds, double, triple and aromatic ones drawn as such, with its heteroatoms coloured, its name, and which of the file's molecules it is, and a structure (PDB or mmCIF) as the trace of its chains through their Cα (or P) atoms, each chain its own colour, turned by dragging, with Face on and Show as text; Word, Excel, PowerPoint, OpenDocument, RTF and EPUB documents as their text and tables, without their layout or pictures; an HTML page laid out as a document (its text, headings, lists, tables and links; no scripts run and no styles or pictures are loaded, as the app has no network client) with Show the source; new folder, new file, rename, and move to the project's trash; listed by name, newest first or largest first, folders first, in the order last chosen; as rows or as tiles, a picture of at most 16 MB as itself, the first 400 entries of a folder, remembered across launches |
+| Files | Project file browser, available before the first conversation, with a field that finds the project's files by name and Upload, which copies files you pick into the folder shown (never over a file that is there: a taken name gets `_1`, `_2`…); read-only text and Markdown preview, pictures (PNG, JPEG, GIF, WebP, SVG, BMP) with the WebView's zoom (a bar under the preview's header: zoom out, the zoom, which a click puts back to the preview's width, and zoom in, 25% to 400% in steps of 25; the wheel zooms about the pointer, and a drag moves a picture larger than the preview; each picture opens as wide as the preview) and its notes on regions (Select a region to ask about, drag over the picture, write a note: a numbered marker that follows the zoom; Send for AI revision puts the numbered notes with their regions in fractions of the picture as a quote in front of the message; Add to chat cuts the region out into `uploads/region_<time>.png` and attaches it, except from an SVG; in marking a click on a marker removes it; notes last while the window is open; only in a conversation that can be written to), and Jupyter notebooks as their cells with what each printed or returned (a figure is named, not drawn; Show as text gives the file itself); a PDF as its first twelve pages, drawn on the CPU by `hayro` (pure Rust, the same on macOS and Windows; a protected PDF is opened with the system's application), with Show the text for its text and tables; an alignment (Clustal, Stockholm, aligned FASTA) or a FASTA file as its sequences, one per row, residues coloured by kind (amino acids by property, nucleotides by base), a hundred columns at a time, with Show as text; a molecule (MOL, SDF, MOL2, a crystal's CIF with its asymmetric unit placed in its cell, or SMILES laid out flat from the notation, implicit hydrogens left out) as its bonds, double, triple and aromatic ones drawn as such, with its heteroatoms coloured, its name, and which of the file's molecules it is, and a structure (PDB or mmCIF) as the trace of its chains through their Cα (or P) atoms, each chain its own colour, turned by dragging, with Face on and Show as text; Word, Excel, PowerPoint, OpenDocument, RTF and EPUB documents as their text and tables, without their layout or pictures; an HTML page laid out as a document (its text, headings, lists, tables and links; no scripts run and no styles or pictures are loaded, as the app has no network client) with Show the source; new folder, new file, rename, and move to the project's trash; listed by name, newest first or largest first, folders first, in the order last chosen; as rows or as tiles, a picture of at most 16 MB as itself, the first 400 entries of a folder, remembered across launches |
 | Composer | Native multiline input. Return sends and Shift+Return starts a new line, or, with the other choice in Settings, General, Return starts a new line and Cmd/Ctrl+Return sends; Cmd/Ctrl+Return always sends. While an input method is composing, Return goes to it. While a turn runs the same key queues the message: it is sent when the turn ends, or given to the running turn at once with the queue's lightning button |
 | Plan first | The model investigates and submits a plan as a card; nothing is changed until you approve it, which leaves plan mode and starts the work |
 | First-run guide | On a first run a dialog walks through four steps: welcome, what Wisp can do, a model (a DeepSeek key sets up deepseek-v4-flash as the default and deepseek-v4-pro beside it, or a link to Settings, Models for another provider), and the tools on this computer (install Python with uv). Get started or Escape puts it away for good, in this desktop and the WebView one |
 | Import from Codex or Claude Code | The import button in the conversation list's header lists the conversations Codex CLI (`~/.codex/sessions`) and Claude Code (`~/.claude/projects`) keep on this computer, newest first, with the first thing asked and the folder it was had in. Import brings one into the project in a group named `codex` or `claude`, with its messages and tool calls; importing it again brings in only what was added since, and leaves a conversation continued here alone. Only this computer is looked at, not SSH or WSL hosts |
 | Delegated tasks | The model can hand a batch of dependent tasks to temporary agents and wait for their results; a plan card asks first when a task can change files, run code or use a remote model. Each task works in a watch-only conversation under the one that started it. The Agents tab lists the batches with each task's status, summary and conversation, and stops a running one |
 | Subagents | The model can start a subagent: a conversation of its own for one focused task, listed under the conversation that started it; in its composer's place a card says it is watched and offers Open the parent. When it ends, a report is added to the parent, whose agent goes on to handle it |
-| Read-only conversations | A conversation that cannot be written to shows, in place of the message box, one card in the composer's column that says why and offers the way on: a subagent's (Open the parent), one whose research is archived (View the archive / Continue research, which opens the research archive), the source of an exploration round that is not settled, and an exploration that no longer runs (the bar over the conversation keeps the round's own actions). Send, the send key, Queue, typed and menu commands that write, attaching, dropping and pasting files and the add-context box all do nothing there |
+| Read-only conversations | A conversation that cannot be written to shows, in place of the message box, one card in the composer's column that says why and offers the way on: a subagent's (Open the parent), one whose research is archived (View the archive / Continue research, which opens the research archive), the source of an exploration round that is not settled, an exploration that no longer runs (the bar over the conversation keeps the round's own actions), and a branch frozen as read-only history because it was brought back or its source lost the turn it split from ("This branch is frozen as read-only history", with Open the source conversation while the project's list names it). Send, the send key, Queue, typed and menu commands that write, attaching, dropping and pasting files and the add-context box all do nothing there |
 | Conversation timer | `/timer 30m <prompt>` gives the open conversation its timer (setting it again changes it: one per conversation). While it has one, a strip above the composer shows the prompt, how often it repeats and when it fires next (or that it is paused, and why its last firing failed), with Pause or Resume and Cancel timer; it is kept by the host, so it is there after a restart |
 | Explorations | On an answer, Start an exploration from here names one and continues the conversation in its own copy of the project; more candidates of the same round start from the same answer. The source shows a bar with each candidate and Abandon the round; a candidate shows its status, View changes and keep (what it changed, what the mainline changed meanwhile, why it cannot be kept), Discard, Back to the mainline and Abandon the round; when it cannot be kept, Show both folders and Finish by hand |
 | Bringing a branch back | In a branch, Bring back in the conversation's toolbar has the model summarise what the branch did since it split off; you read and change the summary, and Bring it back adds it to the conversation the branch came from, which reads it from then on, and opens that conversation, where it shows as a Merged branch result card naming the branch: press it for the summary and Open the branch. A branch is brought back once |
@@ -229,7 +230,7 @@ which it only reads.
 | Drafts | Survive navigation; preserved on send failure, cleared on durable acceptance |
 | Execution | Shared agent/tools, streamed snapshots while running, stop and errors |
 | Approvals | Exact pending request; allow once, allow that tool for the rest of the conversation, always allow it in this project, or deny |
-| Escape | One window-level stack: Escape closes only the topmost of command palette, file preview, Files panel, Settings, title editor, delete confirmation, remove-project confirmation, the Full access question, the model and effort menus, the remove-model question, the sort menu, select mode and its group menu and delete question, a group's name field, actions and delete question, the conversation's group and move menus, the go-back question, the memo editor and its delete question, the memory editor and its delete question, the question before Clear all of the memory, the share dialog, the Favorites page and its remove question, the question about a script changed on disk and the one before closing over unsaved edits, and, after all of them, the newest card for another project's conversation |
+| Escape | One window-level stack: Escape closes only the topmost of command palette, file preview, Files panel, Settings, title editor, delete confirmation, remove-project confirmation, the Full access question, the model and effort menus, the remove-model question, the sort menu, select mode and its group menu and delete question, a group's name field, actions and delete question, the conversation's group and move menus, the go-back question, the memo editor and its delete question, the memory editor and its delete question, the question before Clear all of the memory, the share dialog, the Favorites page, its remove question and an edit of saved code there, the journey's relation details and run record, the question about a script changed on disk and the one before closing over unsaved edits, and, after all of them, the newest card for another project's conversation |
 | Shortcuts | Cmd/Ctrl+K opens the command palette; Cmd/Ctrl+P opens it with only its commands, as the WebView's action palette; Cmd/Ctrl+N starts a conversation in the open project; Cmd/Ctrl+, opens Settings |
 | Lifecycle | Background IO, stale-result rejection, cancel/clean workers on exit |
 
@@ -650,10 +651,19 @@ Limits of this slice:
   answers and tool results (the plans are left out, as the WebView leaves
   them) and is named after the example. The title is the first sentence
   of the recorded request.
-- A host's folders are only listed: files there cannot be opened,
-  downloaded, uploaded, renamed or removed from the Files tab, and
-  nothing on the host is changed by looking. The host has to have passed
-  a check in Settings, as for runs. Each folder is one SSH request over
+- A host's file is read for a preview with the WebView's own scripts
+  (`wisp_runs::remote_file`, which `src-tauri` now calls too), each the
+  remote command of one `ssh`, the path single-quoted as data: text as its
+  first megabyte with the file's whole size (the header says when it was
+  cut), a picture whole up to 32 MB (one larger by the listing is not
+  fetched, and the host refuses one that grew past it); a PDF, an Office
+  document or another kind that is never text is not fetched and says to
+  copy it here, and a notebook, an HTML page, an alignment or a structure
+  shows as its text. The bytes stay in the window: nothing is written into
+  the project. Files cannot be renamed or removed from the Files tab (the
+  WebView cannot either), and there is no field to type a folder's path,
+  which the WebView has. The host has to have passed a check in Settings,
+  as for runs. Each folder is one SSH request over
   the run manager's connection with a twenty-second limit; at most 2,000
   entries are listed, fewer when names are very long, and the folder
   says when there was more. Hidden files are not listed. WSL is not
@@ -935,31 +945,69 @@ Limits of this slice:
   was. Files the turn created are moved to `.wisp/trash/`, not erased.
 - `/timer` gives the open conversation its timer, a scheduled task
   bound to it: the prompt is sent into it every so many minutes, hours
-  or days while the app is open, as a new turn each time. A conversation
-  has one; `/timer` again changes its prompt and interval, keeps whether
-  it was paused, and fires one interval from then. While a turn runs
-  there or messages wait for one it stays due and fires at the first
-  look after (every half minute), as the WebView's does, instead of
-  being refused. Pause keeps the prompt and the interval; Resume keeps
-  the cadence's place on the clock, so a time missed while paused fires
-  once at the next look, as in the WebView. Unlike the WebView's it does
-  not replace the turn before it: every firing adds a turn. The strip
+  or days while the app is open, as `[Timer: …]`, and each firing
+  replaces the timer's previous turn, as the WebView's does: its
+  messages, tool calls and saved events go (files it wrote stay), and so
+  does any compaction made after it (the conversation returns to the
+  context it had before that turn); what you said in between stays. A
+  review's correction or a Stop hook's continuation of the timer's turn
+  is part of it and goes with it. While the timer's turn runs it takes
+  no guidance: a message written then waits for a turn of its own. A
+  conversation has one; `/timer` again changes its prompt and interval,
+  keeps whether it was paused, and fires one interval from then. While
+  a turn runs there or messages wait for one it stays due and fires at
+  the first look after (every half minute), as the WebView's does,
+  instead of being refused. Pause keeps the prompt and the interval;
+  Resume keeps the cadence's place on the clock, so a time missed while
+  paused fires once at the next look, as in the WebView. The strip
   cannot edit the prompt or the interval (send `/timer` again) and
   `/timer` alone does not open an editor. `/timer off` or Cancel timer
   removes it; it is also listed, marked, on the Scheduled tasks page.
-  A timer the WebView made (one that replaces its previous turn) is the
-  WebView's to show and fire, and is not shown here.
+  A conversation an ACP agent runs, or a subagent's, cannot have one.
+- Which desktop fires a scheduled task is the row's (`schedules.host`,
+  migration `0069_schedule_host`): a timer or task made here is marked
+  as the embedded host's and fires only here; the WebView desktop fires
+  only the rows it made (its scheduler skips marked rows, and its Run
+  now refuses them). A timer the WebView made is the WebView's to show
+  and fire: it is not shown here, and `/timer` in that conversation
+  says to change it there. Rows from before the mark keep what they
+  did: a timer made here then adds a turn each time (until `/timer`
+  sets it again, which makes it one that replaces its turn), and a task
+  that adds a turn is fired by whichever desktop is open (a time is
+  claimed once, so it fires once). A `/timer` typed in the WebView in a
+  conversation whose timer was set here changes that timer, which keeps
+  firing only here.
+- When a timer's firing takes rows away, the conversation reads them
+  again: the host's snapshot says where its latest page starts
+  (`next_before_seq`) and how many of the user's messages come before
+  it (`user_offset`), and earlier pages loaded behind it are dropped
+  once either moves, as the web client drops them when the page's start
+  moves; scrolling up loads them again. The phone clients keep only the
+  latest page (Android) or drop their earlier pages when its start moves
+  (iOS), so an older page there can show a replaced turn until the
+  timer's own turn ends and the page moves on.
 - The host's snapshot says why a conversation is read-only
-  (`read_only_reason`: archived or subagent; an optional field older
-  clients ignore). A subagent's conversation opened before the project's
+  (`read_only_reason`: archived, subagent or frozen_branch; an optional
+  field older clients ignore, and one they do not know reads as other). A subagent's conversation opened before the project's
   list of conversations has named its parent says it is watched but
   offers Open the parent only once the list arrives; a host that does not
   say why gets "This conversation is read-only." with nothing offered.
   The card's View the archive only shows an archive that is there: with
-  none the dialog closes again, says so, and nothing is drafted. A branch that
-  was merged back or lost its source is read-only in the WebView but
-  not here: this host does not refuse a message there, and the composer
-  stays open.
+  none the dialog closes again, says so, and nothing is drafted.
+- A branch that was brought back (merged) or whose source lost the turn
+  it split from (orphaned) is read-only history, by the store's rule
+  that both desktops share (`Store::session_branch_frozen`). The host
+  refuses, in the WebView's words, every way a turn starts there (a
+  message, a queued one, a resumed turn, a timer or scheduled task, a
+  review correction, a subagent's or a background batch's report
+  resuming it) and also queueing, guiding a running turn, compacting,
+  undoing a compaction and rewinding; it is still read and quoted. As in
+  the WebView, a subagent's report is still added to it as a reply; only
+  the turn that would follow is refused. Not yet as in the WebView: Edit
+  and send again is still offered on its messages and refused by the
+  host when used; this host lets any branch be branched again, which
+  the WebView refuses; and writing a handoff note, a review or moving
+  the conversation to another project are not refused here.
 - `/compact` asks which kind of compaction to run, then archives the
   conversation's whole history under the project's `.wisp/history/` and
   shortens what the model is sent: regular prunes old tool output and
@@ -1229,19 +1277,28 @@ Limits of this slice:
   The folder is checked each time it is read (a 1536x2288 PNG or WebP
   sheet of at most 16 MB inside the folder); a folder that stops being
   a pet is reported in Settings and nothing is drawn.
-- A research archive is written once and cannot be undone from here:
-  the report and scripts go to `.wisp/research-archives/<id>/` in the
-  project, the record goes to the store's `research_archives` table (the
-  WebView reads both), and the conversation is read-only from then on,
-  for this desktop, the WebView and a paired phone. The draft is one
-  model request over the conversation's latest 80,000 characters, with
-  tool output cut at 4,000 each, so a long conversation is drafted from
-  its end; the model is given five minutes. Unlike the WebView nothing
-  is snapshotted, moved or deleted: project files stay exactly as they
-  are, the scripts in a draft are frozen as the model wrote them (their
-  names are listed, their text is not editable here), and there is no
-  "continue from this archive" link in a new conversation. Closing the
-  dialog before freezing throws the draft away.
+- A research archive is written once and cannot be undone from here.
+  Freezing is the WebView's own code (`wisp_store::research_archive_files`):
+  the report, the scripts, the notebook and the snapshots go to
+  `.wisp/research-archives/<id>/` in the project, the record goes to the
+  store's `research_archives` table, and the conversation is read-only
+  from then on, for this desktop, the WebView and a paired phone. Files
+  chosen for deletion are deleted for good after the record is frozen,
+  as in the WebView: there is no trash to restore them from (the Files
+  tab's Delete, by contrast, moves to `.wisp/trash`). Only files the
+  conversation recorded are listed; only one it created, that no other
+  conversation, run, evidence or archive uses, outside `.wisp/` and
+  `uploads/`, can be chosen for deletion; links, paths out of the project
+  and files changed since the draft are refused, and a failed snapshot
+  freezes nothing and deletes nothing. A deletion that fails after the
+  freeze is kept as the file's receipt, with Retry incomplete cleanup. The
+  draft is one model request over the conversation's latest 80,000
+  characters, with tool output cut at 4,000 each, so a long conversation
+  is drafted from its end; the model is given five minutes. Unlike the
+  WebView the dialog cannot be minimized to a corner pill, and the draft
+  is not drafted from bounded chunks of the whole stored notebook. Closing
+  the dialog, by Close or Escape, after changing the draft asks before the
+  changes are given up; the draft the model wrote stays kept.
 - Review turns is off until switched on, per conversation; Settings,
   Conversation, sets what conversations start with (the WebView's keys,
   `frame_auto_review:<id>` and `auto_review_default_enabled`). A
@@ -1374,8 +1431,11 @@ Limits of this slice:
   The WebView erases at once instead. A link is renamed or moved as a
   link; what it points at is left alone. Uploading into a folder, moving
   between folders, sorting and the grid view are not ported. A picture is
-  shown whole, scaled to the panel, when it is at most 32 MB; there is no
-  zoom. PDF, Office, notebook and table previews are not ported.
+  shown when it is at most 32 MB, as wide as the panel at 100% and zoomed
+  from 25% to 400% from its own pixels; there is no pinch zoom (GPUI does
+  not deliver the gesture), and an SVG is drawn from one raster at its own
+  size, so it is not redrawn sharper when zoomed past that. PDF, Office,
+  notebook and table previews are not ported.
 - A picture is drawn under an answer when the answer names it as a
   Markdown image (`![plot](figs/plot.png)`) and the target is a picture
   inside the project: PNG, JPEG, GIF, WebP, SVG or BMP, at most 32 MB. It is
@@ -1384,7 +1444,8 @@ Limits of this slice:
   addresses, absolute paths and paths that leave the project are never
   fetched. A picture that only a tool wrote, or that the answer mentions
   without image syntax, is not shown; it is in the Artifacts tab and the
-  Files panel. There is no zoom and no click to open.
+  Files panel. A click on one opens it in the Files tab, where it can be
+  zoomed and its regions noted.
 - The research assistant follows the WebView's `research_assistant.rs`:
   one conversation in a hidden project, made on first use, run through
   the ordinary turn pipeline but with its own system prompt and only its
@@ -1445,8 +1506,9 @@ Limits of this slice:
   refreshed. A task cannot be bound to an existing conversation or to
   a skill, and cannot be edited, only deleted and made again. The rows
   are the store's own (`schedules`), shared with the WebView desktop;
-  a conversation's own timer made there is neither listed nor fired
-  here.
+  a task made here carries the embedded host's mark and fires only
+  here, and a conversation's own timer made there is neither listed nor
+  fired here (see `/timer`).
 - Paper evidence keeps papers, versions, items and evidence in the same
   tables the WebView desktop uses, so a paper made in one shows in the
   other. A draft can be checked and finalized here with the WebView's
@@ -1477,10 +1539,24 @@ Limits of this slice:
   WebView does, a month at a time, grouped into your computer's local days.
   A record of your own is progress, a finding, a decision or what comes
   next, and is dated when you save it; it cannot be dated otherwise, changed
-  or removed here. A row that came from a conversation opens it. The
-  relation graph, the sources of a file, and the history of an
-  exploration branch are not ported, and neither is the calendar across
-  projects, which is a page of its own.
+  or removed here. A row that came from a conversation opens it; a file
+  (an output) is traced instead, as in the WebView: beside the days its
+  source details show its version, the inputs of the run that produced it
+  (`Store::research_journey_source`), and that run, whose record (status,
+  context, exit code, times, command and the ends of its output) opens in
+  a dialog. Open output and an input that is a project file open the
+  file as it is now in the Files panel, not the exact version. The month's
+  first output is traced when the month is read. Relationships shows the
+  project's research graph (`Store::research_graph_in_scope`, mainline):
+  listed by kind with the relations leaving each node, or drawn with the
+  layout both desktops share (`wisp_dto::research_graph`: a column per
+  kind in stored order, each relation an S-curve to the next column, a
+  bow within one, a lane between rows over longer distances), painted as
+  lines and arrow heads, each relation's name a button that opens its
+  details; the canvas scrolls both ways. The page's filter narrows the
+  graph to the nodes it matches and those directly related to them. The
+  history of an exploration branch is not ported, and neither is the
+  calendar across projects, which is a page of its own.
 - Daily recaps follow the WebView's `research_recap.rs`: a day's records
   (runs with their errors, files, decisions and notes, what was asked in
   conversations) go to the default model as a bounded digest whose
@@ -1679,9 +1755,17 @@ Limits of this slice:
   (`library.sqlite` in the data directory) that holds copies, so they outlive
   the conversation and the project they came from. A message is saved whole,
   as text, and is recognised as saved by its exact text, so two identical
-  replies share one star. Saving a selected passage, saving a code cell and
-  editing a saved snippet into versions are not ported; code saved by the
-  WebView is listed and shown. A figure is an image file of the project, up to
+  replies share one star. Saving a selected passage and saving a code cell
+  are not ported; code saved by the WebView is listed and shown. Saved code
+  keeps versions as the WebView does (`library_item_versions`, append-only;
+  the item as saved is version 1): the newest is shown, any other can be
+  chosen, Edit code opens the version shown in a code editor and Save as
+  new version (or Cmd/Ctrl+S) adds the next one through
+  `LibraryStore::edit_code`, the checks both desktops share; saving code
+  the same as the newest adds nothing, and a passage cannot be edited.
+  Insert into chat puts the WebView's request to re-run that version, with
+  its code fenced, into the open conversation's message box; it is off
+  where no conversation is open or the open one is read only. A figure is an image file of the project, up to
   32 MB, copied when it is saved. The file is created the first time a desktop
   opens the favorites, never by a headless host.
 - Memory uses the WebView's switch (`memory_enabled`), its habits table and
@@ -1883,6 +1967,11 @@ press Escape (the page stays), press Escape again (the page closes). Open the
 conversation an item came from. Have a turn write an image, save it from
 Artifacts, delete the file and confirm the figure still shows in Favorites.
 Delete a conversation and confirm what was saved from it is still listed.
+Open a saved code item: v1 is shown. Press Edit code, change a line and
+press Cmd/Ctrl+S: v1 · Original and v2 are listed and v2 is shown; choose
+v1 and confirm it is unchanged. With a conversation open, press Insert into
+chat: the page closes and the message box holds the re-run request with the
+code; in a read-only conversation the button is off.
 On the home page press the flask button and choose a folder: a "Wisp
 sample project" folder appears there and opens as a project with its
 README, data and script. Cancel the folder dialog: nothing is made.
@@ -1898,10 +1987,21 @@ the host is offered beside This project. Choose it: its home folder is
 listed, folders first; go into one and back Up; Reload. Choose This
 project: the project's files are back as they were. With a host that has
 not been checked, confirm the tab says a check is needed.
+On the host, click a text file: its text shows with its size, and for one
+over a megabyte the header says only the first megabyte is shown; a `.csv`
+shows as a table and a `.md` laid out. Click a picture: it shows and zooms
+with the wheel. Click a PDF: it says to copy it here. Press Escape: the
+folder is back and the panel stays. In Environments press a host's list
+button: the project's runs there are listed; press its archive button: the
+files the project placed there are listed with whether a run still needs
+each. Press the trash button on one no run needs: a dialog names the host
+and the whole path and says it cannot be undone; press Escape and only the
+dialog closes; press it again and Delete from the host: it is gone from the
+list and from the host.
 On the host, press a file's download button and choose a place: the
 Transfers tray shows it coming, and the file is there when it ends. Press
-Send files here…, pick two small files: they show as uploads, and Reload
-lists them in the folder. Send one of them again: it is refused, not
+the upload button in the folder's header, pick two small files: they show as
+uploads, and Reload lists them in the folder. Send one of them again: it is refused, not
 replaced.
 Have a turn write a file, open the file in the Files tab and press
 Origin: the line names the tool and the conversation, the code is shown,
@@ -2227,7 +2327,7 @@ Attach adds it to the message as a chip, Show in the file manager and
 Open with the system's application do what they say, and Keep as an
 artifact of this conversation lists it in the Artifacts tab (again: a new
 version of it).
-In the Artifacts tab press By folder: the files are under headings, the
+In the Artifacts tab press By folder (the folder button in its header): the files are under headings, the
 top of the project first and files outside it last. Press a file's trail
 button: the line names the tool and the conversation, with the code; press
 it again and the line goes.
@@ -2348,17 +2448,28 @@ the page and the pet idles in the transcript's lower right corner. Click
 it: it waves once. Send a message: it works while the turn runs, waits
 while an approval is open, and jumps when the turn ends. Turn it off:
 it goes.
-In a conversation with results press Research archive: the dialog says a
-draft is being written, then shows a title and a report to edit and the
-scripts that go with it. Change a sentence and press Freeze: the dialog
-shows the frozen report and where it is; `.wisp/research-archives/<id>/`
-holds REPORT.md with your change and the scripts; in this conversation
-a card stands in the message box's place, and a new conversation works
-as before.
+In a conversation that wrote a few files press Research archive: the
+dialog says a draft is being written, then shows a title and a report to
+edit, the scripts with the first open in the code editor, and the files
+the conversation recorded, each with Keep snapshot, Keep in place and
+Permanently delete (unavailable, with a tooltip, for an input). Change a
+line of one script, open another and come back: the change is there.
+Choose Permanently delete on a scratch file: the line under the files
+names it with its size. Freeze stays unavailable until the switch saying
+you reviewed the materials is on, and turns off again after any change.
+Press Escape: a question asks before the changes are given up; Escape
+again leaves the draft open. Press Freeze: the dialog shows the frozen
+report, each file with what became of it and Open saved material for a
+snapshot; the scratch file is gone from the project,
+`.wisp/research-archives/<id>/` holds REPORT.md with your change and,
+in a folder of its own, the edited script and the snapshots; in this
+conversation a card stands in the message box's place, and a new
+conversation works as before.
 Press Continue research: a conversation named "Continue · <title>" opens
 with the report and where the materials are as its first message, and
 the composer sends there.
-Press Escape on a draft: nothing is written.
+Press Escape on a draft you did not change: the dialog closes and nothing
+is written; Research archive again reopens the same draft.
 Switch Review turns on in the composer and have a turn run a tool: when
 it ends the line above the composer reads Reviewing the answer…, then the
 result. Press See: the findings open; Ask Wisp to correct puts them in the
@@ -2593,7 +2704,15 @@ form closes. Press Delete, then Escape: only the question closes; press
 Delete and confirm: the card goes and the conversation stays.
 Save one without a title and confirm it is refused and the form stays.
 Press a row that came from a conversation and confirm that conversation
-opens. Open Journey again and press Escape: the page closes.
+opens. In a month with a file a run produced, press the file: Source
+details names the run and its inputs; press View run record, then Escape:
+only the dialog closes. Press Open output: the Files panel shows the file.
+Press Relationships in a project whose agent recorded decisions or data:
+the nodes are listed by kind; press Graph: they are drawn in columns with
+arrows between them; press a relation's name: its details open beside the
+graph, and Escape closes only them. Type a node's word in the filter:
+the graph keeps it and what it is related to.
+Open Journey again and press Escape: the page closes.
 On a project's card press Export, choose a place, and confirm a zip is
 written and the home page says where. On another data directory (or after
 removing the project from Wisp) press Import on the home page, choose the

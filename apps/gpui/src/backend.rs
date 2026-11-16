@@ -379,6 +379,29 @@ impl Backend {
         self.local(move |host| async move { host.journey(&project, from, until).await })
     }
 
+    /// The project's research graph: its nodes and the relations between.
+    pub fn research_graph(&self, project: String) -> Reply<wisp_dto::ResearchGraph> {
+        self.local(move |host| async move { host.research_graph(&project).await })
+    }
+
+    /// The run that produced one version of an output, and what it read.
+    pub fn journey_source(
+        &self,
+        project: String,
+        version: String,
+    ) -> Reply<wisp_server::desktop::JourneySource> {
+        self.local(move |host| async move { host.journey_source(&project, &version).await })
+    }
+
+    /// One run of the project as the journey's run record shows it.
+    pub fn journey_run(
+        &self,
+        project: String,
+        run: String,
+    ) -> Reply<wisp_server::desktop::JourneyRun> {
+        self.local(move |host| async move { host.journey_run(&project, &run).await })
+    }
+
     /// Every project's history between two moments, for the calendar.
     pub fn calendar(&self, from: i64, until: i64) -> Reply<Vec<wisp_dto::ResearchCalendarProject>> {
         self.local(move |host| async move { host.calendar(from, until).await })
@@ -757,6 +780,23 @@ impl Backend {
 
     pub fn favorite(&self, id: String) -> Reply<Favorite> {
         self.local(move |host| async move { host.favorite(&id).await })
+    }
+
+    /// Every version of a saved item's code, the original first.
+    pub fn favorite_versions(
+        &self,
+        id: String,
+    ) -> Reply<Vec<wisp_server::desktop::LibraryItemVersion>> {
+        self.local(move |host| async move { host.favorite_versions(&id).await })
+    }
+
+    /// Saves an edit of a saved item's code as its next version.
+    pub fn save_favorite_code(
+        &self,
+        id: String,
+        code: String,
+    ) -> Reply<wisp_server::desktop::LibraryItemVersion> {
+        self.local(move |host| async move { host.save_favorite_code(&id, &code).await })
     }
 
     pub fn conversation_favorites(
@@ -1232,7 +1272,6 @@ impl Backend {
         self.local(move |host| async move { host.continue_research(&project, &session).await })
     }
 
-    /// Has the model draft an archive of a conversation; nothing is saved.
     /// Conversations Codex and Claude Code keep on this computer.
     pub fn external_conversations(
         &self,
@@ -1286,23 +1325,47 @@ impl Backend {
         })
     }
 
+    /// The conversation's research archive draft that is not frozen yet.
+    pub fn research_archive_draft(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<Option<wisp_server::desktop::ResearchArchive>> {
+        self.local(move |host| async move { host.research_archive_draft(&project, &session).await })
+    }
+
+    /// Has the model draft an archive of a conversation, with a choice for
+    /// each local file it recorded. The draft is kept; no file is touched.
     pub fn draft_research_archive(
         &self,
         project: String,
         session: String,
-    ) -> Reply<wisp_server::desktop::ArchiveDraft> {
+    ) -> Reply<wisp_server::desktop::ResearchArchive> {
         self.local(move |host| async move { host.draft_research_archive(&project, &session).await })
     }
 
-    /// Freezes a reviewed draft as the conversation's research archive.
+    /// Freezes the kept draft as the researcher reviewed it: the files
+    /// chosen for deletion are then deleted for good.
     pub fn freeze_research_archive(
         &self,
         project: String,
         session: String,
-        draft: wisp_server::desktop::ArchiveDraft,
+        input: wisp_server::desktop::ConfirmResearchArchive,
     ) -> Reply<wisp_server::desktop::ResearchArchive> {
         self.local(move |host| async move {
-            host.freeze_research_archive(&project, &session, draft)
+            host.freeze_research_archive(&project, &session, input)
+                .await
+        })
+    }
+
+    /// Tries again to delete what a frozen archive chose to delete.
+    pub fn retry_research_archive_cleanup(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<wisp_server::desktop::ResearchArchive> {
+        self.local(move |host| async move {
+            host.retry_research_archive_cleanup(&project, &session)
                 .await
         })
     }
@@ -1314,6 +1377,46 @@ impl Backend {
         path: String,
     ) -> Reply<wisp_server::desktop::RemoteDirectory> {
         self.local(move |host| async move { host.remote_directory(&alias, &path).await })
+    }
+
+    /// A file of a saved SSH host, to look at; nothing of it is kept.
+    pub fn remote_file(
+        &self,
+        alias: String,
+        path: String,
+        listed_size: Option<u64>,
+    ) -> Reply<wisp_server::desktop::RemoteFile> {
+        self.local(move |host| async move { host.remote_file(&alias, &path, listed_size).await })
+    }
+
+    /// What the project placed on a saved SSH host and keeps a record of.
+    pub fn host_staged_files(
+        &self,
+        project: String,
+        alias: String,
+    ) -> Reply<Vec<wisp_server::desktop::StagedFile>> {
+        self.local(move |host| async move { host.host_staged_files(&project, &alias).await })
+    }
+
+    /// Deletes one of those files from the host; answers the list again.
+    pub fn remove_host_staged_file(
+        &self,
+        project: String,
+        alias: String,
+        id: String,
+    ) -> Reply<Vec<wisp_server::desktop::StagedFile>> {
+        self.local(
+            move |host| async move { host.remove_host_staged_file(&project, &alias, &id).await },
+        )
+    }
+
+    /// The project's runs on a saved SSH host, newest first.
+    pub fn host_runs(
+        &self,
+        project: String,
+        alias: String,
+    ) -> Reply<Vec<wisp_server::desktop::HostRun>> {
+        self.local(move |host| async move { host.host_runs(&project, &alias).await })
     }
 
     /// Copies a host's file to `destination` as a run; answers its id.
@@ -1407,6 +1510,37 @@ impl Backend {
         })
     }
 
+    /// The turns from `first` to `last` of a conversation, as a quote for
+    /// another one.
+    pub fn render_session_excerpt(
+        &self,
+        project: String,
+        session: String,
+        first: TurnRef,
+        last: TurnRef,
+    ) -> Reply<wisp_dto::SessionExcerpt> {
+        self.local(move |host| async move {
+            host.render_session_excerpt(&project, &session, &first, &last)
+                .await
+        })
+    }
+
+    /// Has the conversation's model distill those turns into an
+    /// experience draft; nothing is kept.
+    pub fn draft_session_experience(
+        &self,
+        project: String,
+        session: String,
+        first: TurnRef,
+        last: TurnRef,
+        focus: Option<String>,
+    ) -> Reply<wisp_dto::SessionExperience> {
+        self.local(move |host| async move {
+            host.draft_session_experience(&project, &session, &first, &last, focus.as_deref())
+                .await
+        })
+    }
+
     /// Starts a new conversation in the project with `note` as its first
     /// message; returns it.
     pub fn start_from_handoff(
@@ -1489,6 +1623,21 @@ impl Backend {
     /// Keeps a pasted picture in the project's `uploads` as `name`.
     pub fn import_pasted(&self, project: String, name: String, bytes: Vec<u8>) -> Reply<String> {
         self.local(move |host| async move { host.import_pasted(&project, &name, &bytes).await })
+    }
+
+    /// Cuts a region marked on a picture of the project out of it and keeps
+    /// it in `uploads` as `name`, a PNG: its project-relative path.
+    pub fn import_image_region(
+        &self,
+        project: String,
+        path: String,
+        region: wisp_dto::image_pins::ImageRegion,
+        name: String,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.import_image_region(&project, &path, region, &name)
+                .await
+        })
     }
 
     /// Opens a terminal of `project`: this computer's shell, or one on an

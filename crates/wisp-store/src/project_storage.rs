@@ -1771,6 +1771,7 @@ mod tests {
             last_run_at: None,
             created_at: 1,
             updated_at: 1,
+            host: None,
         };
         legacy.create_schedule(&schedule).await.unwrap();
         let workflow = crate::AgentWorkflow::new("workflow", "p", "workspace", "Plan").unwrap();

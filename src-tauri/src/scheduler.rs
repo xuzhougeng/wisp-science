@@ -42,7 +42,9 @@ pub(crate) fn start_scheduler(app: &AppHandle) {
 async fn fire_due_schedules(app: &AppHandle) {
     let state = app.state::<AppState>();
     let now = chrono::Utc::now().timestamp();
-    let due = match state.store.due_schedules(now).await {
+    // Rows the embedded host (the GPUI desktop) marked as its own are fired
+    // there, never here.
+    let due = match state.store.due_schedules_for_host(now, None).await {
         Ok(due) => due,
         Err(error) => {
             tracing::warn!(target: "wisp", %error, "failed to poll due schedules");
@@ -270,6 +272,7 @@ pub(crate) async fn create_schedule(
         last_run_at: None,
         created_at: now,
         updated_at: now,
+        host: None,
     };
     state
         .store
@@ -493,6 +496,7 @@ pub(crate) async fn set_session_timer(
         last_run_at: None,
         created_at: now,
         updated_at: now,
+        host: None,
     };
     state
         .store
@@ -588,6 +592,9 @@ pub(crate) async fn run_schedule_now(
     id: String,
 ) -> Result<(), String> {
     let schedule = load_schedule(&state, &id).await?;
+    if !wisp_store::schedule_fired_by(&schedule, None) {
+        return Err("This task belongs to the GPUI desktop and runs there.".into());
+    }
     if schedule.replace_previous_turn {
         return fire_session_timer(&app, &state, schedule, false).await;
     }

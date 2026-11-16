@@ -12,7 +12,7 @@ use gpui_component::{
 };
 use wisp_server::desktop::DelegatedBatch;
 
-use super::{Workspace, chip, shell::icon_button, tone_color};
+use super::{Workspace, chip, shell::icon_button, surfaces, tone_color};
 use crate::{agents, backend::receive, layers::Layer, panel::PanelTab, present::Tone};
 
 impl Workspace {
@@ -277,23 +277,13 @@ impl Workspace {
     fn render_swarm(&self, progress: &wisp_dto::SwarmProgress, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
         let (phase, tone) = agents::swarm_phase(progress.phase);
-        let mut card = div()
-            .v_flex()
-            .gap_1()
-            .px_3()
-            .py_2()
-            .border_b_1()
-            .border_color(cx.theme().border)
+        let mut card = surfaces::panel_entry(cx)
             .child(
-                div().h_flex().gap_2().child(chip(phase, tone, cx)).child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_sm()
-                        .font_semibold()
-                        .child(progress.title.clone()),
-                ),
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .child(chip(phase, tone, cx))
+                    .child(surfaces::panel_label(progress.title.clone())),
             )
             .child(
                 div()
@@ -382,21 +372,22 @@ impl Workspace {
                     })),
             );
         }
-        let mut card = div()
-            .v_flex()
-            .gap_2()
-            .px_3()
-            .py_2()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .child(head)
-            .child(div().text_sm().font_semibold().child(batch.goal.clone()));
+        let mut card = surfaces::panel_entry(cx).gap_2().child(head).child(
+            div()
+                .font_weight(FontWeight::MEDIUM)
+                .child(batch.goal.clone()),
+        );
         for (number, task) in batch.tasks.iter().enumerate() {
             let (status, tone) = agents::task_status(&task.status);
             let mut line = div()
                 .h_flex()
                 .gap_2()
-                .child(div().text_xs().font_semibold().child(task.id.clone()))
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(task.id.clone()),
+                )
                 .child(chip(status, tone, cx))
                 .children(
                     task.expert
@@ -492,14 +483,9 @@ impl Workspace {
         }
         if !self.batches.is_empty() {
             list = list.child(
-                div()
+                surfaces::panel_section(tr("Delegated tasks"), cx)
                     .px_3()
-                    .pt_3()
-                    .pb_1()
-                    .text_xs()
-                    .font_semibold()
-                    .text_color(muted)
-                    .child(tr("Delegated tasks")),
+                    .pb_1(),
             );
             for (index, batch) in self.batches.iter().enumerate() {
                 list = list.child(self.render_batch(index, batch, cx));
@@ -507,14 +493,11 @@ impl Workspace {
         }
         // The helpers' line says there are none only when nothing else is
         // listed.
-        if !helpers.is_empty() || (self.batches.is_empty() && self.swarm.is_none()) {
-            list = list.child(
-                div()
-                    .p_3()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(agents::summary(&helpers, self.state.session.is_some())),
-            );
+        let summary = agents::summary(&helpers, self.state.session.is_some());
+        if !helpers.is_empty() {
+            list = list.child(surfaces::panel_note(summary, cx).pb_1());
+        } else if self.batches.is_empty() && self.swarm.is_none() {
+            list = list.child(surfaces::panel_empty(summary, cx));
         }
         for helper in &helpers {
             let row = helper.row;
@@ -539,18 +522,14 @@ impl Workspace {
                     cx.notify();
                 })),
             );
-            let mut card = div()
-                .v_flex()
-                .gap_1()
-                .px_3()
-                .py_2()
-                .border_b_1()
-                .border_color(cx.theme().border)
-                .child(head)
-                .child(div().text_sm().child(match helper.question.as_str() {
-                    "" => tr("A question that could not be read").to_owned(),
-                    question => question.to_owned(),
-                }));
+            let mut card = surfaces::panel_entry(cx).child(head).child(
+                div()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(match helper.question.as_str() {
+                        "" => tr("A question that could not be read").to_owned(),
+                        question => question.to_owned(),
+                    }),
+            );
             if !helper.focus.is_empty() {
                 card = card.child(
                     div()

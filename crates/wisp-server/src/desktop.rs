@@ -15,7 +15,7 @@ pub use wisp_dto::{ProjectMemo, ProjectMemoPatch};
 use wisp_llm::ProviderKind;
 pub use wisp_store::GlobalMemory;
 use wisp_store::Store;
-pub use wisp_store::{LibraryItem, LibraryItemSummary};
+pub use wisp_store::{LibraryItem, LibraryItemSummary, LibraryItemVersion};
 
 /// The saved model profiles: `{"profiles": [...], "default": "<id>"}`.
 const MODELS_SETTING: &str = "desktop.models";
@@ -1056,6 +1056,28 @@ impl Server {
         Ok((content_type.to_owned(), tokio::fs::read(&real).await?))
     }
 
+    /// Cuts `region` (fractions of the picture) out of a picture in the
+    /// project and keeps it as a PNG named `name` in the project's
+    /// `uploads`, for a message to carry: what the WebView's "Add to chat"
+    /// on a region does in the browser (`crop_region_to_upload` in
+    /// `ui/src/api.js`), the picture's own pixels whatever zoom it was
+    /// marked at. An SVG is refused: there is no renderer for it here.
+    pub async fn import_image_region(
+        &self,
+        project: &str,
+        path: &str,
+        region: wisp_dto::image_pins::ImageRegion,
+        name: &str,
+    ) -> Result<String> {
+        let (kind, bytes) = self.project_image(project, path).await?;
+        ensure!(
+            kind != "image/svg+xml",
+            "A region of an SVG picture cannot be cut out here; add a note to the region instead"
+        );
+        let png = tokio::task::spawn_blocking(move || crop_png(&bytes, region)).await??;
+        self.import_pasted(project, name, &png).await
+    }
+
     /// A PDF of the project, whole, for the window to draw its pages; the
     /// WebView shows them with pdf.js.
     pub async fn project_pdf(&self, project: &str, path: &str) -> Result<Vec<u8>> {
@@ -1672,6 +1694,99 @@ impl Server {
             .store
             .add_research_journal_entry(&wisp_store::StateScope::mainline(project), &input)
             .await
+    }
+
+    /// The project's research graph — its decisions, papers, data, runs and
+    /// outputs, and the relations between them — as the journey's
+    /// Relationships view shows it: the mainline's, as the WebView reads it.
+    pub async fn research_graph(&self, project: &str) -> Result<wisp_dto::ResearchGraph> {
+        self.known_project(project).await?;
+        let graph = self
+            .0
+            .store
+            .research_graph_in_scope(&wisp_store::StateScope::mainline(project))
+            .await?;
+        Ok(wisp_dto::ResearchGraph {
+            nodes: graph
+                .nodes
+                .into_iter()
+                .map(|node| wisp_dto::ResearchNode {
+                    id: node.id,
+                    kind: node.kind.as_str().to_owned(),
+                    title: node.title,
+                    ref_id: node.ref_id,
+                    metadata_json: node.metadata_json,
+                })
+                .collect(),
+            edges: graph
+                .edges
+                .into_iter()
+                .map(|edge| wisp_dto::ResearchEdge {
+                    source_id: edge.source_id,
+                    target_id: edge.target_id,
+                    relation: edge.relation,
+                    metadata_json: edge.metadata_json,
+                })
+                .collect(),
+        })
+    }
+
+    /// Where one version of an output in the journey came from: the run
+    /// that produced it, with what that run read, as the WebView's source
+    /// details show it. A version of another project, or of an exploration,
+    /// is refused before anything of it is read.
+    pub async fn journey_source(&self, project: &str, version: &str) -> Result<JourneySource> {
+        self.known_project(project).await?;
+        let store = &self.0.store;
+        let source = store
+            .research_journey_source(&wisp_store::StateScope::mainline(project), version)
+            .await?;
+        let path_of = |version: Option<String>| async move {
+            let version = version?;
+            let context = store
+                .get_artifact_version_context(&version)
+                .await
+                .ok()
+                .flatten()?;
+            (context.project_id == project)
+                .then(|| project_path(context.logical_key.as_deref()))
+                .flatten()
+        };
+        let path = path_of(Some(version.to_owned())).await;
+        let mut input_paths = Vec::with_capacity(source.inputs.len());
+        for input in &source.inputs {
+            input_paths.push(path_of(input.version_id.clone()).await);
+        }
+        Ok(JourneySource {
+            source,
+            path,
+            input_paths,
+        })
+    }
+
+    /// One run of the project as the journey's run record shows it.
+    pub async fn journey_run(&self, project: &str, run: &str) -> Result<JourneyRun> {
+        self.known_project(project).await?;
+        ensure!(
+            self.0
+                .store
+                .run_visible_in_scope(run, &wisp_store::StateScope::mainline(project))
+                .await?,
+            "Run is unavailable in this project"
+        );
+        let record = self.0.store.get_run(run).await?.context("Run not found")?;
+        Ok(JourneyRun {
+            id: record.id,
+            title: record.title,
+            status: record.status.as_str().to_owned(),
+            context: record.context_id,
+            exit_code: record.exit_code,
+            started_at: record.started_at,
+            ended_at: record.ended_at,
+            command: record.command,
+            stdout_tail: record.stdout_tail,
+            stderr_tail: record.stderr_tail,
+        })
     }
 
     /// A project's name, description, and the rules the model is given in
@@ -2419,6 +2534,22 @@ impl Server {
         })
     }
 
+    /// Every version of a saved item's code, the original first: the
+    /// item as it was saved is version 1, and each saved edit adds one.
+    /// Nothing for an item that is gone.
+    pub async fn favorite_versions(&self, id: &str) -> Result<Vec<LibraryItemVersion>> {
+        self.library().await?.list_versions(id).await
+    }
+
+    /// Saves an edit of a saved item's code as its next version; the item
+    /// as it was saved never changes. A text excerpt cannot be edited.
+    pub async fn save_favorite_code(&self, id: &str, code: &str) -> Result<LibraryItemVersion> {
+        self.library()
+            .await?
+            .edit_code(id, None, code.to_owned())
+            .await
+    }
+
     /// What was saved from one conversation, newest first.
     pub async fn conversation_favorites(
         &self,
@@ -2849,10 +2980,7 @@ impl Server {
         let store = &self.0.store;
         store.require_unarchived_session(session).await?;
         ensure!(
-            !matches!(
-                store.session_branch_state(session).await?,
-                Some("merged" | "orphaned")
-            ),
+            !store.session_branch_frozen(session).await?,
             "A branch that was merged or lost its source cannot be rewound"
         );
         Ok(self.locate_turn(session, turn).await?.0)
@@ -3428,6 +3556,136 @@ impl Server {
             .await
             .map_err(anyhow::Error::msg)?;
         crate::remote_dir::parse(alias, output)
+    }
+
+    /// A file of a saved SSH host, for the Files tab to show, read as the
+    /// WebView's preview reads it: text as its first megabyte, a picture
+    /// whole up to 32 MB. `listed_size` is what the folder listing said; a
+    /// picture larger than the cap by it is not fetched. Nothing is kept,
+    /// in the project or anywhere else.
+    pub async fn remote_file(
+        &self,
+        alias: &str,
+        path: &str,
+        listed_size: Option<u64>,
+    ) -> Result<RemoteFile> {
+        let context = self.host_to_read(alias, path).await?;
+        let (alias, path) = (alias.trim().to_owned(), path.to_owned());
+        tokio::task::spawn_blocking(move || {
+            let mut runner = wisp_runs::remote_file::ProcessRemoteRunner;
+            crate::remote_file::fetch(&alias, &context, &path, listed_size, &mut runner)
+        })
+        .await?
+        .map_err(anyhow::Error::msg)
+    }
+
+    /// The saved host `alias`, when `path` of it may be read: a path is
+    /// named, the host's files were not given up when it was discarded,
+    /// and it has passed a check.
+    async fn host_to_read(&self, alias: &str, path: &str) -> Result<wisp_store::ExecutionContext> {
+        ensure!(!path.trim().is_empty(), "Choose a file of the host");
+        let id = format!("ssh:{}", alias.trim());
+        let context = self
+            .0
+            .store
+            .get_execution_context(&id)
+            .await?
+            .context("That host is no longer saved")?;
+        wisp_runs::remote_files::refuse_if_context_path_discarded(&self.0.store, &id, path)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        wisp_runs::ssh_hosts::require_managed_ssh_ready(&context).map_err(anyhow::Error::msg)?;
+        Ok(context)
+    }
+
+    /// What the project placed on a saved SSH host and keeps a record of:
+    /// the WebView's Remote files list of a server. Each says whether a
+    /// run still needs it, a newer copy replaced it, or nothing does.
+    pub async fn host_staged_files(&self, project: &str, alias: &str) -> Result<Vec<StagedFile>> {
+        self.known_project(project).await?;
+        let context = self.saved_host(alias).await?;
+        wisp_runs::remote_files::list_remote_files(&self.0.store, project, &context.id)
+            .await
+            .map_err(anyhow::Error::msg)
+    }
+
+    /// Deletes one of those files from the host for good, as the WebView's
+    /// Delete from server does: only a file in the project's record, and
+    /// not one a run still needs. A replaced one only leaves the record,
+    /// since its path holds the newer copy. Answers the list again.
+    pub async fn remove_host_staged_file(
+        &self,
+        project: &str,
+        alias: &str,
+        id: &str,
+    ) -> Result<Vec<StagedFile>> {
+        self.remove_host_staged_file_with(project, alias, id, self.0.runs.runner_ref())
+            .await
+    }
+
+    pub(crate) async fn remove_host_staged_file_with(
+        &self,
+        project: &str,
+        alias: &str,
+        id: &str,
+        runner: &dyn wisp_runs::RunCommandRunner,
+    ) -> Result<Vec<StagedFile>> {
+        self.known_project(project).await?;
+        let context = self.saved_host(alias).await?;
+        let _admission = self.0.admission.read().await;
+        wisp_runs::remote_files::remove_remote_files(
+            &self.0.store,
+            runner,
+            project,
+            &context,
+            &[id.to_owned()],
+            false,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        wisp_runs::remote_files::list_remote_files(&self.0.store, project, &context.id)
+            .await
+            .map_err(anyhow::Error::msg)
+    }
+
+    /// The project's runs on a saved SSH host, newest first: the WebView's
+    /// Runs list of a server.
+    pub async fn host_runs(&self, project: &str, alias: &str) -> Result<Vec<HostRun>> {
+        self.known_project(project).await?;
+        let context = self.saved_host(alias).await?;
+        Ok(self
+            .0
+            .store
+            .list_run_summaries_in_scope(&wisp_store::StateScope::mainline(project.to_owned()))
+            .await?
+            .into_iter()
+            .filter(|run| run.context_id == context.id)
+            .map(|run| HostRun {
+                id: run.id,
+                session: run.frame_id,
+                title: run.title,
+                kind: run.kind,
+                status: run.status.as_str().to_owned(),
+                created_at: run.created_at,
+                ended_at: run.ended_at,
+                exit_code: run.exit_code,
+            })
+            .collect())
+    }
+
+    /// A saved SSH host by its alias.
+    async fn saved_host(&self, alias: &str) -> Result<wisp_store::ExecutionContext> {
+        let context = self
+            .0
+            .store
+            .get_execution_context(&format!("ssh:{}", alias.trim()))
+            .await?
+            .context("That host is no longer saved")?;
+        ensure!(
+            context.kind == wisp_store::ExecutionContextKind::Ssh,
+            "That is not an SSH host"
+        );
+        Ok(context)
     }
 
     /// A saved SSH host's execution context, ready for work, and `session`
@@ -4928,16 +5186,41 @@ impl Server {
         Ok(id)
     }
 
-    /// Has the conversation's model write a draft archive of it: a report
-    /// and the scripts that can be put together from what was run. Nothing
-    /// is saved; the researcher reviews the draft and freezes it.
+    /// The conversation's research archive draft that was not frozen yet,
+    /// to go on reviewing it, as the WebView reopens one.
+    pub async fn research_archive_draft(
+        &self,
+        project: &str,
+        session: &str,
+    ) -> Result<Option<ResearchArchive>> {
+        self.own_conversation(project, session).await?;
+        Ok(self
+            .0
+            .store
+            .research_archive(session)
+            .await?
+            .filter(|archive| archive.frozen_at.is_none()))
+    }
+
+    /// Has the conversation's model write a draft archive of it, as the
+    /// WebView's Archive research does: a report, the scripts that can be
+    /// put together from what was run, and the local files the conversation
+    /// recorded, each kept as a snapshot unless the model recommends
+    /// deleting one that may be deleted. The draft is kept, in place of an
+    /// earlier one, for the researcher to review and freeze; no file is
+    /// touched.
     pub async fn draft_research_archive(
         &self,
         project: &str,
         session: &str,
-    ) -> Result<ArchiveDraft> {
+    ) -> Result<ResearchArchive> {
         self.archivable(project, session).await?;
         let store = &self.0.store;
+        let root = std::path::PathBuf::from(self.project_root(project).await?);
+        let (_, source_hash) = store.research_archive_source(session).await?;
+        let mut files = wisp_store::research_archive_files::candidates(store, &root, session)
+            .await
+            .map_err(anyhow::Error::msg)?;
         let options = self.stored_options(session).await?;
         let mut model = self.0.model.read().unwrap().pick(&options.model)?.provider;
         let routes = crate::network::load(store).await;
@@ -4947,13 +5230,38 @@ impl Server {
         let messages = self.whole_transcript(session).await?;
         let provider = (self.0.models)(model);
         let transcript = crate::review::transcript(&messages);
-        match crate::research_archive::draft(provider.as_ref(), transcript).await {
-            Ok(draft) => Ok(draft),
-            Err(error) => bail!(
-                "{}",
-                crate::network::explain(store, &format!("{error:#}")).await
-            ),
-        }
+        let draft =
+            match crate::research_archive::draft(provider.as_ref(), transcript, &files).await {
+                Ok(draft) => draft,
+                Err(error) => bail!(
+                    "{}",
+                    crate::network::explain(store, &format!("{error:#}")).await
+                ),
+            };
+        wisp_store::research_archive_files::recommend_deletions(&mut files, &draft.delete_paths);
+        let archive = ResearchArchive {
+            id: uuid::Uuid::new_v4().to_string(),
+            project_id: project.to_owned(),
+            frame_id: session.to_owned(),
+            source_hash,
+            title: draft.title,
+            report: draft.report,
+            scripts: draft.scripts,
+            files,
+            created_at: chrono::Utc::now().timestamp(),
+            frozen_at: None,
+            warnings: wisp_store::research_archive_files::DRAFT_WARNINGS
+                .map(String::from)
+                .to_vec(),
+        };
+        // What was said while the model wrote is not in the draft.
+        self.archivable(project, session).await?;
+        ensure!(
+            store.research_archive_source(session).await?.1 == archive.source_hash,
+            "The notebook changed while preparing the draft. Generate it again."
+        );
+        store.save_research_archive_draft(&archive).await?;
+        Ok(archive)
     }
 
     /// The conversations Codex CLI and Claude Code keep on this computer,
@@ -5150,51 +5458,61 @@ impl Server {
         Ok(merged.main_session_id)
     }
 
-    /// Freezes `draft` as the conversation's research archive: the report
-    /// and scripts are written under `.wisp/research-archives/` in the
-    /// project and the record is kept. From then on the conversation is
-    /// read-only. No project file is moved or deleted.
+    /// Freezes the conversation's kept draft as the researcher reviewed it
+    /// in `input`, as the WebView's Archive and clean up does: snapshots,
+    /// scripts, the notebook and the report are written under
+    /// `.wisp/research-archives/<id>/`, the record is frozen and the
+    /// conversation is read-only, and then the files chosen for deletion
+    /// are deleted for good, each with a receipt. Refused, with every file
+    /// as it was, when the conversation or a listed file changed since the
+    /// draft, or a choice is not one the draft offered. A deletion that
+    /// fails after the freeze leaves the archive frozen with its receipt;
+    /// [`Self::retry_research_archive_cleanup`] tries it again.
     pub async fn freeze_research_archive(
         &self,
         project: &str,
         session: &str,
-        draft: ArchiveDraft,
+        input: ConfirmResearchArchive,
     ) -> Result<ResearchArchive> {
         let _admission = self.0.admission.write().await;
         self.archivable(project, session).await?;
-        let draft = crate::research_archive::checked(draft)?;
         let store = &self.0.store;
         let root = std::path::PathBuf::from(self.project_root(project).await?);
-        let id = uuid::Uuid::new_v4().to_string();
-        let (_, source_hash) = store.research_archive_source(session).await?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_secs() as i64)
-            .unwrap_or_default();
-        let folder = crate::research_archive::folder(&root, &id);
-        let written = draft.clone();
-        let target = folder.clone();
-        tokio::task::spawn_blocking(move || crate::research_archive::write(&target, &written))
-            .await??;
-        let mut record =
-            crate::research_archive::record(id, project, session, source_hash, draft, now);
-        let kept = async {
-            store.save_research_archive_draft(&record).await?;
-            record.frozen_at = Some(now);
-            store.freeze_research_archive(&record).await
+        let draft = store
+            .research_archive(session)
+            .await?
+            .filter(|archive| archive.frozen_at.is_none())
+            .context("Prepare an archive draft first")?;
+        let result =
+            wisp_store::research_archive_files::freeze_files(store, &root, draft, input).await;
+        // Even a failed receipt leaves the conversation frozen.
+        if self.archived(session).await? {
+            // What the conversation kept running is no longer needed.
+            let runtime = self.session(session).runtime.lock().unwrap().take();
+            if let Some(runtime) = runtime {
+                runtime.shutdown_all().await;
+            }
         }
-        .await;
-        if let Err(error) = kept {
-            // Nothing was frozen: the files written for it go again.
-            let _ = tokio::fs::remove_dir_all(&folder).await;
-            return Err(error);
-        }
-        // What the conversation kept running is no longer needed.
-        let runtime = self.session(session).runtime.lock().unwrap().take();
-        if let Some(runtime) = runtime {
-            runtime.shutdown_all().await;
-        }
-        Ok(record)
+        result.map_err(anyhow::Error::msg)
+    }
+
+    /// Deletes again the files a frozen archive chose to delete that were
+    /// not deleted, as the WebView's Retry incomplete cleanup does. A file
+    /// that changed or is used elsewhere since is kept.
+    pub async fn retry_research_archive_cleanup(
+        &self,
+        project: &str,
+        session: &str,
+    ) -> Result<ResearchArchive> {
+        let _admission = self.0.admission.write().await;
+        let archive = self
+            .research_archive(project, session)
+            .await?
+            .context("Archive is not frozen")?;
+        let root = std::path::PathBuf::from(self.project_root(project).await?);
+        wisp_store::research_archive_files::cleanup_files(&self.0.store, &root, &archive)
+            .await
+            .map_err(anyhow::Error::msg)
     }
 
     /// A conversation can be archived once: when it is the project's own,
@@ -5932,9 +6250,12 @@ impl Server {
         let text = text.trim();
         ensure!(!text.is_empty(), "Write a message first");
         self.own_conversation(project, session).await?;
+        self.ensure_not_frozen_branch(session).await?;
         let running = self.session(session);
         let live = running.live.lock().unwrap();
-        if !live.running || !live.guidable {
+        // A timer's turn takes no guidance, as in the WebView: what is said
+        // then is a turn of its own, after it, that the timer never takes.
+        if !live.running || !live.guidable || live.timer_open {
             return Ok(false);
         }
         let id = running.guided.fetch_add(1, Ordering::Relaxed) + 1;
@@ -6665,6 +6986,42 @@ pub(crate) fn mark_superseded(mut rows: Vec<ReplyArtifact>) -> Vec<ReplyArtifact
         rows[at].superseded = again;
     }
     rows
+}
+
+/// Where an output in the research journey came from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JourneySource {
+    /// The producing run and what it read; empty when no run is recorded.
+    pub source: wisp_dto::ResearchJourneySource,
+    /// Where the output is in the project, when it is a project file.
+    pub path: Option<String>,
+    /// The same for each of `source.inputs`, in their order.
+    pub input_paths: Vec<Option<String>>,
+}
+
+/// A run as the research journey's run record shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JourneyRun {
+    pub id: String,
+    pub title: String,
+    /// `submitted`, `started`, `succeeded`, `failed`, `cancelled`, `lost`.
+    pub status: String,
+    /// The execution context it ran on.
+    pub context: String,
+    pub exit_code: Option<i64>,
+    pub started_at: Option<i64>,
+    pub ended_at: Option<i64>,
+    pub command: Option<String>,
+    pub stdout_tail: Option<String>,
+    pub stderr_tail: Option<String>,
+}
+
+/// The project path an artifact's logical key names, if it names one.
+fn project_path(logical_key: Option<&str>) -> Option<String> {
+    logical_key?
+        .strip_prefix("path:")
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
 }
 
 /// One kept version of an artifact.
@@ -7572,6 +7929,22 @@ pub use crate::webview_import::{
 };
 
 /// Where a project's work keeps things on one SSH host.
+/// One of the project's runs on an SSH host.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostRun {
+    pub id: String,
+    /// The conversation that started it, when one did.
+    pub session: Option<String>,
+    pub title: String,
+    pub kind: String,
+    /// `submitted`, `running`, `succeeded`, `failed` and the rest.
+    pub status: String,
+    /// When it was made, and ended, in seconds since 1970.
+    pub created_at: i64,
+    pub ended_at: Option<i64>,
+    pub exit_code: Option<i64>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HostStorage {
     /// Where uploaded data goes there: a whole path or one under `~/`.
@@ -7588,7 +7961,7 @@ pub use crate::queue::QueuedMessage;
 pub use crate::quick_actions::{QuickAction, QuickActionInput};
 pub use crate::remote_access::{RemoteAccess, RemoteState};
 pub use crate::remote_dir::RemoteDirectory;
-pub use crate::research_archive::ArchiveDraft;
+pub use crate::remote_file::{RemoteFile, RemoteFileBody};
 pub use crate::review::{Finding as ReviewFinding, Outcome as ReviewOutcome, Review};
 pub use crate::run_log::RunLog;
 /// How many times a turn may carry on by itself after a cut answer.
@@ -7614,8 +7987,15 @@ pub use wisp_core::ModelTier;
 /// The most tasks a workflow run as agents takes.
 pub use wisp_core::MAX_DELEGATION_TASKS as WORKFLOW_AGENT_LIMIT;
 pub use wisp_dto::AutoFailureAnalysisSettings;
-pub use wisp_dto::{ArchiveScript, ResearchArchive};
+pub use wisp_dto::{
+    ArchiveFile, ArchiveFileChoice, ArchiveScript, ConfirmResearchArchive, ResearchArchive,
+};
 pub use wisp_dto::{LabKnowledgeBaseInfo, LabMemberInfo, LabStatus};
+/// A file the project placed on an SSH host, from its record there.
+pub use wisp_runs::remote_files::{RemoteFileState as StagedState, RemoteFileView as StagedFile};
+/// The checks the WebView makes on a research archive's title, report and
+/// scripts before it is frozen, for a client to say what is wrong first.
+pub use wisp_store::research_archive_files::validate_content as research_archive_problem;
 
 /// A project's folder, as the question before it is deleted describes it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -7726,7 +8106,26 @@ fn favorite_title(text: &str) -> String {
     title
 }
 
-fn image_type(path: &std::path::Path) -> Option<&'static str> {
+/// The pixels of `region` of a picture (PNG, JPEG, GIF's first frame, WebP
+/// or BMP) as a PNG, as the WebView's canvas crop turns a region into one.
+fn crop_png(bytes: &[u8], region: wisp_dto::image_pins::ImageRegion) -> Result<Vec<u8>> {
+    use image::ImageEncoder;
+    let picture = image::load_from_memory(bytes)
+        .context("The picture could not be read")?
+        .into_rgba8();
+    let (left, top, width, height) = region.pixels(picture.width(), picture.height());
+    let cut = image::imageops::crop_imm(&picture, left, top, width, height).to_image();
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png).write_image(
+        cut.as_raw(),
+        cut.width(),
+        cut.height(),
+        image::ExtendedColorType::Rgba8,
+    )?;
+    Ok(png)
+}
+
+pub(crate) fn image_type(path: &std::path::Path) -> Option<&'static str> {
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     Some(match extension.as_str() {
         "png" => "image/png",

@@ -150,7 +150,6 @@ mod scheduler;
 mod seed;
 mod session_commands;
 mod session_context_tool;
-mod session_experience;
 mod session_export;
 mod session_import;
 mod settings_commands;

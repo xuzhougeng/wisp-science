@@ -779,6 +779,59 @@ pub fn host_caution(check: Option<&EnvironmentCheck>) -> Option<&'static str> {
     }
 }
 
+/// The interpreters the last check of a host found there, on one line:
+/// the WebView's host card names them beside the system.
+pub fn host_interpreters(found: &ProbeResult) -> Option<String> {
+    let found: Vec<String> = check_facts(found)
+        .into_iter()
+        .filter(|(label, _)| matches!(*label, "Python" | "R"))
+        .map(|(label, value)| format!("{label} {value}"))
+        .collect();
+    (!found.is_empty()).then(|| found.join("; "))
+}
+
+/// Whether a file the project placed on a host is still needed there, in
+/// a word.
+pub fn staged_state(state: wisp_server::desktop::StagedState) -> &'static str {
+    use wisp_server::desktop::StagedState;
+    match state {
+        StagedState::Active => tr("In use"),
+        StagedState::Replaced => tr("Replaced"),
+        StagedState::Orphan => tr("Not used"),
+    }
+}
+
+/// How a file came to be on a host, in words.
+pub fn staged_source(source: &str) -> &'static str {
+    match source {
+        "run_input" => tr("A run's input"),
+        "transfer" => tr("Uploaded"),
+        "harvest_persist" => tr("A result kept there"),
+        _ => "",
+    }
+}
+
+/// The question before a placed file goes: what goes, from where, and
+/// that it cannot be undone. A replaced one only leaves the record, as
+/// the newer copy holds its path.
+pub fn staged_question(alias: &str, file: &wisp_server::desktop::StagedFile) -> String {
+    use wisp_server::desktop::StagedState;
+    match file.state {
+        StagedState::Replaced => crate::i18n::fill(
+            tr(
+                "A newer copy replaced this one at {} on {}. Only the project's record of it is closed; the file there stays.",
+            ),
+            &[&file.remote_path, &alias],
+        ),
+        _ => crate::i18n::fill(
+            tr(
+                "{} will be deleted from {} for good. If it is a folder, everything in it goes too. This cannot be undone.",
+            ),
+            &[&file.remote_path, &alias],
+        ),
+    }
+}
+
 /// What the last check of a host found, as labelled facts in the order
 /// they matter when choosing where to run something.
 pub fn check_facts(found: &ProbeResult) -> Vec<(&'static str, String)> {
@@ -1898,12 +1951,47 @@ mod tests {
             found: None,
         };
         assert!(host_caution(None).unwrap().starts_with("Not checked yet"));
+        // The interpreters it found, and nothing when it found none.
+        let found = ProbeResult {
+            python_version: Some("3.11.4".into()),
+            python_executable: Some("/opt/conda/bin/python3".into()),
+            rscript_executable: Some("/usr/bin/Rscript".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            host_interpreters(&found).as_deref(),
+            Some("Python 3.11.4 · /opt/conda/bin/python3; R /usr/bin/Rscript")
+        );
+        assert_eq!(host_interpreters(&ProbeResult::default()), None);
         assert!(
             host_caution(Some(&check(Some("refused"))))
                 .unwrap()
                 .starts_with("Last check failed")
         );
         assert_eq!(host_caution(Some(&check(None))), None);
+    }
+
+    #[test]
+    fn a_file_placed_on_a_host_says_what_deleting_it_does() {
+        use wisp_server::desktop::{StagedFile, StagedState};
+        let file = |state| StagedFile {
+            id: "f1".into(),
+            remote_path: "/scratch/it's; $(x)/old.bam".into(),
+            source: "harvest_persist".into(),
+            run_id: None,
+            run_status: None,
+            size_bytes: None,
+            created_at: 0,
+            state,
+        };
+        let asked = staged_question("gpu", &file(StagedState::Orphan));
+        assert!(asked.starts_with("/scratch/it's; $(x)/old.bam will be deleted from gpu"));
+        assert!(asked.contains("everything in it") && asked.contains("cannot be undone"));
+        let replaced = staged_question("gpu", &file(StagedState::Replaced));
+        assert!(replaced.contains("the file there stays"), "{replaced}");
+        assert_eq!(staged_state(StagedState::Active), "In use");
+        assert_eq!(staged_source("transfer"), "Uploaded");
+        assert_eq!(staged_source("something new"), "");
     }
 
     #[test]

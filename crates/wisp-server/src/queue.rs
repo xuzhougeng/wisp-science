@@ -143,6 +143,9 @@ impl Server {
     /// at once if none runs and nothing holds the queue.
     pub async fn queue_message(&self, project: &str, request: SendRequest) -> Result<u64> {
         self.own_conversation(project, &request.session_id).await?;
+        // Nothing waits to go into a branch frozen as history: it would
+        // only be refused when its turn came.
+        self.ensure_not_frozen_branch(&request.session_id).await?;
         let id = self
             .session(&request.session_id)
             .queue
