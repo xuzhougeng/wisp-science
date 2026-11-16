@@ -456,9 +456,11 @@ impl Workspace {
         }
     }
 
-    /// The row under the header: the actions, or the layer one of them opened.
+    /// The row under the header that one of the conversation's actions
+    /// opened: the title being renamed, or a question before it is deleted
+    /// or cut back.
     pub(super) fn render_conversation_bar(&self, cx: &mut Context<Self>) -> Option<Div> {
-        let row = self.current_row()?;
+        self.current_row()?;
         let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
         let busy = self.pending;
         let bar = div()
@@ -578,155 +580,185 @@ impl Workspace {
                 ),
             );
         }
+        // The actions themselves are a menu under the header's More button.
+        None
+    }
+
+    /// Opens or closes the menu of the open conversation's actions.
+    pub(super) fn toggle_conversation_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.layers.close(Layer::ConversationMenu) {
+            self.focus_composer(window, cx);
+        } else {
+            self.layers.open(Layer::ConversationMenu);
+        }
+        cx.notify();
+    }
+
+    /// The open conversation's actions, as a menu under the header's More
+    /// button. Choosing one closes the menu first; Group and Move open
+    /// beside it. An action that cannot be taken now is dimmed and inert.
+    pub(super) fn conversation_menu(&self, cx: &mut Context<Self>) -> Option<Div> {
+        /// One action of the menu.
+        fn action(
+            id: &'static str,
+            label: &'static str,
+            enabled: bool,
+            run: fn(&mut Workspace, &mut Window, &mut Context<Workspace>),
+            cx: &mut Context<Workspace>,
+        ) -> Stateful<Div> {
+            let row = Workspace::menu_row(id.into(), label, "", false, cx);
+            if !enabled {
+                return row.opacity(0.5).cursor_default();
+            }
+            row.on_click(cx.listener(move |this, _, window, cx| {
+                this.layers.close(Layer::ConversationMenu);
+                run(this, window, cx);
+                cx.notify();
+            }))
+        }
+
+        let row = self.current_row()?;
+        let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
+        let busy = self.pending;
         let pinned = self.pinned.contains(&row.id);
         let archived = row.shelved;
-        Some(
-            bar.child(
-                Button::new("conversation-rename")
-                    .label(tr("Rename"))
-                    .small()
-                    .ghost()
-                    .disabled(busy)
-                    .on_click(cx.listener(|this, _, window, cx| this.begin_rename(window, cx))),
-            )
-            .child({
-                let title = crate::present::one_line(&row.title);
-                Button::new("conversation-copy-title")
-                    .label(tr("Copy title"))
-                    .small()
-                    .ghost()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(title.clone()));
-                        this.notice = Some(tr("Title copied.").into());
-                        cx.notify();
-                    }))
-            })
+        let title = crate::present::one_line(&row.title);
+        let branch = self.open_is_branch();
+        let line = cx.theme().border;
+        let danger = cx.theme().danger;
+        let rule = move || div().h(px(1.)).mx_2().my_1().flex_shrink_0().bg(line);
+
+        let menu = div()
+            .absolute()
+            .top(px(36.))
+            .right_0()
+            .w(px(232.))
+            .v_flex()
+            .p_1()
+            .occlude()
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(line)
+            .bg(cx.theme().popover)
+            .shadow_md()
+            // Its name and its place.
+            .child(action(
+                "conversation-rename",
+                tr("Rename"),
+                !busy,
+                |this, window, cx| this.begin_rename(window, cx),
+                cx,
+            ))
             .child(
-                Button::new("conversation-pin")
-                    .label(if pinned { tr("Unpin") } else { tr("Pin") })
-                    .small()
-                    .ghost()
-                    .disabled(busy || archived)
-                    .on_click(cx.listener(|this, _, window, cx| this.toggle_pin(window, cx))),
+                Self::menu_row(
+                    "conversation-copy-title".into(),
+                    tr("Copy title"),
+                    "",
+                    false,
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.layers.close(Layer::ConversationMenu);
+                    cx.write_to_clipboard(ClipboardItem::new_string(title.clone()));
+                    this.notice = Some(tr("Title copied.").into());
+                    cx.notify();
+                })),
             )
+            .child(action(
+                "conversation-pin",
+                if pinned { tr("Unpin") } else { tr("Pin") },
+                !(busy || archived),
+                |this, window, cx| this.toggle_pin(window, cx),
+                cx,
+            ))
             .child(self.group_button(busy || archived, cx))
             .child(self.transfer_button(busy || running, cx))
-            .child(
-                Button::new("conversation-export")
-                    .label(tr("Export"))
-                    .small()
-                    .ghost()
-                    .tooltip(tr("Save the whole conversation as a Markdown file"))
-                    .disabled(busy)
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.export_conversation(window, cx)),
-                    ),
-            )
-            .child(
-                Button::new("conversation-share-page")
-                    .label(tr("Share as HTML"))
-                    .small()
-                    .ghost()
-                    .tooltip(tr(
-                        "Save what was said as one page to open in any browser, without the tools",
-                    ))
-                    .disabled(busy)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.share_conversation_page(window, cx)
-                    })),
-            )
-            .child(
-                Button::new("conversation-debug-request")
-                    .label(tr("Debug request"))
-                    .small()
-                    .ghost()
-                    .tooltip(tr(
-                        "Save what this conversation sends the model as a JSON file, with sizes",
-                    ))
-                    .disabled(busy)
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.export_debug_request(window, cx)),
-                    ),
-            )
-            .child(
-                Button::new("conversation-trajectory")
-                    .label(tr("Trajectory"))
-                    .small()
-                    .ghost()
-                    .tooltip(tr("Every step of this conversation, with what it took"))
-                    .on_click(cx.listener(|this, _, window, cx| this.open_trajectory(window, cx))),
-            )
-            .child(
-                Button::new("conversation-review")
-                    .label(tr("Review"))
-                    .small()
-                    .ghost()
-                    .tooltip(tr(
-                        "Have the model check this conversation's claims against its tool output",
-                    ))
-                    .disabled(running)
-                    .on_click(cx.listener(|this, _, window, cx| this.open_review(window, cx))),
-            )
-            .when(self.open_is_branch(), |bar| {
-                bar.child(
-                    Button::new("conversation-merge-branch")
-                        .label(tr("Bring back"))
-                        .small()
-                        .ghost()
-                        .tooltip(tr(
-                            "Add a summary of what this branch did to the conversation it came from",
-                        ))
-                        .disabled(running)
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.open_branch_merge(window, cx)),
-                        ),
-                )
+            .child(rule())
+            // Copies of it to keep or hand on.
+            .child(action(
+                "conversation-export",
+                tr("Export"),
+                !busy,
+                |this, window, cx| this.export_conversation(window, cx),
+                cx,
+            ))
+            .child(action(
+                "conversation-share-page",
+                tr("Share as HTML"),
+                !busy,
+                |this, window, cx| this.share_conversation_page(window, cx),
+                cx,
+            ))
+            .child(action(
+                "conversation-debug-request",
+                tr("Debug request"),
+                !busy,
+                |this, window, cx| this.export_debug_request(window, cx),
+                cx,
+            ))
+            .child(rule())
+            // Looking back over it.
+            .child(action(
+                "conversation-trajectory",
+                tr("Trajectory"),
+                true,
+                |this, window, cx| this.open_trajectory(window, cx),
+                cx,
+            ))
+            .child(action(
+                "conversation-review",
+                tr("Review"),
+                !running,
+                |this, window, cx| this.open_review(window, cx),
+                cx,
+            ))
+            .when(branch, |menu| {
+                menu.child(action(
+                    "conversation-merge-branch",
+                    tr("Bring back"),
+                    !running,
+                    |this, window, cx| this.open_branch_merge(window, cx),
+                    cx,
+                ))
             })
+            .child(action(
+                "conversation-research-archive",
+                tr("Research archive"),
+                !running,
+                |this, window, cx| this.open_research_archive(window, cx),
+                cx,
+            ))
+            .child(action(
+                "conversation-skill",
+                tr("Save as skill"),
+                !archived,
+                |this, window, cx| this.ask_for_skill(window, cx),
+                cx,
+            ))
+            .child(rule())
+            // Putting it away. The host refuses to archive or delete a
+            // running turn.
+            .child(action(
+                "conversation-archive",
+                if archived {
+                    tr("Unarchive")
+                } else {
+                    tr("Archive")
+                },
+                !(busy || (running && !archived)),
+                |this, window, cx| this.toggle_archive(window, cx),
+                cx,
+            ))
             .child(
-                Button::new("conversation-research-archive")
-                    .label(tr("Research archive"))
-                    .small()
-                    .ghost()
-                    .tooltip(tr(
-                        "Write this conversation's findings up as a report and freeze it",
-                    ))
-                    .disabled(running)
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.open_research_archive(window, cx)),
-                    ),
-            )
-            .child(
-                Button::new("conversation-skill")
-                    .label(tr("Save as skill"))
-                    .small()
-                    .ghost()
-                    .tooltip(tr(
-                        "Ask Wisp to distill this conversation into a reusable skill",
-                    ))
-                    .disabled(archived)
-                    .on_click(cx.listener(|this, _, window, cx| this.ask_for_skill(window, cx))),
-            )
-            .child(
-                Button::new("conversation-archive")
-                    .label(if archived {
-                        tr("Unarchive")
-                    } else {
-                        tr("Archive")
-                    })
-                    .small()
-                    .ghost()
-                    // The host refuses to archive or delete a running turn.
-                    .disabled(busy || (running && !archived))
-                    .on_click(cx.listener(|this, _, window, cx| this.toggle_archive(window, cx))),
-            )
-            .child(
-                Button::new("conversation-delete")
-                    .label(tr("Delete"))
-                    .small()
-                    .ghost()
-                    .disabled(busy || running)
-                    .on_click(cx.listener(|this, _, _, cx| this.confirm_delete(cx))),
-            ),
-        )
+                action(
+                    "conversation-delete",
+                    tr("Delete"),
+                    !(busy || running),
+                    |this, _, cx| this.confirm_delete(cx),
+                    cx,
+                )
+                .text_color(danger),
+            );
+        Some(menu)
     }
 }

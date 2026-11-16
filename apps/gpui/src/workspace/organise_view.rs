@@ -274,7 +274,7 @@ impl Workspace {
             .map(|folder| folder.name.clone())
             .unwrap_or_default();
         self.folder_target = folder;
-        self.layers.close(Layer::GroupMenu);
+        self.layers.close(Layer::ConversationMenu);
         self.layers.switch(Layer::FolderName, &Layer::SIDEBAR);
         self.folder_name.update(cx, |input, cx| {
             input.set_value(name, window, cx);
@@ -401,7 +401,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.layers.close(Layer::GroupMenu);
+        self.layers.close(Layer::ConversationMenu);
         let (Some(project), Some(session)) =
             (self.state.project.clone(), self.state.session.clone())
         else {
@@ -452,7 +452,7 @@ impl Workspace {
             );
             return;
         }
-        self.layers.close(Layer::TransferMenu);
+        self.layers.close(Layer::ConversationMenu);
         let reply = self
             .backend
             .transfer_conversation(project, session.clone(), target, keep);
@@ -469,7 +469,7 @@ impl Workspace {
         ) else {
             return;
         };
-        self.layers.close(Layer::TransferMenu);
+        self.layers.close(Layer::ConversationMenu);
         let reply = self.backend.move_conversation_with_artifacts(
             project,
             session.clone(),
@@ -1231,20 +1231,37 @@ impl Workspace {
         Some(bar)
     }
 
-    /// The Group button of the conversation bar, with its menu when open.
+    /// A row of the conversation's menu that opens another menu beside it.
+    fn submenu_row(
+        id: &'static str,
+        label: &'static str,
+        layer: Layer,
+        open: bool,
+        disabled: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let hover = cx.theme().list_hover;
+        let row = Self::menu_row(id.into(), label, "", false, cx)
+            .child(icon("chevron-right").text_color(cx.theme().muted_foreground))
+            .when(open, |row| row.bg(hover));
+        if disabled {
+            return row.opacity(0.5).cursor_default();
+        }
+        row.on_click(cx.listener(move |this, _, _, cx| this.toggle_bar_layer(layer, cx)))
+    }
+
+    /// The Group row of the conversation's menu, with the groups beside it
+    /// when open.
     pub(super) fn group_button(&self, disabled: bool, cx: &mut Context<Self>) -> Div {
         let open = self.layers.contains(Layer::GroupMenu);
-        let mut button = div().relative().child(
-            Button::new("conversation-group")
-                .label(tr("Group"))
-                .small()
-                .ghost()
-                .selected(open)
-                .disabled(disabled)
-                .on_click(
-                    cx.listener(|this, _, _, cx| this.toggle_bar_layer(Layer::GroupMenu, cx)),
-                ),
-        );
+        let mut button = div().relative().child(Self::submenu_row(
+            "conversation-group",
+            tr("Group"),
+            Layer::GroupMenu,
+            open,
+            disabled,
+            cx,
+        ));
         if open {
             let current = self
                 .state
@@ -1252,27 +1269,26 @@ impl Workspace {
                 .as_ref()
                 .and_then(|id| self.grouped.get(id))
                 .map(String::as_str);
-            let menu = popup(220., cx).top(px(32.)).left_0();
-            button = button.child(deferred(self.group_choices(menu, current, false, cx)));
+            let menu = popup(220., cx).top_0().right(relative(1.));
+            // Not deferred: the menu this row sits in already is, and a
+            // deferred draw cannot start another.
+            button = button.child(self.group_choices(menu, current, false, cx));
         }
         button
     }
 
-    /// The Move button of the conversation bar, with the projects the
-    /// conversation can go to when open.
+    /// The Move row of the conversation's menu, with the projects the
+    /// conversation can go to beside it when open.
     pub(super) fn transfer_button(&self, disabled: bool, cx: &mut Context<Self>) -> Div {
         let open = self.layers.contains(Layer::TransferMenu);
-        let mut button = div().relative().child(
-            Button::new("conversation-transfer")
-                .label(tr("Move"))
-                .small()
-                .ghost()
-                .selected(open)
-                .disabled(disabled)
-                .on_click(
-                    cx.listener(|this, _, _, cx| this.toggle_bar_layer(Layer::TransferMenu, cx)),
-                ),
-        );
+        let mut button = div().relative().child(Self::submenu_row(
+            "conversation-transfer",
+            tr("Move"),
+            Layer::TransferMenu,
+            open,
+            disabled,
+            cx,
+        ));
         if !open {
             return button;
         }
@@ -1289,7 +1305,7 @@ impl Workspace {
                     cx.notify();
                 }))
         };
-        let mut menu = popup(300., cx).top(px(32.)).left_0().child(
+        let mut menu = popup(300., cx).top_0().right(relative(1.)).child(
             div()
                 .h_flex()
                 .gap_1()
@@ -1333,7 +1349,7 @@ impl Workspace {
                             })),
                     ),
             );
-            button = button.child(deferred(menu.child(confirm)));
+            button = button.child(menu.child(confirm));
             return button;
         }
         menu = menu.child(
@@ -1406,7 +1422,7 @@ impl Workspace {
                 "There is no other project yet. Open one from the home page.",
             )));
         }
-        button = button.child(deferred(menu.child(targets)));
+        button = button.child(menu.child(targets));
         button
     }
 }

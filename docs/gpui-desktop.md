@@ -8,7 +8,8 @@ still consume them.
 
 `apps/gpui` implements the first slices, not full replacement parity. The
 [parity ledger](gpui-parity.md) lists every WebView feature, what GPUI has, and
-the order the rest is ported in. WebView
+the order the rest is ported in. How it should look, and where each rule lives
+in code, is in the [design language](gpui-design-language.md). WebView
 installers remain the release channel until the migration is accepted. No new
 SwiftUI/WinUI installers are built or offered in the download picker. Existing
 immutable download links continue to work.
@@ -172,10 +173,10 @@ which it only reads.
 | Research archive | A conversation's Research archive button (or the command palette) has the model draft a report of its findings with the scripts behind them; you change the draft and freeze it, which writes it into the project and makes the conversation read-only; Continue research then opens a new conversation, linked to the archive, that starts from its report |
 | Review turns | The composer's Review turns switch has each turn that used a tool, or said a good deal, reviewed when it ends; the result shows above the composer, and See opens the findings |
 | Review | A conversation's Review button (or the command palette) has the model read the conversation as a reviewer and lists claims its own tool output does not support, each with the evidence and a fix; Ask Wisp to correct puts the corrections in the composer |
-| Save as skill | A conversation's Save as skill button (or the command palette) puts a request in the composer that asks Wisp to distill the conversation into a reusable skill; you send it, changed or not |
+| Save as skill | Save as skill in a conversation's More menu (or the command palette) puts a request in the composer that asks Wisp to distill the conversation into a reusable skill; you send it, changed or not |
 | Trajectory | A conversation's Trajectory button (or the command palette) shows every turn's steps in the order they happened: what you asked, what the model said, each tool with how it went and how long it took, and each model call with its tokens; the totals are at the top |
 | Windows | New Window (the app menu, Cmd/Ctrl+Shift+N, or the command palette) opens another window on the same projects, each with its own page and conversation; a project's card or palette row opens it in a window of its own, which opens again at the next start until it is closed |
-| Export | A conversation's Export button saves the whole of it as a Markdown file where you choose; Share as HTML (or `/share`) saves what was said as one page to open in any browser |
+| Export | Export in a conversation's More menu saves the whole of it as a Markdown file where you choose; Share as HTML (or `/share`) saves what was said as one page to open in any browser |
 | Notebook | A tab of the side panel: the conversation's code as cells, with what each run returned; copy, save to favorites, or show it in the conversation |
 | Research calendar | A page across every project: a month as a grid with how many records each day holds, and the chosen day's records; projects can be left out |
 | Scheduled tasks | A page across projects (the clock on the home page, or the command palette): a prompt is sent into a new conversation of its project every few hours, daily or weekly at a time, while the app is open; each task can be run now, switched off or deleted, and its latest firing opens the conversation it made |

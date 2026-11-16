@@ -174,6 +174,16 @@ impl Default for Look {
 /// Text sizes offered, in pixels; the WebView's slider goes as far.
 pub const TEXT_SIZES: std::ops::RangeInclusive<f32> = 10.0..=24.0;
 
+/// Body text is the component library's `text_sm()`, this many rems.
+const BODY_IN_REMS: f32 = 0.875;
+
+/// The rem that makes body text come out at `body` pixels. The library
+/// takes its rem from the theme's font size and measures captions, titles,
+/// spacing and control heights in rems, so they all follow the body.
+pub fn rem_for(body: f32) -> f32 {
+    body / BODY_IN_REMS
+}
+
 /// `#rrggbb` a share `amount` of the way from `from` to `to`.
 pub fn mix(from: &str, to: &str, amount: f32) -> String {
     let channels = |hex: &str| {
@@ -274,7 +284,7 @@ pub fn styled(base: &ThemeConfig, look: &Look) -> ThemeConfig {
         }
     }
     if TEXT_SIZES.contains(&look.text_size) {
-        theme.font_size = Some(look.text_size);
+        theme.font_size = Some(rem_for(look.text_size));
     }
     if TEXT_SIZES.contains(&look.code_size) {
         theme.mono_font_size = Some(look.code_size);
@@ -401,7 +411,7 @@ mod tests {
             text(&worn.colors.border),
             Some(mix("#F6F8FA", "#1F2328", 0.14).as_str())
         );
-        assert_eq!(worn.font_size, Some(15.));
+        assert_eq!(worn.font_size, Some(rem_for(15.)));
         assert_eq!(text(&worn.mono_font_family), Some("JetBrains Mono"));
         // The dark theme wears the dark palette.
         assert_eq!(text(&styled(dark, &look).colors.primary), Some("#D79921"));
@@ -424,5 +434,36 @@ mod tests {
         assert_eq!(mix("#000000", "#FFFFFF", 0.5), "#808080");
         assert_eq!(mix("#102030", "#102030", 0.7), "#102030");
         assert_eq!(mix("#000000", "#FFFFFF", 2.), "#FFFFFF");
+    }
+
+    #[test]
+    fn body_text_is_fourteen_pixels_on_the_librarys_own_rem() {
+        // Captions are then 12 px and titles 18, as the design language says.
+        assert_eq!(rem_for(14.), 16.);
+        for theme in bundled().themes {
+            assert_eq!(theme.font_size, Some(rem_for(14.)), "{}", theme.name);
+        }
+    }
+
+    #[test]
+    fn the_main_actions_label_can_be_read_on_its_teal() {
+        fn luminance(hex: &str) -> f32 {
+            let hex = hex.trim_start_matches('#');
+            let channel = |at: usize| {
+                let value = u8::from_str_radix(&hex[at..at + 2], 16).unwrap() as f32 / 255.;
+                if value <= 0.04045 {
+                    value / 12.92
+                } else {
+                    ((value + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4)
+        }
+        for theme in bundled().themes {
+            let fill = luminance(theme.colors.primary.as_ref().unwrap());
+            let label = luminance(theme.colors.primary_foreground.as_ref().unwrap());
+            let contrast = (fill.max(label) + 0.05) / (fill.min(label) + 0.05);
+            assert!(contrast >= 4.5, "{}: {contrast:.2}", theme.name);
+        }
     }
 }
