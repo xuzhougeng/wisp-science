@@ -14405,6 +14405,31 @@ async fn the_browser_tools_are_offered_only_while_the_bridge_is_switched_on() {
     server.shutdown().await;
 }
 
+/// A snapshot as a client that draws compaction rows asks for it.
+async fn snapshot_with_compactions(server: &Server, id: &str) -> dto::Snapshot {
+    serde_json::from_value(
+        call(
+            server,
+            "native_conversation_snapshot",
+            PROJECT,
+            json!({"session_id": id, "compaction_rows": true}),
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap()
+}
+
+/// The compaction rows of a transcript, with where each one is.
+fn compaction_cards(items: &[dto::Item]) -> Vec<(usize, wisp_dto::ContextCompactionDto)> {
+    items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item.role == "compaction")
+        .map(|(at, item)| (at, serde_json::from_str(&item.text).unwrap()))
+        .collect()
+}
+
 #[tokio::test]
 async fn a_conversation_is_compacted_on_request_and_its_history_archived() {
     let temp = tempfile::tempdir().unwrap();
@@ -14422,11 +14447,11 @@ async fn a_conversation_is_compacted_on_request_and_its_history_archived() {
     let session = create(&server).await;
     // Nothing was said yet, and a conversation of another project is not ours.
     assert!(server
-        .compact_conversation(PROJECT, &session)
+        .compact_conversation(PROJECT, &session, desktop::CompactKind::Regular)
         .await
         .is_err());
     assert!(server
-        .compact_conversation("missing", &session)
+        .compact_conversation("missing", &session, desktop::CompactKind::Regular)
         .await
         .is_err());
 
@@ -14436,17 +14461,34 @@ async fn a_conversation_is_compacted_on_request_and_its_history_archived() {
     }
     let shown_before = snapshot(&server, &session).await.items.len();
     let done = server
-        .compact_conversation(PROJECT, &session)
+        .compact_conversation(PROJECT, &session, desktop::CompactKind::Regular)
         .await
         .unwrap();
     assert!(done.after <= done.before, "{done:?}");
+    // Regular compaction keeps every turn; it only trims old tool output.
+    assert!(!done.summarised);
     // The whole history is archived in the project.
     let archives: Vec<_> = std::fs::read_dir(cfg.workspace.join(".wisp/history"))
         .unwrap()
         .collect();
     assert_eq!(archives.len(), 1);
-    // The transcript on screen is as long as it was.
-    assert_eq!(snapshot(&server, &session).await.items.len(), shown_before);
+    // The transcript on screen keeps every row it had, and a compaction
+    // row after them says what happened and that it can be undone.
+    let shown = snapshot_with_compactions(&server, &session).await.items;
+    assert_eq!(shown.len(), shown_before + 1);
+    let marker = compaction_cards(&shown);
+    assert_eq!(marker.len(), 1, "{shown:?}");
+    let (at, card) = &marker[0];
+    assert_eq!(*at, shown.len() - 1);
+    // A client that did not ask (a phone, the web client) gets none: it
+    // would show the row's raw text.
+    let plain = snapshot(&server, &session).await.items;
+    assert_eq!(plain.len(), shown_before);
+    assert!(compaction_cards(&plain).is_empty());
+    assert_eq!(card.strategy, "manual");
+    assert!(card.can_undo && card.undo_reason.is_none(), "{card:?}");
+    assert!(card.checkpoint.is_none());
+    assert_eq!((card.before, card.after), (done.before, done.after));
 
     // Undone, the model is sent everything again; only the compaction
     // that was looked at, and only once.
@@ -14467,6 +14509,10 @@ async fn a_conversation_is_compacted_on_request_and_its_history_archived() {
         .unwrap();
     let restored = server.model_view(PROJECT, &session).await.unwrap();
     assert_eq!(restored.epoch, 0);
+    // Its row is gone with it.
+    let shown = snapshot_with_compactions(&server, &session).await.items;
+    assert!(compaction_cards(&shown).is_empty());
+    assert_eq!(shown.len(), shown_before);
     assert!(!restored.compacted);
     assert!(restored.chars >= whole_before);
     assert!(server
@@ -14474,13 +14520,18 @@ async fn a_conversation_is_compacted_on_request_and_its_history_archived() {
         .await
         .is_err());
 
-    // Compacted again, and the conversation goes on from what was kept;
-    // then it can no longer be undone.
-    server
-        .compact_conversation(PROJECT, &session)
+    // Compacted again, into a summary this time, and the conversation goes
+    // on from what was kept; then it can no longer be undone.
+    let summarised = server
+        .compact_conversation(PROJECT, &session, desktop::CompactKind::Semantic)
         .await
         .unwrap();
+    assert!(summarised.summarised, "{summarised:?}");
     let again = server.model_view(PROJECT, &session).await.unwrap().epoch;
+    let shown = snapshot_with_compactions(&server, &session).await.items;
+    let (_, card) = &compaction_cards(&shown)[0];
+    assert_eq!(card.epoch, again as u64);
+    assert!(card.checkpoint.is_some(), "{card:?}");
     send(&server, &session, "what did we find?").await.unwrap();
     wait_for(&server, &session, |s| !s.running).await;
     assert!(seen
@@ -14494,6 +14545,17 @@ async fn a_conversation_is_compacted_on_request_and_its_history_archived() {
         .unwrap_err()
         .to_string();
     assert!(refused.contains("went on after"), "{refused}");
+    // The row stays where the compaction was, before the question asked
+    // after it, and no longer offers undo.
+    let shown = snapshot_with_compactions(&server, &session).await.items;
+    let marker = compaction_cards(&shown);
+    assert_eq!(marker.len(), 1, "{shown:?}");
+    let (at, card) = &marker[0];
+    assert_eq!(shown[at + 1].role, "user");
+    assert_eq!(shown[at + 1].text, "what did we find?");
+    assert!(!card.can_undo);
+    assert_eq!(card.undo_reason.as_deref(), Some("has_new_turns"));
+    assert!(compaction_cards(&snapshot(&server, &session).await.items).is_empty());
     server.shutdown().await;
 }
 

@@ -4,6 +4,7 @@ mod aside_view;
 mod assistant_view;
 mod calendar_view;
 mod capabilities_view;
+mod compact_view;
 mod conversation_actions;
 mod demos_view;
 mod explore_view;
@@ -97,10 +98,7 @@ use gpui_component::{
     input::{InputEvent, InputState},
 };
 use serde_json::{Value, json};
-use wisp_dto::{
-    ProjectSummary, SessionSearchInfo,
-    native_conversations::{Item, Snapshot},
-};
+use wisp_dto::{ProjectSummary, SessionSearchInfo, native_conversations::Item};
 
 use wisp_dto::native_conversations::SendRequest;
 use wisp_server::desktop::{
@@ -189,6 +187,12 @@ pub struct Workspace {
     model_view_error: Option<String>,
     /// The rows opened to show their whole text.
     model_view_open: HashSet<usize>,
+    /// The kind of compaction the compact dialog has chosen.
+    compact_kind: crate::compaction::Kind,
+    /// A compaction asked for there is running.
+    compacting: bool,
+    /// Why the compaction asked for there failed.
+    compact_error: Option<String>,
     /// The turn the review dialog is about; `None` is the whole conversation.
     review_turn: Option<wisp_server::desktop::TurnRef>,
     /// The review the dialog is showing or waiting for.
@@ -1419,6 +1423,9 @@ impl Workspace {
             model_view: None,
             model_view_error: None,
             model_view_open: HashSet::new(),
+            compact_kind: Default::default(),
+            compacting: false,
+            compact_error: None,
             review: None,
             review_turn: None,
             trajectory: None,
@@ -1932,6 +1939,12 @@ impl Workspace {
                 self.clear_model_view();
                 self.focus_composer(window, cx);
             }
+            Some(Layer::CompactContext) => {
+                self.compact_error = None;
+                if !self.layers.contains(Layer::ModelView) {
+                    self.focus_composer(window, cx);
+                }
+            }
             Some(Layer::ResearchArchive) => {
                 self.archive = None;
                 self.archive_error = None;
@@ -2255,6 +2268,7 @@ impl Workspace {
             Layer::Trajectory,
             Layer::Review,
             Layer::ModelView,
+            Layer::CompactContext,
             Layer::ResearchArchive,
             Layer::BranchMerge,
             Layer::RunReview,
@@ -2266,6 +2280,7 @@ impl Workspace {
         self.merge = None;
         self.clear_trajectory();
         self.clear_model_view();
+        self.compact_error = None;
         self.review = None;
         self.find.clear();
         if self.state.session != session {
@@ -2883,10 +2898,10 @@ impl Workspace {
         let backend = self.backend.clone();
         self.poll = Some(cx.spawn_in(window, async move |this, cx| {
             loop {
-                let result = receive(backend.request::<Snapshot>(
-                    "native_conversation_snapshot",
+                let result = receive(backend.snapshot(
                     selection.project.clone(),
-                    json!({"session_id": selection.session}),
+                    selection.session.clone(),
+                    None,
                 ))
                 .await;
                 let next = this
@@ -3020,10 +3035,10 @@ impl Workspace {
         }
         self.loading_history = true;
         let selection = self.state.selection();
-        let reply = self.backend.request::<Snapshot>(
-            "native_conversation_snapshot",
+        let reply = self.backend.snapshot(
             selection.project.clone(),
-            json!({"session_id":selection.session,"before_seq":before}),
+            selection.session.clone(),
+            Some(before),
         );
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
@@ -3065,10 +3080,10 @@ impl Workspace {
             let mut pages: Vec<Vec<Item>> = Vec::new();
             let mut failure = None;
             while let Some(seq) = before {
-                let page = receive(backend.request::<Snapshot>(
-                    "native_conversation_snapshot",
+                let page = receive(backend.snapshot(
                     selection.project.clone(),
-                    json!({"session_id": selection.session, "before_seq": seq}),
+                    selection.session.clone(),
+                    Some(seq),
                 ))
                 .await;
                 match page {
@@ -4299,6 +4314,12 @@ impl Render for Workspace {
         };
         let root = if self.layers.contains(Layer::ModelView) {
             root.child(self.render_model_view(cx))
+        } else {
+            root
+        };
+        // Over What the model is sent when it was opened from there.
+        let root = if self.layers.contains(Layer::CompactContext) {
+            root.child(self.render_compact_dialog(cx))
         } else {
             root
         };

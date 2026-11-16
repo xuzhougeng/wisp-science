@@ -7397,7 +7397,7 @@ pub use crate::channels::{
     weixin::{QrMatrix, WeixinDestination, WeixinQr, WeixinScan, WeixinStatus},
     ChannelState,
 };
-pub use crate::compact::Compacted;
+pub use crate::compact::{CompactKind, Compacted};
 pub use crate::delegation::{DelegatedBatch, DelegatedTask};
 pub use crate::demos::{Demo, DemoInfo, DemoRole, DemoRow};
 pub use crate::device_bridge::{DeviceBridge, DeviceBridgeState};

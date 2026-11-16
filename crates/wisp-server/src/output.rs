@@ -120,6 +120,13 @@ pub struct Live {
     /// Changes when a turn starts or finishes, invalidating in-flight store reads.
     pub generation: u64,
     pub messages: Vec<Message>,
+    /// The seqs of the saved messages `messages` starts with, as the turn
+    /// found them, so rows that go after a saved message can be placed
+    /// while it runs.
+    pub message_seqs: Vec<i64>,
+    /// The highest message seq when the turn started; what is recorded
+    /// after it belongs to the running turn.
+    pub saved_through: i64,
     pub next_before_seq: Option<i64>,
     pub draft: String,
     pub error: Option<String>,

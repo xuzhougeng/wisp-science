@@ -156,7 +156,8 @@ which it only reads.
 | Notifications | When a turn ends or a tool waits for approval while Wisp is in the background, a system notification is posted and, if chosen, a sound is played (Settings, General); a recent conversation that is not open is announced too when it stops working |
 | Language | Settings, General, chooses the interface language: System (Chinese on a Chinese system, English otherwise), English or 中文 |
 | Delete a project's folder | Removing a project offers Delete folder too: after you type the project's name, the project is removed and its folder is deleted with every file in it |
-| What the model is sent | Clicking the context percentage by the composer (or the command palette) lists the conversation's working set: the instructions, the summary that stands in for compacted turns, and each message with about how many tokens it takes; above them, the same set by kind (system prompt, rules, skills, sub-agent definitions, conversation), with the core's estimate and each one's share, as the WebView's context usage splits it, tool definitions excepted |
+| What the model is sent | Clicking the context percentage by the composer (or the command palette) lists the conversation's working set: the instructions, the summary that stands in for compacted turns, and each message with about how many tokens it takes; above them, the same set by kind (system prompt, rules, skills, sub-agent definitions, conversation), with the core's estimate and each one's share, as the WebView's context usage splits it, tool definitions excepted; Compact… there asks how to compact the conversation |
+| Compaction | `/compact` (or Compact… in What the model is sent) opens a dialog that offers regular compaction (old tool output becomes short archived stubs, every question and answer stays) or semantic compaction (older turns are folded into a summary with a short recent tail), with Cancel and Start compaction. Wherever the conversation was compacted, automatically or on request, the transcript shows a quiet line: who compacted it, whether older turns were summarised or old tool output trimmed, how many tokens before and after and how much smaller; a summary opens under the line with a click, and the latest compaction offers Undo the compaction until the conversation goes on |
 | Interpreters | The Python and R interpreters a conversation keeps between tool calls show above the composer with their version and state; Stop ends one, Dismiss takes a stopped one off the list; Console opens one with its variables, code of your own to run (printed output and plots) and Restart, and the command palette starts the conversation's Python or R console |
 | Experts | Settings, Experts, keeps personas (a name and instructions); the composer's Expert menu starts a new conversation as one, and its instructions hold for the whole conversation |
 | Quick actions | Settings, Quick actions, keeps requests you make often under a name; the composer's quick actions menu puts one into the message box, after whatever is already typed, to finish and send. An action can instead start a workflow of the library: from the menu it is drafted as agents on what is typed (its request, if any, told to every task first) in a new conversation that opens on its Agents tab |
@@ -875,13 +876,30 @@ Limits of this slice:
   that finds a turn running there is recorded as failed rather than
   queued. `/timer off` removes the conversation's timers; they are also
   listed, marked, on the Scheduled tasks page.
-- `/compact` archives the conversation's whole history under the
-  project's `.wisp/history/` and shortens what the model is sent, as a
-  turn does by itself when the context fills up. It is refused while a
-  turn runs and in an archived conversation. There is no choice between
-  pruning and summarising and no instruction for the summary; it can be
-  undone from What the model is sent until the conversation goes on. The
-  transcript on screen keeps its length.
+- `/compact` asks which kind of compaction to run, then archives the
+  conversation's whole history under the project's `.wisp/history/` and
+  shortens what the model is sent: regular prunes old tool output and
+  keeps every turn even when the context stays nearly full; semantic
+  always writes a summary with the model, which takes a model call and
+  fails if the summary cannot bring the context under the warning
+  threshold. A turn that fills the context does the same by itself,
+  pruning first and summarising only when that is not enough. It is
+  refused while a turn runs and in an archived conversation. There is no
+  instruction for the summary and no offer to compact a conversation that
+  has been idle for hours. The transcript on screen keeps every message;
+  a compaction line marks where it happened. The line is placed by the
+  host after the last message saved before the compaction, so a
+  compaction made during a turn sits after that turn's messages and
+  shows once the turn has ended; a line whose place is in history not yet
+  loaded appears when Load earlier messages brings that page. The host
+  sends these lines only to a client that asks for them in its snapshot
+  request (`compaction_rows`), as this desktop does; the phone apps and
+  the web client get the transcript without them. Undo, from
+  the line or from What the model is sent (there only when it shows a
+  summary), goes through the same host call, only for the latest
+  compaction and only while nothing has been said after it. The line has
+  no Rewind to before the compaction and does not say from which turn the
+  recent tail was kept.
 - A slash command is read only when it is the first word of the message
   and one of the known ones, so a message that starts with a path is
   sent as a message. There is no list that narrows as you type.
@@ -2014,9 +2032,17 @@ page lists it as a conversation's timer, and within a minute and a half
 the prompt arrives in the same conversation as a turn. Send `/timer
 off`: a note says one was cancelled. Send `/timer soon`: it is refused
 and the text comes back.
-After a few turns send `/compact`: a note says how many tokens there
-were before and after, a file appears under `.wisp/history/`, and What
-the model is sent is shorter while the transcript is not.
+After a few turns send `/compact`: a dialog offers Regular compact and
+Semantic compact, each explained. Press Escape right away: only the
+dialog closes. Send `/compact` again, keep Regular and press Start
+compaction: a note says how many tokens there were before and after, a
+file appears under `.wisp/history/`, What the model is sent is shorter
+while the transcript is not, and a line at the end of the transcript says
+the context was compacted, with Undo the compaction. Press it: the line
+goes and the context percentage rises again. Open the context percentage,
+press Compact…, choose Semantic compact and start it: the line says older
+turns were summarised and opens to the summary with a click. Send a
+message: the line stays before it and no longer offers Undo.
 Ask the model to write a new file and to edit an existing one, with
 Full access on. Point at the message, choose to go back, and press Go
 back and undo its files: the new file is in `.wisp/trash/`, the edited

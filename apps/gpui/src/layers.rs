@@ -125,6 +125,9 @@ pub enum Layer {
     Review,
     /// What the model is sent for the open conversation: a dialog over it.
     ModelView,
+    /// The choice of how to compact the open conversation: a dialog over
+    /// it, or over What the model is sent when opened from there.
+    CompactContext,
     /// The research archive of the open conversation: a dialog over it.
     ResearchArchive,
     /// Bringing the open branch back into its source: a dialog over it.
@@ -674,6 +677,25 @@ mod tests {
         assert!(stack.close(Layer::Settings));
         assert!(!stack.contains(Layer::ConfirmRemoveMcp));
         assert!(!stack.contains(Layer::ConfirmRemoveEnvironment));
+    }
+
+    #[test]
+    fn the_compact_dialog_closes_first_and_leaves_what_the_model_is_sent() {
+        let mut stack = EscapeStack::default();
+        // From /compact: one Escape and it is gone.
+        stack.open(Layer::CompactContext);
+        assert_eq!(stack.dismiss_top(), Some(Layer::CompactContext));
+        assert_eq!(stack.dismiss_top(), None);
+        // From What the model is sent: Escape leaves the choice first and
+        // the dialog under it stays open; closing that one does not take
+        // the choice along, which stands on its own.
+        stack.open(Layer::ModelView);
+        stack.open(Layer::CompactContext);
+        assert_eq!(stack.dismiss_top(), Some(Layer::CompactContext));
+        assert!(stack.contains(Layer::ModelView));
+        stack.open(Layer::CompactContext);
+        assert!(stack.close(Layer::ModelView));
+        assert!(stack.contains(Layer::CompactContext));
     }
 
     #[test]

@@ -256,12 +256,19 @@ pub fn turn_of(rows: &[Item], index: usize) -> Option<TurnRef> {
     })
 }
 
+/// The row whose actions stay shown: the latest one that is a message, not
+/// the line saying the conversation was compacted after it.
+pub fn latest_message(rows: &[Item]) -> Option<usize> {
+    rows.iter().rposition(|row| row.role != "compaction")
+}
+
 pub fn awaiting_answer(rows: &[Item], index: usize, running: bool) -> bool {
     !running
         && rows.get(index).and_then(question).is_some()
-        && rows[index + 1..]
-            .iter()
-            .all(|row| row.role == "assistant" && row.text.trim().is_empty())
+        && rows[index + 1..].iter().all(|row| {
+            // Compacting the conversation since is not an answer either.
+            (row.role == "assistant" && row.text.trim().is_empty()) || row.role == "compaction"
+        })
 }
 
 /// What approving a plan sends when nothing else is typed. The WebView's.
@@ -657,8 +664,27 @@ mod tests {
         let answered = [asked.clone(), item("user", None, "GRCh38", None)];
         assert!(!awaiting_answer(&answered, 0, false));
         // An empty trailing assistant row is not an answer.
-        let trailing = [asked, item("assistant", None, " ", None)];
+        let trailing = [asked.clone(), item("assistant", None, " ", None)];
         assert!(awaiting_answer(&trailing, 0, false));
+        // Nor is the line saying the conversation was compacted since.
+        let compacted = [asked, item("compaction", None, "{}", None)];
+        assert!(awaiting_answer(&compacted, 0, false));
+    }
+
+    #[test]
+    fn the_latest_message_is_not_a_compaction_line_after_it() {
+        let rows = [
+            item("user", None, "Align these", None),
+            item("assistant", None, "Done.", None),
+            item("compaction", None, "{}", None),
+        ];
+        assert_eq!(latest_message(&rows), Some(1));
+        assert_eq!(latest_message(&rows[..2]), Some(1));
+        assert_eq!(latest_message(&rows[2..]), None);
+        assert_eq!(latest_message(&[]), None);
+        // The turn a compaction line stands after is still the last one.
+        assert_eq!(turn_of(&rows, 2).unwrap().from_end, 0);
+        assert_eq!(turn_of(&rows, 2).unwrap().text, "Align these");
     }
 
     #[test]

@@ -7,7 +7,7 @@ use serde_json::Value;
 use tokio::{runtime::Runtime, sync::OnceCell, task::JoinHandle};
 use wisp_dto::{
     SessionSearchInfo,
-    native_conversations::{SendAccepted, SendRequest},
+    native_conversations::{SendAccepted, SendRequest, Snapshot},
     native_files::{Directory, Preview},
     remote_access::RemoteRequest,
 };
@@ -113,6 +113,22 @@ impl Backend {
             let value = host.dispatch(request).await?;
             serde_json::from_value(value).map_err(|e| e.to_string())
         })
+    }
+
+    /// A page of a conversation: the newest one, or the one before
+    /// `before`. GPUI draws the host's compaction rows, so it asks for them;
+    /// every snapshot it reads goes through here.
+    pub fn snapshot(
+        &self,
+        project: Option<String>,
+        session: Option<String>,
+        before: Option<i64>,
+    ) -> Reply<Snapshot> {
+        self.request(
+            "native_conversation_snapshot",
+            project,
+            snapshot_args(session.as_deref(), before),
+        )
     }
 
     /// Runs a desktop-only host operation. These are direct method calls and
@@ -1106,12 +1122,12 @@ impl Backend {
         self.local(move |host| async move { host.revoke_global_grant(&tool).await })
     }
 
-    /// What the model is sent for a conversation: its saved working set.
     /// Puts back what the compaction at `epoch` replaced.
     pub fn undo_compaction(&self, project: String, session: String, epoch: i64) -> Reply<()> {
         self.local(move |host| async move { host.undo_compaction(&project, &session, epoch).await })
     }
 
+    /// What the model is sent for a conversation: its saved working set.
     pub fn model_view(
         &self,
         project: String,
@@ -1307,13 +1323,16 @@ impl Backend {
         self.local(|host| async move { host.check_for_update().await })
     }
 
-    /// Compacts a conversation now.
+    /// Compacts a conversation now, the way `kind` says.
     pub fn compact_conversation(
         &self,
         project: String,
         session: String,
+        kind: wisp_server::desktop::CompactKind,
     ) -> Reply<wisp_server::desktop::Compacted> {
-        self.local(move |host| async move { host.compact_conversation(&project, &session).await })
+        self.local(
+            move |host| async move { host.compact_conversation(&project, &session, kind).await },
+        )
     }
 
     /// The browser tools as they stand.
@@ -2674,6 +2693,30 @@ impl Backend {
     pub async fn shutdown(&self) {
         if let Some(host) = self.host.get() {
             host.shutdown().await;
+        }
+    }
+}
+
+/// What a snapshot request carries: the conversation, the page, and the
+/// opt-in to compaction rows, which only a client that draws them sends.
+fn snapshot_args(session: Option<&str>, before: Option<i64>) -> Value {
+    serde_json::json!({
+        "session_id": session,
+        "before_seq": before,
+        "compaction_rows": true,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn every_snapshot_gpui_asks_for_includes_compaction_rows() {
+        for before in [None, Some(12)] {
+            let request: wisp_dto::native_conversations::SessionRequest =
+                serde_json::from_value(super::snapshot_args(Some("s"), before)).unwrap();
+            assert_eq!(request.session_id, "s");
+            assert_eq!(request.before_seq, before);
+            assert!(request.compaction_rows);
         }
     }
 }

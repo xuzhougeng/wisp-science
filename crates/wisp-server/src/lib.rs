@@ -1237,6 +1237,8 @@ impl Server {
         live.reasoning.clear();
         live.written.clear();
         live.draft.clear();
+        live.message_seqs = page.messages.iter().map(|(seq, _)| *seq).collect();
+        live.saved_through = page.latest_seq;
         live.messages = page.messages.into_iter().map(|(_, msg)| msg).collect();
         live.next_before_seq = page.next_before_seq;
         session.cancel.store(false, Ordering::Relaxed);
@@ -1561,6 +1563,30 @@ impl Server {
         };
         let exploration = self.exploration_state(project, &request.session_id).await;
         let dispatched = self.subagent_parent(&request.session_id).await.is_some();
+        // Where the conversation was compacted, on this page. While a turn
+        // runs the newest page is what the turn started from; a turn and
+        // its end change the generation checked below, so this agrees with
+        // the rows it is placed among.
+        let started_from = {
+            let live = session.live.lock().unwrap();
+            (live.running && request.before_seq.is_none())
+                .then(|| (live.message_seqs.clone(), live.saved_through))
+        };
+        let page_seqs: Vec<i64> = page.messages.iter().map(|(seq, _)| *seq).collect();
+        // Only for a client that asked: others would show the row's text.
+        let compactions = if request.compaction_rows {
+            self.compaction_rows(
+                &request.session_id,
+                started_from.as_ref().map_or(&page_seqs, |(seqs, _)| seqs),
+                request.before_seq,
+                started_from.as_ref().map(|(_, through)| *through),
+                page.latest_seq,
+                archived,
+            )
+            .await?
+        } else {
+            Vec::new()
+        };
         let live = session.live.lock().unwrap();
         // Completion clears the live transcript only after persisting it. If it
         // crossed these store reads, reload instead of returning an old page as
@@ -1582,9 +1608,20 @@ impl Server {
         let states: Vec<runtime::RunState> = runs.iter().map(Into::into).collect();
         runtime::annotate_runs(&mut items, &states, &request.session_id);
         runtime::annotate_plans(&mut items);
-        // Reviews kept with the conversation, after what each one read.
-        if !use_live {
-            runtime::place_reviews(&mut items, &seqs, &saved, &page.reviews);
+        // Reviews kept with the conversation, after what each one read, and
+        // the compactions, after the last message saved before each.
+        if use_live {
+            let started = live.message_seqs.len().min(live.messages.len());
+            runtime::place_after(
+                &mut items,
+                &live.message_seqs[..started],
+                &live.messages[..started],
+                compactions,
+            );
+        } else {
+            let mut placed = runtime::review_rows(&page.reviews);
+            placed.extend(compactions);
+            runtime::place_after(&mut items, &seqs, &saved, placed);
         }
         // A branch's summary brought back here shows as a card of its own.
         runtime::mark_branch_merges(&mut items, &page.branch_merges);

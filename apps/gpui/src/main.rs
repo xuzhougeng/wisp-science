@@ -11,6 +11,7 @@ mod calendar;
 mod channels;
 mod cif;
 mod codex_pool;
+mod compaction;
 mod compose;
 mod console;
 mod controls;

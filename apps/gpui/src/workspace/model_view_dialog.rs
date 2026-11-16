@@ -48,30 +48,12 @@ impl Workspace {
         self.model_view_open.clear();
     }
 
-    /// Undoes the compaction the dialog shows, then shows the working set
-    /// as it is again.
+    /// Undoes the compaction the dialog shows; the dialog then shows the
+    /// working set as it is again.
     fn undo_compaction(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(project), Some(session), Some(view)) = (
-            self.state.project.clone(),
-            self.state.session.clone(),
-            self.model_view.as_ref(),
-        ) else {
-            return;
-        };
-        let reply = self.backend.undo_compaction(project, session, view.epoch);
-        self.model_view_error = None;
-        cx.spawn_in(window, async move |this, cx| {
-            let result = receive(reply).await;
-            let _ = this.update_in(cx, |this, window, cx| {
-                match result {
-                    Ok(()) => this.open_model_view(window, cx),
-                    Err(error) => this.model_view_error = Some(error),
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
+        if let Some(epoch) = self.model_view.as_ref().map(|view| view.epoch) {
+            self.undo_compaction_at(epoch, window, cx);
+        }
     }
 
     fn close_model_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -259,6 +241,13 @@ impl Workspace {
                     ))
                     .on_click(cx.listener(|this, _, window, cx| this.undo_compaction(window, cx)))
             });
+        // Compacting is chosen in a dialog over this one.
+        let compact = Button::new("model-view-compact")
+            .icon(glyph("context-compact"))
+            .label(tr("Compact…"))
+            .small()
+            .disabled(running || self.compacting)
+            .on_click(cx.listener(|this, _, _, cx| this.open_compact(cx)));
         card = card.child(
             div()
                 .h_flex()
@@ -266,6 +255,7 @@ impl Workspace {
                 .justify_end()
                 .pt_2()
                 .children(undo)
+                .child(compact)
                 .child(
                     Button::new("model-view-close")
                         .label(tr("Close"))

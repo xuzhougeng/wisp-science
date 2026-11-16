@@ -63,7 +63,7 @@ pub const COMMANDS: [(&str, Slash, &str); 19] = [
         Slash::Archive,
         "Archive this conversation's research",
     ),
-    ("/compact", Slash::Compact, "Compact this conversation now"),
+    ("/compact", Slash::Compact, "Compact this conversation"),
     (
         "/timer",
         Slash::Timer,
@@ -214,7 +214,7 @@ pub fn compacted_note(before: usize, after: usize, summarised: bool) -> String {
     let how = if summarised {
         tr("Earlier turns were folded into a summary.")
     } else {
-        tr("Old tool output was pruned; no summary was needed.")
+        tr("Old tool output was pruned; every turn stays as it was.")
     };
     format!(
         "{} {how}",
@@ -235,7 +235,7 @@ mod note_tests {
             super::compacted_note(90_000, 12_000, true),
             "Compacted: about 90000 tokens before, 12000 after. The whole history is archived in the project. Earlier turns were folded into a summary."
         );
-        assert!(super::compacted_note(10, 9, false).ends_with("no summary was needed."));
+        assert!(super::compacted_note(10, 9, false).ends_with("every turn stays as it was."));
         assert_eq!(
             super::compacted_note(11_086, 11_086, false),
             "Nothing could be shortened yet; the whole history is archived in the project."

@@ -674,6 +674,12 @@ pub struct SessionRequest {
     pub session_id: String,
     #[serde(default)]
     pub before_seq: Option<i64>,
+    /// A snapshot request may ask for `compaction` rows (a serialized
+    /// `ContextCompactionDto` each) where the conversation was compacted.
+    /// Off unless asked for, so a client that does not draw them never gets
+    /// their raw text; other commands ignore it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub compaction_rows: bool,
 }
 
 /// Deletion choices come from the native preview of the same project/selection.
@@ -1199,6 +1205,23 @@ pub struct Snapshot {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn compaction_rows_are_sent_only_when_a_snapshot_request_asks() {
+        let plain: super::SessionRequest =
+            serde_json::from_value(serde_json::json!({"session_id": "s"})).unwrap();
+        assert!(!plain.compaction_rows);
+        // An older client's request is written as it was.
+        assert_eq!(
+            serde_json::to_value(&plain).unwrap(),
+            serde_json::json!({"session_id": "s", "before_seq": null})
+        );
+        let asked: super::SessionRequest = serde_json::from_value(
+            serde_json::json!({"session_id": "s", "before_seq": 4, "compaction_rows": true}),
+        )
+        .unwrap();
+        assert!(asked.compaction_rows);
+        assert_eq!(asked.before_seq, Some(4));
+    }
     #[test]
     fn rules_fixture_requires_explicit_status_and_rejects_history_cursors() {
         let data: serde_json::Value = serde_json::from_str(include_str!(

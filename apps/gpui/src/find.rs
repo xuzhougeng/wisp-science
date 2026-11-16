@@ -14,8 +14,9 @@ pub struct Find {
 }
 
 fn matches(item: &Item, needle: &str) -> bool {
-    // A kept review's row holds its report as data, not words to find.
-    if item.role == "review" {
+    // A kept review's row holds its report as data, not words to find, and
+    // so does the line where the conversation was compacted.
+    if item.role == "review" || item.role == "compaction" {
         return false;
     }
     item.text.to_lowercase().contains(needle)
@@ -123,10 +124,18 @@ mod tests {
         let rows = vec![
             row("assistant", "The reads were mapped.", None, Some(1)),
             row("review", "{\"summary\":\"reads checked\"}", None, Some(1)),
+            row(
+                "compaction",
+                "{\"strategy\":\"manual\",\"checkpoint\":\"reads were mapped\"}",
+                None,
+                Some(4),
+            ),
         ];
         find.search(&rows, "reads");
         assert_eq!(find.hits.len(), 1);
         find.search(&rows, "summary");
+        assert!(find.hits.is_empty());
+        find.search(&rows, "manual");
         assert!(find.hits.is_empty());
     }
 

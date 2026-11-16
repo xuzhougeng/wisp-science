@@ -466,10 +466,11 @@ impl Workspace {
     }
 
     /// The small actions under a message. They show while the pointer is
-    /// over the message, and stay under the latest row and one just copied.
+    /// over the message, and stay under the latest message (a compaction
+    /// line after it is not one) and one just copied.
     fn message_actions(&self, index: usize, cx: &mut Context<Self>) -> Div {
         let actions = self.message_action_items(index, cx);
-        if index + 1 == self.rows.len() || self.copied == Some(index) {
+        if controls::latest_message(&self.rows) == Some(index) || self.copied == Some(index) {
             return actions;
         }
         actions
@@ -1140,6 +1141,11 @@ impl Workspace {
                 }
                 div().w_full().px_6().py_1().child(card).into_any_element()
             }
+            // Where the conversation was compacted, as the host placed it.
+            "compaction" => match crate::compaction::card(item) {
+                Some(card) => self.compaction_row(index, card, window, cx),
+                None => div().into_any_element(),
+            },
             _ if item.text.is_empty() => div().into_any_element(),
             _ => div()
                 .group(MESSAGE)

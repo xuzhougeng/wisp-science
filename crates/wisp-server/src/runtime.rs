@@ -1361,23 +1361,36 @@ pub(crate) fn annotate_plans(items: &mut [Item]) {
     }
 }
 
-/// Puts each kept review (`through`, the seq of the last message it read,
-/// and its report) after the rows of that message, as the WebView places
-/// them. `seqs` are the seqs of `messages`, in order; a review is a
-/// `review` row whose text is its report.
-pub(crate) fn place_reviews(
+/// Each kept review (`through`, the seq of the last message it read, and
+/// its report) as a `review` row whose text is its report, to go after the
+/// rows of that message (`place_after`), as the WebView places them.
+pub(crate) fn review_rows(reviews: &[(i64, String)]) -> Vec<(i64, Item)> {
+    reviews
+        .iter()
+        .map(|(through, report)| {
+            let mut row = item("review", report);
+            row.seq = Some(*through);
+            (*through, row)
+        })
+        .collect()
+}
+
+/// Puts each row after the rows of the last message whose seq is at most
+/// its own (`through`). `seqs` are the seqs of `messages`, in order, and
+/// `items` were folded from them (and may go on past them). Rows after
+/// the same message keep the order they are given in.
+pub(crate) fn place_after(
     items: &mut Vec<Item>,
     seqs: &[i64],
     messages: &[Message],
-    reviews: &[(i64, String)],
+    mut rows: Vec<(i64, Item)>,
 ) {
+    rows.sort_by_key(|(through, _)| *through);
     let mut inserted = 0;
-    for (through, report) in reviews {
-        let read = seqs.iter().take_while(|seq| **seq <= *through).count();
+    for (through, row) in rows {
+        let read = seqs.iter().take_while(|seq| **seq <= through).count();
         let at =
             (self::items(&messages[..read.min(messages.len())]).len() + inserted).min(items.len());
-        let mut row = item("review", report);
-        row.seq = Some(*through);
         items.insert(at, row);
         inserted += 1;
     }
@@ -1547,11 +1560,11 @@ mod tests {
         ];
         let seqs = [11, 12, 13, 14];
         let mut rows = items(&messages);
-        place_reviews(
+        place_after(
             &mut rows,
             &seqs,
             &messages,
-            &[(12, "first".into()), (14, "second".into())],
+            review_rows(&[(12, "first".into()), (14, "second".into())]),
         );
         let shape: Vec<_> = rows
             .iter()
@@ -1569,6 +1582,48 @@ mod tests {
             ]
         );
         assert_eq!(rows[2].seq, Some(12));
+    }
+
+    #[test]
+    fn a_compaction_row_goes_after_the_rows_of_the_last_message_before_it() {
+        let messages = [
+            Message::user("count the reads"),
+            Message::assistant("100"),
+            Message::user("and the adapters?"),
+            Message::assistant("none"),
+        ];
+        let seqs = [11, 12, 20, 21];
+        let mut rows = items(&messages);
+        // The compaction read through 15 (its own rows took 13..=15), and
+        // a review read through 12; the review comes first after 12, and
+        // the compaction is still before the next question.
+        let mut rows_to_place = review_rows(&[(12, "first".into())]);
+        rows_to_place.insert(0, (15, item("compaction", "{}")));
+        place_after(&mut rows, &seqs, &messages, rows_to_place);
+        let shape: Vec<_> = rows.iter().map(|row| row.role.as_str()).collect();
+        assert_eq!(
+            shape,
+            [
+                "user",
+                "assistant",
+                "review",
+                "compaction",
+                "user",
+                "assistant"
+            ]
+        );
+        // One after the last saved message goes after it and before what a
+        // running turn has added since, which has no seq yet.
+        let mut rows = items(&messages);
+        rows.push(item("assistant", "still writing"));
+        place_after(
+            &mut rows,
+            &seqs,
+            &messages,
+            vec![(21, item("compaction", "{}"))],
+        );
+        assert_eq!(rows[4].role, "compaction");
+        assert_eq!(rows[5].text, "still writing");
     }
 
     #[test]

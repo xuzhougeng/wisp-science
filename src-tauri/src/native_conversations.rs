@@ -1831,6 +1831,7 @@ mod tests {
         let mut args = wisp_dto::native_conversations::SessionRequest {
             session_id: "assistant-session".into(),
             before_seq: None,
+            compaction_rows: false,
         };
         assert!(super::validate_session_review(&args, false).is_ok());
         assert!(super::validate_session_review(&args, true).is_err());
