@@ -14872,6 +14872,330 @@ async fn a_conversation_is_compacted_on_request_and_its_history_archived() {
     server.shutdown().await;
 }
 
+/// Writes a handoff note when asked in the WebView's words, keeping the
+/// user's instruction in it, and otherwise answers as the offline model.
+struct HandoffWriter;
+#[async_trait]
+impl Provider for HandoffWriter {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _: &[ToolSchema],
+    ) -> wisp_llm::Result<Completion> {
+        let texts: Vec<String> = messages.iter().map(|m| m.content.as_text()).collect();
+        let content = if texts.first().is_some_and(|t| t.contains("handoff note")) {
+            let mut note = "## Goal and current stage\nAlign the reads.".to_owned();
+            if let Some(asked) = texts
+                .iter()
+                .find(|t| t.starts_with("<handoff-instruction>"))
+            {
+                note.push_str(&format!("\n\nAsked: {asked}"));
+            }
+            if texts.iter().any(|t| t.contains("align the reads")) {
+                note.push_str("\n\nFrom the transcript.");
+            }
+            note
+        } else {
+            "Saved result".to_owned()
+        };
+        Ok(Completion {
+            content,
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        _: &[Message],
+        _: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        sink.on_text("Saved result");
+        Ok(Completion {
+            content: "Saved result".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_conversation_is_handed_off_to_a_new_one_that_starts_from_the_note() {
+    let temp = tempfile::tempdir().unwrap();
+    let factory: ModelFactory = Arc::new(|_| Box::new(HandoffWriter));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let ask = |session: &str, instruction: Option<String>| dto::HandoffRequest {
+        session_id: session.into(),
+        instruction,
+    };
+    let source = create(&server).await;
+    // Nothing was said yet: there is nothing to hand off.
+    assert!(server
+        .draft_handoff(PROJECT, ask(&source, None))
+        .await
+        .is_err());
+    send(&server, &source, "align the reads").await.unwrap();
+    wait_for(&server, &source, |s| !s.running && s.items.len() >= 2).await;
+    let said = |messages: Vec<Message>| {
+        messages
+            .iter()
+            .map(|message| (message.role.clone(), message.content.as_text()))
+            .collect::<Vec<_>>()
+    };
+    let before = said(server.whole_transcript(&source).await.unwrap());
+
+    // Not this project's conversation, or too long an instruction.
+    assert!(server
+        .draft_handoff("missing", ask(&source, None))
+        .await
+        .is_err());
+    assert!(server
+        .draft_handoff(PROJECT, ask(&source, Some("研".repeat(8001))))
+        .await
+        .is_err());
+    // The model writes the note from the transcript, as the WebView asks.
+    let drafted = server
+        .draft_handoff(PROJECT, ask(&source, Some("keep the QC thresholds".into())))
+        .await
+        .unwrap();
+    assert_eq!(drafted.project_id, PROJECT);
+    assert_eq!(drafted.session_id, source);
+    assert!(
+        drafted.note.starts_with("## Goal and current stage"),
+        "{}",
+        drafted.note
+    );
+    assert!(drafted.note.contains("keep the QC thresholds"));
+    assert!(drafted.note.contains("From the transcript."));
+
+    // An empty note, or another project, starts nothing.
+    assert!(server
+        .start_from_handoff(PROJECT, &source, "  \n ")
+        .await
+        .is_err());
+    assert!(server
+        .start_from_handoff("missing", &source, "note")
+        .await
+        .is_err());
+    // The note as the user changed it is the new conversation's first
+    // message, in the same project.
+    let edited = format!("{}\n\nAlso re-run QC.", drafted.note);
+    let fresh = server
+        .start_from_handoff(PROJECT, &source, &edited)
+        .await
+        .unwrap();
+    assert_ne!(fresh, source);
+    assert_eq!(
+        server.0.store.frame_project_id(&fresh).await.unwrap(),
+        Some(PROJECT.to_owned())
+    );
+    let started = wait_for(&server, &fresh, |s| !s.running && s.items.len() >= 2).await;
+    assert!(started.error.is_none(), "{:?}", started.error);
+    assert_eq!(started.items[0].role, "user");
+    assert_eq!(started.items[0].text, edited);
+    let opened = said(server.whole_transcript(&fresh).await.unwrap());
+    assert_eq!(
+        opened
+            .iter()
+            .find(|(role, _)| *role == wisp_llm::Role::User),
+        Some(&(wisp_llm::Role::User, edited.clone()))
+    );
+    // The conversation handed off is as it was.
+    assert_eq!(
+        said(server.whole_transcript(&source).await.unwrap()),
+        before
+    );
+    server.shutdown().await;
+}
+
+/// Refuses every turn as too long for its context window while `full` is
+/// set, as a provider does once a conversation has outgrown it; writes a
+/// summary when asked for one, and otherwise answers. Records each turn's
+/// request.
+struct Outgrown {
+    full: Arc<std::sync::atomic::AtomicBool>,
+    seen: Arc<std::sync::Mutex<Vec<Vec<String>>>>,
+}
+#[async_trait]
+impl Provider for Outgrown {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+        Ok(Completion {
+            content: "Summary of the earlier turns".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        messages: &[Message],
+        _: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        self.seen
+            .lock()
+            .unwrap()
+            .push(messages.iter().map(|m| m.content.as_text()).collect());
+        if self.full.load(Ordering::Relaxed) {
+            return Err(wisp_llm::LlmError::Api {
+                status: 400,
+                body: r#"{"error":{"message":"This model's maximum context length is 8192 tokens. However, your messages resulted in 9000 tokens.","code":"context_length_exceeded"}}"#.into(),
+            });
+        }
+        sink.on_text("Continued");
+        Ok(Completion {
+            content: "Continued".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_turn_refused_as_too_long_is_compacted_and_continued_or_taken_elsewhere() {
+    let temp = tempfile::tempdir().unwrap();
+    let full: Arc<std::sync::atomic::AtomicBool> = Arc::default();
+    let seen: Arc<std::sync::Mutex<Vec<Vec<String>>>> = Arc::default();
+    let (outgrown, record) = (full.clone(), seen.clone());
+    let factory: ModelFactory = Arc::new(move |_| {
+        Box::new(Outgrown {
+            full: outgrown.clone(),
+            seen: record.clone(),
+        })
+    });
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    for message in ["align the reads", "now call variants"] {
+        send(&server, &session, message).await.unwrap();
+        let ended = wait_for(&server, &session, |s| !s.running && s.items.len() >= 2).await;
+        assert!(ended.error.is_none() && ended.error_kind.is_none());
+    }
+
+    // The conversation has outgrown the window: the turn fails, even after
+    // its own compaction, and the snapshot says why in a way a client can
+    // offer a way out of; the text stays for those that only show it.
+    full.store(true, Ordering::Relaxed);
+    send(&server, &session, "and summarise").await.unwrap();
+    let failed = wait_for(&server, &session, |s| !s.running && s.error.is_some()).await;
+    assert_eq!(
+        failed.error_kind,
+        Some(dto::TurnErrorKind::ContextTooLong),
+        "{:?}",
+        failed.error
+    );
+    assert!(
+        failed
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("maximum context length"),
+        "{:?}",
+        failed.error
+    );
+    let sent = serde_json::to_value(&failed).unwrap();
+    assert_eq!(sent["error_kind"], "context_too_long");
+
+    // Taken elsewhere: a new conversation is sent the WebView's prompt
+    // with this one referenced, and reads it from there.
+    full.store(false, Ordering::Relaxed);
+    assert!(server
+        .continue_in_new_conversation("missing", &session, "Continue.")
+        .await
+        .is_err());
+    let elsewhere = server
+        .continue_in_new_conversation(
+            PROJECT,
+            &session,
+            "Continue the last unfinished request from the attached conversation.",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        server.0.store.frame_project_id(&elsewhere).await.unwrap(),
+        Some(PROJECT.to_owned())
+    );
+    let there = wait_for(&server, &elsewhere, |s| !s.running && s.items.len() >= 2).await;
+    assert!(there.error.is_none(), "{:?}", there.error);
+    assert!(seen
+        .lock()
+        .unwrap()
+        .last()
+        .unwrap()
+        .iter()
+        .any(|text| text.contains("now call variants")));
+    // The conversation it came from still says what happened.
+    let still = snapshot(&server, &session).await;
+    assert_eq!(still.error_kind, Some(dto::TurnErrorKind::ContextTooLong));
+
+    // Compacted and continued: the same compaction the marker shows, then
+    // the interrupted turn goes on from what was saved, with no new
+    // message and nothing said twice.
+    let done = server
+        .compact_conversation(PROJECT, &session, desktop::CompactKind::Semantic)
+        .await
+        .unwrap();
+    assert!(done.summarised, "{done:?}");
+    let marked = compaction_cards(&snapshot_with_compactions(&server, &session).await.items);
+    assert!(
+        marked.iter().any(|(_, card)| card.strategy == "manual"),
+        "{marked:?}"
+    );
+    seen.lock().unwrap().clear();
+    // As the desktop asks for it.
+    server
+        .send(
+            PROJECT,
+            dto::SendRequest {
+                session_id: session.clone(),
+                request_id: uuid::Uuid::new_v4().to_string(),
+                message: String::new(),
+                resume: true,
+                resume_after: None,
+                attachments: vec![],
+                references: vec![],
+                acp_agent_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    let resumed = wait_for(&server, &session, |s| {
+        !s.running && s.items.last().is_some_and(|row| row.text == "Continued")
+    })
+    .await;
+    assert!(resumed.error.is_none() && resumed.error_kind.is_none());
+    let asked = seen.lock().unwrap().clone();
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    assert!(asked[0]
+        .iter()
+        .any(|text| text.contains("Summary of the earlier turns")));
+    assert_eq!(
+        server
+            .whole_transcript(&session)
+            .await
+            .unwrap()
+            .iter()
+            .filter(|message| message.content.as_text() == "and summarise")
+            .count(),
+        1
+    );
+    server.shutdown().await;
+}
+
 #[tokio::test]
 async fn undoing_the_latest_turn_puts_its_files_back() {
     use desktop::TurnRef;

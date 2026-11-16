@@ -66,6 +66,7 @@ pub enum Command {
     SaveAsSkill,
     Review,
     ModelView,
+    Handoff,
     Terminal,
     PythonConsole,
     RConsole,
@@ -128,6 +129,7 @@ impl Command {
             Command::SaveAsSkill => tr("Save this conversation as a skill"),
             Command::Review => tr("Review this conversation"),
             Command::ModelView => tr("What the model is sent"),
+            Command::Handoff => tr("Hand off to a new conversation"),
             Command::Terminal => tr("Open a terminal in the project folder"),
             Command::PythonConsole => tr("Python console for this conversation"),
             Command::RConsole => tr("R console for this conversation"),
@@ -189,6 +191,7 @@ impl Command {
             Command::SaveAsSkill => "skill",
             Command::Review => "review",
             Command::ModelView => "eye",
+            Command::Handoff => "conversation-move",
             Command::Terminal => "terminal",
             Command::PythonConsole => "code",
             Command::RConsole => "runtime-panel",
@@ -241,6 +244,7 @@ impl Command {
             | Command::SaveAsSkill
             | Command::Review
             | Command::ModelView
+            | Command::Handoff
             | Command::Terminal
             | Command::PythonConsole
             | Command::RConsole
@@ -282,7 +286,7 @@ impl Command {
         }
     }
 
-    const ALL: [Command; 57] = [
+    const ALL: [Command; 58] = [
         Command::NewConversation,
         Command::OpenFolder,
         Command::Home,
@@ -313,6 +317,7 @@ impl Command {
         Command::SaveAsSkill,
         Command::Review,
         Command::ModelView,
+        Command::Handoff,
         Command::Terminal,
         Command::PythonConsole,
         Command::RConsole,

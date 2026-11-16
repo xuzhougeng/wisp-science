@@ -1,8 +1,13 @@
 //! Compaction in the transcript: the quiet line where the conversation was
 //! compacted, read from the `compaction` row the host puts after the last
 //! message saved before it, and the kinds of compaction the compact dialog
-//! offers, with the WebView's words for each.
-use wisp_dto::{ContextCompactionDto, native_conversations::Item};
+//! offers, with the WebView's words for each. Also the way on from a turn
+//! the model refused because the conversation outgrew its context window:
+//! the WebView's three choices, offered in a bar above the composer.
+use wisp_dto::{
+    ContextCompactionDto,
+    native_conversations::{Item, Snapshot, TurnErrorKind},
+};
 use wisp_server::desktop::CompactKind;
 
 use crate::{
@@ -98,9 +103,136 @@ impl Kind {
     }
 }
 
+/// A way on from a turn the model refused as too long, the WebView's three.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Recovery {
+    /// The compact dialog, set to semantic; once the compaction is done the
+    /// unfinished turn goes on from what was saved.
+    CompactAndContinue,
+    /// A new conversation that reads this one and goes on with the request.
+    NewConversation,
+    /// Nothing more is sent; the error and the work stay.
+    Pause,
+}
+
+impl Recovery {
+    /// In the order the bar offers them.
+    pub const ALL: [Recovery; 3] = [
+        Recovery::CompactAndContinue,
+        Recovery::NewConversation,
+        Recovery::Pause,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Recovery::CompactAndContinue => tr("Compact and continue"),
+            Recovery::NewConversation => tr("Continue in a new conversation"),
+            Recovery::Pause => tr("Pause conversation"),
+        }
+    }
+
+    /// What it does, in the WebView's words but for what this desktop
+    /// does: the new conversation reads an excerpt of this one, not a
+    /// Reader's summary.
+    pub fn hint(self) -> &'static str {
+        match self {
+            Recovery::CompactAndContinue => tr(
+                "Archive the full history, fold older turns, then retry the unfinished response without replaying completed tools.",
+            ),
+            Recovery::NewConversation => tr(
+                "Start fresh in this project with this conversation attached as context, and go on with the unfinished request.",
+            ),
+            Recovery::Pause => {
+                tr("Keep the error and all completed work here without sending another request.")
+            }
+        }
+    }
+}
+
+/// What the new conversation is asked first, in the WebView's words.
+pub fn continue_prompt() -> &'static str {
+    tr(
+        "Continue the last unfinished request from the attached conversation. Use its summarized context, preserve completed work, and report the final result, verification, and anything still incomplete.",
+    )
+}
+
+/// The failure the bar is about, so pausing on it does not hide a later
+/// one: the conversation and the turn that failed.
+pub fn failure(snapshot: &Snapshot) -> String {
+    format!(
+        "{}\n{}",
+        snapshot.session_id,
+        snapshot.request_id.as_deref().unwrap_or_default()
+    )
+}
+
+/// Whether the bar shows: the last turn was refused as too long, nothing
+/// runs, the conversation can be written to, Wisp runs it (an ACP agent
+/// keeps its own context) and the user has not paused on this failure.
+pub fn recovery_offered(snapshot: &Snapshot, read_only: bool, paused: bool) -> bool {
+    snapshot.error_kind == Some(TurnErrorKind::ContextTooLong)
+        && !snapshot.running
+        && !read_only
+        && snapshot.acp_agent_id.is_none()
+        && !paused
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn failed(kind: Option<&str>) -> Snapshot {
+        serde_json::from_value(serde_json::json!({
+            "schema": "v1", "epoch": "e", "sequence": 1, "project_id": "p",
+            "session_id": "s", "items": [], "next_before_seq": null,
+            "running": false, "stopping": false, "read_only": false,
+            "model_id": "m", "request_id": "r1",
+            "error": "api: 400 This model's maximum context length is 8192 tokens.",
+            "error_kind": kind, "approvals": []
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn the_bar_shows_for_a_turn_refused_as_too_long_until_paused() {
+        let too_long = failed(Some("context_too_long"));
+        assert!(recovery_offered(&too_long, false, false));
+        // Not while a turn runs, in a conversation that cannot be written
+        // to, in one an ACP agent runs, or once paused on.
+        let mut running = too_long.clone();
+        running.running = true;
+        assert!(!recovery_offered(&running, false, false));
+        assert!(!recovery_offered(&too_long, true, false));
+        let mut acp = too_long.clone();
+        acp.acp_agent_id = Some("agent".into());
+        assert!(!recovery_offered(&acp, false, false));
+        assert!(!recovery_offered(&too_long, false, true));
+        // Any other failure, one an older host does not name, or one this
+        // build does not know: the error alone.
+        assert!(!recovery_offered(&failed(None), false, false));
+        assert!(!recovery_offered(&failed(Some("quota")), false, false));
+        // Pausing is on this failure: the next turn that fails is another.
+        let mut later = too_long.clone();
+        later.request_id = Some("r2".into());
+        assert_ne!(failure(&too_long), failure(&later));
+        assert_eq!(failure(&too_long), failure(&too_long.clone()));
+    }
+
+    #[test]
+    fn the_bar_offers_the_webviews_three_ways_on() {
+        assert_eq!(
+            Recovery::ALL.map(Recovery::label),
+            [
+                "Compact and continue",
+                "Continue in a new conversation",
+                "Pause conversation"
+            ]
+        );
+        for recovery in Recovery::ALL {
+            assert!(!recovery.hint().is_empty());
+        }
+        assert!(continue_prompt().starts_with("Continue the last unfinished request"));
+    }
 
     fn row(role: &str, text: &str) -> Item {
         serde_json::from_value(serde_json::json!({

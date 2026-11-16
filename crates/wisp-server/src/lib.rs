@@ -24,6 +24,7 @@ mod explorations;
 mod export;
 mod files;
 mod follow_ups;
+mod handoff;
 mod hooks;
 mod mandate_report;
 mod mandates;
@@ -1682,6 +1683,18 @@ impl Server {
             .values()
             .map(|(value, _)| value.clone())
             .collect();
+        let error = live
+            .error
+            .clone()
+            .or_else(|| turn.as_ref().and_then(|turn| turn.error.clone()));
+        // Only the text of a failure is kept, so it is read from that, for
+        // a conversation Wisp runs: an ACP agent keeps its own context.
+        let error_kind = error
+            .as_deref()
+            .filter(|error| {
+                options.acp_agent.is_empty() && wisp_llm::is_context_overflow_message(error)
+            })
+            .map(|_| dto::TurnErrorKind::ContextTooLong);
         let snapshot = dto::Snapshot {
             magpie: None,
             schema: dto::SCHEMA.into(),
@@ -1725,10 +1738,8 @@ impl Server {
             history_state: None,
             queue: None,
             request_id: turn.as_ref().map(|turn| turn.request_id.clone()),
-            error: live
-                .error
-                .clone()
-                .or_else(|| turn.and_then(|turn| turn.error)),
+            error,
+            error_kind,
             approval_scopes: approvals
                 .iter()
                 .map(|a| (a.approval_id.clone(), vec![dto::ApprovalScope::Once]))

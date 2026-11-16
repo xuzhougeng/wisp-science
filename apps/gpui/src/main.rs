@@ -22,6 +22,7 @@ mod favorites;
 mod files;
 mod find;
 mod generated;
+mod handoff;
 mod home;
 mod i18n;
 mod i18n_zh;

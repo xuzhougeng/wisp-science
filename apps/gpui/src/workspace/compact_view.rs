@@ -3,13 +3,17 @@
 //! sent), the quiet line the transcript shows where the conversation was
 //! compacted, and undoing the latest compaction from that line or from
 //! the dialog of what the model is sent; both go through one host call.
+//! And the bar above the composer when the model refused a turn because
+//! the conversation outgrew its context window, with the WebView's three
+//! ways on: compact and continue the turn, continue in a new
+//! conversation, or pause.
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     text::TextView,
 };
-use wisp_dto::ContextCompactionDto;
+use wisp_dto::{ContextCompactionDto, native_conversations::SendRequest};
 
 use super::{
     Workspace,
@@ -19,7 +23,8 @@ use super::{
 use crate::{
     assets::icon,
     backend::receive,
-    compaction::{self, Kind},
+    compaction::{self, Kind, Recovery},
+    compose::Chip,
     i18n::tr,
     layers::Layer,
     slash,
@@ -33,13 +38,28 @@ impl Workspace {
         }
         self.layers.close(Layer::Palette);
         self.compact_error = None;
+        // Asked for on its own, it only compacts.
+        self.compact_resume = None;
         self.layers.open(Layer::CompactContext);
         cx.notify();
+    }
+
+    /// The WebView's Compact and continue: the compact dialog, set to
+    /// semantic, and once that compaction is done the turn the model
+    /// refused goes on. Cancelling the dialog cancels the going on.
+    fn compact_and_continue(&mut self, cx: &mut Context<Self>) {
+        let Some(session) = self.state.session.clone() else {
+            return;
+        };
+        self.open_compact(cx);
+        self.compact_kind = Kind::Semantic;
+        self.compact_resume = Some(session);
     }
 
     fn close_compact(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.layers.close(Layer::CompactContext) {
             self.compact_error = None;
+            self.compact_resume = None;
             // What the model is sent stays open under it when it was.
             if !self.layers.contains(Layer::ModelView) {
                 self.focus_composer(window, cx);
@@ -75,6 +95,12 @@ impl Workspace {
                 }
                 match result {
                     Ok(done) => {
+                        // Asked for to go on with a refused turn: it does,
+                        // in the conversation it was asked in.
+                        let resume = this
+                            .compact_resume
+                            .take()
+                            .is_some_and(|resume| selection.session.as_ref() == Some(&resume));
                         this.notice = Some(slash::compacted_note(
                             done.before,
                             done.after,
@@ -82,6 +108,9 @@ impl Workspace {
                         ));
                         this.close_compact(window, cx);
                         this.after_context_change(window, cx);
+                        if resume {
+                            this.resume_turn(window, cx);
+                        }
                     }
                     Err(error) => {
                         this.notice = None;
@@ -242,6 +271,200 @@ impl Workspace {
         row.into_any_element()
     }
 
+    /// Goes on with the turn the model refused, from what was saved: no
+    /// new message, and the tool calls that already ran are not run again.
+    fn resume_turn(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let selection = self.state.selection();
+        let (Some(project), Some(session)) = (selection.project.clone(), selection.session.clone())
+        else {
+            return;
+        };
+        if self.read_only().is_some() {
+            return;
+        }
+        self.pending = true;
+        self.error = None;
+        self.poll = None;
+        let reply = self.backend.send_message(
+            project,
+            SendRequest {
+                session_id: session,
+                request_id: uuid::Uuid::new_v4().to_string(),
+                message: String::new(),
+                resume: true,
+                resume_after: None,
+                attachments: Vec::new(),
+                references: Vec::new(),
+                acp_agent_id: None,
+            },
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.pending = false;
+                if result.is_ok() {
+                    this.watch_activity(window, cx);
+                }
+                if !this.state.current(&selection) {
+                    return;
+                }
+                match result {
+                    Ok(_) => {
+                        if let Some(snapshot) = &mut this.state.snapshot {
+                            snapshot.running = true;
+                        }
+                        this.load_sessions(window, cx);
+                    }
+                    Err(error) => this.error = Some(error),
+                }
+                this.start_poll(window, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// The WebView's Continue in a new conversation: a new one in this
+    /// project is asked to go on with the unfinished request, with this
+    /// one attached as context, and opened.
+    fn continue_elsewhere(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let selection = self.state.selection();
+        let (Some(project), Some(source)) = (selection.project.clone(), selection.session.clone())
+        else {
+            return;
+        };
+        if self.pending {
+            return;
+        }
+        self.pending = true;
+        self.error = None;
+        let prompt = compaction::continue_prompt().to_owned();
+        let title = self
+            .known
+            .get(&source)
+            .map(|row| row.title.clone())
+            .unwrap_or_default();
+        let reply = self.backend.continue_in_new_conversation(
+            project.clone(),
+            source.clone(),
+            prompt.clone(),
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.pending = false;
+                match result {
+                    Ok(id) => {
+                        this.watch_activity(window, cx);
+                        // The conversation it read shows on the message.
+                        this.sent_references.entry(id.clone()).or_default().push((
+                            prompt.clone(),
+                            vec![Chip::Conversation {
+                                id: source.clone(),
+                                title: title.clone(),
+                            }],
+                        ));
+                        if this.state.current(&selection) {
+                            this.open_session(project.clone(), id, window, cx);
+                        } else {
+                            this.load_sessions(window, cx);
+                        }
+                    }
+                    Err(error) if this.state.current(&selection) => this.error = Some(error),
+                    Err(_) => {}
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// The WebView's Pause conversation: nothing more is sent, the bar goes
+    /// and the error stays; a later turn that fails the same way shows it
+    /// again.
+    fn pause_after_too_long(&mut self, cx: &mut Context<Self>) {
+        if let Some(snapshot) = &self.state.snapshot {
+            self.paused_failures.insert(compaction::failure(snapshot));
+        }
+        cx.notify();
+    }
+
+    /// Whether the open conversation shows the bar for a turn the model
+    /// refused as too long.
+    pub(super) fn recovery_shown(&self) -> bool {
+        self.state.snapshot.as_ref().is_some_and(|snapshot| {
+            compaction::recovery_offered(
+                snapshot,
+                self.read_only().is_some(),
+                self.paused_failures
+                    .contains(&compaction::failure(snapshot)),
+            )
+        })
+    }
+
+    /// The bar above the composer after a turn the model refused because
+    /// the conversation outgrew its context window: what happened, the
+    /// provider's words under it, and the three ways on.
+    pub(super) fn render_context_recovery(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        if !self.recovery_shown() {
+            return None;
+        }
+        let snapshot = self.state.snapshot.as_ref()?;
+        let muted = cx.theme().muted_foreground;
+        let attention = cx.theme().warning;
+        let busy = self.pending || self.compacting;
+        let mut choices = div().h_flex().flex_wrap().gap_2();
+        for (at, recovery) in Recovery::ALL.into_iter().enumerate() {
+            let button = Button::new(("context-recovery", at))
+                .label(recovery.label())
+                .small()
+                .disabled(busy)
+                .tooltip(recovery.hint());
+            let button = match recovery {
+                Recovery::CompactAndContinue => button
+                    .icon(glyph("context-compact"))
+                    .primary()
+                    .on_click(cx.listener(|this, _, _, cx| this.compact_and_continue(cx))),
+                Recovery::NewConversation => button.icon(glyph("chat")).on_click(
+                    cx.listener(|this, _, window, cx| this.continue_elsewhere(window, cx)),
+                ),
+                Recovery::Pause => button
+                    .icon(glyph("pause"))
+                    .ghost()
+                    .on_click(cx.listener(|this, _, _, cx| this.pause_after_too_long(cx))),
+            };
+            choices = choices.child(button);
+        }
+        Some(
+            surfaces::bar("context-recovery", cx)
+                .v_flex()
+                .gap_1()
+                .child(
+                    div()
+                        .h_flex()
+                        .gap_2()
+                        .child(icon("circle-alert").text_color(attention))
+                        .child(
+                            div()
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(tr("This conversation is too long")),
+                        ),
+                )
+                .child(div().text_xs().text_color(muted).child(tr(
+                    "The model rejected the request because the conversation exceeded its context window. Choose how Wisp should preserve and continue the work.",
+                )))
+                .children(
+                    snapshot
+                        .error
+                        .clone()
+                        .map(|error| div().text_xs().text_color(muted).truncate().child(error)),
+                )
+                .child(choices.pt_1()),
+        )
+    }
+
     /// The choice of compaction: the kinds the host does, each with what
     /// it does, then Cancel and the main action.
     pub(super) fn render_compact_dialog(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -290,6 +513,11 @@ impl Workspace {
         card = card.child(div().text_xs().text_color(muted).child(tr(
             "The full transcript is archived first, and the latest compaction can be undone until the conversation goes on.",
         )));
+        if self.compact_resume.is_some() {
+            card = card.child(div().text_xs().text_color(muted).child(tr(
+                "Once it is compacted, the unfinished response goes on from what was saved, without running finished tools again.",
+            )));
+        }
         if running {
             card = card.child(div().text_xs().text_color(muted).child(tr(
                 "A turn is running in this conversation; compact it when the turn has ended",
@@ -309,6 +537,8 @@ impl Workspace {
                 .icon(glyph("context-compact"))
                 .label(if self.compacting {
                     tr("Compacting…")
+                } else if self.compact_resume.is_some() {
+                    tr("Compact and continue")
                 } else {
                     tr("Start compaction")
                 })

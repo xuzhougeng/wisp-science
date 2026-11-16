@@ -235,7 +235,18 @@ impl Workspace {
             .small()
             .disabled(running || self.compacting)
             .on_click(cx.listener(|this, _, _, cx| this.open_compact(cx)));
-        card.actions(undo).action(compact).action(
+        // So is handing the conversation off, as from the WebView's usage
+        // panel; the dialog stays open under it.
+        let handoff = Button::new("model-view-handoff")
+            .icon(glyph("conversation-move"))
+            .label(tr("Hand off…"))
+            .small()
+            .disabled(self.handoff_refusal().is_some() || self.compacting)
+            .tooltip(tr(
+                "Summarize the current context into a note you can edit, then start a new conversation from it",
+            ))
+            .on_click(cx.listener(|this, _, window, cx| this.open_handoff(window, cx)));
+        card.actions(undo).action(compact).action(handoff).action(
             Button::new("model-view-close")
                 .label(tr("Close"))
                 .small()

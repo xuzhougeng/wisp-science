@@ -1357,6 +1357,52 @@ impl Backend {
         )
     }
 
+    /// Has the conversation's model write a note to hand it off with.
+    pub fn draft_handoff(
+        &self,
+        project: String,
+        session: String,
+        instruction: Option<String>,
+    ) -> Reply<wisp_dto::native_conversations::HandoffResponse> {
+        self.local(move |host| async move {
+            host.draft_handoff(
+                &project,
+                wisp_dto::native_conversations::HandoffRequest {
+                    session_id: session,
+                    instruction,
+                },
+            )
+            .await
+        })
+    }
+
+    /// Starts a new conversation in the project with `note` as its first
+    /// message; returns it.
+    pub fn start_from_handoff(
+        &self,
+        project: String,
+        source: String,
+        note: String,
+    ) -> Reply<String> {
+        self.local(
+            move |host| async move { host.start_from_handoff(&project, &source, &note).await },
+        )
+    }
+
+    /// Starts a new conversation in the project that is sent `prompt` with
+    /// `source` referenced; returns it.
+    pub fn continue_in_new_conversation(
+        &self,
+        project: String,
+        source: String,
+        prompt: String,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.continue_in_new_conversation(&project, &source, &prompt)
+                .await
+        })
+    }
+
     /// The browser tools as they stand.
     pub fn browser_settings(&self) -> Reply<wisp_server::desktop::BrowserSettings> {
         self.local(|host| async move { host.browser_settings().await })

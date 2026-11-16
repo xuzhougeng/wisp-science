@@ -156,8 +156,10 @@ which it only reads.
 | Notifications | When a turn ends or a tool waits for approval while Wisp is in the background, a system notification is posted and, if chosen, a sound is played (Settings, General); a recent conversation that is not open is announced too when it stops working |
 | Language | Settings, General, chooses the interface language: System (Chinese on a Chinese system, English otherwise), English or 中文 |
 | Delete a project's folder | Removing a project offers Delete folder too: after you type the project's name, the project is removed and its folder is deleted with every file in it |
-| What the model is sent | Clicking the context percentage by the composer (or the command palette) lists the conversation's working set: the instructions, the summary that stands in for compacted turns, and each message with about how many tokens it takes; above them, the same set by kind (system prompt, rules, skills, sub-agent definitions, conversation), with the core's estimate and each one's share, as the WebView's context usage splits it, tool definitions excepted; Compact… there asks how to compact the conversation |
+| What the model is sent | Clicking the context percentage by the composer (or the command palette) lists the conversation's working set: the instructions, the summary that stands in for compacted turns, and each message with about how many tokens it takes; above them, the same set by kind (system prompt, rules, skills, sub-agent definitions, conversation), with the core's estimate and each one's share, as the WebView's context usage splits it, tool definitions excepted; Compact… there asks how to compact the conversation, and Hand off… opens the handoff note over it |
 | Compaction | `/compact` (or Compact… in What the model is sent) opens a dialog that offers regular compaction (old tool output becomes short archived stubs, every question and answer stays) or semantic compaction (older turns are folded into a summary with a short recent tail), with Cancel and Start compaction. Wherever the conversation was compacted, automatically or on request, the transcript shows a quiet line: who compacted it, whether older turns were summarised or old tool output trimmed, how many tokens before and after and how much smaller; a summary opens under the line with a click, and the latest compaction offers Undo the compaction until the conversation goes on |
+| Handoff | Hand off… in What the model is sent (or Hand off to a new conversation in the command palette) has the conversation's model write a handoff note from what it is sent now, in the WebView's headings (goal and stage, completed work, pending work, state to keep outside the conversation); an optional instruction steers it and Regenerate writes it again. The note is read and changed in the dialog, and Start new conversation opens a new conversation in the same project whose first message is the note; the conversation handed off is left as it was |
+| Too-long recovery | When the model refuses a turn because the conversation no longer fits its context window, even after the turn compacted it by itself, a bar above the composer says so, with the provider's words, and offers the WebView's three ways on: Compact and continue (the compact dialog, set to semantic; once it is done the unfinished turn goes on from what was saved, without a new message and without running finished tools again), Continue in a new conversation (a new conversation in the project is asked to go on with the unfinished request, with this one attached as context) and Pause conversation (the bar goes and the error stays) |
 | Interpreters | The Python and R interpreters a conversation keeps between tool calls show above the composer with their version and state; Stop ends one, Dismiss takes a stopped one off the list; Console opens one with its variables, code of your own to run (printed output and plots) and Restart, and the command palette starts the conversation's Python or R console |
 | Experts | Settings, Experts, keeps personas (a name and instructions); the composer's Expert menu starts a new conversation as one, and its instructions hold for the whole conversation |
 | Quick actions | Settings, Quick actions, keeps requests you make often under a name; the composer's quick actions menu puts one into the message box, after whatever is already typed, to finish and send. An action can instead start a workflow of the library: from the menu it is drafted as agents on what is typed (its request, if any, told to every task first) in a new conversation that opens on its Agents tab |
@@ -962,6 +964,21 @@ Limits of this slice:
   compaction and only while nothing has been said after it. The line has
   no Rewind to before the compaction and does not say from which turn the
   recent tail was kept.
+- The handoff note is written by the conversation's own model from what it
+  is sent now (the summary of compacted turns and the turns after it,
+  each bounded, tool output and pictures left out), with the WebView's
+  prompt, which `wisp-core` keeps for both. Nothing is saved until Start
+  new conversation, and the new conversation keeps no link to the old one.
+  It is offered whatever the context's size; the WebView offers it from
+  its usage panel once the window is nearly full. It is refused while a
+  turn runs, in a read-only conversation and in one an ACP agent runs.
+- The host tells a turn refused as too long from the text it keeps of the
+  failure (`error_kind` in the conversation's snapshot, which the phone
+  and web clients ignore), so the bar also shows after a restart, until
+  the next turn. Continue in a new conversation attaches the old
+  conversation the way a referenced conversation is read here, its latest
+  messages as an excerpt, where the WebView has a Reader summarise it.
+  Pause conversation lasts while the window is open.
 - A slash command is read only when it is the first word of the message
   and one of the known ones, so a message that starts with a path is
   sent as a message. There is no list that narrows as you type.
@@ -2151,6 +2168,21 @@ goes and the context percentage rises again. Open the context percentage,
 press Compact…, choose Semantic compact and start it: the line says older
 turns were summarised and opens to the summary with a click. Send a
 message: the line stays before it and no longer offers Undo.
+Open the context percentage and press Hand off…: a dialog over it writes
+a note under four headings. Press Escape right away: only the note's
+dialog closes. Press Hand off… again, type an instruction, press
+Regenerate, change the note and press Start new conversation: a new
+conversation opens whose first message is the note as changed, and the
+old one is unchanged. With a model whose context window is small (a
+profile with a low context limit against a small local model), keep a
+conversation going until the model refuses a turn as too long: a bar above
+the composer says the conversation is too long. Press Pause conversation:
+the bar goes and the error shows above the transcript. On the next refusal
+press Compact and continue: the compact dialog opens set to Semantic
+compact with Compact and continue as its button; once it is done the turn
+goes on and ends with an answer. On another refusal press Continue in a
+new conversation: a new conversation opens with the conversation attached
+and goes on with the request.
 Ask the model to write a new file and to edit an existing one, with
 Full access on. Point at the message, choose to go back, and press Go
 back and undo its files: the new file is in `.wisp/trash/`, the edited

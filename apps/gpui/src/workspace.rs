@@ -14,6 +14,7 @@ mod files_panel;
 mod find_view;
 mod follow_ups_view;
 mod generated_view;
+mod handoff_view;
 mod home_view;
 mod hosts_view;
 mod import_view;
@@ -195,6 +196,17 @@ pub struct Workspace {
     compacting: bool,
     /// Why the compaction asked for there failed.
     compact_error: Option<String>,
+    /// The conversation whose refused turn goes on once the compaction
+    /// asked for there is done (Compact and continue).
+    compact_resume: Option<String>,
+    /// The turns refused as too long whose bar the user paused on.
+    paused_failures: HashSet<String>,
+    /// Handing the open conversation off to a new one, and why that
+    /// failed.
+    handoff: Option<crate::handoff::Dialog>,
+    handoff_error: Option<String>,
+    /// The handoff note's instruction and the note.
+    handoff_fields: [Entity<InputState>; 2],
     /// The turn the review dialog is about; `None` is the whole conversation.
     review_turn: Option<wisp_server::desktop::TurnRef>,
     /// The review the dialog is showing or waiting for.
@@ -1106,6 +1118,18 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
         ];
         let merge_summary = cx.new(|cx| InputState::new(window, cx).multi_line(true));
+        let handoff_fields = [
+            cx.new(|cx| {
+                InputState::new(window, cx).placeholder(tr(
+                    "For example: keep the unresolved QC thresholds and exact file paths.",
+                ))
+            }),
+            cx.new(|cx| {
+                InputState::new(window, cx).multi_line(true).placeholder(tr(
+                    "The generated note appears here. Edit it freely before starting.",
+                ))
+            }),
+        ];
         let expert_fields = [
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx)),
@@ -1232,6 +1256,12 @@ impl Workspace {
             }),
             // The merge button follows whether a summary is written.
             cx.subscribe_in(&merge_summary, window, |_, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            }),
+            // And Start follows whether there is a handoff note.
+            cx.subscribe_in(&handoff_fields[1], window, |_, _, event, _, cx| {
                 if matches!(event, InputEvent::Change) {
                     cx.notify();
                 }
@@ -1448,6 +1478,11 @@ impl Workspace {
             compact_kind: Default::default(),
             compacting: false,
             compact_error: None,
+            compact_resume: None,
+            paused_failures: HashSet::new(),
+            handoff: None,
+            handoff_error: None,
+            handoff_fields,
             review: None,
             review_turn: None,
             trajectory: None,
@@ -1970,6 +2005,14 @@ impl Workspace {
             }
             Some(Layer::CompactContext) => {
                 self.compact_error = None;
+                self.compact_resume = None;
+                if !self.layers.contains(Layer::ModelView) {
+                    self.focus_composer(window, cx);
+                }
+            }
+            Some(Layer::Handoff) => {
+                self.handoff = None;
+                self.handoff_error = None;
                 if !self.layers.contains(Layer::ModelView) {
                     self.focus_composer(window, cx);
                 }
@@ -2303,6 +2346,7 @@ impl Workspace {
             Layer::Review,
             Layer::ModelView,
             Layer::CompactContext,
+            Layer::Handoff,
             Layer::ResearchArchive,
             Layer::BranchMerge,
             Layer::RunReview,
@@ -2315,6 +2359,9 @@ impl Workspace {
         self.clear_trajectory();
         self.clear_model_view();
         self.compact_error = None;
+        self.compact_resume = None;
+        self.handoff = None;
+        self.handoff_error = None;
         self.review = None;
         self.find.clear();
         if self.state.session != session {
@@ -4442,6 +4489,12 @@ impl Render for Workspace {
         // Over What the model is sent when it was opened from there.
         let root = if self.layers.contains(Layer::CompactContext) {
             root.child(self.render_compact_dialog(cx))
+        } else {
+            root
+        };
+        // Over What the model is sent too, when it was opened from there.
+        let root = if self.layers.contains(Layer::Handoff) {
+            root.child(self.render_handoff(cx))
         } else {
             root
         };

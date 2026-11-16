@@ -401,6 +401,7 @@ impl Workspace {
             Command::Trajectory => return self.open_trajectory(window, cx),
             Command::Review => return self.open_review(window, cx),
             Command::ModelView => return self.open_model_view(window, cx),
+            Command::Handoff => return self.open_handoff(window, cx),
             Command::ResearchArchive => return self.open_research_archive(window, cx),
             Command::Terminal => {
                 self.layers.close(Layer::Palette);

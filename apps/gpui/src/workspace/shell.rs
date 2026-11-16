@@ -2601,11 +2601,15 @@ impl Workspace {
                     ),
             );
         }
-        if let Some(error) = self
-            .error
+        // A turn refused as too long is said by its bar above the composer,
+        // with the ways on; its raw error shows again once paused on.
+        let turn_error = self
+            .state
+            .snapshot
             .as_ref()
-            .or_else(|| self.state.snapshot.as_ref().and_then(|s| s.error.as_ref()))
-        {
+            .filter(|_| !self.recovery_shown())
+            .and_then(|s| s.error.as_ref());
+        if let Some(error) = self.error.as_ref().or(turn_error) {
             // In the transcript's column, inset as the bars above the
             // composer are, so their edges line up.
             content = content.child(surfaces::reading_column(
@@ -2707,6 +2711,8 @@ impl Workspace {
         // What waits on the user between the transcript and the composer
         // keeps the composer's column, with its edges on the composer box's.
         let bars = [
+            self.render_context_recovery(cx)
+                .map(IntoElement::into_any_element),
             self.render_approvals(cx).map(IntoElement::into_any_element),
             self.render_review_banner(cx)
                 .map(IntoElement::into_any_element),

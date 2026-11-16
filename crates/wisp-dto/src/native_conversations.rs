@@ -1150,6 +1150,18 @@ pub enum ReadOnlyReason {
     Other,
 }
 
+/// What kind of failure ended a conversation's last turn.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnErrorKind {
+    /// The model's provider refused the request because the conversation
+    /// no longer fits its context window, after the turn's own compaction.
+    ContextTooLong,
+    /// A kind this client does not know yet.
+    #[serde(other)]
+    Other,
+}
+
 /// A replacement event, never a delta. Sequence orders responses within one
 /// host epoch. Reconnects fetch another snapshot; mutations are never replayed.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1207,6 +1219,11 @@ pub struct Snapshot {
     pub acp_agent_id: Option<String>,
     pub request_id: Option<String>,
     pub error: Option<String>,
+    /// What kind of failure `error` is, when the host knows one a client
+    /// can offer a way out of. Absent from older hosts, from hosts that do
+    /// not tell, and for any other failure; `error` keeps its text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<TurnErrorKind>,
     pub approvals: Vec<super::PendingToolApproval>,
     /// Exact pending IDs and the scopes each request can actually grant.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -1239,6 +1256,18 @@ mod tests {
         .unwrap();
         assert!(asked.compaction_rows);
         assert_eq!(asked.before_seq, Some(4));
+    }
+    #[test]
+    fn a_turn_error_kind_is_optional_and_unknown_kinds_are_read_as_other() {
+        use super::TurnErrorKind;
+        assert_eq!(
+            serde_json::to_value(TurnErrorKind::ContextTooLong).unwrap(),
+            serde_json::json!("context_too_long")
+        );
+        assert_eq!(
+            serde_json::from_value::<TurnErrorKind>(serde_json::json!("quota_spent")).unwrap(),
+            TurnErrorKind::Other
+        );
     }
     #[test]
     fn rules_fixture_requires_explicit_status_and_rejects_history_cursors() {
