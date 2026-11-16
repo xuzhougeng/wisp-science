@@ -20,6 +20,7 @@ use wisp_server::desktop::{Favorite, LibraryItem};
 use super::{
     Workspace,
     shell::{error_banner, glyph, icon_button, nav_row},
+    surfaces,
 };
 use crate::{
     assets::icon,
@@ -484,12 +485,7 @@ impl Workspace {
                 div()
                     .v_flex()
                     .gap_1()
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(item.title.clone()),
-                    )
+                    .child(surfaces::title(item.title.clone()))
                     .child(div().text_xs().text_color(muted).child(format!(
                         "{} · {}",
                         favorites::kind_label(&item.kind, item.language.as_deref()),
@@ -643,15 +639,7 @@ impl Workspace {
                 nav_row("favorites-back", "arrow-left", tr("Back"), false, true, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.close_favorites(window, cx))),
             )
-            .child(
-                div()
-                    .px_2()
-                    .pt_3()
-                    .pb_1()
-                    .text_lg()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Favorites")),
-            )
+            .child(surfaces::title(tr("Favorites")).px_2().pt_3().pb_1())
             .child(div().px_2().pb_1().text_xs().text_color(muted).child(tr(
                 "Passages, code and figures you saved, as they were when you saved them.",
             )))

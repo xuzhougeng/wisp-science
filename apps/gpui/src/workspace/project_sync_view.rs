@@ -11,7 +11,12 @@ use gpui_component::{
 };
 use wisp_server::desktop::{ProjectSyncResult, SyncSettings};
 
-use super::{Workspace, chip, settings_sections::setting, tone_color};
+use super::{
+    Workspace, chip,
+    settings_sections::setting,
+    surfaces::{self, DialogWidth},
+    tone_color,
+};
 use crate::{
     backend::{Reply, receive},
     layers::Layer,
@@ -340,77 +345,44 @@ impl Workspace {
     pub(super) fn render_join_synced(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
         let ready = !self.join_code.read(cx).value().trim().is_empty() && !self.join_busy;
-        let mut card = div()
-            .id("join-synced")
-            .v_flex()
-            .gap_3()
-            .w(px(520.))
-            .p_5()
-            .rounded(cx.theme().radius_lg)
-            .border_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().popover)
-            .shadow_lg()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Join a project from another device")),
-            )
-            .child(div().text_xs().text_color(muted).child(tr(
+        let mut card = surfaces::dialog(
+            "join-synced",
+            DialogWidth::Narrow,
+            tr("Join a project from another device"),
+        )
+        .gap_3()
+        .close_on_click_outside(cx.listener(|this, _, _, cx| {
+            this.layers.close(Layer::JoinSyncedProject);
+            cx.notify();
+        }))
+        .child(div().text_xs().text_color(muted).child(tr(
                 "Paste the device code copied in the project's settings on the other device, then choose the folder to put the project in.",
             )))
             .child(Input::new(&self.join_code).small());
         if let Some(error) = &self.join_note {
             card = card.child(chip(crate::i18n::host(error), Tone::Danger, cx));
         }
-        card = card.child(
-            div()
-                .h_flex()
-                .justify_end()
-                .gap_2()
-                .child(
-                    Button::new("join-synced-cancel")
-                        .label(tr("Cancel"))
-                        .small()
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.layers.close(Layer::JoinSyncedProject);
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    Button::new("join-synced-go")
-                        .label(if self.join_busy {
-                            tr("Downloading…")
-                        } else {
-                            tr("Choose a folder and join")
-                        })
-                        .small()
-                        .primary()
-                        .disabled(!ready)
-                        .on_click(cx.listener(|this, _, window, cx| this.join_synced(window, cx))),
-                ),
-        );
-        div()
-            .id("join-synced-backdrop")
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            .occlude()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(cx.theme().overlay)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
+        card.action(
+            Button::new("join-synced-cancel")
+                .label(tr("Cancel"))
+                .small()
+                .on_click(cx.listener(|this, _, _, cx| {
                     this.layers.close(Layer::JoinSyncedProject);
                     cx.notify();
-                }),
-            )
-            .child(card)
+                })),
+        )
+        .action(
+            Button::new("join-synced-go")
+                .label(if self.join_busy {
+                    tr("Downloading…")
+                } else {
+                    tr("Choose a folder and join")
+                })
+                .small()
+                .primary()
+                .disabled(!ready)
+                .on_click(cx.listener(|this, _, window, cx| this.join_synced(window, cx))),
+        )
     }
 
     pub(super) fn load_sync_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {

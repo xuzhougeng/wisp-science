@@ -14,6 +14,7 @@ use wisp_server::desktop::ModelSource;
 use super::{
     Workspace,
     shell::{error_banner, glyph},
+    surfaces::{self, DialogWidth},
 };
 use crate::{backend::receive, layers::Layer, onboarding, settings, toolchain};
 
@@ -223,27 +224,17 @@ impl Workspace {
                 border
             }));
         }
-        let mut card = div()
-            .id("onboarding")
-            .v_flex()
+        // Put away with Escape or by finishing; a click beside it does
+        // nothing, so a stray one does not lose the guide.
+        let mut card = surfaces::dialog("onboarding", DialogWidth::Narrow, onboarding::title(step))
             .gap_3()
-            .w(px(560.))
-            .max_w(relative(0.94))
-            .p_6()
-            .rounded(cx.theme().radius_lg)
-            .border_1()
-            .border_color(border)
-            .bg(cx.theme().popover)
-            .shadow_lg()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(super::surfaces::title(onboarding::title(step)))
-            .child(self.onboarding_body(cx));
+            .child(self.onboarding_body(cx))
+            .aside(dots);
         if let Some(error) = &self.onboarding_error {
             card = card.child(error_banner(error, cx));
         }
-        let mut actions = div().h_flex().gap_2();
         if step > 0 {
-            actions = actions.child(
+            card = card.action(
                 Button::new("onboarding-back")
                     .label(tr("Back"))
                     .small()
@@ -254,7 +245,7 @@ impl Workspace {
                     })),
             );
         }
-        actions = actions.child(
+        card.action(
             Button::new("onboarding-next")
                 .label(onboarding::next_label(
                     step,
@@ -265,28 +256,6 @@ impl Workspace {
                 .primary()
                 .disabled(self.onboarding_saving)
                 .on_click(cx.listener(|this, _, window, cx| this.onboarding_next(window, cx))),
-        );
-        card = card.child(
-            div()
-                .h_flex()
-                .justify_between()
-                .pt_2()
-                .child(dots)
-                .child(actions),
-        );
-        // Put away with Escape or by finishing; a click beside it does
-        // nothing, so a stray one does not lose the guide.
-        div()
-            .id("onboarding-backdrop")
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            .occlude()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(cx.theme().overlay)
-            .child(card)
+        )
     }
 }

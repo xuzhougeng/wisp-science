@@ -7,7 +7,11 @@ use gpui_component::{
     button::{Button, ButtonVariants},
 };
 
-use super::{Workspace, shell::error_banner};
+use super::{
+    Workspace,
+    shell::error_banner,
+    surfaces::{self, DialogWidth},
+};
 use crate::{backend::receive, layers::Layer, settings};
 
 impl Workspace {
@@ -51,26 +55,9 @@ impl Workspace {
     pub(super) fn render_capabilities(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
         let border = cx.theme().border;
-        let mut card = div()
-            .id("capabilities")
-            .v_flex()
-            .gap_2()
-            .w(px(560.))
-            .max_h(px(620.))
-            .overflow_y_scroll()
-            .p_5()
-            .rounded(cx.theme().radius_lg)
-            .border_1()
-            .border_color(border)
-            .bg(cx.theme().popover)
-            .shadow_lg()
-            // A click inside is not a click on the backdrop.
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Capabilities")),
+        let mut card = surfaces::dialog("capabilities", DialogWidth::Narrow, tr("Capabilities"))
+            .close_on_click_outside(
+                cx.listener(|this, _, window, cx| this.close_capabilities(window, cx)),
             )
             .child(div().text_xs().text_color(muted).child(tr(
                 "What Wisp can draw on in this project, and the tools it found on this \
@@ -155,32 +142,11 @@ impl Workspace {
                 }
             }
         }
-        card = card.child(
-            div().h_flex().justify_end().pt_2().child(
-                Button::new("capabilities-close")
-                    .label(tr("Close"))
-                    .small()
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.close_capabilities(window, cx)),
-                    ),
-            ),
-        );
-        div()
-            .id("capabilities-backdrop")
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            // Nothing underneath is clickable while the dialog is open.
-            .occlude()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(cx.theme().overlay)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| this.close_capabilities(window, cx)),
-            )
-            .child(card)
+        card.action(
+            Button::new("capabilities-close")
+                .label(tr("Close"))
+                .small()
+                .on_click(cx.listener(|this, _, window, cx| this.close_capabilities(window, cx))),
+        )
     }
 }

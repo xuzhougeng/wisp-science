@@ -14,7 +14,7 @@ use wisp_dto::ProjectSummary;
 use super::{
     Workspace, chip,
     shell::{error_banner, glyph, icon_button},
-    surfaces,
+    surfaces::{self, DialogWidth},
 };
 use crate::{
     assets::icon,
@@ -367,19 +367,12 @@ impl Workspace {
         let muted = cx.theme().muted_foreground;
         let ready = !self.new_project_name.read(cx).value().trim().is_empty() && !self.pending;
         let layout = self.new_project_layout;
-        let mut card = div()
-            .id("new-project")
-            .v_flex()
+        let mut card = surfaces::dialog("new-project", DialogWidth::Narrow, tr("New project"))
             .gap_3()
-            .w(px(520.))
-            .p_5()
-            .rounded(cx.theme().radius_lg)
-            .border_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().popover)
-            .shadow_lg()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(surfaces::title(tr("New project")))
+            .close_on_click_outside(cx.listener(|this, _, _, cx| {
+                this.layers.close(Layer::NewProject);
+                cx.notify();
+            }))
             .child(div().text_xs().text_color(muted).child(tr(
                 "A folder with this name is made where you choose next, and the project opens in it.",
             )))
@@ -403,50 +396,23 @@ impl Workspace {
         if let Some(error) = &self.new_project_note {
             card = card.child(chip(crate::i18n::host(error), Tone::Danger, cx));
         }
-        card = card.child(
-            div()
-                .h_flex()
-                .justify_end()
-                .gap_2()
-                .child(
-                    Button::new("new-project-cancel")
-                        .label(tr("Cancel"))
-                        .small()
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.layers.close(Layer::NewProject);
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    Button::new("new-project-create")
-                        .label(tr("Choose where and create"))
-                        .small()
-                        .primary()
-                        .disabled(!ready)
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.create_new_project(window, cx)),
-                        ),
-                ),
-        );
-        div()
-            .id("new-project-backdrop")
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            .occlude()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(cx.theme().overlay)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
+        card.action(
+            Button::new("new-project-cancel")
+                .label(tr("Cancel"))
+                .small()
+                .on_click(cx.listener(|this, _, _, cx| {
                     this.layers.close(Layer::NewProject);
                     cx.notify();
-                }),
-            )
-            .child(card)
+                })),
+        )
+        .action(
+            Button::new("new-project-create")
+                .label(tr("Choose where and create"))
+                .small()
+                .primary()
+                .disabled(!ready)
+                .on_click(cx.listener(|this, _, window, cx| this.create_new_project(window, cx))),
+        )
     }
 
     pub(super) fn render_home(&self, cx: &mut Context<Self>) -> impl IntoElement {

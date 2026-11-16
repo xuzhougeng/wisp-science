@@ -11,7 +11,12 @@ use gpui_component::{
 };
 use wisp_server::desktop::{PromotionPreview, TurnRef};
 
-use super::{Workspace, chip, shell::glyph, tone_color};
+use super::{
+    Workspace, chip,
+    shell::glyph,
+    surfaces::{self, DialogWidth},
+    tone_color,
+};
 use crate::{backend::receive, controls, explore, layers::Layer, present::Tone};
 
 /// What the exploration question is about.
@@ -490,59 +495,41 @@ impl Workspace {
 
     pub(super) fn render_exploration_preview(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
-        let mut card = div()
-            .id("exploration-preview")
-            .v_flex()
-            .gap_3()
-            .w(px(620.))
-            .max_h(px(640.))
-            .overflow_y_scroll()
-            .p_5()
-            .rounded(cx.theme().radius_lg)
-            .border_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().popover)
-            .shadow_lg()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Keep this exploration")),
-            );
+        let mut card = surfaces::dialog(
+            "exploration-preview",
+            DialogWidth::Regular,
+            tr("Keep this exploration"),
+        )
+        .gap_3()
+        .close_on_click_outside(cx.listener(|this, _, _, cx| {
+            this.layers.close(Layer::ExplorationPreview);
+            cx.notify();
+        }));
+        let mut actions = Vec::new();
         match &self.explore_preview {
             None => {
                 card = card.child(div().text_sm().text_color(muted).child(tr("Loading…")));
             }
             Some((id, preview)) => {
-                card = card.child(self.preview_body(id, preview, cx));
+                let (body, its_actions) = self.preview_body(id, preview, cx);
+                card = card.child(body);
+                actions = its_actions;
             }
         }
         if let Some(Err(error)) = &self.explore_note {
             card = card.child(chip(crate::i18n::host(error), Tone::Danger, cx));
         }
-        div()
-            .id("exploration-preview-backdrop")
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            .occlude()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(cx.theme().overlay)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.layers.close(Layer::ExplorationPreview);
-                    cx.notify();
-                }),
-            )
-            .child(card)
+        card.actions(actions)
     }
 
-    fn preview_body(&self, id: &str, preview: &PromotionPreview, cx: &mut Context<Self>) -> Div {
+    /// What keeping the exploration would change, and the footer's actions:
+    /// those for finishing by hand, Close, then Keep at the right end.
+    fn preview_body(
+        &self,
+        id: &str,
+        preview: &PromotionPreview,
+        cx: &mut Context<Self>,
+    ) -> (Div, Vec<Button>) {
         let muted = cx.theme().muted_foreground;
         let mut body = div()
             .v_flex()
@@ -561,7 +548,28 @@ impl Workspace {
             body = body.child(chip(crate::i18n::host(blocker), Tone::Attention, cx));
         }
         let busy = self.explore_busy;
-        let mut actions = div().h_flex().justify_end().gap_2().child(
+        let mut actions = Vec::new();
+        if preview.manual_resolution {
+            let shown = id.to_owned();
+            let finished = id.to_owned();
+            actions.push(
+                Button::new("exploration-folders")
+                    .label(tr("Show both folders"))
+                    .small()
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.show_folders(shown.clone(), window, cx)
+                    })),
+            );
+            actions.push(
+                Button::new("exploration-by-hand")
+                    .label(tr("Finish by hand"))
+                    .small()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.ask_explore(ExploreQuestion::FinishByHand(finished.clone()), cx)
+                    })),
+            );
+        }
+        actions.push(
             Button::new("exploration-preview-close")
                 .label(tr("Close"))
                 .small()
@@ -570,28 +578,7 @@ impl Workspace {
                     cx.notify();
                 })),
         );
-        if preview.manual_resolution {
-            let shown = id.to_owned();
-            let finished = id.to_owned();
-            actions = actions
-                .child(
-                    Button::new("exploration-folders")
-                        .label(tr("Show both folders"))
-                        .small()
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.show_folders(shown.clone(), window, cx)
-                        })),
-                )
-                .child(
-                    Button::new("exploration-by-hand")
-                        .label(tr("Finish by hand"))
-                        .small()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.ask_explore(ExploreQuestion::FinishByHand(finished.clone()), cx)
-                        })),
-                );
-        }
-        actions = actions.child(
+        actions.push(
             Button::new("exploration-keep")
                 .label(if busy {
                     tr("Keeping…")
@@ -606,84 +593,49 @@ impl Workspace {
         if let Some(question) = self.explore_question_row(cx) {
             body = body.child(question);
         }
-        body.child(actions)
+        (body, actions)
     }
 
     pub(super) fn render_start_exploration(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
         let ready = !self.explore_name.read(cx).value().trim().is_empty() && !self.explore_busy;
-        let mut card = div()
-            .id("start-exploration")
-            .v_flex()
-            .gap_3()
-            .w(px(520.))
-            .p_5()
-            .rounded(cx.theme().radius_lg)
-            .border_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().popover)
-            .shadow_lg()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Start an exploration")),
-            )
-            .child(div().text_xs().text_color(muted).child(tr(
+        let mut card = surfaces::dialog(
+            "start-exploration",
+            DialogWidth::Narrow,
+            tr("Start an exploration"),
+        )
+        .gap_3()
+        .close_on_click_outside(cx.listener(|this, _, _, cx| {
+            this.layers.close(Layer::StartExploration);
+            cx.notify();
+        }))
+        .child(div().text_xs().text_color(muted).child(tr(
                 "The exploration continues this conversation up to the chosen answer, in its own copy of the project's files as they are now (earlier file versions are not brought back). Keep one later, or discard them.",
             )))
             .child(Input::new(&self.explore_name).small());
         if let Some(Err(error)) = &self.explore_note {
             card = card.child(chip(crate::i18n::host(error), Tone::Danger, cx));
         }
-        card = card.child(
-            div()
-                .h_flex()
-                .justify_end()
-                .gap_2()
-                .child(
-                    Button::new("start-exploration-cancel")
-                        .label(tr("Cancel"))
-                        .small()
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.layers.close(Layer::StartExploration);
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    Button::new("start-exploration-go")
-                        .label(if self.explore_busy {
-                            tr("Copying the project…")
-                        } else {
-                            tr("Start")
-                        })
-                        .small()
-                        .primary()
-                        .disabled(!ready)
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.start_exploration(window, cx)),
-                        ),
-                ),
-        );
-        div()
-            .id("start-exploration-backdrop")
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            .occlude()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(cx.theme().overlay)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
+        card.action(
+            Button::new("start-exploration-cancel")
+                .label(tr("Cancel"))
+                .small()
+                .on_click(cx.listener(|this, _, _, cx| {
                     this.layers.close(Layer::StartExploration);
                     cx.notify();
-                }),
-            )
-            .child(card)
+                })),
+        )
+        .action(
+            Button::new("start-exploration-go")
+                .label(if self.explore_busy {
+                    tr("Copying the project…")
+                } else {
+                    tr("Start")
+                })
+                .small()
+                .primary()
+                .disabled(!ready)
+                .on_click(cx.listener(|this, _, window, cx| this.start_exploration(window, cx))),
+        )
     }
 }

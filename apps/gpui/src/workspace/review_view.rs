@@ -8,7 +8,12 @@ use gpui_component::{
     button::{Button, ButtonVariants},
 };
 
-use super::{Workspace, shell::error_banner, surfaces, tone_color};
+use super::{
+    Workspace,
+    shell::error_banner,
+    surfaces::{self, DialogWidth},
+    tone_color,
+};
 use crate::{
     assets::icon,
     backend::receive,
@@ -175,34 +180,21 @@ impl Workspace {
     pub(super) fn render_review(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
         let border = cx.theme().border;
-        let mut card = div()
-            .id("review")
-            .v_flex()
-            .gap_2()
-            .w(px(680.))
-            .max_w(relative(0.94))
-            .max_h(relative(0.9))
-            .overflow_y_scroll()
-            .p_5()
-            .rounded(cx.theme().radius_lg)
-            .border_1()
-            .border_color(border)
-            .bg(cx.theme().popover)
-            .shadow_lg()
-            // A click inside is not a click on the backdrop.
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(div().text_lg().font_weight(FontWeight::MEDIUM).child(
-                if self.review_turn.is_some() {
-                    tr("Review of one turn")
-                } else {
-                    tr("Review")
-                },
-            ))
+        let title = if self.review_turn.is_some() {
+            tr("Review of one turn")
+        } else {
+            tr("Review")
+        };
+        let mut card = surfaces::dialog("review", DialogWidth::Regular, title)
+            .close_on_click_outside(
+                cx.listener(|this, _, window, cx| this.close_review(window, cx)),
+            )
             .child(div().text_xs().text_color(muted).child(tr(
                 "The conversation's model reads it as a reviewer and reports claims that \
                  its own tool output does not support. Nothing is added to the conversation.",
             )));
-        let mut actions = div().h_flex().gap_2().justify_end().pt_2();
+        // The main action, after Close at the right end.
+        let mut main = None;
         match &self.review {
             None | Some(Asked::Reading) => {
                 card = card.child(
@@ -214,8 +206,9 @@ impl Workspace {
                 );
             }
             Some(Asked::Failed(error)) => {
-                card = card.child(error_banner(error, cx));
-                actions = actions.child(self.review_again(cx));
+                card = card
+                    .child(error_banner(error, cx))
+                    .action(self.review_again(cx));
             }
             Some(Asked::Done(found)) => {
                 let (outcome, tone) = review::outcome(found);
@@ -273,9 +266,9 @@ impl Workspace {
                         .text_color(muted)
                         .child(crate::i18n::fill(tr("Reviewed by {}."), &[&found.model])),
                 );
-                actions = actions.child(self.review_again(cx));
+                card = card.action(self.review_again(cx));
                 if !found.findings.is_empty() {
-                    actions = actions.child(
+                    main = Some(
                         Button::new("review-correct")
                             .label(tr("Ask Wisp to correct"))
                             .small()
@@ -288,29 +281,13 @@ impl Workspace {
                 }
             }
         }
-        actions = actions.child(
+        card.action(
             Button::new("review-close")
                 .label(tr("Close"))
                 .small()
                 .on_click(cx.listener(|this, _, window, cx| this.close_review(window, cx))),
-        );
-        div()
-            .id("review-backdrop")
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            // Nothing underneath is clickable while the dialog is open.
-            .occlude()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(cx.theme().overlay)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| this.close_review(window, cx)),
-            )
-            .child(card.child(actions))
+        )
+        .actions(main)
     }
 
     fn review_again(&self, cx: &mut Context<Self>) -> Button {

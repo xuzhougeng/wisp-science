@@ -4,13 +4,17 @@
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Sizable,
     button::{Button, ButtonVariants},
     input::Input,
 };
 use wisp_server::desktop::BranchMerge;
 
-use super::{Workspace, shell::error_banner};
+use super::{
+    Workspace,
+    shell::error_banner,
+    surfaces::{self, DialogWidth},
+};
 use crate::{backend::receive, layers::Layer};
 
 /// Where the dialog stands.
@@ -184,31 +188,19 @@ impl Workspace {
     pub(super) fn render_branch_merge(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
         let note = |text: String| div().text_sm().text_color(muted).child(text);
-        let mut card = div()
-            .id("branch-merge")
-            .v_flex()
-            .gap_3()
-            .w(px(680.))
-            .max_w(relative(0.94))
-            .max_h(relative(0.92))
-            .overflow_y_scroll()
-            .p_5()
-            .rounded(cx.theme().radius_lg)
-            .border_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().popover)
-            .shadow_lg()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Bring this branch back")),
-            );
+        // A click beside it does not throw a summary away: only Close and
+        // Escape leave it.
+        let mut card = surfaces::dialog(
+            "branch-merge",
+            DialogWidth::Regular,
+            tr("Bring this branch back"),
+        )
+        .gap_3();
         if let Some(error) = &self.merge_error {
             card = card.child(error_banner(error, cx));
         }
-        let mut actions = div().h_flex().gap_2().justify_end().pt_2();
+        // The main action, after Close at the right end.
+        let mut main = None;
         match &self.merge {
             None | Some(MergeView::Looking) => {
                 card = card.child(note(tr("Looking at the branch…").into()));
@@ -218,8 +210,8 @@ impl Workspace {
                     tr("{} messages since it split off. Wisp writes a summary of them for you to read and change; it is then added to the conversation it came from, which reads it from then on."),
                     &[&found.new_messages],
                 )));
-                actions =
-                    actions.child(
+                main =
+                    Some(
                         Button::new("merge-draft")
                             .label(tr("Write the summary"))
                             .small()
@@ -245,8 +237,8 @@ impl Workspace {
                             .h(px(300.))
                             .child(Input::new(&self.merge_summary).h_full()),
                     );
-                actions = actions
-                    .child(
+                card =
+                    card.action(
                         Button::new("merge-redraft")
                             .label(tr("Write it again"))
                             .small()
@@ -255,40 +247,27 @@ impl Workspace {
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.draft_branch_summary(window, cx)
                             })),
-                    )
-                    .child(
-                        Button::new("merge-confirm")
-                            .label(if merging {
-                                tr("Working…")
-                            } else {
-                                tr("Bring it back")
-                            })
-                            .small()
-                            .primary()
-                            .disabled(merging || !written)
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.merge_branch(window, cx)),
-                            ),
                     );
+                main = Some(
+                    Button::new("merge-confirm")
+                        .label(if merging {
+                            tr("Working…")
+                        } else {
+                            tr("Bring it back")
+                        })
+                        .small()
+                        .primary()
+                        .disabled(merging || !written)
+                        .on_click(cx.listener(|this, _, window, cx| this.merge_branch(window, cx))),
+                );
             }
         }
-        actions = actions.child(
+        card.action(
             Button::new("merge-close")
                 .label(tr("Close"))
                 .small()
                 .on_click(cx.listener(|this, _, window, cx| this.close_branch_merge(window, cx))),
-        );
-        div()
-            .id("branch-merge-backdrop")
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            .occlude()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(cx.theme().overlay)
-            .child(card.child(actions))
+        )
+        .actions(main)
     }
 }

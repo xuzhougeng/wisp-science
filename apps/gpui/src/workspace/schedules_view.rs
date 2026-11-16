@@ -13,7 +13,7 @@ use wisp_server::desktop::{ScheduleInput, ScheduleRow};
 use super::{
     Workspace, chip,
     shell::{error_banner, glyph, nav_row},
-    surfaces::switch,
+    surfaces::{self, switch},
 };
 use crate::{
     backend::{Reply, receive},
@@ -571,14 +571,7 @@ impl Workspace {
                 nav_row("schedules-back", "arrow-left", tr("Back"), false, true, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.close_schedules(window, cx))),
             )
-            .child(
-                div()
-                    .px_2()
-                    .pt_3()
-                    .text_lg()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Scheduled tasks")),
-            )
+            .child(surfaces::title(tr("Scheduled tasks")).px_2().pt_3())
             .child(div().px_2().pb_2().text_xs().text_color(muted).child(tr(
                 "Prompts sent on a schedule while the app is open, or any time you need \
                  them. Each firing is a conversation of its own in the task's project.",

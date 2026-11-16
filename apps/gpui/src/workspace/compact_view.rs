@@ -14,7 +14,7 @@ use wisp_dto::ContextCompactionDto;
 use super::{
     Workspace,
     shell::{error_banner, glyph},
-    surfaces,
+    surfaces::{self, DialogWidth},
 };
 use crate::{
     assets::icon,
@@ -249,19 +249,16 @@ impl Workspace {
         let snapshot = self.state.snapshot.as_ref();
         let running = snapshot.is_some_and(|s| s.running);
         let read_only = snapshot.is_some_and(|s| s.read_only);
-        let mut card = surfaces::card("compact-context", cx)
-            .v_flex()
-            .gap_3()
-            .w(px(520.))
-            .max_w(relative(0.94))
-            .p_5()
-            .shadow_lg()
-            // A click inside is not a click on the backdrop.
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(surfaces::title(tr("Compact context")))
-            .child(div().text_sm().text_color(muted).child(tr(
-                "Choose regular pruning or a semantic checkpoint before rewriting the model context.",
-            )));
+        let mut card = surfaces::dialog(
+            "compact-context",
+            DialogWidth::Narrow,
+            tr("Compact context"),
+        )
+        .gap_3()
+        .close_on_click_outside(cx.listener(|this, _, window, cx| this.close_compact(window, cx)))
+        .child(div().text_sm().text_color(muted).child(tr(
+            "Choose regular pruning or a semantic checkpoint before rewriting the model context.",
+        )));
         for (at, kind) in Kind::ALL.into_iter().enumerate() {
             let chosen = self.compact_kind == kind;
             card = card.child(
@@ -301,52 +298,24 @@ impl Workspace {
         if let Some(error) = &self.compact_error {
             card = card.child(error_banner(error, cx));
         }
-        card = card.child(
-            div()
-                .h_flex()
-                .gap_2()
-                .justify_end()
-                .pt_1()
-                .child(
-                    Button::new("compact-cancel")
-                        .label(tr("Cancel"))
-                        .small()
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.close_compact(window, cx)),
-                        ),
-                )
-                .child(
-                    Button::new("compact-start")
-                        .icon(glyph("context-compact"))
-                        .label(if self.compacting {
-                            tr("Compacting…")
-                        } else {
-                            tr("Start compaction")
-                        })
-                        .small()
-                        .primary()
-                        .disabled(self.compacting || running || read_only)
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.start_compaction(window, cx)),
-                        ),
-                ),
-        );
-        div()
-            .id("compact-context-backdrop")
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            // Nothing underneath is clickable while the dialog is open.
-            .occlude()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(cx.theme().overlay)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| this.close_compact(window, cx)),
-            )
-            .child(card)
+        card.action(
+            Button::new("compact-cancel")
+                .label(tr("Cancel"))
+                .small()
+                .on_click(cx.listener(|this, _, window, cx| this.close_compact(window, cx))),
+        )
+        .action(
+            Button::new("compact-start")
+                .icon(glyph("context-compact"))
+                .label(if self.compacting {
+                    tr("Compacting…")
+                } else {
+                    tr("Start compaction")
+                })
+                .small()
+                .primary()
+                .disabled(self.compacting || running || read_only)
+                .on_click(cx.listener(|this, _, window, cx| this.start_compaction(window, cx))),
+        )
     }
 }

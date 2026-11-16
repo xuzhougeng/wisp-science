@@ -16,6 +16,7 @@ use wisp_server::desktop::{WebViewModel, WebViewOutcome, WebViewProject};
 use super::{
     Workspace, chip,
     shell::{error_banner, glyph},
+    surfaces::{self, DialogWidth},
 };
 use crate::{backend::receive, home, layers::Layer, present::Tone, webview_import};
 
@@ -178,36 +179,24 @@ impl Workspace {
         let border = cx.theme().border;
         let imports = &self.webview_imports;
         let home_dir = dirs::home_dir().map(|path| path.to_string_lossy().into_owned());
-        let mut card = div()
-            .id("webview-import")
-            .v_flex()
-            .gap_2()
-            .w(px(640.))
-            .max_w(relative(0.94))
-            .max_h(relative(0.86))
-            .overflow_y_scroll()
-            .p_5()
-            .rounded(cx.theme().radius_lg)
-            .border_1()
-            .border_color(border)
-            .bg(cx.theme().popover)
-            .shadow_lg()
-            // A click inside is not a click on the backdrop.
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Bring over from the WebView desktop")),
-            )
-            .child(div().text_sm().text_color(muted).child(tr(
-                "The projects and settings of Wisp's WebView desktop on this computer. Its \
+        let mut card = surfaces::dialog(
+            "webview-import",
+            DialogWidth::Regular,
+            tr("Bring over from the WebView desktop"),
+        )
+        .close_on_click_outside(cx.listener(|this, _, _, cx| {
+            if !this.webview_imports.busy {
+                this.close_webview_import(cx)
+            }
+        }))
+        .child(div().text_sm().text_color(muted).child(tr(
+            "The projects and settings of Wisp's WebView desktop on this computer. Its \
                  database is only read. A project kept in it is copied here, with its settings, \
                  and goes on using its folder where it is; one that keeps its own database in \
                  its folder is opened there, so both desktops then share it. A group of \
                  settings comes only while none of it is set here. A saved model comes with its \
                  key, from the keychain to the keychain.",
-            )));
+        )));
         let place = imports.database.as_ref().map_or_else(
             || tr("No WebView data was found on this computer.").to_owned(),
             |path| home::short_path(&path.to_string_lossy(), home_dir.as_deref()),
@@ -441,74 +430,45 @@ impl Workspace {
                 .found
                 .as_deref()
                 .is_some_and(|found| !webview_import::first_picks(found).is_empty());
-        card = card.child(
-            div()
-                .h_flex()
-                .gap_2()
-                .pt_2()
-                .when(can_come, |row| {
-                    row.child(
-                        Button::new("webview-import-all")
-                            .label(tr("Select all"))
-                            .small()
-                            .ghost()
-                            .disabled(imports.busy)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let imports = &mut this.webview_imports;
-                                if let Some(found) = &imports.found {
-                                    imports.picks = webview_import::first_picks(found);
-                                }
-                                imports.setting_picks = imports.settings.iter().cloned().collect();
-                                imports.model_picks =
-                                    webview_import::first_model_picks(&imports.models);
-                                cx.notify();
-                            })),
-                    )
-                })
-                .child(div().flex_1())
-                .child(
-                    Button::new("webview-import-close")
-                        .label(tr("Close"))
-                        .small()
-                        .on_click(cx.listener(|this, _, _, cx| this.close_webview_import(cx))),
-                )
-                .when(can_come, |row| {
-                    row.child(
-                        Button::new("webview-import-bring")
-                            .label(if imports.busy {
-                                tr("Bringing over…").to_owned()
-                            } else {
-                                crate::i18n::fill(tr("Bring over {}"), &[&chosen])
-                            })
-                            .small()
-                            .primary()
-                            .disabled(imports.busy || chosen == 0)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.bring_webview_projects(window, cx)
-                            })),
-                    )
-                }),
-        );
-        div()
-            .id("webview-import-backdrop")
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            // Nothing underneath is clickable while the dialog is open.
-            .occlude()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(cx.theme().overlay)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    if !this.webview_imports.busy {
-                        this.close_webview_import(cx)
-                    }
-                }),
+        card.when(can_come, |card| {
+            card.aside(
+                Button::new("webview-import-all")
+                    .label(tr("Select all"))
+                    .small()
+                    .ghost()
+                    .disabled(imports.busy)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let imports = &mut this.webview_imports;
+                        if let Some(found) = &imports.found {
+                            imports.picks = webview_import::first_picks(found);
+                        }
+                        imports.setting_picks = imports.settings.iter().cloned().collect();
+                        imports.model_picks = webview_import::first_model_picks(&imports.models);
+                        cx.notify();
+                    })),
             )
-            .child(card)
+        })
+        .action(
+            Button::new("webview-import-close")
+                .label(tr("Close"))
+                .small()
+                .on_click(cx.listener(|this, _, _, cx| this.close_webview_import(cx))),
+        )
+        .when(can_come, |card| {
+            card.action(
+                Button::new("webview-import-bring")
+                    .label(if imports.busy {
+                        tr("Bringing over…").to_owned()
+                    } else {
+                        crate::i18n::fill(tr("Bring over {}"), &[&chosen])
+                    })
+                    .small()
+                    .primary()
+                    .disabled(imports.busy || chosen == 0)
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.bring_webview_projects(window, cx)),
+                    ),
+            )
+        })
     }
 }

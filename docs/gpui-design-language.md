@@ -41,10 +41,10 @@ for text size moves all four together.
   `SEMIBOLD` for serif titles. No bold.
 - Rank is said with colour (`muted_foreground`), not with a smaller size.
   Caption is for metadata, not for making a secondary sentence quieter.
-- Views do not use `text_base()`, `text_xl()`, `text_2xl()`, `text_3xl()` or
-  a size in pixels; a test in `surfaces.rs` rejects them. The terminal's grid
-  is the one exception. `text_lg()` in a view is tolerated for now and should
-  move to `surfaces::title` when the view is next touched.
+- Views do not use `text_base()`, `text_lg()`, `text_xl()`, `text_2xl()`,
+  `text_3xl()` or a size in pixels; a test in `surfaces.rs` rejects them. The
+  terminal's grid is the one exception. A heading is `surfaces::title`; a
+  figure or a code that should stand out is body text in `MEDIUM`.
 
 ## Colour
 
@@ -77,7 +77,9 @@ names and never a colour of their own.
   composer, dialogs and menus (`radius_lg`). Pills only for counts and tags.
 - **Cards**: `surfaces::card`: a white surface with a hairline and no
   shadow. Hover darkens the line; it does not lift the card.
-- **Shadows**: dialogs and menus only.
+- **Shadows**: dialogs and menus only (with the palette and the update
+  notice, which also float over the page). A test in `surfaces.rs` names
+  every function that may draw one and rejects a shadow anywhere else.
 - **Spacing**: the rem steps (`gap_1` … `gap_8`, `p_*`), not pixels. Pixels
   are for layout widths.
 - **Rows**: a row in a list or the sidebar is 32 px high or more, with a
@@ -104,7 +106,8 @@ names and never a colour of their own.
   Title; the selected conversation is a white row with a hairline.
 - The conversation keeps a reading column (`surfaces::READING_WIDTH`),
   centred in the space the sidebar and the side panel leave. The composer
-  sits in the same column.
+  sits in the same column. So do the error and notice lines above the
+  transcript, inset as the bars above the composer are.
 - What waits between the transcript and the composer (approvals and plans
   to approve, the line about a review, hooks that failed, a drafted memory,
   the questions to ask next, the transfer tray) and the composer's own
@@ -141,8 +144,20 @@ names and never a colour of their own.
   page when off (in every palette), with the setting's name to its left and
   a tooltip that says what it switches; Tab reaches it and Enter or Space
   flips it. A test in `surfaces.rs` rejects a button labelled On or Off.
-- **Dialogs**: a card of one of three widths with a Title, a backdrop and a
-  shadow; the main action is at the right end, Cancel to its left.
+- **Dialogs**: `surfaces::dialog(id, width, title)`: a card with a Title, a
+  backdrop and a shadow, in one of three widths for dialogs
+  (`DialogWidth::Narrow` 520 px for a short form or a question, `Regular`
+  640 px for a list or a longer form, `Wide` 760 px for a record to read),
+  plus one for a dialog of two panes side by side (`TwoPanes`, 1000 px),
+  used by Example conversations and not by a dialog of one column. Its body scrolls inside 90% of
+  the window's height. The footer has what concerns the whole dialog (a
+  count, a guide's steps, Select all) at the left, then the actions:
+  secondary ones, Cancel or Close, and the main action at the right end,
+  the dialog's one filled button. A dialog closes on a click beside it
+  (`close_on_click_outside`) unless it holds work a stray click would lose,
+  a draft or a guide part way through; one with no footer has a close button
+  in its title row. A test in `surfaces.rs` checks every dialog is drawn
+  this way and that nothing else dims the window but the palette.
 - **Icons**: the shared stroke set in `apps/gpui/assets/icons`; no emoji or
   text glyphs as icons.
 - **Escape**: every dismissible layer joins the window's stack in
@@ -154,7 +169,7 @@ names and never a colour of their own.
 | --- | --- |
 | Colours, radius, base sizes | `apps/gpui/assets/wisp-theme.json` |
 | The rem and the palettes | `apps/gpui/src/theme.rs` |
-| Titles, display text, cards, the reading column, the bars above the composer (`bar`, `above_composer`), the on/off switch | `apps/gpui/src/workspace/surfaces.rs` |
+| Titles, display text, cards, dialogs (`dialog`, `DialogWidth`), the reading column, the bars above the composer (`bar`, `above_composer`), the on/off switch | `apps/gpui/src/workspace/surfaces.rs` |
 | A setting's row: name and note on the left, control on the right | `setting` in `apps/gpui/src/workspace/settings_sections.rs` |
 
 ## Not done yet
@@ -162,6 +177,6 @@ names and never a colour of their own.
 The first change that follows this page restyles the theme, the home page,
 the conversation's column, its actions and the composer's settings; a second
 puts a switch in place of every On/Off button; a third puts the bars above
-the composer in its column. Still to bring under it: dialogs drawn from one
-shape, `text_lg()` titles in individual views, per-view shadows, and the
-side panel as margin notes.
+the composer in its column; a fourth draws every dialog from one shape, makes
+every heading a Title and keeps shadows to what floats. Still to bring under
+it: the side panel as margin notes.

@@ -7,6 +7,7 @@ use gpui_component::{ActiveTheme, Disableable, Sizable, StyledExt, button::Butto
 use super::{
     Workspace,
     shell::{error_banner, glyph},
+    surfaces::{self, DialogWidth},
 };
 use crate::{backend::receive, layers::Layer, model_view};
 
@@ -66,29 +67,15 @@ impl Workspace {
 
     pub(super) fn render_model_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
-        let border = cx.theme().border;
-        let mut card = div()
-            .id("model-view")
-            .v_flex()
-            .gap_1()
-            .w(px(760.))
-            .max_w(relative(0.94))
-            .max_h(relative(0.9))
-            .overflow_y_scroll()
-            .p_5()
-            .rounded(cx.theme().radius_lg)
-            .border_1()
-            .border_color(border)
-            .bg(cx.theme().popover)
-            .shadow_lg()
-            // A click inside is not a click on the backdrop.
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("What the model is sent")),
-            );
+        let mut card = surfaces::dialog(
+            "model-view",
+            DialogWidth::Wide,
+            tr("What the model is sent"),
+        )
+        .gap_1()
+        .close_on_click_outside(
+            cx.listener(|this, _, window, cx| this.close_model_view(window, cx)),
+        );
         if let Some(error) = &self.model_view_error {
             card = card.child(error_banner(error, cx));
         }
@@ -248,39 +235,11 @@ impl Workspace {
             .small()
             .disabled(running || self.compacting)
             .on_click(cx.listener(|this, _, _, cx| this.open_compact(cx)));
-        card = card.child(
-            div()
-                .h_flex()
-                .gap_2()
-                .justify_end()
-                .pt_2()
-                .children(undo)
-                .child(compact)
-                .child(
-                    Button::new("model-view-close")
-                        .label(tr("Close"))
-                        .small()
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.close_model_view(window, cx)),
-                        ),
-                ),
-        );
-        div()
-            .id("model-view-backdrop")
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            // Nothing underneath is clickable while the dialog is open.
-            .occlude()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(cx.theme().overlay)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| this.close_model_view(window, cx)),
-            )
-            .child(card)
+        card.actions(undo).action(compact).action(
+            Button::new("model-view-close")
+                .label(tr("Close"))
+                .small()
+                .on_click(cx.listener(|this, _, window, cx| this.close_model_view(window, cx))),
+        )
     }
 }

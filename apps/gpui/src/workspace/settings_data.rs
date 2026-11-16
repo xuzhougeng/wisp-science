@@ -24,7 +24,7 @@ fn figure(value: String, name: &'static str, cx: &App) -> Div {
         .p_3()
         .rounded(cx.theme().radius)
         .bg(cx.theme().muted)
-        .child(div().text_lg().font_weight(FontWeight::MEDIUM).child(value))
+        .child(div().font_weight(FontWeight::MEDIUM).child(value))
         .child(
             div()
                 .text_xs()

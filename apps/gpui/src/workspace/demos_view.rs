@@ -4,15 +4,14 @@
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
-    button::{Button, ButtonVariants},
-    text::TextView,
+    ActiveTheme, Disableable, Selectable, Sizable, StyledExt, button::Button, text::TextView,
 };
 use wisp_server::desktop::{Demo, DemoRole};
 
 use super::{
     Workspace, chip,
     shell::{error_banner, glyph},
+    surfaces::{self, DialogWidth},
 };
 use crate::{backend::receive, demos, layers::Layer, present::Tone};
 
@@ -400,52 +399,33 @@ impl Workspace {
                     .child(tr("Reading…")),
             );
         }
-        let mut card = div()
-            .id("examples")
-            .v_flex()
-            .gap_3()
-            .w(px(1000.))
-            .h(px(680.))
-            .max_w(relative(0.94))
-            .max_h(relative(0.9))
-            .p_5()
-            .rounded(cx.theme().radius_lg)
-            .border_1()
-            .border_color(border)
-            .bg(cx.theme().popover)
-            .shadow_lg()
-            // A click inside is not a click on the backdrop.
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .h_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_lg()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(tr("Example conversations")),
-                    )
-                    .child(
-                        Button::new("examples-close")
-                            .label(tr("Close"))
-                            .small()
-                            .ghost()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.layers.close(Layer::Examples);
-                                this.close_examples();
-                                cx.notify();
-                            })),
-                    ),
-            )
-            .child(div().text_xs().text_color(muted).child(tr(
+        let mut card = surfaces::dialog(
+            "examples",
+            DialogWidth::TwoPanes,
+            tr("Example conversations"),
+        )
+        .height(680.)
+        .gap_3()
+        .close_button(
+            "examples-close",
+            cx.listener(|this, _, _, cx| {
+                this.layers.close(Layer::Examples);
+                this.close_examples();
+                cx.notify();
+            }),
+        )
+        .close_on_click_outside(cx.listener(|this, _, _, cx| {
+            this.layers.close(Layer::Examples);
+            this.close_examples();
+            cx.notify();
+        }))
+        .child(div().text_xs().text_color(muted).child(tr(
                 "Research recorded with Wisp, to read before you start. Copying one into a project adds it as a conversation you can go on with, with the files it refers to; files already there are left as they are.",
             )));
         if let Some(note) = &self.demo_note {
             card = card.child(error_banner(note, cx));
         }
-        card = card.child(
+        card.child(
             div()
                 .h_flex()
                 .items_start()
@@ -453,26 +433,6 @@ impl Workspace {
                 .min_h_0()
                 .child(side)
                 .child(reading),
-        );
-        div()
-            .id("examples-backdrop")
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            .occlude()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(cx.theme().overlay)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.layers.close(Layer::Examples);
-                    this.close_examples();
-                    cx.notify();
-                }),
-            )
-            .child(card)
+        )
     }
 }

@@ -554,7 +554,6 @@ impl Workspace {
         if !challenge.user_code.is_empty() {
             panel = panel.child(
                 div()
-                    .text_lg()
                     .font_family("Menlo")
                     .font_weight(FontWeight::MEDIUM)
                     .child(challenge.user_code.clone()),

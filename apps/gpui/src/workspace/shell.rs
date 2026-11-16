@@ -110,7 +110,7 @@ impl Workspace {
             return body.child(div().text_color(muted).child(tr("Starting Wisp…")));
         }
         body = body
-            .child(div().text_lg().child(tr("Wisp could not start")))
+            .child(surfaces::title(tr("Wisp could not start")))
             .child(div().max_w(px(520.)).text_sm().text_color(muted).child(tr(
                 "Another Wisp desktop may already be using this data directory. \
                          See docs/gpui-desktop.md for the data and workspace locations.",
@@ -2602,10 +2602,16 @@ impl Workspace {
             .as_ref()
             .or_else(|| self.state.snapshot.as_ref().and_then(|s| s.error.as_ref()))
         {
-            content = content.child(div().px_4().pt_2().child(error_banner(error, cx)));
+            // In the transcript's column, inset as the bars above the
+            // composer are, so their edges line up.
+            content = content.child(surfaces::reading_column(
+                div().px_4().pt_2().child(error_banner(error, cx)),
+            ));
         }
         if let Some(notice) = &self.notice {
-            content = content.child(div().px_4().pt_2().child(self.notice_banner(notice, cx)));
+            content = content.child(surfaces::reading_column(
+                div().px_4().pt_2().child(self.notice_banner(notice, cx)),
+            ));
         }
         if self.state.session.is_none() {
             let can_start = !self.pending && self.state.project.is_some();
