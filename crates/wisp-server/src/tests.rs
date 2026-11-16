@@ -1224,6 +1224,137 @@ async fn a_branch_is_brought_back_as_a_summary_the_user_approved() {
     server.shutdown().await;
 }
 
+#[tokio::test]
+async fn a_merged_or_orphaned_branch_is_read_only_history_and_its_source_is_not() {
+    let tmp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(tmp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let main = create(&server).await;
+    send(&server, &main, "Look at the counts").await.unwrap();
+    wait_for(&server, &main, |s| !s.running && !s.items.is_empty()).await;
+    // One branch after the first turn, one after the second.
+    let merged = server
+        .branch_conversation(PROJECT, &main, None)
+        .await
+        .unwrap();
+    send(&server, &main, "Now plot them").await.unwrap();
+    wait_for(&server, &main, |s| !s.running && s.items.len() >= 4).await;
+    let orphaned = server
+        .branch_conversation(PROJECT, &main, None)
+        .await
+        .unwrap();
+    // An active branch takes messages as any conversation does.
+    let active = snapshot(&server, &merged).await;
+    assert!(!active.read_only, "{:?}", active.read_only_reason);
+    assert_eq!(active.read_only_reason, None);
+    send(&server, &merged, "Try a log scale").await.unwrap();
+    wait_for(&server, &merged, |s| !s.running && s.items.len() >= 4).await;
+    // The source loses the turn the second branch split after...
+    server
+        .rewind_conversation(
+            PROJECT,
+            &main,
+            &desktop::TurnRef {
+                from_end: 0,
+                text: "Now plot them".into(),
+            },
+        )
+        .await
+        .unwrap();
+    // ...and the first is brought back into it.
+    let ready = server.branch_merge(PROJECT, &merged).await.unwrap();
+    server
+        .merge_branch(
+            PROJECT,
+            &merged,
+            &ready.guard,
+            "Log scale shows the outlier.",
+        )
+        .await
+        .unwrap();
+    let store = &server.0.store;
+    assert_eq!(
+        store.session_branch_state(&merged).await.unwrap(),
+        Some("merged")
+    );
+    assert_eq!(
+        store.session_branch_state(&orphaned).await.unwrap(),
+        Some("orphaned")
+    );
+
+    for (branch, last) in [(&merged, "Try a log scale"), (&orphaned, "Now plot them")] {
+        // The snapshot says it is read-only, and why.
+        let shown = snapshot(&server, branch).await;
+        assert!(shown.read_only, "{branch}");
+        assert_eq!(
+            shown.read_only_reason,
+            Some(dto::ReadOnlyReason::FrozenBranch)
+        );
+        // Nothing starts or waits to start a turn there, in the WebView's
+        // words for a send.
+        let refused = send(&server, branch, "one more thing").await.unwrap_err();
+        assert!(
+            refused.contains(wisp_store::FROZEN_BRANCH_REFUSAL),
+            "{refused}"
+        );
+        let request = dto::SendRequest {
+            session_id: branch.clone(),
+            request_id: String::new(),
+            message: "later".into(),
+            resume: false,
+            resume_after: None,
+            attachments: vec![],
+            references: vec![],
+            acp_agent_id: None,
+        };
+        assert!(server.queue_message(PROJECT, request).await.is_err());
+        assert!(server
+            .queued_messages(PROJECT, branch)
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(server.guide(PROJECT, branch, "look again").await.is_err());
+        assert!(server
+            .compact_conversation(PROJECT, branch, desktop::CompactKind::Regular)
+            .await
+            .is_err());
+        assert!(server
+            .rewind_conversation(
+                PROJECT,
+                branch,
+                &desktop::TurnRef {
+                    from_end: 0,
+                    text: last.into(),
+                },
+            )
+            .await
+            .is_err());
+        // It is still read and quoted.
+        let turn = desktop::TurnRef {
+            from_end: 0,
+            text: last.into(),
+        };
+        let quoted = server
+            .render_session_excerpt(PROJECT, branch, &turn, &turn)
+            .await
+            .unwrap();
+        assert!(quoted.text.contains(last), "{}", quoted.text);
+        assert!(!server.whole_transcript(branch).await.unwrap().is_empty());
+    }
+
+    // The conversation they came from is not frozen with them.
+    let source = snapshot(&server, &main).await;
+    assert!(!source.read_only);
+    assert_eq!(source.read_only_reason, None);
+    send(&server, &main, "Carry on").await.unwrap();
+    wait_for(&server, &main, |s| {
+        !s.running && s.items.iter().any(|item| item.text == "Carry on")
+    })
+    .await;
+    server.shutdown().await;
+}
+
 /// Proposes a fresh plan, then answers whatever the plan tool said.
 struct Planner;
 #[async_trait]

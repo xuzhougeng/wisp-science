@@ -809,6 +809,9 @@ impl Server {
             !self.archived(&request.session_id).await?,
             "This conversation's research is archived and it is read-only; continue in a new conversation"
         );
+        // A branch brought back into its source, or one whose source lost
+        // the turn it split from, is read-only history, as in the WebView.
+        self.ensure_not_frozen_branch(&request.session_id).await?;
         // An exploration's turns work in its own copy of the project. The
         // source of an exploration round is frozen; other conversations in
         // the project keep to tools that change nothing until it ends.
@@ -1517,6 +1520,17 @@ impl Server {
             .is_some_and(|archive| archive.frozen_at.is_some()))
     }
 
+    /// Refuses, with the WebView's words, to add to a branch frozen as
+    /// read-only history (merged back, or its source lost the turn it
+    /// split from). The rule is the store's, which the WebView shares.
+    pub(crate) async fn ensure_not_frozen_branch(&self, session: &str) -> Result<()> {
+        ensure!(
+            !self.0.store.session_branch_frozen(session).await?,
+            wisp_store::FROZEN_BRANCH_REFUSAL
+        );
+        Ok(())
+    }
+
     /// Asks the conversation's model what could be asked next and keeps
     /// the answer for the snapshot, unless a newer turn began meanwhile.
     /// A failure costs the user nothing but the suggestions.
@@ -1629,6 +1643,11 @@ impl Server {
         };
         let exploration = self.exploration_state(project, &request.session_id).await;
         let dispatched = self.subagent_parent(&request.session_id).await.is_some();
+        let frozen_branch = self
+            .0
+            .store
+            .session_branch_frozen(&request.session_id)
+            .await?;
         // Where the conversation was compacted, on this page. While a turn
         // runs the newest page is what the turn started from; a turn and
         // its end change the generation checked below, so this agrees with
@@ -1730,13 +1749,16 @@ impl Server {
             running: live.running,
             stopping: live.running && session.cancel.load(Ordering::Relaxed),
             activity_status: None,
-            // A subagent's conversation is watched, not written to.
-            read_only: archived || dispatched,
+            // A subagent's conversation is watched, not written to, and a
+            // frozen branch is read as history.
+            read_only: archived || dispatched || frozen_branch,
             // And why, so a client need not guess which.
             read_only_reason: if archived {
                 Some(dto::ReadOnlyReason::Archived)
             } else if dispatched {
                 Some(dto::ReadOnlyReason::Subagent)
+            } else if frozen_branch {
+                Some(dto::ReadOnlyReason::FrozenBranch)
             } else {
                 None
             },

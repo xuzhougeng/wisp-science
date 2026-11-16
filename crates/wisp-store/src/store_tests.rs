@@ -3232,6 +3232,8 @@ async fn branch_summary_appends_to_the_current_main_tail_without_reading_or_rewr
         store.session_branch_state("branch").await.unwrap(),
         Some("merged")
     );
+    assert!(store.session_branch_frozen("branch").await.unwrap());
+    assert!(!store.session_branch_frozen("main").await.unwrap());
     assert!(store
         .preview_session_branch_merge("branch", "p")
         .await
@@ -3321,12 +3323,15 @@ async fn rewinding_past_a_branch_checkpoint_keeps_it_as_frozen_history() {
         .set_session_branch_point("branch", "main", 1, "before_user")
         .await
         .unwrap();
+    // An active branch still takes messages.
+    assert!(!store.session_branch_frozen("branch").await.unwrap());
 
     store.truncate_messages("main", 2).await.unwrap();
     assert_eq!(
         store.session_branch_state("branch").await.unwrap(),
         Some("orphaned")
     );
+    assert!(store.session_branch_frozen("branch").await.unwrap());
     assert!(store
         .list_session_branches("main", "p")
         .await

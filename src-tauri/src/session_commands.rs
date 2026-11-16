@@ -1829,14 +1829,12 @@ pub(crate) async fn rewind_locked(
         .require_unarchived_session(&frame_id)
         .await
         .map_err(|e| e.to_string())?;
-    if matches!(
-        state
-            .store
-            .session_branch_state(&frame_id)
-            .await
-            .map_err(|error| error.to_string())?,
-        Some("merged" | "orphaned")
-    ) {
+    if state
+        .store
+        .session_branch_frozen(&frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+    {
         return Err("Frozen conversation branches cannot be rewound.".into());
     }
     let scope = state
@@ -1896,14 +1894,12 @@ pub(super) async fn undo_compaction(
         .require_unarchived_session(&frame_id)
         .await
         .map_err(|e| e.to_string())?;
-    if matches!(
-        state
-            .store
-            .session_branch_state(&frame_id)
-            .await
-            .map_err(|error| error.to_string())?,
-        Some("merged" | "orphaned")
-    ) {
+    if state
+        .store
+        .session_branch_frozen(&frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+    {
         return Err("Frozen conversation branches cannot undo compaction.".into());
     }
     let scope = state
@@ -2750,14 +2746,11 @@ pub(crate) async fn native_transcript(
         .await
         .map_err(|e| e.to_string())?
         .is_some_and(|a| a.frozen_at.is_some())
-        || matches!(
-            state
-                .store
-                .session_branch_state(id)
-                .await
-                .map_err(|e| e.to_string())?,
-            Some("merged" | "orphaned")
-        );
+        || state
+            .store
+            .session_branch_frozen(id)
+            .await
+            .map_err(|e| e.to_string())?;
     Ok((items, page.next_before_seq, frozen, page.user_offset))
 }
 

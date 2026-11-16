@@ -449,13 +449,11 @@ pub(crate) async fn require_mutable_session(
         .map_err(|e| e.to_string())?
         .ok_or("Session state scope was not found")?;
     crate::exploration_commands::require_writable_scope(store, &scope).await?;
-    if matches!(
-        store
-            .session_branch_state(session)
-            .await
-            .map_err(|e| e.to_string())?,
-        Some("merged" | "orphaned")
-    ) {
+    if store
+        .session_branch_frozen(session)
+        .await
+        .map_err(|e| e.to_string())?
+    {
         return Err("Frozen conversation branches cannot be changed".into());
     }
     Ok(())

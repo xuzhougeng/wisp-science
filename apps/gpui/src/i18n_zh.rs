@@ -2382,6 +2382,13 @@ pub const ZH: &[(&str, &str)] = &[
     ("A subagent of “{}”. Its agent takes instructions only from there; you can watch it here.", "“{}”的子智能体。它只接受那个会话的指令；你可以在这里查看。"),
     ("Open the parent", "打开父会话"),
     ("This subagent conversation only takes instructions from the conversation that started it.", "这个子智能体会话只接受启动它的会话的指令。"),
+    // A branch frozen as read-only history, and what the host says when
+    // something tries to add to one.
+    ("This branch is frozen as read-only history", "该分支已冻结为只读历史"),
+    ("Open the source conversation", "打开来源会话"),
+    ("This conversation branch is frozen and cannot accept new messages.", "该分支已冻结，不能再接收新消息。"),
+    ("A branch that was merged or lost its source cannot be rewound", "已合并或失去来源的分支不能回到之前的消息"),
+    ("Frozen conversation branches cannot undo compaction.", "已冻结的分支不能撤销压缩。"),
     ("Stopped", "已停止"),
     ("Unknown", "未知"),
     ("Waiting", "等待中"),

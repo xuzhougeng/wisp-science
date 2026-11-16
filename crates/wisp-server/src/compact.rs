@@ -80,6 +80,9 @@ impl Server {
             !self.archived(session).await?,
             "This conversation's research is archived and it is read-only"
         );
+        // The WebView compacts by sending `/compact`, which a frozen
+        // branch refuses.
+        self.ensure_not_frozen_branch(session).await?;
         let options = self.stored_options(session).await?;
         let model = self.0.model.read().unwrap().pick(&options.model)?;
         let subagent = self.subagent_model_for(session, &model).await;
@@ -160,6 +163,10 @@ impl Server {
         ensure!(
             !self.archived(session).await?,
             "A frozen conversation cannot be changed"
+        );
+        ensure!(
+            !self.0.store.session_branch_frozen(session).await?,
+            "Frozen conversation branches cannot undo compaction."
         );
         ensure!(
             crate::acp_turn::agent_of(&self.0.store, session)

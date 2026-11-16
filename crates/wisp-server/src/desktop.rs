@@ -2980,10 +2980,7 @@ impl Server {
         let store = &self.0.store;
         store.require_unarchived_session(session).await?;
         ensure!(
-            !matches!(
-                store.session_branch_state(session).await?,
-                Some("merged" | "orphaned")
-            ),
+            !store.session_branch_frozen(session).await?,
             "A branch that was merged or lost its source cannot be rewound"
         );
         Ok(self.locate_turn(session, turn).await?.0)
@@ -6123,6 +6120,7 @@ impl Server {
         let text = text.trim();
         ensure!(!text.is_empty(), "Write a message first");
         self.own_conversation(project, session).await?;
+        self.ensure_not_frozen_branch(session).await?;
         let running = self.session(session);
         let live = running.live.lock().unwrap();
         if !live.running || !live.guidable {

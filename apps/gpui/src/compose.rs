@@ -512,6 +512,11 @@ pub enum ReadOnly {
     /// An exploration that does not take messages (being made, being
     /// kept, failed or ended), with its status.
     ClosedExploration { status: String },
+    /// A branch frozen as read-only history: brought back into the
+    /// conversation it came from, or that conversation lost the turn it
+    /// split from. `source` is the conversation it came from, when the
+    /// project's list names one.
+    FrozenBranch { source: Option<String> },
 }
 
 /// The way on that a read-only conversation offers.
@@ -525,13 +530,23 @@ pub enum ReadOnlyAction {
 
 /// Which read-only case the open conversation is in, if any. `parent` is
 /// the conversation that started it, when the project's list says it is a
-/// subagent's. Why the host marks it read-only is the host's to say: a
-/// reason it does not give is not guessed, so a subagent's conversation
-/// opened before that list arrives never reads as archived.
-pub fn read_only(snapshot: &Snapshot, parent: Option<&str>) -> Option<ReadOnly> {
+/// subagent's; `branch_source` the one it was branched from, when the list
+/// says it is a branch. Why the host marks it read-only is the host's to
+/// say: a reason it does not give is not guessed, so a subagent's
+/// conversation opened before that list arrives never reads as archived.
+pub fn read_only(
+    snapshot: &Snapshot,
+    parent: Option<&str>,
+    branch_source: Option<&str>,
+) -> Option<ReadOnly> {
     let parent = parent.map(str::to_owned);
     match (snapshot.read_only, snapshot.read_only_reason) {
         (true, Some(ReadOnlyReason::Archived)) => return Some(ReadOnly::Archived),
+        (true, Some(ReadOnlyReason::FrozenBranch)) => {
+            return Some(ReadOnly::FrozenBranch {
+                source: branch_source.map(str::to_owned),
+            });
+        }
         (_, Some(ReadOnlyReason::Subagent)) => return Some(ReadOnly::Subagent { parent }),
         _ if parent.is_some() => return Some(ReadOnly::Subagent { parent }),
         (true, _) => return Some(ReadOnly::Unexplained),
@@ -577,6 +592,8 @@ pub fn read_only_reason(state: &ReadOnly, parent_title: &str) -> String {
             tr("This exploration is read-only ({})."),
             &[&crate::explore::status_label(status)],
         ),
+        // The WebView's placeholder for a merged or orphaned branch.
+        ReadOnly::FrozenBranch { .. } => tr("This branch is frozen as read-only history").to_owned(),
     }
 }
 
@@ -593,6 +610,13 @@ pub fn read_only_action(state: &ReadOnly) -> Option<(&'static str, ReadOnlyActio
             tr("View the archive / Continue research"),
             ReadOnlyAction::Archive,
         )),
+        // Work goes on in the conversation it came from, while there is one.
+        ReadOnly::FrozenBranch { source } => source.clone().map(|source| {
+            (
+                tr("Open the source conversation"),
+                ReadOnlyAction::Open(source),
+            )
+        }),
         ReadOnly::Unexplained | ReadOnly::FrozenMainline | ReadOnly::ClosedExploration { .. } => {
             None
         }
@@ -604,9 +628,10 @@ pub fn read_only_icon(state: &ReadOnly) -> &'static str {
     match state {
         ReadOnly::Subagent { .. } => "bot",
         ReadOnly::Archived => "archive",
-        ReadOnly::Unexplained | ReadOnly::FrozenMainline | ReadOnly::ClosedExploration { .. } => {
-            "lock"
-        }
+        ReadOnly::Unexplained
+        | ReadOnly::FrozenMainline
+        | ReadOnly::ClosedExploration { .. }
+        | ReadOnly::FrozenBranch { .. } => "lock",
     }
 }
 
@@ -648,16 +673,20 @@ mod tests {
     #[test]
     fn a_read_only_conversation_says_why_and_offers_one_way_on() {
         // A conversation that can be written to is none of them.
-        assert_eq!(read_only(&conversation(json!({})), None), None);
+        assert_eq!(read_only(&conversation(json!({})), None, None), None);
         assert_eq!(
-            read_only(&conversation(exploration(false, Some("active"))), None),
+            read_only(
+                &conversation(exploration(false, Some("active"))),
+                None,
+                None
+            ),
             None
         );
 
         // A subagent's, as the host says, with its parent once the list
         // of conversations names it.
         let told = json!({"read_only": true, "read_only_reason": "subagent"});
-        let subagent = read_only(&conversation(told.clone()), Some("lead")).unwrap();
+        let subagent = read_only(&conversation(told.clone()), Some("lead"), None).unwrap();
         assert_eq!(
             subagent,
             ReadOnly::Subagent {
@@ -666,7 +695,11 @@ mod tests {
         );
         // Known from the list alone, from a host that does not say why.
         assert_eq!(
-            read_only(&conversation(json!({"read_only": true})), Some("lead")),
+            read_only(
+                &conversation(json!({"read_only": true})),
+                Some("lead"),
+                None
+            ),
             Some(subagent.clone())
         );
         assert_eq!(
@@ -681,7 +714,7 @@ mod tests {
 
         // Before the list has named its parent it is still a subagent's,
         // never an archive, and it offers nothing it cannot do.
-        let unlisted = read_only(&conversation(told), None).unwrap();
+        let unlisted = read_only(&conversation(told), None, None).unwrap();
         assert_eq!(unlisted, ReadOnly::Subagent { parent: None });
         assert!(read_only_reason(&unlisted, "").starts_with("Subagent conversation: watch only."));
         assert_eq!(read_only_action(&unlisted), None);
@@ -689,6 +722,7 @@ mod tests {
         // An archive only when the host says so.
         let archived = read_only(
             &conversation(json!({"read_only": true, "read_only_reason": "archived"})),
+            None,
             None,
         )
         .unwrap();
@@ -709,7 +743,7 @@ mod tests {
             json!({"read_only": true}),
             json!({"read_only": true, "read_only_reason": "a_later_reason"}),
         ] {
-            let state = read_only(&conversation(unsaid), None).unwrap();
+            let state = read_only(&conversation(unsaid), None, None).unwrap();
             assert_eq!(state, ReadOnly::Unexplained);
             assert_eq!(
                 read_only_reason(&state, ""),
@@ -720,11 +754,16 @@ mod tests {
 
         // The source of an unsettled round, and an exploration that ended:
         // the bar over the conversation settles the round.
-        let frozen = read_only(&conversation(exploration(true, None)), None).unwrap();
+        let frozen = read_only(&conversation(exploration(true, None)), None, None).unwrap();
         assert_eq!(frozen, ReadOnly::FrozenMainline);
         assert!(read_only_reason(&frozen, "").starts_with("This conversation is frozen"));
         assert_eq!(read_only_action(&frozen), None);
-        let ended = read_only(&conversation(exploration(false, Some("promoted"))), None).unwrap();
+        let ended = read_only(
+            &conversation(exploration(false, Some("promoted"))),
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(
             ended,
             ReadOnly::ClosedExploration {
@@ -737,6 +776,50 @@ mod tests {
         );
         assert_eq!(read_only_action(&ended), None);
         assert_eq!(read_only_icon(&ended), "lock");
+    }
+
+    #[test]
+    fn a_frozen_branch_says_so_and_opens_where_it_came_from() {
+        let told = json!({"read_only": true, "read_only_reason": "frozen_branch"});
+        // The list names where it came from, which it opens.
+        let merged = read_only(&conversation(told.clone()), None, Some("main")).unwrap();
+        assert_eq!(
+            merged,
+            ReadOnly::FrozenBranch {
+                source: Some("main".into())
+            }
+        );
+        assert_eq!(
+            read_only_reason(&merged, ""),
+            "This branch is frozen as read-only history"
+        );
+        assert_eq!(
+            read_only_action(&merged),
+            Some((
+                "Open the source conversation",
+                ReadOnlyAction::Open("main".into())
+            ))
+        );
+        assert_eq!(read_only_icon(&merged), "lock");
+        // A branch whose source was deleted is named by no list entry, so
+        // it offers nothing.
+        let orphaned = read_only(&conversation(told), None, None).unwrap();
+        assert_eq!(orphaned, ReadOnly::FrozenBranch { source: None });
+        assert_eq!(read_only_action(&orphaned), None);
+        // An active branch is written to as any conversation is.
+        assert_eq!(
+            read_only(&conversation(json!({})), None, Some("main")),
+            None
+        );
+        // A host that does not say why is not guessed at.
+        assert_eq!(
+            read_only(
+                &conversation(json!({"read_only": true})),
+                None,
+                Some("main")
+            ),
+            Some(ReadOnly::Unexplained)
+        );
     }
 
     /// The text of method `name` in `source`, from its signature to the

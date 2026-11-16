@@ -215,7 +215,7 @@ which it only reads.
 | Import from Codex or Claude Code | The import button in the conversation list's header lists the conversations Codex CLI (`~/.codex/sessions`) and Claude Code (`~/.claude/projects`) keep on this computer, newest first, with the first thing asked and the folder it was had in. Import brings one into the project in a group named `codex` or `claude`, with its messages and tool calls; importing it again brings in only what was added since, and leaves a conversation continued here alone. Only this computer is looked at, not SSH or WSL hosts |
 | Delegated tasks | The model can hand a batch of dependent tasks to temporary agents and wait for their results; a plan card asks first when a task can change files, run code or use a remote model. Each task works in a watch-only conversation under the one that started it. The Agents tab lists the batches with each task's status, summary and conversation, and stops a running one |
 | Subagents | The model can start a subagent: a conversation of its own for one focused task, listed under the conversation that started it; in its composer's place a card says it is watched and offers Open the parent. When it ends, a report is added to the parent, whose agent goes on to handle it |
-| Read-only conversations | A conversation that cannot be written to shows, in place of the message box, one card in the composer's column that says why and offers the way on: a subagent's (Open the parent), one whose research is archived (View the archive / Continue research, which opens the research archive), the source of an exploration round that is not settled, and an exploration that no longer runs (the bar over the conversation keeps the round's own actions). Send, the send key, Queue, typed and menu commands that write, attaching, dropping and pasting files and the add-context box all do nothing there |
+| Read-only conversations | A conversation that cannot be written to shows, in place of the message box, one card in the composer's column that says why and offers the way on: a subagent's (Open the parent), one whose research is archived (View the archive / Continue research, which opens the research archive), the source of an exploration round that is not settled, an exploration that no longer runs (the bar over the conversation keeps the round's own actions), and a branch frozen as read-only history because it was brought back or its source lost the turn it split from ("This branch is frozen as read-only history", with Open the source conversation while the project's list names it). Send, the send key, Queue, typed and menu commands that write, attaching, dropping and pasting files and the add-context box all do nothing there |
 | Conversation timer | `/timer 30m <prompt>` gives the open conversation its timer (setting it again changes it: one per conversation). While it has one, a strip above the composer shows the prompt, how often it repeats and when it fires next (or that it is paused, and why its last firing failed), with Pause or Resume and Cancel timer; it is kept by the host, so it is there after a restart |
 | Explorations | On an answer, Start an exploration from here names one and continues the conversation in its own copy of the project; more candidates of the same round start from the same answer. The source shows a bar with each candidate and Abandon the round; a candidate shows its status, View changes and keep (what it changed, what the mainline changed meanwhile, why it cannot be kept), Discard, Back to the mainline and Abandon the round; when it cannot be kept, Show both folders and Finish by hand |
 | Bringing a branch back | In a branch, Bring back in the conversation's toolbar has the model summarise what the branch did since it split off; you read and change the summary, and Bring it back adds it to the conversation the branch came from, which reads it from then on, and opens that conversation, where it shows as a Merged branch result card naming the branch: press it for the summary and Open the branch. A branch is brought back once |
@@ -951,16 +951,27 @@ Limits of this slice:
   A timer the WebView made (one that replaces its previous turn) is the
   WebView's to show and fire, and is not shown here.
 - The host's snapshot says why a conversation is read-only
-  (`read_only_reason`: archived or subagent; an optional field older
-  clients ignore). A subagent's conversation opened before the project's
+  (`read_only_reason`: archived, subagent or frozen_branch; an optional
+  field older clients ignore, and one they do not know reads as other). A subagent's conversation opened before the project's
   list of conversations has named its parent says it is watched but
   offers Open the parent only once the list arrives; a host that does not
   say why gets "This conversation is read-only." with nothing offered.
   The card's View the archive only shows an archive that is there: with
-  none the dialog closes again, says so, and nothing is drafted. A branch that
-  was merged back or lost its source is read-only in the WebView but
-  not here: this host does not refuse a message there, and the composer
-  stays open.
+  none the dialog closes again, says so, and nothing is drafted.
+- A branch that was brought back (merged) or whose source lost the turn
+  it split from (orphaned) is read-only history, by the store's rule
+  that both desktops share (`Store::session_branch_frozen`). The host
+  refuses, in the WebView's words, every way a turn starts there (a
+  message, a queued one, a resumed turn, a timer or scheduled task, a
+  review correction, a subagent's or a background batch's report
+  resuming it) and also queueing, guiding a running turn, compacting,
+  undoing a compaction and rewinding; it is still read and quoted. As in
+  the WebView, a subagent's report is still added to it as a reply; only
+  the turn that would follow is refused. Not yet as in the WebView: Edit
+  and send again is still offered on its messages and refused by the
+  host when used; this host lets any branch be branched again, which
+  the WebView refuses; and writing a handoff note, a review or moving
+  the conversation to another project are not refused here.
 - `/compact` asks which kind of compaction to run, then archives the
   conversation's whole history under the project's `.wisp/history/` and
   shortens what the model is sent: regular prunes old tool output and

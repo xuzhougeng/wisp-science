@@ -3719,12 +3719,14 @@ impl Workspace {
     /// Why the open conversation cannot be written to, when it cannot.
     pub(super) fn read_only(&self) -> Option<compose::ReadOnly> {
         let snapshot = self.state.snapshot.as_ref()?;
-        let parent = self
-            .state
-            .session
-            .as_ref()
-            .and_then(|session| self.dispatched.get(session));
-        compose::read_only(snapshot, parent.map(String::as_str))
+        let session = self.state.session.as_ref();
+        let parent = session.and_then(|session| self.dispatched.get(session));
+        let source = session.and_then(|session| self.branched.get(session));
+        compose::read_only(
+            snapshot,
+            parent.map(String::as_str),
+            source.map(String::as_str),
+        )
     }
 
     /// What is attached to the message being written in this conversation.

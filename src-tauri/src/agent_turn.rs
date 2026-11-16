@@ -450,17 +450,13 @@ async fn send_message_inner_with_continuation(
             .require_unarchived_session(id)
             .await
             .map_err(|e| e.to_string())?;
-        if matches!(
-            state
-                .store
-                .session_branch_state(id)
-                .await
-                .map_err(|error| error.to_string())?,
-            Some("merged" | "orphaned")
-        ) {
-            return Err(
-                "This conversation branch is frozen and cannot accept new messages.".into(),
-            );
+        if state
+            .store
+            .session_branch_frozen(id)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            return Err(wisp_store::FROZEN_BRANCH_REFUSAL.into());
         }
         subagent_tool::require_instruction_source(&state.store, id, origin, resume).await?;
         let (working_project, scope) =
