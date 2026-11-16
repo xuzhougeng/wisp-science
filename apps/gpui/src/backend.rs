@@ -1531,6 +1531,21 @@ impl Backend {
         self.local(move |host| async move { host.import_pasted(&project, &name, &bytes).await })
     }
 
+    /// Cuts a region marked on a picture of the project out of it and keeps
+    /// it in `uploads` as `name`, a PNG: its project-relative path.
+    pub fn import_image_region(
+        &self,
+        project: String,
+        path: String,
+        region: wisp_dto::image_pins::ImageRegion,
+        name: String,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.import_image_region(&project, &path, region, &name)
+                .await
+        })
+    }
+
     /// Opens a terminal of `project`: this computer's shell, or one on an
     /// environment such as `ssh:alias`.
     pub fn open_terminal(

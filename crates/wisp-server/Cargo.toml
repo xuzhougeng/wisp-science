@@ -18,7 +18,7 @@ flate2 = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
 qrcode = { version = "0.14.1", default-features = false }
-image = { version = "0.25", default-features = false, features = ["png", "webp"] }
+image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
 hex = { workspace = true }
 ignore = { workspace = true }
 serde = { workspace = true }

@@ -47,6 +47,7 @@ mod panel;
 mod papers;
 mod pdf_pages;
 mod pet;
+mod picture;
 mod plugins;
 mod present;
 mod project_windows;

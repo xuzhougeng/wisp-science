@@ -13,6 +13,7 @@ use std::rc::Rc;
 
 pub mod codex_login;
 pub mod execution_plan;
+pub mod image_pins;
 pub mod native_assistant;
 pub mod native_branch_merge;
 pub mod native_calendar;

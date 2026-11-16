@@ -9,6 +9,13 @@ pub enum Layer {
     FilesPanel,
     /// File preview shown over the browser's directory listing.
     FilePreview,
+    /// Marking regions on a previewed picture: a drag draws a region
+    /// instead of moving the picture, and a click on a note's number
+    /// removes it.
+    PictureSelect,
+    /// A region just marked on the picture, with the field for its note and
+    /// the actions that put it on the message.
+    PictureRegion,
     /// Question over the preview when an edited script changed on disk
     /// after the edit began: keep editing, reload, or overwrite.
     FileChangedOnDisk,
@@ -348,7 +355,8 @@ impl Layer {
             Layer::GroupMenu | Layer::TransferMenu => Some(Layer::ConversationMenu),
             Layer::ExampleCopy => Some(Layer::Examples),
             Layer::ConfirmRunFilesDelete => Some(Layer::RunReview),
-            Layer::FileChangedOnDisk => Some(Layer::FilePreview),
+            Layer::FileChangedOnDisk | Layer::PictureSelect => Some(Layer::FilePreview),
+            Layer::PictureRegion => Some(Layer::PictureSelect),
             _ => None,
         }
     }
@@ -514,6 +522,32 @@ mod tests {
         stack.open(Layer::ConfirmCloseUnsaved);
         assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmCloseUnsaved));
         assert!(stack.contains(Layer::FilePreview));
+    }
+
+    #[test]
+    fn a_marked_region_goes_first_then_marking_then_the_picture() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::FilePreview);
+        stack.open(Layer::PictureSelect);
+        stack.open(Layer::PictureRegion);
+        // Escape, pressed at once, gives up the region and its note; the
+        // picture is still being marked, and its preview is open.
+        assert_eq!(stack.dismiss_top(), Some(Layer::PictureRegion));
+        assert!(stack.contains(Layer::PictureSelect) && stack.contains(Layer::FilePreview));
+        assert_eq!(stack.dismiss_top(), Some(Layer::PictureSelect));
+        assert!(stack.contains(Layer::FilePreview));
+        // Leaving marking takes a region waiting for its note along, and
+        // leaving the picture takes both.
+        stack.open(Layer::PictureSelect);
+        stack.open(Layer::PictureRegion);
+        assert!(stack.close(Layer::PictureSelect));
+        assert!(!stack.contains(Layer::PictureRegion));
+        stack.open(Layer::PictureSelect);
+        stack.open(Layer::PictureRegion);
+        assert!(stack.close(Layer::FilePreview));
+        assert!(!stack.contains(Layer::PictureSelect) && !stack.contains(Layer::PictureRegion));
+        assert!(stack.contains(Layer::FilesPanel));
     }
 
     #[test]

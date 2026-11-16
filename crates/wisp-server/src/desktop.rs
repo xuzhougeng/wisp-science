@@ -1056,6 +1056,28 @@ impl Server {
         Ok((content_type.to_owned(), tokio::fs::read(&real).await?))
     }
 
+    /// Cuts `region` (fractions of the picture) out of a picture in the
+    /// project and keeps it as a PNG named `name` in the project's
+    /// `uploads`, for a message to carry: what the WebView's "Add to chat"
+    /// on a region does in the browser (`crop_region_to_upload` in
+    /// `ui/src/api.js`), the picture's own pixels whatever zoom it was
+    /// marked at. An SVG is refused: there is no renderer for it here.
+    pub async fn import_image_region(
+        &self,
+        project: &str,
+        path: &str,
+        region: wisp_dto::image_pins::ImageRegion,
+        name: &str,
+    ) -> Result<String> {
+        let (kind, bytes) = self.project_image(project, path).await?;
+        ensure!(
+            kind != "image/svg+xml",
+            "A region of an SVG picture cannot be cut out here; add a note to the region instead"
+        );
+        let png = tokio::task::spawn_blocking(move || crop_png(&bytes, region)).await??;
+        self.import_pasted(project, name, &png).await
+    }
+
     /// A PDF of the project, whole, for the window to draw its pages; the
     /// WebView shows them with pdf.js.
     pub async fn project_pdf(&self, project: &str, path: &str) -> Result<Vec<u8>> {
@@ -7869,6 +7891,25 @@ fn favorite_title(text: &str) -> String {
         title.push('…');
     }
     title
+}
+
+/// The pixels of `region` of a picture (PNG, JPEG, GIF's first frame, WebP
+/// or BMP) as a PNG, as the WebView's canvas crop turns a region into one.
+fn crop_png(bytes: &[u8], region: wisp_dto::image_pins::ImageRegion) -> Result<Vec<u8>> {
+    use image::ImageEncoder;
+    let picture = image::load_from_memory(bytes)
+        .context("The picture could not be read")?
+        .into_rgba8();
+    let (left, top, width, height) = region.pixels(picture.width(), picture.height());
+    let cut = image::imageops::crop_imm(&picture, left, top, width, height).to_image();
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png).write_image(
+        cut.as_raw(),
+        cut.width(),
+        cut.height(),
+        image::ExtendedColorType::Rgba8,
+    )?;
+    Ok(png)
 }
 
 fn image_type(path: &std::path::Path) -> Option<&'static str> {

@@ -7845,6 +7845,85 @@ async fn project_settings_name_the_project_and_give_the_model_its_rules() {
 }
 
 #[tokio::test]
+async fn the_desktop_cuts_a_marked_region_of_a_picture_into_uploads() {
+    use wisp_dto::image_pins::ImageRegion;
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let workspace = temp.path().join("workspace");
+    std::fs::create_dir_all(workspace.join("figures")).unwrap();
+    // Four pixels by three, each a colour of its own.
+    let picture =
+        image::RgbImage::from_fn(4, 3, |x, y| image::Rgb([x as u8 * 60, y as u8 * 100, 7]));
+    picture.save(workspace.join("figures/plot.png")).unwrap();
+    picture.save(workspace.join("figures/photo.jpg")).unwrap();
+
+    // The right half of the top row, in fractions of the picture, is its
+    // own two pixels, whatever zoom it was marked at.
+    let region = ImageRegion {
+        x: 0.5,
+        y: 0.0,
+        w: 0.5,
+        h: 1.0 / 3.0,
+    };
+    let kept = server
+        .import_image_region(
+            PROJECT,
+            "figures/plot.png",
+            region,
+            "region_20261116090000.png",
+        )
+        .await
+        .unwrap();
+    assert_eq!(kept, "uploads/region_20261116090000.png");
+    let cut = image::open(workspace.join(&kept)).unwrap().into_rgb8();
+    assert_eq!(cut.dimensions(), (2, 1));
+    assert_eq!(cut.get_pixel(0, 0), &image::Rgb([120, 0, 7]));
+    assert_eq!(cut.get_pixel(1, 0), &image::Rgb([180, 0, 7]));
+    // A second cut under the same name keeps the first.
+    assert_eq!(
+        server
+            .import_image_region(
+                PROJECT,
+                "figures/plot.png",
+                region,
+                "region_20261116090000.png"
+            )
+            .await
+            .unwrap(),
+        "uploads/region_20261116090000-2.png"
+    );
+    // A JPEG is cut the same way, into a PNG.
+    let photo = server
+        .import_image_region(PROJECT, "figures/photo.jpg", region, "region_photo.png")
+        .await
+        .unwrap();
+    let cut = image::open(workspace.join(&photo)).unwrap();
+    assert_eq!((cut.width(), cut.height()), (2, 1));
+
+    // An SVG, a file that is not a picture, and anything outside the
+    // project are refused, and nothing is kept for them.
+    std::fs::write(
+        workspace.join("figures/plot.svg"),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="3"/>"#,
+    )
+    .unwrap();
+    std::fs::write(workspace.join("figures/notes.txt"), "words").unwrap();
+    for path in ["figures/plot.svg", "figures/notes.txt", "../x.png"] {
+        assert!(
+            server
+                .import_image_region(PROJECT, path, region, "refused.png")
+                .await
+                .is_err(),
+            "{path}"
+        );
+    }
+    assert!(!workspace.join("uploads/refused.png").exists());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn the_desktop_makes_renames_and_trashes_project_files() {
     let temp = tempfile::tempdir().unwrap();
     let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))

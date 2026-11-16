@@ -317,6 +317,12 @@ pub fn pasted_name(extension: &str, now: chrono::NaiveDateTime) -> String {
     format!("pasted-{}.{extension}", now.format("%Y%m%d-%H%M%S"))
 }
 
+/// The name a region cut out of a picture is kept under in `uploads`, as
+/// the WebView names it: `region_` and when it was cut, in UTC.
+pub fn region_name(now_utc: chrono::NaiveDateTime) -> String {
+    format!("region_{}.png", now_utc.format("%Y%m%d%H%M%S"))
+}
+
 /// Whether Cmd+V (Ctrl+V off macOS) was pressed with nothing else held.
 pub fn is_paste(key: &str, primary: bool, shift: bool, others: bool) -> bool {
     key == "v" && primary && !shift && !others
@@ -454,6 +460,25 @@ pub fn with_inline_quote(typed: &str, message: &str) -> String {
         format!("“{kept}” ")
     } else {
         format!("{typed} “{kept}” ")
+    }
+}
+
+/// The text of the composer once `text` is quoted, whole and line by line,
+/// in front of what was being written: where the WebView puts a quote it
+/// holds beside its composer (the notes on a picture's regions) when the
+/// message is sent, so the model reads the same message.
+pub fn with_quote_before(typed: &str, text: &str) -> String {
+    let quoted = text
+        .trim()
+        .lines()
+        .map(|line| format!("> {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let typed = typed.trim();
+    if typed.is_empty() {
+        format!("{quoted}\n\n")
+    } else {
+        format!("{quoted}\n\n{typed}")
     }
 }
 
@@ -829,6 +854,24 @@ mod tests {
         assert!(!is_paste("v", false, false, false));
         assert!(!is_paste("v", true, true, false));
         assert!(!is_paste("c", true, false, false));
+        assert_eq!(region_name(at), "region_20261115090507.png");
+    }
+
+    #[test]
+    fn notes_on_a_picture_go_whole_in_front_of_what_is_written() {
+        let notes =
+            "Revision notes on image `a.png`:\n1. (x=0.100, y=0.200, w=0.300, h=0.400) darker";
+        assert_eq!(
+            with_quote_before("", notes),
+            "> Revision notes on image `a.png`:\n> 1. (x=0.100, y=0.200, w=0.300, h=0.400) darker\n\n"
+        );
+        assert_eq!(
+            with_quote_before("Fix these.  \n", notes),
+            "> Revision notes on image `a.png`:\n> 1. (x=0.100, y=0.200, w=0.300, h=0.400) darker\n\nFix these."
+        );
+        // However many notes there are, none is cut.
+        let long = "n\n".repeat(2_000);
+        assert_eq!(with_quote_before("", &long).matches("> n").count(), 2_000);
     }
 
     #[test]

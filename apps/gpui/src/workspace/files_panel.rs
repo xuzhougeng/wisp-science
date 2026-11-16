@@ -533,9 +533,11 @@ impl Workspace {
     }
 
     pub(super) fn open_file(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        let same_file = self.files.preview_path.as_deref() == Some(path.as_str());
         let Some(ticket) = self.files.begin_preview(&path) else {
             return;
         };
+        self.reset_picture(same_file);
         // An edit of the file shown before stays as its draft.
         self.file_edit = None;
         self.layers.close(Layer::FileChangedOnDisk);
@@ -701,7 +703,7 @@ impl Workspace {
         cx.notify();
     }
 
-    fn close_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn close_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.layers.close(Layer::FilePreview) {
             // An unsaved edit stays as the file's draft.
             self.file_edit = None;
@@ -786,25 +788,12 @@ impl Workspace {
 
     fn render_preview(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let message = |text: &'static str| surfaces::panel_empty(text, cx).into_any_element();
-        if let Some((_, image)) = self
+        if let Some((path, image)) = self
             .file_image
             .as_ref()
             .filter(|(path, _)| self.files.preview_path.as_deref() == Some(path.as_str()))
         {
-            return div()
-                .flex_1()
-                .min_h_0()
-                .p_3()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    img(image.clone())
-                        .max_w_full()
-                        .max_h_full()
-                        .object_fit(ObjectFit::Contain),
-                )
-                .into_any_element();
+            return self.render_picture(path, image.clone(), window, cx);
         }
         let Some(content) = &self.files.preview else {
             return match &self.files.error {
@@ -1748,6 +1737,7 @@ impl Workspace {
                         .child(notice.clone())
                 }))
                 .children(self.render_file_editor_bar(cx))
+                .children(self.render_picture_bar(cx))
                 .child(self.render_preview(window, cx))
                 .into_any_element();
         }

@@ -35,6 +35,7 @@ mod palette_view;
 mod panel_tabs;
 mod papers_view;
 mod pet_view;
+mod picture_view;
 mod privacy_view;
 mod project_settings;
 mod project_sync_view;
@@ -865,6 +866,23 @@ pub struct Workspace {
     file_structure: Option<(String, std::sync::Arc<crate::molecules::Structure>)>,
     structure_turn: (f32, f32),
     structure_drag: Option<Point<Pixels>>,
+    /// How the previewed picture is zoomed and scrolled; back to the
+    /// preview's width for each picture opened, as in the WebView.
+    picture: crate::picture::View,
+    /// The picture preview's place in the window and the picture's own
+    /// size in pixels, as last drawn, for the pointer's events.
+    picture_geometry: std::rc::Rc<std::cell::Cell<Option<(Bounds<Pixels>, (f32, f32))>>>,
+    /// Where a drag that moves the picture last was.
+    picture_pan: Option<Point<Pixels>>,
+    /// The region being marked on the picture, or marked and waiting for
+    /// its note.
+    picture_mark: Option<crate::picture::Mark>,
+    /// Notes on regions of pictures, while the window is open.
+    picture_pins: crate::picture::Pins,
+    /// The note being written for the marked region.
+    pin_note: Entity<InputState>,
+    /// A marked region is being cut out of the picture for the message.
+    picture_cutting: bool,
     favorite_request: u64,
     rename: Entity<InputState>,
     settings: settings_view::SettingsForm,
@@ -969,6 +987,8 @@ impl Workspace {
         let search =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Search conversations…")));
         let rename = cx.new(|cx| InputState::new(window, cx).placeholder(tr("Conversation title")));
+        let pin_note =
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("Write a short comment…")));
         let folder_name = cx.new(|cx| InputState::new(window, cx).placeholder(tr("Group name")));
         let delete_name_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Type the project's name")));
@@ -1373,6 +1393,12 @@ impl Workspace {
             cx.subscribe_in(&rename, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::PressEnter { .. }) {
                     this.save_rename(window, cx);
+                }
+            }),
+            // Return keeps the note on the marked region.
+            cx.subscribe_in(&pin_note, window, |this, _, event, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    this.add_picture_pin(window, cx);
                 }
             }),
             // Filtering is done here, over the list already read.
@@ -1885,6 +1911,13 @@ impl Workspace {
             file_structure: None,
             structure_turn: (0.0, 0.0),
             structure_drag: None,
+            picture: crate::picture::View::default(),
+            picture_geometry: std::rc::Rc::default(),
+            picture_pan: None,
+            picture_mark: None,
+            picture_pins: crate::picture::Pins::default(),
+            pin_note,
+            picture_cutting: false,
             inline_images: HashMap::new(),
             reply_artifacts: Vec::new(),
             generated: HashMap::new(),
@@ -2170,6 +2203,9 @@ impl Workspace {
             Some(Layer::ConfirmTrashFile) => self.file_trashing = None,
             // The edit stays as it was, unsaved.
             Some(Layer::FileChangedOnDisk | Layer::ConfirmCloseUnsaved) => {}
+            // The region and its note are given up; marking goes on.
+            Some(Layer::PictureRegion) => self.drop_picture_mark(window, cx),
+            Some(Layer::PictureSelect) => self.picture_mark = None,
             // Menus and questions that hold no focus of their own.
             Some(
                 Layer::SortMenu
