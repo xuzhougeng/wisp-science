@@ -1923,7 +1923,7 @@ impl Workspace {
     }
 
     /// The small rounded box a file or reference is shown in.
-    fn chip_box(cx: &App) -> Div {
+    pub(super) fn chip_box(cx: &App) -> Div {
         div()
             .h_flex()
             .gap_1()

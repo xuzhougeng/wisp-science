@@ -2908,4 +2908,7 @@ pub const ZH: &[(&str, &str)] = &[
     ("Last error: {}", "最近错误：{}"),
     ("Reviewer is checking the margins…", "Reviewer 正在逐字挑刺…"),
     ("Red pen uncapped; claims are looking nervous", "红笔已拔帽，论点开始紧张"),
+    // A passage of a file quoted into a side question.
+    ("Ask aside about the selected text", "引用选中文字到侧边问答"),
+    ("Select a passage of the text first.", "请先选中一段文字。"),
 ];

@@ -205,7 +205,7 @@ desktop can hold them as they are.
 | Artifacts | Files a turn wrote are recorded when it ends; an Artifacts tab lists them for the conversation or the project and opens them, and lists each one's versions, any of which can be saved as a copy from its snapshot (checked against its checksum, up to 512 MB); By folder puts them under their folders, and each one's trail button says which tool call wrote it, with the code and Open the conversation |
 | Side panel | Tabs: Files, Runs, Environments (this computer and the saved SSH hosts: attach one to the conversation so its runs may go there, take it away, check it, open a terminal or its folders, see the Python and R its last check found, list the project's runs there, list the files the project placed there and delete one no run needs after a question, and set where the project keeps things there: uploaded data, run folders and the results folder), Artifacts, Notebook, Provenance (the loaded part's tool calls with how each went, opening to what each was given and returned, with Show in the conversation), Agents, Highlights, Memos, Memory, Aside, each named in words, the open one in ink with a short teal line under it. − beside the open tab takes it away and + adds one back; the tabs kept are remembered, and opening a tab from elsewhere brings it back |
 | Agents | The Agents tab lists the helpers the conversation sent off to explore: what each was asked, how it went, and what it found; the transcript draws those calls, and the subagents and batches the agent started, as cards |
-| Aside | The Aside tab (or the command palette) asks the conversation's model a question about the open conversation; the answer shows beside it and nothing is added to the conversation. The latest turns are quoted whole; passages from before them that match the question go along labelled [E1]… and are listed under the answer, with who said them and the words they matched. Ask aside under a message opens it with that message quoted in the question |
+| Aside | The Aside tab (or the command palette) asks the conversation's model a question about the open conversation; the answer shows beside it and nothing is added to the conversation. As in the WebView's side chat, the model first says what kind of question it is (about the conversation as a whole, a comparison of earlier and later, or a lookup of something said in it) and which phrases to look for; the answer is then told that scope. The latest turns are quoted whole; passages from before them that hold those phrases (or, for a lookup or comparison the model gave none for, the question's words) go along labelled [E1]… and are listed under the answer, with who said them and the words they matched. Ask aside under a message opens it with that message quoted in the question; with text selected in a file's text in the preview (plain text, a script, a table shown as text), the preview's Ask aside about the selected text quotes that passage under the file's name into the next question, as a chip with its × until it is asked |
 | Quoting | Quote under a message puts it in the message box as a quotation after what you were writing, ready to answer; a selected passage is copied with Cmd/Ctrl+C |
 | Quote / reuse | Under a message of yours, Quote / reuse starts a range of turns and End quote here on the same or a later (or earlier) one of yours ends it; a bar above the composer says where it starts until then, and Escape or Cancel gives it up. The dialog shows the turns (Original turns) or has the conversation's model distill them into an experience draft to edit (Distill experience, with an optional focus and Regenerate) and keep for this project or as a habit. Add to conversation puts the turns or the draft, as a quote naming the conversation and its turns, in front of the draft of a new conversation or another one of the project, and opens it to be sent from there. Not offered on a turn still running or in a conversation an ACP agent runs |
 | Favorites | A star under any message saves it as it reads now; an image in Artifacts can be saved as a figure. Highlights lists what this conversation saved; the Favorites page lists everything from every project, with search, a kind filter, the item in full, its source conversation and removal after a confirmation; saved code has versions, is edited into a new one, and is inserted into the open conversation as a request to run it again |
@@ -517,9 +517,12 @@ Limits of this slice:
   tab's rows (the WebView also offers it on file links in answers, from a
   right-click menu GPUI does not have), and only beside a conversation.
   Chat snapshots (a bound reference of an answer opened as an immutable
-  `artifact-version:` tab with Open in editor) are not ported: answers do
-  not draw their bound references here, and the host cannot read a stored
-  artifact version. Escape does not end a drag of the divider.
+  `artifact-version:` tab with Open in editor) are not ported: this host
+  never binds an answer's file links to stored versions (the Tauri
+  desktop does it as it saves each answer, in
+  `src-tauri/src/resource_refs.rs`, with a Markdown parser no crate this
+  desktop builds has), so its answers carry no bound references to open.
+  Escape does not end a drag of the divider.
 - The palette finds files by name, not content. Each project is walked
   breadth-first for at most 20,000 entries, skipping links, dot-folders,
   `node_modules` and `__pycache__`, so a file deep in a very large tree can be
@@ -1170,7 +1173,11 @@ Limits of this slice:
   delivered to the conversation, whose model sums it up. Run as agents
   takes at most 8 tasks, the delegation limit. Not ported: ACP executors
   and a named model profile per task (a task picks the sub-agent model or
-  the conversation's), tool-call and cost budgets, dragging tasks about on the map,
+  the conversation's), because this host's delegation cannot run them: it
+  offers its tasks only those two models and one native executor, and
+  runs every task's turn natively on one of the two, so the editor does
+  not offer them and Bring over still leaves such WebView templates
+  behind; tool-call and cost budgets, dragging tasks about on the map,
   skills that bring scripts of their own as conversion sources, and literature and web research
   capabilities.
   A task can only need tasks listed before it; besides the numbered
@@ -1408,18 +1415,34 @@ Limits of this slice:
   composer, after whatever you had typed. The work is done by the bundled
   `skill-creator` skill in an ordinary turn, so it needs that skill turned
   on in Settings and asks for approval like any turn that writes files.
-- A question asked aside is one model request without tools: the
-  conversation's model reads the last twelve turns, with long messages and
-  tool results cut short, the latest eight side exchanges, and the
-  question (at most 4,000 characters). It can be asked while a turn runs
-  and then reads what has been saved so far. The answer is the model's
-  reading of the conversation, not a search of the project: there is no
-  list of the evidence it used. Ask on a run card ties the next questions
+- A question asked aside is two model requests without tools. First the
+  conversation's model classifies it with the WebView's side-chat
+  classifier (its prompt, how its JSON is read and what each scope tells
+  the answer are shared from `wisp_app::side_question`), given 30
+  seconds; a question it cannot classify is answered on a best-effort
+  reading, the answer told so. Then it reads the last twelve turns, with
+  long messages and tool results cut short, the earlier passages the
+  scope looks up, the latest eight side exchanges, and the question (at
+  most 4,000 characters, quoted passages included; a quoted selection is
+  cut at 3,000). It can be asked while a turn runs and then reads what
+  has been saved so far. The answer is the model's reading of the
+  conversation, not a search of the project. Unlike the WebView, which
+  sends the model only up to eight ranked excerpts, the latest turns go
+  whole and the scope only picks the earlier passages; a lookup that
+  finds nothing is still answered (the WebView says there is no
+  evidence without asking). Ask on a run card ties the next questions
   to that run: its live snapshot (status, timing, exit code, command,
   progress and stored output tails) goes along as the newest source, as
-  the WebView's run-card questions do, until it is put away or another
-  conversation opens; the run's server is not asked anything. A question
-  cannot be tied to selected text. The thread is kept per conversation in the window
+  the WebView's run-card questions do, without a classification, until it
+  is put away or another conversation opens; the run's server is not
+  asked anything. A selection can be quoted only from a file's text in
+  the preview: the text of an answer, rendered Markdown, a document's
+  text and the viewers keep their selection inside gpui-component, and
+  there is no selection popup or right-click menu, only the preview's
+  button. A quoted passage is named a workspace file to the model even
+  where the WebView, by the file's kind, would name it a reference. The
+  WebView's side chat can also be answered by an ACP agent; this one
+  cannot. The thread is kept per conversation in the window
   that asked, until the app closes; nothing is written to the database,
   and the tokens are not in the usage statistics or the trajectory.
 - Follow-up questions cost one more, short model request after every turn

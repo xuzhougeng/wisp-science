@@ -6669,9 +6669,11 @@ impl Server {
     }
 
     /// Answers a question about a conversation without adding anything to
-    /// it: the conversation's model reads its latest turns and `earlier`,
-    /// the side exchanges so far, and has no tools. It can be asked while a
-    /// turn runs, and reads what has been saved by then.
+    /// it: the conversation's model first classifies the question, as the
+    /// WebView's side chat does, then reads its latest turns, the earlier
+    /// passages its scope looks up and `earlier`, the side exchanges so
+    /// far, and has no tools. It can be asked while a turn runs, and reads
+    /// what has been saved by then.
     pub async fn ask_aside(
         &self,
         project: &str,
@@ -6710,6 +6712,9 @@ impl Server {
         question: &str,
     ) -> Result<AsideAnswer> {
         self.own_conversation(project, session).await?;
+        // A question that would be refused is refused before the model is
+        // asked anything about it.
+        let question = crate::aside::checked_question(question)?;
         let snapshot = match run {
             None => None,
             Some(run) => {
@@ -6733,18 +6738,47 @@ impl Server {
         let messages = store
             .load_recent_turn_preview_messages(session, crate::aside::TURNS)
             .await?;
+        let provider = (self.0.models)(model);
+        // As the WebView's side chat does, the model first says what kind of
+        // question it is, unless it is about a run, whose scope the card
+        // chose. One it cannot classify is answered on a best-effort reading.
+        let intent = match snapshot {
+            Some(_) => None,
+            None => Some(
+                match wisp_app::side_question::classify(
+                    provider.as_ref(),
+                    question,
+                    wisp_app::side_question::INTENT_TIMEOUT,
+                )
+                .await
+                {
+                    Ok(intent) => intent,
+                    Err(reason) => {
+                        tracing::warn!(
+                            reason,
+                            "Aside classification unavailable; using recent conversation"
+                        );
+                        wisp_app::side_question::Intent::fallback(crate::aside::terms(question))
+                    }
+                },
+            ),
+        };
+        let wanted = match &intent {
+            Some(intent) => crate::aside::lookup_terms(question, intent),
+            None => crate::aside::terms(question),
+        };
         // Passages from before the turns quoted whole that match the
         // question go along, labelled, as the WebView's evidence does.
         let history = store
             .load_recent_turn_preview_messages(session, crate::aside::HISTORY_TURNS)
             .await?;
         let before = history.len().saturating_sub(messages.len());
-        let sources = crate::aside::sources(question, &history[..before]);
-        let provider = (self.0.models)(model);
+        let sources = crate::aside::sources(&wanted, &history[..before]);
         match crate::aside::ask(
             provider.as_ref(),
             &messages,
             snapshot.as_deref(),
+            intent.map(|intent| intent.scope),
             &sources,
             earlier,
             question,

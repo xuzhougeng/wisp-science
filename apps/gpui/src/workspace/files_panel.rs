@@ -1642,6 +1642,31 @@ impl Workspace {
             .into_any_element()
     }
 
+    /// Whether the preview shows the file's text in the text field, where a
+    /// passage can be selected and read back: plain text, a script in the
+    /// editor, or a table shown as text. Rendered Markdown, pages, notebooks
+    /// and the viewers keep their selection to themselves.
+    fn preview_text_selectable(&self) -> bool {
+        let Some(content) = &self.files.preview else {
+            return false;
+        };
+        if files::preview_mode(content) != PreviewMode::Text || files::html_page(content) {
+            return false;
+        }
+        let path = content.path.as_str();
+        let shown = |other: Option<&String>| other.is_some_and(|other| other == path);
+        if shown(self.file_sequences.as_ref().map(|(at, _)| at))
+            || shown(self.file_structure.as_ref().map(|(at, _)| at))
+        {
+            return false;
+        }
+        let text = content.text.as_deref().unwrap_or_default();
+        if files::notebook(path, text).is_some() {
+            return false;
+        }
+        files::table(path, text).is_none() || self.file_as_text
+    }
+
     /// Looks up which tool call wrote the file being previewed.
     fn load_file_origin(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(project), Some(path)) =
@@ -1763,8 +1788,19 @@ impl Workspace {
             note.push_str(tr("Not saved"));
         }
         let note = (!note.is_empty()).then(|| note.into());
+        // A passage selected in the text can be asked about aside, as the
+        // WebView quotes a selection into its side chat.
+        let quote = (self.state.session.is_some() && self.preview_text_selectable()).then(|| {
+            icon_button(
+                "file-quote-aside",
+                "circle-help",
+                "Ask aside about the selected text",
+            )
+            .on_click(cx.listener(|this, _, window, cx| this.quote_selection_aside(window, cx)))
+        });
         let header = surfaces::panel_header(name, note, cx)
             .children(self.file_actions(cx))
+            .children(quote)
             .child(
                 icon_button(
                     "file-preview-origin",

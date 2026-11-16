@@ -9010,8 +9010,19 @@ async fn a_question_asked_aside_is_answered_without_touching_the_conversation() 
         ) -> wisp_llm::Result<Completion> {
             assert!(tools.is_empty(), "a side question has no tools");
             self.asked.lock().unwrap().push(messages.to_vec());
+            // Asked what kind of question it is, it says, except about the
+            // header, which it cannot classify.
+            let classifying =
+                messages[0].content.as_text() == wisp_app::side_question::INTENT_SYSTEM_PROMPT;
+            let content = if !classifying {
+                " Because the file has 400 lines. "
+            } else if messages[1].content.as_text().contains("header") {
+                "I cannot tell."
+            } else {
+                r#"{"scope":"lookup","prefer_recent":false,"query_terms":["reads"]}"#
+            };
             Ok(Completion {
-                content: " Because the file has 400 lines. ".into(),
+                content: content.into(),
                 finish_reason: Some("stop".into()),
                 ..Default::default()
             })
@@ -9069,8 +9080,26 @@ async fn a_question_asked_aside_is_answered_without_touching_the_conversation() 
     assert!(answer.sources.is_empty());
     {
         let asked = asked.lock().unwrap();
-        assert_eq!(asked.len(), 1);
-        let sent: Vec<_> = asked[0]
+        // First the model says what kind of question it is, the question
+        // tagged as data, as the WebView's side chat asks it.
+        assert_eq!(asked.len(), 2);
+        assert_eq!(
+            asked[0][0].content.as_text(),
+            wisp_app::side_question::INTENT_SYSTEM_PROMPT
+        );
+        assert!(asked[0][1]
+            .content
+            .as_text()
+            .starts_with("<side_question>\nwhy 100?\n</side_question>"));
+        // Then it answers, told the scope it gave.
+        let system = asked[1][0].content.as_text();
+        assert!(
+            system.ends_with(wisp_app::side_question::scope_instruction(
+                wisp_app::side_question::Scope::Lookup
+            )),
+            "{system}"
+        );
+        let sent: Vec<_> = asked[1]
             .iter()
             .map(|message| message.content.as_text())
             .collect();
@@ -9102,7 +9131,23 @@ async fn a_question_asked_aside_is_answered_without_touching_the_conversation() 
         .ask_aside(PROJECT, "missing", &[], "why?")
         .await
         .is_err());
-    assert_eq!(asked.lock().unwrap().len(), 1);
+    // A refused question asked the model nothing.
+    assert_eq!(asked.lock().unwrap().len(), 2);
+
+    // A question the model cannot classify is still answered, told so.
+    server
+        .ask_aside(PROJECT, &session, &[], "what about the header?")
+        .await
+        .unwrap();
+    {
+        let asked = asked.lock().unwrap();
+        assert_eq!(asked.len(), 4);
+        let system = asked[3][0].content.as_text();
+        assert!(
+            system.contains("Intent classification was unavailable"),
+            "{system}"
+        );
+    }
 
     // About one of the project's runs: its live snapshot goes along.
     let mut run =
@@ -9116,6 +9161,9 @@ async fn a_question_asked_aside_is_answered_without_touching_the_conversation() 
         .unwrap();
     {
         let asked = asked.lock().unwrap();
+        // The run card chose the scope: nothing is classified.
+        assert_eq!(asked.len(), 5);
+        assert!(!asked[4][0].content.as_text().contains("Classified scope"));
         let sent = asked.last().unwrap()[1].content.as_text();
         assert!(
             sent.contains("<run>\nRun run-aside \"Align reads\""),

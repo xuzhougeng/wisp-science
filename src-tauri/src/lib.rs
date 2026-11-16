@@ -7098,7 +7098,9 @@ async fn side_chat(
         (None, Ok(llm)) => side_chat::classify_intent(llm.as_ref(), question).await,
         (None, Err(error)) => {
             if acp_agent_id.as_deref().is_some_and(|id| !id.is_empty()) {
-                side_chat::SideChatIntent::session_fallback(question)
+                <side_chat::SideChatIntent as side_chat::SessionFallback>::session_fallback(
+                    question,
+                )
             } else {
                 return Err(error.clone());
             }

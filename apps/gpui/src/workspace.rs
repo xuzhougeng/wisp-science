@@ -379,6 +379,9 @@ pub struct Workspace {
     /// The run the next side question is about, with its title, when it
     /// was asked from a run card.
     aside_run: Option<(String, String)>,
+    /// Passages selected in project files, quoted into the next side
+    /// question, as the WebView's side chat holds its quotes.
+    aside_quotes: Vec<crate::aside::Quote>,
     palette_scroll: ScrollHandle,
     sessions: Vec<SessionSearchInfo>,
     /// Conversations in any project that are waiting for the user.
@@ -1711,6 +1714,7 @@ impl Workspace {
             plan_feedback,
             asides: HashMap::new(),
             aside_run: None,
+            aside_quotes: Vec::new(),
             capabilities: None,
             capabilities_error: None,
             archive: None,
@@ -3160,8 +3164,10 @@ impl Workspace {
     fn clear_transcript(&mut self) {
         self.poll = None;
         self.rows.clear();
-        // A side question about a run was about the conversation left.
+        // A side question about a run, or quoting a passage, was about the
+        // conversation left, as the WebView clears its side chat's quotes.
         self.aside_run = None;
+        self.aside_quotes.clear();
         self.turn_tokens.clear();
         self.batches.clear();
         self.batches_for = None;
