@@ -352,7 +352,9 @@ impl Server {
             .open(config.data.join("server.lock"))?;
         lock.try_lock()
             .context("Another wisp-server already owns this data directory")?;
-        let store = Store::open(&config.data.join("wisp.sqlite")).await?;
+        // As the desktop opens it: with the registry of projects that keep
+        // their own database in their folder.
+        let store = Store::open_application(&config.data.join("wisp.sqlite")).await?;
         // The built-in project follows the configured workspace; its name is
         // the user's once they have changed it.
         let name = store

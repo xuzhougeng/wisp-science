@@ -15017,3 +15017,40 @@ async fn a_memory_is_drafted_from_a_turn_for_the_researcher_to_keep() {
         .is_err());
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_new_project_can_keep_its_own_database_and_such_a_folder_opens_in_place() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    server.set_separate_project_storage(true).await.unwrap();
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    server.create_conversation(&lab).await.unwrap();
+    // Its records are in its folder, not in the host's database.
+    assert!(folder.join(".wisp/project.sqlite").is_file());
+    assert!(folder.join(".wisp/project.json").is_file());
+    // A project made before the choice, or with it off, stays where it is.
+    server.set_separate_project_storage(false).await.unwrap();
+    let plain = temp.path().join("plain");
+    std::fs::create_dir(&plain).unwrap();
+    server.register_local_project(&plain).await.unwrap();
+    assert!(!plain.join(".wisp/project.sqlite").exists());
+    server.shutdown().await;
+    drop(server);
+
+    // Another host opens the folder where it is, its conversation with it.
+    let other = tempfile::tempdir().unwrap();
+    let target = Server::open_with_models(config(other.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let opened = target.import_project_folder(&folder).await.unwrap();
+    assert_eq!(opened, lab);
+    assert_eq!(
+        target.0.store.list_sessions(&opened).await.unwrap().len(),
+        1
+    );
+    target.shutdown().await;
+}
