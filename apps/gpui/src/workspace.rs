@@ -362,6 +362,11 @@ pub struct Workspace {
     branched: HashMap<String, String>,
     /// Subagent conversation id to the conversation that started it.
     dispatched: HashMap<String, String>,
+    /// The open conversation's timer, as the host last gave it; drawn
+    /// only while that conversation is open.
+    timer: Option<wisp_server::desktop::ScheduleRow>,
+    /// A change to the timer is on its way to the host.
+    timer_busy: bool,
     /// The message the rewind question is about.
     rewind_turn: Option<TurnRef>,
     /// Keys of the sections that are folded.
@@ -1525,6 +1530,8 @@ impl Workspace {
             grouped: HashMap::new(),
             branched: HashMap::new(),
             dispatched: HashMap::new(),
+            timer: None,
+            timer_busy: false,
             rewind_turn: None,
             collapsed: HashSet::new(),
             picks: Picks::default(),
@@ -2910,6 +2917,8 @@ impl Workspace {
             self.load_assistant_plan(window, cx);
         }
         self.load_turn_tokens(window, cx);
+        // A timer is kept by the host, so it shows after a restart too.
+        self.load_timer(window, cx);
         let backend = self.backend.clone();
         self.poll = Some(cx.spawn_in(window, async move |this, cx| {
             loop {
@@ -2949,6 +2958,11 @@ impl Workspace {
                                 if this.state.accept(&selection, snapshot) {
                                     if let Some(event) = event {
                                         this.tell_user(event, window);
+                                    }
+                                    // A turn that starts or ends may be the
+                                    // timer's, which then fires next later.
+                                    if running != was_running {
+                                        this.load_timer(window, cx);
                                     }
                                     this.update_rows();
                                     this.ensure_batches(window, cx);
@@ -3231,6 +3245,11 @@ impl Workspace {
     }
 
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Nothing is written into a conversation that cannot take it: not a
+        // message, not a command, not one queued for later.
+        if self.read_only().is_some() {
+            return;
+        }
         let text = self.composer.read(cx).value().to_string();
         // A message that is only a command is run, not sent; in an ACP
         // agent's conversation every message is the agent's to read, its
@@ -3276,6 +3295,9 @@ impl Workspace {
         else {
             return;
         };
+        if self.read_only().is_some() {
+            return;
+        }
         let attachments = carried.attachments();
         let referenced = carried.reference_chips();
         // Files alone are a message; the host names it after the first one.
@@ -3347,6 +3369,17 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Why the open conversation cannot be written to, when it cannot.
+    pub(super) fn read_only(&self) -> Option<compose::ReadOnly> {
+        let snapshot = self.state.snapshot.as_ref()?;
+        let parent = self
+            .state
+            .session
+            .as_ref()
+            .and_then(|session| self.dispatched.get(session));
+        compose::read_only(snapshot, parent.map(String::as_str))
+    }
+
     /// What is attached to the message being written in this conversation.
     fn attached(&self) -> &[Chip] {
         self.state
@@ -3378,6 +3411,9 @@ impl Workspace {
     /// Picks files with the system dialog. Files outside the project are
     /// copied into its `uploads` folder; files inside it are used in place.
     fn attach_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only().is_some() {
+            return;
+        }
         let selection = self.state.selection();
         let (Some(project), Some(_)) = (selection.project.clone(), selection.session.clone())
         else {
@@ -3420,6 +3456,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only().is_some() {
+            return;
+        }
         let selection = self.state.selection();
         let (Some(project), Some(_)) = (selection.project.clone(), selection.session.clone())
         else {
@@ -3447,7 +3486,7 @@ impl Workspace {
     /// picture that comes with text is left to it. Whether it took the
     /// paste.
     pub(super) fn paste_picture(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if !self.composer.focus_handle(cx).is_focused(window) {
+        if self.read_only().is_some() || !self.composer.focus_handle(cx).is_focused(window) {
             return false;
         }
         let Some(item) = cx.read_from_clipboard() else {

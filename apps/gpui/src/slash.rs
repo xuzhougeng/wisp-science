@@ -133,9 +133,53 @@ pub fn takes_words(command: Slash) -> bool {
     matches!(command, Slash::Timer | Slash::Btw)
 }
 
+/// Whether a command writes to the conversation or into its composer, so
+/// that it is not run in a conversation that cannot be written to. The
+/// others only open something to read.
+pub fn writes(command: Slash) -> bool {
+    matches!(
+        command,
+        Slash::Timer
+            | Slash::Upload
+            | Slash::Compact
+            | Slash::Rewind
+            | Slash::Plan
+            | Slash::Permission
+            | Slash::SaveAsSkill
+            | Slash::Help
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_read_only_conversation_still_runs_the_commands_that_only_open_something() {
+        for command in [
+            Slash::Timer,
+            Slash::Upload,
+            Slash::Compact,
+            Slash::Rewind,
+            Slash::Plan,
+            Slash::Permission,
+            Slash::SaveAsSkill,
+            Slash::Help,
+        ] {
+            assert!(writes(command), "{command:?}");
+        }
+        for command in [
+            Slash::Review,
+            Slash::Trajectory,
+            Slash::Context,
+            Slash::Archive,
+            Slash::Files,
+            Slash::Share,
+            Slash::Fork,
+        ] {
+            assert!(!writes(command), "{command:?}");
+        }
+    }
 
     #[test]
     fn only_a_known_command_at_the_start_is_a_command() {

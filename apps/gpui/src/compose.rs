@@ -4,7 +4,7 @@
 //! graphics.
 use wisp_dto::{
     ComposerReferenceArg,
-    native_conversations::{Item, Snapshot},
+    native_conversations::{Item, ReadOnlyReason, Snapshot},
 };
 
 /// What asks the model to turn the conversation into a skill. The wording
@@ -468,10 +468,294 @@ pub fn with_quote(typed: &str, message: &str) -> String {
     }
 }
 
+/// Why a conversation cannot be written to, the cases the WebView desktop
+/// tells apart. In place of its box the composer says which, and offers the
+/// one way on that makes sense there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReadOnly {
+    /// A subagent's conversation: its agent takes instructions only from
+    /// the conversation that started it, `parent` once the project's list
+    /// of conversations has named it.
+    Subagent { parent: Option<String> },
+    /// Its research was frozen as an archive: it is a record now.
+    Archived,
+    /// The host marks it read-only and does not say why (an older host,
+    /// or a reason this client does not know).
+    Unexplained,
+    /// The source of an exploration round that is not settled yet.
+    FrozenMainline,
+    /// An exploration that does not take messages (being made, being
+    /// kept, failed or ended), with its status.
+    ClosedExploration { status: String },
+}
+
+/// The way on that a read-only conversation offers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReadOnlyAction {
+    /// Open this conversation: the one that started a subagent.
+    Open(String),
+    /// Open the research archive, which goes on in a new conversation.
+    Archive,
+}
+
+/// Which read-only case the open conversation is in, if any. `parent` is
+/// the conversation that started it, when the project's list says it is a
+/// subagent's. Why the host marks it read-only is the host's to say: a
+/// reason it does not give is not guessed, so a subagent's conversation
+/// opened before that list arrives never reads as archived.
+pub fn read_only(snapshot: &Snapshot, parent: Option<&str>) -> Option<ReadOnly> {
+    let parent = parent.map(str::to_owned);
+    match (snapshot.read_only, snapshot.read_only_reason) {
+        (true, Some(ReadOnlyReason::Archived)) => return Some(ReadOnly::Archived),
+        (_, Some(ReadOnlyReason::Subagent)) => return Some(ReadOnly::Subagent { parent }),
+        _ if parent.is_some() => return Some(ReadOnly::Subagent { parent }),
+        (true, _) => return Some(ReadOnly::Unexplained),
+        (false, _) => {}
+    }
+    let exploration = snapshot.exploration.as_ref()?;
+    if exploration.source_frozen {
+        return Some(ReadOnly::FrozenMainline);
+    }
+    // Only an active exploration accepts writes.
+    exploration
+        .summary
+        .as_ref()
+        .filter(|summary| summary.exploration.status != "active")
+        .map(|summary| ReadOnly::ClosedExploration {
+            status: summary.exploration.status.clone(),
+        })
+}
+
+/// The one sentence that says why. `parent_title` names a subagent's
+/// parent, when it is known.
+pub fn read_only_reason(state: &ReadOnly, parent_title: &str) -> String {
+    use crate::i18n::{fill, tr};
+    match state {
+        ReadOnly::Unexplained => tr("This conversation is read-only.").to_owned(),
+        ReadOnly::Subagent { .. } if parent_title.trim().is_empty() => tr(
+            "Subagent conversation: watch only. Send follow-ups from the conversation that started it.",
+        )
+        .to_owned(),
+        ReadOnly::Subagent { .. } => fill(
+            tr("A subagent of “{}”. Its agent takes instructions only from there; you can watch it here."),
+            &[&parent_title],
+        ),
+        ReadOnly::Archived => tr(
+            "This conversation's research is archived and it is read-only. Continue the research in a new conversation from the archive.",
+        )
+        .to_owned(),
+        ReadOnly::FrozenMainline => tr(
+            "This conversation is frozen until one exploration is kept or the round is abandoned; other conversations in the project can only read meanwhile.",
+        )
+        .to_owned(),
+        ReadOnly::ClosedExploration { status } => fill(
+            tr("This exploration is read-only ({})."),
+            &[&crate::explore::status_label(status)],
+        ),
+    }
+}
+
+/// The action the card offers, with its label. An exploration's round is
+/// settled from the bar over the conversation, which stays, so the card
+/// offers nothing of its own there.
+pub fn read_only_action(state: &ReadOnly) -> Option<(&'static str, ReadOnlyAction)> {
+    use crate::i18n::tr;
+    match state {
+        ReadOnly::Subagent { parent } => parent
+            .clone()
+            .map(|parent| (tr("Open the parent"), ReadOnlyAction::Open(parent))),
+        ReadOnly::Archived => Some((
+            tr("View the archive / Continue research"),
+            ReadOnlyAction::Archive,
+        )),
+        ReadOnly::Unexplained | ReadOnly::FrozenMainline | ReadOnly::ClosedExploration { .. } => {
+            None
+        }
+    }
+}
+
+/// The icon beside the sentence.
+pub fn read_only_icon(state: &ReadOnly) -> &'static str {
+    match state {
+        ReadOnly::Subagent { .. } => "bot",
+        ReadOnly::Archived => "archive",
+        ReadOnly::Unexplained | ReadOnly::FrozenMainline | ReadOnly::ClosedExploration { .. } => {
+            "lock"
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn conversation(change: serde_json::Value) -> Snapshot {
+        let mut value = json!({
+            "schema": "test", "epoch": "host-1", "sequence": 1,
+            "project_id": "p", "session_id": "s", "items": [],
+            "next_before_seq": null, "running": false, "stopping": false,
+            "read_only": false, "model_id": "offline", "request_id": null,
+            "error": null, "approvals": []
+        });
+        for (key, changed) in change.as_object().unwrap() {
+            value[key] = changed.clone();
+        }
+        serde_json::from_value(value).unwrap()
+    }
+
+    fn exploration(source_frozen: bool, status: Option<&str>) -> serde_json::Value {
+        json!({"exploration": {
+            "summary": status.map(|status| json!({
+                "exploration": {
+                    "id": "e1", "checkpoint_id": "k1", "frame_id": "s",
+                    "name": "Try B", "status": status, "workspace_dir": "/w",
+                    "workspace_backend": "copy", "scope_generation": 1,
+                    "warnings_json": "[]", "created_at": 0, "updated_at": 0
+                },
+                "source_frame_id": "main", "checkpoint_user_index": 1,
+                "isolation_summary_json": "{}"
+            })),
+            "active_count": 0, "source_frozen": source_frozen
+        }})
+    }
+
+    #[test]
+    fn a_read_only_conversation_says_why_and_offers_one_way_on() {
+        // A conversation that can be written to is none of them.
+        assert_eq!(read_only(&conversation(json!({})), None), None);
+        assert_eq!(
+            read_only(&conversation(exploration(false, Some("active"))), None),
+            None
+        );
+
+        // A subagent's, as the host says, with its parent once the list
+        // of conversations names it.
+        let told = json!({"read_only": true, "read_only_reason": "subagent"});
+        let subagent = read_only(&conversation(told.clone()), Some("lead")).unwrap();
+        assert_eq!(
+            subagent,
+            ReadOnly::Subagent {
+                parent: Some("lead".into())
+            }
+        );
+        // Known from the list alone, from a host that does not say why.
+        assert_eq!(
+            read_only(&conversation(json!({"read_only": true})), Some("lead")),
+            Some(subagent.clone())
+        );
+        assert_eq!(
+            read_only_reason(&subagent, "Survey"),
+            "A subagent of “Survey”. Its agent takes instructions only from there; you can watch it here."
+        );
+        assert!(read_only_reason(&subagent, " ").starts_with("Subagent conversation: watch only."));
+        assert_eq!(
+            read_only_action(&subagent),
+            Some(("Open the parent", ReadOnlyAction::Open("lead".into())))
+        );
+
+        // Before the list has named its parent it is still a subagent's,
+        // never an archive, and it offers nothing it cannot do.
+        let unlisted = read_only(&conversation(told), None).unwrap();
+        assert_eq!(unlisted, ReadOnly::Subagent { parent: None });
+        assert!(read_only_reason(&unlisted, "").starts_with("Subagent conversation: watch only."));
+        assert_eq!(read_only_action(&unlisted), None);
+
+        // An archive only when the host says so.
+        let archived = read_only(
+            &conversation(json!({"read_only": true, "read_only_reason": "archived"})),
+            None,
+        )
+        .unwrap();
+        assert_eq!(archived, ReadOnly::Archived);
+        assert!(read_only_reason(&archived, "").contains("research is archived"));
+        assert_eq!(
+            read_only_action(&archived),
+            Some((
+                "View the archive / Continue research",
+                ReadOnlyAction::Archive
+            ))
+        );
+        assert_eq!(read_only_icon(&archived), "archive");
+
+        // Read-only for a reason not given, or not known here: it says so
+        // and offers nothing.
+        for unsaid in [
+            json!({"read_only": true}),
+            json!({"read_only": true, "read_only_reason": "a_later_reason"}),
+        ] {
+            let state = read_only(&conversation(unsaid), None).unwrap();
+            assert_eq!(state, ReadOnly::Unexplained);
+            assert_eq!(
+                read_only_reason(&state, ""),
+                "This conversation is read-only."
+            );
+            assert_eq!(read_only_action(&state), None);
+        }
+
+        // The source of an unsettled round, and an exploration that ended:
+        // the bar over the conversation settles the round.
+        let frozen = read_only(&conversation(exploration(true, None)), None).unwrap();
+        assert_eq!(frozen, ReadOnly::FrozenMainline);
+        assert!(read_only_reason(&frozen, "").starts_with("This conversation is frozen"));
+        assert_eq!(read_only_action(&frozen), None);
+        let ended = read_only(&conversation(exploration(false, Some("promoted"))), None).unwrap();
+        assert_eq!(
+            ended,
+            ReadOnly::ClosedExploration {
+                status: "promoted".into()
+            }
+        );
+        assert_eq!(
+            read_only_reason(&ended, ""),
+            "This exploration is read-only (Ended)."
+        );
+        assert_eq!(read_only_action(&ended), None);
+        assert_eq!(read_only_icon(&ended), "lock");
+    }
+
+    /// The text of method `name` in `source`, from its signature to the
+    /// brace that closes it at the `impl`'s indent.
+    fn method<'a>(source: &'a str, name: &str) -> Option<&'a str> {
+        let start = source.find(&format!("fn {name}("))?;
+        let rest = &source[start..];
+        Some(&rest[..rest.find("\n    }\n")?])
+    }
+
+    #[test]
+    fn every_way_into_a_read_only_conversation_is_shut() {
+        // The send key, Send, Queue and a typed command all go through
+        // `send`; answers picked on cards through `deliver`; files through
+        // the picker, a drop or a paste; references through the add-context
+        // box; and the `/` menu through `run_slash`.
+        let sources = [
+            include_str!("workspace.rs"),
+            include_str!("workspace/queue_view.rs"),
+            include_str!("workspace/palette_view.rs"),
+            include_str!("workspace/slash_view.rs"),
+        ];
+        for name in [
+            "send",
+            "deliver",
+            "enqueue",
+            "attach_files",
+            "attach_dropped",
+            "paste_picture",
+            "toggle_attach_palette",
+            "run_slash",
+        ] {
+            let body = sources
+                .iter()
+                .find_map(|source| method(source, name))
+                .unwrap_or_else(|| panic!("no fn {name}"));
+            assert!(body.contains("self.read_only()"), "{name} is not shut");
+        }
+        // And the box itself is not drawn: the card stands in its place.
+        let composer = method(include_str!("workspace/shell.rs"), "render_composer").unwrap();
+        let card = composer.find("self.read_only_card(").expect("the card");
+        let editor = composer.find("Input::new(&self.composer)").unwrap();
+        assert!(card < editor);
+    }
 
     #[test]
     fn an_at_or_hash_typed_where_a_word_starts_asks_for_a_mention() {

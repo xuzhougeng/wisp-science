@@ -83,6 +83,10 @@ impl Waiting {
         Ok(self.next_id)
     }
 
+    pub(crate) fn is_empty(&self) -> bool {
+        self.messages.is_empty()
+    }
+
     pub(crate) fn list(&self) -> Vec<QueuedMessage> {
         self.messages.iter().cloned().collect()
     }

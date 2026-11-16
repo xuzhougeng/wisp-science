@@ -2353,6 +2353,14 @@ impl Workspace {
         if let Some(strip) = self.queue_strip(running, cx) {
             area = area.child(strip);
         }
+        if let Some(strip) = self.timer_strip(cx) {
+            area = area.child(strip);
+        }
+        // A conversation that cannot be written to says why in place of
+        // the box, so nothing looks typed into and refused.
+        if let Some(why) = self.read_only() {
+            return area.child(self.read_only_card(&why, cx));
+        }
         if self.layers.contains(Layer::ConfirmFullAccess) {
             area = area.child(
                 surfaces::bar("full-access-question", cx)
@@ -2495,6 +2503,50 @@ impl Workspace {
         )
     }
 
+    /// What stands in the composer's place in a read-only conversation: a
+    /// bar with the reason and the one way on.
+    fn read_only_card(&self, why: &compose::ReadOnly, cx: &mut Context<Self>) -> Stateful<Div> {
+        let muted = cx.theme().muted_foreground;
+        let parent_title = match why {
+            compose::ReadOnly::Subagent {
+                parent: Some(parent),
+            } => self
+                .known
+                .get(parent)
+                .map(|row| row.title.clone())
+                .unwrap_or_default(),
+            _ => String::new(),
+        };
+        let action = compose::read_only_action(why).map(|(label, action)| {
+            Button::new("read-only-action")
+                .label(label)
+                .small()
+                .on_click(cx.listener(move |this, _, window, cx| match &action {
+                    compose::ReadOnlyAction::Open(session) => {
+                        if let Some(project) = this.state.project.clone() {
+                            this.open_session(project, session.clone(), window, cx);
+                        }
+                    }
+                    // Only an archive that is there: never a new draft.
+                    compose::ReadOnlyAction::Archive => {
+                        this.open_frozen_research_archive(window, cx)
+                    }
+                }))
+        });
+        surfaces::bar("read-only", cx)
+            .h_flex()
+            .gap_2()
+            .child(icon(compose::read_only_icon(why)).text_color(muted))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_sm()
+                    .child(compose::read_only_reason(why, &parent_title)),
+            )
+            .children(action)
+    }
+
     /// Everything to the right of the sidebar.
     pub(super) fn render_conversation(&self, cx: &mut Context<Self>) -> Div {
         let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
@@ -2516,9 +2568,6 @@ impl Workspace {
             content = content.child(bar);
         }
         if let Some(bar) = self.render_exploration_bar(cx) {
-            content = content.child(bar);
-        }
-        if let Some(bar) = self.render_subagent_bar(cx) {
             content = content.child(bar);
         }
         if let Some(bar) = self.render_assistant_bar(cx) {

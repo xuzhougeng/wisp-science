@@ -3,14 +3,17 @@
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Selectable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
 };
 
-use super::Workspace;
+use super::{Workspace, shell::glyph, surfaces, tone_color};
 use crate::{
+    assets::icon,
     layers::Layer,
     panel::PanelTab,
+    present::Tone,
+    schedules::{TimerAct, TimerCall},
     settings::Section,
     slash::{self, Slash},
 };
@@ -43,6 +46,11 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.layers.close(Layer::SlashMenu);
+        // A conversation that cannot be written to still opens what is
+        // there to read; the composer's card says why the rest is not.
+        if slash::writes(command) && self.read_only().is_some() {
+            return cx.notify();
+        }
         match command {
             Slash::Review => self.open_review(window, cx),
             Slash::Trajectory => self.open_trajectory(window, cx),
@@ -124,21 +132,18 @@ impl Workspace {
                     let result = crate::backend::receive(reply).await.map(|removed| {
                         crate::i18n::fill(tr("Timers cancelled here: {}"), &[&removed])
                     });
-                    let _ = this.update(cx, |this, cx| said(this, result, cx));
+                    let _ = this.update_in(cx, |this, window, cx| {
+                        this.load_timer(window, cx);
+                        said(this, result, cx)
+                    });
                 })
                 .detach();
             }
             slash::TimerAsk::Every { secs, prompt } => {
+                // One timer per conversation: setting it again changes it.
                 let reply = self
                     .backend
-                    .create_schedule(wisp_server::desktop::ScheduleInput {
-                        project,
-                        name: String::new(),
-                        prompt,
-                        interval_secs: secs,
-                        start_at: None,
-                        session: Some(session),
-                    });
+                    .set_conversation_timer(project, session, prompt, secs);
                 cx.spawn_in(window, async move |this, cx| {
                     let result = crate::backend::receive(reply).await.map(|()| {
                         crate::i18n::fill(
@@ -146,11 +151,148 @@ impl Workspace {
                             &[&crate::schedules::cadence_label(secs)],
                         )
                     });
-                    let _ = this.update(cx, |this, cx| said(this, result, cx));
+                    let _ = this.update_in(cx, |this, window, cx| {
+                        this.load_timer(window, cx);
+                        said(this, result, cx)
+                    });
                 })
                 .detach();
             }
         }
+    }
+
+    /// Reads the open conversation's timer from the host.
+    pub(super) fn load_timer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let selection = self.state.selection();
+        let (Some(project), Some(session)) = (selection.project.clone(), selection.session.clone())
+        else {
+            self.timer = None;
+            return;
+        };
+        if self
+            .timer
+            .as_ref()
+            .is_some_and(|row| row.session.as_deref() != Some(session.as_str()))
+        {
+            self.timer = None;
+        }
+        let reply = self.backend.conversation_timer(project, session);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = crate::backend::receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                if !this.state.current(&selection) {
+                    return;
+                }
+                // A timer that cannot be read is left as it was shown.
+                if let Ok(timer) = result {
+                    this.timer = timer;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Pauses, resumes or cancels the open conversation's timer.
+    fn act_on_timer(&mut self, act: TimerAct, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(call) = self
+            .timer
+            .as_ref()
+            .and_then(|row| crate::schedules::timer_call(row, act))
+        else {
+            return;
+        };
+        if self.timer_busy {
+            return;
+        }
+        self.timer_busy = true;
+        let backend = self.backend.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = match call {
+                TimerCall::SetEnabled { id, enabled } => {
+                    crate::backend::receive(backend.set_schedule_enabled(id, enabled)).await
+                }
+                TimerCall::Cancel { project, session } => {
+                    crate::backend::receive(backend.cancel_conversation_schedules(project, session))
+                        .await
+                        .map(|_| ())
+                }
+            };
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.timer_busy = false;
+                if let Err(error) = result {
+                    this.error = Some(error);
+                }
+                this.load_timer(window, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// The strip above the composer while the conversation has a timer:
+    /// what it repeats, how often and when next, or that it is paused, with
+    /// Pause or Resume and Cancel.
+    pub(super) fn timer_strip(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let row = self
+            .timer
+            .as_ref()
+            .filter(|row| row.session.is_some() && row.session == self.state.session)?;
+        let muted = cx.theme().muted_foreground;
+        let line =
+            crate::schedules::timer_line(row, chrono::Utc::now().timestamp(), &chrono::Local);
+        let enabled = row.enabled;
+        Some(
+            surfaces::bar("timer", cx)
+                .h_flex()
+                .gap_2()
+                .child(icon("clock").text_color(if enabled {
+                    tone_color(Tone::Active, cx)
+                } else {
+                    muted
+                }))
+                .child(
+                    div()
+                        .v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .child(
+                            div()
+                                .text_sm()
+                                .truncate()
+                                .child(crate::present::one_line(&row.prompt)),
+                        )
+                        .child(div().text_xs().text_color(muted).child(line)),
+                )
+                .child(
+                    Button::new("timer-toggle")
+                        .icon(glyph(if enabled { "pause" } else { "play" }))
+                        .label(if enabled { tr("Pause") } else { tr("Resume") })
+                        .xsmall()
+                        .ghost()
+                        .disabled(self.timer_busy)
+                        .tooltip(if enabled {
+                            tr("Stop firing; the prompt and the interval are kept")
+                        } else {
+                            tr("Fire again on the interval; a time missed while paused fires once")
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.act_on_timer(TimerAct::Toggle, window, cx)
+                        })),
+                )
+                .child(
+                    Button::new("timer-cancel")
+                        .icon(glyph("trash"))
+                        .label(tr("Cancel timer"))
+                        .xsmall()
+                        .ghost()
+                        .disabled(self.timer_busy)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.act_on_timer(TimerAct::Cancel, window, cx)
+                        })),
+                ),
+        )
     }
 
     /// Opens the `/` menu on a `/` typed where a word starts, narrows it as

@@ -9506,6 +9506,7 @@ async fn a_conversations_research_is_drafted_reviewed_and_frozen() {
         None
     );
     assert!(!snapshot(&server, &session).await.read_only);
+    assert_eq!(snapshot(&server, &session).await.read_only_reason, None);
 
     // What is frozen is what the researcher made of it.
     draft.report.push_str("\n\nChecked by hand.");
@@ -9537,7 +9538,9 @@ async fn a_conversations_research_is_drafted_reviewed_and_frozen() {
     );
 
     // From now on it is a record: read, not continued or archived again.
-    assert!(snapshot(&server, &session).await.read_only);
+    let record = snapshot(&server, &session).await;
+    assert!(record.read_only);
+    assert_eq!(record.read_only_reason, Some(dto::ReadOnlyReason::Archived));
     let late = send(&server, &session, "one more thing").await.unwrap_err();
     assert!(late.contains("read-only"), "{late}");
     assert!(server
@@ -14137,6 +14140,146 @@ async fn a_scheduled_task_fires_once_per_time_into_a_new_conversation() {
         1
     );
     assert_eq!(server.schedules().await.unwrap().len(), 1);
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_subagents_conversation_says_it_is_read_only_because_it_is_a_subagents() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let parent = server.create_conversation(PROJECT).await.unwrap();
+    let child = server.create_conversation(PROJECT).await.unwrap();
+    server
+        .0
+        .store
+        .set_session_dispatched_from(&child, &parent)
+        .await
+        .unwrap();
+    let watched = snapshot(&server, &child).await;
+    assert!(watched.read_only);
+    assert_eq!(
+        watched.read_only_reason,
+        Some(dto::ReadOnlyReason::Subagent)
+    );
+    let open = snapshot(&server, &parent).await;
+    assert!(!open.read_only && open.read_only_reason.is_none());
+    // An older client reads the snapshot as before: the reason is one
+    // more field, and absent when there is none.
+    let sent = serde_json::to_value(&open).unwrap();
+    assert!(sent.get("read_only_reason").is_none());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_conversation_keeps_one_timer_that_waits_while_the_conversation_is_busy() {
+    let temp = tempfile::tempdir().unwrap();
+    let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let record = seen.clone();
+    let factory: ModelFactory = Arc::new(move |_| Box::new(Everything(record.clone())));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let session = server.create_conversation(PROJECT).await.unwrap();
+    assert!(server
+        .conversation_timer(PROJECT, &session)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(server
+        .set_conversation_timer(PROJECT, "absent", "check", 600)
+        .await
+        .is_err());
+    assert!(server
+        .set_conversation_timer(PROJECT, &session, "check", 30)
+        .await
+        .is_err());
+
+    // Setting it again changes the one timer, and a paused one stays paused.
+    server
+        .set_conversation_timer(PROJECT, &session, "check the queue", 600)
+        .await
+        .unwrap();
+    let first = server
+        .conversation_timer(PROJECT, &session)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(first.enabled);
+    server.set_schedule_enabled(&first.id, false).await.unwrap();
+    let before = chrono::Utc::now().timestamp();
+    server
+        .set_conversation_timer(PROJECT, &session, "look again", 1_800)
+        .await
+        .unwrap();
+    let timer = server
+        .conversation_timer(PROJECT, &session)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(server.schedules().await.unwrap().len(), 1);
+    assert_eq!(
+        (timer.prompt.as_str(), timer.interval_secs, timer.enabled),
+        ("look again", 1_800, false)
+    );
+    assert!(timer.next_run_at >= before + 1_800);
+    assert_eq!(timer.session.as_deref(), Some(session.as_str()));
+    let due = timer.next_run_at;
+    // Paused, it does not fire.
+    assert_eq!(server.fire_due_schedules(due).await.unwrap(), 0);
+    server.set_schedule_enabled(&timer.id, true).await.unwrap();
+
+    // While a turn runs there, or a message waits for one, it stays due
+    // and nothing is recorded.
+    let live = server.session(&session);
+    live.live.lock().unwrap().running = true;
+    assert_eq!(server.fire_due_schedules(due).await.unwrap(), 0);
+    live.live.lock().unwrap().running = false;
+    let queued = live
+        .queue
+        .lock()
+        .unwrap()
+        .push(PROJECT, "after this turn", vec![], vec![])
+        .unwrap();
+    assert_eq!(server.fire_due_schedules(due).await.unwrap(), 0);
+    let waiting = server
+        .conversation_timer(PROJECT, &session)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(waiting.next_run_at, due);
+    assert!(waiting.runs.is_empty());
+
+    // Idle again, it fires into the conversation.
+    live.queue.lock().unwrap().take(queued).unwrap();
+    assert_eq!(server.fire_due_schedules(due).await.unwrap(), 1);
+    wait_for(&server, &session, |s| !s.running).await;
+    let fired = server
+        .conversation_timer(PROJECT, &session)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fired.next_run_at, due + 1_800);
+    assert!(fired.runs[0].error.is_none());
+    assert!(seen
+        .lock()
+        .unwrap()
+        .join("\n")
+        .contains("[Scheduled task: look again]"));
+
+    assert_eq!(
+        server
+            .cancel_conversation_schedules(PROJECT, &session)
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(server
+        .conversation_timer(PROJECT, &session)
+        .await
+        .unwrap()
+        .is_none());
     server.shutdown().await;
 }
 

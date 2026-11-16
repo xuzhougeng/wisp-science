@@ -155,6 +155,87 @@ where
     }
 }
 
+/// The state line of a conversation's timer, in the strip above its
+/// composer: how often it repeats and when it fires next, or that it is
+/// paused, and the error of its latest firing when that failed. A time
+/// that has passed is due: it fires at the next look once the
+/// conversation is idle.
+pub fn timer_line<Tz: TimeZone>(row: &ScheduleRow, now: i64, zone: &Tz) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    let mut parts = Vec::new();
+    if !row.enabled {
+        parts.push(tr("Timer paused").to_owned());
+    }
+    parts.push(cadence_label(row.interval_secs));
+    if row.enabled {
+        parts.push(if row.next_run_at <= now {
+            tr("Due now").to_owned()
+        } else {
+            fill(tr("Next: {}"), &[&clock(row.next_run_at, now, zone)])
+        });
+    }
+    if let Some(error) = row.runs.first().and_then(|run| run.error.as_deref()) {
+        parts.push(fill(
+            tr("Last run failed: {}"),
+            &[&error.lines().next().unwrap_or_default()],
+        ));
+    }
+    parts.join(" · ")
+}
+
+/// A time as the hour on the day of `now`, with the date on another day.
+fn clock<Tz: TimeZone>(at: i64, now: i64, zone: &Tz) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    let (Some(at), Some(now)) = (
+        zone.timestamp_opt(at, 0).earliest(),
+        zone.timestamp_opt(now, 0).earliest(),
+    ) else {
+        return String::new();
+    };
+    if at.date_naive() == now.date_naive() {
+        at.format("%H:%M").to_string()
+    } else {
+        at.format("%Y-%m-%d %H:%M").to_string()
+    }
+}
+
+/// What the timer strip's buttons do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TimerAct {
+    /// Pause a timer that runs, resume one that is paused.
+    Toggle,
+    /// Remove it, as `/timer off` does.
+    Cancel,
+}
+
+/// What a button of the timer strip asks the host.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TimerCall {
+    /// Pausing keeps the prompt and the interval. Resuming keeps the
+    /// cadence's place on the clock: a time that passed while it was
+    /// paused fires once at the next look, as the WebView's does.
+    SetEnabled { id: String, enabled: bool },
+    /// Removes the conversation's timers.
+    Cancel { project: String, session: String },
+}
+
+pub fn timer_call(row: &ScheduleRow, act: TimerAct) -> Option<TimerCall> {
+    Some(match act {
+        TimerAct::Toggle => TimerCall::SetEnabled {
+            id: row.id.clone(),
+            enabled: !row.enabled,
+        },
+        TimerAct::Cancel => TimerCall::Cancel {
+            project: row.project.clone(),
+            session: row.session.clone()?,
+        },
+    })
+}
+
 /// Prompts to start a task from: a name and what is sent.
 pub const TEMPLATES: [(&str, &str); 3] = [
     (
@@ -299,5 +380,78 @@ mod tests {
             last_label(Some(&run), &zone()),
             "Failed 2026-11-11 10:00: No model is set up"
         );
+    }
+
+    fn timer(next: i64) -> ScheduleRow {
+        ScheduleRow {
+            id: "t".into(),
+            project: "p".into(),
+            project_name: "Lab".into(),
+            name: "check the queue".into(),
+            prompt: "check the queue".into(),
+            interval_secs: 30 * 60,
+            enabled: true,
+            next_run_at: next,
+            session: Some("c".into()),
+            runs: vec![],
+        }
+    }
+
+    #[test]
+    fn a_timer_says_how_often_and_when_next_or_that_it_is_paused() {
+        let now = wednesday(10, 0).timestamp();
+        let mut row = timer(wednesday(10, 30).timestamp());
+        assert_eq!(timer_line(&row, now, &zone()), "Every 30 min · Next: 10:30");
+        // On another day the date is given.
+        row.next_run_at = wednesday(23, 50).timestamp() + 3_600;
+        assert_eq!(
+            timer_line(&row, now, &zone()),
+            "Every 30 min · Next: 2026-11-12 00:50"
+        );
+        // A time that has passed waits for the next look.
+        row.next_run_at = now;
+        assert_eq!(timer_line(&row, now, &zone()), "Every 30 min · Due now");
+        row.interval_secs = 2 * HOUR;
+        row.enabled = false;
+        assert_eq!(timer_line(&row, now, &zone()), "Timer paused · Every 2 h");
+        row.runs = vec![ScheduleRun {
+            fired_at: now - 60,
+            session: Some("c".into()),
+            error: Some("A turn is already running\nmore".into()),
+        }];
+        assert_eq!(
+            timer_line(&row, now, &zone()),
+            "Timer paused · Every 2 h · Last run failed: A turn is already running"
+        );
+    }
+
+    #[test]
+    fn pause_resume_and_cancel_ask_the_host_for_one_change() {
+        let mut row = timer(0);
+        assert_eq!(
+            timer_call(&row, TimerAct::Toggle),
+            Some(TimerCall::SetEnabled {
+                id: "t".into(),
+                enabled: false
+            })
+        );
+        row.enabled = false;
+        assert_eq!(
+            timer_call(&row, TimerAct::Toggle),
+            Some(TimerCall::SetEnabled {
+                id: "t".into(),
+                enabled: true
+            })
+        );
+        assert_eq!(
+            timer_call(&row, TimerAct::Cancel),
+            Some(TimerCall::Cancel {
+                project: "p".into(),
+                session: "c".into()
+            })
+        );
+        // A task of the Scheduled tasks page is not a conversation's.
+        row.session = None;
+        assert_eq!(timer_call(&row, TimerAct::Cancel), None);
     }
 }

@@ -1136,6 +1136,20 @@ impl PlanProposal {
         })
     }
 }
+/// Why a conversation is read-only.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadOnlyReason {
+    /// Its research was frozen as an archive.
+    Archived,
+    /// A subagent's conversation: it takes instructions only from the
+    /// conversation that started it.
+    Subagent,
+    /// A reason this client does not know yet.
+    #[serde(other)]
+    Other,
+}
+
 /// A replacement event, never a delta. Sequence orders responses within one
 /// host epoch. Reconnects fetch another snapshot; mutations are never replayed.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1167,6 +1181,10 @@ pub struct Snapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activity_status: Option<String>,
     pub read_only: bool,
+    /// Why `read_only` is set, for a client that says so. Absent from
+    /// older hosts and from hosts that do not tell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_only_reason: Option<ReadOnlyReason>,
     pub model_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub composer_references: Option<bool>,

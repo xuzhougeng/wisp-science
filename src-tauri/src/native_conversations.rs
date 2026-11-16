@@ -1417,6 +1417,8 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 activity_status: Some(activity_status),
                 stopping: record.stopping,
                 read_only,
+                // Its clients do not say why; they show the flag alone.
+                read_only_reason: None,
                 acp_state: if frozen || args.before_seq.is_some() || binding.is_none() {
                     None
                 } else {

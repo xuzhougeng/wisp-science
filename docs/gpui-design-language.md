@@ -109,8 +109,8 @@ names and never a colour of their own.
   to approve, the line about a review, hooks that failed, a drafted memory,
   the questions to ask next, the transfer tray) and the composer's own
   strips (an interpreter's console, the model's thinking, queued messages,
-  the full-access question) are bars in that column, their edges on the
-  composer box's at any width. A bar is a card (`surfaces::bar`): white,
+  the conversation's timer, the full-access question) are bars in that
+  column, their edges on the composer box's at any width. A bar is a card (`surfaces::bar`): white,
   a hairline, `radius_lg`, no shadow and no tint; its status is the
   theme's colour on an icon or a word, and it has at most one filled
   button. Bars stack with a small gap; approvals and transfers scroll
@@ -119,6 +119,10 @@ names and never a colour of their own.
   with the conversation (rename, pin, group, move, export, review, archive,
   delete) is a menu under the bar's More button, in groups with a hairline
   between; Group and Move open beside it. Nothing is listed across the page.
+- A conversation that cannot be written to has no message box: one bar
+  stands in its place with a status icon, the sentence that says why and
+  at most the one action that leads on (`read_only_card`). The reason is
+  said there only, not again in a bar above the transcript.
 - The small actions under a message show while the pointer is over the
   message, and stay under the latest one.
 - In the composer a setting at its usual value is an icon with a tooltip

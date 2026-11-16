@@ -1654,6 +1654,14 @@ impl Server {
             activity_status: None,
             // A subagent's conversation is watched, not written to.
             read_only: archived || dispatched,
+            // And why, so a client need not guess which.
+            read_only_reason: if archived {
+                Some(dto::ReadOnlyReason::Archived)
+            } else if dispatched {
+                Some(dto::ReadOnlyReason::Subagent)
+            } else {
+                None
+            },
             model_id,
             composer_references: Some(false),
             context_view: Some(false),

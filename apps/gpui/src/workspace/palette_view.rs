@@ -30,7 +30,7 @@ impl Workspace {
 
     /// The same box, but picking a row adds it to the message being written.
     pub(super) fn toggle_attach_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.state.session.is_some() {
+        if self.state.session.is_some() && self.read_only().is_none() {
             self.show_palette(Mode::Attach, window, cx);
         }
     }

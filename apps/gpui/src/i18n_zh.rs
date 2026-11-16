@@ -1454,6 +1454,22 @@ pub const ZH: &[(&str, &str)] = &[
     ("Timers cancelled here: {}", "此处已取消的定时器：{}"),
     ("Timer set: {} in this conversation, while the app is open. /timer off cancels it.", "定时器已设置：{}，在此对话中，应用打开期间有效。/timer off 可取消。"),
     ("A conversation's timer", "对话的定时器"),
+    // The timer strip above the composer. The WebView says 定时任务, which
+    // is what the Scheduled tasks page is called here, so the conversation's
+    // timer is 定时器 throughout.
+    ("Timer paused", "定时器已暂停"),
+    ("Due now", "即将执行"),
+    ("Last run failed: {}", "上次执行失败：{}"),
+    ("Cancel timer", "取消定时器"),
+    ("Stop firing; the prompt and the interval are kept", "暂停触发；提示词和间隔会保留"),
+    ("Fire again on the interval; a time missed while paused fires once", "按间隔恢复触发；暂停期间错过的时间会补触发一次"),
+    // What a read-only conversation shows in the composer's place.
+    ("Subagent conversation: watch only. Send follow-ups from the conversation that started it.", "子智能体会话仅供查看，追加指令请回到发起它的会话。"),
+    ("This conversation's research is archived and it is read-only. Continue the research in a new conversation from the archive.", "此对话的研究已归档，现为只读。请从归档节点在新会话中继续研究。"),
+    ("This exploration is read-only ({}).", "此探索为只读状态（{}）。"),
+    ("View the archive / Continue research", "查看归档 / 继续研究"),
+    ("This conversation is read-only.", "此对话为只读。"),
+    ("This conversation has no research archive.", "此对话没有研究归档。"),
     ("Copy the file's path", "复制文件路径"),
     ("Path copied.", "路径已复制。"),
     ("Attach to the message", "附加到消息"),

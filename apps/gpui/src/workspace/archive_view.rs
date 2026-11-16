@@ -27,8 +27,51 @@ pub(super) enum ArchiveView {
     Frozen(ResearchArchive),
 }
 
+/// What the dialog does once the host has said whether the conversation
+/// has a frozen archive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Found {
+    /// Show it.
+    Show,
+    /// Have the model draft one.
+    Draft,
+    /// Close: there is none, and none is to be drafted.
+    Close,
+}
+
+/// `may_draft` is whether the dialog was opened to make an archive (the
+/// conversation's Research archive button, `/archive`, the palette) rather
+/// than to look at one (a read-only conversation's card).
+fn after_looking(frozen: bool, may_draft: bool) -> Found {
+    match (frozen, may_draft) {
+        (true, _) => Found::Show,
+        (false, true) => Found::Draft,
+        (false, false) => Found::Close,
+    }
+}
+
 impl Workspace {
+    /// Opens the conversation's archive, or drafts one when it has none.
     pub(super) fn open_research_archive(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.look_for_research_archive(true, window, cx);
+    }
+
+    /// Opens the conversation's frozen archive, and only that: with none
+    /// the dialog closes again and nothing is drafted.
+    pub(super) fn open_frozen_research_archive(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.look_for_research_archive(false, window, cx);
+    }
+
+    fn look_for_research_archive(
+        &mut self,
+        may_draft: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let (Some(project), Some(session)) =
             (self.state.project.clone(), self.state.session.clone())
         else {
@@ -46,8 +89,17 @@ impl Workspace {
                     return;
                 }
                 match result {
-                    Ok(Some(frozen)) => this.archive = Some(ArchiveView::Frozen(frozen)),
-                    Ok(None) => this.draft_research_archive(window, cx),
+                    Ok(found) => match (after_looking(found.is_some(), may_draft), found) {
+                        (Found::Show, Some(frozen)) => {
+                            this.archive = Some(ArchiveView::Frozen(frozen))
+                        }
+                        (Found::Draft, _) => this.draft_research_archive(window, cx),
+                        _ => {
+                            this.close_research_archive(window, cx);
+                            this.error =
+                                Some(tr("This conversation has no research archive.").into());
+                        }
+                    },
                     Err(error) => this.archive_error = Some(error),
                 }
                 cx.notify();
@@ -336,5 +388,28 @@ impl Workspace {
             // A click beside the dialog does not throw a draft away: only
             // Close and Escape leave it.
             .child(card.child(actions))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Found, after_looking};
+
+    #[test]
+    fn only_the_dialog_opened_to_make_an_archive_drafts_one() {
+        assert_eq!(after_looking(true, true), Found::Show);
+        assert_eq!(after_looking(true, false), Found::Show);
+        assert_eq!(after_looking(false, true), Found::Draft);
+        // Opened to look at one, it never asks the model for a draft.
+        assert_eq!(after_looking(false, false), Found::Close);
+    }
+
+    #[test]
+    fn the_read_only_card_only_looks_at_an_archive() {
+        let shell = include_str!("shell.rs");
+        let start = shell.find("fn read_only_card(").unwrap();
+        let card = &shell[start..start + shell[start..].find("\n    }\n").unwrap()];
+        assert!(card.contains("this.open_frozen_research_archive("));
+        assert!(!card.contains("this.open_research_archive("));
     }
 }

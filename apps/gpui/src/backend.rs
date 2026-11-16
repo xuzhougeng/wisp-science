@@ -1600,6 +1600,29 @@ impl Backend {
         self.local(move |host| async move { host.delete_schedule(&id).await })
     }
 
+    /// The open conversation's timer, when it has one.
+    pub fn conversation_timer(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<Option<wisp_server::desktop::ScheduleRow>> {
+        self.local(move |host| async move { host.conversation_timer(&project, &session).await })
+    }
+
+    /// Gives a conversation its timer, or changes the one it has.
+    pub fn set_conversation_timer(
+        &self,
+        project: String,
+        session: String,
+        prompt: String,
+        interval_secs: i64,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.set_conversation_timer(&project, &session, &prompt, interval_secs)
+                .await
+        })
+    }
+
     /// Removes one conversation's timers; how many there were.
     pub fn cancel_conversation_schedules(&self, project: String, session: String) -> Reply<usize> {
         self.local(move |host| async move {

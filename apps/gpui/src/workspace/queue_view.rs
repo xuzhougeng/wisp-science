@@ -17,6 +17,9 @@ impl Workspace {
     /// Hands what is typed, and what is attached to it, to the host, which
     /// sends it when the running turn ends.
     pub(super) fn enqueue(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only().is_some() {
+            return;
+        }
         let selection = self.state.selection();
         let (Some(project), Some(session)) = (selection.project.clone(), selection.session.clone())
         else {

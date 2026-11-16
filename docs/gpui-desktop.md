@@ -210,7 +210,9 @@ which it only reads.
 | First-run guide | On a first run a dialog walks through four steps: welcome, what Wisp can do, a model (a DeepSeek key sets up deepseek-v4-flash as the default and deepseek-v4-pro beside it, or a link to Settings, Models for another provider), and the tools on this computer (install Python with uv). Get started or Escape puts it away for good, in this desktop and the WebView one |
 | Import from Codex or Claude Code | The import button in the conversation list's header lists the conversations Codex CLI (`~/.codex/sessions`) and Claude Code (`~/.claude/projects`) keep on this computer, newest first, with the first thing asked and the folder it was had in. Import brings one into the project in a group named `codex` or `claude`, with its messages and tool calls; importing it again brings in only what was added since, and leaves a conversation continued here alone. Only this computer is looked at, not SSH or WSL hosts |
 | Delegated tasks | The model can hand a batch of dependent tasks to temporary agents and wait for their results; a plan card asks first when a task can change files, run code or use a remote model. Each task works in a watch-only conversation under the one that started it. The Agents tab lists the batches with each task's status, summary and conversation, and stops a running one |
-| Subagents | The model can start a subagent: a conversation of its own for one focused task, listed under the conversation that started it, with a bar saying it is watched and Open the parent; its composer is closed. When it ends, a report is added to the parent, whose agent goes on to handle it |
+| Subagents | The model can start a subagent: a conversation of its own for one focused task, listed under the conversation that started it; in its composer's place a card says it is watched and offers Open the parent. When it ends, a report is added to the parent, whose agent goes on to handle it |
+| Read-only conversations | A conversation that cannot be written to shows, in place of the message box, one card in the composer's column that says why and offers the way on: a subagent's (Open the parent), one whose research is archived (View the archive / Continue research, which opens the research archive), the source of an exploration round that is not settled, and an exploration that no longer runs (the bar over the conversation keeps the round's own actions). Send, the send key, Queue, typed and menu commands that write, attaching, dropping and pasting files and the add-context box all do nothing there |
+| Conversation timer | `/timer 30m <prompt>` gives the open conversation its timer (setting it again changes it: one per conversation). While it has one, a strip above the composer shows the prompt, how often it repeats and when it fires next (or that it is paused, and why its last firing failed), with Pause or Resume and Cancel timer; it is kept by the host, so it is there after a restart |
 | Explorations | On an answer, Start an exploration from here names one and continues the conversation in its own copy of the project; more candidates of the same round start from the same answer. The source shows a bar with each candidate and Abandon the round; a candidate shows its status, View changes and keep (what it changed, what the mainline changed meanwhile, why it cannot be kept), Discard, Back to the mainline and Abandon the round; when it cannot be kept, Show both folders and Finish by hand |
 | Bringing a branch back | In a branch, Bring back in the conversation's toolbar has the model summarise what the branch did since it split off; you read and change the summary, and Bring it back adds it to the conversation the branch came from, which reads it from then on, and opens that conversation, where it shows as a Merged branch result card naming the branch: press it for the summary and Open the branch. A branch is brought back once |
 | Approving a plan | When the model sets out a new plan it waits for you: the plan's steps show above the composer with Approve, Turn down, and a box to say what should change; Send feedback (or Return in the box) turns the plan down with your words, which the model reads to revise it |
@@ -886,13 +888,33 @@ Limits of this slice:
   before it ended, has nothing to put back. There is no preview of
   what will be undone before it is done; the note afterwards says what
   was. Files the turn created are moved to `.wisp/trash/`, not erased.
-- `/timer` makes a scheduled task bound to the open conversation: the
-  prompt is sent into it every so many minutes, hours or days while the
-  app is open, as a new turn each time. It does not replace the turn
-  before it as the WebView's timer does, cannot be paused, and a firing
-  that finds a turn running there is recorded as failed rather than
-  queued. `/timer off` removes the conversation's timers; they are also
-  listed, marked, on the Scheduled tasks page.
+- `/timer` gives the open conversation its timer, a scheduled task
+  bound to it: the prompt is sent into it every so many minutes, hours
+  or days while the app is open, as a new turn each time. A conversation
+  has one; `/timer` again changes its prompt and interval, keeps whether
+  it was paused, and fires one interval from then. While a turn runs
+  there or messages wait for one it stays due and fires at the first
+  look after (every half minute), as the WebView's does, instead of
+  being refused. Pause keeps the prompt and the interval; Resume keeps
+  the cadence's place on the clock, so a time missed while paused fires
+  once at the next look, as in the WebView. Unlike the WebView's it does
+  not replace the turn before it: every firing adds a turn. The strip
+  cannot edit the prompt or the interval (send `/timer` again) and
+  `/timer` alone does not open an editor. `/timer off` or Cancel timer
+  removes it; it is also listed, marked, on the Scheduled tasks page.
+  A timer the WebView made (one that replaces its previous turn) is the
+  WebView's to show and fire, and is not shown here.
+- The host's snapshot says why a conversation is read-only
+  (`read_only_reason`: archived or subagent; an optional field older
+  clients ignore). A subagent's conversation opened before the project's
+  list of conversations has named its parent says it is watched but
+  offers Open the parent only once the list arrives; a host that does not
+  say why gets "This conversation is read-only." with nothing offered.
+  The card's View the archive only shows an archive that is there: with
+  none the dialog closes again, says so, and nothing is drafted. A branch that
+  was merged back or lost its source is read-only in the WebView but
+  not here: this host does not refuse a message there, and the composer
+  stays open.
 - `/compact` asks which kind of compaction to run, then archives the
   conversation's whole history under the project's `.wisp/history/` and
   shortens what the model is sent: regular prunes old tool output and
@@ -2065,11 +2087,25 @@ fingerprint, and Add evidence and Change are gone. Press New version:
 "v2 · Version 2" opens as a draft with the same figure and evidence.
 With the reason field open press Escape: only the field closes; press it
 again: the panel closes and the page stays.
-Send `/timer 1m say the time`: a note confirms it, the Scheduled tasks
-page lists it as a conversation's timer, and within a minute and a half
-the prompt arrives in the same conversation as a turn. Send `/timer
-off`: a note says one was cancelled. Send `/timer soon`: it is refused
-and the text comes back.
+Send `/timer 1m say the time`: a note confirms it, a strip above the
+composer shows the prompt with "Every 1 min · Next: <time>", the
+Scheduled tasks page lists it as a conversation's timer, and within a
+minute and a half the prompt arrives in the same conversation as a turn
+and the strip's next time moves on. Send `/timer 2m say the date`: the
+strip shows the new prompt and "Every 2 min", and the Scheduled tasks
+page still lists one. Press Pause: the strip reads "Timer paused" and
+nothing arrives; quit and reopen the app: the strip is still there,
+paused. Press Resume: the prompt arrives at the next look. Start a long
+turn and let the time pass: the strip says Due now and the prompt
+arrives only after the turn ends. Press Cancel timer: the strip goes.
+Send `/timer off`: a note says none was cancelled. Send `/timer soon`:
+it is refused and the text comes back.
+Freeze a conversation's research archive: in place of the message box a
+card says its research is archived, with View the archive / Continue
+research; press it: the archive opens. Open a subagent's conversation: a
+card says whose subagent it is, with Open the parent, and no bar above
+the transcript says it again. In either, drop a file on the transcript
+and press the paste shortcut: nothing is attached.
 After a few turns send `/compact`: a dialog offers Regular compact and
 Semantic compact, each explained. Press Escape right away: only the
 dialog closes. Send `/compact` again, keep Regular and press Start
@@ -2219,8 +2255,9 @@ In a conversation with results press Research archive: the dialog says a
 draft is being written, then shows a title and a report to edit and the
 scripts that go with it. Change a sentence and press Freeze: the dialog
 shows the frozen report and where it is; `.wisp/research-archives/<id>/`
-holds REPORT.md with your change and the scripts; the composer no longer
-sends in this conversation, and a new conversation works as before.
+holds REPORT.md with your change and the scripts; in this conversation
+a card stands in the message box's place, and a new conversation works
+as before.
 Press Continue research: a conversation named "Continue · <title>" opens
 with the report and where the materials are as its first message, and
 the composer sends there.
@@ -2533,8 +2570,8 @@ one, then Escape: only the question closes; answer it: the files match
 the side chosen.
 With a model that can use tools and full access in a conversation, ask
 it to start a subagent that lists the project's files: a conversation
-named after the task appears under it, with the instruction and a bar
-saying it is watched; its composer does not send. When it ends, the
+named after the task appears under it, with the instruction and, in
+its composer's place, a card saying it is watched. When it ends, the
 parent shows a report and its agent answers it without a new message of
 yours.
 With such a model and without full access, ask it to have two temporary

@@ -346,6 +346,8 @@ mod tests {
             ("workspace/transfers_view.rs", "render_transfers"),
             ("workspace/queue_view.rs", "queue_strip"),
             ("workspace/runtime_console_view.rs", "render_console"),
+            ("workspace/slash_view.rs", "timer_strip"),
+            ("workspace/shell.rs", "read_only_card"),
         ] {
             let body = method(file(name), function)
                 .unwrap_or_else(|| panic!("{name} has no fn {function}"));
