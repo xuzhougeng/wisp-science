@@ -56,7 +56,7 @@ pub const COMMANDS: [(&str, Slash, &str); 19] = [
     ("/skills", Slash::Skills, "Show the skills in Settings"),
     ("/files", Slash::Files, "Show or hide Files"),
     ("/upload", Slash::Upload, "Attach files to the message"),
-    ("/memo", Slash::Memo, "Show memos"),
+    ("/memo", Slash::Memo, "Put a memo into the message"),
     ("/remember", Slash::Remember, "Show memory"),
     (
         "/archive",

@@ -63,6 +63,7 @@ mod settings_skill_store;
 mod settings_subscriptions;
 mod settings_view;
 mod settings_workflows;
+mod share_view;
 mod shell;
 mod slash_view;
 mod surfaces;
@@ -407,6 +408,9 @@ pub struct Workspace {
     /// that for the project chosen, with its name, waiting to be confirmed.
     transfer_artifacts: bool,
     transfer_preview: Option<(String, String, wisp_dto::SessionArtifactPreview)>,
+    /// The messages being chosen for the open conversation's shared page,
+    /// while that dialog is open.
+    sharing: Option<crate::share::Sharing>,
     /// Something that went as asked and is worth a line.
     notice: Option<String>,
     /// The project's memos; `None` until they were read.
@@ -418,6 +422,9 @@ pub struct Workspace {
     memo_target: Option<String>,
     memo_title: Entity<InputState>,
     memo_body: Entity<InputState>,
+    /// The Memos tab's search field: it narrows the list to the memos whose
+    /// title or text holds what is typed.
+    memo_search: Entity<InputState>,
     /// What is remembered, as the Memory tab shows it; `None` until read.
     memory: Option<MemoryView>,
     /// Only the latest memory request may fill the tab.
@@ -949,6 +956,7 @@ impl Workspace {
                 .multi_line(true)
                 .placeholder(tr("A prompt you reuse, a server address, a reminder…"))
         });
+        let memo_search = cx.new(|cx| InputState::new(window, cx).placeholder(tr("Search memos")));
         let settings = settings_view::SettingsForm::new(window, cx);
         let palette_input = cx.new(|cx| {
             InputState::new(window, cx).placeholder(tr("Search conversations, projects and files…"))
@@ -1350,6 +1358,11 @@ impl Workspace {
                     _ => {}
                 },
             ),
+            cx.subscribe_in(&memo_search, window, |_, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            }),
             cx.subscribe_in(&skills_search, window, |_, _, event, _, cx| {
                 if matches!(event, InputEvent::Change) {
                     cx.notify();
@@ -1609,12 +1622,14 @@ impl Workspace {
             transfer_copy: false,
             transfer_artifacts: false,
             transfer_preview: None,
+            sharing: None,
             notice: None,
             memos: None,
             memos_request: 0,
             memo_target: None,
             memo_title,
             memo_body,
+            memo_search,
             memory: None,
             memory_request: 0,
             memory_target: None,
@@ -1953,6 +1968,9 @@ impl Workspace {
                 self.focus_composer(window, cx);
             }
             Some(Layer::ConfirmDeleteMemory) => self.memory_target = None,
+            // Nothing was deleted; the Memory tab stays as it was.
+            Some(Layer::ConfirmClearMemory) => {}
+            Some(Layer::ShareMessages) => self.sharing = None,
             Some(Layer::Favorites) => {
                 self.favorite = None;
                 self.favorite_image = None;
@@ -2234,6 +2252,7 @@ impl Workspace {
                 &self.memo_body,
                 tr("A prompt you reuse, a server address, a reminder…"),
             ),
+            (&self.memo_search, tr("Search memos")),
             (&self.mcp_name, tr("Lab notebook")),
             (
                 &self.project_fields[2],
@@ -2347,6 +2366,7 @@ impl Workspace {
             self.memo_target = None;
             self.layers.close(Layer::MemoryEditor);
             self.layers.close(Layer::ConfirmDeleteMemory);
+            self.layers.close(Layer::ConfirmClearMemory);
             self.memory = None;
             self.memory_target = None;
         }
@@ -2381,10 +2401,12 @@ impl Workspace {
             Layer::ResearchArchive,
             Layer::BranchMerge,
             Layer::RunReview,
+            Layer::ShareMessages,
         ] {
             self.layers.close(layer);
         }
         self.run_review = None;
+        self.sharing = None;
         self.archive = None;
         self.merge = None;
         self.clear_trajectory();
@@ -4537,6 +4559,11 @@ impl Render for Workspace {
         } else {
             root
         };
+        let root = if self.layers.contains(Layer::ShareMessages) {
+            root.child(self.render_share(cx))
+        } else {
+            root
+        };
         let root = if self.layers.contains(Layer::BranchMerge) {
             root.child(self.render_branch_merge(cx))
         } else {
@@ -4554,6 +4581,11 @@ impl Render for Workspace {
         };
         let root = if self.layers.contains(Layer::Onboarding) {
             root.child(self.render_onboarding(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::ConfirmClearMemory) {
+            root.child(self.render_clear_memory(cx))
         } else {
             root
         };

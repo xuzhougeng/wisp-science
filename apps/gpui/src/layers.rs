@@ -138,6 +138,9 @@ pub enum Layer {
     Handoff,
     /// The research archive of the open conversation: a dialog over it.
     ResearchArchive,
+    /// The messages of the open conversation to put into its shared page:
+    /// a dialog over it.
+    ShareMessages,
     /// Bringing the open branch back into its source: a dialog over it.
     BranchMerge,
     /// Conversations from Codex or Claude Code to import: a dialog.
@@ -181,6 +184,9 @@ pub enum Layer {
     MemoryEditor,
     /// Question before a habit or a note is deleted.
     ConfirmDeleteMemory,
+    /// Question, as a dialog, before every note of the project's memory is
+    /// deleted (the Memory tab's Clear all).
+    ConfirmClearMemory,
     /// The Favorites page, shown in place of the rest of the window.
     Favorites,
     /// Question on the Favorites page before a saved item is removed.
@@ -290,6 +296,7 @@ impl Layer {
             | Layer::ConfirmDeleteMemo
             | Layer::MemoryEditor
             | Layer::ConfirmDeleteMemory
+            | Layer::ConfirmClearMemory
             | Layer::TaskBudget => Some(Layer::FilesPanel),
             Layer::ConfirmDeleteModel
             | Layer::McpForm
@@ -463,6 +470,19 @@ mod tests {
         assert_eq!(stack.dismiss_top(), Some(Layer::FilesPanel));
         assert!(!stack.contains(Layer::FilesPanel));
         assert_eq!(stack.dismiss_top(), None);
+    }
+
+    #[test]
+    fn the_share_dialog_closes_alone_and_outlives_the_side_panel() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::ShareMessages);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ShareMessages));
+        assert!(stack.contains(Layer::FilesPanel));
+        // It is the window's, not the panel's.
+        stack.open(Layer::ShareMessages);
+        assert!(stack.close(Layer::FilesPanel));
+        assert!(stack.contains(Layer::ShareMessages));
     }
 
     #[test]
@@ -704,8 +724,15 @@ mod tests {
         stack.open(Layer::MemoryEditor);
         stack.open(Layer::ConfirmDeleteMemory);
         assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmDeleteMemory));
+        // The question before Clear all is the one Escape closes first, and
+        // it goes with the panel its tab is in.
+        stack.open(Layer::ConfirmClearMemory);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmClearMemory));
+        assert!(stack.contains(Layer::FilesPanel) && stack.contains(Layer::MemoryEditor));
+        stack.open(Layer::ConfirmClearMemory);
         assert!(stack.close(Layer::FilesPanel));
         assert!(!stack.contains(Layer::MemoEditor) && !stack.contains(Layer::MemoryEditor));
+        assert!(!stack.contains(Layer::ConfirmClearMemory));
     }
 
     #[test]

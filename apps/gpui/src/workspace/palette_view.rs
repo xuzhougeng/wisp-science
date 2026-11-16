@@ -35,6 +35,28 @@ impl Workspace {
         }
     }
 
+    /// The same box listing only the project's memos, as the WebView's
+    /// `/memo` turns its `/` menu into a memo picker: `query` is what was
+    /// typed after the command. Picking one puts its text into the message
+    /// after what is written there; Escape leaves the message as it was.
+    pub(super) fn open_memo_picker(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.state.session.is_none() || self.read_only().is_some() {
+            return;
+        }
+        self.layers.close(Layer::Palette);
+        self.show_palette(Mode::Memos, window, cx);
+        if !query.is_empty() {
+            // Reported as a change, which filters the list.
+            self.palette_input
+                .update(cx, |input, cx| input.set_value(query, window, cx));
+        }
+    }
+
     fn show_palette(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {
         if self.layers.close(Layer::Palette) {
             self.focus_composer(window, cx);
@@ -47,6 +69,7 @@ impl Workspace {
                     "Add a file, an artifact, an environment, a conversation, a skill, a workflow or a memo…",
                 ),
                 Mode::Commands => tr("Run a command…"),
+                Mode::Memos => tr("Search memos"),
             };
             self.palette_input.update(cx, |input, cx| {
                 input.set_placeholder(placeholder, window, cx);
@@ -55,8 +78,10 @@ impl Workspace {
             });
             // The list with nothing typed is the recent conversations.
             self.load_recent(window, cx);
-            if mode == Mode::Attach {
-                self.offer_mentions(window, cx);
+            match mode {
+                Mode::Attach => self.offer_mentions(window, cx),
+                Mode::Memos => self.offer_memos(window, cx),
+                Mode::Open | Mode::Commands => {}
             }
             // Clearing the box does not report a change when it was empty.
             self.search_palette(window, cx);
@@ -188,6 +213,33 @@ impl Workspace {
         .detach();
     }
 
+    /// Offers the project's memos to the `/memo` picker: those the Memos
+    /// tab already read at once, then the host's list.
+    fn offer_memos(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        let opening = self.palette.opening();
+        if let Some(memos) = self.memos.as_deref() {
+            self.palette
+                .offer(opening, Section::Memos, palette::memo_entries(memos));
+        }
+        let memos = self.backend.memos(project);
+        cx.spawn_in(window, async move |this, cx| {
+            let memos = receive(memos).await;
+            let _ = this.update(cx, |this, cx| {
+                match memos {
+                    Ok(memos) => this.accept_palette_results(|palette| {
+                        palette.offer(opening, Section::Memos, palette::memo_entries(&memos))
+                    }),
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Puts a memo's text into the message box after what is written there,
     /// as the WebView's `/memo` does: the model reads a memo only this way.
     fn put_memo(&mut self, body: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -224,8 +276,8 @@ impl Workspace {
         self.palette_scroll.scroll_to_item(0);
         cx.notify();
         let query = self.palette.query.clone();
-        // Commands are listed here; nothing is asked of the host.
-        if self.palette.mode == Mode::Commands {
+        // Commands and memos are listed here; nothing is asked of the host.
+        if matches!(self.palette.mode, Mode::Commands | Mode::Memos) {
             return;
         }
         let attach = self.palette.mode == Mode::Attach;
@@ -328,9 +380,12 @@ impl Workspace {
             return;
         };
         self.layers.close(Layer::Palette);
-        if self.palette.mode == Mode::Attach {
+        if matches!(self.palette.mode, Mode::Attach | Mode::Memos) {
             if let Entry::Memo { body, .. } = &entry {
                 self.put_memo(body, window, cx);
+            } else if let Entry::Command(command) = entry {
+                // The `/memo` picker's one row in a project with no memos.
+                return self.run_command(command, window, cx);
             } else if let Some(chip) = entry.chip() {
                 self.attach(chip, cx);
             }
@@ -555,10 +610,18 @@ impl Workspace {
             .min_h_0()
             .overflow_y_scroll()
             .p_1();
+        let memo_picker = self.palette.mode == Mode::Memos;
         let mut section = None;
         for (index, entry) in entries.iter().enumerate() {
             if section != Some(entry.section()) {
                 section = Some(entry.section());
+                // The memo picker's row for a project without memos is
+                // under the memos' heading too.
+                let heading = if memo_picker {
+                    Section::Memos.title()
+                } else {
+                    entry.section().title()
+                };
                 list = list.child(
                     div()
                         .px_2()
@@ -567,7 +630,7 @@ impl Workspace {
                         .flex_shrink_0()
                         .text_xs()
                         .text_color(muted)
-                        .child(entry.section().title()),
+                        .child(heading),
                 );
             }
             let glyph = entry.glyph();
@@ -588,6 +651,11 @@ impl Workspace {
                 Entry::Memo {
                     heading, preview, ..
                 } => (heading.clone(), preview.clone()),
+                // The WebView's words for a project with no memos yet.
+                Entry::Command(Command::Memos) if memo_picker => (
+                    tr("This project has no memos yet").to_owned(),
+                    tr("Open Memos").to_owned(),
+                ),
                 Entry::Command(command) => (command.label().to_owned(), String::new()),
             };
             // A project can also be opened in a window of its own.
@@ -669,7 +737,9 @@ impl Workspace {
         }
         if entries.is_empty() {
             list = list.child(div().p_4().text_sm().text_color(muted).child(
-                if self.palette.query.is_empty() {
+                if memo_picker && self.palette.query.is_empty() {
+                    tr("Loading…").to_owned()
+                } else if self.palette.query.is_empty() {
                     tr("Type a file name, a word from a conversation, or a skill.").to_owned()
                 } else {
                     crate::i18n::fill(tr("Nothing matches “{}”."), &[&self.palette.query])
@@ -720,6 +790,9 @@ impl Workspace {
                             "↑ ↓ to move · Return to open · Esc to close"
                         }
                         Mode::Attach => "↑ ↓ to move · Return to add · Esc to close",
+                        Mode::Memos => {
+                            tr("↑ ↓ to move · Return to put it into the message · Esc to close")
+                        }
                     }),
             );
 

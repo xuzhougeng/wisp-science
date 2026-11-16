@@ -5900,6 +5900,68 @@ async fn memory_reaches_the_model_only_while_it_is_on_and_is_never_saved_with_a_
 }
 
 #[tokio::test]
+async fn clearing_memory_deletes_this_projects_notes_only() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+
+    // Nothing to clear yet: no memory folder at all.
+    assert_eq!(server.clear_memory_notes(&lab).await.unwrap(), 0);
+    assert!(server.clear_memory_notes("missing").await.is_err());
+
+    server
+        .remember(&lab, None, "the queue is called gpu-long", false)
+        .await
+        .unwrap();
+    server
+        .save_memory_note(&lab, "2026-01-02.md", "older finding\n")
+        .await
+        .unwrap();
+    server
+        .remember(PROJECT, None, "another project's finding", false)
+        .await
+        .unwrap();
+    let habit = server.add_habit("always report medians").await.unwrap();
+    // What the tab does not list as a note stays: a hidden file, another
+    // kind of file, a folder.
+    let memory = folder.join(".wisp/memory");
+    std::fs::write(memory.join(".draft.md"), "kept").unwrap();
+    std::fs::write(memory.join("index.txt"), "kept").unwrap();
+    std::fs::create_dir(memory.join("old.md")).unwrap();
+    let before = server
+        .0
+        .store
+        .state_generation(&wisp_store::StateScope::mainline(lab.clone()))
+        .await
+        .unwrap();
+
+    assert_eq!(server.clear_memory_notes(&lab).await.unwrap(), 2);
+    let view = server.memory(&lab).await.unwrap();
+    assert!(view.notes.is_empty());
+    // Habits apply in every project and are not a project's to clear.
+    assert_eq!(view.habits.len(), 1);
+    assert_eq!(view.habits[0].id, habit.id);
+    assert_eq!(server.memory(PROJECT).await.unwrap().notes.len(), 1);
+    for kept in [".draft.md", "index.txt", "old.md"] {
+        assert!(memory.join(kept).exists(), "{kept}");
+    }
+    // Other devices are told the project's research state changed.
+    let after = server
+        .0
+        .store
+        .state_generation(&wisp_store::StateScope::mainline(lab.clone()))
+        .await
+        .unwrap();
+    assert!(after > before);
+    assert_eq!(server.clear_memory_notes(&lab).await.unwrap(), 0);
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn favorites_are_snapshots_that_outlive_the_conversation_they_came_from() {
     let temp = tempfile::tempdir().unwrap();
     let settings = config(temp.path());

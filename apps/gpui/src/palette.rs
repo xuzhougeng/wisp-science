@@ -32,6 +32,9 @@ pub enum Mode {
     Attach,
     /// Commands only, as the WebView's action palette (⌘P) lists them.
     Commands,
+    /// The project's memos only, as the WebView's `/memo` picker lists
+    /// them: picking one puts its text into the message.
+    Memos,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -704,6 +707,9 @@ pub struct PaletteState {
     /// Artifacts, environments, runtimes, workflows and memos to attach,
     /// filtered here as the query changes.
     offered: Vec<Entry>,
+    /// Whether the memos were offered while the box is open, so that "none"
+    /// is known rather than not read yet.
+    memos_offered: bool,
     pub selected: usize,
     pub mode: Mode,
 }
@@ -738,6 +744,7 @@ impl PaletteState {
             return false;
         }
         self.offered.retain(|entry| entry.section() != section);
+        self.memos_offered |= section == Section::Memos;
         self.offered.extend(
             entries
                 .into_iter()
@@ -820,6 +827,9 @@ impl PaletteState {
     ) -> Vec<Entry> {
         let query = self.query.as_str();
         let attach = self.mode == Mode::Attach;
+        if self.mode == Mode::Memos {
+            return self.memo_rows();
+        }
         if self.mode == Mode::Commands {
             return Command::ALL
                 .into_iter()
@@ -889,6 +899,30 @@ impl PaletteState {
                 .map(Entry::Command),
         );
         entries
+    }
+
+    /// The rows of the `/memo` picker: every memo that matches what is typed,
+    /// not only the first few. A project with no memos at all has one row
+    /// that shows the Memos tab, as the WebView's picker has; until the
+    /// memos are read there is none.
+    fn memo_rows(&self) -> Vec<Entry> {
+        let memos: Vec<&Entry> = self
+            .offered
+            .iter()
+            .filter(|entry| entry.section() == Section::Memos)
+            .collect();
+        if memos.is_empty() {
+            return if self.memos_offered {
+                vec![Entry::Command(Command::Memos)]
+            } else {
+                Vec::new()
+            };
+        }
+        memos
+            .into_iter()
+            .filter(|entry| matches(&entry.search_text(), &self.query))
+            .cloned()
+            .collect()
     }
 
     /// Moves the selection by `delta` rows, wrapping at both ends.
@@ -1505,6 +1539,58 @@ mod tests {
                 .entries(&projects, &recent, Screen::Project)
                 .iter()
                 .all(|entry| entry.section() != Section::Skills)
+        );
+    }
+
+    #[test]
+    fn the_memo_picker_lists_every_matching_memo_and_nothing_else() {
+        let memo = |title: &str, body: &str| ProjectMemo {
+            title: title.into(),
+            body: body.into(),
+            ..Default::default()
+        };
+        let projects = [project("Lab", "/data/lab")];
+        let recent = [conversation("r", "Earlier alignment", false)];
+        let mut state = PaletteState::default();
+        state.reset(Mode::Memos);
+        // Not read yet: no rows, and not the "no memos" row either.
+        assert!(
+            state
+                .entries(&projects, &recent, Screen::Project)
+                .is_empty()
+        );
+        let opening = state.opening();
+        let many: Vec<ProjectMemo> = (0..MEMOS + 3)
+            .map(|i| memo(&format!("Note {i}"), "text"))
+            .chain([memo("Server", "ssh lab-gpu")])
+            .collect();
+        state.offer(opening, Section::Memos, memo_entries(&many));
+        state.offer(opening, Section::Workflows, workflow_entries(&[]));
+        state.begin("");
+        let all = state.entries(&projects, &recent, Screen::Project);
+        // Every memo, uncapped; no projects, conversations or commands.
+        assert_eq!(all.len(), MEMOS + 4);
+        assert!(all.iter().all(|entry| entry.section() == Section::Memos));
+        state.begin("LAB-gpu");
+        assert_eq!(
+            state.entries(&projects, &recent, Screen::Project),
+            memo_entries(&[memo("Server", "ssh lab-gpu")])
+        );
+        state.begin("nothing like it");
+        assert!(
+            state
+                .entries(&projects, &recent, Screen::Project)
+                .is_empty()
+        );
+        // A project with no memos offers the Memos tab instead, whatever
+        // is typed.
+        state.reset(Mode::Memos);
+        let opening = state.opening();
+        state.offer(opening, Section::Memos, memo_entries(&[]));
+        state.begin("gpu");
+        assert_eq!(
+            state.entries(&projects, &recent, Screen::Project),
+            [Entry::Command(Command::Memos)]
         );
     }
 }

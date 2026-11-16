@@ -2267,6 +2267,36 @@ impl Server {
         }
     }
 
+    /// Deletes every note of the project's memory, as "Clear all" on the
+    /// WebView's Memory page does: the Markdown notes directly inside the
+    /// project's memory folder (`.wisp/memory`). Habits, which apply in every
+    /// project, and other projects' notes are left alone. Returns how many
+    /// notes were deleted; a project without a memory folder has none.
+    pub async fn clear_memory_notes(&self, project: &str) -> Result<usize> {
+        let _admission = self.0.admission.read().await;
+        let root = std::path::PathBuf::from(self.project_root(project).await?);
+        let dir = wisp_core::MemoryManager::at(&root).dir().to_owned();
+        let mut entries = match tokio::fs::read_dir(&dir).await {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(error.into()),
+        };
+        let mut removed = 0;
+        while let Some(entry) = entries.next_entry().await? {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            // Only what the Memory tab lists as a note; a folder is not one.
+            if memory_note_name(&name).is_err() || entry.file_type().await?.is_dir() {
+                continue;
+            }
+            tokio::fs::remove_file(entry.path()).await?;
+            removed += 1;
+        }
+        if removed > 0 {
+            self.memory_changed(project).await?;
+        }
+        Ok(removed)
+    }
+
     /// Project notes are research state other devices sync.
     async fn memory_changed(&self, project: &str) -> Result<()> {
         self.0

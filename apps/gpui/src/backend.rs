@@ -715,6 +715,12 @@ impl Backend {
         self.local(move |host| async move { host.delete_memory_note(&project, &name).await })
     }
 
+    /// Deletes every note of the project's memory; habits stay. Answers how
+    /// many were deleted.
+    pub fn clear_memory_notes(&self, project: String) -> Reply<usize> {
+        self.local(move |host| async move { host.clear_memory_notes(&project).await })
+    }
+
     /// Keeps `text` for the project, or with `everywhere` as a habit.
     pub fn remember(
         &self,

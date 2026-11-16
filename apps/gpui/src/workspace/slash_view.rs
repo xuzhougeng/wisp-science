@@ -74,6 +74,12 @@ impl Workspace {
             }
             Slash::Files => self.toggle_files(window, cx),
             Slash::Upload => self.attach_files(window, cx),
+            // As in the WebView: a memo picker over the composer, filtered
+            // by what follows `/memo`. Where nothing can be written, the
+            // Memos tab is still there to read.
+            Slash::Memo if self.state.session.is_some() && self.read_only().is_none() => {
+                return self.open_memo_picker(rest, window, cx);
+            }
             Slash::Memo => self.show_panel_tab(PanelTab::Memos, window, cx),
             Slash::Remember => self.show_panel_tab(PanelTab::Memory, window, cx),
             Slash::Archive => self.open_research_archive(window, cx),

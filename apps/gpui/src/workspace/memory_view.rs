@@ -1,6 +1,7 @@
 //! The side panel's Memory tab: one switch, the habits the model is shown in
 //! every project, and this project's notes, which it can search. The editor
-//! and the delete question are layers inside the panel.
+//! and the delete question are layers inside the panel; the question before
+//! Clear all is a dialog over the window.
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
@@ -12,7 +13,7 @@ use gpui_component::{
 use super::{
     Workspace,
     shell::{error_banner, glyph, icon_button},
-    surfaces::{self, switch},
+    surfaces::{self, DialogWidth, switch},
 };
 use crate::{
     assets::icon,
@@ -554,6 +555,94 @@ impl Workspace {
         }
     }
 
+    /// Asks before every note of the project's memory is deleted.
+    fn ask_clear_memory(&mut self, cx: &mut Context<Self>) {
+        if self
+            .memory
+            .as_ref()
+            .is_some_and(|view| !view.notes.is_empty())
+        {
+            self.layers.open(Layer::ConfirmClearMemory);
+            cx.notify();
+        }
+    }
+
+    /// Deletes every note of the project's memory, as the WebView's Clear
+    /// all does. Habits stay.
+    fn clear_memory(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending || !self.layers.contains(Layer::ConfirmClearMemory) {
+            return;
+        }
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        self.pending = true;
+        self.error = None;
+        let reply = self.backend.clear_memory_notes(project.clone());
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.pending = false;
+                if this.state.project.as_ref() != Some(&project) {
+                    return;
+                }
+                this.layers.close(Layer::ConfirmClearMemory);
+                match result {
+                    Ok(removed) => this.notice = Some(memory::cleared(removed)),
+                    Err(error) => this.error = Some(error),
+                }
+                // Some may be gone even when one could not be deleted.
+                this.load_memory(window, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// The question before Clear all: what is deleted, by name, that it
+    /// cannot be undone, and that habits stay.
+    pub(super) fn render_clear_memory(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let muted = cx.theme().muted_foreground;
+        let notes = self
+            .memory
+            .as_ref()
+            .map_or(&[][..], |view| view.notes.as_slice());
+        let mut names = div().v_flex().gap_0p5();
+        for note in notes {
+            names = names.child(div().text_xs().text_color(muted).child(format!(
+                "{} · {}",
+                note.name,
+                size_label(note.bytes)
+            )));
+        }
+        surfaces::dialog(
+            "clear-memory",
+            DialogWidth::Narrow,
+            tr("Clear this project's notes?"),
+        )
+        .child(div().text_sm().child(memory::clear_question(notes.len())))
+        .child(names)
+        .action(
+            Button::new("clear-memory-cancel")
+                .label(tr("Cancel"))
+                .small()
+                .ghost()
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.layers.close(Layer::ConfirmClearMemory);
+                    cx.notify();
+                })),
+        )
+        .action(
+            Button::new("clear-memory-confirm")
+                .label(tr("Delete all notes"))
+                .small()
+                .danger()
+                .disabled(self.pending || notes.is_empty())
+                .on_click(cx.listener(|this, _, window, cx| this.clear_memory(window, cx))),
+        )
+    }
+
     fn memory_editor(&self, target: &Target, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
         let problem = memory::problem(target, &self.memory_text.read(cx).value());
@@ -875,6 +964,21 @@ impl Workspace {
                 Target::Note(note.name.clone()),
                 cx,
             ));
+        }
+        // Under the notes, as the WebView has it under its list of them.
+        if !view.notes.is_empty() {
+            list = list.child(
+                div().h_flex().justify_end().child(
+                    Button::new("memory-clear-all")
+                        .icon(glyph("trash"))
+                        .label(tr("Clear all"))
+                        .xsmall()
+                        .ghost()
+                        .disabled(self.pending)
+                        .tooltip(tr("Delete all of this project's notes; habits stay"))
+                        .on_click(cx.listener(|this, _, _, cx| this.ask_clear_memory(cx))),
+                ),
+            );
         }
         list.into_any_element()
     }

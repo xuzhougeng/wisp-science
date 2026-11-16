@@ -2582,4 +2582,26 @@ pub const ZH: &[(&str, &str)] = &[
     ("Close without saving?", "不保存就关闭？"),
     ("Close without saving", "不保存并关闭"),
     ("Not saved", "未保存"),
+    // Memo search and the `/memo` picker.
+    ("Search memos", "搜索备忘录"),
+    ("No memos match.", "没有匹配的备忘录。"),
+    ("This project has no memos yet", "这个项目还没有备忘录"),
+    ("Open Memos", "打开备忘录"),
+    ("↑ ↓ to move · Return to put it into the message · Esc to close", "↑ ↓ 移动 · 回车放进消息 · Esc 关闭"),
+    ("Put a memo into the message", "把一条备忘录插入输入框"),
+    // Memory: Clear all.
+    ("Clear all", "全部清除"),
+    ("Delete all of this project's notes; habits stay", "删除此项目的全部笔记；习惯保留"),
+    ("Clear this project's notes?", "清除此项目的笔记？"),
+    ("All of this project's memory notes ({}, in .wisp/memory) will be deleted. This cannot be undone. Habits apply in every project and are kept.", "将删除此项目记忆中的全部笔记（{}，位于 .wisp/memory）。此操作无法撤销。习惯适用于所有项目，会保留。"),
+    ("Delete all notes", "删除全部笔记"),
+    ("This project's memory had no notes to delete.", "此项目的记忆中没有可删除的笔记。"),
+    ("Deleted {} from this project's memory.", "已从此项目的记忆中删除 {}。"),
+    // Share: choosing the messages.
+    ("Pick the messages to include.", "勾选要展示的消息。"),
+    ("Select at least one message", "至少选择一条消息"),
+    ("Clear selection", "清空选择"),
+    ("{} of {} selected", "已选 {}/{} 条"),
+    ("Export HTML", "导出 HTML"),
+    ("Exporting…", "导出中…"),
 ];

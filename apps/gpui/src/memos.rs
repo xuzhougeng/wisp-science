@@ -58,6 +58,13 @@ pub fn insert(draft: &str, body: &str) -> String {
     }
 }
 
+/// The memos the tab lists for what is typed in its search field: those
+/// whose title or text holds it, ignoring case, in the host's order (pinned
+/// first, then the most recently changed), as the WebView filters them.
+pub fn shown<'a>(memos: &'a [ProjectMemo], query: &str) -> Vec<&'a ProjectMemo> {
+    memos.iter().filter(|memo| memo.matches(query)).collect()
+}
+
 /// Whether the editor holds something worth saving. The host has the last
 /// word on lengths.
 pub fn can_save(body: &str) -> bool {
@@ -115,6 +122,27 @@ mod tests {
             insert("Compare A and B.\n", "note\nline"),
             "Compare A and B.\n\nnote\nline"
         );
+    }
+
+    #[test]
+    fn the_search_finds_a_title_or_the_text_and_keeps_pinned_ones_first() {
+        let mut pinned = memo("Primers", "F: ACGT");
+        pinned.id = "pinned".into();
+        pinned.pinned = true;
+        let mut server = memo("", "ssh LAB-gpu\nport 2222");
+        server.id = "server".into();
+        let memos = [pinned, server];
+        let ids = |query: &str| {
+            shown(&memos, query)
+                .iter()
+                .map(|memo| memo.id.as_str())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(""), ["pinned", "server"]);
+        assert_eq!(ids("  primers "), ["pinned"]);
+        assert_eq!(ids("lab-GPU"), ["server"]);
+        assert_eq!(ids("2222"), ["server"]);
+        assert!(ids("nothing").is_empty());
     }
 
     #[test]
