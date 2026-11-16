@@ -14,32 +14,19 @@ use wisp_dto::ProjectSummary;
 use super::{
     Workspace, chip,
     shell::{error_banner, glyph, icon_button},
+    surfaces,
 };
 use crate::{
+    assets::icon,
     backend::receive,
     home,
     layers::Layer,
     present::{self, Tone},
 };
 
-fn section(title: &'static str, cx: &App) -> Div {
-    div()
-        .text_sm()
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(cx.theme().muted_foreground)
-        .child(title)
-}
-
-/// The shared look of a project or conversation card.
+/// A project's card: the page's card with room inside.
 fn card(id: SharedString, cx: &App) -> Stateful<Div> {
-    div()
-        .id(id)
-        .px_4()
-        .py_3()
-        .rounded(cx.theme().radius_lg)
-        .border_1()
-        .border_color(cx.theme().border)
-        .bg(cx.theme().popover)
+    surfaces::card(id, cx).px_4().py_3()
 }
 
 impl Workspace {
@@ -122,13 +109,10 @@ impl Workspace {
         let id = project.id.clone();
         let muted = cx.theme().muted_foreground;
         let ring = cx.theme().ring;
-        let mut top = div().h_flex().gap_2().child(
-            div()
-                .min_w_0()
-                .truncate()
-                .font_weight(FontWeight::MEDIUM)
-                .child(project.name.clone()),
-        );
+        let mut top = div()
+            .h_flex()
+            .gap_2()
+            .child(surfaces::title(project.name.clone()).min_w_0().truncate());
         for (label, tone) in home::activity(project) {
             top = top.child(chip(label, tone, cx));
         }
@@ -395,12 +379,7 @@ impl Workspace {
             .bg(cx.theme().popover)
             .shadow_lg()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("New project")),
-            )
+            .child(surfaces::title(tr("New project")))
             .child(div().text_xs().text_color(muted).child(tr(
                 "A folder with this name is made where you choose next, and the project opens in it.",
             )))
@@ -476,180 +455,182 @@ impl Workspace {
     pub(super) fn render_home(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
         let ring = cx.theme().ring;
+        let line = cx.theme().border;
+        let hover = cx.theme().list_hover;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|elapsed| elapsed.as_secs() as i64)
             .unwrap_or(0);
         let home_dir = dirs::home_dir().map(|path| path.to_string_lossy().into_owned());
 
-        let header = div()
+        // The wordmark, and opposite it the places to go, as words.
+        let link =
+            |id: &'static str, label: &'static str| Button::new(id).label(label).ghost().small();
+        let bar = div()
             .h_flex()
-            .justify_between()
-            .gap_4()
+            .flex_wrap()
+            .gap_1()
+            .px_6()
+            .py_3()
+            .child(surfaces::title("Wisp").text_color(cx.theme().primary))
             .child(
                 div()
-                    .v_flex()
-                    .gap_1()
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap(px(7.))
-                            .text_3xl()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(div().text_color(cx.theme().primary).child("Wisp"))
-                            .child("Science"),
-                    )
-                    .child(
-                        div()
-                            .text_color(muted)
-                            .child(tr("Rigorous research, with Wisp at your side.")),
-                    ),
+                    .pl_2()
+                    .child(chip(tr("GPUI preview"), Tone::Neutral, cx)),
+            )
+            .child(div().flex_1())
+            .child(
+                link("home-assistant", tr("Research assistant"))
+                    .on_click(cx.listener(|this, _, window, cx| this.open_assistant(window, cx))),
+            )
+            .child(
+                link("home-mandates", tr("Research mandates"))
+                    .on_click(cx.listener(|this, _, window, cx| this.open_mandates(window, cx))),
+            )
+            .child(
+                link("home-calendar", tr("Research calendar"))
+                    .on_click(cx.listener(|this, _, window, cx| this.open_calendar(window, cx))),
+            )
+            .child(
+                link("home-schedules", tr("Scheduled tasks"))
+                    .on_click(cx.listener(|this, _, window, cx| this.open_schedules(window, cx))),
+            )
+            .child(
+                link("home-favorites", tr("Favorites"))
+                    .on_click(cx.listener(|this, _, window, cx| this.open_favorites(window, cx))),
+            )
+            .child(
+                link("home-examples", tr("Example conversations"))
+                    .on_click(cx.listener(|this, _, window, cx| this.open_examples(window, cx))),
+            )
+            .child(
+                icon_button("home-docs", "book", tr("Documentation, in your browser"))
+                    .on_click(cx.listener(|_, _, _, cx| cx.open_url(crate::links::DOCS))),
+            )
+            .child(
+                icon_button("home-settings", "gear", tr("Settings"))
+                    .on_click(cx.listener(|this, _, window, cx| this.open_settings(window, cx))),
+            );
+
+        // Looks like a field, opens the palette: there is one search.
+        let search = surfaces::card("home-search", cx)
+            .h_flex()
+            .gap_3()
+            .px_4()
+            .py_3()
+            .cursor_pointer()
+            .hover(|style| style.border_color(ring.opacity(0.6)))
+            .child(icon("search").text_color(muted))
+            .child(
+                div()
+                    .flex_1()
+                    .text_color(muted)
+                    .child(tr("Search everything")),
             )
             .child(
                 div()
-                    .h_flex()
-                    .gap_2()
-                    .child(chip(tr("GPUI preview"), Tone::Neutral, cx))
-                    .child(
-                        icon_button("home-search", "search", tr("Search everything")).on_click(
-                            cx.listener(|this, _, window, cx| this.toggle_palette(window, cx)),
-                        ),
-                    )
-                    .child(
-                        icon_button(
-                            "home-import",
-                            "archive-import",
-                            tr("Import a project archive or folder package"),
-                        )
-                        .disabled(self.pending)
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.import_project(window, cx)),
-                        ),
-                    )
-                    .child(
-                        icon_button(
-                            "home-webview",
-                            "computer",
-                            tr("Bring over projects from the WebView desktop"),
-                        )
-                        .disabled(self.pending)
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.open_webview_import(window, cx)),
-                        ),
-                    )
-                    .child(
-                        icon_button(
-                            "home-join",
-                            "sync",
-                            tr("Join a project from another device"),
-                        )
-                        .disabled(self.pending)
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.open_join_synced(window, cx)),
-                        ),
-                    )
-                    .child(
-                        icon_button(
-                            "home-sample",
-                            "flask",
-                            "Make a sample project to try Wisp on",
-                        )
-                        .disabled(self.pending)
-                        .on_click(
-                            cx.listener(|this, _, window, cx| {
-                                this.create_sample_project(window, cx)
-                            }),
-                        ),
-                    )
-                    .child(
-                        icon_button("home-examples", "file-play", tr("Example conversations"))
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.open_examples(window, cx)),
-                            ),
-                    )
-                    .child(
-                        icon_button("home-calendar", "calendar", tr("Research calendar")).on_click(
-                            cx.listener(|this, _, window, cx| this.open_calendar(window, cx)),
-                        ),
-                    )
-                    .child(
-                        icon_button("home-schedules", "clock", tr("Scheduled tasks")).on_click(
-                            cx.listener(|this, _, window, cx| this.open_schedules(window, cx)),
-                        ),
-                    )
-                    .child(
-                        icon_button("home-assistant", "bot", tr("Research assistant")).on_click(
-                            cx.listener(|this, _, window, cx| this.open_assistant(window, cx)),
-                        ),
-                    )
-                    .child(
-                        icon_button("home-mandates", "gauge", tr("Research mandates")).on_click(
-                            cx.listener(|this, _, window, cx| this.open_mandates(window, cx)),
-                        ),
-                    )
-                    .child(
-                        icon_button("home-favorites", "star", tr("Favorites")).on_click(
-                            cx.listener(|this, _, window, cx| this.open_favorites(window, cx)),
-                        ),
-                    )
-                    .child(
-                        icon_button("home-settings", "gear", tr("Settings")).on_click(
-                            cx.listener(|this, _, window, cx| this.open_settings(window, cx)),
-                        ),
-                    )
-                    .child(
-                        icon_button("home-docs", "book", tr("Documentation, in your browser"))
-                            .on_click(cx.listener(|_, _, _, cx| cx.open_url(crate::links::DOCS))),
-                    )
-                    .child(
-                        Button::new("new-project")
-                            .icon(glyph("plus"))
-                            .label(tr("New project"))
-                            .disabled(self.pending)
-                            .on_click(
-                                cx.listener(|this, _, window, cx| {
-                                    this.open_new_project(window, cx)
-                                }),
-                            ),
-                    )
-                    .child(
-                        Button::new("open-project")
-                            .icon(glyph("folder-plus"))
-                            .label(tr("Open folder"))
-                            .primary()
-                            .disabled(self.pending)
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.open_project(window, cx)),
-                            ),
+                    .text_xs()
+                    .text_color(muted)
+                    .child(if cfg!(target_os = "macos") {
+                        "⌘K"
+                    } else {
+                        "Ctrl+K"
+                    }),
+            )
+            .on_click(cx.listener(|this, _, window, cx| this.toggle_palette(window, cx)));
+
+        // The ways to start: one filled, the usual two outlined, the rarer
+        // ones as words.
+        let start = div()
+            .h_flex()
+            .flex_wrap()
+            .gap_2()
+            .child(
+                Button::new("new-project")
+                    .icon(glyph("plus"))
+                    .label(tr("New project"))
+                    .primary()
+                    .disabled(self.pending)
+                    .on_click(cx.listener(|this, _, window, cx| this.open_new_project(window, cx))),
+            )
+            .child(
+                Button::new("open-project")
+                    .icon(glyph("folder-plus"))
+                    .label(tr("Open folder"))
+                    .outline()
+                    .disabled(self.pending)
+                    .on_click(cx.listener(|this, _, window, cx| this.open_project(window, cx))),
+            )
+            .child(
+                Button::new("home-import")
+                    .icon(glyph("archive-import"))
+                    .label(tr("Import"))
+                    .outline()
+                    .tooltip(tr("Import a project archive or folder package"))
+                    .disabled(self.pending)
+                    .on_click(cx.listener(|this, _, window, cx| this.import_project(window, cx))),
+            )
+            .child(div().flex_1())
+            .child(
+                link("home-webview", tr("Bring over from WebView"))
+                    .tooltip(tr("Bring over projects from the WebView desktop"))
+                    .disabled(self.pending)
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.open_webview_import(window, cx)),
+                    ),
+            )
+            .child(
+                link("home-join", tr("Join from another device"))
+                    .tooltip(tr("Join a project from another device"))
+                    .disabled(self.pending)
+                    .on_click(cx.listener(|this, _, window, cx| this.open_join_synced(window, cx))),
+            )
+            .child(
+                link("home-sample", tr("Sample project"))
+                    .tooltip(tr("Make a sample project to try Wisp on"))
+                    .disabled(self.pending)
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.create_sample_project(window, cx)),
                     ),
             );
 
-        let mut projects = div()
-            .v_flex()
-            .gap_2()
-            .flex_1()
-            .min_w_0()
-            .child(section(tr("Projects"), cx));
-        // Privacy mode hides the chosen projects while recording.
+        // Projects are cards in two columns. Privacy mode hides the chosen
+        // projects while recording.
+        let mut cards = Vec::new();
         for project in self
             .projects
             .iter()
             .filter(|project| !home::concealed(&self.privacy, &project.id))
         {
-            projects = projects.child(self.project_card(project, now, home_dir.as_deref(), cx));
+            cards.push(self.project_card(project, now, home_dir.as_deref(), cx));
+        }
+        let mut projects = div()
+            .v_flex()
+            .gap_3()
+            .child(surfaces::title(tr("Projects")));
+        for row in surfaces::rows_of(cards, 2) {
+            let short = row.len() < 2;
+            let mut pair = div().h_flex().items_start().gap_4();
+            for card in row {
+                pair = pair.child(card.flex_1().min_w_0());
+            }
+            if short {
+                // Keeps a lone card the width of a column.
+                pair = pair.child(div().flex_1());
+            }
+            projects = projects.child(pair);
         }
 
-        let mut recent = div()
-            .v_flex()
-            .gap_2()
-            .flex_1()
-            .min_w_0()
-            .child(section(tr("Recent conversations"), cx));
+        // Recent conversations are lines with a hairline between.
+        let mut recent = div().v_flex().child(
+            div()
+                .pb_2()
+                .child(surfaces::title(tr("Recent conversations"))),
+        );
         if self.recent.is_empty() {
             recent = recent.child(
                 div()
                     .py_2()
-                    .text_sm()
                     .text_color(muted)
                     .child(tr("Conversations you start will appear here.")),
             );
@@ -667,23 +648,37 @@ impl Workspace {
             } else {
                 format!("{} · {age}", row.project_name)
             };
-            let mut line = card(SharedString::from(format!("recent-{session}")), cx)
+            let mut entry = div()
+                .id(SharedString::from(format!("recent-{session}")))
                 .h_flex()
                 .gap_3()
+                .px_2()
+                .py_2()
+                .border_t_1()
+                .border_color(line)
                 .child(
                     div()
-                        .v_flex()
                         .flex_1()
                         .min_w_0()
-                        .child(div().truncate().child(crate::present::one_line(&row.title)))
-                        .child(div().truncate().text_xs().text_color(muted).child(place)),
+                        .truncate()
+                        .child(crate::present::one_line(&row.title)),
+                )
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .max_w(px(280.))
+                        .truncate()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(place),
                 );
             if let Some((label, tone)) = present::session_status(&row.status) {
-                line = line.child(chip(label, tone, cx));
+                entry = entry.child(chip(label, tone, cx));
             }
             recent = recent.child(
-                line.cursor_pointer()
-                    .hover(|style| style.border_color(ring.opacity(0.6)))
+                entry
+                    .cursor_pointer()
+                    .hover(move |style| style.bg(hover))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_session(project.clone(), session.clone(), window, cx)
                     })),
@@ -693,12 +688,22 @@ impl Workspace {
         let mut page = div()
             .v_flex()
             .w_full()
-            .max_w(px(1080.))
+            .max_w(px(surfaces::HOME_WIDTH))
             .mx_auto()
             .px_8()
-            .py_10()
+            .pt_8()
+            .pb_10()
             .gap_8()
-            .child(header);
+            .child(
+                div()
+                    .v_flex()
+                    .gap_4()
+                    .child(surfaces::display(tr(
+                        "Rigorous research, with Wisp at your side.",
+                    )))
+                    .child(search)
+                    .child(start),
+            );
         if !self.settings.configured() {
             page = page.child(
                 div()
@@ -708,7 +713,7 @@ impl Workspace {
                     .py_3()
                     .rounded(cx.theme().radius_lg)
                     .bg(cx.theme().muted)
-                    .child(div().flex_1().text_sm().child(tr(
+                    .child(div().flex_1().child(tr(
                         "Choose a model before you start: Wisp needs one to answer.",
                     )))
                     .child(
@@ -727,15 +732,11 @@ impl Workspace {
         if let Some(notice) = &self.notice {
             page = page.child(self.notice_banner(notice, cx));
         }
-        div().id("home").size_full().overflow_y_scroll().child(
-            page.child(
-                div()
-                    .h_flex()
-                    .items_start()
-                    .gap_8()
-                    .child(projects)
-                    .child(recent),
-            ),
-        )
+        div()
+            .id("home")
+            .size_full()
+            .overflow_y_scroll()
+            .child(bar)
+            .child(page.child(projects).child(recent))
     }
 }

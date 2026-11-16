@@ -58,6 +58,7 @@ mod settings_view;
 mod settings_workflows;
 mod shell;
 mod slash_view;
+mod surfaces;
 mod tabs_view;
 mod terminal_view;
 mod trajectory_view;
@@ -1967,7 +1968,8 @@ impl Workspace {
                 Layer::SortMenu
                 | Layer::BatchGroupMenu
                 | Layer::ConfirmBatchDelete
-                | Layer::GroupMenu,
+                | Layer::GroupMenu
+                | Layer::ConversationMenu,
             ) => {}
             // A move waiting to be confirmed is forgotten with its menu.
             Some(Layer::TransferMenu) => self.transfer_preview = None,
@@ -2218,6 +2220,7 @@ impl Workspace {
         for layer in [
             Layer::Rename,
             Layer::ConfirmDelete,
+            Layer::ConversationMenu,
             Layer::GroupMenu,
             Layer::TransferMenu,
             Layer::ConfirmRewind,
@@ -4163,6 +4166,8 @@ impl Render for Workspace {
         let root = div()
             .relative()
             .size_full()
+            // Body text: what has no size of its own is this, not a rem.
+            .text_sm()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground);
         if !self.ready {

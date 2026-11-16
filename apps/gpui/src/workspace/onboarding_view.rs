@@ -236,12 +236,7 @@ impl Workspace {
             .bg(cx.theme().popover)
             .shadow_lg()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .text_xl()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(onboarding::title(step)),
-            )
+            .child(super::surfaces::title(onboarding::title(step)))
             .child(self.onboarding_body(cx));
         if let Some(error) = &self.onboarding_error {
             card = card.child(error_banner(error, cx));

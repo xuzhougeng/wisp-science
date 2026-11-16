@@ -11,7 +11,7 @@ use gpui_component::{
 use serde_json::json;
 use wisp_server::desktop::{RUNS_LOCALLY, Remember};
 
-use super::{Workspace, chip, tone_color};
+use super::{Workspace, chip, surfaces, tone_color};
 use crate::{
     assets::{icon, icon_path},
     compose::{self, Chip},
@@ -21,6 +21,10 @@ use crate::{
     present::{self, Tone},
     settings,
 };
+
+/// The hover group of one message: its actions show while the pointer is
+/// anywhere over it.
+const MESSAGE: &str = "message";
 
 /// The time now, in Unix seconds.
 fn unix_now() -> i64 {
@@ -225,14 +229,7 @@ impl Workspace {
                         icon_button("home", "arrow-left", tr("All projects"))
                             .on_click(cx.listener(|this, _, window, cx| this.go_home(window, cx))),
                     )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(project_name),
-                    ),
+                    .child(surfaces::title(project_name).flex_1().min_w_0().truncate()),
             )
             .child(new_chat)
             .child(files)
@@ -359,12 +356,11 @@ impl Workspace {
                     tr("New research").into()
                 }
             });
-        let mut heading = div().v_flex().flex_1().min_w_0().child(
-            div()
-                .truncate()
-                .font_weight(FontWeight::MEDIUM)
-                .child(title),
-        );
+        let mut heading = div()
+            .v_flex()
+            .flex_1()
+            .min_w_0()
+            .child(surfaces::title(title).truncate());
         if let Some(snapshot) = &self.state.snapshot {
             heading = heading.child(
                 div()
@@ -432,6 +428,22 @@ impl Workspace {
                             button
                         }
                     })
+                    .child({
+                        let open = self.layers.contains(Layer::ConversationMenu);
+                        let button = div().relative().child(
+                            icon_button("conversation-menu", "more", tr("Conversation actions"))
+                                .selected(open)
+                                .disabled(self.current_row().is_none())
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.toggle_conversation_menu(window, cx)
+                                })),
+                        );
+                        // Painted last, over the transcript below.
+                        match open.then(|| self.conversation_menu(cx)).flatten() {
+                            Some(menu) => button.child(deferred(menu)),
+                            None => button,
+                        }
+                    })
                     .child(
                         icon_button("refresh", "refresh", tr("Refresh"))
                             .disabled(self.pending)
@@ -453,8 +465,19 @@ impl Workspace {
             )
     }
 
-    /// The small actions under a message.
+    /// The small actions under a message. They show while the pointer is
+    /// over the message, and stay under the latest row and one just copied.
     fn message_actions(&self, index: usize, cx: &mut Context<Self>) -> Div {
+        let actions = self.message_action_items(index, cx);
+        if index + 1 == self.rows.len() || self.copied == Some(index) {
+            return actions;
+        }
+        actions
+            .invisible()
+            .group_hover(MESSAGE, |style| style.visible())
+    }
+
+    fn message_action_items(&self, index: usize, cx: &mut Context<Self>) -> Div {
         let copied = self.copied == Some(index);
         let actions = div()
             .h_flex()
@@ -822,7 +845,14 @@ impl Workspace {
         match item.role.as_str() {
             "user" => {
                 let text = compose::user_text(item);
-                let mut message = div().w_full().v_flex().items_end().gap_1().px_6().py_2();
+                let mut message = div()
+                    .group(MESSAGE)
+                    .w_full()
+                    .v_flex()
+                    .items_end()
+                    .gap_1()
+                    .px_6()
+                    .py_2();
                 if !text.is_empty() {
                     message = message.child(
                         div()
@@ -1112,6 +1142,7 @@ impl Workspace {
             }
             _ if item.text.is_empty() => div().into_any_element(),
             _ => div()
+                .group(MESSAGE)
                 .w_full()
                 .v_flex()
                 .gap_1()
@@ -1886,13 +1917,11 @@ impl Workspace {
         let full = options.full_access;
 
         let planning = options.plan_first;
+        // A setting at its usual value is an icon; one that changes what
+        // Wisp does says so in words.
         let plan = Button::new("plan-first")
             .icon(glyph("plan"))
-            .label(if planning {
-                tr("Planning")
-            } else {
-                tr("Plan first")
-            })
+            .when(planning, |button| button.label(tr("Planning")))
             .small()
             .ghost()
             .selected(planning)
@@ -1905,11 +1934,7 @@ impl Workspace {
 
         let access = Button::new("access")
             .icon(glyph(if full { "bolt" } else { "shield" }))
-            .label(if full {
-                tr("Full access")
-            } else {
-                tr("Ask first")
-            })
+            .when(full, |button| button.label(tr("Full access")))
             .small()
             .ghost()
             .selected(full || self.layers.contains(Layer::ConfirmFullAccess))
@@ -1923,10 +1948,7 @@ impl Workspace {
         let mut effort = div().relative().child(
             Button::new("effort")
                 .icon(glyph("gauge"))
-                .label(crate::i18n::fill(
-                    tr("Effort: {}"),
-                    &[&controls::effort_label(&options.reasoning_effort)],
-                ))
+                .label(controls::effort_label(&options.reasoning_effort))
                 .small()
                 .ghost()
                 .selected(effort_open)
@@ -2129,7 +2151,7 @@ impl Workspace {
             }
         });
 
-        let mut actions = div().h_flex().gap_2();
+        let mut actions = div().h_flex().flex_shrink_0().gap_2();
         let usage = self
             .status
             .as_ref()
@@ -2427,10 +2449,17 @@ impl Workspace {
                 .child(
                     div()
                         .h_flex()
+                        .items_end()
                         .justify_between()
+                        .gap_2()
                         .child(
+                            // The settings wrap onto a second line where the
+                            // column is narrower than they are; Send stays.
                             div()
                                 .h_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .flex_wrap()
                                 .gap_1()
                                 .child(attach)
                                 .children(quick)
@@ -2449,10 +2478,8 @@ impl Workspace {
                                 .when(!by_agent, |row| row.child(
                                     Button::new("auto-review")
                                         .icon(glyph("review"))
-                                        .label(if options.auto_review {
-                                            tr("Reviewing")
-                                        } else {
-                                            tr("Review turns")
+                                        .when(options.auto_review, |button| {
+                                            button.label(tr("Reviewing"))
                                         })
                                         .small()
                                         .ghost()
@@ -2545,11 +2572,9 @@ impl Workspace {
                     .justify_center()
                     .gap_3()
                     .p_8()
-                    .child(
-                        div()
-                            .text_2xl()
-                            .child(tr("What would you like to research today?")),
-                    )
+                    .child(surfaces::display(tr(
+                        "What would you like to research today?",
+                    )))
                     .child(
                         div()
                             .text_sm()
@@ -2612,8 +2637,11 @@ impl Workspace {
                 .flex_col()
                 .pr(margin)
                 .child(
+                    // Every row keeps the reading column, centred in what the
+                    // sidebar and the side panel leave.
                     list(self.list.clone(), move |index, window, cx| {
                         weak.update(cx, |this, cx| this.found_row(index, window, cx))
+                            .map(|row| surfaces::reading_column(row).into_any_element())
                             .unwrap_or_else(|_| div().into_any_element())
                     })
                     .flex_1()
@@ -2639,8 +2667,9 @@ impl Workspace {
         if let Some(transfers) = self.render_transfers(cx) {
             content = content.child(transfers);
         }
+        // The composer sits in the same column as what it answers.
         content
-            .child(self.render_composer(running, cx))
+            .child(surfaces::reading_column(self.render_composer(running, cx)).flex_shrink_0())
             .children(self.render_terminal_dock(cx))
     }
 }

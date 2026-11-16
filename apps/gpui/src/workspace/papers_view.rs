@@ -1171,7 +1171,7 @@ impl Workspace {
             .flex_1()
             .min_w_0()
             .gap_1()
-            .child(div().text_xl().child(paper.title.clone()));
+            .child(super::surfaces::title(paper.title.clone()));
         if !paper.description.is_empty() {
             heading = heading.child(
                 div()

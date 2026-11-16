@@ -74,6 +74,9 @@ pub enum Layer {
     Find,
     /// The outline of the open conversation, under its header.
     Outline,
+    /// The open conversation's actions, under the More button of its
+    /// header. Group and Move open beside it.
+    ConversationMenu,
     /// The research journey of the open project: a page of its own.
     Journey,
     /// The form on the journey page for a record of the researcher's own.
@@ -311,6 +314,7 @@ impl Layer {
             | Layer::PaperFinalize => Some(Layer::Papers),
             Layer::PaperWaiver => Some(Layer::PaperFinalize),
             Layer::BatchGroupMenu | Layer::ConfirmBatchDelete => Some(Layer::SelectMode),
+            Layer::GroupMenu | Layer::TransferMenu => Some(Layer::ConversationMenu),
             Layer::ExampleCopy => Some(Layer::Examples),
             Layer::ConfirmRunFilesDelete => Some(Layer::RunReview),
             _ => None,
@@ -599,6 +603,21 @@ mod tests {
         stack.switch(Layer::SortMenu, &Layer::SIDEBAR);
         assert_eq!(stack.dismiss_top(), Some(Layer::SortMenu));
         assert_eq!(stack.dismiss_top(), Some(Layer::TransferMenu));
+        assert_eq!(stack.dismiss_top(), None);
+    }
+
+    #[test]
+    fn the_conversation_menu_closes_after_what_it_opened_beside_it() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::ConversationMenu);
+        stack.switch(Layer::GroupMenu, &Layer::CONVERSATION_BAR);
+        // Escape, pressed right after opening, closes only the topmost.
+        assert_eq!(stack.dismiss_top(), Some(Layer::GroupMenu));
+        assert!(stack.contains(Layer::ConversationMenu));
+        // Closing the menu takes what it opened with it.
+        stack.switch(Layer::TransferMenu, &Layer::CONVERSATION_BAR);
+        assert!(stack.close(Layer::ConversationMenu));
+        assert!(!stack.contains(Layer::TransferMenu));
         assert_eq!(stack.dismiss_top(), None);
     }
 
