@@ -39,6 +39,7 @@ mod project_sync_view;
 mod queue_view;
 mod remote_files_view;
 mod review_view;
+mod run_cards_view;
 mod run_review_view;
 mod runtime_console_view;
 mod schedules_view;
@@ -736,6 +737,12 @@ pub struct Workspace {
     /// drawn as, by row, worked out again whenever the rows, the batches or
     /// the conversation list change.
     agent_cards: HashMap<usize, crate::agents::Card>,
+    /// The rows that draw a run's card, with the run and the shape of what
+    /// the card shows, worked out again whenever the rows or the
+    /// conversation's runs change.
+    run_card_rows: HashMap<usize, (String, u64)>,
+    /// Runs the user moved to the background here, until a snapshot says so.
+    backgrounded_runs: HashSet<String>,
     /// The latest work over many items the open conversation ran.
     swarm: Option<wisp_dto::SwarmProgress>,
     batches_request: u64,
@@ -1759,6 +1766,8 @@ impl Workspace {
             batches: Vec::new(),
             batches_for: None,
             agent_cards: HashMap::new(),
+            run_card_rows: HashMap::new(),
+            backgrounded_runs: HashSet::new(),
             swarm: None,
             batches_request: 0,
             budget_target: None,
@@ -2758,6 +2767,8 @@ impl Workspace {
         self.batches.clear();
         self.batches_for = None;
         self.agent_cards.clear();
+        self.run_card_rows.clear();
+        self.backgrounded_runs.clear();
         self.swarm = None;
         self.history.clear();
         self.before = None;
@@ -3161,6 +3172,7 @@ impl Workspace {
         self.rows = rows;
         self.place_generated();
         self.place_agent_cards();
+        self.place_run_cards();
         // The same words, in the transcript as it is now.
         if self.layers.contains(Layer::Find) {
             self.find.refresh(&self.rows);

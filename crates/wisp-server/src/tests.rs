@@ -16196,3 +16196,174 @@ async fn the_sidebar_pages_through_more_conversations_than_one_list_holds() {
     assert_eq!(remote, newest_first[..page]);
     server.shutdown().await;
 }
+
+/// Asked to watch an alignment, waits on its Run with `monitor_run`; once
+/// that returns, says it was left running.
+struct WatchingModel;
+
+#[async_trait]
+impl Provider for WatchingModel {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+        Ok(Completion {
+            content: "[]".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        messages: &[Message],
+        _: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        let answered = messages
+            .iter()
+            .rev()
+            .take_while(|m| m.role != wisp_llm::Role::User)
+            .any(|m| m.role == wisp_llm::Role::Tool);
+        if !answered {
+            return Ok(Completion {
+                tool_calls: vec![ToolCall {
+                    id: "monitor-1".into(),
+                    kind: "function".into(),
+                    function: wisp_llm::FunctionCall {
+                        name: "monitor_run".into(),
+                        arguments: json!({"run_id": "align"}).to_string(),
+                    },
+                }],
+                finish_reason: Some("tool_calls".into()),
+                ..Default::default()
+            });
+        }
+        sink.on_text("Left it running.");
+        Ok(Completion {
+            content: "Left it running.".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_run_moved_to_the_background_frees_the_turn_and_reports_its_end() {
+    let temp = tempfile::tempdir().unwrap();
+    let server =
+        Server::open_with_models(config(temp.path()), Arc::new(|_| Box::new(WatchingModel)))
+            .await
+            .unwrap();
+    let session = create(&server).await;
+    let store = &server.0.store;
+    let mut run =
+        wisp_store::RunRecord::new("align", PROJECT, "local", "Align reads", "local_detached");
+    run.frame_id = Some(session.clone());
+    run.status = wisp_store::RunStatus::Running;
+    store.create_run(&run).await.unwrap();
+
+    send(&server, &session, "watch the alignment")
+        .await
+        .unwrap();
+    // The turn waits on the Run, whose card is not in the background yet.
+    let waiting = wait_for(&server, &session, |s| {
+        s.running
+            && s.items
+                .iter()
+                .any(|item| item.tool_name.as_deref() == Some("monitor_run"))
+    })
+    .await;
+    let card = waiting.run_cards.iter().find(|r| r.id == "align").unwrap();
+    assert!(!card.background_requested);
+    // A Run that does not exist, or is not this project's, is refused.
+    assert!(server
+        .background_run(PROJECT, "ghost", false)
+        .await
+        .is_err());
+    assert!(server
+        .background_run("missing", "align", false)
+        .await
+        .is_err());
+
+    server
+        .background_run(PROJECT, "align", false)
+        .await
+        .unwrap();
+    // The wait ends without touching the Run; the agent finishes its reply.
+    let done = wait_for(&server, &session, |s| !s.running).await;
+    let monitor = done
+        .items
+        .iter()
+        .find(|item| item.tool_name.as_deref() == Some("monitor_run"))
+        .unwrap();
+    assert!(
+        monitor.text.contains("wait_backgrounded"),
+        "{}",
+        monitor.text
+    );
+    assert!(
+        monitor.text.contains("Do not call monitor_run"),
+        "{}",
+        monitor.text
+    );
+    assert!(done
+        .items
+        .iter()
+        .any(|item| item.role == "assistant" && item.text == "Left it running."));
+    let card = done.run_cards.iter().find(|r| r.id == "align").unwrap();
+    assert_eq!(card.status, "running");
+    assert!(card.background_requested);
+    let going = store.get_run("align").await.unwrap().unwrap();
+    assert_eq!(going.status, wisp_store::RunStatus::Running);
+    // Asking again is fine, and the conversation takes new messages: a
+    // wait on the Run now returns at once.
+    server
+        .background_run(PROJECT, "align", false)
+        .await
+        .unwrap();
+    send(&server, &session, "anything else?").await.unwrap();
+    let again = wait_for(&server, &session, |s| !s.running).await;
+    let replies = again
+        .items
+        .iter()
+        .filter(|item| item.role == "assistant" && item.text == "Left it running.")
+        .count();
+    assert_eq!(replies, 2);
+
+    // The Run ends later; its conversation is told once, after it.
+    assert!(store
+        .claim_run_lifecycle("align", "test", 60)
+        .await
+        .unwrap());
+    assert!(store
+        .finish_active_run_owned("align", "test", wisp_store::RunStatus::Succeeded, Some(0))
+        .await
+        .unwrap());
+    let notice = "Background Run “Align reads” succeeded";
+    let told = wait_for(&server, &session, |s| {
+        s.items
+            .iter()
+            .any(|item| item.role == "assistant" && item.text.starts_with(notice))
+    })
+    .await;
+    let card = told.run_cards.iter().find(|r| r.id == "align").unwrap();
+    assert_eq!(card.status, "succeeded");
+    assert!(!card.background_requested);
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let notices = snapshot(&server, &session)
+        .await
+        .items
+        .into_iter()
+        .filter(|item| item.role == "assistant" && item.text.starts_with(notice))
+        .count();
+    assert_eq!(notices, 1);
+    assert!(store
+        .list_pending_background_runs()
+        .await
+        .unwrap()
+        .is_empty());
+    server.shutdown().await;
+}

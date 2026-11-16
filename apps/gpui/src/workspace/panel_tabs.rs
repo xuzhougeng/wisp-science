@@ -166,7 +166,7 @@ impl Workspace {
         }
     }
 
-    fn cancel_run(&mut self, run: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn cancel_run(&mut self, run: String, window: &mut Window, cx: &mut Context<Self>) {
         let selection = self.state.selection();
         let Some(project) = selection.project.clone() else {
             return;

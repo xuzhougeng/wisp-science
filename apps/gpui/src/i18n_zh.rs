@@ -1805,6 +1805,14 @@ pub const ZH: &[(&str, &str)] = &[
     ("Show as a notebook", "以笔记本显示"),
     // Run rows.
     ("Show in Runs", "在运行中查看"),
+    ("The run's whole output, log and clean-up in the Runs tab", "在运行标签页查看这次运行的全部输出、日志和清理"),
+    ("Move to background and get a message when it ends", "转到后台，结束时发消息提醒"),
+    ("Cancel run", "取消运行"),
+    ("Running in the background. This conversation gets a message when it ends.", "已转到后台运行，结束时会在本对话发消息提醒。"),
+    ("Remote workdir", "远端工作目录"),
+    ("Elapsed {}", "已运行 {}"),
+    ("Heartbeat {} ago", "心跳更新于 {} 前"),
+    ("Limit {}", "上限 {}"),
     // Inline pictures.
     ("Open it in Files", "在文件中打开"),
     ("Generated · {}", "已生成 · {}"),

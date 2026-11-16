@@ -85,6 +85,9 @@ impl Backend {
                 // Background task batches the app closed on are settled, and
                 // results not yet delivered reach their conversations.
                 server.start_batch_deliveries();
+                // Runs moved to the background before the app closed are
+                // reported to their conversations when they end.
+                server.start_background_run_notices();
                 Ok::<_, String>(server)
             })
             .await?;
@@ -830,6 +833,12 @@ impl Backend {
 
     pub fn cancel_run(&self, project: String, run: String) -> Reply<()> {
         self.local(move |host| async move { host.cancel_run(&project, &run).await })
+    }
+
+    /// Stops a turn's wait on a run without touching the run; its
+    /// conversation is told, in Chinese when `chinese`, when it ends.
+    pub fn background_run(&self, project: String, run: String, chinese: bool) -> Reply<()> {
+        self.local(move |host| async move { host.background_run(&project, &run, chinese).await })
     }
 
     /// Where a project's work keeps things on a saved SSH host.

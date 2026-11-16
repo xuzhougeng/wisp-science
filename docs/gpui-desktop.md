@@ -197,7 +197,7 @@ which it only reads.
 | Transcript | Virtualized Markdown, selectable text, paginated history |
 | Tool calls | One folded line each with outcome and elapsed time; click for the verbatim input and output; interrupted calls stop claiming to run |
 | Agent cards | A call that hands work to other agents is a card in its place: `explore` with its question, status and folded findings; `dispatch_subagent` with the subagent conversation's title, status and task, and a button that opens it; `delegate_tasks` with the batch's goal, status, task counts and a line per task (status, instruction, its conversation), Show in Agents and Stop while it runs. `subagent_status`, `stop_subagent`, `get_delegated_result` and a background batch's result coming back are one folded line naming the subagent or batch. Until the batches or the conversation list are read the call stays a tool row |
-| Runs | A Runs tab: runs started by the conversation with kind, status, exit code, command and output tails; a run that has not ended can be cancelled, and is followed until it ends. One that has ended and kept a workspace where it ran can have it deleted after a question (its logs are saved into the project first, and outputs never brought back are not lost without a second question); a cleaned run, or one whose cleanup failed, says so. A run that moves files between machines shows its phase, file, bytes, rate and time left on its card, and while it moves (and a few seconds after) in a Transfers tray above the composer that folds to one line. A finished run on an SSH host has a folder button: a dialog lists what it left there a folder at a time, with a name filter and More… for long folders, and the files and folders chosen (across folders) are brought into the project as the conversation's results, a folder as one archive, or deleted there after a question; the whole workspace can be deleted from it too. In the transcript, a call that started or watched a run shows the run's state now, and Show in Runs opens its output there |
+| Runs | A Runs tab: runs started by the conversation with kind, status, exit code, command and output tails; a run that has not ended can be cancelled, and is followed until it ends. One that has ended and kept a workspace where it ran can have it deleted after a question (its logs are saved into the project first, and outputs never brought back are not lost without a second question); a cleaned run, or one whose cleanup failed, says so. A run that moves files between machines shows its phase, file, bytes, rate and time left on its card, and while it moves (and a few seconds after) in a Transfers tray above the composer that folds to one line. A finished run on an SSH host has a folder button: a dialog lists what it left there a folder at a time, with a name filter and More… for long folders, and the files and folders chosen (across folders) are brought into the project as the conversation's results, a folder as one archive, or deleted there after a question; the whole workspace can be deleted from it too. In the transcript each run has one card, under the call that waits on it while it goes on (a `run_in_context` still waiting on its run included) and under the call that submitted it once it has ended, so an explicit `monitor_run` leaves no second card: its state as an icon and a word, where and how long it ran, a transfer's meter, and, with the call opened, its remote folder, command and output tails; Ask, Move to background (a turn waiting on the run stops waiting with `wait_backgrounded` and finishes its reply while the run goes on; the conversation gets one message when the run ends, even after a restart), Cancel, the review dialog for a finished run on an SSH host, and Show in Runs for its whole output, log and clean-up |
 | Artifacts | Files a turn wrote are recorded when it ends; an Artifacts tab lists them for the conversation or the project and opens them, and lists each one's versions, any of which can be saved as a copy from its snapshot (checked against its checksum, up to 512 MB); By folder puts them under their folders, and each one's trail button says which tool call wrote it, with the code and Open the conversation |
 | Side panel | Tabs: Files, Runs, Environments (this computer and the saved SSH hosts: attach one to the conversation so its runs may go there, take it away, check it, open a terminal or its folders, and set where the project keeps things there: uploaded data, run folders and the results folder), Artifacts, Notebook, Provenance (the loaded part's tool calls with how each went, opening to what each was given and returned, with Show in the conversation), Agents, Highlights, Memos, Memory, Aside; the open tab is named, the others are icons. − beside the open tab takes it away and + adds one back; the tabs kept are remembered, and opening a tab from elsewhere brings it back |
 | Agents | The Agents tab lists the helpers the conversation sent off to explore: what each was asked, how it went, and what it found; the transcript draws those calls, and the subagents and batches the agent started, as cards |
@@ -1650,8 +1650,10 @@ Limits of this slice:
   to the message; either way the typed word goes. A word with another `/`
   in it is a path and opens nothing. Escape shuts the menu until that word
   is gone. The `/` button opens the same menu.
-- Runs can be cancelled. Harvest, review of a remote workspace, transfers and
-  the full log are not ported.
+- Runs can be cancelled, moved to the background from their card in the
+  transcript and reviewed (harvest, delete, clean up) on an SSH host; see the
+  Runs row above. Moving a run to the background is a command of the
+  desktop only, not of remote access.
 - Favorites are the WebView's library: a database of their own
   (`library.sqlite` in the data directory) that holds copies, so they outlive
   the conversation and the project they came from. A message is saved whole,
@@ -1988,9 +1990,17 @@ work starts.
 Ask for a long piece of work that the model plans: its plan update shows as
 a checklist, and the line above the composer says how many steps are done
 and names the current one; it goes once every step is done.
-After a turn that started a run, the run call in the transcript has a line
-with the run's state that changes as the run does; Show in Runs opens the
-Runs tab with that run's output open.
+After a turn that started a run, the run call in the transcript has the
+run's card with its state, where it runs and for how long, all changing as
+the run does; Show in Runs opens the Runs tab with that run's output open.
+Ask for a long run that the model waits on (`monitor_run`, or
+`run_in_context` with `wait_for_completion`): while it waits, the card has a
+bell button (Move to background) and a stop button (Cancel run). Press the
+bell: the turn ends with a short reply, the card says the run goes on in the
+background, and a new message can be sent. When the run ends, one message in
+the conversation names it, its outcome, exit code and time. With a run on an
+SSH host, once it has ended its card has a folder button that opens the run
+review dialog; Escape closes it.
 Open a PDF in the Files tab: after a moment its pages show as they look,
 each labelled, under a line that says how many there are (a long one says
 only the first twelve are drawn); Show the text gives its text and tables,

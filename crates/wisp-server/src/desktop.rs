@@ -4467,8 +4467,8 @@ impl Server {
             .map_err(anyhow::Error::msg)
     }
 
-    /// A finished run of `project`, checked to be its own.
-    async fn own_run(&self, project: &str, run: &str) -> Result<wisp_store::RunRecord> {
+    /// A run of `project`, checked to be its own.
+    pub(crate) async fn own_run(&self, project: &str, run: &str) -> Result<wisp_store::RunRecord> {
         self.project_root(project).await?;
         let record = self.0.store.get_run(run).await?.context("Run not found")?;
         ensure!(

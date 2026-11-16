@@ -4,6 +4,7 @@ mod acp_turn;
 mod approvals;
 mod aside;
 mod assistant;
+mod background_runs;
 mod branch_merge;
 mod browser;
 mod browser_filters;
@@ -198,6 +199,8 @@ struct Inner {
     subagent_resumes: std::sync::Mutex<HashMap<String, (String, bool, String)>>,
     /// Conversations a background batch's result is being delivered to.
     delivering: std::sync::Mutex<HashSet<String>>,
+    /// Runs moved to the background that a watcher here reports on.
+    background_runs: std::sync::Mutex<HashSet<String>>,
     /// Conversations whose running turn corrects what an automatic review
     /// found; the review after it is not corrected again.
     corrections: std::sync::Mutex<HashSet<String>>,
@@ -462,6 +465,7 @@ impl Server {
             project_locks: Default::default(),
             subagent_resumes: Default::default(),
             delivering: Default::default(),
+            background_runs: Default::default(),
             corrections: Default::default(),
             stop_continued: Default::default(),
             to_correct,
@@ -1591,6 +1595,17 @@ impl Server {
         }
         let turn = self.0.store.latest_server_turn(&request.session_id).await?;
         let runs = self.0.store.list_runs_by_project(project).await?;
+        // The conversation's runs still going that the user moved to the
+        // background, for their cards.
+        let mut backgrounded = HashSet::new();
+        for run in &runs {
+            if !run.status.is_terminal()
+                && run.frame_id.as_deref() == Some(&request.session_id)
+                && self.0.store.run_background_requested(&run.id).await?
+            {
+                backgrounded.insert(run.id.clone());
+            }
+        }
         let mut outcomes: HashMap<_, _> = self
             .0
             .store
@@ -1749,7 +1764,13 @@ impl Server {
                 .into_iter()
                 .filter(|run| run.frame_id.as_deref() == Some(&request.session_id))
                 .take(100)
-                .map(|run| serde_json::from_value(serde_json::to_value(run)?))
+                .map(|run| {
+                    let background_requested = backgrounded.contains(&run.id);
+                    let mut card: wisp_dto::RunRecord =
+                        serde_json::from_value(serde_json::to_value(run)?)?;
+                    card.background_requested = background_requested;
+                    Ok(card)
+                })
                 .collect::<serde_json::Result<_>>()?,
             run_review_supported: Some(false),
         };

@@ -1421,9 +1421,11 @@ impl From<&wisp_store::RunRecord> for RunState {
 }
 
 /// The run a tool row started: the run tools answer with the run's record.
+/// Whether the call succeeded or waited (`wait_for_completion`) on a run that
+/// then failed, as the WebView links them; a submission refused before any
+/// run started names none.
 fn submitted_run_id(item: &Item) -> Option<String> {
     if item.role != "tool"
-        || item.ok != Some(true)
         || !matches!(
             item.tool_name.as_deref(),
             Some("run_in_context" | "wisp_run_in_context" | "transfer_between_contexts")
@@ -1892,6 +1894,12 @@ mod tests {
             row.ok = Some(ok);
             row
         };
+        let refused = || {
+            let mut row = item("tool", "run_in_context error: context not selected");
+            row.tool_name = Some("run_in_context".into());
+            row.ok = Some(false);
+            row
+        };
         let watched = |input: &str| {
             let mut row = item("tool", "still running");
             row.tool_name = Some("monitor_run".into());
@@ -1905,6 +1913,7 @@ mod tests {
             started("r2", true),
             started("r3", false),
             watched("r1"),
+            refused(),
         ];
         let run = |id: &str, frame: &str, status: &str| RunState {
             id: id.into(),
@@ -1934,9 +1943,12 @@ mod tests {
                 Some(("r1", "running", Some(1))),
                 // Another conversation's run is not this one's to show.
                 None,
-                // A run call that failed started nothing.
-                None,
+                // A call that waited on its run, which failed, still
+                // started it, as the WebView links it.
+                Some(("r3", "failed", Some(4))),
                 Some(("r1", "running", Some(1))),
+                // A submission refused before any run started names none.
+                None,
             ]
         );
     }
