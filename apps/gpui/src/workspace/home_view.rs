@@ -695,6 +695,10 @@ impl Workspace {
         if let Some(notice) = &self.notice {
             page = page.child(self.notice_banner(notice, cx));
         }
+        // The home page has no sidebar to hold the card for a newer version.
+        if let Some(card) = self.update_card(cx) {
+            page = page.child(card);
+        }
         div()
             .id("home")
             .size_full()

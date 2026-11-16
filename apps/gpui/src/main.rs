@@ -36,6 +36,7 @@ mod method_search;
 mod model_view;
 mod molecules;
 mod notebook;
+mod notices;
 mod notify;
 mod onboarding;
 mod organise;
@@ -94,7 +95,17 @@ pub fn open_window(backend: backend::Backend, cx: &mut App) -> bool {
 /// Opens a window as [`open_window`] does, in `project` when one is given
 /// rather than on the home page.
 pub fn open_window_on(backend: backend::Backend, project: Option<String>, cx: &mut App) -> bool {
-    open_window_noting(backend, project, true, cx)
+    open_window_noting(backend, project, None, true, cx)
+}
+
+/// Opens a window in `project` on its conversation `session`.
+pub fn open_window_at(
+    backend: backend::Backend,
+    project: String,
+    session: String,
+    cx: &mut App,
+) -> bool {
+    open_window_noting(backend, Some(project), Some(session), true, cx)
 }
 
 /// Opens a window; one for a project is added to the saved list when
@@ -102,6 +113,7 @@ pub fn open_window_on(backend: backend::Backend, project: Option<String>, cx: &m
 fn open_window_noting(
     backend: backend::Backend,
     project: Option<String>,
+    session: Option<String>,
     note: bool,
     cx: &mut App,
 ) -> bool {
@@ -125,7 +137,10 @@ fn open_window_noting(
             let workspace = cx.new(|cx| workspace::Workspace::new(backend, window, cx));
             if let Some(project) = project {
                 workspace.update(cx, |workspace, cx| {
-                    workspace.enter_project(project.clone(), window, cx)
+                    workspace.enter_project(project.clone(), window, cx);
+                    if let Some(session) = session {
+                        workspace.open_session(project.clone(), session, window, cx);
+                    }
                 });
                 // Kept so it opens again at the next start, until it is
                 // closed; quitting keeps it.
@@ -181,7 +196,7 @@ fn reopen_project_windows(backend: backend::Backend, cx: &mut App) {
             // kept.
             save_project_windows(&backend, project_windows::replace(&projects), cx);
             for project in projects {
-                open_window_noting(backend.clone(), Some(project), false, cx);
+                open_window_noting(backend.clone(), Some(project), None, false, cx);
             }
         });
     })

@@ -200,7 +200,16 @@ pub const ZH: &[(&str, &str)] = &[
     ("This conversation has nothing to share yet.", "这个对话还没有可分享的内容。"),
     ("This conversation is too long to share as one page.", "这个对话太长，无法保存为一个网页。"),
     ("Shared from Wisp Science", "分享自 Wisp Science"),
-    ("Wisp {} is available; this is {}.", "Wisp {} 已发布；当前是 {}。"),
+    ("Update available", "发现新版本"),
+    ("Version {} · this is {}", "版本 {} · 当前是 {}"),
+    // The conversation list, cut off after a page.
+    ("Load earlier conversations", "加载更早会话"),
+    ("Load more matches", "加载更多匹配"),
+    // Cards for conversations in other projects.
+    ("Open conversation", "打开会话"),
+    ("Task completed", "任务已完成"),
+    ("Task failed", "任务失败"),
+    ("Untitled conversation", "未命名会话"),
     ("Don't check at start", "启动时不再检查"),
     ("Not now", "暂不"),
     ("Check at start", "启动时检查"),

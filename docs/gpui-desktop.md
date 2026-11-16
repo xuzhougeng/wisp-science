@@ -226,11 +226,17 @@ which it only reads.
 | Drafts | Survive navigation; preserved on send failure, cleared on durable acceptance |
 | Execution | Shared agent/tools, streamed snapshots while running, stop and errors |
 | Approvals | Exact pending request; allow once, allow that tool for the rest of the conversation, always allow it in this project, or deny |
-| Escape | One window-level stack: Escape closes only the topmost of command palette, file preview, Files panel, Settings, title editor, delete confirmation, remove-project confirmation, the Full access question, the model and effort menus, the remove-model question, the sort menu, select mode and its group menu and delete question, a group's name field, actions and delete question, the conversation's group and move menus, the go-back question, the memo editor and its delete question, the memory editor and its delete question, and the Favorites page and its remove question |
+| Escape | One window-level stack: Escape closes only the topmost of command palette, file preview, Files panel, Settings, title editor, delete confirmation, remove-project confirmation, the Full access question, the model and effort menus, the remove-model question, the sort menu, select mode and its group menu and delete question, a group's name field, actions and delete question, the conversation's group and move menus, the go-back question, the memo editor and its delete question, the memory editor and its delete question, the Favorites page and its remove question, and, after all of them, the newest card for another project's conversation |
 | Shortcuts | Cmd/Ctrl+K opens the command palette; Cmd/Ctrl+P opens it with only its commands, as the WebView's action palette; Cmd/Ctrl+N starts a conversation in the open project; Cmd/Ctrl+, opens Settings |
 | Lifecycle | Background IO, stale-result rejection, cancel/clean workers on exit |
 
-Lists and search results show up to 100 conversations per project. Drafts do
+The host lists 100 conversations of a project at a time, newest first, and
+says when it left older ones out; the sidebar then offers Load earlier
+conversations (Load more matches for a search), which lists the next 100
+under them. Every refresh reads all the pages loaded, so selection, scroll
+position, open groups, pins and picks stay as they were. A pinned
+conversation older than the pages is listed anyway. The phone and web
+clients' `remote_sessions` list is unchanged: the newest 100. Drafts do
 not yet survive app restarts. Messages are
 text-only. The initial project keeps the embedded host's `Server` name; opened
 folders use their own names.
@@ -670,8 +676,11 @@ Limits of this slice:
   turned off in Settings, General, or Don't check at start is pressed on
   the note it shows (the WebView's `update_check_enabled`, so either
   desktop honours it), and whenever its button is pressed; nothing is
-  checked in the background. At start it says something only when a
-  newer release exists, in a note in the window's corner. It asks GitHub for the latest
+  checked in the background. It says something outside Settings only
+  when a newer release exists: a card at the foot of the sidebar (on the
+  home page, which has none, under its column) names the version, with
+  Open releases, Don't check at start and Not now, which puts the card
+  away until the next start. It asks GitHub for the latest
   release of the project (the WebView's request, with a generic client
   name and nothing about you or your work), over the system's proxy
   settings, and gives up after eight seconds. Nothing is downloaded or
@@ -696,6 +705,20 @@ Limits of this slice:
   `notify-send` and `canberra-gtk-play`, silently doing nothing when
   those are missing. Windows gets the sound only. The sound cannot be
   chosen.
+- In the window, a conversation of another project (any project, on the
+  home page) whose turn ends gets a card in the lower right corner, as in
+  the WebView: the project, the conversation, Task completed or Task
+  failed, Open conversation and Close. At most three show, newest first. A
+  finished one goes fifteen seconds after the pointer last left it; a
+  failed one stays until it is opened or closed; either goes once the
+  Needs-you list has had it and dropped it. Escape closes the newest card
+  after everything else open has been closed. Open conversation goes to
+  another window that shows the project, brought forward, or opens a new
+  one for it; a window on the home page opens it itself. The cards come
+  from the same reading of the twelve most recent conversations as the
+  notifications, so a conversation outside them is not announced; one
+  that waits for an approval gets no card. The conversation on screen
+  never gets one.
 - The Chinese interface is not complete. Translated: the fixed text of
   the pages, panels and dialogs, the names of panel tabs, palette commands
   and settings sections, the placeholders of text fields, statuses,
@@ -1905,9 +1928,11 @@ In Settings, General, press Check for updates: it reads Checking… and
 then says this is the latest version or names a newer one, with Open
 releases opening the project's release page. Without a network it says
 it could not check. Turn At start off, quit and start again: no check is
-made; turn it on and start a build older than the latest release: a note
-in the corner names the newer version, and Don't check at start turns
-the switch off.
+made; turn it on and start a build older than the latest release: a card
+at the foot of the sidebar names the newer version (on the home page,
+under its column), Don't check at start turns the switch off and Not now
+puts the card away. A newer version found by Check for updates puts the
+same card there.
 Open three conversations, one of them in another project: tabs appear
 above the conversation from the second on. Click a tab of the other
 project: its project and conversation open. Close the tab in view: its
@@ -1917,6 +1942,15 @@ Start a slow turn, switch to another app and wait: a notification names
 the conversation when the turn ends, and another when a tool asks for
 approval. Stay in Wisp and confirm nothing is posted. Turn Notify me off
 and Play a sound on in Settings, General: only the sound comes.
+Start a slow turn in one project and open another: when it ends, a card
+in the lower right corner names the project and the conversation and
+leaves fifteen seconds after the pointer leaves it; a turn that fails
+leaves a card that stays. With a second window on the first project,
+Open conversation brings that window forward on the conversation;
+without one, a new window opens on it. Escape closes the newest card.
+In a project with more than a hundred conversations, scroll to the end
+of the list: Load earlier conversations lists the next hundred under
+them, and the selection, the scroll position and the open groups stay.
 Press the import button in the conversation list's header: conversations
 from Codex and Claude Code on this computer are listed; Import one, and it
 appears in a group named after the tool, reads as it did there, and is not

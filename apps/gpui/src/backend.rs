@@ -444,13 +444,35 @@ impl Backend {
         self.local(move |host| async move { host.remove_project(&project).await })
     }
 
+    /// The first `pages` pages of a project's conversations, or of a
+    /// search in them, or of its archive.
     pub fn conversations(
         &self,
         project: String,
         query: String,
         archived: bool,
+        pages: usize,
     ) -> Reply<ConversationList> {
-        self.local(move |host| async move { host.conversations(&project, &query, archived).await })
+        self.local(move |host| async move {
+            host.conversation_pages(&project, &query, archived, pages)
+                .await
+        })
+    }
+
+    /// The newest conversations across projects, and how the turns this
+    /// host ran since it started ended (`true` for an error), for telling
+    /// which of them just finished or failed.
+    pub fn recent_activity(
+        &self,
+        limit: usize,
+    ) -> Reply<(
+        Vec<SessionSearchInfo>,
+        std::collections::HashMap<String, bool>,
+    )> {
+        self.local(move |host| async move {
+            let recent = host.recent_conversations(limit).await?;
+            Ok((recent, host.finished_turns()))
+        })
     }
 
     pub fn rename_conversation(

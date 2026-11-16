@@ -90,6 +90,34 @@ async fn verify(routed: bool) {
         .await
         .unwrap()
         .is_empty());
+    // Pages cut from the same order, across projects and within one, add
+    // up to the whole list, each session once.
+    for project in [None, Some("hidden")] {
+        let all = store
+            .search_sessions(project, "needle", 100, None, None)
+            .await
+            .unwrap();
+        assert!(all.len() > 10);
+        let mut paged = Vec::new();
+        for offset in (0..all.len() + 5).step_by(4) {
+            paged.extend(
+                store
+                    .search_sessions_window(
+                        project,
+                        "needle",
+                        4,
+                        offset as i64,
+                        None,
+                        None,
+                        &[],
+                        Default::default(),
+                    )
+                    .await
+                    .unwrap(),
+            );
+        }
+        assert_eq!(paged, all);
+    }
     store
         .set_session_shelved("title", "z-title", true)
         .await

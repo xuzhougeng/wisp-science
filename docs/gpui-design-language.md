@@ -77,8 +77,8 @@ names and never a colour of their own.
   composer, dialogs and menus (`radius_lg`). Pills only for counts and tags.
 - **Cards**: `surfaces::card`: a white surface with a hairline and no
   shadow. Hover darkens the line; it does not lift the card.
-- **Shadows**: dialogs and menus only (with the palette and the update
-  notice, which also float over the page). A test in `surfaces.rs` names
+- **Shadows**: dialogs and menus only (with the palette and the cards
+  for other projects' conversations, which also float over the page). A test in `surfaces.rs` names
   every function that may draw one and rejects a shadow anywhere else.
 - **Spacing**: the rem steps (`gap_1` … `gap_8`, `p_*`), not pixels. Pixels
   are for layout widths.

@@ -1104,6 +1104,22 @@ impl Workspace {
                 }
             }
         }
+        // The host gives a page at a time; when it cut the list off, the
+        // next page is a click away, under the ones listed.
+        if self.paging.offered() {
+            let loading = self.paging.loading();
+            list = list.child(
+                div().px_1().py_1().flex_shrink_0().child(
+                    Button::new("load-earlier")
+                        .label(organise::earlier_label(self.listing(cx), loading))
+                        .xsmall()
+                        .ghost()
+                        .w_full()
+                        .disabled(loading || self.pending)
+                        .on_click(cx.listener(|this, _, window, cx| this.load_earlier(window, cx))),
+                ),
+            );
+        }
         list
     }
 

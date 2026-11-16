@@ -229,6 +229,10 @@ pub enum Layer {
     EnvironmentForm,
     /// Question before an SSH host is removed.
     ConfirmRemoveEnvironment,
+    /// The cards for conversations in other projects that finished or
+    /// failed, in the window's corner over the page. Escape closes the
+    /// newest card once nothing else is open.
+    SessionNotices,
 }
 
 impl Layer {
@@ -360,6 +364,14 @@ impl EscapeStack {
     /// The member of `set` that is drawn over the others, if any is open.
     pub fn top_of(&self, set: &[Layer]) -> Option<Layer> {
         self.0.iter().rev().copied().find(|open| set.contains(open))
+    }
+
+    /// Opens `layer` under every surface already open, so Escape reaches it
+    /// only after them. Already open, it keeps its place.
+    pub fn open_beneath(&mut self, layer: Layer) {
+        if !self.0.contains(&layer) {
+            self.0.insert(0, layer);
+        }
     }
 
     /// Closes only the topmost surface and reports which one it was.
@@ -510,6 +522,29 @@ mod tests {
         assert!(!stack.close(Layer::Settings));
         assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmDelete));
         assert_eq!(stack.dismiss_top(), Some(Layer::Rename));
+        assert_eq!(stack.dismiss_top(), None);
+    }
+
+    #[test]
+    fn notices_from_other_projects_wait_under_what_is_already_open() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::Settings);
+        stack.open(Layer::McpForm);
+        // A card arrives while a form is open: the form closes first.
+        stack.open_beneath(Layer::SessionNotices);
+        assert_eq!(stack.dismiss_top(), Some(Layer::McpForm));
+        // Another card does not move the cards up.
+        stack.open_beneath(Layer::SessionNotices);
+        assert_eq!(stack.dismiss_top(), Some(Layer::Settings));
+        assert_eq!(stack.dismiss_top(), Some(Layer::SessionNotices));
+        assert_eq!(stack.dismiss_top(), None);
+        // Alone, a press reaches the cards at once; what opens after them
+        // is closed before them.
+        stack.open_beneath(Layer::SessionNotices);
+        stack.open(Layer::Palette);
+        assert_eq!(stack.dismiss_top(), Some(Layer::Palette));
+        assert!(stack.contains(Layer::SessionNotices));
+        assert!(stack.close(Layer::SessionNotices));
         assert_eq!(stack.dismiss_top(), None);
     }
 

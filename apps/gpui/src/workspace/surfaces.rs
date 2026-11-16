@@ -708,7 +708,8 @@ mod tests {
     fn only_dialogs_and_menus_cast_a_shadow() {
         // What sits on the page is set off by a hairline. What floats above
         // it casts a shadow: the dialog, the menus and pickers anchored to a
-        // control, the palette and the update notice in the window's corner.
+        // control, the palette and the cards for other projects'
+        // conversations in the window's corner.
         let floating = [
             ("workspace/surfaces.rs", "dialog_card"),
             ("workspace/shell.rs", "composer_menu"),
@@ -719,7 +720,7 @@ mod tests {
             ("workspace/demos_view.rs", "example_copy_menu"),
             ("workspace/terminal_view.rs", "terminal_hosts_menu"),
             ("workspace/palette_view.rs", "render_palette"),
-            ("workspace/settings_sections.rs", "render_update_banner"),
+            ("workspace/notices_view.rs", "render_session_notices"),
         ];
         let mut found = Vec::new();
         for (path, text) in sources() {

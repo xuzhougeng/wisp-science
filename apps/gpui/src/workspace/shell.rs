@@ -332,6 +332,10 @@ impl Workspace {
         if let Some(bar) = self.render_batch_bar(cx) {
             sidebar = sidebar.child(bar);
         }
+        // A newer version, at the foot as the WebView has it.
+        if let Some(card) = self.update_card(cx) {
+            sidebar = sidebar.child(card);
+        }
 
         sidebar.child(
             nav_row("settings", "gear", tr("Settings"), false, true, cx)

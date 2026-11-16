@@ -25,6 +25,7 @@ mod memos_view;
 mod merge_view;
 mod model_view_dialog;
 mod notebook_view;
+mod notices_view;
 mod onboarding_view;
 mod organise_view;
 mod palette_view;
@@ -352,6 +353,14 @@ pub struct Workspace {
     show_archived: bool,
     /// Only the latest list request may replace the rows on screen.
     list_request: u64,
+    /// How many pages of the conversation list are loaded, and whether
+    /// older ones were left out.
+    paging: organise::Paging,
+    /// Cards for conversations in other projects that finished or failed
+    /// while this window shows something else.
+    notices: crate::notices::Notices,
+    /// Takes a finished conversation's card away once it has lingered.
+    notice_timer: Option<Task<()>>,
     /// How the conversation list is sorted and sectioned.
     arrangement: Arrangement,
     /// The project's groups, in the user's order.
@@ -1525,6 +1534,9 @@ impl Workspace {
             pinned: vec![],
             show_archived: false,
             list_request: 0,
+            paging: organise::Paging::default(),
+            notices: crate::notices::Notices::default(),
+            notice_timer: None,
             arrangement: Arrangement::default(),
             folders: vec![],
             grouped: HashMap::new(),
@@ -1974,6 +1986,11 @@ impl Workspace {
             }
             // Putting the guide away is finishing it, as in the WebView.
             Some(Layer::Onboarding) => self.finish_onboarding(cx),
+            // The newest card goes; the others wait for the next press.
+            Some(Layer::SessionNotices) => {
+                self.notices.dismiss_newest();
+                self.sync_notices(window, cx);
+            }
             Some(Layer::ImportConversations) => {
                 self.imports = Default::default();
             }
@@ -2387,12 +2404,12 @@ impl Workspace {
     }
 
     fn load_recent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let reply = self.backend.recent_conversations(12);
+        let reply = self.backend.recent_activity(12);
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
             let _ = this.update_in(cx, |this, window, cx| {
                 match result {
-                    Ok(recent) => {
+                    Ok((recent, finished)) => {
                         // Conversations that are not open and stopped
                         // working are told about like the open one.
                         let open = this.state.session.clone();
@@ -2402,6 +2419,25 @@ impl Workspace {
                             if crate::notify::wanted(this.notify, window.is_window_active()) {
                                 crate::notify::post(this.notify, this.notify_tone, event, &title);
                             }
+                        }
+                        // Those of other projects whose turn ended get a
+                        // card in the corner too.
+                        let stopped =
+                            crate::notify::stopped(&this.recent, &recent, open.as_deref());
+                        let here = this.shown_project();
+                        let arrived = crate::notices::arrivals(
+                            &stopped,
+                            &finished,
+                            here.as_deref(),
+                            open.as_deref(),
+                            |project| home::concealed(&this.privacy, project),
+                        );
+                        if !arrived.is_empty() {
+                            let now = std::time::Instant::now();
+                            for (row, failed) in arrived {
+                                this.notices.push(row, failed, now);
+                            }
+                            this.sync_notices(window, cx);
                         }
                         this.recent = recent;
                     }
@@ -2623,9 +2659,16 @@ impl Workspace {
         );
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
-            let _ = this.update(cx, |this, cx| {
+            let _ = this.update_in(cx, |this, window, cx| {
                 match result {
-                    Ok(inbox) => this.inbox = inbox,
+                    Ok(inbox) => {
+                        // A card whose conversation was read somewhere goes.
+                        let listed = inbox.iter().map(|row| row.id.as_str()).collect();
+                        if this.notices.reconcile(&listed) {
+                            this.sync_notices(window, cx);
+                        }
+                        this.inbox = inbox;
+                    }
                     Err(error) => this.error = Some(error),
                 }
                 cx.notify();
@@ -2698,7 +2741,11 @@ impl Workspace {
         let browsing = query.trim().is_empty() && !archived;
         self.list_request += 1;
         let request = self.list_request;
-        let reply = self.backend.conversations(project, query, archived);
+        // Every page loaded of this list is read again, so a refresh keeps
+        // what "Load earlier" added.
+        let key: organise::ListKey = (Some(project.clone()), query.clone(), archived);
+        let pages = self.paging.pages_for(key.clone());
+        let reply = self.backend.conversations(project, query, archived, pages);
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -2707,6 +2754,7 @@ impl Workspace {
                 }
                 match result {
                     Ok(list) => {
+                        this.paging.answered(&key, pages, list.more);
                         for row in &list.rows {
                             this.known.insert(row.id.clone(), row.clone());
                         }
@@ -2739,12 +2787,23 @@ impl Workspace {
                         }
                         this.mark_seen(window, cx);
                     }
-                    Err(error) => this.error = Some(error),
+                    Err(error) => {
+                        this.paging.failed();
+                        this.error = Some(error);
+                    }
                 }
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    /// Lists the page of conversations before the ones loaded, under them.
+    pub(super) fn load_earlier(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.paging.earlier() {
+            self.load_sessions(window, cx);
+        }
+        cx.notify();
     }
 
     fn select_session(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -2755,6 +2814,10 @@ impl Workspace {
             if let Some(row) = self.known.get(&id) {
                 self.tabs.name(&id, &present::one_line(&row.title));
             }
+        }
+        // The conversation on screen has no card of its own.
+        if self.notices.remove(&id) {
+            self.sync_notices(window, cx);
         }
         self.choose(self.state.project.clone(), Some(id));
         self.clear_transcript();
@@ -2781,7 +2844,7 @@ impl Workspace {
     }
 
     /// Opens a conversation from any project, as the inbox needs.
-    fn open_session(
+    pub(crate) fn open_session(
         &mut self,
         project: String,
         session: String,
@@ -4312,8 +4375,9 @@ impl Render for Workspace {
                 }
             }
         };
-        // A newer version found at start, in a corner until it is put away.
-        let root = root.children(self.render_update_banner(cx));
+        // Conversations of other projects that finished, in a corner over
+        // the page and under the dialogs.
+        let root = root.children(self.render_session_notices(cx));
         // Last, so they are drawn over whichever screen or layer is showing.
         let root = if self.layers.contains(Layer::ProjectSettings) {
             root.child(self.render_project_settings(cx))

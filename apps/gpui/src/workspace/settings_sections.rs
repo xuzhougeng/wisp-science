@@ -13,9 +13,10 @@ use wisp_server::desktop::TurnDefaults;
 use super::{
     Workspace,
     shell::{error_banner, glyph, icon_button},
-    surfaces::switch,
+    surfaces::{self, switch},
 };
 use crate::{
+    assets::icon,
     backend::receive,
     layers::Layer,
     settings::{self, Section},
@@ -1215,39 +1216,58 @@ impl Workspace {
         cx.notify();
     }
 
-    /// The newer version found at start: where to get it, and how to stop
-    /// being told.
-    pub(super) fn render_update_banner(&self, cx: &mut Context<Self>) -> Option<Div> {
+    /// A newer version, found at start or when asked in Settings: a card at
+    /// the foot of the sidebar (or on the home page, which has none) that
+    /// names it and leads to the release page. Not now puts it away until
+    /// the next start; Don't check at start stops looking for one.
+    pub(super) fn update_card(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let found = self.update_banner.as_ref()?;
+        let line = settings::update_card_line(Some(found))?;
         let url = found.url.clone();
         Some(
-            div()
-                .absolute()
-                .bottom_4()
-                .left_4()
-                .w(px(320.))
+            surfaces::card("update-card", cx)
+                .flex_shrink_0()
                 .v_flex()
-                .gap_2()
-                .p_3()
-                .rounded(cx.theme().radius_lg)
-                .border_1()
-                .border_color(cx.theme().border)
-                .bg(cx.theme().popover)
-                .shadow_lg()
-                .text_sm()
-                .child(crate::i18n::fill(
-                    tr("Wisp {} is available; this is {}."),
-                    &[&found.latest, &found.current],
-                ))
+                .gap_1()
+                .p_2()
                 .child(
                     div()
                         .h_flex()
+                        .gap_2()
+                        .child(icon("download").text_color(cx.theme().primary))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(tr("Update available")),
+                        )
+                        .child(
+                            icon_button("update-card-close", "close", tr("Not now"))
+                                .xsmall()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.update_banner = None;
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(line),
+                )
+                .child(
+                    div()
+                        .h_flex()
+                        .flex_wrap()
                         .gap_1()
                         .child(
-                            Button::new("update-banner-open")
+                            Button::new("update-card-open")
                                 .label(tr("Open releases"))
-                                .small()
-                                .primary()
+                                .xsmall()
+                                .outline()
                                 .tooltip(tr("Open the release page in your browser"))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     cx.open_url(&url);
@@ -1256,26 +1276,13 @@ impl Workspace {
                                 })),
                         )
                         .child(
-                            Button::new("update-banner-never")
+                            Button::new("update-card-never")
                                 .label(tr("Don't check at start"))
-                                .small()
+                                .xsmall()
                                 .ghost()
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.set_update_at_start(false, window, cx)
                                 })),
-                        )
-                        .child(div().flex_1())
-                        .child(
-                            super::shell::icon_button(
-                                "update-banner-close",
-                                "close",
-                                tr("Not now"),
-                            )
-                            .small()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.update_banner = None;
-                                cx.notify();
-                            })),
                         ),
                 ),
         )
@@ -1288,10 +1295,16 @@ impl Workspace {
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
             let _ = this.update(cx, |this, cx| {
-                this.update = Some(match result {
+                let update = match result {
                     Ok(found) => settings::Update::Found(found),
                     Err(problem) => settings::Update::Failed(problem),
-                });
+                };
+                // A newer version found when asked is offered in the
+                // sidebar too, as the one found at start is.
+                if let Some(found) = settings::newer_release(&update) {
+                    this.update_banner = Some(found.clone());
+                }
+                this.update = Some(update);
                 cx.notify();
             });
         })

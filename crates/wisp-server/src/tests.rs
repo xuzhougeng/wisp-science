@@ -15794,3 +15794,81 @@ async fn the_webview_desktops_saved_models_come_with_their_keys() {
     assert!(twice.models.is_empty());
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn the_sidebar_pages_through_more_conversations_than_one_list_holds() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let page = desktop::CONVERSATION_PAGE;
+    // Pinned first, so every conversation made after it is newer.
+    let pinned = create(&server).await;
+    server
+        .pin_conversation(PROJECT, &pinned, true)
+        .await
+        .unwrap();
+    let mut newest_first = Vec::new();
+    for _ in 0..page + 5 {
+        newest_first.insert(0, create(&server).await);
+    }
+    let ids = |list: &desktop::ConversationList| {
+        list.rows
+            .iter()
+            .map(|row| row.id.clone())
+            .collect::<Vec<_>>()
+    };
+
+    // One page: the newest hundred, the pinned one although it is older,
+    // and word that there is more.
+    let first = server.conversations(PROJECT, "", false).await.unwrap();
+    assert!(first.more);
+    assert_eq!(first.rows.len(), page + 1);
+    assert_eq!(ids(&first)[..page], newest_first[..page]);
+    assert_eq!(ids(&first)[page], pinned);
+    // Two pages: everything, once each, the older ones under the first page.
+    let both = server
+        .conversation_pages(PROJECT, "", false, 2)
+        .await
+        .unwrap();
+    assert!(!both.more);
+    assert_eq!(both.rows.len(), page + 6);
+    assert_eq!(ids(&both)[..page], newest_first[..page]);
+    let mut rest = newest_first[page..].to_vec();
+    rest.push(pinned.clone());
+    assert_eq!(ids(&both)[page..], rest[..]);
+    // Asking for more pages than there are is the same as asking for all.
+    let all = server
+        .conversation_pages(PROJECT, "", false, 5)
+        .await
+        .unwrap();
+    assert_eq!((ids(&all), all.more), (ids(&both), false));
+
+    // A search is cut off and paged the same way, so it misses nothing.
+    let found = server
+        .conversations(PROJECT, "new conversation", false)
+        .await
+        .unwrap();
+    assert!(found.more);
+    assert_eq!(found.rows.len(), page);
+    let found = server
+        .conversation_pages(PROJECT, "new conversation", false, 2)
+        .await
+        .unwrap();
+    assert!(!found.more);
+    assert_eq!(found.rows.len(), page + 6);
+
+    // The phone and web clients' list is what it was: the newest hundred,
+    // with no pinned row added and nothing said about more.
+    let remote = call(&server, "remote_sessions", PROJECT, json!({}))
+        .await
+        .unwrap();
+    let remote: Vec<String> = remote
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["id"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(remote, newest_first[..page]);
+    server.shutdown().await;
+}

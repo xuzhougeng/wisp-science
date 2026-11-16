@@ -413,7 +413,15 @@ pub struct ConversationList {
     /// Subagent conversation id to the id of the conversation that started
     /// it; it is watched, not written to.
     pub dispatched: HashMap<String, String>,
+    /// Whether the list was cut off: there are older conversations (or, for
+    /// a search, more matches) than the pages asked for, and asking for one
+    /// page more lists them.
+    pub more: bool,
 }
+
+/// How many conversations the sidebar is given at a time. Asking for more
+/// pages lists the next ones under them.
+pub const CONVERSATION_PAGE: usize = 100;
 
 /// Names one user message of a conversation without trusting a row number:
 /// how many user messages come after it, and what it says. A reference that
@@ -925,6 +933,22 @@ impl Server {
         let mut rows = self.session_rows(None, "", false).await?;
         rows.truncate(limit);
         Ok(rows)
+    }
+
+    /// How the last turn of each conversation this host ran since it
+    /// started ended, for the ones not running now: `true` when it stopped
+    /// on an error. One it has not run a turn in is not listed.
+    pub fn finished_turns(&self) -> HashMap<String, bool> {
+        self.0
+            .sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|(id, session)| {
+                let live = session.live.lock().unwrap();
+                (!live.running && live.generation > 0).then(|| (id.clone(), live.error.is_some()))
+            })
+            .collect()
     }
 
     /// Conversations in any project whose title or messages match `query`,
@@ -1941,22 +1965,56 @@ impl Server {
     }
 
     /// Recent conversations, keyword matches (titles and messages, archived
-    /// ones included), or the archive itself.
+    /// ones included), or the archive itself: the first page of
+    /// [`Self::conversation_pages`].
     pub async fn conversations(
         &self,
         project: &str,
         query: &str,
         archived: bool,
     ) -> Result<ConversationList> {
+        self.conversation_pages(project, query, archived, 1).await
+    }
+
+    /// The first `pages` pages of [`CONVERSATION_PAGE`] conversations each,
+    /// newest first; `more` says whether older ones were left out. While
+    /// browsing, a pinned conversation is listed even when it is older than
+    /// the pages, as the WebView lists it on its first page.
+    pub async fn conversation_pages(
+        &self,
+        project: &str,
+        query: &str,
+        archived: bool,
+        pages: usize,
+    ) -> Result<ConversationList> {
         let query = query.trim();
+        let wanted = pages.max(1).saturating_mul(CONVERSATION_PAGE);
         let mut grouped = HashMap::new();
         let mut branched = HashMap::new();
+        let mut more = false;
+        let pinned: Vec<String> = self
+            .0
+            .store
+            .list_pinned_sessions(project)
+            .await?
+            .into_iter()
+            .map(|(id, ..)| id)
+            .collect();
         let rows: Vec<SessionSearchInfo> = if archived {
-            self.0
+            let mut page = self
+                .0
                 .store
-                .list_sessions_page_with_visibility(project, None, 100, Some(true), query)
-                .await?
-                .into_iter()
+                .list_sessions_page_with_visibility(
+                    project,
+                    None,
+                    wanted.saturating_add(1),
+                    Some(true),
+                    query,
+                )
+                .await?;
+            more = page.len() > wanted;
+            page.truncate(wanted);
+            page.into_iter()
                 .map(|(id, title, ts, folder, source)| {
                     if let Some(folder) = folder {
                         grouped.insert(id.clone(), folder);
@@ -1977,9 +2035,47 @@ impl Server {
                 })
                 .collect()
         } else {
-            let rows = self
-                .session_rows(Some(project), query, !query.is_empty())
-                .await?;
+            let archived_too = !query.is_empty();
+            let mut rows: Vec<SessionSearchInfo> = Vec::new();
+            let mut seen = HashSet::new();
+            let mut offset = 0;
+            loop {
+                let page = self
+                    .session_rows_window(
+                        Some(project),
+                        query,
+                        archived_too,
+                        offset,
+                        CONVERSATION_PAGE,
+                    )
+                    .await?;
+                let full = page.len() == CONVERSATION_PAGE;
+                // A conversation that moved up while the pages were read is
+                // listed once.
+                rows.extend(page.into_iter().filter(|row| seen.insert(row.id.clone())));
+                offset += CONVERSATION_PAGE;
+                if !full {
+                    break;
+                }
+                if offset >= wanted {
+                    more = !self
+                        .session_rows_window(Some(project), query, archived_too, offset, 1)
+                        .await?
+                        .is_empty();
+                    break;
+                }
+            }
+            if query.is_empty() {
+                for id in &pinned {
+                    if seen.contains(id) {
+                        continue;
+                    }
+                    if let Some(row) = self.session_row(project, id).await? {
+                        seen.insert(row.id.clone());
+                        rows.push(row);
+                    }
+                }
+            }
             let listed: HashSet<&str> = rows.iter().map(|row| row.id.as_str()).collect();
             for (id, _, _, folder, source) in self.0.store.list_sessions(project).await? {
                 if !listed.contains(id.as_str()) {
@@ -2002,14 +2098,6 @@ impl Server {
             .into_iter()
             .map(|(id, name, _)| Folder { id, name })
             .collect();
-        let pinned = self
-            .0
-            .store
-            .list_pinned_sessions(project)
-            .await?
-            .into_iter()
-            .map(|(id, ..)| id)
-            .collect();
         let dispatched = self.0.store.list_dispatched_sessions(project).await?;
         Ok(ConversationList {
             rows,
@@ -2018,6 +2106,7 @@ impl Server {
             grouped,
             branched,
             dispatched,
+            more,
         })
     }
 
