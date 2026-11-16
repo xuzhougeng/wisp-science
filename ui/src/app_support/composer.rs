@@ -555,11 +555,7 @@ pub(crate) fn message_with_attachments(text: &str, paths: &[String]) -> String {
 }
 
 fn prompt_safe_source(source: &str) -> String {
-    source
-        .replace(['\r', '\n'], " ")
-        .replace('`', "\\`")
-        .trim()
-        .to_string()
+    crate::dto::quote_source_safe(source)
 }
 
 /// Prefix the message body with quoted-selection snippets as markdown
@@ -577,12 +573,11 @@ fn message_with_quotes_inner(
     let mut out = String::new();
     for quote in quotes {
         if let Some(source) = quote.source.as_deref() {
+            // Reused turns are worded in `wisp-dto`, which the GPUI desktop shares.
             if let Some(label) = source.strip_prefix(EXCERPT_SOURCE_PREFIX) {
-                out.push_str("Quoted turns from an earlier conversation `");
-                out.push_str(&prompt_safe_source(label));
+                out.push_str(&crate::dto::quoted_turns_heading(label));
             } else if let Some(label) = source.strip_prefix(EXPERIENCE_SOURCE_PREFIX) {
-                out.push_str("Reusable experience distilled from conversation `");
-                out.push_str(&prompt_safe_source(label));
+                out.push_str(&crate::dto::distilled_experience_heading(label));
             } else {
                 let source = prompt_safe_source(source);
                 if quote.workspace_source().is_some() {
@@ -591,14 +586,10 @@ fn message_with_quotes_inner(
                     out.push_str("Selected excerpt from reference `");
                 }
                 out.push_str(&source);
+                out.push_str("`:\n");
             }
-            out.push_str("`:\n");
         }
-        for line in quote.text.trim().lines() {
-            out.push_str("> ");
-            out.push_str(line);
-            out.push('\n');
-        }
+        out.push_str(&crate::dto::blockquote_lines(&quote.text));
         out.push('\n');
     }
     out.push_str(text.trim());

@@ -546,19 +546,14 @@ pub(super) async fn generate_session_experience(
     let _activity = state.begin_project_activity(&project_id)?;
     let messages =
         load_excerpt_messages(&state, frame_id, start_user_index, end_user_index).await?;
-    let (evidence, truncated) = crate::session_experience::evidence(&messages)?;
-    let focus = instruction.as_deref().unwrap_or("").trim();
-    if focus.chars().count() > 1000 {
-        return Err("Experience focus cannot exceed 1000 characters.".into());
-    }
-    let prompt = serde_json::json!({
-        "focus": focus,
-        "first_turn": start_user_index + 1,
-        "last_turn": end_user_index + 1,
-        "evidence_shortened": truncated,
-        "transcript": evidence,
-    })
-    .to_string();
+    let (evidence, truncated) = wisp_core::session_experience::evidence(&messages)?;
+    let prompt = wisp_core::session_experience::request(
+        instruction.as_deref(),
+        start_user_index + 1,
+        end_user_index + 1,
+        &evidence,
+        truncated,
+    )?;
     let completion = tokio::time::timeout(
         BRANCH_SUMMARY_TIMEOUT,
         turn_hooks::side_complete(
@@ -566,7 +561,7 @@ pub(super) async fn generate_session_experience(
             frame_id,
             "session_experience",
             turn_hooks::SideModel::Session { max_tokens: 4096 },
-            crate::session_experience::SYSTEM_PROMPT,
+            wisp_core::session_experience::SYSTEM_PROMPT,
             &prompt,
             None,
         ),

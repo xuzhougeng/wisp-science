@@ -33,9 +33,66 @@ impl SessionExcerpt {
     }
 }
 
+/// A quote's source as it may stand between backticks in what the model
+/// reads: on one line, with no backtick that would close it early.
+pub fn quote_source_safe(source: &str) -> String {
+    source
+        .replace(['\r', '\n'], " ")
+        .replace('`', "\\`")
+        .trim()
+        .to_string()
+}
+
+/// The line in front of quoted turns of another conversation, named by
+/// `label` (its title and turn range), as the model reads it.
+pub fn quoted_turns_heading(label: &str) -> String {
+    format!(
+        "Quoted turns from an earlier conversation `{}`:\n",
+        quote_source_safe(label)
+    )
+}
+
+/// The line in front of an experience distilled from turns of the
+/// conversation `label` names, as the model reads it.
+pub fn distilled_experience_heading(label: &str) -> String {
+    format!(
+        "Reusable experience distilled from conversation `{}`:\n",
+        quote_source_safe(label)
+    )
+}
+
+/// `text` as a Markdown quote, each of its lines behind `> `.
+pub fn blockquote_lines(text: &str) -> String {
+    let mut out = String::new();
+    for line in text.trim().lines() {
+        out.push_str("> ");
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
-    use super::SessionExcerpt;
+    use super::*;
+
+    #[test]
+    fn reused_turns_are_quoted_under_their_source() {
+        assert_eq!(
+            format!(
+                "{}{}",
+                quoted_turns_heading("a`b\nc · turns 3–5"),
+                blockquote_lines("\nUser:\nq\n\nAssistant:\na\n")
+            ),
+            "Quoted turns from an earlier conversation `a\\`b c · turns 3–5`:\n\
+             > User:\n> q\n> \n> Assistant:\n> a\n"
+        );
+        assert_eq!(
+            distilled_experience_heading(" x · turn 1 "),
+            "Reusable experience distilled from conversation `x · turn 1`:\n"
+        );
+        assert_eq!(blockquote_lines("  "), "");
+    }
 
     #[test]
     fn turn_count_is_inclusive() {

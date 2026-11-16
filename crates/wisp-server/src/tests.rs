@@ -16122,6 +16122,178 @@ async fn a_memory_is_drafted_from_a_turn_for_the_researcher_to_keep() {
 }
 
 #[tokio::test]
+async fn chosen_turns_are_quoted_or_distilled_and_only_a_kept_draft_is_saved() {
+    /// Answers every turn, and distills an experience when asked in the
+    /// WebView's words, saying which turns and evidence it was given.
+    struct Distilling;
+    #[async_trait]
+    impl Provider for Distilling {
+        fn name(&self) -> &str {
+            "offline"
+        }
+        fn model(&self) -> &str {
+            "offline"
+        }
+        async fn complete(
+            &self,
+            messages: &[Message],
+            _: &[ToolSchema],
+        ) -> wisp_llm::Result<Completion> {
+            let asked = messages.first().is_some_and(|m| {
+                m.content.as_text() == wisp_core::session_experience::SYSTEM_PROMPT
+            });
+            let content = if asked {
+                let request: Value = serde_json::from_str(&messages[1].content.as_text()).unwrap();
+                let transcript = request["transcript"].as_str().unwrap_or_default();
+                let seen: Vec<&str> =
+                    ["count the reads", "normalize the counts", "plot the result"]
+                        .into_iter()
+                        .filter(|said| transcript.contains(said))
+                        .collect();
+                format!(
+                    "## Steps\nturns {}–{}; focus: {}; from: {}",
+                    request["first_turn"],
+                    request["last_turn"],
+                    request["focus"].as_str().unwrap_or_default(),
+                    seen.join(", ")
+                )
+            } else {
+                "{}".to_owned()
+            };
+            Ok(Completion {
+                content,
+                finish_reason: Some("stop".into()),
+                ..Default::default()
+            })
+        }
+        async fn stream(
+            &self,
+            _: &[Message],
+            _: &[ToolSchema],
+            sink: &mut dyn StreamSink,
+        ) -> wisp_llm::Result<Completion> {
+            sink.on_text("Done.");
+            Ok(Completion {
+                content: "Done.".into(),
+                finish_reason: Some("stop".into()),
+                ..Default::default()
+            })
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let factory: ModelFactory = Arc::new(|_| Box::new(Distilling));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    for said in ["count the reads", "normalize the counts", "plot the result"] {
+        send(&server, &session, said).await.unwrap();
+        turn_done(&server, &session).await;
+    }
+    let turn = |from_end: usize, text: &str| desktop::TurnRef {
+        from_end,
+        text: text.into(),
+    };
+    let (second, third) = (turn(1, "normalize the counts"), turn(0, "plot the result"));
+    let saved = server.whole_transcript(&session).await.unwrap().len();
+
+    // The excerpt holds exactly the chosen turns, chosen in either order.
+    let excerpt = server
+        .render_session_excerpt(PROJECT, &session, &third, &second)
+        .await
+        .unwrap();
+    assert_eq!(excerpt.session_id, session);
+    assert_eq!((excerpt.start_user_index, excerpt.end_user_index), (1, 2));
+    assert!(
+        excerpt.text.contains("normalize the counts"),
+        "{}",
+        excerpt.text
+    );
+    assert!(excerpt.text.contains("plot the result"));
+    assert!(!excerpt.text.contains("count the reads"));
+    assert!(!excerpt.truncated);
+    let one = server
+        .render_session_excerpt(
+            PROJECT,
+            &session,
+            &turn(2, "count the reads"),
+            &turn(2, "count the reads"),
+        )
+        .await
+        .unwrap();
+    assert_eq!((one.start_user_index, one.end_user_index), (0, 0));
+    assert!(one.text.contains("count the reads"));
+    assert!(!one.text.contains("normalize the counts"));
+    // Another project's, a missing conversation, or a turn it does not
+    // have, quotes nothing.
+    for (project, id, last) in [
+        ("missing", session.as_str(), &third),
+        (PROJECT, "no-such-conversation", &third),
+        (PROJECT, session.as_str(), &turn(0, "never said")),
+        (PROJECT, session.as_str(), &turn(5, "plot the result")),
+    ] {
+        assert!(server
+            .render_session_excerpt(project, id, &second, last)
+            .await
+            .is_err());
+        assert!(server
+            .draft_session_experience(project, id, &second, last, None)
+            .await
+            .is_err());
+    }
+
+    // The draft is distilled from the chosen turns alone, with the focus.
+    let draft = server
+        .draft_session_experience(
+            PROJECT,
+            &session,
+            &second,
+            &third,
+            Some(" the normalization "),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        draft.content,
+        "## Steps\nturns 2–3; focus: the normalization; from: normalize the counts, plot the result"
+    );
+    assert!(!draft.truncated);
+    assert!(server
+        .draft_session_experience(
+            PROJECT,
+            &session,
+            &second,
+            &third,
+            Some(&"研".repeat(wisp_core::session_experience::FOCUS_LIMIT + 1)),
+        )
+        .await
+        .is_err());
+
+    // Quoting and drafting (and so a draft given up) keep nothing: the
+    // memory is empty and the conversation as it was.
+    let memory = server.memory(PROJECT).await.unwrap();
+    assert!(memory.notes.is_empty() && memory.habits.is_empty());
+    assert_eq!(
+        server.whole_transcript(&session).await.unwrap().len(),
+        saved
+    );
+    // A draft that is kept goes where Save to memory puts it.
+    server
+        .remember(PROJECT, Some(&session), &draft.content, false)
+        .await
+        .unwrap();
+    let memory = server.memory(PROJECT).await.unwrap();
+    assert_eq!(memory.notes.len(), 1);
+    assert!(
+        memory.notes[0].preview.contains("## Steps"),
+        "{:?}",
+        memory.notes[0]
+    );
+    assert!(memory.habits.is_empty());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_new_project_can_keep_its_own_database_and_such_a_folder_opens_in_place() {
     let temp = tempfile::tempdir().unwrap();
     let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))

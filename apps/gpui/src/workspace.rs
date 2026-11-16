@@ -41,6 +41,7 @@ mod project_settings;
 mod project_sync_view;
 mod queue_view;
 mod remote_files_view;
+mod reuse_view;
 mod review_view;
 mod run_cards_view;
 mod run_review_view;
@@ -213,6 +214,17 @@ pub struct Workspace {
     handoff_error: Option<String>,
     /// The handoff note's instruction and the note.
     handoff_fields: [Entity<InputState>; 2],
+    /// The first turn of a range of the open conversation being chosen to
+    /// quote or distill (Quote / reuse).
+    reuse_selection: Option<crate::reuse::Selection>,
+    /// The chosen turns are being read for the dialog.
+    reuse_loading: bool,
+    /// The dialog over the chosen turns, and why its last step failed.
+    reuse: Option<crate::reuse::Dialog>,
+    reuse_error: Option<String>,
+    /// Its focus for the experience, the experience draft, and the search
+    /// for a destination.
+    reuse_fields: [Entity<InputState>; 3],
     /// The turn the review dialog is about; `None` is the whole conversation.
     review_turn: Option<wisp_server::desktop::TurnRef>,
     /// The review the dialog is showing or waiting for.
@@ -1202,6 +1214,13 @@ impl Workspace {
                 ))
             }),
         ];
+        let reuse_fields = [
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx).multi_line(true)),
+            cx.new(|cx| {
+                InputState::new(window, cx).placeholder(tr("Find a conversation in this project"))
+            }),
+        ];
         let expert_fields = [
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx)),
@@ -1340,6 +1359,22 @@ impl Workspace {
             }),
             // And Start follows whether there is a handoff note.
             cx.subscribe_in(&handoff_fields[1], window, |_, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            }),
+            // An edited experience draft is not the one kept, and the
+            // buttons follow whether there is one.
+            cx.subscribe_in(&reuse_fields[1], window, |this, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    if let Some(dialog) = this.reuse.as_mut() {
+                        dialog.edited();
+                    }
+                    cx.notify();
+                }
+            }),
+            // The destinations follow the search.
+            cx.subscribe_in(&reuse_fields[2], window, |_, _, event, _, cx| {
                 if matches!(event, InputEvent::Change) {
                     cx.notify();
                 }
@@ -1578,6 +1613,11 @@ impl Workspace {
             handoff: None,
             handoff_error: None,
             handoff_fields,
+            reuse_selection: None,
+            reuse_loading: false,
+            reuse: None,
+            reuse_error: None,
+            reuse_fields,
             review: None,
             review_turn: None,
             trajectory: None,
@@ -2146,6 +2186,17 @@ impl Workspace {
                     self.focus_composer(window, cx);
                 }
             }
+            // The range stays chosen under the dialog, as in the WebView.
+            Some(Layer::SessionReuse) => {
+                self.reuse = None;
+                self.reuse_error = None;
+            }
+            Some(Layer::ReuseRange) => {
+                self.reuse_selection = None;
+                self.reuse_loading = false;
+                self.reuse = None;
+                self.reuse_error = None;
+            }
             Some(Layer::ResearchArchive) => {
                 self.archive = None;
                 self.archive_error = None;
@@ -2512,6 +2563,13 @@ impl Workspace {
             self.copied = None;
             // The list belonged to the conversation, or project, being left.
             self.artifacts.clear();
+            // A range of turns is chosen in one conversation; its dialog
+            // goes with it.
+            self.layers.close(Layer::ReuseRange);
+            self.reuse_selection = None;
+            self.reuse_loading = false;
+            self.reuse = None;
+            self.reuse_error = None;
         }
         if self.state.project != project {
             // Paths are the project's own; another project's mean others.
@@ -4644,6 +4702,11 @@ impl Render for Workspace {
         // Over What the model is sent too, when it was opened from there.
         let root = if self.layers.contains(Layer::Handoff) {
             root.child(self.render_handoff(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::SessionReuse) {
+            root.child(self.render_session_reuse(cx))
         } else {
             root
         };

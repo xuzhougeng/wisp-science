@@ -757,6 +757,7 @@ mod tests {
             ("workspace/runtime_console_view.rs", "render_console"),
             ("workspace/slash_view.rs", "timer_strip"),
             ("workspace/shell.rs", "read_only_card"),
+            ("workspace/reuse_view.rs", "render_reuse_range"),
         ] {
             let body = method(file(name), function)
                 .unwrap_or_else(|| panic!("{name} has no fn {function}"));
@@ -789,6 +790,7 @@ mod tests {
             "render_memory_proposal",
             "render_follow_ups",
             "render_transfers",
+            "render_reuse_range",
         ] {
             assert!(
                 gathered.contains(&format!("self.{function}(")),
@@ -965,6 +967,7 @@ mod tests {
             ("workspace/file_editor_view.rs", "render_close_unsaved"),
             ("workspace/memory_view.rs", "render_clear_memory"),
             ("workspace/share_view.rs", "render_share"),
+            ("workspace/reuse_view.rs", "render_session_reuse"),
         ] {
             let body = method(file(name), function)
                 .unwrap_or_else(|| panic!("{name} has no fn {function}"));

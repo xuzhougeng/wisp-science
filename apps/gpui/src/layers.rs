@@ -147,6 +147,13 @@ pub enum Layer {
     /// Handing the open conversation off to a new one: a dialog over it,
     /// or over What the model is sent when opened from there.
     Handoff,
+    /// The first of a range of the open conversation's turns is chosen
+    /// (Quote / reuse): a bar above the composer until the last is.
+    ReuseRange,
+    /// The chosen turns, to quote in another conversation or distill into
+    /// an experience: a dialog over the conversation, with the range under
+    /// it.
+    SessionReuse,
     /// The research archive of the open conversation: a dialog over it.
     ResearchArchive,
     /// The messages of the open conversation to put into its shared page:
@@ -357,6 +364,7 @@ impl Layer {
             Layer::ConfirmRunFilesDelete => Some(Layer::RunReview),
             Layer::FileChangedOnDisk | Layer::PictureSelect => Some(Layer::FilePreview),
             Layer::PictureRegion => Some(Layer::PictureSelect),
+            Layer::SessionReuse => Some(Layer::ReuseRange),
             _ => None,
         }
     }
@@ -858,6 +866,25 @@ mod tests {
         assert!(stack.contains(Layer::ModelView));
         assert_eq!(stack.dismiss_top(), Some(Layer::ModelView));
         assert_eq!(stack.dismiss_top(), None);
+    }
+
+    #[test]
+    fn the_reuse_dialog_closes_first_and_leaves_the_range_chosen() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::ReuseRange);
+        stack.open(Layer::SessionReuse);
+        // One Escape closes the dialog; the range stays, as in the WebView.
+        assert_eq!(stack.dismiss_top(), Some(Layer::SessionReuse));
+        assert!(stack.contains(Layer::ReuseRange));
+        // The next gives up the range.
+        assert_eq!(stack.dismiss_top(), Some(Layer::ReuseRange));
+        assert_eq!(stack.dismiss_top(), None);
+        // Giving up the range, or leaving the conversation, takes the
+        // dialog along.
+        stack.open(Layer::ReuseRange);
+        stack.open(Layer::SessionReuse);
+        assert!(stack.close(Layer::ReuseRange));
+        assert!(!stack.contains(Layer::SessionReuse));
     }
 
     #[test]

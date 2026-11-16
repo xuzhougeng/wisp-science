@@ -14,6 +14,7 @@ pub mod orchestration;
 pub mod output;
 mod plan_progress;
 pub mod provenance;
+pub mod session_experience;
 pub mod session_locks;
 pub mod subagent;
 pub mod swarm;

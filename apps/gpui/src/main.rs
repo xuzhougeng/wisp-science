@@ -53,6 +53,7 @@ mod present;
 mod project_windows;
 mod queue;
 mod remote;
+mod reuse;
 mod review;
 mod run_cards;
 mod run_review;

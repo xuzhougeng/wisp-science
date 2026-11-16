@@ -1447,6 +1447,37 @@ impl Backend {
         })
     }
 
+    /// The turns from `first` to `last` of a conversation, as a quote for
+    /// another one.
+    pub fn render_session_excerpt(
+        &self,
+        project: String,
+        session: String,
+        first: TurnRef,
+        last: TurnRef,
+    ) -> Reply<wisp_dto::SessionExcerpt> {
+        self.local(move |host| async move {
+            host.render_session_excerpt(&project, &session, &first, &last)
+                .await
+        })
+    }
+
+    /// Has the conversation's model distill those turns into an
+    /// experience draft; nothing is kept.
+    pub fn draft_session_experience(
+        &self,
+        project: String,
+        session: String,
+        first: TurnRef,
+        last: TurnRef,
+        focus: Option<String>,
+    ) -> Reply<wisp_dto::SessionExperience> {
+        self.local(move |host| async move {
+            host.draft_session_experience(&project, &session, &first, &last, focus.as_deref())
+                .await
+        })
+    }
+
     /// Starts a new conversation in the project with `note` as its first
     /// message; returns it.
     pub fn start_from_handoff(
