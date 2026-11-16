@@ -327,6 +327,14 @@ pub struct Workspace {
     paper_source_fields: [Entity<InputState>; 2],
     paper_choices: Vec<wisp_server::desktop::PaperSourceChoice>,
     paper_choices_more: bool,
+    /// The conversation message a passage is being chosen from, and its
+    /// text, read-only, to select the passage in.
+    paper_passage: Option<wisp_server::desktop::PaperSourceChoice>,
+    paper_passage_field: Entity<InputState>,
+    /// The run of the shown finalized version being rerun clean, and
+    /// whether its capsule is being written.
+    paper_rerunning: Option<String>,
+    paper_capsule_saving: bool,
     /// What finalizing the shown version is checked against, what the
     /// last check found, and whether one is under way.
     paper_policy: wisp_server::desktop::PaperPolicy,
@@ -1143,6 +1151,7 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx)),
         ];
+        let paper_passage_field = cx.new(|cx| InputState::new(window, cx).multi_line(true));
         let paper_waiver_field = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder(tr("Why it can stand, for whoever reads the record"))
@@ -1729,6 +1738,10 @@ impl Workspace {
             paper_source_fields,
             paper_choices: Vec::new(),
             paper_choices_more: false,
+            paper_passage: None,
+            paper_passage_field,
+            paper_rerunning: None,
+            paper_capsule_saving: false,
             paper_policy: Default::default(),
             paper_check: None,
             paper_checking: false,

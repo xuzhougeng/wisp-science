@@ -34,6 +34,7 @@ pub mod native_session_transfer;
 pub mod native_settings;
 pub mod project_browser;
 mod project_chat_search;
+pub mod publication_sources;
 pub mod remote_access;
 pub mod research_checklist;
 pub mod research_graph;

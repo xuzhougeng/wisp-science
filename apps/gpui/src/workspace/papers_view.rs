@@ -1,6 +1,8 @@
 //! Paper evidence: a page listing the papers the open project is writing.
 //! A paper has versions; a draft version holds figures, tables and claims,
-//! each with the results and runs it rests on.
+//! each with the results, runs and conversation passages it rests on. A
+//! finalized version's runs can be rerun in a clean folder, and its
+//! evidence saved as a capsule.
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
@@ -10,7 +12,7 @@ use gpui_component::{
 };
 use wisp_server::desktop::{
     Paper, PaperAudience, PaperCheck, PaperFinding, PaperInput, PaperItem, PaperItemInput,
-    PaperItemKind, PaperPolicy, PaperSourceChoice, PaperSourceKind,
+    PaperItemKind, PaperPolicy, PaperSource, PaperSourceChoice, PaperSourceKind,
 };
 
 use super::{
@@ -60,6 +62,7 @@ impl Workspace {
         }
         self.paper_check = None;
         self.paper_waiving = None;
+        self.paper_passage = None;
     }
 
     /// Reads the project's papers, then shows `open`, or the paper that
@@ -316,6 +319,7 @@ impl Workspace {
         if !more {
             self.paper_choices.clear();
             self.paper_choices_more = false;
+            self.paper_passage = None;
         }
         let kind = self.paper_source_kind;
         let query = self.paper_source_fields[0].read(cx).value().to_string();
@@ -368,6 +372,136 @@ impl Workspace {
             purpose,
         );
         self.change_paper(reply, window, cx);
+    }
+
+    /// Shows a conversation message to choose a passage of; the passage is
+    /// selected in its text, read-only.
+    fn choose_paper_message(
+        &mut self,
+        choice: PaperSourceChoice,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let text = choice
+            .message
+            .as_ref()
+            .and_then(|message| message.text.clone())
+            .unwrap_or_default();
+        self.paper_passage_field
+            .update(cx, |input, cx| input.set_value(text, window, cx));
+        self.paper_passage = Some(choice);
+        self.error = None;
+        cx.notify();
+    }
+
+    /// Binds the passage selected in the shown message, or the whole
+    /// preview when nothing is selected, as the WebView does.
+    fn bind_paper_passage(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(message) = self
+            .paper_passage
+            .as_ref()
+            .and_then(|choice| choice.message.clone())
+        else {
+            return;
+        };
+        let (shown, selected) = self.paper_passage_field.update(cx, |input, cx| {
+            let selected = input
+                .selected_text_range(false, window, cx)
+                .map(|selection| selection.range)
+                .unwrap_or_default();
+            (input.value().to_string(), selected)
+        });
+        match papers::passage_locator(&message, &shown, selected) {
+            Ok(locator) => {
+                let choice = PaperSourceChoice {
+                    kind: PaperSourceKind::Passage,
+                    id: locator,
+                    name: String::new(),
+                    detail: String::new(),
+                    message: None,
+                };
+                self.bind_paper_source(&choice, window, cx);
+            }
+            Err(refused) => {
+                self.error = Some(refused.to_owned());
+                cx.notify();
+            }
+        }
+    }
+
+    /// Reruns `run` of the shown finalized version in a clean folder, as
+    /// the WebView's "Verify in clean workspace" does without asking first,
+    /// then shows the report.
+    fn verify_paper_run(&mut self, run: String, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(project), Some(paper)) = (self.state.project.clone(), &self.paper) else {
+            return;
+        };
+        if self.paper_rerunning.is_some() {
+            return;
+        }
+        let (id, version) = (paper.id.clone(), paper.shown.clone());
+        let reply = self
+            .backend
+            .verify_paper_run(project, version.clone(), run.clone());
+        self.paper_rerunning = Some(run);
+        self.error = None;
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.paper_rerunning = None;
+                if let Err(error) = result {
+                    this.error = Some(error);
+                }
+                // A rerun that ran and failed is recorded too.
+                if this.paper.as_ref().map(|paper| paper.shown.as_str()) == Some(&version) {
+                    this.show_paper(id, Some(version), window, cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Asks where to save the shown finalized version's capsule, then
+    /// writes it there; the attempt shows under the version either way.
+    fn save_paper_capsule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(project), Some(paper)) = (self.state.project.clone(), &self.paper) else {
+            return;
+        };
+        if self.paper_capsule_saving {
+            return;
+        }
+        let (id, version) = (paper.id.clone(), paper.shown.clone());
+        let name = wisp_server::desktop::paper_capsule_file_name(&paper.title, &version);
+        let folder = dirs::document_dir()
+            .or_else(dirs::home_dir)
+            .unwrap_or_default();
+        let place = cx.prompt_for_new_path(&folder, Some(&name));
+        let backend = self.backend.clone();
+        self.error = None;
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(path))) = place.await else {
+                // The dialog was dismissed: nothing is written.
+                return;
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.paper_capsule_saving = true;
+                cx.notify();
+            });
+            let result = receive(backend.build_paper_capsule(project, version.clone(), path)).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.paper_capsule_saving = false;
+                if let Err(error) = result {
+                    this.error = Some(error);
+                }
+                if this.paper.as_ref().map(|paper| paper.shown.as_str()) == Some(&version) {
+                    this.show_paper(id, Some(version), window, cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Opens the readiness check for the shown draft version, starting
@@ -610,11 +744,16 @@ impl Workspace {
         let muted = cx.theme().muted_foreground;
         let hover = cx.theme().list_hover;
         let mut kinds = div().h_flex().gap_1();
-        for kind in [PaperSourceKind::Result, PaperSourceKind::Run] {
+        for kind in [
+            PaperSourceKind::Result,
+            PaperSourceKind::Run,
+            PaperSourceKind::Passage,
+        ] {
             kinds = kinds.child(
                 Button::new(SharedString::from(format!("paper-source-kind-{kind:?}")))
                     .label(match kind {
                         PaperSourceKind::Result => tr("Project results"),
+                        PaperSourceKind::Passage => tr("Research conversations"),
                         _ => tr("Runs"),
                     })
                     .small()
@@ -631,13 +770,24 @@ impl Workspace {
             .max_h(px(260.))
             .overflow_y_scroll();
         if self.paper_choices.is_empty() {
-            list = list.child(div().py_2().text_xs().text_color(muted).child(tr(
-                "Nothing matches. A file has to be a registered result of the project \
-                 before it can be chosen.",
-            )));
+            list = list.child(div().py_2().text_xs().text_color(muted).child(
+                match self.paper_source_kind {
+                    PaperSourceKind::Passage => tr(
+                        "Nothing matches. Only what you and the assistant said in this \
+                         project's own conversations can be chosen.",
+                    ),
+                    _ => tr(
+                        "Nothing matches. A file has to be a registered result of the project \
+                         before it can be chosen.",
+                    ),
+                },
+            ));
         }
+        let chosen = self.paper_passage.as_ref().map(|choice| choice.id.as_str());
+        let active = cx.theme().list_active;
         for (index, choice) in self.paper_choices.iter().enumerate() {
             let picked = choice.clone();
+            let message = choice.kind == PaperSourceKind::Passage;
             list = list.child(
                 div()
                     .id(("paper-source", index))
@@ -645,19 +795,26 @@ impl Workspace {
                     .py_1()
                     .rounded(cx.theme().radius)
                     .cursor_pointer()
+                    .when(chosen == Some(choice.id.as_str()), |row| row.bg(active))
                     .hover(move |style| style.bg(hover))
                     .text_sm()
+                    .when(message, |row| row.truncate())
                     .child(papers::choice_line(choice))
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.bind_paper_source(&picked, window, cx)
+                        if message {
+                            this.choose_paper_message(picked.clone(), window, cx)
+                        } else {
+                            this.bind_paper_source(&picked, window, cx)
+                        }
                     })),
             );
         }
         let mut form = self
             .form_frame(tr("Add evidence"), cx)
             .child(div().text_xs().text_color(muted).child(tr(
-                "Say why it supports the item, then choose a result or a run. A result is \
-                 kept at the version it has now; later changes to the file do not alter it.",
+                "Say why it supports the item, then choose a result, a run or a passage of a \
+                 conversation. What you choose is kept as it is now; later changes do not \
+                 alter it.",
             )))
             .child(Input::new(&self.paper_source_fields[1]).small())
             .child(
@@ -691,6 +848,51 @@ impl Workspace {
                             this.search_paper_sources(true, window, cx)
                         })),
                 ),
+            );
+        }
+        if let Some(choice) = &self.paper_passage {
+            form = form.child(
+                div()
+                    .v_flex()
+                    .gap_1()
+                    .pt_2()
+                    .border_t_1()
+                    .border_color(cx.theme().border)
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(format!(
+                                "{} · {}",
+                                choice.name,
+                                papers::role_label(&choice.detail)
+                            )),
+                    )
+                    .child(div().text_xs().text_color(muted).child(tr(
+                        "Select a passage below, or continue to use the full preview (up to \
+                         16 KiB).",
+                    )))
+                    .child(
+                        div().h(px(180.)).child(
+                            Input::new(&self.paper_passage_field)
+                                .disabled(true)
+                                .h_full(),
+                        ),
+                    )
+                    .child(div().text_xs().text_color(muted).child(tr(
+                        "The selected version or passage is saved; later edits do not update it.",
+                    )))
+                    .child(
+                        div().h_flex().child(
+                            Button::new("paper-passage-bind")
+                                .label(tr("Add this passage"))
+                                .small()
+                                .primary()
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.bind_paper_passage(window, cx)
+                                })),
+                        ),
+                    ),
             );
         }
         form.child(
@@ -984,6 +1186,133 @@ impl Workspace {
         form
     }
 
+    /// On evidence of a finalized version that a run made: rerun that run
+    /// in a clean folder.
+    fn paper_verify_button(
+        &self,
+        paper: &Paper,
+        source: &PaperSource,
+        cx: &mut Context<Self>,
+    ) -> Option<Button> {
+        let run = source.run.clone()?;
+        if !papers::shown_is_finalized(paper) {
+            return None;
+        }
+        Some(
+            Button::new(SharedString::from(format!("paper-verify-{}", source.id)))
+                .label(tr("Verify in a clean folder"))
+                .xsmall()
+                .ghost()
+                .disabled(self.paper_rerunning.is_some())
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.verify_paper_run(run.clone(), window, cx)
+                })),
+        )
+    }
+
+    /// What clean reruns and capsules of the shown finalized version
+    /// recorded.
+    fn paper_records(&self, paper: &Paper, cx: &mut Context<Self>) -> Option<Div> {
+        if paper.reruns.is_empty() && paper.capsules.is_empty() {
+            return None;
+        }
+        let muted = cx.theme().muted_foreground;
+        let mut records = div().v_flex().gap_2().pt_2();
+        if !paper.reruns.is_empty() {
+            let mut section = div().v_flex().gap_1().child(
+                div()
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(tr("Reproduction reports")),
+            );
+            for rerun in &paper.reruns {
+                let mut entry = div()
+                    .v_flex()
+                    .gap_0p5()
+                    .py_1()
+                    .child(div().text_sm().child(papers::rerun_line(rerun)))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(format!("run:{}", rerun.run)),
+                    );
+                for output in &rerun.outputs {
+                    entry = entry.child(
+                        div()
+                            .h_flex()
+                            .gap_2()
+                            .child(chip(
+                                if output.passed {
+                                    tr("Matches")
+                                } else {
+                                    tr("Differs")
+                                },
+                                if output.passed {
+                                    Tone::Success
+                                } else {
+                                    Tone::Danger
+                                },
+                                cx,
+                            ))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_xs()
+                                    .child(papers::rerun_output_line(output)),
+                            ),
+                    );
+                }
+                if let Some(error) = &rerun.error {
+                    entry = entry.child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(crate::i18n::host(error)),
+                    );
+                }
+                section = section.child(entry);
+            }
+            records = records.child(section);
+        }
+        if !paper.capsules.is_empty() {
+            let mut section = div().v_flex().gap_1().child(
+                div()
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(tr("Capsule builds")),
+            );
+            for capsule in &paper.capsules {
+                let mut entry = div()
+                    .v_flex()
+                    .gap_0p5()
+                    .py_1()
+                    .child(div().text_sm().child(papers::capsule_line(capsule)));
+                if !capsule.path.is_empty() {
+                    entry = entry.child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .truncate()
+                            .child(capsule.path.clone()),
+                    );
+                }
+                if let Some(error) = &capsule.error {
+                    entry = entry.child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(crate::i18n::host(error)),
+                    );
+                }
+                section = section.child(entry);
+            }
+            records = records.child(section);
+        }
+        Some(records)
+    }
+
     fn paper_item_row(&self, paper: &Paper, item: &PaperItem, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
         let version = paper.shown.clone();
@@ -1036,6 +1365,8 @@ impl Workspace {
                         this.change_paper(reply, window, cx);
                     })),
                 );
+            } else if let Some(verify) = self.paper_verify_button(paper, source, cx) {
+                line = line.child(verify);
             }
             words = words.child(line);
         }
@@ -1133,6 +1464,19 @@ impl Workspace {
                         .on_click(cx.listener(|this, _, _, cx| this.open_paper_finalize(cx))),
                 );
             }
+            if papers::shown_is_finalized(paper) {
+                actions = actions.child(
+                    Button::new("paper-capsule")
+                        .icon(glyph("download"))
+                        .label(tr("Build capsule…"))
+                        .small()
+                        .ghost()
+                        .disabled(self.paper_capsule_saving)
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.save_paper_capsule(window, cx)),
+                        ),
+                );
+            }
             if !paper.shown.is_empty() {
                 actions = actions.child(
                     Button::new("paper-new-version")
@@ -1228,6 +1572,31 @@ impl Workspace {
                     &[&papers::fingerprint(&locked.fingerprint)],
                 )));
             }
+            if let Some(level) = paper.level {
+                body = body.child(div().text_xs().text_color(muted).child(crate::i18n::fill(
+                    tr("Evidence level: {}"),
+                    &[&papers::level_label(level)],
+                )));
+            }
+            if papers::shown_is_finalized(paper) {
+                body = body.child(div().text_xs().text_color(muted).child(tr(
+                    "Finalization preserves evidence. Reproduction is verified separately and \
+                     is not implied by a successful check.",
+                )));
+            }
+            if self.paper_rerunning.is_some() {
+                body = body.child(div().text_xs().text_color(muted).child(tr(
+                    "Rerunning in a clean folder with only the frozen inputs and code…",
+                )));
+            }
+            if self.paper_capsule_saving {
+                body = body.child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(tr("Writing the capsule…")),
+                );
+            }
         }
         if self.layers.contains(Layer::PaperFinalize) && paper.editable {
             body = body.child(self.paper_finalize_form(cx));
@@ -1243,9 +1612,23 @@ impl Workspace {
                     .child(tr("Evidence kept with the version as a whole")),
             );
             for source in &paper.loose {
-                loose = loose.child(div().text_xs().child(papers::source_line(source)));
+                let mut line = div().h_flex().gap_2().child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_xs()
+                        .child(papers::source_line(source)),
+                );
+                if let Some(verify) = self.paper_verify_button(paper, source, cx) {
+                    line = line.child(verify);
+                }
+                loose = loose.child(line);
             }
             body = body.child(loose);
+        }
+        if let Some(records) = self.paper_records(paper, cx) {
+            body = body.child(records);
         }
         if paper.editable && !self.layers.contains(Layer::PaperItemForm) {
             body = body.child(

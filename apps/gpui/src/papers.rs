@@ -1,6 +1,9 @@
-//! Paper evidence: how a paper's versions, items and their sources read.
+//! Paper evidence: how a paper's versions, items and their sources read,
+//! how a passage chosen in a message is pinned, and how clean reruns and
+//! capsules of a finalized version read.
 use wisp_server::desktop::{
-    Paper, PaperAudience, PaperCheck, PaperItemKind, PaperLevel, PaperSource, PaperSourceChoice,
+    Paper, PaperAudience, PaperCapsule, PaperCapsuleStatus, PaperCheck, PaperItemKind, PaperLevel,
+    PaperRerun, PaperRerunOutput, PaperRerunStatus, PaperSource, PaperSourceChoice,
     PaperSourceKind, PaperVersion, PaperVersionState,
 };
 
@@ -40,7 +43,16 @@ pub fn source_kind_label(kind: PaperSourceKind) -> &'static str {
     match kind {
         PaperSourceKind::Result => tr("Result"),
         PaperSourceKind::Run => tr("Run"),
+        PaperSourceKind::Passage => tr("Passage"),
         PaperSourceKind::Other => tr("Other source"),
+    }
+}
+
+/// Who wrote a message offered as evidence.
+pub fn role_label(role: &str) -> &'static str {
+    match role {
+        "user" => tr("You"),
+        _ => tr("Assistant"),
     }
 }
 
@@ -55,16 +67,128 @@ pub fn source_line(source: &PaperSource) -> String {
     }
 }
 
-/// A result or run in the list to choose from. A result says which of
-/// its versions would be bound; a run says how it ended.
+/// A result, run or message in the list to choose from. A result says
+/// which of its versions would be bound; a run says how it ended; a message
+/// says its conversation, who wrote it and how it begins.
 pub fn choice_line(choice: &PaperSourceChoice) -> String {
     match (choice.kind, choice.detail.trim()) {
+        (PaperSourceKind::Passage, role) => {
+            let mut line = format!("{} · {}", choice.name, role_label(role));
+            let teaser = choice
+                .message
+                .as_ref()
+                .and_then(|message| message.text.as_deref())
+                .map(wisp_dto::publication_sources::source_snippet)
+                .unwrap_or_default();
+            if !teaser.is_empty() {
+                line.push_str(" — ");
+                line.push_str(&teaser);
+            }
+            line
+        }
         (_, "") => choice.name.clone(),
         (PaperSourceKind::Result, version) => {
             fill(tr("{} · version {}"), &[&choice.name, &version])
         }
         (_, state) => format!("{} · {state}", choice.name),
     }
+}
+
+/// The exact locator binding a passage of `message`: `selected` is the
+/// selection in its preview, in UTF-16 units as the text input reports
+/// it, and `shown` the preview's text as the input holds it. An empty
+/// selection takes the whole preview, as the WebView does. A selection in
+/// a preview that is not exactly the message, or that splits a character,
+/// is refused rather than moved.
+pub fn passage_locator(
+    message: &wisp_dto::PublicationSourceChoice,
+    shown: &str,
+    selected: std::ops::Range<usize>,
+) -> Result<String, &'static str> {
+    use wisp_dto::publication_sources::{message_span_locator, utf16_byte_range};
+    let text = message.text.as_deref().unwrap_or_default();
+    let range = if selected.is_empty() {
+        None
+    } else {
+        if shown != text {
+            return Err(tr(
+                "This message could not be shown exactly; choose it without selecting a passage",
+            ));
+        }
+        let (Ok(start), Ok(end)) = (u32::try_from(selected.start), u32::try_from(selected.end))
+        else {
+            return Err(tr("Select the passage again"));
+        };
+        Some(utf16_byte_range(text, start, end).ok_or(tr("Select the passage again"))?)
+    };
+    message_span_locator(message, range).ok_or(tr("This is not a message to choose a passage from"))
+}
+
+pub fn rerun_status_label(status: PaperRerunStatus) -> &'static str {
+    match status {
+        PaperRerunStatus::Running => tr("Running"),
+        PaperRerunStatus::Completed => tr("Completed"),
+        PaperRerunStatus::Failed => tr("Failed"),
+    }
+}
+
+/// A clean rerun in a line: how it ended, what it showed, whether the
+/// environment was the recorded one, and its exit code.
+pub fn rerun_line(rerun: &PaperRerun) -> String {
+    let mut line = format!(
+        "{} · {} · {}",
+        rerun_status_label(rerun.status),
+        level_label(rerun.level),
+        if rerun.environment_matched {
+            tr("Environment matched")
+        } else {
+            tr("Environment mismatch")
+        }
+    );
+    if let Some(code) = rerun.exit_code {
+        line.push_str(&fill(tr(" · exit {}"), &[&code]));
+    }
+    line
+}
+
+/// One compared output: its path and how it was compared.
+pub fn rerun_output_line(output: &PaperRerunOutput) -> String {
+    format!("{} · {}", output.path, output.comparator)
+}
+
+pub fn capsule_status_label(status: PaperCapsuleStatus) -> &'static str {
+    match status {
+        PaperCapsuleStatus::Building => tr("Building"),
+        PaperCapsuleStatus::Succeeded => tr("Succeeded"),
+        PaperCapsuleStatus::Failed => tr("Failed"),
+    }
+}
+
+/// A capsule build in a line: who it is for and, once written, the
+/// archive's fingerprint.
+pub fn capsule_line(capsule: &PaperCapsule) -> String {
+    let mut line = format!(
+        "{} · zip · {}",
+        capsule_status_label(capsule.status),
+        audience_label(capsule.audience)
+    );
+    if let Some(archive) = &capsule.archive {
+        line.push_str(" · ");
+        line.push_str(&fingerprint(archive));
+    }
+    line
+}
+
+/// Whether the shown version can be rerun and saved as a capsule: it is
+/// finalized or published.
+pub fn shown_is_finalized(paper: &Paper) -> bool {
+    paper.versions.iter().any(|version| {
+        version.id == paper.shown
+            && matches!(
+                version.state,
+                PaperVersionState::Finalized | PaperVersionState::Published
+            )
+    })
 }
 
 /// What a paper's shown version holds, in a line.
@@ -151,6 +275,7 @@ mod tests {
             kind: PaperSourceKind::Run,
             name: name.into(),
             purpose: purpose.into(),
+            run: Some(name.into()),
         }
     }
 
@@ -190,6 +315,7 @@ mod tests {
             id: "a".into(),
             name: "fig1.png".into(),
             detail: "3".into(),
+            message: None,
         };
         assert_eq!(choice_line(&choice), "fig1.png · version 3");
         choice.kind = PaperSourceKind::Run;
@@ -213,6 +339,9 @@ mod tests {
                 item("Figure 2", vec![]),
             ],
             loose: vec![source("c", "")],
+            level: None,
+            reruns: vec![],
+            capsules: vec![],
         };
         assert_eq!(summary(&paper), "2 items · 3 sources · 1 without a source");
         paper.items.pop();
@@ -269,9 +398,148 @@ mod tests {
             editable: false,
             items: vec![],
             loose: vec![],
+            level: Some(PaperLevel::Rerunnable),
+            reruns: vec![],
+            capsules: vec![],
         };
         assert_eq!(next_version_label(&paper), "Version 4");
         paper.versions.clear();
         assert_eq!(next_version_label(&paper), "Version 1");
+    }
+
+    fn message(text: &str) -> wisp_dto::PublicationSourceChoice {
+        wisp_dto::PublicationSourceChoice {
+            kind: "message_span".into(),
+            id: "m".into(),
+            title: "Strains".into(),
+            detail: "assistant".into(),
+            text: Some(text.into()),
+            text_sha256: None,
+            frame_id: Some("frame".into()),
+            message_seq: Some(3),
+        }
+    }
+
+    #[test]
+    fn a_message_choice_names_its_conversation_writer_and_beginning() {
+        let choice = PaperSourceChoice {
+            kind: PaperSourceKind::Passage,
+            id: "m".into(),
+            name: "Strains".into(),
+            detail: "assistant".into(),
+            message: Some(message("## Kept **strain B** for `fit`")),
+        };
+        assert_eq!(
+            choice_line(&choice),
+            "Strains · Assistant — Kept strain B for fit"
+        );
+        assert_eq!(role_label("user"), "You");
+    }
+
+    #[test]
+    fn a_passage_is_pinned_by_its_bytes_or_the_whole_preview() {
+        let text = "A水稻🌱结果";
+        let found = message(text);
+        // Nothing selected: the whole preview.
+        assert_eq!(
+            passage_locator(&found, text, 2..2).unwrap(),
+            r#"{"byte_end":17,"byte_start":0,"frame_id":"frame","message_seq":3}"#
+        );
+        // "水稻🌱" is UTF-16 units 1..5, bytes 1..11.
+        assert_eq!(
+            passage_locator(&found, text, 1..5).unwrap(),
+            r#"{"byte_end":11,"byte_start":1,"frame_id":"frame","message_seq":3}"#
+        );
+        // Half of the seedling's surrogate pair is refused, not moved.
+        assert!(passage_locator(&found, text, 1..4).is_err());
+        // A preview the input changed cannot be pinned by a selection.
+        assert!(passage_locator(&found, "A水稻", 1..2).is_err());
+        assert!(passage_locator(&found, "A水稻", 0..0).is_ok());
+        let mut not_a_message = found.clone();
+        not_a_message.text = None;
+        assert!(passage_locator(&not_a_message, "", 0..0).is_err());
+    }
+
+    #[test]
+    fn reruns_and_capsules_say_how_they_went() {
+        let mut rerun = PaperRerun {
+            id: "r".into(),
+            run: "run".into(),
+            status: PaperRerunStatus::Completed,
+            level: PaperLevel::Reproduced,
+            environment_matched: true,
+            exit_code: Some(0),
+            error: None,
+            outputs: vec![PaperRerunOutput {
+                path: "results/out.txt".into(),
+                comparator: "sha256".into(),
+                passed: true,
+            }],
+        };
+        assert_eq!(
+            rerun_line(&rerun),
+            "Completed · Reproduced · Environment matched · exit 0"
+        );
+        rerun.environment_matched = false;
+        rerun.exit_code = None;
+        rerun.status = PaperRerunStatus::Failed;
+        rerun.level = PaperLevel::Rerunnable;
+        assert_eq!(
+            rerun_line(&rerun),
+            "Failed · Re-runnable · Environment mismatch"
+        );
+        assert_eq!(
+            rerun_output_line(&rerun.outputs[0]),
+            "results/out.txt · sha256"
+        );
+        let mut capsule = PaperCapsule {
+            id: "c".into(),
+            status: PaperCapsuleStatus::Succeeded,
+            audience: PaperAudience::Private,
+            path: "/tmp/a.zip".into(),
+            archive: Some("cd".repeat(32)),
+            error: None,
+        };
+        assert_eq!(
+            capsule_line(&capsule),
+            "Succeeded · zip · Private · sha256:cdcdcdcdcdcd"
+        );
+        capsule.status = PaperCapsuleStatus::Failed;
+        capsule.archive = None;
+        assert_eq!(capsule_line(&capsule), "Failed · zip · Private");
+    }
+
+    #[test]
+    fn only_a_finalized_or_published_version_is_rerun_or_saved() {
+        let version = |id: &str, state| PaperVersion {
+            id: id.into(),
+            number: 1,
+            label: String::new(),
+            state,
+            fingerprint: String::new(),
+        };
+        let mut paper = Paper {
+            id: "p".into(),
+            title: "Paper".into(),
+            description: String::new(),
+            versions: vec![
+                version("a", PaperVersionState::Finalized),
+                version("b", PaperVersionState::Draft),
+                version("c", PaperVersionState::Published),
+                version("d", PaperVersionState::Busy),
+            ],
+            shown: "a".into(),
+            editable: false,
+            items: vec![],
+            loose: vec![],
+            level: None,
+            reruns: vec![],
+            capsules: vec![],
+        };
+        assert!(shown_is_finalized(&paper));
+        for (shown, finalized) in [("b", false), ("c", true), ("d", false), ("", false)] {
+            paper.shown = shown.into();
+            assert_eq!(shown_is_finalized(&paper), finalized, "{shown}");
+        }
     }
 }

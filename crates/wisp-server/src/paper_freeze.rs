@@ -279,6 +279,27 @@ fn scan_security(text: &str) -> SecurityFlags {
     flags
 }
 
+/// What a capsule or a clean rerun refuses in text: credentials always, and
+/// for the public machine-local or internal network details. As the WebView
+/// host's `publication_freeze::capsule_security_violations`.
+pub(crate) fn capsule_security_violations(text: &str, public: bool) -> Vec<String> {
+    let flags = scan_security(text);
+    let mut violations = flags
+        .secret_kinds
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if public && flags.machine_path {
+        violations.push("machine_local_detail".into());
+    }
+    if public && flags.internal_network {
+        violations.push("internal_network_detail".into());
+    }
+    violations.sort();
+    violations.dedup();
+    violations
+}
+
 fn looks_absolute_path(text: &str) -> bool {
     text.starts_with('/')
         || text.starts_with("\\\\")

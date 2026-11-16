@@ -10946,6 +10946,579 @@ async fn a_paper_version_is_checked_waived_finalized_and_continued() {
     server.shutdown().await;
 }
 
+#[tokio::test]
+async fn a_passage_of_a_conversation_is_evidence_with_its_text_kept() {
+    use desktop::{PaperInput, PaperItemInput, PaperItemKind, PaperSourceKind};
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let paper = server
+        .create_paper(
+            PROJECT,
+            PaperInput {
+                title: "Copy number".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let version = paper.shown.clone();
+    server
+        .save_paper_item(
+            PROJECT,
+            &version,
+            PaperItemInput {
+                id: String::new(),
+                kind: PaperItemKind::Claim,
+                title: "Copy number doubles".into(),
+                note: String::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let claim = server.paper(PROJECT, &paper.id, None).await.unwrap().items[0]
+        .id
+        .clone();
+
+    // What was said in the project's conversation is offered, with its
+    // text to pick a passage from.
+    let session = create(&server).await;
+    send(
+        &server,
+        &session,
+        "the copy number doubled in strain 水稻 🌱",
+    )
+    .await
+    .unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    let (said, more) = server
+        .paper_source_choices(PROJECT, PaperSourceKind::Passage, "COPY NUMBER DOUBLED", 0)
+        .await
+        .unwrap();
+    assert!(!more);
+    assert!(said
+        .iter()
+        .all(|choice| choice.kind == PaperSourceKind::Passage));
+    let choice = said
+        .iter()
+        .find(|choice| choice.detail == "user")
+        .unwrap_or_else(|| panic!("{said:?}"));
+    let message = choice.message.clone().unwrap();
+    let text = message.text.clone().unwrap();
+    assert!(message.frame_id.is_some() && message.message_seq.is_some());
+    // Results and runs carry no message.
+    let (runs, _) = server
+        .paper_source_choices(PROJECT, PaperSourceKind::Run, "", 0)
+        .await
+        .unwrap();
+    assert!(runs.iter().all(|choice| choice.message.is_none()));
+
+    // A passage chosen within it is bound with its text.
+    let start = text.find("strain").unwrap();
+    let end = start + "strain 水稻".len();
+    let exact =
+        wisp_dto::publication_sources::message_span_locator(&message, Some((start, end))).unwrap();
+    server
+        .bind_paper_source(
+            PROJECT,
+            &version,
+            &claim,
+            PaperSourceKind::Passage,
+            &exact,
+            " the strain we kept ",
+        )
+        .await
+        .unwrap();
+    // A range that splits a character, or a locator not in canonical
+    // form, is refused.
+    let split =
+        wisp_dto::publication_sources::message_span_locator(&message, Some((start, end - 1)))
+            .unwrap();
+    let loose = exact.replace("{\"byte_end\"", "{ \"byte_end\"");
+    for refused in [split, loose] {
+        assert!(server
+            .bind_paper_source(
+                PROJECT,
+                &version,
+                &claim,
+                PaperSourceKind::Passage,
+                &refused,
+                ""
+            )
+            .await
+            .is_err());
+    }
+    let shown = server.paper(PROJECT, &paper.id, None).await.unwrap();
+    let sources = &shown.items[0].sources;
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0].kind, PaperSourceKind::Passage);
+    assert_eq!(sources[0].name, "strain 水稻");
+    assert_eq!(sources[0].purpose, "the strain we kept");
+    assert_eq!(sources[0].run, None);
+
+    // Another project's conversation is not offered, and its passage is
+    // refused.
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    assert!(server
+        .paper_source_choices(&lab, PaperSourceKind::Passage, "", 0)
+        .await
+        .unwrap()
+        .0
+        .is_empty());
+    let other = server
+        .create_paper(
+            &lab,
+            PaperInput {
+                title: "Elsewhere".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    server
+        .save_paper_item(
+            &lab,
+            &other.shown,
+            PaperItemInput {
+                id: String::new(),
+                kind: PaperItemKind::Claim,
+                title: "Claim".into(),
+                note: String::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let other_item = server.paper(&lab, &other.id, None).await.unwrap().items[0]
+        .id
+        .clone();
+    assert!(server
+        .bind_paper_source(
+            &lab,
+            &other.shown,
+            &other_item,
+            PaperSourceKind::Passage,
+            &exact,
+            ""
+        )
+        .await
+        .is_err());
+    server.shutdown().await;
+}
+
+/// A finalized paper whose figure rests on a local run with a declared
+/// input, its code, its output and its environment, as the WebView
+/// host's reproduction fixture builds it.
+async fn finalized_paper_with_a_run(server: &Server, workspace: &Path) -> (String, String) {
+    use desktop::{PaperInput, PaperItemInput, PaperItemKind, PaperPolicy, PaperSourceKind};
+    use sha2::Digest;
+    use wisp_runs::snapshot_store::{capture_file, SnapshotPolicy};
+    use wisp_store::{
+        ArtifactCaptureTiming, ArtifactMaterialization, ArtifactVersionDraft, LineageBasis,
+        LineageConfidence, RunCodeSnapshot, RunInput, RunOutput, RunRecord, RunStatus,
+    };
+    let store = &server.0.store;
+    std::fs::create_dir_all(workspace.join("data")).unwrap();
+    std::fs::create_dir_all(workspace.join("results")).unwrap();
+    std::fs::write(workspace.join("data/input.txt"), b"declared input\n").unwrap();
+    std::fs::write(workspace.join("results/out.txt"), b"42\n").unwrap();
+    std::fs::write(workspace.join("undeclared.txt"), b"stays outside\n").unwrap();
+    store
+        .create_frame("paper-frame", PROJECT, "OPERON", "model")
+        .await
+        .unwrap();
+    let mut run = RunRecord::new("run-fit", PROJECT, "local", "fit", "command");
+    run.frame_id = Some("paper-frame".into());
+    run.command = Some("python analysis.py".into());
+    run.status = RunStatus::Succeeded;
+    run.exit_code = Some(0);
+    run.ended_at = Some(chrono::Utc::now().timestamp());
+    store.create_run(&run).await.unwrap();
+    let version_of = |file: &str| {
+        let captured =
+            capture_file(workspace, &workspace.join(file), SnapshotPolicy::Always).unwrap();
+        (
+            captured.storage_path,
+            captured.size_bytes,
+            captured.checksum,
+        )
+    };
+    let (input_path, input_size, input_sum) = version_of("data/input.txt");
+    let (output_path, output_size, output_sum) = version_of("results/out.txt");
+    let draft =
+        |id: &str, name: &str, path, size: u64, sum, run: Option<&str>| ArtifactVersionDraft {
+            version_id: Some(format!("{id}-version")),
+            artifact_id: format!("{id}-artifact"),
+            project_id: PROJECT.into(),
+            root_frame_id: "paper-frame".into(),
+            filename: name.into(),
+            content_type: "text/plain".into(),
+            storage_path: path,
+            logical_key: Some(format!("result:{id}")),
+            size_bytes: Some(size as i64),
+            checksum: Some(sum),
+            producing_run_id: run.map(str::to_owned),
+            env_snapshot_hash: None,
+            materialization: ArtifactMaterialization::Snapshot,
+            capture_timing: ArtifactCaptureTiming::AtCreation,
+        };
+    let input = store
+        .save_artifact_version(&draft(
+            "input",
+            "input.txt",
+            input_path,
+            input_size,
+            input_sum,
+            None,
+        ))
+        .await
+        .unwrap();
+    let output = store
+        .save_artifact_version(&draft(
+            "output",
+            "out.txt",
+            output_path,
+            output_size,
+            output_sum,
+            Some("run-fit"),
+        ))
+        .await
+        .unwrap();
+    store
+        .save_run_input(&RunInput {
+            id: "run-fit-input".into(),
+            run_id: "run-fit".into(),
+            artifact_version_id: Some(input),
+            external_resource_id: None,
+            source_ref: "data/input.txt".into(),
+            role: "data".into(),
+            required: true,
+            basis: LineageBasis::Declared,
+            confidence: LineageConfidence::Exact,
+            created_at: 1,
+        })
+        .await
+        .unwrap();
+    store
+        .save_run_output(&RunOutput {
+            id: "run-fit-output".into(),
+            run_id: "run-fit".into(),
+            artifact_version_id: output,
+            role: "result".into(),
+            logical_output_key: "result:output".into(),
+            source_path: "results/out.txt".into(),
+            created_at: 1,
+        })
+        .await
+        .unwrap();
+    let code = "print('fixture')\n";
+    store
+        .save_run_code_snapshot(&RunCodeSnapshot {
+            id: "run-fit-code".into(),
+            run_id: "run-fit".into(),
+            source_kind: "script".into(),
+            source_path: Some("analysis.py".into()),
+            source_text: code.into(),
+            checksum: hex::encode(sha2::Sha256::digest(code.as_bytes())),
+            storage_path: None,
+            git_commit: None,
+            dirty_patch: None,
+            created_at: 1,
+        })
+        .await
+        .unwrap();
+    let context = store.get_execution_context("local").await.unwrap().unwrap();
+    let (environment, _) = wisp_runs::publication_reproduction::reproduction_environment(&context);
+    store
+        .record_run_environment_snapshot(
+            "run-fit",
+            Some("local"),
+            &serde_json::from_str(&environment).unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let paper = server
+        .create_paper(
+            PROJECT,
+            PaperInput {
+                title: "Copy number: a study".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let version = paper.shown.clone();
+    server
+        .save_paper_item(
+            PROJECT,
+            &version,
+            PaperItemInput {
+                id: String::new(),
+                kind: PaperItemKind::Methods,
+                title: "Analysis".into(),
+                note: String::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let item = server.paper(PROJECT, &paper.id, None).await.unwrap().items[0]
+        .id
+        .clone();
+    server
+        .bind_paper_source(
+            PROJECT,
+            &version,
+            &item,
+            PaperSourceKind::Run,
+            "run-fit",
+            "the analysis",
+        )
+        .await
+        .unwrap();
+    let policy = PaperPolicy {
+        keep_restricted: true,
+        ..PaperPolicy::default()
+    };
+    let check = server.check_paper(PROJECT, &version, policy).await.unwrap();
+    for finding in check.blockers.iter().filter(|found| found.waived.is_none()) {
+        server
+            .waive_paper_finding(PROJECT, &version, &finding.code, "fixture")
+            .await
+            .unwrap();
+    }
+    let done = server
+        .finalize_paper(PROJECT, &version, policy)
+        .await
+        .unwrap();
+    assert!(done.finalized, "{:?}", done.blockers);
+    (paper.id, version)
+}
+
+/// Stands in for the host's run runner: checks it was handed a clean
+/// folder with only the frozen input and code, and writes `output`.
+struct CleanRerun {
+    output: &'static [u8],
+    seen: std::sync::Mutex<Vec<wisp_runs::RunCommand>>,
+}
+
+#[async_trait]
+impl wisp_runs::RunCommandRunner for CleanRerun {
+    async fn run(
+        &self,
+        command: wisp_runs::RunCommand,
+        _: std::time::Duration,
+    ) -> Result<wisp_runs::RunCommandOutput, String> {
+        let folder = command.cwd.clone().expect("a rerun has its own folder");
+        assert_eq!(
+            std::fs::read(folder.join("data/input.txt")).unwrap(),
+            b"declared input\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(folder.join("analysis.py")).unwrap(),
+            "print('fixture')\n"
+        );
+        assert!(!folder.join("undeclared.txt").exists());
+        assert!(!folder.join("results/out.txt").exists());
+        std::fs::create_dir_all(folder.join("results")).unwrap();
+        std::fs::write(folder.join("results/out.txt"), self.output).unwrap();
+        self.seen.lock().unwrap().push(command);
+        Ok(wisp_runs::RunCommandOutput {
+            exit_code: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_finalized_paper_run_is_rerun_in_a_clean_folder_and_compared() {
+    use desktop::{PaperLevel, PaperRerunStatus};
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let (paper, version) =
+        finalized_paper_with_a_run(&server, &temp.path().join("workspace")).await;
+    let shown = server.paper(PROJECT, &paper, Some(&version)).await.unwrap();
+    assert_eq!(shown.items[0].sources[0].run.as_deref(), Some("run-fit"));
+    assert_eq!(shown.level, Some(PaperLevel::Rerunnable));
+    assert!(shown.reruns.is_empty());
+
+    // An output that comes out different is recorded, and the version is
+    // not reproduced.
+    let wrong = CleanRerun {
+        output: b"41\n",
+        seen: Default::default(),
+    };
+    server
+        .verify_paper_run_with(PROJECT, &version, "run-fit", &wrong)
+        .await
+        .unwrap();
+    {
+        let seen = wrong.seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(
+            seen[0].context_id,
+            wisp_runs::PUBLICATION_REPRODUCTION_CONTEXT_ID
+        );
+        // The rerun's folder is gone afterwards.
+        assert!(!seen[0].cwd.as_ref().unwrap().exists());
+    }
+    let shown = server.paper(PROJECT, &paper, Some(&version)).await.unwrap();
+    assert_eq!(shown.reruns.len(), 1);
+    assert_eq!(shown.reruns[0].status, PaperRerunStatus::Completed);
+    assert!(!shown.reruns[0].outputs[0].passed);
+    assert_eq!(shown.level, Some(PaperLevel::Rerunnable));
+
+    // The same output, under the same environment, reproduces it.
+    let right = CleanRerun {
+        output: b"42\n",
+        seen: Default::default(),
+    };
+    server
+        .verify_paper_run_with(PROJECT, &version, "run-fit", &right)
+        .await
+        .unwrap();
+    let shown = server.paper(PROJECT, &paper, Some(&version)).await.unwrap();
+    assert_eq!(shown.reruns.len(), 2);
+    let passed = shown
+        .reruns
+        .iter()
+        .find(|rerun| rerun.outputs.iter().all(|output| output.passed))
+        .unwrap();
+    assert_eq!(passed.run, "run-fit");
+    assert!(passed.environment_matched);
+    assert_eq!(passed.exit_code, Some(0));
+    assert_eq!(passed.level, PaperLevel::Reproduced);
+    assert_eq!(passed.outputs[0].path, "results/out.txt");
+    assert_eq!(passed.outputs[0].comparator, "sha256");
+    assert_eq!(shown.level, Some(PaperLevel::Reproduced));
+    // The finalized version itself is unchanged.
+    assert!(!shown.editable);
+    assert_eq!(shown.versions[0].fingerprint.len(), 64);
+
+    // A run the version does not name, a draft, and another project's
+    // paper are refused without running anything.
+    let refused = CleanRerun {
+        output: b"42\n",
+        seen: Default::default(),
+    };
+    assert!(server
+        .verify_paper_run_with(PROJECT, &version, "run-absent", &refused)
+        .await
+        .is_err());
+    let draft = server
+        .new_paper_version(PROJECT, &paper, &version, "")
+        .await
+        .unwrap();
+    assert_eq!(draft.level, None);
+    assert!(server
+        .verify_paper_run_with(PROJECT, &draft.shown, "run-fit", &refused)
+        .await
+        .is_err());
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    assert!(server
+        .verify_paper_run_with(&lab, &version, "run-fit", &refused)
+        .await
+        .is_err());
+    assert!(refused.seen.lock().unwrap().is_empty());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_finalized_paper_is_saved_as_a_capsule_where_chosen() {
+    use desktop::{PaperAudience, PaperCapsuleStatus};
+    use std::io::Read;
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let (paper, version) =
+        finalized_paper_with_a_run(&server, &temp.path().join("workspace")).await;
+    assert_eq!(
+        desktop::paper_capsule_file_name("Copy number: a study", "v 1"),
+        "wisp-publication-Copy-number-a-study-v-1.zip"
+    );
+
+    // Only a .zip at a full path is written.
+    let saved = temp.path().join("saved");
+    std::fs::create_dir(&saved).unwrap();
+    for wrong in [
+        std::path::PathBuf::from("capsule.zip"),
+        saved.join("capsule.txt"),
+    ] {
+        assert!(server
+            .build_paper_capsule(PROJECT, &version, &wrong)
+            .await
+            .is_err());
+    }
+    let first = saved.join("first.zip");
+    server
+        .build_paper_capsule(PROJECT, &version, &first)
+        .await
+        .unwrap();
+    let second = saved.join("second.zip");
+    server
+        .build_paper_capsule(PROJECT, &version, &second)
+        .await
+        .unwrap();
+    // The same version gives the same bytes.
+    assert_eq!(
+        std::fs::read(&first).unwrap(),
+        std::fs::read(&second).unwrap()
+    );
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(&first).unwrap()).unwrap();
+    let mut index = String::new();
+    archive
+        .by_name("capsule.json")
+        .unwrap()
+        .read_to_string(&mut index)
+        .unwrap();
+    assert!(index.contains("wisp.publication_evidence_capsule"));
+    assert!(archive.by_name("REPRODUCE.md").is_ok());
+    // An existing file is not overwritten.
+    assert!(server
+        .build_paper_capsule(PROJECT, &version, &first)
+        .await
+        .is_err());
+
+    let shown = server.paper(PROJECT, &paper, Some(&version)).await.unwrap();
+    assert_eq!(shown.capsules.len(), 2);
+    let built = shown
+        .capsules
+        .iter()
+        .find(|capsule| capsule.path == first.to_string_lossy())
+        .unwrap();
+    assert_eq!(built.status, PaperCapsuleStatus::Succeeded);
+    assert_eq!(built.audience, PaperAudience::Private);
+    assert_eq!(built.archive.as_ref().map(String::len), Some(64));
+    assert_eq!(built.error, None);
+
+    // A draft has no capsule, and another project's paper is refused.
+    let draft = server
+        .new_paper_version(PROJECT, &paper, &version, "")
+        .await
+        .unwrap();
+    assert!(server
+        .build_paper_capsule(PROJECT, &draft.shown, &saved.join("draft.zip"))
+        .await
+        .is_err());
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    assert!(server
+        .build_paper_capsule(&lab, &version, &saved.join("lab.zip"))
+        .await
+        .is_err());
+    assert!(!saved.join("draft.zip").exists() && !saved.join("lab.zip").exists());
+    server.shutdown().await;
+}
+
 /// A stand-in ACP agent: answers `initialize` with a name and one way to
 /// sign in, and stops when its input closes.
 #[cfg(unix)]

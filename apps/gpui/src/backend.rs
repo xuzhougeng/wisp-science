@@ -2024,6 +2024,25 @@ impl Backend {
         })
     }
 
+    /// Reruns one run of a finalized version in a clean folder and records
+    /// how its outputs compare.
+    pub fn verify_paper_run(&self, project: String, version: String, run: String) -> Reply<()> {
+        self.local(move |host| async move { host.verify_paper_run(&project, &version, &run).await })
+    }
+
+    /// Saves a finalized version's evidence capsule at `destination`.
+    pub fn build_paper_capsule(
+        &self,
+        project: String,
+        version: String,
+        destination: std::path::PathBuf,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.build_paper_capsule(&project, &version, &destination)
+                .await
+        })
+    }
+
     /// What is installed under the data folder, and how an install goes.
     pub fn toolchain(&self) -> Reply<wisp_dto::ToolchainStatus> {
         self.local(|host| async move { Ok(host.toolchain()) })

@@ -5678,6 +5678,41 @@ impl Server {
         crate::papers::open(&self.0.store, project, paper, Some(&created)).await
     }
 
+    /// Reruns one run of a finalized version in a clean temporary folder
+    /// with only its frozen inputs and code, as the WebView's "Verify in
+    /// clean workspace" does, and records how its outputs compare. Runs
+    /// through the host's run runner; only local runs can be rerun.
+    pub async fn verify_paper_run(&self, project: &str, version: &str, run: &str) -> Result<()> {
+        self.verify_paper_run_with(project, version, run, self.0.runs.runner_ref())
+            .await
+    }
+
+    pub(crate) async fn verify_paper_run_with(
+        &self,
+        project: &str,
+        version: &str,
+        run: &str,
+        runner: &dyn wisp_runs::RunCommandRunner,
+    ) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        crate::papers::verify(&self.0.store, project, version, run, runner).await
+    }
+
+    /// Saves the evidence capsule of a finalized version as a new `.zip`
+    /// at `destination`, which the person chose; the attempt is recorded
+    /// with the version either way.
+    pub async fn build_paper_capsule(
+        &self,
+        project: &str,
+        version: &str,
+        destination: &std::path::Path,
+    ) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        crate::papers::build_capsule(&self.0.store, project, version, destination).await
+    }
+
     /// The ACP agents that can be started from here, with whether each
     /// program is found.
     pub async fn acp_agents(&self) -> Vec<AcpAgentRow> {
@@ -7916,9 +7951,10 @@ pub use crate::method_search::prepare::{MethodSearchAuditReport, ProtectedFileAu
 pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow};
 pub use crate::origin::FileOrigin;
 pub use crate::papers::{
-    Paper, PaperAudience, PaperCheck, PaperFinding, PaperInput, PaperItem, PaperItemInput,
-    PaperItemKind, PaperLevel, PaperPolicy, PaperRow, PaperSource, PaperSourceChoice,
-    PaperSourceKind, PaperVersion, PaperVersionState,
+    Paper, PaperAudience, PaperCapsule, PaperCapsuleStatus, PaperCheck, PaperFinding, PaperInput,
+    PaperItem, PaperItemInput, PaperItemKind, PaperLevel, PaperPolicy, PaperRerun,
+    PaperRerunOutput, PaperRerunStatus, PaperRow, PaperSource, PaperSourceChoice, PaperSourceKind,
+    PaperVersion, PaperVersionState,
 };
 pub use crate::pet::{Pet, PetLook, SHEET_HEIGHT, SHEET_WIDTH};
 pub use crate::plugins::PluginRow;
@@ -7927,6 +7963,9 @@ pub use crate::webview_import::{
     WebViewData, WebViewImport, WebViewModel, WebViewOutcome, WebViewProject,
     SETTING_GROUPS as WEBVIEW_SETTING_GROUPS,
 };
+/// The file name a version's evidence capsule is offered under when saving
+/// it, from the paper's title and the version's id, as the WebView offers.
+pub use wisp_runs::publication_capsule::capsule_filename as paper_capsule_file_name;
 
 /// Where a project's work keeps things on one SSH host.
 /// One of the project's runs on an SSH host.

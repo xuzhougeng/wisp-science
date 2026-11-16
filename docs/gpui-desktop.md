@@ -185,7 +185,7 @@ which it only reads.
 | Notebook | A tab of the side panel: the conversation's code as cells, with what each run returned; copy, save to favorites, or show it in the conversation |
 | Research calendar | A page across every project: a month as a grid with how many records each day holds, and the chosen day's records; projects can be left out |
 | Scheduled tasks | A page across projects (the clock on the home page, or the command palette): a prompt is sent into a new conversation of its project every few hours, daily or weekly at a time, while the app is open; each task can be run now, switched off or deleted, and its latest firing opens the conversation it made |
-| Paper evidence | A page for the open project (Papers in the sidebar, or the command palette): the papers it is writing, each with its versions and, in a draft version, figures, tables and claims with the project results and runs they rest on and why each was chosen. Finalize… checks a draft for whom the evidence is for (private, restricted or public, with the reviews public needs) and lists what stands in the way, warnings and what the record leaves out; a finding that may stand is kept with a reason; when nothing is left in the way the version is locked under a SHA-256 fingerprint. New version starts a draft from any version with its items and evidence |
+| Paper evidence | A page for the open project (Papers in the sidebar, or the command palette): the papers it is writing, each with its versions and, in a draft version, figures, tables and claims with the project results, runs and conversation passages they rest on and why each was chosen. Research conversations lists what you and the assistant said in the project's own conversations; a message opens read-only, a passage is selected in it (or the whole preview, up to 16 KiB, is used) and its text is kept with the evidence. Finalize… checks a draft for whom the evidence is for (private, restricted or public, with the reviews public needs) and lists what stands in the way, warnings and what the record leaves out; a finding that may stand is kept with a reason; when nothing is left in the way the version is locked under a SHA-256 fingerprint. A finalized version shows its evidence level; evidence a run made offers Verify in a clean folder, which reruns that run with only its frozen inputs and code and lists each output as matching or not (Reproduction reports); Build capsule… saves the version's evidence capsule as a `.zip` where you choose (Capsule builds). New version starts a draft from any version with its items and evidence |
 | Research mandates | A page of standing goals (the gauge on the home page, or the command palette): each project's agent works on its mandate in rounds on a cadence in one conversation, asks you through the research assistant when it needs something only you can give, and writes reports; answer, run now, pause, report, edit, close or delete from its card |
 | Research assistant | One conversation of its own (the robot on the home page, or the command palette) that reads what was recorded across projects and each project's progress, keeps your dated plan, and hands work to a project conversation, whose outcome it reports back; a bar over it shows today's plan to tick off or drop |
 | Research journey | A page for the open project: one month of what happened, by day (what you asked, runs, files, decisions, your own records), a filter, and a form to add a record of your own. A file's source details (the run that made it, what that run read, the run's record) show beside the days, and Relationships shows the project's research graph as a list or drawn. Each day can have a recap the model drafts from its records, with what was done, found, went wrong and comes next, which you change, confirm or dismiss; Scheduled tasks drafts the last days' recaps each morning |
@@ -1515,17 +1515,36 @@ Limits of this slice:
   own rules (the check is ported into the host from
   `src-tauri/src/publication_freeze.rs`), findings can be let stand with
   a reason (recorded as written by "Local user"), and New version copies
-  any version into a draft. A version cannot be published, packed as a
-  capsule or reproduced from here. A finalized version is shown with its
-  evidence and cannot be changed, and a paper with such a version cannot
-  be removed. Finding messages come from the check in English; the few
-  fixed ones are translated. Evidence is a registered
-  result of the project (bound at the version it has when chosen) or a
-  run; passages of a conversation, tool calls and outside resources
-  bound in the WebView are listed by kind but cannot be added here.
-  Evidence is not reviewed or marked from here, and items are flat:
-  they are shown in the order they were added and cannot be nested or
-  reordered.
+  any version into a draft. A version cannot be published from here. A
+  finalized version is shown with its evidence and cannot be changed, and
+  a paper with such a version cannot be removed. Finding messages come
+  from the check in English; the few fixed ones are translated. Evidence
+  is a registered result of the project (bound at the version it has when
+  chosen), a run, or a passage of a message of the project's own
+  conversations (the WebView's `message_span`: the passage is pinned by
+  its UTF-8 bytes and the message's SHA-256, a message changed since it
+  was shown is refused, and the text is kept with the evidence; the
+  offsets and locator are `wisp_dto::publication_sources`, which the
+  WebView picker uses too). Tool calls, code cells and outside resources
+  bound through the WebView's advanced anchors are listed by kind but
+  cannot be added here. Evidence is not reviewed or marked from here, and
+  items are flat: they are shown in the order they were added and cannot
+  be nested or reordered.
+- A finalized version's clean rerun and capsule are the WebView host's
+  own code, moved into `wisp_runs::publication_reproduction` and
+  `wisp_runs::publication_capsule` and called by both hosts. Verify in a
+  clean folder runs at once, as the WebView's button does: the run's
+  frozen command goes through the embedded host's run runner in a new
+  temporary folder holding only the frozen inputs and code, with a
+  cleared environment; only local runs can be rerun, every output is
+  compared by SHA-256 (the other comparators exist but no control picks
+  them, as in the WebView), the report is kept beside the version, which
+  never changes, and the version reads Reproduced once every run it names
+  has a matching report. Build capsule… asks where to save, as the
+  WebView does, offering `wisp-publication-<title>-<version>.zip` in the
+  Documents folder; it writes a new file only (an existing one is
+  refused), built from the frozen manifest and content-addressed
+  snapshots alone, and records each attempt.
 - On an SSH host a terminal runs the WebView's interactive `ssh` for that
   host (port, key or password prompt, jump hosts), with the browsed
   folder as a quoted `cd` when there is one; a WSL distribution opens with
@@ -2265,7 +2284,17 @@ finished run to the figure and check: what the run lacks is listed;
 press Let it stand… on each, give a reason and save: the check runs
 again and shows the reason. When the verdict reads Ready to finalize,
 finalize: the panel closes, the version reads Finalized with its
-fingerprint, and Add evidence and Change are gone. Press New version:
+fingerprint and its evidence level, and Add evidence and Change are gone.
+On a local run's evidence press Verify in a clean folder: a note says it
+is rerunning, then Reproduction reports lists it with each output
+marked Matches or Differs and whether the environment matched. Press
+Build capsule…, keep the offered name: Capsule builds lists it as
+Succeeded with its path and fingerprint, and the ZIP holds
+`capsule.json`; save to the same name again: the error says the file
+exists. Back in a draft, press Add evidence, choose Research
+conversations, click a message: its text opens read-only; select a few
+words and press Add this passage: the item lists them as a Passage.
+Press New version:
 "v2 · Version 2" opens as a draft with the same figure and evidence.
 With the reason field open press Escape: only the field closes; press it
 again: the panel closes and the page stays.
