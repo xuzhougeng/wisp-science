@@ -674,6 +674,12 @@ pub struct SessionRequest {
     pub session_id: String,
     #[serde(default)]
     pub before_seq: Option<i64>,
+    /// A snapshot request may ask for `compaction` rows (a serialized
+    /// `ContextCompactionDto` each) where the conversation was compacted.
+    /// Off unless asked for, so a client that does not draw them never gets
+    /// their raw text; other commands ignore it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub compaction_rows: bool,
 }
 
 /// Deletion choices come from the native preview of the same project/selection.
@@ -1130,6 +1136,32 @@ impl PlanProposal {
         })
     }
 }
+/// Why a conversation is read-only.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadOnlyReason {
+    /// Its research was frozen as an archive.
+    Archived,
+    /// A subagent's conversation: it takes instructions only from the
+    /// conversation that started it.
+    Subagent,
+    /// A reason this client does not know yet.
+    #[serde(other)]
+    Other,
+}
+
+/// What kind of failure ended a conversation's last turn.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnErrorKind {
+    /// The model's provider refused the request because the conversation
+    /// no longer fits its context window, after the turn's own compaction.
+    ContextTooLong,
+    /// A kind this client does not know yet.
+    #[serde(other)]
+    Other,
+}
+
 /// A replacement event, never a delta. Sequence orders responses within one
 /// host epoch. Reconnects fetch another snapshot; mutations are never replayed.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1161,6 +1193,10 @@ pub struct Snapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activity_status: Option<String>,
     pub read_only: bool,
+    /// Why `read_only` is set, for a client that says so. Absent from
+    /// older hosts and from hosts that do not tell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_only_reason: Option<ReadOnlyReason>,
     pub model_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub composer_references: Option<bool>,
@@ -1183,6 +1219,11 @@ pub struct Snapshot {
     pub acp_agent_id: Option<String>,
     pub request_id: Option<String>,
     pub error: Option<String>,
+    /// What kind of failure `error` is, when the host knows one a client
+    /// can offer a way out of. Absent from older hosts, from hosts that do
+    /// not tell, and for any other failure; `error` keeps its text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<TurnErrorKind>,
     pub approvals: Vec<super::PendingToolApproval>,
     /// Exact pending IDs and the scopes each request can actually grant.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -1199,6 +1240,35 @@ pub struct Snapshot {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn compaction_rows_are_sent_only_when_a_snapshot_request_asks() {
+        let plain: super::SessionRequest =
+            serde_json::from_value(serde_json::json!({"session_id": "s"})).unwrap();
+        assert!(!plain.compaction_rows);
+        // An older client's request is written as it was.
+        assert_eq!(
+            serde_json::to_value(&plain).unwrap(),
+            serde_json::json!({"session_id": "s", "before_seq": null})
+        );
+        let asked: super::SessionRequest = serde_json::from_value(
+            serde_json::json!({"session_id": "s", "before_seq": 4, "compaction_rows": true}),
+        )
+        .unwrap();
+        assert!(asked.compaction_rows);
+        assert_eq!(asked.before_seq, Some(4));
+    }
+    #[test]
+    fn a_turn_error_kind_is_optional_and_unknown_kinds_are_read_as_other() {
+        use super::TurnErrorKind;
+        assert_eq!(
+            serde_json::to_value(TurnErrorKind::ContextTooLong).unwrap(),
+            serde_json::json!("context_too_long")
+        );
+        assert_eq!(
+            serde_json::from_value::<TurnErrorKind>(serde_json::json!("quota_spent")).unwrap(),
+            TurnErrorKind::Other
+        );
+    }
     #[test]
     fn rules_fixture_requires_explicit_status_and_rejects_history_cursors() {
         let data: serde_json::Value = serde_json::from_str(include_str!(

@@ -8,6 +8,7 @@ use gpui_component::{ActiveTheme, Sizable, StyledExt};
 use super::{
     Workspace,
     shell::{glyph, icon_button},
+    surfaces,
 };
 use crate::{backend::receive, compose};
 
@@ -71,40 +72,32 @@ impl Workspace {
         cx.notify();
     }
 
-    pub(super) fn render_follow_ups(&self, cx: &mut Context<Self>) -> Option<Div> {
+    pub(super) fn render_follow_ups(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let questions = compose::suggestions(self.state.snapshot.as_ref()?);
         if questions.is_empty() {
             return None;
         }
         let muted = cx.theme().muted_foreground;
-        let mut block = div()
-            .v_flex()
-            .flex_shrink_0()
-            .gap_0p5()
-            .mx_4()
-            .mb_2()
-            .p_2()
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(cx.theme().border)
-            .child(
-                div()
-                    .h_flex()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(tr("You could ask next")),
-                    )
-                    .child(
-                        icon_button("follow-ups-dismiss", "close", tr("Put these away"))
-                            .xsmall()
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.dismiss_follow_ups(window, cx)
-                            })),
-                    ),
-            );
+        let mut block = surfaces::bar("follow-ups", cx).v_flex().gap_0p5().child(
+            // The heading starts where the questions do.
+            div()
+                .h_flex()
+                .justify_between()
+                .pl_2()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(tr("You could ask next")),
+                )
+                .child(
+                    icon_button("follow-ups-dismiss", "close", tr("Put these away"))
+                        .xsmall()
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.dismiss_follow_ups(window, cx)),
+                        ),
+                ),
+        );
         for (index, question) in questions.iter().enumerate() {
             let picked = question.clone();
             block = block.child(

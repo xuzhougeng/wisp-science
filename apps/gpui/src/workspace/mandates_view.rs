@@ -14,6 +14,7 @@ use wisp_dto::MandateOverview;
 use super::{
     Workspace, chip,
     shell::{error_banner, glyph, nav_row},
+    surfaces::{self, switch},
 };
 use crate::{
     backend::{Reply, receive},
@@ -250,14 +251,15 @@ impl Workspace {
                     .h_flex()
                     .gap_2()
                     .child(
-                        Button::new("mandate-review")
-                            .label(if review { tr("On") } else { tr("Off") })
-                            .xsmall()
-                            .selected(review)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.mandate_review = !review;
-                                cx.notify();
-                            })),
+                        switch(
+                            "mandate-review",
+                            review,
+                            tr("Ask before anything that changes files or runs work"),
+                        )
+                        .on_change(cx.listener(move |this, _, _, cx| {
+                            this.mandate_review = !review;
+                            cx.notify();
+                        })),
                     )
                     .child(
                         div()
@@ -532,14 +534,7 @@ impl Workspace {
                 nav_row("mandates-back", "arrow-left", tr("Back"), false, true, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.close_mandates(window, cx))),
             )
-            .child(
-                div()
-                    .px_2()
-                    .pt_3()
-                    .text_lg()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Research mandates")),
-            )
+            .child(surfaces::title(tr("Research mandates")).px_2().pt_3())
             .child(div().px_2().pb_2().text_xs().text_color(muted).child(tr(
                 "Standing goals a project's agent works on in rounds, in one conversation of \
                  the project, while the app is open. A mandate asks you when it needs something \

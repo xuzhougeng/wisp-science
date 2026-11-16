@@ -85,6 +85,93 @@ pub fn html(title: &str, rows: &[ShareRow], dark: bool) -> Result<String, String
     Ok(page)
 }
 
+/// What was said in a conversation, each message ticked to go into its
+/// shared page or not, as the WebView's share dialog lists them: one row per
+/// message, your messages and the answers alike, every one ticked at first.
+#[derive(Clone, Debug, Default)]
+pub struct ShareChoice {
+    rows: Vec<ShareRow>,
+    picked: Vec<bool>,
+}
+
+impl ShareChoice {
+    /// The whole conversation, as sharing was before there was a choice.
+    pub fn new(rows: Vec<ShareRow>) -> Self {
+        let picked = vec![true; rows.len()];
+        Self { rows, picked }
+    }
+
+    pub fn rows(&self) -> &[ShareRow] {
+        &self.rows
+    }
+
+    pub fn is_picked(&self, index: usize) -> bool {
+        self.picked.get(index).copied().unwrap_or(false)
+    }
+
+    /// Ticks the message at `index`, or takes its tick away.
+    pub fn toggle(&mut self, index: usize) {
+        if let Some(picked) = self.picked.get_mut(index) {
+            *picked = !*picked;
+        }
+    }
+
+    /// Select all, or Clear selection.
+    pub fn set_all(&mut self, picked: bool) {
+        self.picked.fill(picked);
+    }
+
+    pub fn count(&self) -> usize {
+        self.picked.iter().filter(|picked| **picked).count()
+    }
+
+    /// The ticked messages, in the order they were said: what the page shows.
+    pub fn chosen(&self) -> Vec<ShareRow> {
+        self.rows
+            .iter()
+            .zip(&self.picked)
+            .filter(|(_, picked)| **picked)
+            .map(|(row, _)| row.clone())
+            .collect()
+    }
+
+    /// How many are ticked, of how many.
+    pub fn count_line(&self) -> String {
+        crate::i18n::fill(tr("{} of {} selected"), &[&self.count(), &self.rows.len()])
+    }
+}
+
+/// The share dialog's state: which conversation, under what title, the
+/// messages chosen, and whether the page is being saved.
+#[derive(Clone, Debug)]
+pub struct Sharing {
+    pub session: String,
+    pub title: String,
+    pub choice: ShareChoice,
+    pub saving: bool,
+}
+
+/// Who said a message, as its row and the page name them.
+pub fn speaker(row: &ShareRow) -> &'static str {
+    match row.role.as_str() {
+        "user" => tr("You"),
+        _ => "Wisp Science",
+    }
+}
+
+/// The start of a message on one line, for its row in the share dialog.
+pub fn preview(row: &ShareRow) -> String {
+    const LIMIT: usize = 160;
+    let line = row.text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if line.chars().count() <= LIMIT {
+        return line;
+    }
+    let mut short: String = line.chars().take(LIMIT - 1).collect();
+    short.truncate(short.trim_end().len());
+    short.push('…');
+    short
+}
+
 /// The file name a page is offered under: the conversation's export name
 /// as HTML.
 pub fn file_name(title: &str) -> String {
@@ -138,6 +225,53 @@ mod tests {
                 .contains("color-scheme:dark")
         );
         assert!(html("", &[], false).is_err());
+    }
+
+    #[test]
+    fn every_message_is_shared_until_one_is_unticked() {
+        let mut choice = ShareChoice::new(vec![
+            row("user", "Align the reads"),
+            row("assistant", "Mapped: **98%**."),
+            row("user", "And the duplicates?"),
+            row("assistant", "12% duplicates."),
+        ]);
+        // At first the page is the whole conversation, as it was before.
+        assert_eq!(choice.count(), 4);
+        assert_eq!(choice.chosen().len(), 4);
+        assert_eq!(choice.count_line(), "4 of 4 selected");
+        // A single message goes, its question or answer stays.
+        choice.toggle(1);
+        assert!(!choice.is_picked(1) && choice.is_picked(0));
+        let said: Vec<_> = choice.chosen().into_iter().map(|row| row.text).collect();
+        assert_eq!(
+            said,
+            ["Align the reads", "And the duplicates?", "12% duplicates."]
+        );
+        let page = html("Reads", &choice.chosen(), false).unwrap();
+        assert!(!page.contains("98%") && page.contains("12% duplicates."));
+        // A row that is not there changes nothing.
+        choice.toggle(9);
+        assert!(!choice.is_picked(9));
+        assert_eq!(choice.count_line(), "3 of 4 selected");
+        // Clear selection leaves nothing to share; Select all brings all back.
+        choice.set_all(false);
+        assert_eq!(choice.count(), 0);
+        assert!(html("Reads", &choice.chosen(), false).is_err());
+        choice.set_all(true);
+        assert_eq!(choice.chosen().len(), choice.rows().len());
+        choice.toggle(1);
+        choice.toggle(1);
+        assert!(choice.is_picked(1));
+    }
+
+    #[test]
+    fn a_row_names_who_spoke_and_begins_the_message_on_one_line() {
+        assert_eq!(speaker(&row("user", "x")), "You");
+        assert_eq!(speaker(&row("assistant", "x")), "Wisp Science");
+        assert_eq!(preview(&row("user", "  one\n\ntwo  ")), "one two");
+        let long = preview(&row("assistant", &"序列 ".repeat(200)));
+        assert!(long.chars().count() <= 160);
+        assert!(long.ends_with('…') && !long.ends_with(" …"));
     }
 
     #[test]

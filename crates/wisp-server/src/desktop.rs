@@ -2,6 +2,7 @@
 //! management and the model it runs on. They are typed methods rather than
 //! dispatch commands, so nothing here can be reached through the remote
 //! allowlist.
+pub use crate::files::FileSave;
 pub use crate::output::{tool_question, TokenUsage};
 use crate::{config::ModelConfig, Server};
 use anyhow::{bail, ensure, Context, Result};
@@ -413,7 +414,15 @@ pub struct ConversationList {
     /// Subagent conversation id to the id of the conversation that started
     /// it; it is watched, not written to.
     pub dispatched: HashMap<String, String>,
+    /// Whether the list was cut off: there are older conversations (or, for
+    /// a search, more matches) than the pages asked for, and asking for one
+    /// page more lists them.
+    pub more: bool,
 }
+
+/// How many conversations the sidebar is given at a time. Asking for more
+/// pages lists the next ones under them.
+pub const CONVERSATION_PAGE: usize = 100;
 
 /// Names one user message of a conversation without trusting a row number:
 /// how many user messages come after it, and what it says. A reference that
@@ -927,6 +936,22 @@ impl Server {
         Ok(rows)
     }
 
+    /// How the last turn of each conversation this host ran since it
+    /// started ended, for the ones not running now: `true` when it stopped
+    /// on an error. One it has not run a turn in is not listed.
+    pub fn finished_turns(&self) -> HashMap<String, bool> {
+        self.0
+            .sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|(id, session)| {
+                let live = session.live.lock().unwrap();
+                (!live.running && live.generation > 0).then(|| (id.clone(), live.error.is_some()))
+            })
+            .collect()
+    }
+
     /// Conversations in any project whose title or messages match `query`,
     /// archived ones included. An empty query lists the newest instead.
     pub async fn find_conversations(
@@ -1127,6 +1152,37 @@ impl Server {
         let _admission = self.0.admission.read().await;
         let root = self.project_root(project).await?;
         crate::files::rename(std::path::Path::new(&root), path, name).await
+    }
+
+    /// Saves the user's edit of an existing project file, as the WebView's
+    /// source editor does (`save_file`): with `original`, only while the
+    /// file still holds that text, so an edit left open across a turn that
+    /// rewrote the file does not silently replace that turn's work. A
+    /// project frozen while one of its explorations runs takes no edits,
+    /// as no other write.
+    pub async fn save_project_file(
+        &self,
+        project: &str,
+        path: &str,
+        original: Option<&str>,
+        text: &str,
+    ) -> Result<FileSave> {
+        let _admission = self.0.admission.read().await;
+        let root = self.project_root(project).await?;
+        crate::explorations::service::require_writable_scope(
+            &self.0.store,
+            &wisp_store::StateScope::mainline(project.to_owned()),
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        let saved = crate::files::save(std::path::Path::new(&root), path, original, text).await?;
+        if saved == FileSave::Saved {
+            self.0
+                .store
+                .bump_state_generation(&wisp_store::StateScope::mainline(project.to_owned()))
+                .await?;
+        }
+        Ok(saved)
     }
 
     /// Moves a project file or folder into the project's `.wisp/trash`;
@@ -1941,22 +1997,56 @@ impl Server {
     }
 
     /// Recent conversations, keyword matches (titles and messages, archived
-    /// ones included), or the archive itself.
+    /// ones included), or the archive itself: the first page of
+    /// [`Self::conversation_pages`].
     pub async fn conversations(
         &self,
         project: &str,
         query: &str,
         archived: bool,
     ) -> Result<ConversationList> {
+        self.conversation_pages(project, query, archived, 1).await
+    }
+
+    /// The first `pages` pages of [`CONVERSATION_PAGE`] conversations each,
+    /// newest first; `more` says whether older ones were left out. While
+    /// browsing, a pinned conversation is listed even when it is older than
+    /// the pages, as the WebView lists it on its first page.
+    pub async fn conversation_pages(
+        &self,
+        project: &str,
+        query: &str,
+        archived: bool,
+        pages: usize,
+    ) -> Result<ConversationList> {
         let query = query.trim();
+        let wanted = pages.max(1).saturating_mul(CONVERSATION_PAGE);
         let mut grouped = HashMap::new();
         let mut branched = HashMap::new();
+        let mut more = false;
+        let pinned: Vec<String> = self
+            .0
+            .store
+            .list_pinned_sessions(project)
+            .await?
+            .into_iter()
+            .map(|(id, ..)| id)
+            .collect();
         let rows: Vec<SessionSearchInfo> = if archived {
-            self.0
+            let mut page = self
+                .0
                 .store
-                .list_sessions_page_with_visibility(project, None, 100, Some(true), query)
-                .await?
-                .into_iter()
+                .list_sessions_page_with_visibility(
+                    project,
+                    None,
+                    wanted.saturating_add(1),
+                    Some(true),
+                    query,
+                )
+                .await?;
+            more = page.len() > wanted;
+            page.truncate(wanted);
+            page.into_iter()
                 .map(|(id, title, ts, folder, source)| {
                     if let Some(folder) = folder {
                         grouped.insert(id.clone(), folder);
@@ -1977,9 +2067,47 @@ impl Server {
                 })
                 .collect()
         } else {
-            let rows = self
-                .session_rows(Some(project), query, !query.is_empty())
-                .await?;
+            let archived_too = !query.is_empty();
+            let mut rows: Vec<SessionSearchInfo> = Vec::new();
+            let mut seen = HashSet::new();
+            let mut offset = 0;
+            loop {
+                let page = self
+                    .session_rows_window(
+                        Some(project),
+                        query,
+                        archived_too,
+                        offset,
+                        CONVERSATION_PAGE,
+                    )
+                    .await?;
+                let full = page.len() == CONVERSATION_PAGE;
+                // A conversation that moved up while the pages were read is
+                // listed once.
+                rows.extend(page.into_iter().filter(|row| seen.insert(row.id.clone())));
+                offset += CONVERSATION_PAGE;
+                if !full {
+                    break;
+                }
+                if offset >= wanted {
+                    more = !self
+                        .session_rows_window(Some(project), query, archived_too, offset, 1)
+                        .await?
+                        .is_empty();
+                    break;
+                }
+            }
+            if query.is_empty() {
+                for id in &pinned {
+                    if seen.contains(id) {
+                        continue;
+                    }
+                    if let Some(row) = self.session_row(project, id).await? {
+                        seen.insert(row.id.clone());
+                        rows.push(row);
+                    }
+                }
+            }
             let listed: HashSet<&str> = rows.iter().map(|row| row.id.as_str()).collect();
             for (id, _, _, folder, source) in self.0.store.list_sessions(project).await? {
                 if !listed.contains(id.as_str()) {
@@ -2002,14 +2130,6 @@ impl Server {
             .into_iter()
             .map(|(id, name, _)| Folder { id, name })
             .collect();
-        let pinned = self
-            .0
-            .store
-            .list_pinned_sessions(project)
-            .await?
-            .into_iter()
-            .map(|(id, ..)| id)
-            .collect();
         let dispatched = self.0.store.list_dispatched_sessions(project).await?;
         Ok(ConversationList {
             rows,
@@ -2018,6 +2138,7 @@ impl Server {
             grouped,
             branched,
             dispatched,
+            more,
         })
     }
 
@@ -2144,6 +2265,36 @@ impl Server {
             }
             Err(error) => Err(error.into()),
         }
+    }
+
+    /// Deletes every note of the project's memory, as "Clear all" on the
+    /// WebView's Memory page does: the Markdown notes directly inside the
+    /// project's memory folder (`.wisp/memory`). Habits, which apply in every
+    /// project, and other projects' notes are left alone. Returns how many
+    /// notes were deleted; a project without a memory folder has none.
+    pub async fn clear_memory_notes(&self, project: &str) -> Result<usize> {
+        let _admission = self.0.admission.read().await;
+        let root = std::path::PathBuf::from(self.project_root(project).await?);
+        let dir = wisp_core::MemoryManager::at(&root).dir().to_owned();
+        let mut entries = match tokio::fs::read_dir(&dir).await {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(error.into()),
+        };
+        let mut removed = 0;
+        while let Some(entry) = entries.next_entry().await? {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            // Only what the Memory tab lists as a note; a folder is not one.
+            if memory_note_name(&name).is_err() || entry.file_type().await?.is_dir() {
+                continue;
+            }
+            tokio::fs::remove_file(entry.path()).await?;
+            removed += 1;
+        }
+        if removed > 0 {
+            self.memory_changed(project).await?;
+        }
+        Ok(removed)
     }
 
     /// Project notes are research state other devices sync.
@@ -4293,6 +4444,49 @@ impl Server {
             .collect())
     }
 
+    /// The files each turn of a conversation recorded as artifacts, oldest
+    /// turn first, each with the turn's last tool call so it can be shown
+    /// under the answer that closes that turn, as the WebView shows a
+    /// reply's generated files. A version deleted since is left out; one a
+    /// later turn wrote again is marked. Turns from before the host kept
+    /// this have none.
+    pub async fn reply_artifacts(
+        &self,
+        project: &str,
+        session: &str,
+    ) -> Result<Vec<ReplyArtifact>> {
+        self.own_conversation(project, session).await?;
+        let store = &self.0.store;
+        let mut rows = Vec::new();
+        for saved in store.load_session_ui_events(session).await? {
+            let Ok(event) = serde_json::from_str::<crate::output::ArtifactsEvent>(&saved) else {
+                continue;
+            };
+            if event.kind != crate::output::ARTIFACTS_EVENT {
+                continue;
+            }
+            for version in event.versions {
+                let Some(context) = store.get_artifact_version_context(&version).await? else {
+                    continue;
+                };
+                rows.push(ReplyArtifact {
+                    call_id: event.call_id.clone(),
+                    artifact: context.version.artifact_id,
+                    version: context.version.id,
+                    name: context.filename,
+                    kind: context.version.content_type,
+                    path: context
+                        .logical_key
+                        .as_deref()
+                        .and_then(|key| key.strip_prefix("path:"))
+                        .map(str::to_owned),
+                    superseded: false,
+                });
+            }
+        }
+        Ok(mark_superseded(rows))
+    }
+
     /// Asks a run that has not finished to stop.
     pub async fn cancel_run(&self, project: &str, run: &str) -> Result<()> {
         self.project_root(project).await?;
@@ -4335,8 +4529,8 @@ impl Server {
             .map_err(anyhow::Error::msg)
     }
 
-    /// A finished run of `project`, checked to be its own.
-    async fn own_run(&self, project: &str, run: &str) -> Result<wisp_store::RunRecord> {
+    /// A run of `project`, checked to be its own.
+    pub(crate) async fn own_run(&self, project: &str, run: &str) -> Result<wisp_store::RunRecord> {
         self.project_root(project).await?;
         let record = self.0.store.get_run(run).await?.context("Run not found")?;
         ensure!(
@@ -6441,6 +6635,38 @@ pub struct ArtifactRow {
     pub session_title: String,
 }
 
+/// A file one turn of a conversation recorded as an artifact, for the
+/// answer that closes the turn.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplyArtifact {
+    /// The turn's last tool call: the file belongs under the answer that
+    /// closes the turn this call is in.
+    pub call_id: String,
+    pub artifact: String,
+    /// The version this turn recorded.
+    pub version: String,
+    pub name: String,
+    /// MIME type.
+    pub kind: String,
+    /// Where the file is in the project, when it is a project file.
+    pub path: Option<String>,
+    /// A later turn of the conversation wrote the file again.
+    pub superseded: bool,
+}
+
+/// Marks each file a later turn of the same conversation wrote again;
+/// `rows` are in the order the turns recorded them.
+pub(crate) fn mark_superseded(mut rows: Vec<ReplyArtifact>) -> Vec<ReplyArtifact> {
+    for at in 0..rows.len() {
+        let artifact = &rows[at].artifact;
+        let again = rows[at + 1..]
+            .iter()
+            .any(|later| later.artifact == *artifact && later.call_id != rows[at].call_id);
+        rows[at].superseded = again;
+    }
+    rows
+}
+
 /// One kept version of an artifact.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArtifactVersionRow {
@@ -7322,7 +7548,7 @@ pub use crate::channels::{
     weixin::{QrMatrix, WeixinDestination, WeixinQr, WeixinScan, WeixinStatus},
     ChannelState,
 };
-pub use crate::compact::Compacted;
+pub use crate::compact::{CompactKind, Compacted};
 pub use crate::delegation::{DelegatedBatch, DelegatedTask};
 pub use crate::demos::{Demo, DemoInfo, DemoRole, DemoRow};
 pub use crate::device_bridge::{DeviceBridge, DeviceBridgeState};

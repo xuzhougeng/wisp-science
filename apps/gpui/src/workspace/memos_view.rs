@@ -435,7 +435,25 @@ impl Workspace {
                 )));
             }
             Some(memos) => {
-                for (index, memo) in memos.iter().enumerate() {
+                // As in the WebView, the search field is there once there is
+                // something to search.
+                list = list.child(
+                    Input::new(&self.memo_search)
+                        .small()
+                        .cleanable(true)
+                        .prefix(icon("search").text_color(muted)),
+                );
+                let query = self.memo_search.read(cx).value().to_string();
+                let shown = memos::shown(memos, &query);
+                if shown.is_empty() {
+                    list = list.child(
+                        div()
+                            .text_sm()
+                            .text_color(muted)
+                            .child(tr("No memos match.")),
+                    );
+                }
+                for (index, memo) in shown.into_iter().enumerate() {
                     list = list.child(self.memo_card(index, memo, cx));
                 }
             }

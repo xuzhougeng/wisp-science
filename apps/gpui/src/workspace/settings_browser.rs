@@ -3,13 +3,13 @@
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Selectable, Sizable, StyledExt,
+    ActiveTheme, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     input::Input,
 };
 use wisp_server::desktop::{BrowserHostRule, BrowserSettings};
 
-use super::{Workspace, settings_sections::setting, tone_color};
+use super::{Workspace, settings_sections::setting, surfaces::switch, tone_color};
 use crate::{
     backend::{Reply, receive},
     browser::{self, List},
@@ -194,14 +194,12 @@ impl Workspace {
                      extension, and conversations get the browser tools from their next turn. \
                      Only one Wisp can listen at a time.",
                 ),
-                Button::new("browser-enabled")
-                    .label(if enabled { tr("On") } else { tr("Off") })
-                    .small()
-                    .selected(enabled)
-                    .on_click(cx.listener(move |this, _, window, cx| {
+                switch("browser-enabled", enabled, tr("Browser tools")).on_change(cx.listener(
+                    move |this, _, window, cx| {
                         let reply = this.backend.set_browser_enabled(!enabled);
                         this.receive_browser(reply, None, window, cx);
-                    })),
+                    },
+                )),
                 cx,
             ));
         let folder = settings.extension_path.clone();

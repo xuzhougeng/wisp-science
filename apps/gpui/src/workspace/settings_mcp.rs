@@ -10,7 +10,7 @@ use gpui_component::{
 };
 use wisp_server::desktop::{McpServerInput, McpServerRow, McpTransport};
 
-use super::{Workspace, shell::glyph};
+use super::{Workspace, shell::glyph, surfaces::switch};
 use crate::{
     backend::{Reply, receive},
     layers::Layer,
@@ -407,17 +407,17 @@ impl Workspace {
             .border_color(cx.theme().border)
             .child(about)
             .child(
-                Button::new(SharedString::from(format!("mcp-enabled-{id}")))
-                    .label(if enabled { tr("On") } else { tr("Off") })
-                    .small()
-                    .selected(enabled)
-                    .flex_shrink_0()
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        let reply = this
-                            .backend
-                            .set_mcp_server_enabled(toggling.clone(), !enabled);
-                        this.change_mcp(reply, |_, _, _| {}, window, cx);
-                    })),
+                switch(
+                    SharedString::from(format!("mcp-enabled-{id}")),
+                    enabled,
+                    tr("Use this server"),
+                )
+                .on_change(cx.listener(move |this, _, window, cx| {
+                    let reply = this
+                        .backend
+                        .set_mcp_server_enabled(toggling.clone(), !enabled);
+                    this.change_mcp(reply, |_, _, _| {}, window, cx);
+                })),
             )
     }
 

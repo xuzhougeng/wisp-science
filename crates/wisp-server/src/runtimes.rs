@@ -130,6 +130,69 @@ impl Server {
             wisp_runtime::MAX_CODE_BYTES
         );
         let (manager, info, root) = self.conversation_runtime(project, session, id).await?;
+        self.check_runnable(session, code).await?;
+        let execution = manager
+            .execute(&info.key, std::path::Path::new(&root), code.to_owned())
+            .await?;
+        finish(execution, |response, _| {
+            wisp_runtime::format_response(response)
+        })
+        .await
+    }
+
+    /// Runs the saved project script `path` whole in an interpreter of its
+    /// language, as the WebView's Run script does
+    /// (`execute_runtime_script`): what is on disk is read, so the output
+    /// names the file and the digest of exactly what ran, and the
+    /// interpreter keeps what it defined. The file is read where the
+    /// interpreter works, which is the project's own folder for a
+    /// conversation of the main line; an exploration's conversation works
+    /// in a copy the Files tab does not show, so it is refused there.
+    pub async fn run_script_in_runtime(
+        &self,
+        project: &str,
+        session: &str,
+        id: &str,
+        path: &str,
+    ) -> Result<RuntimeOutput> {
+        let (manager, info, root) = self.conversation_runtime(project, session, id).await?;
+        ensure!(
+            root == self.project_root(project).await?,
+            "This conversation works in an exploration's copy of the project; run the \
+             script's code from its editor instead"
+        );
+        let script = {
+            let root = std::path::PathBuf::from(&root);
+            let path = path.to_owned();
+            let extension = info.key.language.script_extension();
+            tokio::task::spawn_blocking(move || {
+                wisp_runtime::read_project_script(&root, &path, extension)
+            })
+            .await?
+            .map_err(anyhow::Error::msg)?
+        };
+        self.check_runnable(session, &script.code).await?;
+        let execution = manager
+            .execute_with_options(
+                &info.key,
+                std::path::Path::new(&root),
+                script.code,
+                wisp_runtime::RuntimeExecutionOptions {
+                    source_name: Some(script.provenance.path.clone()),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        let provenance = script.provenance;
+        finish(execution, move |response, runtime| {
+            wisp_runtime::format_script_response(response, Some(&provenance), runtime)
+        })
+        .await
+    }
+
+    /// Refuses code while the project is frozen for an exploration, and
+    /// code an exploration's boundary does not let reach this computer.
+    async fn check_runnable(&self, session: &str, code: &str) -> Result<()> {
         let store = &self.0.store;
         let (_, scope) =
             crate::explorations::service::working_project_in(store, &self.0.config.data, session)
@@ -153,32 +216,39 @@ impl Server {
                 .check_local_source(code)
                 .map_err(anyhow::Error::msg)?;
         }
-        let mut execution = manager
-            .execute(&info.key, std::path::Path::new(&root), code.to_owned())
-            .await?;
-        loop {
-            match execution.recv().await {
-                Some(RuntimeEvent::Stdout(_)) => {}
-                Some(RuntimeEvent::Finished(result)) => {
-                    let response = result.map_err(anyhow::Error::msg)?;
-                    use base64::Engine as _;
-                    // A plot that cannot be read is left out.
-                    let plots = response
-                        .plots
-                        .iter()
-                        .filter_map(|plot| {
-                            base64::engine::general_purpose::STANDARD
-                                .decode(plot.trim())
-                                .ok()
-                        })
-                        .collect();
-                    return Ok(RuntimeOutput {
-                        text: wisp_runtime::format_response(&response),
-                        plots,
-                    });
-                }
-                None => bail!("The interpreter ended before returning a result"),
+        Ok(())
+    }
+}
+
+/// Waits for one run to end; returns what it printed, worded by `format`,
+/// and its plots.
+async fn finish(
+    mut execution: wisp_runtime::RuntimeExecution,
+    format: impl FnOnce(&wisp_runtime::KernelResp, &RuntimeInfo) -> String,
+) -> Result<RuntimeOutput> {
+    let runtime = execution.info().clone();
+    loop {
+        match execution.recv().await {
+            Some(RuntimeEvent::Stdout(_)) => {}
+            Some(RuntimeEvent::Finished(result)) => {
+                let response = result.map_err(anyhow::Error::msg)?;
+                use base64::Engine as _;
+                // A plot that cannot be read is left out.
+                let plots = response
+                    .plots
+                    .iter()
+                    .filter_map(|plot| {
+                        base64::engine::general_purpose::STANDARD
+                            .decode(plot.trim())
+                            .ok()
+                    })
+                    .collect();
+                return Ok(RuntimeOutput {
+                    text: format(&response, &runtime),
+                    plots,
+                });
             }
+            None => bail!("The interpreter ended before returning a result"),
         }
     }
 }
@@ -223,6 +293,120 @@ mod tests {
             .contains("bytes"));
         assert!(server
             .runtime_objects("other", &session, "missing")
+            .await
+            .is_err());
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn a_saved_script_runs_whole_from_disk_and_only_from_inside_the_project() {
+        /// Says what it was given to run and under which file name.
+        struct Echo;
+        #[async_trait::async_trait]
+        impl wisp_runtime::RuntimeKernel for Echo {
+            async fn execute(
+                &mut self,
+                _: &str,
+                code: &str,
+                source: Option<&str>,
+                _: &[String],
+                _: &wisp_runtime::RuntimeOutput,
+            ) -> Result<wisp_runtime::KernelResp> {
+                Ok(wisp_runtime::KernelResp {
+                    stdout: format!("{source:?}|{code}"),
+                    ..Default::default()
+                })
+            }
+            async fn inspect(&mut self, _: &str) -> Result<RuntimeObjectList> {
+                Ok(Default::default())
+            }
+            async fn shutdown(&mut self) -> Result<()> {
+                Ok(())
+            }
+        }
+        struct Launcher;
+        #[async_trait::async_trait]
+        impl wisp_runtime::RuntimeLauncher for Launcher {
+            async fn launch(
+                &self,
+                _: &RuntimeKey,
+                _: &std::path::Path,
+            ) -> Result<wisp_runtime::LaunchedRuntime> {
+                Ok(wisp_runtime::LaunchedRuntime::new(
+                    Box::new(Echo),
+                    wisp_runtime::RuntimeMetadata::default(),
+                ))
+            }
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let server = Server::open_with_models(
+            crate::tests::config(temp.path()),
+            crate::tests::models(Arc::default(), false),
+        )
+        .await
+        .unwrap();
+        let session = server.create_conversation(crate::PROJECT).await.unwrap();
+        *server.session(&session).runtime.lock().unwrap() =
+            Some(RuntimeManager::new(Arc::new(Launcher)));
+        let root = std::path::PathBuf::from(server.project_root(crate::PROJECT).await.unwrap());
+        std::fs::create_dir_all(root.join("analysis")).unwrap();
+        std::fs::write(root.join("analysis/qc.py"), "x = 1\nprint(x)\n").unwrap();
+        std::fs::write(root.join("analysis/plot.R"), "plot(1)\n").unwrap();
+        let id = server
+            .start_runtime(crate::PROJECT, &session, RuntimeLanguage::Python)
+            .await
+            .unwrap();
+
+        // The whole file as it is on disk, named by its path, with the
+        // digest of what ran.
+        let output = server
+            .run_script_in_runtime(crate::PROJECT, &session, &id, "analysis/qc.py")
+            .await
+            .unwrap();
+        assert!(
+            output
+                .text
+                .starts_with("[runtime script] path=analysis/qc.py sha256="),
+            "{}",
+            output.text
+        );
+        assert!(
+            output
+                .text
+                .ends_with("Some(\"analysis/qc.py\")|x = 1\nprint(x)\n"),
+            "{}",
+            output.text
+        );
+
+        // Only a script of the interpreter's own language, inside the
+        // project, and there.
+        for path in [
+            "analysis/plot.R",
+            "analysis/missing.py",
+            "../outside.py",
+            "analysis",
+        ] {
+            assert!(
+                server
+                    .run_script_in_runtime(crate::PROJECT, &session, &id, path)
+                    .await
+                    .is_err(),
+                "{path}"
+            );
+        }
+        #[cfg(unix)]
+        {
+            let elsewhere = tempfile::tempdir().unwrap();
+            std::fs::write(elsewhere.path().join("secret.py"), "print('out')\n").unwrap();
+            std::os::unix::fs::symlink(elsewhere.path().join("secret.py"), root.join("link.py"))
+                .unwrap();
+            assert!(server
+                .run_script_in_runtime(crate::PROJECT, &session, &id, "link.py")
+                .await
+                .is_err());
+        }
+        assert!(server
+            .run_script_in_runtime(crate::PROJECT, &session, "missing", "analysis/qc.py")
             .await
             .is_err());
         server.shutdown().await;

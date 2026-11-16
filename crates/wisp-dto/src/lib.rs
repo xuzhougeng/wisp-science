@@ -35,6 +35,7 @@ pub mod project_browser;
 mod project_chat_search;
 pub mod remote_access;
 pub mod research_checklist;
+pub mod source_run;
 pub mod specialist_package;
 pub use project_chat_search::*;
 mod decision_model;
@@ -5529,6 +5530,12 @@ pub struct RunRecord {
     pub cleaned_at: Option<i64>,
     #[serde(default)]
     pub cleanup_error: Option<String>,
+    /// The user moved this Run, which has not ended, to the background: no
+    /// turn waits on it and its conversation gets a message when it ends.
+    /// Only the GPUI host's snapshot run cards carry it; elsewhere it is
+    /// absent and reads as false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub background_requested: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]

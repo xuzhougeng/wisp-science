@@ -97,16 +97,12 @@ pub(crate) fn memo_heading(memo: &ProjectMemo) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Case-insensitive match on title and body.
+/// Case-insensitive match on title and body (`ProjectMemo::matches`, which
+/// the GPUI desktop's memo search uses too).
 pub(crate) fn filter_memos(memos: &[ProjectMemo], query: &str) -> Vec<ProjectMemo> {
-    let query = query.trim().to_lowercase();
     memos
         .iter()
-        .filter(|memo| {
-            query.is_empty()
-                || memo.title.to_lowercase().contains(&query)
-                || memo.body.to_lowercase().contains(&query)
-        })
+        .filter(|memo| memo.matches(query))
         .cloned()
         .collect()
 }

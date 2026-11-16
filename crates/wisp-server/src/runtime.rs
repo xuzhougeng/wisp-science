@@ -561,7 +561,7 @@ pub async fn build(
     }
     // Context the user attached to this turn only. It goes in front of
     // their request and is not saved with the conversation.
-    for injection in reference_context(store, &skills, references).await? {
+    for injection in reference_context(store, &skills, references, frame, &root).await? {
         agent.ctx.inject_user(injection);
     }
     // A lab member's agent is told about the lab every turn.
@@ -677,7 +677,8 @@ pub(crate) fn session_runtimes(
 /// Records the files a turn wrote as artifacts of its conversation: one
 /// artifact per project path, with a new version each time it is rewritten.
 /// The same identity and snapshot rules as the WebView desktop. A file that
-/// cannot be recorded is skipped; it never fails the turn.
+/// cannot be recorded is skipped; it never fails the turn. Returns the
+/// versions it recorded, in order.
 pub(crate) async fn record_artifacts(
     store: &Store,
     project: &str,
@@ -685,9 +686,10 @@ pub(crate) async fn record_artifacts(
     root: &std::path::Path,
     frame: &str,
     written: Vec<String>,
-) {
+) -> Vec<String> {
+    let mut recorded = Vec::new();
     let Ok(root) = tokio::fs::canonicalize(root).await else {
-        return;
+        return recorded;
     };
     let mut seen = std::collections::HashSet::new();
     for path in written {
@@ -760,10 +762,14 @@ pub(crate) async fn record_artifacts(
             materialization: captured.materialization,
             capture_timing: wisp_store::ArtifactCaptureTiming::AtCreation,
         };
-        if let Err(error) = store.save_artifact_version(&draft).await {
-            tracing::warn!(%error, path = %relative, "Could not record an artifact");
+        match store.save_artifact_version(&draft).await {
+            Ok(version) => recorded.push(version),
+            Err(error) => {
+                tracing::warn!(%error, path = %relative, "Could not record an artifact")
+            }
         }
     }
+    recorded
 }
 
 /// Most of a referenced conversation that is passed along, newest kept.
@@ -814,17 +820,86 @@ async fn conversation_excerpt(store: &Store, id: &str) -> Result<String> {
     ))
 }
 
+/// An artifact a message was sent with, as the WebView lists it for the
+/// model: its name and where its file is now, in the conversation's state
+/// (an exploration's own copy, or the project). One that is gone, hidden
+/// from this state or no longer readable fails the send.
+async fn artifact_line(store: &Store, id: &str, frame: &str, root: &Path) -> Result<String> {
+    use anyhow::Context;
+    let artifact = store
+        .get_artifact_detail(id)
+        .await?
+        .with_context(|| format!("Attached artifact '{id}' no longer exists."))?;
+    let scope = store
+        .frame_state_scope(frame)
+        .await?
+        .context("Target conversation not found.")?;
+    let unavailable =
+        || anyhow::anyhow!("Attached artifact '{id}' is unavailable in the active state.");
+    anyhow::ensure!(
+        store.artifact_visible_in_scope(id, &scope).await?,
+        unavailable()
+    );
+    let path = store
+        .artifact_path_in_scope(id, &scope)
+        .await?
+        .ok_or_else(unavailable)?;
+    let base = match scope {
+        wisp_store::StateScope::Exploration { .. } => root.to_path_buf(),
+        _ => PathBuf::from(&artifact.project_root),
+    };
+    let real = wisp_tools::safety::validate_file_path(&base, &path)
+        .ok()
+        .filter(|real| real.is_file())
+        .with_context(|| {
+            format!(
+                "Attached artifact '{}' is no longer readable.",
+                artifact.name
+            )
+        })?;
+    Ok(format!("- {}: {}", artifact.name, real.display()))
+}
+
 /// Turns the composer's references into context for one turn. A reference
 /// that cannot be honoured fails the send instead of being dropped silently.
+/// What each kind tells the model is the WebView's; an environment or a
+/// runtime named here is also attached to the conversation, so its work may
+/// run there, as the WebView does.
 async fn reference_context(
     store: &Store,
     skills: &SkillIndex,
     references: &[wisp_dto::ComposerReferenceArg],
+    frame: &str,
+    root: &Path,
 ) -> Result<Vec<String>> {
+    use anyhow::Context;
     use wisp_dto::ComposerReferenceArg as Reference;
+    use wisp_store::ExecutionContextKind;
     let mut seen = std::collections::HashSet::new();
     let mut conversations = Vec::new();
+    let mut artifact_lines = Vec::new();
+    let mut context_lines = Vec::new();
+    let mut runtime_lines = Vec::new();
     let mut skill_blocks = Vec::new();
+    let mut workflow_blocks = Vec::new();
+    // Environments to attach once every reference was found.
+    let mut attach = Vec::new();
+    let environment = |id: &str| {
+        let id = id.to_owned();
+        async move {
+            store
+                .get_execution_context(&id)
+                .await?
+                .with_context(|| format!("Referenced environment '{id}' no longer exists."))
+        }
+    };
+    let label = |context: &wisp_store::ExecutionContext| {
+        if context.label.trim().is_empty() {
+            context.id.clone()
+        } else {
+            context.label.clone()
+        }
+    };
     for reference in references {
         match reference {
             Reference::Skill { name } => {
@@ -840,8 +915,85 @@ async fn reference_context(
                     conversations.push(conversation_excerpt(store, id).await?);
                 }
             }
-            _ => anyhow::bail!("This kind of reference is not available in this build yet"),
+            Reference::Artifact { id } => {
+                if seen.insert(format!("artifact:{id}")) {
+                    artifact_lines.push(artifact_line(store, id, frame, root).await?);
+                }
+            }
+            Reference::Context { id } => {
+                if seen.insert(format!("context:{id}")) {
+                    let context = environment(id).await?;
+                    context_lines.push(format!(
+                        "- {} (context_id: {id}, kind: {})",
+                        label(&context),
+                        context.kind.as_str()
+                    ));
+                    attach.push(context);
+                }
+            }
+            Reference::Runtime {
+                context_id,
+                language,
+            } => {
+                if seen.insert(format!("runtime:{context_id}:{language}")) {
+                    anyhow::ensure!(
+                        language == "python" || language == "r",
+                        "Unknown runtime language '{language}'."
+                    );
+                    let context = environment(context_id).await?;
+                    // This host keeps its interpreters on this computer.
+                    anyhow::ensure!(
+                        context.kind == ExecutionContextKind::Local,
+                        "The {language} runtime on '{}' cannot be used here: Python and R run on \
+                         this computer.",
+                        label(&context)
+                    );
+                    runtime_lines.push(format!(
+                        "- {language} runtime on {} (context_id: {context_id}): call the \
+                         `{language}` tool with this context_id.",
+                        label(&context)
+                    ));
+                }
+            }
+            Reference::Workflow { id } => {
+                if seen.insert(format!("workflow:{id}")) {
+                    workflow_blocks.push(crate::workflows::reference(store, id).await?);
+                }
+            }
+            Reference::Project { .. } => {
+                anyhow::bail!("This kind of reference is not available in this build yet")
+            }
         }
+    }
+    // Local work is always on; the store refuses to switch it.
+    for context in attach {
+        if context.kind != ExecutionContextKind::Local {
+            store
+                .set_session_execution_context_enabled(frame, &context.id, true)
+                .await?;
+        }
+    }
+    if !artifact_lines.is_empty() {
+        conversations.push(format!(
+            "The user explicitly attached these local artifacts for this turn. Read them when \
+             relevant:\n{}",
+            artifact_lines.join("\n")
+        ));
+    }
+    if !context_lines.is_empty() {
+        conversations.push(format!(
+            "The user directed this request at these execution contexts. Run this turn's work \
+             there — submit commands with `run_in_context` using the context id:\n{}",
+            context_lines.join("\n")
+        ));
+    }
+    if !runtime_lines.is_empty() {
+        conversations.push(format!(
+            "The user referenced these persistent language runtimes. Each keeps its variables \
+             between calls, so inspect state directly (R: `ls()`, `str(x)`; Python: `dir()`, \
+             `type(x)`) instead of re-running earlier work:\n{}",
+            runtime_lines.join("\n")
+        ));
     }
     if !skill_blocks.is_empty() {
         conversations.push(format!(
@@ -849,6 +1001,7 @@ async fn reference_context(
             skill_blocks.join("\n\n")
         ));
     }
+    conversations.extend(workflow_blocks);
     Ok(conversations)
 }
 
@@ -1007,6 +1160,8 @@ pub async fn run(
     scope: TurnScope,
 ) -> Result<()> {
     let start_seq = store.max_message_seq(&request.session_id).await?;
+    // Where this turn's messages start among the live ones.
+    let first_message = session.live.lock().unwrap().messages.len();
     let (tx, persist) = persisting(&store, &request.session_id, &session).await?;
     let artifact_project = project.clone();
     let scope_key = scope.state.scope_key().to_owned();
@@ -1138,7 +1293,7 @@ pub async fn run(
     }
     // Whatever the turn's outcome, the files it wrote exist and are its work.
     let written = std::mem::take(&mut session.live.lock().unwrap().written);
-    record_artifacts(
+    let recorded = record_artifacts(
         &store,
         &artifact_project,
         &scope_key,
@@ -1147,6 +1302,29 @@ pub async fn run(
         written,
     )
     .await;
+    // And under which answer they belong: after the turn's last tool call.
+    let call = {
+        let live = session.live.lock().unwrap();
+        live.messages
+            .get(first_message..)
+            .and_then(crate::output::last_call)
+    };
+    if let (false, Some(call_id)) = (recorded.is_empty(), call) {
+        let event = crate::output::ArtifactsEvent {
+            kind: crate::output::ARTIFACTS_EVENT.into(),
+            call_id,
+            versions: recorded,
+        };
+        let saved = async {
+            let seq = store.next_session_ui_event_seq(&request.session_id).await?;
+            store
+                .append_session_ui_event(&request.session_id, seq, &serde_json::to_string(&event)?)
+                .await
+        };
+        if let Err(error) = saved.await {
+            tracing::warn!(%error, "Could not keep which answer the turn's artifacts belong to");
+        }
+    }
     if let Some(compacted) = agent.ctx.last_compaction() {
         store
             .open_context_epoch(
@@ -1243,9 +1421,11 @@ impl From<&wisp_store::RunRecord> for RunState {
 }
 
 /// The run a tool row started: the run tools answer with the run's record.
+/// Whether the call succeeded or waited (`wait_for_completion`) on a run that
+/// then failed, as the WebView links them; a submission refused before any
+/// run started names none.
 fn submitted_run_id(item: &Item) -> Option<String> {
     if item.role != "tool"
-        || item.ok != Some(true)
         || !matches!(
             item.tool_name.as_deref(),
             Some("run_in_context" | "wisp_run_in_context" | "transfer_between_contexts")
@@ -1330,23 +1510,36 @@ pub(crate) fn annotate_plans(items: &mut [Item]) {
     }
 }
 
-/// Puts each kept review (`through`, the seq of the last message it read,
-/// and its report) after the rows of that message, as the WebView places
-/// them. `seqs` are the seqs of `messages`, in order; a review is a
-/// `review` row whose text is its report.
-pub(crate) fn place_reviews(
+/// Each kept review (`through`, the seq of the last message it read, and
+/// its report) as a `review` row whose text is its report, to go after the
+/// rows of that message (`place_after`), as the WebView places them.
+pub(crate) fn review_rows(reviews: &[(i64, String)]) -> Vec<(i64, Item)> {
+    reviews
+        .iter()
+        .map(|(through, report)| {
+            let mut row = item("review", report);
+            row.seq = Some(*through);
+            (*through, row)
+        })
+        .collect()
+}
+
+/// Puts each row after the rows of the last message whose seq is at most
+/// its own (`through`). `seqs` are the seqs of `messages`, in order, and
+/// `items` were folded from them (and may go on past them). Rows after
+/// the same message keep the order they are given in.
+pub(crate) fn place_after(
     items: &mut Vec<Item>,
     seqs: &[i64],
     messages: &[Message],
-    reviews: &[(i64, String)],
+    mut rows: Vec<(i64, Item)>,
 ) {
+    rows.sort_by_key(|(through, _)| *through);
     let mut inserted = 0;
-    for (through, report) in reviews {
-        let read = seqs.iter().take_while(|seq| **seq <= *through).count();
+    for (through, row) in rows {
+        let read = seqs.iter().take_while(|seq| **seq <= through).count();
         let at =
             (self::items(&messages[..read.min(messages.len())]).len() + inserted).min(items.len());
-        let mut row = item("review", report);
-        row.seq = Some(*through);
         items.insert(at, row);
         inserted += 1;
     }
@@ -1516,11 +1709,11 @@ mod tests {
         ];
         let seqs = [11, 12, 13, 14];
         let mut rows = items(&messages);
-        place_reviews(
+        place_after(
             &mut rows,
             &seqs,
             &messages,
-            &[(12, "first".into()), (14, "second".into())],
+            review_rows(&[(12, "first".into()), (14, "second".into())]),
         );
         let shape: Vec<_> = rows
             .iter()
@@ -1538,6 +1731,48 @@ mod tests {
             ]
         );
         assert_eq!(rows[2].seq, Some(12));
+    }
+
+    #[test]
+    fn a_compaction_row_goes_after_the_rows_of_the_last_message_before_it() {
+        let messages = [
+            Message::user("count the reads"),
+            Message::assistant("100"),
+            Message::user("and the adapters?"),
+            Message::assistant("none"),
+        ];
+        let seqs = [11, 12, 20, 21];
+        let mut rows = items(&messages);
+        // The compaction read through 15 (its own rows took 13..=15), and
+        // a review read through 12; the review comes first after 12, and
+        // the compaction is still before the next question.
+        let mut rows_to_place = review_rows(&[(12, "first".into())]);
+        rows_to_place.insert(0, (15, item("compaction", "{}")));
+        place_after(&mut rows, &seqs, &messages, rows_to_place);
+        let shape: Vec<_> = rows.iter().map(|row| row.role.as_str()).collect();
+        assert_eq!(
+            shape,
+            [
+                "user",
+                "assistant",
+                "review",
+                "compaction",
+                "user",
+                "assistant"
+            ]
+        );
+        // One after the last saved message goes after it and before what a
+        // running turn has added since, which has no seq yet.
+        let mut rows = items(&messages);
+        rows.push(item("assistant", "still writing"));
+        place_after(
+            &mut rows,
+            &seqs,
+            &messages,
+            vec![(21, item("compaction", "{}"))],
+        );
+        assert_eq!(rows[4].role, "compaction");
+        assert_eq!(rows[5].text, "still writing");
     }
 
     #[test]
@@ -1659,6 +1894,12 @@ mod tests {
             row.ok = Some(ok);
             row
         };
+        let refused = || {
+            let mut row = item("tool", "run_in_context error: context not selected");
+            row.tool_name = Some("run_in_context".into());
+            row.ok = Some(false);
+            row
+        };
         let watched = |input: &str| {
             let mut row = item("tool", "still running");
             row.tool_name = Some("monitor_run".into());
@@ -1672,6 +1913,7 @@ mod tests {
             started("r2", true),
             started("r3", false),
             watched("r1"),
+            refused(),
         ];
         let run = |id: &str, frame: &str, status: &str| RunState {
             id: id.into(),
@@ -1701,9 +1943,12 @@ mod tests {
                 Some(("r1", "running", Some(1))),
                 // Another conversation's run is not this one's to show.
                 None,
-                // A run call that failed started nothing.
-                None,
+                // A call that waited on its run, which failed, still
+                // started it, as the WebView links it.
+                Some(("r3", "failed", Some(4))),
                 Some(("r1", "running", Some(1))),
+                // A submission refused before any run started names none.
+                None,
             ]
         );
     }

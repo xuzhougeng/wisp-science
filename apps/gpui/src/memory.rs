@@ -144,6 +144,34 @@ pub fn summary(view: &MemoryView) -> String {
     crate::i18n::fill(tr("{} here, {} everywhere."), &[&notes, &habits])
 }
 
+/// How many notes, in words: 1 note, 3 notes.
+fn notes(count: usize) -> String {
+    match count {
+        1 => tr("1 note").into(),
+        n => crate::i18n::fill(tr("{} notes"), &[&n]),
+    }
+}
+
+/// The question before Clear all: what goes (every note of this project's
+/// memory, by count and folder), that it is for good, and what stays.
+pub fn clear_question(count: usize) -> String {
+    crate::i18n::fill(
+        tr(
+            "All of this project's memory notes ({}, in .wisp/memory) will be deleted. \
+            This cannot be undone. Habits apply in every project and are kept.",
+        ),
+        &[&notes(count)],
+    )
+}
+
+/// What is said once Clear all has run.
+pub fn cleared(count: usize) -> String {
+    match count {
+        0 => tr("This project's memory had no notes to delete.").into(),
+        n => crate::i18n::fill(tr("Deleted {} from this project's memory."), &[&notes(n)]),
+    }
+}
+
 /// How many habits, in words: 1 habit, 3 habits.
 pub fn habits(count: usize) -> String {
     match count {
@@ -297,6 +325,19 @@ mod tests {
         assert_eq!(summary(&view(0, 0)), "no notes here, no habits everywhere.");
         assert_eq!(summary(&view(1, 1)), "1 note here, 1 habit everywhere.");
         assert_eq!(summary(&view(3, 2)), "3 notes here, 2 habits everywhere.");
+    }
+
+    #[test]
+    fn clearing_says_what_goes_for_good_and_what_stays() {
+        assert_eq!(
+            clear_question(3),
+            "All of this project's memory notes (3 notes, in .wisp/memory) will be deleted. \
+             This cannot be undone. Habits apply in every project and are kept."
+        );
+        assert!(clear_question(1).contains("(1 note, in .wisp/memory)"));
+        assert_eq!(cleared(1), "Deleted 1 note from this project's memory.");
+        assert_eq!(cleared(4), "Deleted 4 notes from this project's memory.");
+        assert_eq!(cleared(0), "This project's memory had no notes to delete.");
     }
 
     #[test]

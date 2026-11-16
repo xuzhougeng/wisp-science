@@ -8,7 +8,7 @@ use gpui_component::{
     button::{Button, ButtonVariants},
 };
 
-use super::{Workspace, shell::glyph};
+use super::{Workspace, shell::glyph, surfaces};
 use crate::{assets::icon, backend::receive, compose::Pending, controls, queue};
 use wisp_dto::native_conversations::SendRequest;
 use wisp_server::desktop::QueuedMessage;
@@ -17,6 +17,9 @@ impl Workspace {
     /// Hands what is typed, and what is attached to it, to the host, which
     /// sends it when the running turn ends.
     pub(super) fn enqueue(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only().is_some() {
+            return;
+        }
         let selection = self.state.selection();
         let (Some(project), Some(session)) = (selection.project.clone(), selection.session.clone())
         else {
@@ -210,20 +213,29 @@ impl Workspace {
                 let Some(queued) = taken else {
                     return;
                 };
-                // A conversation it referred to is named as the sidebar
-                // names it.
-                let titles: Vec<(String, String)> = this
-                    .sessions
-                    .iter()
-                    .map(|row| (row.id.clone(), row.title.clone()))
-                    .collect();
-                let carried = Pending::from_sent(&queued.attachments, &queued.references, |id| {
-                    titles
-                        .iter()
-                        .find(|(known, _)| known == id)
-                        .map(|(_, title)| title.clone())
-                        .unwrap_or_else(|| tr("Conversation").into())
-                });
+                // What it referred to is named as the sidebar, the
+                // Artifacts tab and the workflow library name it.
+                let carried =
+                    Pending::from_sent(&queued.attachments, &queued.references, |reference| {
+                        match reference {
+                            wisp_dto::ComposerReferenceArg::Session { id } => this
+                                .sessions
+                                .iter()
+                                .find(|row| &row.id == id)
+                                .map(|row| row.title.clone()),
+                            wisp_dto::ComposerReferenceArg::Artifact { id } => this
+                                .artifacts
+                                .iter()
+                                .find(|row| &row.id == id)
+                                .map(|row| row.name.clone()),
+                            wisp_dto::ComposerReferenceArg::Workflow { id } => this
+                                .workflows
+                                .iter()
+                                .find(|workflow| &workflow.id == id)
+                                .map(|workflow| workflow.name.clone()),
+                            _ => None,
+                        }
+                    });
                 this.state.save_draft(queued.message.clone());
                 this.composer
                     .update(cx, |input, cx| input.set_value(queued.message, window, cx));
@@ -239,7 +251,11 @@ impl Workspace {
 
     /// What waits in the open conversation, above the composer; nothing
     /// when nothing waits.
-    pub(super) fn queue_strip(&self, running: bool, cx: &mut Context<Self>) -> Option<Div> {
+    pub(super) fn queue_strip(
+        &self,
+        running: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<Stateful<Div>> {
         self.state.session.as_ref()?;
         let waiting = self.waiting();
         if waiting.is_empty() {
@@ -270,7 +286,7 @@ impl Workspace {
                     .on_click(cx.listener(|this, _, window, cx| this.send_next_queued(window, cx))),
             );
         }
-        let mut strip = div().v_flex().gap_1().px_1().child(heading);
+        let mut strip = surfaces::bar("queue", cx).v_flex().gap_1().child(heading);
         for queued in waiting {
             let id = queued.id;
             // Only words can be read mid-turn; attachments wait for a turn.

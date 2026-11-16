@@ -3746,15 +3746,72 @@ impl Store {
         excluded_project_ids: &[String],
         options: SessionSearchOptions,
     ) -> Result<Vec<SessionSearchResult>> {
+        self.search_sessions_window(
+            project_id,
+            query,
+            limit,
+            0,
+            session_id,
+            preferred_project_id,
+            excluded_project_ids,
+            options,
+        )
+        .await
+    }
+
+    /// [`Self::search_sessions_with_options`] after skipping its first
+    /// `offset` results, in the same order: the page that follows a list
+    /// cut off at `limit`. A page is still at most 100 sessions.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn search_sessions_window(
+        &self,
+        project_id: Option<&str>,
+        query: &str,
+        limit: i64,
+        offset: i64,
+        session_id: Option<&str>,
+        preferred_project_id: Option<&str>,
+        excluded_project_ids: &[String],
+        options: SessionSearchOptions,
+    ) -> Result<Vec<SessionSearchResult>> {
+        self.search_sessions_rows(
+            project_id,
+            query,
+            limit.clamp(1, 100),
+            offset.max(0),
+            session_id,
+            preferred_project_id,
+            excluded_project_ids,
+            options,
+        )
+        .await
+    }
+
+    /// The search itself; `limit` is taken as given, so the projects kept
+    /// in stores of their own can each be read far enough to be merged
+    /// before a later page is cut out of them.
+    #[allow(clippy::too_many_arguments)]
+    async fn search_sessions_rows(
+        &self,
+        project_id: Option<&str>,
+        query: &str,
+        limit: i64,
+        offset: i64,
+        session_id: Option<&str>,
+        preferred_project_id: Option<&str>,
+        excluded_project_ids: &[String],
+        options: SessionSearchOptions,
+    ) -> Result<Vec<SessionSearchResult>> {
         if let Some(project_id) = project_id {
             if excluded_project_ids.iter().any(|id| id == project_id) {
                 return Ok(Vec::new());
             }
             if let Some(store) = self.route_project(project_id).await? {
-                return Box::pin(store.search_sessions_with_options(
+                return Box::pin(store.search_sessions_rows(
                     Some(project_id),
                     query,
                     limit,
+                    offset,
                     session_id,
                     preferred_project_id,
                     excluded_project_ids,
@@ -3767,10 +3824,11 @@ impl Store {
             let q = query.trim().to_lowercase();
             let pattern = format!("%{q}%");
             for store in stores {
-                let matches = Box::pin(store.search_sessions_with_options(
+                let matches = Box::pin(store.search_sessions_rows(
                     project_id,
                     query,
-                    limit,
+                    offset.saturating_add(limit),
+                    0,
                     session_id,
                     preferred_project_id,
                     excluded_project_ids,
@@ -3793,8 +3851,12 @@ impl Store {
                     .then(b.2.cmp(&a.2))
                     .then(b.0.id.cmp(&a.0.id))
             });
-            ranked.truncate(limit.clamp(1, 100) as usize);
-            return Ok(ranked.into_iter().map(|(row, _, _)| row).collect());
+            return Ok(ranked
+                .into_iter()
+                .skip(offset as usize)
+                .take(limit as usize)
+                .map(|(row, _, _)| row)
+                .collect());
         }
         let q = query.trim().to_lowercase();
         let pattern = format!("%{q}%");
@@ -3834,7 +3896,7 @@ impl Store {
                     AND lower(COALESCE(m.content,'')) LIKE ?)) \
              ORDER BY CASE WHEN ? IS NOT NULL AND s.project_id=? THEN 0 ELSE 1 END, \
                 CASE WHEN ?='' OR lower(COALESCE(NULLIF(s.custom_title,''), s.first_user, '')) LIKE ? THEN 0 ELSE 1 END, \
-                s.activity_at DESC, s.frame_rowid DESC LIMIT ?",
+                s.activity_at DESC, s.frame_rowid DESC LIMIT ? OFFSET ?",
             listable = format!("({}) AND ({})", self.session_listable_sql().await?,
                 self.session_shelved_sql(shelved_filter).await?),
         );
@@ -3851,7 +3913,8 @@ impl Store {
             .bind(preferred_project_id)
             .bind(&q)
             .bind(&pattern)
-            .bind(limit.clamp(1, 100))
+            .bind(limit)
+            .bind(offset)
             .fetch_all(&self.pool)
             .await?;
         rows.into_iter()

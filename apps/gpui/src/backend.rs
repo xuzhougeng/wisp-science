@@ -7,7 +7,7 @@ use serde_json::Value;
 use tokio::{runtime::Runtime, sync::OnceCell, task::JoinHandle};
 use wisp_dto::{
     SessionSearchInfo,
-    native_conversations::{SendAccepted, SendRequest},
+    native_conversations::{SendAccepted, SendRequest, Snapshot},
     native_files::{Directory, Preview},
     remote_access::RemoteRequest,
 };
@@ -85,6 +85,9 @@ impl Backend {
                 // Background task batches the app closed on are settled, and
                 // results not yet delivered reach their conversations.
                 server.start_batch_deliveries();
+                // Runs moved to the background before the app closed are
+                // reported to their conversations when they end.
+                server.start_background_run_notices();
                 Ok::<_, String>(server)
             })
             .await?;
@@ -113,6 +116,22 @@ impl Backend {
             let value = host.dispatch(request).await?;
             serde_json::from_value(value).map_err(|e| e.to_string())
         })
+    }
+
+    /// A page of a conversation: the newest one, or the one before
+    /// `before`. GPUI draws the host's compaction rows, so it asks for them;
+    /// every snapshot it reads goes through here.
+    pub fn snapshot(
+        &self,
+        project: Option<String>,
+        session: Option<String>,
+        before: Option<i64>,
+    ) -> Reply<Snapshot> {
+        self.request(
+            "native_conversation_snapshot",
+            project,
+            snapshot_args(session.as_deref(), before),
+        )
     }
 
     /// Runs a desktop-only host operation. These are direct method calls and
@@ -238,6 +257,22 @@ impl Backend {
         self.local(
             move |host| async move { host.rename_project_entry(&project, &path, &name).await },
         )
+    }
+
+    /// Saves an edit of a project file: with `original`, only while the
+    /// file still holds that text (otherwise the reply says it changed on
+    /// disk and nothing is written); without it, over whatever is there.
+    pub fn save_project_file(
+        &self,
+        project: String,
+        path: String,
+        original: Option<String>,
+        text: String,
+    ) -> Reply<wisp_server::desktop::FileSave> {
+        self.local(move |host| async move {
+            host.save_project_file(&project, &path, original.as_deref(), &text)
+                .await
+        })
     }
 
     /// Moves a file or folder to the project's trash; the reply is where
@@ -428,13 +463,35 @@ impl Backend {
         self.local(move |host| async move { host.remove_project(&project).await })
     }
 
+    /// The first `pages` pages of a project's conversations, or of a
+    /// search in them, or of its archive.
     pub fn conversations(
         &self,
         project: String,
         query: String,
         archived: bool,
+        pages: usize,
     ) -> Reply<ConversationList> {
-        self.local(move |host| async move { host.conversations(&project, &query, archived).await })
+        self.local(move |host| async move {
+            host.conversation_pages(&project, &query, archived, pages)
+                .await
+        })
+    }
+
+    /// The newest conversations across projects, and how the turns this
+    /// host ran since it started ended (`true` for an error), for telling
+    /// which of them just finished or failed.
+    pub fn recent_activity(
+        &self,
+        limit: usize,
+    ) -> Reply<(
+        Vec<SessionSearchInfo>,
+        std::collections::HashMap<String, bool>,
+    )> {
+        self.local(move |host| async move {
+            let recent = host.recent_conversations(limit).await?;
+            Ok((recent, host.finished_turns()))
+        })
     }
 
     pub fn rename_conversation(
@@ -658,6 +715,12 @@ impl Backend {
         self.local(move |host| async move { host.delete_memory_note(&project, &name).await })
     }
 
+    /// Deletes every note of the project's memory; habits stay. Answers how
+    /// many were deleted.
+    pub fn clear_memory_notes(&self, project: String) -> Reply<usize> {
+        self.local(move |host| async move { host.clear_memory_notes(&project).await })
+    }
+
     /// Keeps `text` for the project, or with `everywhere` as a habit.
     pub fn remember(
         &self,
@@ -780,8 +843,24 @@ impl Backend {
         })
     }
 
+    /// The files each turn of a conversation recorded, for the answers
+    /// that close those turns.
+    pub fn reply_artifacts(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<Vec<wisp_server::desktop::ReplyArtifact>> {
+        self.local(move |host| async move { host.reply_artifacts(&project, &session).await })
+    }
+
     pub fn cancel_run(&self, project: String, run: String) -> Reply<()> {
         self.local(move |host| async move { host.cancel_run(&project, &run).await })
+    }
+
+    /// Stops a turn's wait on a run without touching the run; its
+    /// conversation is told, in Chinese when `chinese`, when it ends.
+    pub fn background_run(&self, project: String, run: String, chinese: bool) -> Reply<()> {
+        self.local(move |host| async move { host.background_run(&project, &run, chinese).await })
     }
 
     /// Where a project's work keeps things on a saved SSH host.
@@ -1096,12 +1175,12 @@ impl Backend {
         self.local(move |host| async move { host.revoke_global_grant(&tool).await })
     }
 
-    /// What the model is sent for a conversation: its saved working set.
     /// Puts back what the compaction at `epoch` replaced.
     pub fn undo_compaction(&self, project: String, session: String, epoch: i64) -> Reply<()> {
         self.local(move |host| async move { host.undo_compaction(&project, &session, epoch).await })
     }
 
+    /// What the model is sent for a conversation: its saved working set.
     pub fn model_view(
         &self,
         project: String,
@@ -1297,13 +1376,62 @@ impl Backend {
         self.local(|host| async move { host.check_for_update().await })
     }
 
-    /// Compacts a conversation now.
+    /// Compacts a conversation now, the way `kind` says.
     pub fn compact_conversation(
         &self,
         project: String,
         session: String,
+        kind: wisp_server::desktop::CompactKind,
     ) -> Reply<wisp_server::desktop::Compacted> {
-        self.local(move |host| async move { host.compact_conversation(&project, &session).await })
+        self.local(
+            move |host| async move { host.compact_conversation(&project, &session, kind).await },
+        )
+    }
+
+    /// Has the conversation's model write a note to hand it off with.
+    pub fn draft_handoff(
+        &self,
+        project: String,
+        session: String,
+        instruction: Option<String>,
+    ) -> Reply<wisp_dto::native_conversations::HandoffResponse> {
+        self.local(move |host| async move {
+            host.draft_handoff(
+                &project,
+                wisp_dto::native_conversations::HandoffRequest {
+                    session_id: session,
+                    instruction,
+                },
+            )
+            .await
+        })
+    }
+
+    /// Starts a new conversation in the project with `note` as its first
+    /// message; returns it.
+    pub fn start_from_handoff(
+        &self,
+        project: String,
+        source: String,
+        note: String,
+    ) -> Reply<String> {
+        self.local(
+            move |host| async move { host.start_from_handoff(&project, &source, &note).await },
+        )
+    }
+
+    /// Starts a new conversation in the project that is sent `prompt` with
+    /// `source` referenced; returns it.
+    pub fn continue_in_new_conversation(
+        &self,
+        project: String,
+        source: String,
+        prompt: String,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.continue_in_new_conversation(&project, &source, &prompt)
+                .await
+        })
     }
 
     /// The browser tools as they stand.
@@ -1569,6 +1697,29 @@ impl Backend {
 
     pub fn delete_schedule(&self, id: String) -> Reply<()> {
         self.local(move |host| async move { host.delete_schedule(&id).await })
+    }
+
+    /// The open conversation's timer, when it has one.
+    pub fn conversation_timer(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<Option<wisp_server::desktop::ScheduleRow>> {
+        self.local(move |host| async move { host.conversation_timer(&project, &session).await })
+    }
+
+    /// Gives a conversation its timer, or changes the one it has.
+    pub fn set_conversation_timer(
+        &self,
+        project: String,
+        session: String,
+        prompt: String,
+        interval_secs: i64,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.set_conversation_timer(&project, &session, &prompt, interval_secs)
+                .await
+        })
     }
 
     /// Removes one conversation's timers; how many there were.
@@ -2115,6 +2266,20 @@ impl Backend {
         self.local(
             move |host| async move { host.run_in_runtime(&project, &session, &id, &code).await },
         )
+    }
+
+    /// Runs the saved project script `path` whole in interpreter `id`.
+    pub fn run_script_in_runtime(
+        &self,
+        project: String,
+        session: String,
+        id: String,
+        path: String,
+    ) -> Reply<wisp_server::desktop::RuntimeOutput> {
+        self.local(move |host| async move {
+            host.run_script_in_runtime(&project, &session, &id, &path)
+                .await
+        })
     }
 
     /// What the system's terminal runs to open a shell on a context.
@@ -2664,6 +2829,30 @@ impl Backend {
     pub async fn shutdown(&self) {
         if let Some(host) = self.host.get() {
             host.shutdown().await;
+        }
+    }
+}
+
+/// What a snapshot request carries: the conversation, the page, and the
+/// opt-in to compaction rows, which only a client that draws them sends.
+fn snapshot_args(session: Option<&str>, before: Option<i64>) -> Value {
+    serde_json::json!({
+        "session_id": session,
+        "before_seq": before,
+        "compaction_rows": true,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn every_snapshot_gpui_asks_for_includes_compaction_rows() {
+        for before in [None, Some(12)] {
+            let request: wisp_dto::native_conversations::SessionRequest =
+                serde_json::from_value(super::snapshot_args(Some("s"), before)).unwrap();
+            assert_eq!(request.session_id, "s");
+            assert_eq!(request.before_seq, before);
+            assert!(request.compaction_rows);
         }
     }
 }

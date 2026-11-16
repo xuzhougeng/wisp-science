@@ -10,7 +10,7 @@ use gpui_component::{
 };
 use wisp_server::desktop::RuntimeLanguage;
 
-use super::{Workspace, shell::icon_button};
+use super::{Workspace, shell::icon_button, surfaces};
 use crate::{backend::receive, console, layers::Layer};
 
 impl Workspace {
@@ -60,6 +60,30 @@ impl Workspace {
         self.console_input
             .update(cx, |input, cx| input.focus(window, cx));
         self.load_console_objects(window, cx);
+        cx.notify();
+    }
+
+    /// Shows a run made from outside the console (a script's editor) in
+    /// the console on interpreter `id`, opening it there without taking
+    /// the keyboard from where the run was made.
+    pub(super) fn show_console_run(
+        &mut self,
+        id: String,
+        code: &str,
+        output: wisp_server::desktop::RuntimeOutput,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.console_runtime.as_deref() != Some(id.as_str()) {
+            self.console_entries.clear();
+        }
+        self.console_runtime = Some(id);
+        // Under what is open, so Escape still closes the editor first.
+        self.layers.open_beneath(Layer::RuntimeConsole);
+        console::push(&mut self.console_entries, console::Entry::new(code, output));
+        self.console_scroll.scroll_to_bottom();
+        self.load_console_objects(window, cx);
+        self.load_status(window, cx);
         cx.notify();
     }
 
@@ -168,7 +192,7 @@ impl Workspace {
         cx.notify();
     }
 
-    pub(super) fn render_console(&self, cx: &mut Context<Self>) -> Option<Div> {
+    pub(super) fn render_console(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         if !self.layers.contains(Layer::RuntimeConsole) {
             return None;
         }
@@ -182,19 +206,15 @@ impl Workspace {
             .map(crate::controls::runtime_label)
             .unwrap_or_else(|| tr("Interpreter").to_owned());
         let busy = self.console_busy;
-        let mut panel = div()
+        let mut panel = surfaces::bar("runtime-console", cx)
             .v_flex()
             .gap_2()
-            .p_2()
             .max_h(px(420.))
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(cx.theme().border)
             .child(
                 div()
                     .h_flex()
                     .gap_2()
-                    .child(div().flex_1().text_sm().font_semibold().child(label))
+                    .child(div().flex_1().font_weight(FontWeight::MEDIUM).child(label))
                     .child(
                         Button::new("console-restart")
                             .label(tr("Restart"))

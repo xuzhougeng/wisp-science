@@ -10,7 +10,11 @@ use gpui_component::{
 };
 use wisp_server::desktop::{ExternalConversation, ImportOutcome};
 
-use super::{Workspace, chip, shell::error_banner};
+use super::{
+    Workspace, chip,
+    shell::error_banner,
+    surfaces::{self, DialogWidth},
+};
 use crate::{backend::receive, layers::Layer, present::Tone};
 
 /// The import dialog's state.
@@ -97,28 +101,13 @@ impl Workspace {
         let muted = cx.theme().muted_foreground;
         let border = cx.theme().border;
         let now = chrono::Utc::now().timestamp();
-        let mut card = div()
-            .id("imports")
-            .v_flex()
-            .gap_2()
-            .w(px(720.))
-            .max_w(relative(0.94))
-            .max_h(relative(0.86))
-            .overflow_y_scroll()
-            .p_5()
-            .rounded(cx.theme().radius_lg)
-            .border_1()
-            .border_color(border)
-            .bg(cx.theme().popover)
-            .shadow_lg()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Import from Codex or Claude Code")),
-            )
-            .child(div().text_sm().text_color(muted).child(tr(
+        let mut card = surfaces::dialog(
+            "imports",
+            DialogWidth::Wide,
+            tr("Import from Codex or Claude Code"),
+        )
+        .close_on_click_outside(cx.listener(|this, _, _, cx| this.close_imports(cx)))
+        .child(div().text_sm().text_color(muted).child(tr(
                 "Conversations kept on this computer under ~/.codex/sessions and ~/.claude/projects. One goes into this project in a group named after the tool; importing it again brings in only what was added since.",
             )));
         if let Some(error) = &self.imports.error {
@@ -196,29 +185,11 @@ impl Workspace {
                 }
             }
         }
-        card = card.child(
-            div().h_flex().justify_end().pt_2().child(
-                Button::new("imports-close")
-                    .label(tr("Close"))
-                    .small()
-                    .on_click(cx.listener(|this, _, _, cx| this.close_imports(cx))),
-            ),
-        );
-        div()
-            .id("imports-backdrop")
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            .occlude()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(cx.theme().overlay)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| this.close_imports(cx)),
-            )
-            .child(card)
+        card.action(
+            Button::new("imports-close")
+                .label(tr("Close"))
+                .small()
+                .on_click(cx.listener(|this, _, _, cx| this.close_imports(cx))),
+        )
     }
 }

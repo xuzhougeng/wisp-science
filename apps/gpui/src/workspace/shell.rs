@@ -27,7 +27,7 @@ use crate::{
 const MESSAGE: &str = "message";
 
 /// The time now, in Unix seconds.
-fn unix_now() -> i64 {
+pub(super) fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_secs() as i64)
@@ -110,7 +110,7 @@ impl Workspace {
             return body.child(div().text_color(muted).child(tr("Starting Wisp…")));
         }
         body = body
-            .child(div().text_lg().child(tr("Wisp could not start")))
+            .child(surfaces::title(tr("Wisp could not start")))
             .child(div().max_w(px(520.)).text_sm().text_color(muted).child(tr(
                 "Another Wisp desktop may already be using this data directory. \
                          See docs/gpui-desktop.md for the data and workspace locations.",
@@ -332,6 +332,10 @@ impl Workspace {
         if let Some(bar) = self.render_batch_bar(cx) {
             sidebar = sidebar.child(bar);
         }
+        // A newer version, at the foot as the WebView has it.
+        if let Some(card) = self.update_card(cx) {
+            sidebar = sidebar.child(card);
+        }
 
         sidebar.child(
             nav_row("settings", "gear", tr("Settings"), false, true, cx)
@@ -466,10 +470,11 @@ impl Workspace {
     }
 
     /// The small actions under a message. They show while the pointer is
-    /// over the message, and stay under the latest row and one just copied.
+    /// over the message, and stay under the latest message (a compaction
+    /// line after it is not one) and one just copied.
     fn message_actions(&self, index: usize, cx: &mut Context<Self>) -> Div {
         let actions = self.message_action_items(index, cx);
-        if index + 1 == self.rows.len() || self.copied == Some(index) {
+        if controls::latest_message(&self.rows) == Some(index) || self.copied == Some(index) {
             return actions;
         }
         actions
@@ -909,6 +914,11 @@ impl Workspace {
                 if let Some(steps) = controls::execution_steps(item) {
                     return self.progress_card(steps, cx);
                 }
+                // A call that handed work to other agents, once that work
+                // is known: a card in place of the tool row.
+                if let Some(card) = self.agent_cards.get(&index) {
+                    return self.agent_card(index, card, window, cx);
+                }
                 let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
                 let key = present::tool_key(item, index);
                 let open = self.open_tools.contains(&key);
@@ -950,33 +960,11 @@ impl Workspace {
                     .border_1()
                     .border_color(cx.theme().border)
                     .child(header);
-                // The run this call started or watched, as it stands now.
-                if let Some(run) = &item.run {
-                    let (state, tone) = present::run_state(&run.status, None);
-                    let wanted = run.id.clone();
-                    card = card.child(
-                        div()
-                            .h_flex()
-                            .gap_2()
-                            .px_3()
-                            .pb_2()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(icon("play").text_color(muted))
-                            .child(tr("Run"))
-                            .child(chip(state, tone, cx))
-                            .child(div().flex_1())
-                            .child(
-                                Button::new(SharedString::from(format!("show-run-{index}")))
-                                    .label(tr("Show in Runs"))
-                                    .xsmall()
-                                    .ghost()
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.expanded_run = Some(wanted.clone());
-                                        this.show_panel_tab(PanelTab::Runs, window, cx);
-                                    })),
-                            ),
-                    );
+                // The run this call started or watched, as it stands now:
+                // one card per run, under the call that waits on it while
+                // it goes on and under the call that submitted it after.
+                if let Some((run, _)) = self.run_card_rows.get(&index) {
+                    card = card.child(self.run_card(index, run, open, window, cx));
                 }
                 if open {
                     card = card.child(div().px_3().pb_3().child(
@@ -1140,6 +1128,11 @@ impl Workspace {
                 }
                 div().w_full().px_6().py_1().child(card).into_any_element()
             }
+            // Where the conversation was compacted, as the host placed it.
+            "compaction" => match crate::compaction::card(item) {
+                Some(card) => self.compaction_row(index, card, window, cx),
+                None => div().into_any_element(),
+            },
             _ if item.text.is_empty() => div().into_any_element(),
             _ => div()
                 .group(MESSAGE)
@@ -1151,6 +1144,7 @@ impl Workspace {
                 .child(TextView::markdown(id, item.text.clone(), window, cx).selectable(true))
                 .children(self.inline_pictures(&item.text, cx))
                 .children(self.written_pictures(index, cx))
+                .children(self.generated_section(index, cx))
                 .child(self.message_actions(index, cx))
                 .into_any_element(),
         }
@@ -1162,13 +1156,13 @@ impl Workspace {
             return None;
         }
         let attention = tone_color(Tone::Attention, cx);
+        // Several at once scroll here, so they never push the transcript
+        // out of the window.
         let mut approvals = div()
             .id("approvals")
             .v_flex()
             .flex_shrink_0()
             .gap_2()
-            .px_4()
-            .pb_2()
             .max_h(px(260.))
             .overflow_y_scroll();
         for approval in &snapshot.approvals {
@@ -1182,14 +1176,9 @@ impl Workspace {
             if let Some(picture) = controls::image_resize(&approval.message) {
                 let (resize, cancel) = (id.clone(), id.clone());
                 approvals = approvals.child(
-                    div()
+                    surfaces::bar(SharedString::from(format!("approval-{id}")), cx)
                         .v_flex()
                         .gap_2()
-                        .p_3()
-                        .rounded(cx.theme().radius_lg)
-                        .border_1()
-                        .border_color(attention.opacity(0.5))
-                        .bg(attention.opacity(0.06))
                         .child(
                             div()
                                 .h_flex()
@@ -1297,14 +1286,9 @@ impl Workspace {
             buttons = buttons.child(answer(tr("Deny"), "ban", false, Remember::No));
             approvals =
                 approvals.child(
-                    div()
+                    surfaces::bar(SharedString::from(format!("approval-{id}")), cx)
                         .v_flex()
                         .gap_2()
-                        .p_3()
-                        .rounded(cx.theme().radius_lg)
-                        .border_1()
-                        .border_color(attention.opacity(0.5))
-                        .bg(attention.opacity(0.06))
                         .child(
                             div()
                                 .h_flex()
@@ -1339,16 +1323,16 @@ impl Workspace {
 
     /// A plan the model asks to start on: its steps, to approve, to turn
     /// down, or to send back with what should change.
-    fn plan_approval_card(&self, id: String, steps: Vec<String>, cx: &mut Context<Self>) -> Div {
+    fn plan_approval_card(
+        &self,
+        id: String,
+        steps: Vec<String>,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         let attention = tone_color(Tone::Attention, cx);
-        let mut card = div()
+        let mut card = surfaces::bar(SharedString::from(format!("approval-{id}")), cx)
             .v_flex()
             .gap_2()
-            .p_3()
-            .rounded(cx.theme().radius_lg)
-            .border_1()
-            .border_color(attention.opacity(0.5))
-            .bg(attention.opacity(0.06))
             .child(
                 div()
                     .h_flex()
@@ -2209,7 +2193,9 @@ impl Workspace {
                 .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
         );
 
-        let mut area = div().v_flex().flex_shrink_0().gap_1().px_4().pb_4().pt_1();
+        // `px_4` is the inset `surfaces::above_composer` shares, so the bars
+        // there line up with the box below.
+        let mut area = div().v_flex().flex_shrink_0().gap_2().px_4().pb_4().pt_1();
         if let Some(console) = self.render_console(cx) {
             area = area.child(console);
         }
@@ -2308,13 +2294,9 @@ impl Workspace {
             .filter(|text| running && !text.trim().is_empty());
         if let Some(thinking) = thinking {
             area = area.child(
-                div()
+                surfaces::bar("thinking", cx)
                     .v_flex()
                     .gap_1()
-                    .px_3()
-                    .py_2()
-                    .rounded(cx.theme().radius)
-                    .bg(cx.theme().muted)
                     .child(
                         div()
                             .h_flex()
@@ -2353,15 +2335,19 @@ impl Workspace {
         if let Some(strip) = self.queue_strip(running, cx) {
             area = area.child(strip);
         }
+        if let Some(strip) = self.timer_strip(cx) {
+            area = area.child(strip);
+        }
+        // A conversation that cannot be written to says why in place of
+        // the box, so nothing looks typed into and refused.
+        if let Some(why) = self.read_only() {
+            return area.child(self.read_only_card(&why, cx));
+        }
         if self.layers.contains(Layer::ConfirmFullAccess) {
             area = area.child(
-                div()
+                surfaces::bar("full-access-question", cx)
                     .h_flex()
                     .gap_2()
-                    .px_3()
-                    .py_2()
-                    .rounded(cx.theme().radius)
-                    .bg(attention.opacity(0.08))
                     .child(icon("bolt").text_color(attention))
                     .child(div().flex_1().min_w_0().text_sm().child(tr(
                         "Let Wisp change files and run commands in this conversation without \
@@ -2499,6 +2485,50 @@ impl Workspace {
         )
     }
 
+    /// What stands in the composer's place in a read-only conversation: a
+    /// bar with the reason and the one way on.
+    fn read_only_card(&self, why: &compose::ReadOnly, cx: &mut Context<Self>) -> Stateful<Div> {
+        let muted = cx.theme().muted_foreground;
+        let parent_title = match why {
+            compose::ReadOnly::Subagent {
+                parent: Some(parent),
+            } => self
+                .known
+                .get(parent)
+                .map(|row| row.title.clone())
+                .unwrap_or_default(),
+            _ => String::new(),
+        };
+        let action = compose::read_only_action(why).map(|(label, action)| {
+            Button::new("read-only-action")
+                .label(label)
+                .small()
+                .on_click(cx.listener(move |this, _, window, cx| match &action {
+                    compose::ReadOnlyAction::Open(session) => {
+                        if let Some(project) = this.state.project.clone() {
+                            this.open_session(project, session.clone(), window, cx);
+                        }
+                    }
+                    // Only an archive that is there: never a new draft.
+                    compose::ReadOnlyAction::Archive => {
+                        this.open_frozen_research_archive(window, cx)
+                    }
+                }))
+        });
+        surfaces::bar("read-only", cx)
+            .h_flex()
+            .gap_2()
+            .child(icon(compose::read_only_icon(why)).text_color(muted))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_sm()
+                    .child(compose::read_only_reason(why, &parent_title)),
+            )
+            .children(action)
+    }
+
     /// Everything to the right of the sidebar.
     pub(super) fn render_conversation(&self, cx: &mut Context<Self>) -> Div {
         let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
@@ -2520,9 +2550,6 @@ impl Workspace {
             content = content.child(bar);
         }
         if let Some(bar) = self.render_exploration_bar(cx) {
-            content = content.child(bar);
-        }
-        if let Some(bar) = self.render_subagent_bar(cx) {
             content = content.child(bar);
         }
         if let Some(bar) = self.render_assistant_bar(cx) {
@@ -2552,15 +2579,25 @@ impl Workspace {
                     ),
             );
         }
-        if let Some(error) = self
-            .error
+        // A turn refused as too long is said by its bar above the composer,
+        // with the ways on; its raw error shows again once paused on.
+        let turn_error = self
+            .state
+            .snapshot
             .as_ref()
-            .or_else(|| self.state.snapshot.as_ref().and_then(|s| s.error.as_ref()))
-        {
-            content = content.child(div().px_4().pt_2().child(error_banner(error, cx)));
+            .filter(|_| !self.recovery_shown())
+            .and_then(|s| s.error.as_ref());
+        if let Some(error) = self.error.as_ref().or(turn_error) {
+            // In the transcript's column, inset as the bars above the
+            // composer are, so their edges line up.
+            content = content.child(surfaces::reading_column(
+                div().px_4().pt_2().child(error_banner(error, cx)),
+            ));
         }
         if let Some(notice) = &self.notice {
-            content = content.child(div().px_4().pt_2().child(self.notice_banner(notice, cx)));
+            content = content.child(surfaces::reading_column(
+                div().px_4().pt_2().child(self.notice_banner(notice, cx)),
+            ));
         }
         if self.state.session.is_none() {
             let can_start = !self.pending && self.state.project.is_some();
@@ -2649,26 +2686,27 @@ impl Workspace {
                 )
                 .children(pet),
         );
-        if let Some(approvals) = self.render_approvals(cx) {
-            content = content.child(approvals);
-        }
-        if let Some(review) = self.render_review_banner(cx) {
-            content = content.child(review);
-        }
-        if let Some(failures) = self.render_hook_failures(cx) {
-            content = content.child(failures);
-        }
-        if let Some(proposal) = self.render_memory_proposal(cx) {
-            content = content.child(proposal);
-        }
-        if let Some(follow_ups) = self.render_follow_ups(cx) {
-            content = content.child(follow_ups);
-        }
-        if let Some(transfers) = self.render_transfers(cx) {
-            content = content.child(transfers);
-        }
+        // What waits on the user between the transcript and the composer
+        // keeps the composer's column, with its edges on the composer box's.
+        let bars = [
+            self.render_context_recovery(cx)
+                .map(IntoElement::into_any_element),
+            self.render_approvals(cx).map(IntoElement::into_any_element),
+            self.render_review_banner(cx)
+                .map(IntoElement::into_any_element),
+            self.render_hook_failures(cx)
+                .map(IntoElement::into_any_element),
+            self.render_memory_proposal(cx)
+                .map(IntoElement::into_any_element),
+            self.render_follow_ups(cx)
+                .map(IntoElement::into_any_element),
+            self.render_transfers(cx).map(IntoElement::into_any_element),
+        ];
         // The composer sits in the same column as what it answers.
         content
+            .children(surfaces::above_composer(
+                bars.into_iter().flatten().collect(),
+            ))
             .child(surfaces::reading_column(self.render_composer(running, cx)).flex_shrink_0())
             .children(self.render_terminal_dock(cx))
     }

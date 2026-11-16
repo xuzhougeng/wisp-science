@@ -16,6 +16,18 @@ pub struct ProjectMemo {
     pub updated_at: i64,
 }
 
+impl ProjectMemo {
+    /// Whether the memo is found by `query`: its title or its body holds the
+    /// trimmed query, ignoring case. An empty query finds every memo. Both
+    /// desktops' memo searches go by this.
+    pub fn matches(&self, query: &str) -> bool {
+        let query = query.trim().to_lowercase();
+        query.is_empty()
+            || self.title.to_lowercase().contains(&query)
+            || self.body.to_lowercase().contains(&query)
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectMemoInput {
     #[serde(default)]
@@ -38,6 +50,21 @@ pub struct ProjectMemoPatch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_memo_is_found_by_its_title_or_body_ignoring_case() {
+        let memo = ProjectMemo {
+            title: "GPU server".into(),
+            body: "ssh lab-gpu -p 2222\nUse the 基因 queue".into(),
+            ..Default::default()
+        };
+        for query in ["", "  ", "gpu", " SERVER ", "lab-gpu -p", "基因"] {
+            assert!(memo.matches(query), "{query:?}");
+        }
+        for query in ["prompt", "gpu prompt"] {
+            assert!(!memo.matches(query), "{query:?}");
+        }
+    }
 
     /// The SwiftUI 备忘录 tab sends and decodes these shapes.
     #[test]

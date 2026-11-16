@@ -45,6 +45,31 @@ that last as long as the job, so they report the same way. Only Runs started
 from a conversation can move to the background, and there is no way to bring a
 backgrounded Run back into a waiting turn; ask the agent about it instead.
 
+## In the GPUI desktop
+
+The GPUI desktop draws one card per Run under a tool row of the transcript,
+with the same placement: under the call that waits on the Run while it goes
+on (`monitor_run`, or a `run_in_context` still waiting with
+`wait_for_completion`), and under its submission row once it has ended, with
+no second card for an explicit `monitor_run`. It offers Ask, Move to
+background (bell), Cancel (stop), the Run review dialog for a finished SSH
+Run whose workspace is still there (folder) and Show in Runs. Moving a Run
+uses the same shared code (`wisp_runs::background`) through the embedded
+host's `background_run`; the completion message is the WebView's, written in
+the window's language, or after a restart in the saved Language setting
+(else English). It differs from the WebView in these ways:
+
+- Tool rows fold one by one rather than into a **Processed** group, so the
+  card sits under its call row; the command, remote folder and output tails
+  show when that row is opened.
+- A card always belongs to a row, so there is no dismiss. A Run no call
+  names (a scheduler job followed through `shell`) has no card in the
+  transcript, only in the Runs tab.
+- No force-cancel of a Run already cancelling, no environment snapshot, and
+  no desktop notification when a backgrounded Run ends.
+- Moving a Run to the background is a desktop command, not a remote-access
+  command, so the phone and web clients do not offer it.
+
 ## Runs tab in the right pane
 
 Long sessions bury Run cards in the transcript. The right pane's **Runs / 运行**

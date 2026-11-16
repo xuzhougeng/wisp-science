@@ -1,5 +1,7 @@
 //! Project file browser beside the transcript: one directory at a time and a
-//! read-only preview, both served by the host's confined project file access.
+//! preview, both served by the host's confined project file access. The
+//! preview is read-only except for R and Python scripts, which are edited
+//! in place (`file_editor_view`).
 use crate::i18n::tr;
 use std::ops::Range;
 
@@ -536,10 +538,13 @@ impl Workspace {
         cx.notify();
     }
 
-    fn open_file(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_file(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ticket) = self.files.begin_preview(&path) else {
             return;
         };
+        // An edit of the file shown before stays as its draft.
+        self.file_edit = None;
+        self.layers.close(Layer::FileChangedOnDisk);
         self.layers.open(Layer::FilePreview);
         self.file_image = None;
         self.file_document = None;
@@ -668,6 +673,7 @@ impl Workspace {
                 if !applied {
                     return;
                 }
+                let mut editing = None;
                 if let Some(content) = &this.files.preview {
                     if files::preview_mode(content) == PreviewMode::Text {
                         let text = content.text.clone().unwrap_or_default();
@@ -679,9 +685,20 @@ impl Workspace {
                         this.file_structure = crate::molecules::parse(&content.path, &text)
                             .map(|read| (content.path.clone(), std::sync::Arc::new(read)));
                         this.structure_turn = (0.0, 0.0);
-                        this.file_view
-                            .update(cx, |input, cx| input.set_value(text, window, cx));
+                        // An R or Python script loaded whole is edited
+                        // where it is shown; anything else is only read.
+                        match files::editable(content) {
+                            Some(Ok(script)) => {
+                                editing = Some((script, content.path.clone(), text))
+                            }
+                            _ => this
+                                .file_view
+                                .update(cx, |input, cx| input.set_value(text, window, cx)),
+                        }
                     }
+                }
+                if let Some((script, path, text)) = editing {
+                    this.begin_editing(script, path, text, window, cx);
                 }
                 cx.notify();
             });
@@ -692,6 +709,8 @@ impl Workspace {
 
     fn close_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.layers.close(Layer::FilePreview) {
+            // An unsaved edit stays as the file's draft.
+            self.file_edit = None;
             self.files.close_preview();
             self.file_image = None;
             self.file_problem = None;
@@ -935,6 +954,9 @@ impl Workspace {
                 }
                 match files::table(&content.path, text) {
                     Some(table) => self.render_table(&table, cx),
+                    None if self.live_edit().is_some() => {
+                        self.render_file_editor(cx).into_any_element()
+                    }
                     None => self.render_text_preview(),
                 }
             }
@@ -1704,12 +1726,20 @@ impl Workspace {
         if previewing {
             let name = self.files.preview_path.as_deref().unwrap_or_default();
             let name = files::file_name(name).to_string();
-            let note = self
+            let mut note = self
                 .files
                 .preview
                 .as_ref()
                 .map(files::preview_note)
                 .unwrap_or_default();
+            // The WebView's Save shows only while there is something to save;
+            // the line under the name says so as well.
+            if self.live_edit().is_some_and(|edit| edit.dirty) {
+                if !note.is_empty() {
+                    note.push_str(" · ");
+                }
+                note.push_str(tr("Not saved"));
+            }
             return panel
                 .child(
                     div()
@@ -1759,6 +1789,7 @@ impl Workspace {
                         .text_color(muted)
                         .child(notice.clone())
                 }))
+                .children(self.render_file_editor_bar(cx))
                 .child(self.render_preview(window, cx))
                 .into_any_element();
         }

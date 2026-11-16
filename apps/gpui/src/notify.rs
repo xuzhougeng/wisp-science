@@ -100,6 +100,25 @@ pub fn elsewhere(
     after: &[wisp_dto::SessionSearchInfo],
     open: Option<&str>,
 ) -> Vec<(Event, String)> {
+    stopped(before, after, open)
+        .into_iter()
+        .map(|row| {
+            let event = match row.status.as_str() {
+                "needs_you" => Event::NeedsYou,
+                _ => Event::Done,
+            };
+            (event, row.title.clone())
+        })
+        .collect()
+}
+
+/// The conversations other than the open one that were working at the
+/// first reading and are not at the second.
+pub fn stopped<'a>(
+    before: &[wisp_dto::SessionSearchInfo],
+    after: &'a [wisp_dto::SessionSearchInfo],
+    open: Option<&str>,
+) -> Vec<&'a wisp_dto::SessionSearchInfo> {
     after
         .iter()
         .filter(|row| Some(row.id.as_str()) != open && row.status != "running")
@@ -107,13 +126,6 @@ pub fn elsewhere(
             before
                 .iter()
                 .any(|was| was.id == row.id && was.status == "running")
-        })
-        .map(|row| {
-            let event = match row.status.as_str() {
-                "needs_you" => Event::NeedsYou,
-                _ => Event::Done,
-            };
-            (event, row.title.clone())
         })
         .collect()
 }

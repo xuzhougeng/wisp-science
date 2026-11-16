@@ -14,6 +14,7 @@ use gpui_component::{
 use super::{
     Workspace, chip,
     shell::{error_banner, icon_button, nav_row},
+    surfaces,
 };
 use crate::{
     backend::receive,
@@ -119,14 +120,7 @@ impl Workspace {
                 nav_row("calendar-back", "arrow-left", tr("Back"), false, true, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.close_calendar(window, cx))),
             )
-            .child(
-                div()
-                    .px_2()
-                    .pt_3()
-                    .text_lg()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Research calendar")),
-            )
+            .child(surfaces::title(tr("Research calendar")).px_2().pt_3())
             .child(div().px_2().pb_2().text_xs().text_color(muted).child(tr(
                 "How much happened in your projects on each day. Choose a day to see what.",
             )))

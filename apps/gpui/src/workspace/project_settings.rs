@@ -10,7 +10,11 @@ use gpui_component::{
 };
 use wisp_server::desktop::{ProjectSettings, RunRetention};
 
-use super::{Workspace, shell::error_banner};
+use super::{
+    Workspace,
+    shell::error_banner,
+    surfaces::{self, DialogWidth},
+};
 use crate::{backend::receive, home, layers::Layer};
 
 impl Workspace {
@@ -157,106 +161,64 @@ impl Workspace {
                 .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(text))
                 .child(div().text_xs().text_color(muted).child(note))
         };
-        let mut card = div()
-            .id("project-settings")
-            .v_flex()
-            .gap_3()
-            .w(px(620.))
-            .max_h(relative(0.92))
-            .overflow_y_scroll()
-            .p_5()
-            .rounded(cx.theme().radius_lg)
-            .border_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().popover)
-            .shadow_lg()
-            // A click inside is not a click on the backdrop.
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Project settings")),
-            );
+        let mut card = surfaces::dialog(
+            "project-settings",
+            DialogWidth::Regular,
+            tr("Project settings"),
+        )
+        .gap_3()
+        .close_on_click_outside(cx.listener(|this, _, _, cx| this.close_project_settings(cx)));
         if let Some(error) = &self.project_form_error {
             card = card.child(error_banner(error, cx));
         }
-        card = card
-            .child(label(
-                tr("Name"),
-                tr("What the project is called in lists."),
-            ))
-            .child(Input::new(&self.project_fields[0]).small())
-            .child(label(
-                tr("Description"),
-                tr("For you: what the project is about. The model is not shown it."),
-            ))
-            .child(Input::new(&self.project_fields[1]).small())
-            .child(label(
-                tr("Rules for the model"),
-                tr(
-                    "What Wisp should always do or never do in this project, in your own words. \
+        card.child(label(
+            tr("Name"),
+            tr("What the project is called in lists."),
+        ))
+        .child(Input::new(&self.project_fields[0]).small())
+        .child(label(
+            tr("Description"),
+            tr("For you: what the project is about. The model is not shown it."),
+        ))
+        .child(Input::new(&self.project_fields[1]).small())
+        .child(label(
+            tr("Rules for the model"),
+            tr(
+                "What Wisp should always do or never do in this project, in your own words. \
                  Kept in the project folder as .wisp/WISP.md and read again every turn.",
-                ),
-            ))
-            .child(
-                div()
-                    .h(px(220.))
-                    .child(Input::new(&self.project_fields[2]).h_full()),
-            )
-            .child(label(
-                tr("Automatic server cleanup"),
-                tr(
-                    "A succeeded run's folder on the server is removed this many days after its \
+            ),
+        ))
+        .child(
+            div()
+                .h(px(220.))
+                .child(Input::new(&self.project_fields[2]).h_full()),
+        )
+        .child(label(
+            tr("Automatic server cleanup"),
+            tr(
+                "A succeeded run's folder on the server is removed this many days after its \
                  results were brought back, a failed or cancelled run's after the second, and \
                  files on a server that nothing refers to any more after the third. Leave a \
                  field empty to keep everything until you clean up yourself.",
+            ),
+        ))
+        .child(self.render_cleanup_windows(cx))
+        .child(self.render_project_sync(cx))
+        .action(
+            Button::new("project-settings-cancel")
+                .label(tr("Cancel"))
+                .small()
+                .on_click(cx.listener(|this, _, _, cx| this.close_project_settings(cx))),
+        )
+        .action(
+            Button::new("project-settings-save")
+                .label(tr("Save"))
+                .small()
+                .primary()
+                .disabled(!self.project_form_ready)
+                .on_click(
+                    cx.listener(|this, _, window, cx| this.save_project_settings(window, cx)),
                 ),
-            ))
-            .child(self.render_cleanup_windows(cx))
-            .child(self.render_project_sync(cx))
-            .child(
-                div()
-                    .h_flex()
-                    .justify_end()
-                    .gap_2()
-                    .pt_1()
-                    .child(
-                        Button::new("project-settings-cancel")
-                            .label(tr("Cancel"))
-                            .small()
-                            .on_click(
-                                cx.listener(|this, _, _, cx| this.close_project_settings(cx)),
-                            ),
-                    )
-                    .child(
-                        Button::new("project-settings-save")
-                            .label(tr("Save"))
-                            .small()
-                            .primary()
-                            .disabled(!self.project_form_ready)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.save_project_settings(window, cx)
-                            })),
-                    ),
-            );
-
-        div()
-            .id("project-settings-backdrop")
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            // Nothing underneath is clickable while the dialog is open.
-            .occlude()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(cx.theme().overlay)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| this.close_project_settings(cx)),
-            )
-            .child(card)
+        )
     }
 }

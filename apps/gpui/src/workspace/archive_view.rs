@@ -4,14 +4,18 @@
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Sizable,
     button::{Button, ButtonVariants},
     input::Input,
     text::TextView,
 };
 use wisp_server::desktop::{ArchiveDraft, ArchiveScript, ResearchArchive};
 
-use super::{Workspace, shell::error_banner};
+use super::{
+    Workspace,
+    shell::error_banner,
+    surfaces::{self, DialogWidth},
+};
 use crate::{backend::receive, layers::Layer};
 
 /// Where the dialog stands.
@@ -27,8 +31,51 @@ pub(super) enum ArchiveView {
     Frozen(ResearchArchive),
 }
 
+/// What the dialog does once the host has said whether the conversation
+/// has a frozen archive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Found {
+    /// Show it.
+    Show,
+    /// Have the model draft one.
+    Draft,
+    /// Close: there is none, and none is to be drafted.
+    Close,
+}
+
+/// `may_draft` is whether the dialog was opened to make an archive (the
+/// conversation's Research archive button, `/archive`, the palette) rather
+/// than to look at one (a read-only conversation's card).
+fn after_looking(frozen: bool, may_draft: bool) -> Found {
+    match (frozen, may_draft) {
+        (true, _) => Found::Show,
+        (false, true) => Found::Draft,
+        (false, false) => Found::Close,
+    }
+}
+
 impl Workspace {
+    /// Opens the conversation's archive, or drafts one when it has none.
     pub(super) fn open_research_archive(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.look_for_research_archive(true, window, cx);
+    }
+
+    /// Opens the conversation's frozen archive, and only that: with none
+    /// the dialog closes again and nothing is drafted.
+    pub(super) fn open_frozen_research_archive(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.look_for_research_archive(false, window, cx);
+    }
+
+    fn look_for_research_archive(
+        &mut self,
+        may_draft: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let (Some(project), Some(session)) =
             (self.state.project.clone(), self.state.session.clone())
         else {
@@ -46,8 +93,17 @@ impl Workspace {
                     return;
                 }
                 match result {
-                    Ok(Some(frozen)) => this.archive = Some(ArchiveView::Frozen(frozen)),
-                    Ok(None) => this.draft_research_archive(window, cx),
+                    Ok(found) => match (after_looking(found.is_some(), may_draft), found) {
+                        (Found::Show, Some(frozen)) => {
+                            this.archive = Some(ArchiveView::Frozen(frozen))
+                        }
+                        (Found::Draft, _) => this.draft_research_archive(window, cx),
+                        _ => {
+                            this.close_research_archive(window, cx);
+                            this.error =
+                                Some(tr("This conversation has no research archive.").into());
+                        }
+                    },
                     Err(error) => this.archive_error = Some(error),
                 }
                 cx.notify();
@@ -189,34 +245,19 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
-        let border = cx.theme().border;
         let note = |text: String| div().text_xs().text_color(muted).child(text);
-        let mut card = div()
-            .id("research-archive")
-            .v_flex()
-            .gap_2()
-            .w(px(760.))
-            .max_w(relative(0.94))
-            .max_h(relative(0.92))
-            .overflow_y_scroll()
-            .p_5()
-            .rounded(cx.theme().radius_lg)
-            .border_1()
-            .border_color(border)
-            .bg(cx.theme().popover)
-            .shadow_lg()
-            // A click inside is not a click on the backdrop.
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Research archive")),
-            );
+        // A click beside the dialog does not throw a draft away: only Close
+        // and Escape leave it.
+        let mut card = surfaces::dialog(
+            "research-archive",
+            DialogWidth::Wide,
+            tr("Research archive"),
+        );
         if let Some(error) = &self.archive_error {
             card = card.child(error_banner(error, cx));
         }
-        let mut actions = div().h_flex().gap_2().justify_end().pt_2();
+        // The main action, after Close at the right end.
+        let mut main = None;
         let scripts_line = |scripts: &[ArchiveScript]| {
             let names: Vec<&str> = scripts
                 .iter()
@@ -258,31 +299,30 @@ impl Workspace {
                             .child(Input::new(&self.archive_fields[1]).h_full()),
                     )
                     .child(note(scripts_line(scripts)));
-                actions = actions
-                    .child(
-                        Button::new("archive-redraft")
-                            .label(tr("Draft again"))
-                            .small()
-                            .ghost()
-                            .disabled(freezing)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.draft_research_archive(window, cx)
-                            })),
-                    )
-                    .child(
-                        Button::new("archive-freeze")
-                            .label(if freezing {
-                                tr("Working…")
-                            } else {
-                                tr("Freeze")
-                            })
-                            .small()
-                            .primary()
-                            .disabled(freezing)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.freeze_research_archive(window, cx)
-                            })),
-                    );
+                card = card.action(
+                    Button::new("archive-redraft")
+                        .label(tr("Draft again"))
+                        .small()
+                        .ghost()
+                        .disabled(freezing)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.draft_research_archive(window, cx)
+                        })),
+                );
+                main = Some(
+                    Button::new("archive-freeze")
+                        .label(if freezing {
+                            tr("Working…")
+                        } else {
+                            tr("Freeze")
+                        })
+                        .small()
+                        .primary()
+                        .disabled(freezing)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.freeze_research_archive(window, cx)
+                        })),
+                );
             }
             Some(ArchiveView::Frozen(frozen)) => {
                 card = card
@@ -301,7 +341,7 @@ impl Workspace {
                             .selectable(true),
                     )
                     .child(note(scripts_line(&frozen.scripts)));
-                actions = actions.child(
+                main = Some(
                     Button::new("archive-continue")
                         .label(tr("Continue research"))
                         .small()
@@ -313,28 +353,37 @@ impl Workspace {
                 );
             }
         }
-        actions = actions.child(
+        card.action(
             Button::new("archive-close")
                 .label(tr("Close"))
                 .small()
                 .on_click(
                     cx.listener(|this, _, window, cx| this.close_research_archive(window, cx)),
                 ),
-        );
-        div()
-            .id("research-archive-backdrop")
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            // Nothing underneath is clickable while the dialog is open.
-            .occlude()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(cx.theme().overlay)
-            // A click beside the dialog does not throw a draft away: only
-            // Close and Escape leave it.
-            .child(card.child(actions))
+        )
+        .actions(main)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Found, after_looking};
+
+    #[test]
+    fn only_the_dialog_opened_to_make_an_archive_drafts_one() {
+        assert_eq!(after_looking(true, true), Found::Show);
+        assert_eq!(after_looking(true, false), Found::Show);
+        assert_eq!(after_looking(false, true), Found::Draft);
+        // Opened to look at one, it never asks the model for a draft.
+        assert_eq!(after_looking(false, false), Found::Close);
+    }
+
+    #[test]
+    fn the_read_only_card_only_looks_at_an_archive() {
+        let shell = include_str!("shell.rs");
+        let start = shell.find("fn read_only_card(").unwrap();
+        let card = &shell[start..start + shell[start..].find("\n    }\n").unwrap()];
+        assert!(card.contains("this.open_frozen_research_archive("));
+        assert!(!card.contains("this.open_research_archive("));
     }
 }

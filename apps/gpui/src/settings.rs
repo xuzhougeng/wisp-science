@@ -258,6 +258,26 @@ pub fn update_note(update: Option<&Update>, at_start: bool) -> (String, bool) {
     }
 }
 
+/// The release a finished check found that the sidebar's card should offer:
+/// only a newer one. Checking, a failed check and being up to date offer
+/// nothing.
+pub fn newer_release(update: &Update) -> Option<&wisp_server::desktop::UpdateCheck> {
+    match update {
+        Update::Found(found) if found.newer => Some(found),
+        _ => None,
+    }
+}
+
+/// The card's second line, under "Update available": the new version and
+/// this one. None when there is no newer release to offer.
+pub fn update_card_line(found: Option<&wisp_server::desktop::UpdateCheck>) -> Option<String> {
+    let found = found.filter(|found| found.newer)?;
+    Some(crate::i18n::fill(
+        tr("Version {} · this is {}"),
+        &[&found.latest, &found.current],
+    ))
+}
+
 /// The composer's expert button: the name of the expert the conversation
 /// is started as, or the word for choosing one.
 pub fn expert_label(experts: &[wisp_server::desktop::Expert], chosen: &str) -> String {
@@ -1232,6 +1252,32 @@ mod tests {
             update_note(Some(&Update::Failed("no network".into())), true),
             ("Could not check: no network".into(), false)
         );
+    }
+
+    #[test]
+    fn the_update_card_offers_only_a_newer_release() {
+        let found = |newer| wisp_server::desktop::UpdateCheck {
+            current: "1.24.0".into(),
+            latest: if newer { "1.25.0" } else { "1.24.0" }.into(),
+            newer,
+            url: "https://github.com/xuzhougeng/wisp-science/releases".into(),
+            notes: String::new(),
+        };
+        // From each state of a check: only a newer release makes a card.
+        assert_eq!(newer_release(&Update::Checking), None);
+        assert_eq!(newer_release(&Update::Failed("no network".into())), None);
+        assert_eq!(newer_release(&Update::Found(found(false))), None);
+        assert_eq!(
+            newer_release(&Update::Found(found(true))),
+            Some(&found(true))
+        );
+        // What it says.
+        assert_eq!(
+            update_card_line(Some(&found(true))).as_deref(),
+            Some("Version 1.25.0 · this is 1.24.0")
+        );
+        assert_eq!(update_card_line(Some(&found(false))), None);
+        assert_eq!(update_card_line(None), None);
     }
 
     #[test]

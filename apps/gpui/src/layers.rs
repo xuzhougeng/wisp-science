@@ -9,6 +9,11 @@ pub enum Layer {
     FilesPanel,
     /// File preview shown over the browser's directory listing.
     FilePreview,
+    /// Question over the preview when an edited script changed on disk
+    /// after the edit began: keep editing, reload, or overwrite.
+    FileChangedOnDisk,
+    /// Question before the window closes over edits that are not saved.
+    ConfirmCloseUnsaved,
     /// The side panel's tabs that can be added back, under its tab row.
     PanelTabMenu,
     /// Question under a run's card before its workspace is deleted.
@@ -125,8 +130,17 @@ pub enum Layer {
     Review,
     /// What the model is sent for the open conversation: a dialog over it.
     ModelView,
+    /// The choice of how to compact the open conversation: a dialog over
+    /// it, or over What the model is sent when opened from there.
+    CompactContext,
+    /// Handing the open conversation off to a new one: a dialog over it,
+    /// or over What the model is sent when opened from there.
+    Handoff,
     /// The research archive of the open conversation: a dialog over it.
     ResearchArchive,
+    /// The messages of the open conversation to put into its shared page:
+    /// a dialog over it.
+    ShareMessages,
     /// Bringing the open branch back into its source: a dialog over it.
     BranchMerge,
     /// Conversations from Codex or Claude Code to import: a dialog.
@@ -170,6 +184,9 @@ pub enum Layer {
     MemoryEditor,
     /// Question before a habit or a note is deleted.
     ConfirmDeleteMemory,
+    /// Question, as a dialog, before every note of the project's memory is
+    /// deleted (the Memory tab's Clear all).
+    ConfirmClearMemory,
     /// The Favorites page, shown in place of the rest of the window.
     Favorites,
     /// Question on the Favorites page before a saved item is removed.
@@ -226,6 +243,10 @@ pub enum Layer {
     EnvironmentForm,
     /// Question before an SSH host is removed.
     ConfirmRemoveEnvironment,
+    /// The cards for conversations in other projects that finished or
+    /// failed, in the window's corner over the page. Escape closes the
+    /// newest card once nothing else is open.
+    SessionNotices,
 }
 
 impl Layer {
@@ -275,6 +296,7 @@ impl Layer {
             | Layer::ConfirmDeleteMemo
             | Layer::MemoryEditor
             | Layer::ConfirmDeleteMemory
+            | Layer::ConfirmClearMemory
             | Layer::TaskBudget => Some(Layer::FilesPanel),
             Layer::ConfirmDeleteModel
             | Layer::McpForm
@@ -317,6 +339,7 @@ impl Layer {
             Layer::GroupMenu | Layer::TransferMenu => Some(Layer::ConversationMenu),
             Layer::ExampleCopy => Some(Layer::Examples),
             Layer::ConfirmRunFilesDelete => Some(Layer::RunReview),
+            Layer::FileChangedOnDisk => Some(Layer::FilePreview),
             _ => None,
         }
     }
@@ -357,6 +380,14 @@ impl EscapeStack {
     /// The member of `set` that is drawn over the others, if any is open.
     pub fn top_of(&self, set: &[Layer]) -> Option<Layer> {
         self.0.iter().rev().copied().find(|open| set.contains(open))
+    }
+
+    /// Opens `layer` under every surface already open, so Escape reaches it
+    /// only after them. Already open, it keeps its place.
+    pub fn open_beneath(&mut self, layer: Layer) {
+        if !self.0.contains(&layer) {
+            self.0.insert(0, layer);
+        }
     }
 
     /// Closes only the topmost surface and reports which one it was.
@@ -442,6 +473,41 @@ mod tests {
     }
 
     #[test]
+    fn the_share_dialog_closes_alone_and_outlives_the_side_panel() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::ShareMessages);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ShareMessages));
+        assert!(stack.contains(Layer::FilesPanel));
+        // It is the window's, not the panel's.
+        stack.open(Layer::ShareMessages);
+        assert!(stack.close(Layer::FilesPanel));
+        assert!(stack.contains(Layer::ShareMessages));
+    }
+
+    #[test]
+    fn the_question_about_a_changed_file_goes_first_and_with_its_preview() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::FilePreview);
+        stack.open(Layer::FileChangedOnDisk);
+        // One press closes the question; the edit stays open under it.
+        assert_eq!(stack.dismiss_top(), Some(Layer::FileChangedOnDisk));
+        assert!(stack.contains(Layer::FilePreview));
+        // Leaving the preview takes a question about it along.
+        stack.open(Layer::FileChangedOnDisk);
+        assert!(stack.close(Layer::FilePreview));
+        assert!(!stack.contains(Layer::FileChangedOnDisk));
+        assert!(stack.contains(Layer::FilesPanel));
+        // The question before closing the window stands over everything and
+        // goes on its own.
+        stack.open(Layer::FilePreview);
+        stack.open(Layer::ConfirmCloseUnsaved);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmCloseUnsaved));
+        assert!(stack.contains(Layer::FilePreview));
+    }
+
+    #[test]
     fn closing_a_parent_closes_its_children_and_reopening_does_not_duplicate() {
         let mut stack = EscapeStack::default();
         stack.open(Layer::FilesPanel);
@@ -507,6 +573,29 @@ mod tests {
         assert!(!stack.close(Layer::Settings));
         assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmDelete));
         assert_eq!(stack.dismiss_top(), Some(Layer::Rename));
+        assert_eq!(stack.dismiss_top(), None);
+    }
+
+    #[test]
+    fn notices_from_other_projects_wait_under_what_is_already_open() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::Settings);
+        stack.open(Layer::McpForm);
+        // A card arrives while a form is open: the form closes first.
+        stack.open_beneath(Layer::SessionNotices);
+        assert_eq!(stack.dismiss_top(), Some(Layer::McpForm));
+        // Another card does not move the cards up.
+        stack.open_beneath(Layer::SessionNotices);
+        assert_eq!(stack.dismiss_top(), Some(Layer::Settings));
+        assert_eq!(stack.dismiss_top(), Some(Layer::SessionNotices));
+        assert_eq!(stack.dismiss_top(), None);
+        // Alone, a press reaches the cards at once; what opens after them
+        // is closed before them.
+        stack.open_beneath(Layer::SessionNotices);
+        stack.open(Layer::Palette);
+        assert_eq!(stack.dismiss_top(), Some(Layer::Palette));
+        assert!(stack.contains(Layer::SessionNotices));
+        assert!(stack.close(Layer::SessionNotices));
         assert_eq!(stack.dismiss_top(), None);
     }
 
@@ -635,8 +724,15 @@ mod tests {
         stack.open(Layer::MemoryEditor);
         stack.open(Layer::ConfirmDeleteMemory);
         assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmDeleteMemory));
+        // The question before Clear all is the one Escape closes first, and
+        // it goes with the panel its tab is in.
+        stack.open(Layer::ConfirmClearMemory);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmClearMemory));
+        assert!(stack.contains(Layer::FilesPanel) && stack.contains(Layer::MemoryEditor));
+        stack.open(Layer::ConfirmClearMemory);
         assert!(stack.close(Layer::FilesPanel));
         assert!(!stack.contains(Layer::MemoEditor) && !stack.contains(Layer::MemoryEditor));
+        assert!(!stack.contains(Layer::ConfirmClearMemory));
     }
 
     #[test]
@@ -674,6 +770,42 @@ mod tests {
         assert!(stack.close(Layer::Settings));
         assert!(!stack.contains(Layer::ConfirmRemoveMcp));
         assert!(!stack.contains(Layer::ConfirmRemoveEnvironment));
+    }
+
+    #[test]
+    fn the_compact_dialog_closes_first_and_leaves_what_the_model_is_sent() {
+        let mut stack = EscapeStack::default();
+        // From /compact: one Escape and it is gone.
+        stack.open(Layer::CompactContext);
+        assert_eq!(stack.dismiss_top(), Some(Layer::CompactContext));
+        assert_eq!(stack.dismiss_top(), None);
+        // From What the model is sent: Escape leaves the choice first and
+        // the dialog under it stays open; closing that one does not take
+        // the choice along, which stands on its own.
+        stack.open(Layer::ModelView);
+        stack.open(Layer::CompactContext);
+        assert_eq!(stack.dismiss_top(), Some(Layer::CompactContext));
+        assert!(stack.contains(Layer::ModelView));
+        stack.open(Layer::CompactContext);
+        assert!(stack.close(Layer::ModelView));
+        assert!(stack.contains(Layer::CompactContext));
+    }
+
+    #[test]
+    fn the_handoff_dialog_closes_first_and_leaves_what_the_model_is_sent() {
+        let mut stack = EscapeStack::default();
+        // From the command palette: one Escape and it is gone.
+        stack.open(Layer::Handoff);
+        assert_eq!(stack.dismiss_top(), Some(Layer::Handoff));
+        assert_eq!(stack.dismiss_top(), None);
+        // From What the model is sent: the note goes first and the dialog
+        // under it stays open, as the WebView's usage panel does.
+        stack.open(Layer::ModelView);
+        stack.open(Layer::Handoff);
+        assert_eq!(stack.dismiss_top(), Some(Layer::Handoff));
+        assert!(stack.contains(Layer::ModelView));
+        assert_eq!(stack.dismiss_top(), Some(Layer::ModelView));
+        assert_eq!(stack.dismiss_top(), None);
     }
 
     #[test]

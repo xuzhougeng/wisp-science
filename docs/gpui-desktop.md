@@ -139,7 +139,8 @@ which it only reads.
 | Command palette | One box over everything: projects, files by name in every project, conversations by title or message text, and the window's commands, the WebView's among them (appearance, text and code size, the side panel's tabs, import and export, skills, updates, the first-run guide); arrow keys, Return, Escape |
 | Large pictures | When the model asks to look at a picture larger than it takes, a question of its own asks whether to send a smaller temporary copy (the file is not changed): Resize and continue, or Cancel, for that once only |
 | Privacy mode | ⌘⇧H (or the palette's Privacy mode) chooses projects to hide while the screen is recorded or shared: their cards, their conversations in the recent list and their rows in the palette are left out until Restore all. The choice is the WebView's, kept in the store, so both desktops honour it |
-| Pictures in answers | When an answer shows a picture of the project with Markdown image syntax, the picture is drawn under the answer, and so are the pictures its turn wrote with `write` or `edit` that it does not show (under the turn's last answer); clicking one opens it in the Files tab |
+| Pictures in answers | When an answer shows a picture of the project with Markdown image syntax, the picture is drawn under the answer, and so are the pictures its turn wrote with `write` or `edit` or recorded as artifacts (code the model ran included) that it does not show, under the turn's last answer, each once; clicking one opens it in the Files tab |
+| Generated files | Under the last answer of a turn that recorded artifacts, a folded Generated · N (已生成 · N) line opens to the files the turn recorded under their folders, each folder folded with its file count; a file opens in the Files tab, and one a later answer wrote again is greyed and labelled Updated. The list scrolls past a set height. Tab reaches the line, each folder and each file, and Enter or Space opens it; what is open stays open while the conversation does |
 | WebView projects | Bring over on the home page (or the palette's command) lists the WebView desktop's projects from its database, found where the WebView keeps it or chosen, and read without being changed: each with its folder and its conversations, the ones already here or whose folder is gone held back. The ticked ones come in one press, and a line says how many came and why any did not: one kept in the WebView's database is copied with its conversations and goes on using its folder where it is, one that keeps its own database in its folder is opened there, so both desktops share it; a starred one stays starred, and a copied one keeps its own settings and its conversations'. Under Settings the WebView's own settings that mean the same here are offered by group (network routes, skills switched off and tags, experts, ACP agents, command hooks, your credentials' names and more), each only while none of it is set here, so nothing made here is replaced. Under Saved models the WebView's models are listed with their model ids and whether their key comes: one brought over keeps its endpoint, limits and route, its key goes from the keychain to the keychain under this desktop's name, and the WebView's everyday model becomes the default while there is none (not while `WISP_*` variables set the model) |
 | Project archives | Export on a project's card writes the project, its records and its files, as one zip; its folder-package button writes them as a folder another computer opens in place, in a new folder named after the project. Import on the home page takes either: a zip is put in a folder you choose, a folder package is opened where it is. While either runs, a line on the home page says the step, the files and bytes done of all, and the file it is at |
 | Project sync | Project settings, Sync: Sync now publishes the project through a relay or a shared folder (set in Settings, Remote access) or brings in another device's changes, Copy device code, and after a conflict Use the other device's copy or Keep this device's copy, each asked first; a project in a cloud-drive folder can save itself there instead. Join a project from another device on the home page takes a device code and a folder |
@@ -155,13 +156,17 @@ which it only reads.
 | Notifications | When a turn ends or a tool waits for approval while Wisp is in the background, a system notification is posted and, if chosen, a sound is played (Settings, General); a recent conversation that is not open is announced too when it stops working |
 | Language | Settings, General, chooses the interface language: System (Chinese on a Chinese system, English otherwise), English or 中文 |
 | Delete a project's folder | Removing a project offers Delete folder too: after you type the project's name, the project is removed and its folder is deleted with every file in it |
-| What the model is sent | Clicking the context percentage by the composer (or the command palette) lists the conversation's working set: the instructions, the summary that stands in for compacted turns, and each message with about how many tokens it takes; above them, the same set by kind (system prompt, rules, skills, sub-agent definitions, conversation), with the core's estimate and each one's share, as the WebView's context usage splits it, tool definitions excepted |
+| What the model is sent | Clicking the context percentage by the composer (or the command palette) lists the conversation's working set: the instructions, the summary that stands in for compacted turns, and each message with about how many tokens it takes; above them, the same set by kind (system prompt, rules, skills, sub-agent definitions, conversation), with the core's estimate and each one's share, as the WebView's context usage splits it, tool definitions excepted; Compact… there asks how to compact the conversation, and Hand off… opens the handoff note over it |
+| Compaction | `/compact` (or Compact… in What the model is sent) opens a dialog that offers regular compaction (old tool output becomes short archived stubs, every question and answer stays) or semantic compaction (older turns are folded into a summary with a short recent tail), with Cancel and Start compaction. Wherever the conversation was compacted, automatically or on request, the transcript shows a quiet line: who compacted it, whether older turns were summarised or old tool output trimmed, how many tokens before and after and how much smaller; a summary opens under the line with a click, and the latest compaction offers Undo the compaction until the conversation goes on |
+| Handoff | Hand off… in What the model is sent (or Hand off to a new conversation in the command palette) has the conversation's model write a handoff note from what it is sent now, in the WebView's headings (goal and stage, completed work, pending work, state to keep outside the conversation); an optional instruction steers it and Regenerate writes it again. The note is read and changed in the dialog, and Start new conversation opens a new conversation in the same project whose first message is the note; the conversation handed off is left as it was |
+| Too-long recovery | When the model refuses a turn because the conversation no longer fits its context window, even after the turn compacted it by itself, a bar above the composer says so, with the provider's words, and offers the WebView's three ways on: Compact and continue (the compact dialog, set to semantic; once it is done the unfinished turn goes on from what was saved, without a new message and without running finished tools again), Continue in a new conversation (a new conversation in the project is asked to go on with the unfinished request, with this one attached as context) and Pause conversation (the bar goes and the error stays) |
 | Interpreters | The Python and R interpreters a conversation keeps between tool calls show above the composer with their version and state; Stop ends one, Dismiss takes a stopped one off the list; Console opens one with its variables, code of your own to run (printed output and plots) and Restart, and the command palette starts the conversation's Python or R console |
 | Experts | Settings, Experts, keeps personas (a name and instructions); the composer's Expert menu starts a new conversation as one, and its instructions hold for the whole conversation |
 | Quick actions | Settings, Quick actions, keeps requests you make often under a name; the composer's quick actions menu puts one into the message box, after whatever is already typed, to finish and send. An action can instead start a workflow of the library: from the menu it is drafted as agents on what is typed (its request, if any, told to every task first) in a new conversation that opens on its Agents tab |
 | Undo a turn | Going back to the latest message can also undo its files: a file the turn edited gets its earlier content, a file it created goes to the project's trash, and a file changed again since is left and named |
 | Table preview | A `.csv` or `.tsv` file is previewed as a grid of its first 200 rows and 30 columns, with a switch to its text |
 | File actions | A previewed file's path can be copied, the file attached to the message, shown in the file manager or opened with the system's own application |
+| Script editor | An R (`.R`, `.r`) or Python (`.py`, `.pyw`) script previewed in the Files tab is edited where it is shown, with line numbers, as in the WebView's source editor: Save (or Cmd/Ctrl+S in the editor) writes it over the file, keeping the file's line endings and final newline, and appears with "Not saved" under the name while there is something to save; Run (Cmd/Ctrl+Return) runs the selection, or the whole statement under the caret and then moves to the next one, and Run script (Cmd/Ctrl+Shift+Return) saves and runs the saved file whole, both in the open conversation's interpreter for the script's language (started on the first run), with the output and plots in the console above the composer. A save is refused when the file changed on disk after the edit began, and a dialog offers Keep editing, Reload from disk or Overwrite. Unsaved edits stay per file while the window is open, through switching files, closing the preview and changing conversation; closing the window over them asks first |
 | Slash commands | A message that is only a command does something instead of being sent: `/review`, `/trajectory`, `/context`, `/btw <question>`, `/plan`, `/save-as-skill`, `/skills`, `/files`, `/upload`, `/memo`, `/remember`, `/archive`, `/compact`, `/timer 30m <prompt>`, `/fork`, `/rewind`, `/permission`, `/share`, `/help`; typing "/" where a word starts, or the composer's "/" button, lists them with the project's skills, narrowing as you type |
 | Browser | Settings, Browser, switches on a bridge to the Wisp extension in your own Chrome or Chromium; conversations can then open a tab, read it and run a script in it, only in tabs they opened themselves, and hosts can be blocked or preferred |
 | Workflows | Settings, Workflows, keeps templates of a goal broken into tasks, each saying which earlier tasks it needs and what it may do as an agent, with an approval policy; Run starts a conversation in the open project and gives the model the tasks stage by stage, and Run as agents drafts them as a batch of agents in a new conversation, approved or discarded in its Agents tab |
@@ -176,7 +181,7 @@ which it only reads.
 | Save as skill | Save as skill in a conversation's More menu (or the command palette) puts a request in the composer that asks Wisp to distill the conversation into a reusable skill; you send it, changed or not |
 | Trajectory | A conversation's Trajectory button (or the command palette) shows every turn's steps in the order they happened: what you asked, what the model said, each tool with how it went and how long it took, and each model call with its tokens; the totals are at the top |
 | Windows | New Window (the app menu, Cmd/Ctrl+Shift+N, or the command palette) opens another window on the same projects, each with its own page and conversation; a project's card or palette row opens it in a window of its own, which opens again at the next start until it is closed |
-| Export | Export in a conversation's More menu saves the whole of it as a Markdown file where you choose; Share as HTML (or `/share`) saves what was said as one page to open in any browser |
+| Export | Export in a conversation's More menu saves the whole of it as a Markdown file where you choose; Share as HTML (or `/share`) lists what was said one message to a row, every one ticked, with Select all and Clear selection, and Export HTML saves the ticked ones as one page to open in any browser (the WebView's long image is not there: GPUI cannot draw into an image) |
 | Notebook | A tab of the side panel: the conversation's code as cells, with what each run returned; copy, save to favorites, or show it in the conversation |
 | Research calendar | A page across every project: a month as a grid with how many records each day holds, and the chosen day's records; projects can be left out |
 | Scheduled tasks | A page across projects (the clock on the home page, or the command palette): a prompt is sent into a new conversation of its project every few hours, daily or weekly at a time, while the app is open; each task can be run now, switched off or deleted, and its latest firing opens the conversation it made |
@@ -192,22 +197,25 @@ which it only reads.
 | Read state | A finished answer is marked read once it is on screen in the active window |
 | Transcript | Virtualized Markdown, selectable text, paginated history |
 | Tool calls | One folded line each with outcome and elapsed time; click for the verbatim input and output; interrupted calls stop claiming to run |
-| Runs | A Runs tab: runs started by the conversation with kind, status, exit code, command and output tails; a run that has not ended can be cancelled, and is followed until it ends. One that has ended and kept a workspace where it ran can have it deleted after a question (its logs are saved into the project first, and outputs never brought back are not lost without a second question); a cleaned run, or one whose cleanup failed, says so. A run that moves files between machines shows its phase, file, bytes, rate and time left on its card, and while it moves (and a few seconds after) in a Transfers tray above the composer that folds to one line. A finished run on an SSH host has a folder button: a dialog lists what it left there a folder at a time, with a name filter and More… for long folders, and the files and folders chosen (across folders) are brought into the project as the conversation's results, a folder as one archive, or deleted there after a question; the whole workspace can be deleted from it too. In the transcript, a call that started or watched a run shows the run's state now, and Show in Runs opens its output there |
+| Agent cards | A call that hands work to other agents is a card in its place: `explore` with its question, status and folded findings; `dispatch_subagent` with the subagent conversation's title, status and task, and a button that opens it; `delegate_tasks` with the batch's goal, status, task counts and a line per task (status, instruction, its conversation), Show in Agents and Stop while it runs. `subagent_status`, `stop_subagent`, `get_delegated_result` and a background batch's result coming back are one folded line naming the subagent or batch. Until the batches or the conversation list are read the call stays a tool row |
+| Runs | A Runs tab: runs started by the conversation with kind, status, exit code, command and output tails; a run that has not ended can be cancelled, and is followed until it ends. One that has ended and kept a workspace where it ran can have it deleted after a question (its logs are saved into the project first, and outputs never brought back are not lost without a second question); a cleaned run, or one whose cleanup failed, says so. A run that moves files between machines shows its phase, file, bytes, rate and time left on its card, and while it moves (and a few seconds after) in a Transfers tray above the composer that folds to one line. A finished run on an SSH host has a folder button: a dialog lists what it left there a folder at a time, with a name filter and More… for long folders, and the files and folders chosen (across folders) are brought into the project as the conversation's results, a folder as one archive, or deleted there after a question; the whole workspace can be deleted from it too. In the transcript each run has one card, under the call that waits on it while it goes on (a `run_in_context` still waiting on its run included) and under the call that submitted it once it has ended, so an explicit `monitor_run` leaves no second card: its state as an icon and a word, where and how long it ran, a transfer's meter, and, with the call opened, its remote folder, command and output tails; Ask, Move to background (a turn waiting on the run stops waiting with `wait_backgrounded` and finishes its reply while the run goes on; the conversation gets one message when the run ends, even after a restart), Cancel, the review dialog for a finished run on an SSH host, and Show in Runs for its whole output, log and clean-up |
 | Artifacts | Files a turn wrote are recorded when it ends; an Artifacts tab lists them for the conversation or the project and opens them, and lists each one's versions, any of which can be saved as a copy from its snapshot (checked against its checksum, up to 512 MB); By folder puts them under their folders, and each one's trail button says which tool call wrote it, with the code and Open the conversation |
 | Side panel | Tabs: Files, Runs, Environments (this computer and the saved SSH hosts: attach one to the conversation so its runs may go there, take it away, check it, open a terminal or its folders, and set where the project keeps things there: uploaded data, run folders and the results folder), Artifacts, Notebook, Provenance (the loaded part's tool calls with how each went, opening to what each was given and returned, with Show in the conversation), Agents, Highlights, Memos, Memory, Aside; the open tab is named, the others are icons. − beside the open tab takes it away and + adds one back; the tabs kept are remembered, and opening a tab from elsewhere brings it back |
-| Agents | The Agents tab lists the helpers the conversation sent off to explore: what each was asked, how it went, and what it found |
+| Agents | The Agents tab lists the helpers the conversation sent off to explore: what each was asked, how it went, and what it found; the transcript draws those calls, and the subagents and batches the agent started, as cards |
 | Aside | The Aside tab (or the command palette) asks the conversation's model a question about the open conversation; the answer shows beside it and nothing is added to the conversation. The latest turns are quoted whole; passages from before them that match the question go along labelled [E1]… and are listed under the answer, with who said them and the words they matched. Ask aside under a message opens it with that message quoted in the question |
 | Quoting | Quote under a message puts it in the message box as a quotation after what you were writing, ready to answer; a selected passage is copied with Cmd/Ctrl+C |
 | Favorites | A star under any message saves it as it reads now; an image in Artifacts can be saved as a figure. Highlights lists what this conversation saved; the Favorites page lists everything from every project, with search, a kind filter, the item in full, its source conversation and removal after a confirmation |
-| Memory | One switch; habits the model is shown in every project; this project's notes by day, which the model can search; add, edit and delete either, and save any message to one or the other, or press Suggest for the reviewer model's draft of what is worth keeping from its turn (the WebView's `turn_memory` prompt), with where it suggests keeping it; a weekly tidy that proposes merging or retiring habits for you to apply or dismiss |
-| Memos | Your own notes per project: add, edit, pin, copy, delete after a confirmation, and put one into the message box. The model is never shown them |
+| Memory | One switch; habits the model is shown in every project; this project's notes by day, which the model can search; add, edit and delete either, and save any message to one or the other, or press Suggest for the reviewer model's draft of what is worth keeping from its turn (the WebView's `turn_memory` prompt), with where it suggests keeping it; a weekly tidy that proposes merging or retiring habits for you to apply or dismiss; Clear all under the notes deletes every note of this project's memory after a question that names them (habits and other projects' notes stay) |
+| Memos | Your own notes per project: add, edit, pin, copy, delete after a confirmation, and put one into the message box; a search field narrows the list to the memos whose title or text holds what is typed. `/memo`, typed or picked from the "/" menu, opens a picker of the project's memos, filtered by any words after it, that puts the one picked into the message after what is written there (one row opens the Memos tab when the project has none). The model is never shown them |
 | Files | Project file browser, available before the first conversation, with a field that finds the project's files by name and Upload, which copies files you pick into the folder shown (never over a file that is there: a taken name gets `_1`, `_2`…); read-only text and Markdown preview, pictures (PNG, JPEG, GIF, WebP, SVG, BMP), and Jupyter notebooks as their cells with what each printed or returned (a figure is named, not drawn; Show as text gives the file itself); a PDF as its first twelve pages, drawn on the CPU by `hayro` (pure Rust, the same on macOS and Windows; a protected PDF is opened with the system's application), with Show the text for its text and tables; an alignment (Clustal, Stockholm, aligned FASTA) or a FASTA file as its sequences, one per row, residues coloured by kind (amino acids by property, nucleotides by base), a hundred columns at a time, with Show as text; a molecule (MOL, SDF, MOL2, a crystal's CIF with its asymmetric unit placed in its cell, or SMILES laid out flat from the notation, implicit hydrogens left out) as its bonds, double, triple and aromatic ones drawn as such, with its heteroatoms coloured, its name, and which of the file's molecules it is, and a structure (PDB or mmCIF) as the trace of its chains through their Cα (or P) atoms, each chain its own colour, turned by dragging, with Face on and Show as text; Word, Excel, PowerPoint, OpenDocument, RTF and EPUB documents as their text and tables, without their layout or pictures; an HTML page laid out as a document (its text, headings, lists, tables and links; no scripts run and no styles or pictures are loaded, as the app has no network client) with Show the source; new folder, new file, rename, and move to the project's trash; listed by name, newest first or largest first, folders first, in the order last chosen; as rows or as tiles, a picture of at most 16 MB as itself, the first 400 entries of a folder, remembered across launches |
 | Composer | Native multiline input. Return sends and Shift+Return starts a new line, or, with the other choice in Settings, General, Return starts a new line and Cmd/Ctrl+Return sends; Cmd/Ctrl+Return always sends. While an input method is composing, Return goes to it. While a turn runs the same key queues the message: it is sent when the turn ends, or given to the running turn at once with the queue's lightning button |
 | Plan first | The model investigates and submits a plan as a card; nothing is changed until you approve it, which leaves plan mode and starts the work |
 | First-run guide | On a first run a dialog walks through four steps: welcome, what Wisp can do, a model (a DeepSeek key sets up deepseek-v4-flash as the default and deepseek-v4-pro beside it, or a link to Settings, Models for another provider), and the tools on this computer (install Python with uv). Get started or Escape puts it away for good, in this desktop and the WebView one |
 | Import from Codex or Claude Code | The import button in the conversation list's header lists the conversations Codex CLI (`~/.codex/sessions`) and Claude Code (`~/.claude/projects`) keep on this computer, newest first, with the first thing asked and the folder it was had in. Import brings one into the project in a group named `codex` or `claude`, with its messages and tool calls; importing it again brings in only what was added since, and leaves a conversation continued here alone. Only this computer is looked at, not SSH or WSL hosts |
 | Delegated tasks | The model can hand a batch of dependent tasks to temporary agents and wait for their results; a plan card asks first when a task can change files, run code or use a remote model. Each task works in a watch-only conversation under the one that started it. The Agents tab lists the batches with each task's status, summary and conversation, and stops a running one |
-| Subagents | The model can start a subagent: a conversation of its own for one focused task, listed under the conversation that started it, with a bar saying it is watched and Open the parent; its composer is closed. When it ends, a report is added to the parent, whose agent goes on to handle it |
+| Subagents | The model can start a subagent: a conversation of its own for one focused task, listed under the conversation that started it; in its composer's place a card says it is watched and offers Open the parent. When it ends, a report is added to the parent, whose agent goes on to handle it |
+| Read-only conversations | A conversation that cannot be written to shows, in place of the message box, one card in the composer's column that says why and offers the way on: a subagent's (Open the parent), one whose research is archived (View the archive / Continue research, which opens the research archive), the source of an exploration round that is not settled, and an exploration that no longer runs (the bar over the conversation keeps the round's own actions). Send, the send key, Queue, typed and menu commands that write, attaching, dropping and pasting files and the add-context box all do nothing there |
+| Conversation timer | `/timer 30m <prompt>` gives the open conversation its timer (setting it again changes it: one per conversation). While it has one, a strip above the composer shows the prompt, how often it repeats and when it fires next (or that it is paused, and why its last firing failed), with Pause or Resume and Cancel timer; it is kept by the host, so it is there after a restart |
 | Explorations | On an answer, Start an exploration from here names one and continues the conversation in its own copy of the project; more candidates of the same round start from the same answer. The source shows a bar with each candidate and Abandon the round; a candidate shows its status, View changes and keep (what it changed, what the mainline changed meanwhile, why it cannot be kept), Discard, Back to the mainline and Abandon the round; when it cannot be kept, Show both folders and Finish by hand |
 | Bringing a branch back | In a branch, Bring back in the conversation's toolbar has the model summarise what the branch did since it split off; you read and change the summary, and Bring it back adds it to the conversation the branch came from, which reads it from then on, and opens that conversation, where it shows as a Merged branch result card naming the branch: press it for the summary and Open the branch. A branch is brought back once |
 | Approving a plan | When the model sets out a new plan it waits for you: the plan's steps show above the composer with Approve, Turn down, and a box to say what should change; Send feedback (or Return in the box) turns the plan down with your words, which the model reads to revise it |
@@ -217,15 +225,21 @@ which it only reads.
 | Usage | How full the context is, and the tokens the running or latest turn used |
 | Questions | When the model asks, a card with its options: one click answers, or type the answer |
 | Messages | Copy any message as Markdown |
-| Attachments | Attach files with the system dialog or by dropping them onto the conversation, or add a project file, another conversation or a skill from the add-context box; shown as chips until sent |
+| Attachments | Attach files with the system dialog or by dropping them onto the conversation, or add a project file, an artifact, an environment (this computer or a saved SSH host), a runtime, another conversation, a skill or a workflow from the add-context box; shown as chips until sent. A memo picked there is put into the message as text |
 | Drafts | Survive navigation; preserved on send failure, cleared on durable acceptance |
 | Execution | Shared agent/tools, streamed snapshots while running, stop and errors |
 | Approvals | Exact pending request; allow once, allow that tool for the rest of the conversation, always allow it in this project, or deny |
-| Escape | One window-level stack: Escape closes only the topmost of command palette, file preview, Files panel, Settings, title editor, delete confirmation, remove-project confirmation, the Full access question, the model and effort menus, the remove-model question, the sort menu, select mode and its group menu and delete question, a group's name field, actions and delete question, the conversation's group and move menus, the go-back question, the memo editor and its delete question, the memory editor and its delete question, and the Favorites page and its remove question |
+| Escape | One window-level stack: Escape closes only the topmost of command palette, file preview, Files panel, Settings, title editor, delete confirmation, remove-project confirmation, the Full access question, the model and effort menus, the remove-model question, the sort menu, select mode and its group menu and delete question, a group's name field, actions and delete question, the conversation's group and move menus, the go-back question, the memo editor and its delete question, the memory editor and its delete question, the question before Clear all of the memory, the share dialog, the Favorites page and its remove question, the question about a script changed on disk and the one before closing over unsaved edits, and, after all of them, the newest card for another project's conversation |
 | Shortcuts | Cmd/Ctrl+K opens the command palette; Cmd/Ctrl+P opens it with only its commands, as the WebView's action palette; Cmd/Ctrl+N starts a conversation in the open project; Cmd/Ctrl+, opens Settings |
 | Lifecycle | Background IO, stale-result rejection, cancel/clean workers on exit |
 
-Lists and search results show up to 100 conversations per project. Drafts do
+The host lists 100 conversations of a project at a time, newest first, and
+says when it left older ones out; the sidebar then offers Load earlier
+conversations (Load more matches for a search), which lists the next 100
+under them. Every refresh reads all the pages loaded, so selection, scroll
+position, open groups, pins and picks stay as they were. A pinned
+conversation older than the pages is listed anyway. The phone and web
+clients' `remote_sessions` list is unchanged: the newest 100. Drafts do
 not yet survive app restarts. Messages are
 text-only. The initial project keeps the embedded host's `Server` name; opened
 folders use their own names.
@@ -467,8 +481,27 @@ Limits of this slice:
 - Files shows the local project root only, one directory at a time (at most
   2000 entries), hides `.wisp`, `.git`, links and special files, and previews
   the first 1 MB of a text file. Markdown up to 256 KB is rendered; larger or
-  other text is shown verbatim. No edit, upload, download, image, PDF or
-  Office preview.
+  other text is shown verbatim and read-only, except R and Python scripts.
+- A script is edited only when it was loaded whole: one over 1 MB, one
+  with more than 8,000 lines, or one that is not UTF-8 text is shown
+  read-only with a line that says why, as the WebView does. Other text
+  files (Markdown, shell, JSON, …) are not edited, as in the WebView. The
+  editor numbers lines but does not colour the code: the component's
+  language grammars are a build feature the app does not take. There is
+  no "Selected lines" label as the selection changes. Saving goes through
+  the host's project-file confinement (inside the project after links are
+  followed, never `.wisp` or `.git`, an existing UTF-8 file, at most 8 MB),
+  is refused while the project is frozen for an exploration, and records
+  no artifact version, as in the WebView. A file of mixed line endings is
+  saved with the more common one. Drafts live in the window: quitting the
+  app (Cmd/Ctrl+Q) does not ask and they are lost, as they are in the
+  WebView. Running needs an open conversation: its interpreter on this
+  computer runs the code. Run script reads the file from the project
+  folder, so it is refused in an exploration's conversation, whose
+  interpreter works in the exploration's copy; Run still sends the code.
+  There is no runtime binding to an SSH or WSL context as the WebView's
+  editor has, and no external editor (the WebView has none either: its
+  "Open in editor" opens a chat snapshot's source in its own editor).
 - The palette finds files by name, not content. Each project is walked
   breadth-first for at most 20,000 entries, skipping links, dot-folders,
   `node_modules` and `__pycache__`, so a file deep in a very large tree can be
@@ -665,8 +698,11 @@ Limits of this slice:
   turned off in Settings, General, or Don't check at start is pressed on
   the note it shows (the WebView's `update_check_enabled`, so either
   desktop honours it), and whenever its button is pressed; nothing is
-  checked in the background. At start it says something only when a
-  newer release exists, in a note in the window's corner. It asks GitHub for the latest
+  checked in the background. It says something outside Settings only
+  when a newer release exists: a card at the foot of the sidebar (on the
+  home page, which has none, under its column) names the version, with
+  Open releases, Don't check at start and Not now, which puts the card
+  away until the next start. It asks GitHub for the latest
   release of the project (the WebView's request, with a generic client
   name and nothing about you or your work), over the system's proxy
   settings, and gives up after eight seconds. Nothing is downloaded or
@@ -691,6 +727,20 @@ Limits of this slice:
   `notify-send` and `canberra-gtk-play`, silently doing nothing when
   those are missing. Windows gets the sound only. The sound cannot be
   chosen.
+- In the window, a conversation of another project (any project, on the
+  home page) whose turn ends gets a card in the lower right corner, as in
+  the WebView: the project, the conversation, Task completed or Task
+  failed, Open conversation and Close. At most three show, newest first. A
+  finished one goes fifteen seconds after the pointer last left it; a
+  failed one stays until it is opened or closed; either goes once the
+  Needs-you list has had it and dropped it. Escape closes the newest card
+  after everything else open has been closed. Open conversation goes to
+  another window that shows the project, brought forward, or opens a new
+  one for it; a window on the home page opens it itself. The cards come
+  from the same reading of the twelve most recent conversations as the
+  notifications, so a conversation outside them is not announced; one
+  that waits for an approval gets no card. The conversation on screen
+  never gets one.
 - The Chinese interface is not complete. Translated: the fixed text of
   the pages, panels and dialogs, the names of panel tabs, palette commands
   and settings sections, the placeholders of text fields, statuses,
@@ -760,6 +810,22 @@ Limits of this slice:
   the loaded transcript like the Notebook: the `explore` calls from the
   messages that are loaded, with a helper's findings once it has
   reported back, not its steps along the way.
+- The transcript draws each call that hands work to other agents as a
+  card in place of its tool row (`agents::cards`). An `explore` card is
+  read from its own row. A `dispatch_subagent` card names the subagent
+  its result returned (or, for a further instruction, its `session_id`)
+  and is drawn only when the conversation list says that conversation
+  was started by this one; its title and status are the list's, and the
+  list refreshes every few seconds. A `delegate_tasks` card is the batch
+  whose `workflow_id` its result names; while the call is still out
+  (waiting on its plan card or running in the turn) it is the newest
+  batch of this conversation with the same goal not already claimed by
+  another call. The batches are read for the open conversation whenever
+  its transcript has such a call, not only while the Agents tab shows,
+  and again while one runs, so a card follows its batch in the turn and
+  in the background. A call whose work cannot be found yet, or is gone
+  (a denied batch), stays an ordinary tool row. `map_items` work keeps
+  its place in the Agents tab and has no card.
 - The sub-agent model is the model the `explore` helper works on, the
   only sub-agent this host has. The order is the WebView's: a
   conversation's own choice for its sub-agents (its `frames` column, set
@@ -867,28 +933,81 @@ Limits of this slice:
   before it ended, has nothing to put back. There is no preview of
   what will be undone before it is done; the note afterwards says what
   was. Files the turn created are moved to `.wisp/trash/`, not erased.
-- `/timer` makes a scheduled task bound to the open conversation: the
-  prompt is sent into it every so many minutes, hours or days while the
-  app is open, as a new turn each time. It does not replace the turn
-  before it as the WebView's timer does, cannot be paused, and a firing
-  that finds a turn running there is recorded as failed rather than
-  queued. `/timer off` removes the conversation's timers; they are also
-  listed, marked, on the Scheduled tasks page.
-- `/compact` archives the conversation's whole history under the
-  project's `.wisp/history/` and shortens what the model is sent, as a
-  turn does by itself when the context fills up. It is refused while a
-  turn runs and in an archived conversation. There is no choice between
-  pruning and summarising and no instruction for the summary; it can be
-  undone from What the model is sent until the conversation goes on. The
-  transcript on screen keeps its length.
+- `/timer` gives the open conversation its timer, a scheduled task
+  bound to it: the prompt is sent into it every so many minutes, hours
+  or days while the app is open, as a new turn each time. A conversation
+  has one; `/timer` again changes its prompt and interval, keeps whether
+  it was paused, and fires one interval from then. While a turn runs
+  there or messages wait for one it stays due and fires at the first
+  look after (every half minute), as the WebView's does, instead of
+  being refused. Pause keeps the prompt and the interval; Resume keeps
+  the cadence's place on the clock, so a time missed while paused fires
+  once at the next look, as in the WebView. Unlike the WebView's it does
+  not replace the turn before it: every firing adds a turn. The strip
+  cannot edit the prompt or the interval (send `/timer` again) and
+  `/timer` alone does not open an editor. `/timer off` or Cancel timer
+  removes it; it is also listed, marked, on the Scheduled tasks page.
+  A timer the WebView made (one that replaces its previous turn) is the
+  WebView's to show and fire, and is not shown here.
+- The host's snapshot says why a conversation is read-only
+  (`read_only_reason`: archived or subagent; an optional field older
+  clients ignore). A subagent's conversation opened before the project's
+  list of conversations has named its parent says it is watched but
+  offers Open the parent only once the list arrives; a host that does not
+  say why gets "This conversation is read-only." with nothing offered.
+  The card's View the archive only shows an archive that is there: with
+  none the dialog closes again, says so, and nothing is drafted. A branch that
+  was merged back or lost its source is read-only in the WebView but
+  not here: this host does not refuse a message there, and the composer
+  stays open.
+- `/compact` asks which kind of compaction to run, then archives the
+  conversation's whole history under the project's `.wisp/history/` and
+  shortens what the model is sent: regular prunes old tool output and
+  keeps every turn even when the context stays nearly full; semantic
+  always writes a summary with the model, which takes a model call and
+  fails if the summary cannot bring the context under the warning
+  threshold. A turn that fills the context does the same by itself,
+  pruning first and summarising only when that is not enough. It is
+  refused while a turn runs and in an archived conversation. There is no
+  instruction for the summary and no offer to compact a conversation that
+  has been idle for hours. The transcript on screen keeps every message;
+  a compaction line marks where it happened. The line is placed by the
+  host after the last message saved before the compaction, so a
+  compaction made during a turn sits after that turn's messages and
+  shows once the turn has ended; a line whose place is in history not yet
+  loaded appears when Load earlier messages brings that page. The host
+  sends these lines only to a client that asks for them in its snapshot
+  request (`compaction_rows`), as this desktop does; the phone apps and
+  the web client get the transcript without them. Undo, from
+  the line or from What the model is sent (there only when it shows a
+  summary), goes through the same host call, only for the latest
+  compaction and only while nothing has been said after it. The line has
+  no Rewind to before the compaction and does not say from which turn the
+  recent tail was kept.
+- The handoff note is written by the conversation's own model from what it
+  is sent now (the summary of compacted turns and the turns after it,
+  each bounded, tool output and pictures left out), with the WebView's
+  prompt, which `wisp-core` keeps for both. Nothing is saved until Start
+  new conversation, and the new conversation keeps no link to the old one.
+  It is offered whatever the context's size; the WebView offers it from
+  its usage panel once the window is nearly full. It is refused while a
+  turn runs, in a read-only conversation and in one an ACP agent runs.
+- The host tells a turn refused as too long from the text it keeps of the
+  failure (`error_kind` in the conversation's snapshot, which the phone
+  and web clients ignore), so the bar also shows after a restart, until
+  the next turn. Continue in a new conversation attaches the old
+  conversation the way a referenced conversation is read here, its latest
+  messages as an excerpt, where the WebView has a Reader summarise it.
+  Pause conversation lasts while the window is open.
 - A slash command is read only when it is the first word of the message
   and one of the known ones, so a message that starts with a path is
-  sent as a message. There is no list that narrows as you type.
+  sent as a message. The "/" menu narrows as you type.
   `/fork` branches the conversation as it stands, `/rewind` asks about
   going back to the latest message, `/permission` switches full access
-  (asking first when it turns it on), and `/share` saves the
-  conversation as an HTML page, as Share as HTML does, rather than
-  publishing it anywhere.
+  (asking first when it turns it on), `/memo [words]` opens the memo
+  picker filtered by the words, and `/share` opens the share dialog, as
+  Share as HTML does: the messages picked are saved as an HTML page
+  rather than published anywhere (the WebView has no share link either).
 - The browser bridge is off until it is switched on, and then listens
   on this computer only, on the port the extension dials
   (127.0.0.1:18765), so it and the WebView desktop cannot both hold it.
@@ -1523,9 +1642,25 @@ Limits of this slice:
   can see, the paths are all it gets. Whether a model can see is the model
   catalog's word for its ID. A referenced conversation is
   passed as its most recent exchange (about 12,000 bytes), and a skill as its
-  instructions, for that turn only: neither is saved with the message, so
-  the chips a message shows for them last while the window that sent it
-  is open, as in the WebView. Paste,
+  instructions. The add-context box also lists, each under its own heading
+  and filtered by what is typed, the project's artifacts (this
+  conversation's first, then the newest), where work can run (this computer
+  and the saved SSH hosts; found by "server" too), the runtimes (Python on
+  this computer, and R once the conversation has one; found by "runtime"),
+  the workflow library and the memos. These are told to the model the way
+  the WebView tells them: an artifact as its name and where its file is
+  now, an environment as its context id and kind (a saved host is also
+  attached to the conversation, so its runs may go there), a runtime as the
+  `python` or `r` tool to call with its context id and to inspect rather
+  than re-run, and a workflow as its goal and staged tasks to apply to the
+  request. A memo is never a reference: picking one puts its text into the
+  message after what is written, as the WebView's `/memo` does, so the model
+  reads a memo only when it is sent that way. All of it is for that turn
+  only: none is saved with the message, so the chips a message shows for
+  them last while the window that sent it is open, as in the WebView. A
+  runtime on an SSH host is refused, because the embedded host keeps Python
+  and R on this computer; a conversation is not read by the WebView's
+  reader agent, and `#project` is not offered. Paste,
   drag and drop work, and typing `@` or `#` where a word starts opens the
   add-context picker (the character is taken back out). A slash command
   runs when it is the whole message. Typing `/` where a word starts opens
@@ -1536,8 +1671,10 @@ Limits of this slice:
   to the message; either way the typed word goes. A word with another `/`
   in it is a path and opens nothing. Escape shuts the menu until that word
   is gone. The `/` button opens the same menu.
-- Runs can be cancelled. Harvest, review of a remote workspace, transfers and
-  the full log are not ported.
+- Runs can be cancelled, moved to the background from their card in the
+  transcript and reviewed (harvest, delete, clean up) on an SSH host; see the
+  Runs row above. Moving a run to the background is a command of the
+  desktop only, not of remote access.
 - Favorites are the WebView's library: a database of their own
   (`library.sqlite` in the data directory) that holds copies, so they outlive
   the conversation and the project they came from. A message is saved whole,
@@ -1675,7 +1812,12 @@ the conversation falls back to the default.
 Attach a file from outside the project and one inside it; add another
 conversation and a skill from the add-context box; remove a chip; send, and
 confirm the file chips stay on the message and `uploads/` holds the copy. Send
-files with no text.
+files with no text. Type `@`, then `server`: this computer and the saved hosts
+are listed under Environments; pick one with the arrows and Return, add an
+artifact, the Python runtime and a workflow with the pointer, send, and
+confirm each shows as a chip on the message and What the model is sent lists
+them for that turn. Pick a memo: its text is put into the message box and no
+chip is added. Press Escape with the box open: only the box closes.
 Type a word that occurs only in a message, and one that matches nothing. Press
 Escape with the palette over Settings and over the Files panel: only the
 palette closes. Click outside it: it closes.
@@ -1826,9 +1968,11 @@ In Settings, General, press Check for updates: it reads Checking… and
 then says this is the latest version or names a newer one, with Open
 releases opening the project's release page. Without a network it says
 it could not check. Turn At start off, quit and start again: no check is
-made; turn it on and start a build older than the latest release: a note
-in the corner names the newer version, and Don't check at start turns
-the switch off.
+made; turn it on and start a build older than the latest release: a card
+at the foot of the sidebar names the newer version (on the home page,
+under its column), Don't check at start turns the switch off and Not now
+puts the card away. A newer version found by Check for updates puts the
+same card there.
 Open three conversations, one of them in another project: tabs appear
 above the conversation from the second on. Click a tab of the other
 project: its project and conversation open. Close the tab in view: its
@@ -1838,6 +1982,15 @@ Start a slow turn, switch to another app and wait: a notification names
 the conversation when the turn ends, and another when a tool asks for
 approval. Stay in Wisp and confirm nothing is posted. Turn Notify me off
 and Play a sound on in Settings, General: only the sound comes.
+Start a slow turn in one project and open another: when it ends, a card
+in the lower right corner names the project and the conversation and
+leaves fifteen seconds after the pointer leaves it; a turn that fails
+leaves a card that stays. With a second window on the first project,
+Open conversation brings that window forward on the conversation;
+without one, a new window opens on it. Escape closes the newest card.
+In a project with more than a hundred conversations, scroll to the end
+of the list: Load earlier conversations lists the next hundred under
+them, and the selection, the scroll position and the open groups stay.
 Press the import button in the conversation list's header: conversations
 from Codex and Claude Code on this computer are listed; Import one, and it
 appears in a group named after the tool, reads as it did there, and is not
@@ -1858,9 +2011,17 @@ work starts.
 Ask for a long piece of work that the model plans: its plan update shows as
 a checklist, and the line above the composer says how many steps are done
 and names the current one; it goes once every step is done.
-After a turn that started a run, the run call in the transcript has a line
-with the run's state that changes as the run does; Show in Runs opens the
-Runs tab with that run's output open.
+After a turn that started a run, the run call in the transcript has the
+run's card with its state, where it runs and for how long, all changing as
+the run does; Show in Runs opens the Runs tab with that run's output open.
+Ask for a long run that the model waits on (`monitor_run`, or
+`run_in_context` with `wait_for_completion`): while it waits, the card has a
+bell button (Move to background) and a stop button (Cancel run). Press the
+bell: the turn ends with a short reply, the card says the run goes on in the
+background, and a new message can be sent. When the run ends, one message in
+the conversation names it, its outcome, exit code and time. With a run on an
+SSH host, once it has ended its card has a folder button that opens the run
+review dialog; Escape closes it.
 Open a PDF in the Files tab: after a moment its pages show as they look,
 each labelled, under a line that says how many there are (a long one says
 only the first twelve are drawn); Show the text gives its text and tables,
@@ -2008,14 +2169,51 @@ fingerprint, and Add evidence and Change are gone. Press New version:
 "v2 · Version 2" opens as a draft with the same figure and evidence.
 With the reason field open press Escape: only the field closes; press it
 again: the panel closes and the page stays.
-Send `/timer 1m say the time`: a note confirms it, the Scheduled tasks
-page lists it as a conversation's timer, and within a minute and a half
-the prompt arrives in the same conversation as a turn. Send `/timer
-off`: a note says one was cancelled. Send `/timer soon`: it is refused
-and the text comes back.
-After a few turns send `/compact`: a note says how many tokens there
-were before and after, a file appears under `.wisp/history/`, and What
-the model is sent is shorter while the transcript is not.
+Send `/timer 1m say the time`: a note confirms it, a strip above the
+composer shows the prompt with "Every 1 min · Next: <time>", the
+Scheduled tasks page lists it as a conversation's timer, and within a
+minute and a half the prompt arrives in the same conversation as a turn
+and the strip's next time moves on. Send `/timer 2m say the date`: the
+strip shows the new prompt and "Every 2 min", and the Scheduled tasks
+page still lists one. Press Pause: the strip reads "Timer paused" and
+nothing arrives; quit and reopen the app: the strip is still there,
+paused. Press Resume: the prompt arrives at the next look. Start a long
+turn and let the time pass: the strip says Due now and the prompt
+arrives only after the turn ends. Press Cancel timer: the strip goes.
+Send `/timer off`: a note says none was cancelled. Send `/timer soon`:
+it is refused and the text comes back.
+Freeze a conversation's research archive: in place of the message box a
+card says its research is archived, with View the archive / Continue
+research; press it: the archive opens. Open a subagent's conversation: a
+card says whose subagent it is, with Open the parent, and no bar above
+the transcript says it again. In either, drop a file on the transcript
+and press the paste shortcut: nothing is attached.
+After a few turns send `/compact`: a dialog offers Regular compact and
+Semantic compact, each explained. Press Escape right away: only the
+dialog closes. Send `/compact` again, keep Regular and press Start
+compaction: a note says how many tokens there were before and after, a
+file appears under `.wisp/history/`, What the model is sent is shorter
+while the transcript is not, and a line at the end of the transcript says
+the context was compacted, with Undo the compaction. Press it: the line
+goes and the context percentage rises again. Open the context percentage,
+press Compact…, choose Semantic compact and start it: the line says older
+turns were summarised and opens to the summary with a click. Send a
+message: the line stays before it and no longer offers Undo.
+Open the context percentage and press Hand off…: a dialog over it writes
+a note under four headings. Press Escape right away: only the note's
+dialog closes. Press Hand off… again, type an instruction, press
+Regenerate, change the note and press Start new conversation: a new
+conversation opens whose first message is the note as changed, and the
+old one is unchanged. With a model whose context window is small (a
+profile with a low context limit against a small local model), keep a
+conversation going until the model refuses a turn as too long: a bar above
+the composer says the conversation is too long. Press Pause conversation:
+the bar goes and the error shows above the transcript. On the next refusal
+press Compact and continue: the compact dialog opens set to Semantic
+compact with Compact and continue as its button; once it is done the turn
+goes on and ends with an answer. On another refusal press Continue in a
+new conversation: a new conversation opens with the conversation attached
+and goes on with the request.
 Ask the model to write a new file and to edit an existing one, with
 Full access on. Point at the message, choose to go back, and press Go
 back and undo its files: the new file is in `.wisp/trash/`, the edited
@@ -2154,8 +2352,9 @@ In a conversation with results press Research archive: the dialog says a
 draft is being written, then shows a title and a report to edit and the
 scripts that go with it. Change a sentence and press Freeze: the dialog
 shows the frozen report and where it is; `.wisp/research-archives/<id>/`
-holds REPORT.md with your change and the scripts; the composer no longer
-sends in this conversation, and a new conversation works as before.
+holds REPORT.md with your change and the scripts; in this conversation
+a card stands in the message box's place, and a new conversation works
+as before.
 Press Continue research: a conversation named "Continue · <title>" opens
 with the report and where the materials are as its first message, and
 the composer sends there.
@@ -2187,7 +2386,18 @@ second press adds nothing. Send it and confirm the model reads the
 Ask something that makes the model call `explore`, then open the Agents
 tab: the helper is listed with its question, reads Running until it
 reports back, then shows its findings; the arrow goes to its row in the
-conversation.
+conversation. In the transcript the call is a card with the question and
+its status; Tab reaches Findings and Enter opens them.
+Ask the model to delegate two independent read-only tasks: the call is a
+Delegated tasks card with the goal, a line per task moving from Waiting to
+Running to Done and the counts under the goal; the chat button on a task
+opens its watch-only conversation, Show in Agents opens the tab, and Stop
+is there only while the batch runs. Ask for a background batch: the card
+says In the background and keeps updating after the turn ends; its result
+coming back is one folded line naming the batch. Restart the app and open
+the conversation: the cards come back from the saved batches. Ask for a
+subagent: the call is a Subagent card with the conversation's title,
+Running, then Idle, and Open its conversation opens it.
 Open the Aside tab in a conversation with an answer in it, ask what the
 answer was, and confirm the reply is about that conversation while the
 transcript is unchanged. Ask a second question that leans on the first
@@ -2457,8 +2667,8 @@ one, then Escape: only the question closes; answer it: the files match
 the side chosen.
 With a model that can use tools and full access in a conversation, ask
 it to start a subagent that lists the project's files: a conversation
-named after the task appears under it, with the instruction and a bar
-saying it is watched; its composer does not send. When it ends, the
+named after the task appears under it, with the instruction and, in
+its composer's place, a card saying it is watched. When it ends, the
 parent shows a report and its agent answers it without a new message of
 yours.
 With such a model and without full access, ask it to have two temporary

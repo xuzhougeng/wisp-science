@@ -11,6 +11,7 @@ mod calendar;
 mod channels;
 mod cif;
 mod codex_pool;
+mod compaction;
 mod compose;
 mod console;
 mod controls;
@@ -20,6 +21,8 @@ mod explore;
 mod favorites;
 mod files;
 mod find;
+mod generated;
+mod handoff;
 mod home;
 mod i18n;
 mod i18n_zh;
@@ -34,6 +37,7 @@ mod method_search;
 mod model_view;
 mod molecules;
 mod notebook;
+mod notices;
 mod notify;
 mod onboarding;
 mod organise;
@@ -49,6 +53,7 @@ mod project_windows;
 mod queue;
 mod remote;
 mod review;
+mod run_cards;
 mod run_review;
 mod schedules;
 mod sequences;
@@ -92,7 +97,17 @@ pub fn open_window(backend: backend::Backend, cx: &mut App) -> bool {
 /// Opens a window as [`open_window`] does, in `project` when one is given
 /// rather than on the home page.
 pub fn open_window_on(backend: backend::Backend, project: Option<String>, cx: &mut App) -> bool {
-    open_window_noting(backend, project, true, cx)
+    open_window_noting(backend, project, None, true, cx)
+}
+
+/// Opens a window in `project` on its conversation `session`.
+pub fn open_window_at(
+    backend: backend::Backend,
+    project: String,
+    session: String,
+    cx: &mut App,
+) -> bool {
+    open_window_noting(backend, Some(project), Some(session), true, cx)
 }
 
 /// Opens a window; one for a project is added to the saved list when
@@ -100,6 +115,7 @@ pub fn open_window_on(backend: backend::Backend, project: Option<String>, cx: &m
 fn open_window_noting(
     backend: backend::Backend,
     project: Option<String>,
+    session: Option<String>,
     note: bool,
     cx: &mut App,
 ) -> bool {
@@ -121,20 +137,35 @@ fn open_window_noting(
         |window, cx| {
             let keeper = backend.clone();
             let workspace = cx.new(|cx| workspace::Workspace::new(backend, window, cx));
+            let guard = workspace.downgrade();
+            let leaving = project.clone();
             if let Some(project) = project {
                 workspace.update(cx, |workspace, cx| {
-                    workspace.enter_project(project.clone(), window, cx)
+                    workspace.enter_project(project.clone(), window, cx);
+                    if let Some(session) = session {
+                        workspace.open_session(project.clone(), session, window, cx);
+                    }
                 });
                 // Kept so it opens again at the next start, until it is
                 // closed; quitting keeps it.
                 if note {
                     save_project_windows(&keeper, project_windows::note(&project, true), cx);
                 }
-                window.on_window_should_close(cx, move |_, cx| {
-                    save_project_windows(&keeper, project_windows::note(&project, false), cx);
-                    true
-                });
             }
+            window.on_window_should_close(cx, move |_, cx| {
+                // Not over a script's edits that are not saved, until the
+                // user says to close without them.
+                if !guard
+                    .update(cx, |workspace, cx| workspace.may_close_window(cx))
+                    .unwrap_or(true)
+                {
+                    return false;
+                }
+                if let Some(project) = &leaving {
+                    save_project_windows(&keeper, project_windows::note(project, false), cx);
+                }
+                true
+            });
             cx.new(|cx| Root::new(workspace, window, cx))
         },
     );
@@ -179,7 +210,7 @@ fn reopen_project_windows(backend: backend::Backend, cx: &mut App) {
             // kept.
             save_project_windows(&backend, project_windows::replace(&projects), cx);
             for project in projects {
-                open_window_noting(backend.clone(), Some(project), false, cx);
+                open_window_noting(backend.clone(), Some(project), None, false, cx);
             }
         });
     })
@@ -239,6 +270,7 @@ fn main() -> anyhow::Result<()> {
             ]);
             // After the input component's own keys, so the composer's win.
             cx.bind_keys(workspace::composer_bindings());
+            cx.bind_keys(workspace::file_editor_bindings());
             cx.set_menus(vec![Menu {
                 name: "Wisp Science".into(),
                 items: vec![

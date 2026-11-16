@@ -1,16 +1,21 @@
+mod agent_cards_view;
 mod agents_view;
 mod archive_view;
 mod aside_view;
 mod assistant_view;
 mod calendar_view;
 mod capabilities_view;
+mod compact_view;
 mod conversation_actions;
 mod demos_view;
 mod explore_view;
 mod favorites_view;
+mod file_editor_view;
 mod files_panel;
 mod find_view;
 mod follow_ups_view;
+mod generated_view;
+mod handoff_view;
 mod home_view;
 mod hosts_view;
 mod import_view;
@@ -22,6 +27,7 @@ mod memos_view;
 mod merge_view;
 mod model_view_dialog;
 mod notebook_view;
+mod notices_view;
 mod onboarding_view;
 mod organise_view;
 mod palette_view;
@@ -34,6 +40,7 @@ mod project_sync_view;
 mod queue_view;
 mod remote_files_view;
 mod review_view;
+mod run_cards_view;
 mod run_review_view;
 mod runtime_console_view;
 mod schedules_view;
@@ -56,6 +63,7 @@ mod settings_skill_store;
 mod settings_subscriptions;
 mod settings_view;
 mod settings_workflows;
+mod share_view;
 mod shell;
 mod slash_view;
 mod surfaces;
@@ -73,6 +81,7 @@ use std::{
 };
 
 actions!(composer, [SendMessage]);
+pub use file_editor_view::file_editor_bindings;
 
 /// The composer's own keys, bound after the input component's so they win
 /// where both apply: with the Return choice, Return sends and Shift+Return
@@ -96,10 +105,7 @@ use gpui_component::{
     input::{InputEvent, InputState},
 };
 use serde_json::{Value, json};
-use wisp_dto::{
-    ProjectSummary, SessionSearchInfo,
-    native_conversations::{Item, Snapshot},
-};
+use wisp_dto::{ProjectSummary, SessionSearchInfo, native_conversations::Item};
 
 use wisp_dto::native_conversations::SendRequest;
 use wisp_server::desktop::{
@@ -188,6 +194,23 @@ pub struct Workspace {
     model_view_error: Option<String>,
     /// The rows opened to show their whole text.
     model_view_open: HashSet<usize>,
+    /// The kind of compaction the compact dialog has chosen.
+    compact_kind: crate::compaction::Kind,
+    /// A compaction asked for there is running.
+    compacting: bool,
+    /// Why the compaction asked for there failed.
+    compact_error: Option<String>,
+    /// The conversation whose refused turn goes on once the compaction
+    /// asked for there is done (Compact and continue).
+    compact_resume: Option<String>,
+    /// The turns refused as too long whose bar the user paused on.
+    paused_failures: HashSet<String>,
+    /// Handing the open conversation off to a new one, and why that
+    /// failed.
+    handoff: Option<crate::handoff::Dialog>,
+    handoff_error: Option<String>,
+    /// The handoff note's instruction and the note.
+    handoff_fields: [Entity<InputState>; 2],
     /// The turn the review dialog is about; `None` is the whole conversation.
     review_turn: Option<wisp_server::desktop::TurnRef>,
     /// The review the dialog is showing or waiting for.
@@ -346,6 +369,14 @@ pub struct Workspace {
     show_archived: bool,
     /// Only the latest list request may replace the rows on screen.
     list_request: u64,
+    /// How many pages of the conversation list are loaded, and whether
+    /// older ones were left out.
+    paging: organise::Paging,
+    /// Cards for conversations in other projects that finished or failed
+    /// while this window shows something else.
+    notices: crate::notices::Notices,
+    /// Takes a finished conversation's card away once it has lingered.
+    notice_timer: Option<Task<()>>,
     /// How the conversation list is sorted and sectioned.
     arrangement: Arrangement,
     /// The project's groups, in the user's order.
@@ -356,6 +387,11 @@ pub struct Workspace {
     branched: HashMap<String, String>,
     /// Subagent conversation id to the conversation that started it.
     dispatched: HashMap<String, String>,
+    /// The open conversation's timer, as the host last gave it; drawn
+    /// only while that conversation is open.
+    timer: Option<wisp_server::desktop::ScheduleRow>,
+    /// A change to the timer is on its way to the host.
+    timer_busy: bool,
     /// The message the rewind question is about.
     rewind_turn: Option<TurnRef>,
     /// Keys of the sections that are folded.
@@ -372,6 +408,9 @@ pub struct Workspace {
     /// that for the project chosen, with its name, waiting to be confirmed.
     transfer_artifacts: bool,
     transfer_preview: Option<(String, String, wisp_dto::SessionArtifactPreview)>,
+    /// The messages being chosen for the open conversation's shared page,
+    /// while that dialog is open.
+    sharing: Option<crate::share::Sharing>,
     /// Something that went as asked and is worth a line.
     notice: Option<String>,
     /// The project's memos; `None` until they were read.
@@ -383,6 +422,9 @@ pub struct Workspace {
     memo_target: Option<String>,
     memo_title: Entity<InputState>,
     memo_body: Entity<InputState>,
+    /// The Memos tab's search field: it narrows the list to the memos whose
+    /// title or text holds what is typed.
+    memo_search: Entity<InputState>,
     /// What is remembered, as the Memory tab shows it; `None` until read.
     memory: Option<MemoryView>,
     /// Only the latest memory request may fill the tab.
@@ -697,6 +739,19 @@ pub struct Workspace {
     explorations: Vec<wisp_dto::ExplorationSummary>,
     /// The task batches the open conversation's agent delegated.
     batches: Vec<wisp_server::desktop::DelegatedBatch>,
+    /// The conversation `batches` were read for; until it is the open one,
+    /// the calls that delegated them stay ordinary tool rows.
+    batches_for: Option<String>,
+    /// The card each transcript row that hands work to other agents is
+    /// drawn as, by row, worked out again whenever the rows, the batches or
+    /// the conversation list change.
+    agent_cards: HashMap<usize, crate::agents::Card>,
+    /// The rows that draw a run's card, with the run and the shape of what
+    /// the card shows, worked out again whenever the rows or the
+    /// conversation's runs change.
+    run_card_rows: HashMap<usize, (String, u64)>,
+    /// Runs the user moved to the background here, until a snapshot says so.
+    backgrounded_runs: HashSet<String>,
     /// The latest work over many items the open conversation ran.
     swarm: Option<wisp_dto::SwarmProgress>,
     batches_request: u64,
@@ -755,6 +810,18 @@ pub struct Workspace {
     /// Pictures the open project's answers point at, by path. `None` is a
     /// picture that is being read or could not be.
     inline_images: HashMap<String, Option<std::sync::Arc<Image>>>,
+    /// The files each turn of the open conversation recorded, as the host
+    /// lists them for the answers that close those turns.
+    reply_artifacts: Vec<wisp_server::desktop::ReplyArtifact>,
+    /// Those files by the row of the answer they go under, worked out again
+    /// whenever the rows or the files change.
+    generated: HashMap<usize, crate::generated::Reply>,
+    /// The open "Generated" lists and folders while the conversation stays
+    /// loaded: an answer's key with "" for the list itself, or a folder's
+    /// path in it.
+    generated_open: HashSet<(String, String)>,
+    /// Only the latest request may fill `reply_artifacts`.
+    reply_artifacts_request: u64,
     /// The picture being previewed in the Files panel, with its path.
     file_image: Option<(String, std::sync::Arc<Image>)>,
     /// The document being previewed, turned into text, with its path.
@@ -798,6 +865,13 @@ pub struct Workspace {
     layers: EscapeStack,
     files: FilesState,
     file_view: Entity<InputState>,
+    /// The script being edited in the preview, when the previewed file is
+    /// one that can be.
+    file_edit: Option<crate::files::Editing>,
+    /// Unsaved edits of every file, kept while the window is open.
+    file_drafts: crate::files::Drafts,
+    /// The window may close over unsaved edits: the user said so.
+    close_confirmed: bool,
     expanded_run: Option<String>,
     /// Which tab the side panel shows.
     panel_tab: PanelTab,
@@ -882,6 +956,7 @@ impl Workspace {
                 .multi_line(true)
                 .placeholder(tr("A prompt you reuse, a server address, a reminder…"))
         });
+        let memo_search = cx.new(|cx| InputState::new(window, cx).placeholder(tr("Search memos")));
         let settings = settings_view::SettingsForm::new(window, cx);
         let palette_input = cx.new(|cx| {
             InputState::new(window, cx).placeholder(tr("Search conversations, projects and files…"))
@@ -1067,6 +1142,18 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
         ];
         let merge_summary = cx.new(|cx| InputState::new(window, cx).multi_line(true));
+        let handoff_fields = [
+            cx.new(|cx| {
+                InputState::new(window, cx).placeholder(tr(
+                    "For example: keep the unresolved QC thresholds and exact file paths.",
+                ))
+            }),
+            cx.new(|cx| {
+                InputState::new(window, cx).multi_line(true).placeholder(tr(
+                    "The generated note appears here. Edit it freely before starting.",
+                ))
+            }),
+        ];
         let expert_fields = [
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx)),
@@ -1197,6 +1284,12 @@ impl Workspace {
                     cx.notify();
                 }
             }),
+            // And Start follows whether there is a handoff note.
+            cx.subscribe_in(&handoff_fields[1], window, |_, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            }),
             // The feedback button follows what is written; Return sends it.
             cx.subscribe_in(
                 &plan_feedback,
@@ -1220,6 +1313,12 @@ impl Workspace {
                     _ => {}
                 },
             ),
+            // Each change to an edited script is kept as its draft.
+            cx.subscribe_in(&file_view, window, |this, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.note_file_edit(cx);
+                }
+            }),
             cx.subscribe_in(&file_name_input, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::PressEnter { .. }) {
                     this.save_file_name(window, cx);
@@ -1259,6 +1358,11 @@ impl Workspace {
                     _ => {}
                 },
             ),
+            cx.subscribe_in(&memo_search, window, |_, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            }),
             cx.subscribe_in(&skills_search, window, |_, _, event, _, cx| {
                 if matches!(event, InputEvent::Change) {
                     cx.notify();
@@ -1406,6 +1510,14 @@ impl Workspace {
             model_view: None,
             model_view_error: None,
             model_view_open: HashSet::new(),
+            compact_kind: Default::default(),
+            compacting: false,
+            compact_error: None,
+            compact_resume: None,
+            paused_failures: HashSet::new(),
+            handoff: None,
+            handoff_error: None,
+            handoff_fields,
             review: None,
             review_turn: None,
             trajectory: None,
@@ -1492,11 +1604,16 @@ impl Workspace {
             pinned: vec![],
             show_archived: false,
             list_request: 0,
+            paging: organise::Paging::default(),
+            notices: crate::notices::Notices::default(),
+            notice_timer: None,
             arrangement: Arrangement::default(),
             folders: vec![],
             grouped: HashMap::new(),
             branched: HashMap::new(),
             dispatched: HashMap::new(),
+            timer: None,
+            timer_busy: false,
             rewind_turn: None,
             collapsed: HashSet::new(),
             picks: Picks::default(),
@@ -1505,12 +1622,14 @@ impl Workspace {
             transfer_copy: false,
             transfer_artifacts: false,
             transfer_preview: None,
+            sharing: None,
             notice: None,
             memos: None,
             memos_request: 0,
             memo_target: None,
             memo_title,
             memo_body,
+            memo_search,
             memory: None,
             memory_request: 0,
             memory_target: None,
@@ -1675,6 +1794,10 @@ impl Workspace {
             new_project_note: None,
             explorations: Vec::new(),
             batches: Vec::new(),
+            batches_for: None,
+            agent_cards: HashMap::new(),
+            run_card_rows: HashMap::new(),
+            backgrounded_runs: HashSet::new(),
             swarm: None,
             batches_request: 0,
             budget_target: None,
@@ -1718,6 +1841,10 @@ impl Workspace {
             structure_turn: (0.0, 0.0),
             structure_drag: None,
             inline_images: HashMap::new(),
+            reply_artifacts: Vec::new(),
+            generated: HashMap::new(),
+            generated_open: HashSet::new(),
+            reply_artifacts_request: 0,
             favorite_request: 0,
             rename,
             settings,
@@ -1735,6 +1862,9 @@ impl Workspace {
             layers: EscapeStack::default(),
             files: FilesState::default(),
             file_view,
+            file_edit: None,
+            file_drafts: Default::default(),
+            close_confirmed: false,
             expanded_run: None,
             panel_tab: PanelTab::default(),
             kept_tabs: PanelTab::ALL.to_vec(),
@@ -1769,6 +1899,8 @@ impl Workspace {
     fn dismiss_top(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         match self.layers.dismiss_top() {
             Some(Layer::FilePreview) => {
+                // An unsaved edit stays as the file's draft.
+                self.file_edit = None;
                 self.files.close_preview();
                 self.file_image = None;
                 self.file_document = None;
@@ -1836,6 +1968,9 @@ impl Workspace {
                 self.focus_composer(window, cx);
             }
             Some(Layer::ConfirmDeleteMemory) => self.memory_target = None,
+            // Nothing was deleted; the Memory tab stays as it was.
+            Some(Layer::ConfirmClearMemory) => {}
+            Some(Layer::ShareMessages) => self.sharing = None,
             Some(Layer::Favorites) => {
                 self.favorite = None;
                 self.favorite_image = None;
@@ -1915,6 +2050,20 @@ impl Workspace {
                 self.clear_model_view();
                 self.focus_composer(window, cx);
             }
+            Some(Layer::CompactContext) => {
+                self.compact_error = None;
+                self.compact_resume = None;
+                if !self.layers.contains(Layer::ModelView) {
+                    self.focus_composer(window, cx);
+                }
+            }
+            Some(Layer::Handoff) => {
+                self.handoff = None;
+                self.handoff_error = None;
+                if !self.layers.contains(Layer::ModelView) {
+                    self.focus_composer(window, cx);
+                }
+            }
             Some(Layer::ResearchArchive) => {
                 self.archive = None;
                 self.archive_error = None;
@@ -1927,6 +2076,11 @@ impl Workspace {
             }
             // Putting the guide away is finishing it, as in the WebView.
             Some(Layer::Onboarding) => self.finish_onboarding(cx),
+            // The newest card goes; the others wait for the next press.
+            Some(Layer::SessionNotices) => {
+                self.notices.dismiss_newest();
+                self.sync_notices(window, cx);
+            }
             Some(Layer::ImportConversations) => {
                 self.imports = Default::default();
             }
@@ -1963,6 +2117,8 @@ impl Workspace {
             }
             Some(Layer::PaperWaiver) => self.paper_waiving = None,
             Some(Layer::ConfirmTrashFile) => self.file_trashing = None,
+            // The edit stays as it was, unsaved.
+            Some(Layer::FileChangedOnDisk | Layer::ConfirmCloseUnsaved) => {}
             // Menus and questions that hold no focus of their own.
             Some(
                 Layer::SortMenu
@@ -2096,6 +2252,7 @@ impl Workspace {
                 &self.memo_body,
                 tr("A prompt you reuse, a server address, a reminder…"),
             ),
+            (&self.memo_search, tr("Search memos")),
             (&self.mcp_name, tr("Lab notebook")),
             (
                 &self.project_fields[2],
@@ -2209,6 +2366,7 @@ impl Workspace {
             self.memo_target = None;
             self.layers.close(Layer::MemoryEditor);
             self.layers.close(Layer::ConfirmDeleteMemory);
+            self.layers.close(Layer::ConfirmClearMemory);
             self.memory = None;
             self.memory_target = None;
         }
@@ -2238,17 +2396,25 @@ impl Workspace {
             Layer::Trajectory,
             Layer::Review,
             Layer::ModelView,
+            Layer::CompactContext,
+            Layer::Handoff,
             Layer::ResearchArchive,
             Layer::BranchMerge,
             Layer::RunReview,
+            Layer::ShareMessages,
         ] {
             self.layers.close(layer);
         }
         self.run_review = None;
+        self.sharing = None;
         self.archive = None;
         self.merge = None;
         self.clear_trajectory();
         self.clear_model_view();
+        self.compact_error = None;
+        self.compact_resume = None;
+        self.handoff = None;
+        self.handoff_error = None;
         self.review = None;
         self.find.clear();
         if self.state.session != session {
@@ -2338,12 +2504,12 @@ impl Workspace {
     }
 
     fn load_recent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let reply = self.backend.recent_conversations(12);
+        let reply = self.backend.recent_activity(12);
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
             let _ = this.update_in(cx, |this, window, cx| {
                 match result {
-                    Ok(recent) => {
+                    Ok((recent, finished)) => {
                         // Conversations that are not open and stopped
                         // working are told about like the open one.
                         let open = this.state.session.clone();
@@ -2353,6 +2519,25 @@ impl Workspace {
                             if crate::notify::wanted(this.notify, window.is_window_active()) {
                                 crate::notify::post(this.notify, this.notify_tone, event, &title);
                             }
+                        }
+                        // Those of other projects whose turn ended get a
+                        // card in the corner too.
+                        let stopped =
+                            crate::notify::stopped(&this.recent, &recent, open.as_deref());
+                        let here = this.shown_project();
+                        let arrived = crate::notices::arrivals(
+                            &stopped,
+                            &finished,
+                            here.as_deref(),
+                            open.as_deref(),
+                            |project| home::concealed(&this.privacy, project),
+                        );
+                        if !arrived.is_empty() {
+                            let now = std::time::Instant::now();
+                            for (row, failed) in arrived {
+                                this.notices.push(row, failed, now);
+                            }
+                            this.sync_notices(window, cx);
                         }
                         this.recent = recent;
                     }
@@ -2574,9 +2759,16 @@ impl Workspace {
         );
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
-            let _ = this.update(cx, |this, cx| {
+            let _ = this.update_in(cx, |this, window, cx| {
                 match result {
-                    Ok(inbox) => this.inbox = inbox,
+                    Ok(inbox) => {
+                        // A card whose conversation was read somewhere goes.
+                        let listed = inbox.iter().map(|row| row.id.as_str()).collect();
+                        if this.notices.reconcile(&listed) {
+                            this.sync_notices(window, cx);
+                        }
+                        this.inbox = inbox;
+                    }
                     Err(error) => this.error = Some(error),
                 }
                 cx.notify();
@@ -2617,6 +2809,10 @@ impl Workspace {
         self.aside_run = None;
         self.turn_tokens.clear();
         self.batches.clear();
+        self.batches_for = None;
+        self.agent_cards.clear();
+        self.run_card_rows.clear();
+        self.backgrounded_runs.clear();
         self.swarm = None;
         self.history.clear();
         self.before = None;
@@ -2625,6 +2821,12 @@ impl Workspace {
         self.expanded_run = None;
         self.close_search();
         self.open_tools.clear();
+        // The files under the answers, and what was open of them, were the
+        // conversation's being left.
+        self.reply_artifacts.clear();
+        self.generated.clear();
+        self.generated_open.clear();
+        self.reply_artifacts_request += 1;
         self.list.reset(0);
     }
 
@@ -2641,7 +2843,11 @@ impl Workspace {
         let browsing = query.trim().is_empty() && !archived;
         self.list_request += 1;
         let request = self.list_request;
-        let reply = self.backend.conversations(project, query, archived);
+        // Every page loaded of this list is read again, so a refresh keeps
+        // what "Load earlier" added.
+        let key: organise::ListKey = (Some(project.clone()), query.clone(), archived);
+        let pages = self.paging.pages_for(key.clone());
+        let reply = self.backend.conversations(project, query, archived, pages);
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -2650,6 +2856,7 @@ impl Workspace {
                 }
                 match result {
                     Ok(list) => {
+                        this.paging.answered(&key, pages, list.more);
                         for row in &list.rows {
                             this.known.insert(row.id.clone(), row.clone());
                         }
@@ -2659,6 +2866,9 @@ impl Workspace {
                         this.grouped = list.grouped;
                         this.branched = list.branched;
                         this.dispatched = list.dispatched;
+                        // A subagent's card follows its conversation's title
+                        // and status.
+                        this.place_agent_cards();
                         this.picks.keep(&this.sessions);
                         // The host may start a turn in the open conversation
                         // by itself (a subagent's report, a background batch's
@@ -2679,12 +2889,23 @@ impl Workspace {
                         }
                         this.mark_seen(window, cx);
                     }
-                    Err(error) => this.error = Some(error),
+                    Err(error) => {
+                        this.paging.failed();
+                        this.error = Some(error);
+                    }
                 }
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    /// Lists the page of conversations before the ones loaded, under them.
+    pub(super) fn load_earlier(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.paging.earlier() {
+            self.load_sessions(window, cx);
+        }
+        cx.notify();
     }
 
     fn select_session(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -2696,6 +2917,10 @@ impl Workspace {
                 self.tabs.name(&id, &present::one_line(&row.title));
             }
         }
+        // The conversation on screen has no card of its own.
+        if self.notices.remove(&id) {
+            self.sync_notices(window, cx);
+        }
         self.choose(self.state.project.clone(), Some(id));
         self.clear_transcript();
         let draft = self.state.draft();
@@ -2705,6 +2930,7 @@ impl Workspace {
         self.load_saved(window, cx);
         self.ensure_files(window, cx);
         self.reload_artifacts(window, cx);
+        self.load_reply_artifacts(window, cx);
         self.remember_place(window, cx);
     }
 
@@ -2720,7 +2946,7 @@ impl Workspace {
     }
 
     /// Opens a conversation from any project, as the inbox needs.
-    fn open_session(
+    pub(crate) fn open_session(
         &mut self,
         project: String,
         session: String,
@@ -2845,7 +3071,7 @@ impl Workspace {
         if selection.session.is_none() {
             return;
         }
-        if self.agents_visible() {
+        if self.agents_wanted() {
             self.load_batches(window, cx);
         }
         if selection
@@ -2856,13 +3082,15 @@ impl Workspace {
             self.load_assistant_plan(window, cx);
         }
         self.load_turn_tokens(window, cx);
+        // A timer is kept by the host, so it shows after a restart too.
+        self.load_timer(window, cx);
         let backend = self.backend.clone();
         self.poll = Some(cx.spawn_in(window, async move |this, cx| {
             loop {
-                let result = receive(backend.request::<Snapshot>(
-                    "native_conversation_snapshot",
+                let result = receive(backend.snapshot(
                     selection.project.clone(),
-                    json!({"session_id": selection.session}),
+                    selection.session.clone(),
+                    None,
                 ))
                 .await;
                 let next = this
@@ -2896,7 +3124,13 @@ impl Workspace {
                                     if let Some(event) = event {
                                         this.tell_user(event, window);
                                     }
+                                    // A turn that starts or ends may be the
+                                    // timer's, which then fires next later.
+                                    if running != was_running {
+                                        this.load_timer(window, cx);
+                                    }
                                     this.update_rows();
+                                    this.ensure_batches(window, cx);
                                     this.load_inline_images(window, cx);
                                     // An open search card follows its run.
                                     this.refresh_search(window, cx);
@@ -2909,7 +3143,7 @@ impl Workspace {
                                         }
                                         // A batch the turn delegates shows
                                         // up while the turn waits for it.
-                                        if this.agents_visible() && this.status_tick % 3 == 0 {
+                                        if this.agents_wanted() && this.status_tick % 3 == 0 {
                                             this.load_batches(window, cx);
                                         }
                                     } else if was_running {
@@ -2920,7 +3154,8 @@ impl Workspace {
                                         this.refresh_lists(window, cx);
                                         this.reload_files(window, cx);
                                         this.reload_artifacts(window, cx);
-                                        if this.agents_visible() {
+                                        this.load_reply_artifacts(window, cx);
+                                        if this.agents_wanted() {
                                             this.load_batches(window, cx);
                                         }
                                         // The assistant's turn may have
@@ -2979,6 +3214,9 @@ impl Workspace {
         self.list
             .splice(prefix..self.rows.len(), rows.len() - prefix);
         self.rows = rows;
+        self.place_generated();
+        self.place_agent_cards();
+        self.place_run_cards();
         // The same words, in the transcript as it is now.
         if self.layers.contains(Layer::Find) {
             self.find.refresh(&self.rows);
@@ -2994,10 +3232,10 @@ impl Workspace {
         }
         self.loading_history = true;
         let selection = self.state.selection();
-        let reply = self.backend.request::<Snapshot>(
-            "native_conversation_snapshot",
+        let reply = self.backend.snapshot(
             selection.project.clone(),
-            json!({"session_id":selection.session,"before_seq":before}),
+            selection.session.clone(),
+            Some(before),
         );
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
@@ -3013,6 +3251,7 @@ impl Workspace {
                         this.history = history;
                         this.before = page.next_before_seq;
                         this.update_rows();
+                        this.ensure_batches(window, cx);
                         this.load_inline_images(window, cx);
                     }
                     Err(error) => this.error = Some(error),
@@ -3039,10 +3278,10 @@ impl Workspace {
             let mut pages: Vec<Vec<Item>> = Vec::new();
             let mut failure = None;
             while let Some(seq) = before {
-                let page = receive(backend.request::<Snapshot>(
-                    "native_conversation_snapshot",
+                let page = receive(backend.snapshot(
                     selection.project.clone(),
-                    json!({"session_id": selection.session, "before_seq": seq}),
+                    selection.session.clone(),
+                    Some(seq),
                 ))
                 .await;
                 match page {
@@ -3065,6 +3304,7 @@ impl Workspace {
                 this.history = crate::outline::stitch(pages, std::mem::take(&mut this.history));
                 this.before = before;
                 this.update_rows();
+                this.ensure_batches(window, cx);
                 this.load_inline_images(window, cx);
                 if let Some(error) = failure {
                     this.error = Some(error);
@@ -3171,6 +3411,11 @@ impl Workspace {
     }
 
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Nothing is written into a conversation that cannot take it: not a
+        // message, not a command, not one queued for later.
+        if self.read_only().is_some() {
+            return;
+        }
         let text = self.composer.read(cx).value().to_string();
         // A message that is only a command is run, not sent; in an ACP
         // agent's conversation every message is the agent's to read, its
@@ -3216,6 +3461,9 @@ impl Workspace {
         else {
             return;
         };
+        if self.read_only().is_some() {
+            return;
+        }
         let attachments = carried.attachments();
         let referenced = carried.reference_chips();
         // Files alone are a message; the host names it after the first one.
@@ -3287,6 +3535,17 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Why the open conversation cannot be written to, when it cannot.
+    pub(super) fn read_only(&self) -> Option<compose::ReadOnly> {
+        let snapshot = self.state.snapshot.as_ref()?;
+        let parent = self
+            .state
+            .session
+            .as_ref()
+            .and_then(|session| self.dispatched.get(session));
+        compose::read_only(snapshot, parent.map(String::as_str))
+    }
+
     /// What is attached to the message being written in this conversation.
     fn attached(&self) -> &[Chip] {
         self.state
@@ -3318,6 +3577,9 @@ impl Workspace {
     /// Picks files with the system dialog. Files outside the project are
     /// copied into its `uploads` folder; files inside it are used in place.
     fn attach_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only().is_some() {
+            return;
+        }
         let selection = self.state.selection();
         let (Some(project), Some(_)) = (selection.project.clone(), selection.session.clone())
         else {
@@ -3360,6 +3622,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only().is_some() {
+            return;
+        }
         let selection = self.state.selection();
         let (Some(project), Some(_)) = (selection.project.clone(), selection.session.clone())
         else {
@@ -3387,7 +3652,7 @@ impl Workspace {
     /// picture that comes with text is left to it. Whether it took the
     /// paste.
     pub(super) fn paste_picture(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if !self.composer.focus_handle(cx).is_focused(window) {
+        if self.read_only().is_some() || !self.composer.focus_handle(cx).is_focused(window) {
             return false;
         }
         let Some(item) = cx.read_from_clipboard() else {
@@ -4213,8 +4478,9 @@ impl Render for Workspace {
                 }
             }
         };
-        // A newer version found at start, in a corner until it is put away.
-        let root = root.children(self.render_update_banner(cx));
+        // Conversations of other projects that finished, in a corner over
+        // the page and under the dialogs.
+        let root = root.children(self.render_session_notices(cx));
         // Last, so they are drawn over whichever screen or layer is showing.
         let root = if self.layers.contains(Layer::ProjectSettings) {
             root.child(self.render_project_settings(cx))
@@ -4276,8 +4542,25 @@ impl Render for Workspace {
         } else {
             root
         };
+        // Over What the model is sent when it was opened from there.
+        let root = if self.layers.contains(Layer::CompactContext) {
+            root.child(self.render_compact_dialog(cx))
+        } else {
+            root
+        };
+        // Over What the model is sent too, when it was opened from there.
+        let root = if self.layers.contains(Layer::Handoff) {
+            root.child(self.render_handoff(cx))
+        } else {
+            root
+        };
         let root = if self.layers.contains(Layer::ResearchArchive) {
             root.child(self.render_research_archive(window, cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::ShareMessages) {
+            root.child(self.render_share(cx))
         } else {
             root
         };
@@ -4298,6 +4581,21 @@ impl Render for Workspace {
         };
         let root = if self.layers.contains(Layer::Onboarding) {
             root.child(self.render_onboarding(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::ConfirmClearMemory) {
+            root.child(self.render_clear_memory(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::FileChangedOnDisk) {
+            root.child(self.render_file_changed(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::ConfirmCloseUnsaved) {
+            root.child(self.render_close_unsaved(cx))
         } else {
             root
         };

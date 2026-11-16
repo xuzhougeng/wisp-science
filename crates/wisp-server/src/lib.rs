@@ -4,6 +4,7 @@ mod acp_turn;
 mod approvals;
 mod aside;
 mod assistant;
+mod background_runs;
 mod branch_merge;
 mod browser;
 mod browser_filters;
@@ -24,6 +25,7 @@ mod explorations;
 mod export;
 mod files;
 mod follow_ups;
+mod handoff;
 mod hooks;
 mod mandate_report;
 mod mandates;
@@ -107,6 +109,34 @@ const COMMANDS: &[&str] = &[
     "native_conversation_panel_file_read",
 ];
 
+/// A row of the conversation list, with what it is doing now: waiting for
+/// an approval or an unread answer, running, or done.
+fn session_info(
+    row: wisp_store::SessionSearchResult,
+    running: &HashSet<String>,
+    awaiting: &HashSet<String>,
+) -> wisp_dto::SessionSearchInfo {
+    let status = if awaiting.contains(&row.id) {
+        "needs_you"
+    } else if running.contains(&row.id) {
+        "running"
+    } else if row.unseen && row.last_role.as_deref() == Some("assistant") {
+        "needs_you"
+    } else {
+        "complete"
+    };
+    wisp_dto::SessionSearchInfo {
+        id: row.id,
+        project_id: row.project_id,
+        project_name: row.project_name,
+        title: row.title,
+        ts: row.created_at,
+        activity_at: row.activity_at,
+        status: status.into(),
+        shelved: row.shelved,
+    }
+}
+
 #[derive(Clone)]
 pub struct Server(Arc<Inner>);
 
@@ -169,6 +199,8 @@ struct Inner {
     subagent_resumes: std::sync::Mutex<HashMap<String, (String, bool, String)>>,
     /// Conversations a background batch's result is being delivered to.
     delivering: std::sync::Mutex<HashSet<String>>,
+    /// Runs moved to the background that a watcher here reports on.
+    background_runs: std::sync::Mutex<HashSet<String>>,
     /// Conversations whose running turn corrects what an automatic review
     /// found; the review after it is not corrected again.
     corrections: std::sync::Mutex<HashSet<String>>,
@@ -433,6 +465,7 @@ impl Server {
             project_locks: Default::default(),
             subagent_resumes: Default::default(),
             delivering: Default::default(),
+            background_runs: Default::default(),
             corrections: Default::default(),
             stop_continued: Default::default(),
             to_correct,
@@ -545,15 +578,29 @@ impl Server {
         query: &str,
         include_archived: bool,
     ) -> Result<Vec<wisp_dto::SessionSearchInfo>> {
+        self.session_rows_window(project, query, include_archived, 0, 100)
+            .await
+    }
+
+    /// [`Self::session_rows`] from the `offset`th on, at most `limit` (and
+    /// never more than 100) of them: a later page of the same list.
+    async fn session_rows_window(
+        &self,
+        project: Option<&str>,
+        query: &str,
+        include_archived: bool,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<wisp_dto::SessionSearchInfo>> {
         let (running, awaiting) = self.activity();
-        let mut rows = Vec::new();
-        for row in self
+        Ok(self
             .0
             .store
-            .search_sessions_with_options(
+            .search_sessions_window(
                 project,
                 query,
-                100,
+                i64::try_from(limit).unwrap_or(i64::MAX),
+                i64::try_from(offset).unwrap_or(i64::MAX),
                 None,
                 project,
                 &[],
@@ -562,28 +609,35 @@ impl Server {
                 },
             )
             .await?
-        {
-            let status = if awaiting.contains(&row.id) {
-                "needs_you"
-            } else if running.contains(&row.id) {
-                "running"
-            } else if row.unseen && row.last_role.as_deref() == Some("assistant") {
-                "needs_you"
-            } else {
-                "complete"
-            };
-            rows.push(wisp_dto::SessionSearchInfo {
-                id: row.id,
-                project_id: row.project_id,
-                project_name: row.project_name,
-                title: row.title,
-                ts: row.created_at,
-                activity_at: row.activity_at,
-                status: status.into(),
-                shelved: row.shelved,
-            });
-        }
-        Ok(rows)
+            .into_iter()
+            .map(|row| session_info(row, &running, &awaiting))
+            .collect())
+    }
+
+    /// One listed conversation of `project` by its id, whatever page it is
+    /// on; `None` when it is not one of the project's.
+    async fn session_row(
+        &self,
+        project: &str,
+        id: &str,
+    ) -> Result<Option<wisp_dto::SessionSearchInfo>> {
+        let (running, awaiting) = self.activity();
+        Ok(self
+            .0
+            .store
+            .search_sessions_with_options(
+                Some(project),
+                "",
+                1,
+                Some(id),
+                Some(project),
+                &[],
+                wisp_store::SessionSearchOptions::default(),
+            )
+            .await?
+            .into_iter()
+            .next()
+            .map(|row| session_info(row, &running, &awaiting)))
     }
 
     async fn execute(&self, request: RemoteRequest) -> Result<Value> {
@@ -1237,6 +1291,8 @@ impl Server {
         live.reasoning.clear();
         live.written.clear();
         live.draft.clear();
+        live.message_seqs = page.messages.iter().map(|(seq, _)| *seq).collect();
+        live.saved_through = page.latest_seq;
         live.messages = page.messages.into_iter().map(|(_, msg)| msg).collect();
         live.next_before_seq = page.next_before_seq;
         session.cancel.store(false, Ordering::Relaxed);
@@ -1539,6 +1595,17 @@ impl Server {
         }
         let turn = self.0.store.latest_server_turn(&request.session_id).await?;
         let runs = self.0.store.list_runs_by_project(project).await?;
+        // The conversation's runs still going that the user moved to the
+        // background, for their cards.
+        let mut backgrounded = HashSet::new();
+        for run in &runs {
+            if !run.status.is_terminal()
+                && run.frame_id.as_deref() == Some(&request.session_id)
+                && self.0.store.run_background_requested(&run.id).await?
+            {
+                backgrounded.insert(run.id.clone());
+            }
+        }
         let mut outcomes: HashMap<_, _> = self
             .0
             .store
@@ -1561,6 +1628,30 @@ impl Server {
         };
         let exploration = self.exploration_state(project, &request.session_id).await;
         let dispatched = self.subagent_parent(&request.session_id).await.is_some();
+        // Where the conversation was compacted, on this page. While a turn
+        // runs the newest page is what the turn started from; a turn and
+        // its end change the generation checked below, so this agrees with
+        // the rows it is placed among.
+        let started_from = {
+            let live = session.live.lock().unwrap();
+            (live.running && request.before_seq.is_none())
+                .then(|| (live.message_seqs.clone(), live.saved_through))
+        };
+        let page_seqs: Vec<i64> = page.messages.iter().map(|(seq, _)| *seq).collect();
+        // Only for a client that asked: others would show the row's text.
+        let compactions = if request.compaction_rows {
+            self.compaction_rows(
+                &request.session_id,
+                started_from.as_ref().map_or(&page_seqs, |(seqs, _)| seqs),
+                request.before_seq,
+                started_from.as_ref().map(|(_, through)| *through),
+                page.latest_seq,
+                archived,
+            )
+            .await?
+        } else {
+            Vec::new()
+        };
         let live = session.live.lock().unwrap();
         // Completion clears the live transcript only after persisting it. If it
         // crossed these store reads, reload instead of returning an old page as
@@ -1582,9 +1673,20 @@ impl Server {
         let states: Vec<runtime::RunState> = runs.iter().map(Into::into).collect();
         runtime::annotate_runs(&mut items, &states, &request.session_id);
         runtime::annotate_plans(&mut items);
-        // Reviews kept with the conversation, after what each one read.
-        if !use_live {
-            runtime::place_reviews(&mut items, &seqs, &saved, &page.reviews);
+        // Reviews kept with the conversation, after what each one read, and
+        // the compactions, after the last message saved before each.
+        if use_live {
+            let started = live.message_seqs.len().min(live.messages.len());
+            runtime::place_after(
+                &mut items,
+                &live.message_seqs[..started],
+                &live.messages[..started],
+                compactions,
+            );
+        } else {
+            let mut placed = runtime::review_rows(&page.reviews);
+            placed.extend(compactions);
+            runtime::place_after(&mut items, &seqs, &saved, placed);
         }
         // A branch's summary brought back here shows as a card of its own.
         runtime::mark_branch_merges(&mut items, &page.branch_merges);
@@ -1596,6 +1698,18 @@ impl Server {
             .values()
             .map(|(value, _)| value.clone())
             .collect();
+        let error = live
+            .error
+            .clone()
+            .or_else(|| turn.as_ref().and_then(|turn| turn.error.clone()));
+        // Only the text of a failure is kept, so it is read from that, for
+        // a conversation Wisp runs: an ACP agent keeps its own context.
+        let error_kind = error
+            .as_deref()
+            .filter(|error| {
+                options.acp_agent.is_empty() && wisp_llm::is_context_overflow_message(error)
+            })
+            .map(|_| dto::TurnErrorKind::ContextTooLong);
         let snapshot = dto::Snapshot {
             magpie: None,
             schema: dto::SCHEMA.into(),
@@ -1617,6 +1731,14 @@ impl Server {
             activity_status: None,
             // A subagent's conversation is watched, not written to.
             read_only: archived || dispatched,
+            // And why, so a client need not guess which.
+            read_only_reason: if archived {
+                Some(dto::ReadOnlyReason::Archived)
+            } else if dispatched {
+                Some(dto::ReadOnlyReason::Subagent)
+            } else {
+                None
+            },
             model_id,
             composer_references: Some(false),
             context_view: Some(false),
@@ -1631,10 +1753,8 @@ impl Server {
             history_state: None,
             queue: None,
             request_id: turn.as_ref().map(|turn| turn.request_id.clone()),
-            error: live
-                .error
-                .clone()
-                .or_else(|| turn.and_then(|turn| turn.error)),
+            error,
+            error_kind,
             approval_scopes: approvals
                 .iter()
                 .map(|a| (a.approval_id.clone(), vec![dto::ApprovalScope::Once]))
@@ -1644,7 +1764,13 @@ impl Server {
                 .into_iter()
                 .filter(|run| run.frame_id.as_deref() == Some(&request.session_id))
                 .take(100)
-                .map(|run| serde_json::from_value(serde_json::to_value(run)?))
+                .map(|run| {
+                    let background_requested = backgrounded.contains(&run.id);
+                    let mut card: wisp_dto::RunRecord =
+                        serde_json::from_value(serde_json::to_value(run)?)?;
+                    card.background_requested = background_requested;
+                    Ok(card)
+                })
                 .collect::<serde_json::Result<_>>()?,
             run_review_supported: Some(false),
         };

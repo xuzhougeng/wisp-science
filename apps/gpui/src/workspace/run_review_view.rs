@@ -12,6 +12,7 @@ use gpui_component::{
 use super::{
     Workspace,
     shell::{error_banner, glyph, icon_button},
+    surfaces::{self, DialogWidth},
 };
 use crate::{
     assets::icon,
@@ -415,83 +416,63 @@ impl Workspace {
             );
         }
         let none = review.picked.is_empty();
-        let actions = div()
-            .h_flex()
-            .gap_2()
-            .pt_2()
-            .child(
-                div()
-                    .flex_1()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(fill(tr("{} chosen"), &[&review.picked.len()])),
-            )
-            .child(
-                Button::new("review-bring")
-                    .icon(glyph("download"))
-                    .label(tr("Bring into the project"))
-                    .small()
-                    .primary()
-                    .disabled(none || review.busy)
-                    .on_click(cx.listener(|this, _, window, cx| this.bring_run_files(window, cx))),
-            )
-            .child(
-                Button::new("review-delete")
-                    .label(tr("Delete chosen…"))
-                    .small()
-                    .disabled(none || review.busy)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.ask_run_review_delete(Deletion::Chosen, cx)
-                    })),
-            )
-            .child(
-                Button::new("review-clean")
-                    .label(tr("Delete the whole workspace…"))
-                    .small()
-                    .ghost()
-                    .disabled(review.busy)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.ask_run_review_delete(Deletion::Whole, cx)
-                    })),
-            )
-            .child(
-                Button::new("review-close")
-                    .label(tr("Close"))
-                    .small()
-                    .on_click(cx.listener(|this, _, _, cx| this.close_run_review(cx))),
-            );
-        let mut card = div()
-            .id("run-review")
-            .v_flex()
-            .gap_2()
-            .w(px(760.))
-            .max_w(relative(0.94))
-            .max_h(relative(0.9))
-            .p_5()
-            .rounded(cx.theme().radius_lg)
-            .border_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().popover)
-            .shadow_lg()
-            // A click inside is not a click on the backdrop.
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("What the run left on its host")),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(review.title.clone()),
-            )
-            .child(div().text_xs().text_color(muted).child(tr(
-                "Choose files and folders to bring into the project (a folder comes as one \
+        let mut card = surfaces::dialog(
+            "run-review",
+            DialogWidth::Wide,
+            tr("What the run left on its host"),
+        )
+        .close_on_click_outside(cx.listener(|this, _, _, cx| this.close_run_review(cx)))
+        .aside(
+            div()
+                .text_xs()
+                .text_color(muted)
+                .child(fill(tr("{} chosen"), &[&review.picked.len()])),
+        )
+        .action(
+            Button::new("review-clean")
+                .label(tr("Delete the whole workspace…"))
+                .small()
+                .ghost()
+                .disabled(review.busy)
+                .on_click(
+                    cx.listener(|this, _, _, cx| this.ask_run_review_delete(Deletion::Whole, cx)),
+                ),
+        )
+        .action(
+            Button::new("review-delete")
+                .label(tr("Delete chosen…"))
+                .small()
+                .disabled(none || review.busy)
+                .on_click(
+                    cx.listener(|this, _, _, cx| this.ask_run_review_delete(Deletion::Chosen, cx)),
+                ),
+        )
+        .action(
+            Button::new("review-close")
+                .label(tr("Close"))
+                .small()
+                .on_click(cx.listener(|this, _, _, cx| this.close_run_review(cx))),
+        )
+        .action(
+            Button::new("review-bring")
+                .icon(glyph("download"))
+                .label(tr("Bring into the project"))
+                .small()
+                .primary()
+                .disabled(none || review.busy)
+                .on_click(cx.listener(|this, _, window, cx| this.bring_run_files(window, cx))),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(muted)
+                .child(review.title.clone()),
+        )
+        .child(div().text_xs().text_color(muted).child(tr(
+            "Choose files and folders to bring into the project (a folder comes as one \
                  archive) or to delete there. Nothing is copied until you ask.",
-            )))
-            .child(navigation);
+        )))
+        .child(navigation);
         if let Some(problem) = &review.problem {
             card = card.child(error_banner(problem, cx));
         }
@@ -507,24 +488,6 @@ impl Workspace {
         if review.asking.is_some() && self.layers.contains(Layer::ConfirmRunFilesDelete) {
             card = card.child(self.run_review_question(review, cx));
         }
-        card = card.child(actions);
-        div()
-            .id("run-review-backdrop")
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            // Nothing underneath is clickable while the dialog is open.
-            .occlude()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(cx.theme().overlay)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| this.close_run_review(cx)),
-            )
-            .child(card)
-            .into_any_element()
+        card.into_any_element()
     }
 }

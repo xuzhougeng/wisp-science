@@ -5900,6 +5900,68 @@ async fn memory_reaches_the_model_only_while_it_is_on_and_is_never_saved_with_a_
 }
 
 #[tokio::test]
+async fn clearing_memory_deletes_this_projects_notes_only() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+
+    // Nothing to clear yet: no memory folder at all.
+    assert_eq!(server.clear_memory_notes(&lab).await.unwrap(), 0);
+    assert!(server.clear_memory_notes("missing").await.is_err());
+
+    server
+        .remember(&lab, None, "the queue is called gpu-long", false)
+        .await
+        .unwrap();
+    server
+        .save_memory_note(&lab, "2026-01-02.md", "older finding\n")
+        .await
+        .unwrap();
+    server
+        .remember(PROJECT, None, "another project's finding", false)
+        .await
+        .unwrap();
+    let habit = server.add_habit("always report medians").await.unwrap();
+    // What the tab does not list as a note stays: a hidden file, another
+    // kind of file, a folder.
+    let memory = folder.join(".wisp/memory");
+    std::fs::write(memory.join(".draft.md"), "kept").unwrap();
+    std::fs::write(memory.join("index.txt"), "kept").unwrap();
+    std::fs::create_dir(memory.join("old.md")).unwrap();
+    let before = server
+        .0
+        .store
+        .state_generation(&wisp_store::StateScope::mainline(lab.clone()))
+        .await
+        .unwrap();
+
+    assert_eq!(server.clear_memory_notes(&lab).await.unwrap(), 2);
+    let view = server.memory(&lab).await.unwrap();
+    assert!(view.notes.is_empty());
+    // Habits apply in every project and are not a project's to clear.
+    assert_eq!(view.habits.len(), 1);
+    assert_eq!(view.habits[0].id, habit.id);
+    assert_eq!(server.memory(PROJECT).await.unwrap().notes.len(), 1);
+    for kept in [".draft.md", "index.txt", "old.md"] {
+        assert!(memory.join(kept).exists(), "{kept}");
+    }
+    // Other devices are told the project's research state changed.
+    let after = server
+        .0
+        .store
+        .state_generation(&wisp_store::StateScope::mainline(lab.clone()))
+        .await
+        .unwrap();
+    assert!(after > before);
+    assert_eq!(server.clear_memory_notes(&lab).await.unwrap(), 0);
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn favorites_are_snapshots_that_outlive_the_conversation_they_came_from() {
     let temp = tempfile::tempdir().unwrap();
     let settings = config(temp.path());
@@ -6453,6 +6515,176 @@ async fn desktop_messages_carry_project_files_and_turn_scoped_references() {
 }
 
 #[tokio::test]
+async fn a_message_can_carry_artifacts_environments_runtimes_and_workflows() {
+    use wisp_dto::ComposerReferenceArg as Reference;
+    let temp = tempfile::tempdir().unwrap();
+    let shown: Arc<std::sync::Mutex<Vec<Vec<String>>>> = Arc::default();
+    let record = shown.clone();
+    let factory: ModelFactory = Arc::new(move |_| Box::new(Recorder(record.clone())));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let folder = temp.path().join("lab");
+    std::fs::create_dir_all(folder.join("data")).unwrap();
+    std::fs::write(folder.join("data/counts.csv"), "gene,count\n").unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    let session = call(&server, "native_conversation_create", &lab, json!({}))
+        .await
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_owned();
+    server
+        .save_ssh_host(desktop::SshHostRow {
+            alias: "gpu".into(),
+            host_name: "10.0.0.8".into(),
+            identity_file: "~/.ssh/id_lab".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    server
+        .0
+        .store
+        .save_artifact(
+            "art-counts",
+            &lab,
+            &session,
+            "counts.csv",
+            "text/csv",
+            "data/counts.csv",
+        )
+        .await
+        .unwrap();
+    let workflow = server.workflows().await.unwrap().remove(0);
+    let request = |id: &str, references: Vec<Reference>| dto::SendRequest {
+        session_id: session.clone(),
+        request_id: id.into(),
+        message: "use these".into(),
+        resume: false,
+        resume_after: None,
+        attachments: vec![],
+        references,
+        acp_agent_id: None,
+    };
+
+    // What cannot be honoured is refused, and nothing is attached for it.
+    for bad in [
+        Reference::Artifact {
+            id: "missing".into(),
+        },
+        Reference::Context {
+            id: "ssh:absent".into(),
+        },
+        // Interpreters are kept on this computer only.
+        Reference::Runtime {
+            context_id: "ssh:gpu".into(),
+            language: "python".into(),
+        },
+        Reference::Runtime {
+            context_id: "local".into(),
+            language: "julia".into(),
+        },
+        Reference::Workflow { id: "gone".into() },
+        Reference::Project { id: lab.clone() },
+    ] {
+        let refused = server
+            .send(
+                &lab,
+                request(
+                    "bad",
+                    vec![
+                        Reference::Context {
+                            id: "ssh:gpu".into(),
+                        },
+                        bad,
+                    ],
+                ),
+            )
+            .await;
+        assert!(refused.is_err());
+    }
+    assert!(!server
+        .0
+        .store
+        .session_execution_context_enabled(&session, "ssh:gpu")
+        .await
+        .unwrap());
+
+    let references = vec![
+        Reference::Artifact {
+            id: "art-counts".into(),
+        },
+        Reference::Context {
+            id: "ssh:gpu".into(),
+        },
+        Reference::Runtime {
+            context_id: "local".into(),
+            language: "python".into(),
+        },
+        Reference::Workflow {
+            id: workflow.id.clone(),
+        },
+        Reference::Artifact {
+            id: "art-counts".into(),
+        },
+    ];
+    server.send(&lab, request("r1", references)).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let value = call(
+                &server,
+                "native_conversation_snapshot",
+                &lab,
+                json!({"session_id": session}),
+            )
+            .await
+            .unwrap();
+            if !serde_json::from_value::<dto::Snapshot>(value)
+                .unwrap()
+                .running
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let turn = shown.lock().unwrap().last().unwrap().join("\n");
+    // The artifact by name and where its file is, once.
+    assert_eq!(turn.matches("- counts.csv: ").count(), 1, "{turn}");
+    let counts = format!("lab{0}data{0}counts.csv", std::path::MAIN_SEPARATOR);
+    assert!(turn.contains(&counts), "{turn}");
+    // The environment by its id and kind; work may now run there.
+    assert!(
+        turn.contains("- gpu (context_id: ssh:gpu, kind: ssh)"),
+        "{turn}"
+    );
+    assert!(server
+        .0
+        .store
+        .session_execution_context_enabled(&session, "ssh:gpu")
+        .await
+        .unwrap());
+    assert!(
+        turn.contains("- python runtime on Local (context_id: local): call the `python` tool"),
+        "{turn}"
+    );
+    assert!(
+        turn.contains(&format!("Template id: {}", workflow.id)),
+        "{turn}"
+    );
+    // None of it is saved with the conversation.
+    let saved = server.0.store.load_messages(&session).await.unwrap();
+    assert!(saved.iter().all(|message| {
+        let text = message.content.as_text();
+        !text.contains("context_id:") && !text.contains("selected_workflow_template")
+    }));
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_conversation_in_plan_mode_is_told_so_and_cannot_change_anything() {
     let temp = tempfile::tempdir().unwrap();
     let cfg = config(temp.path());
@@ -6523,6 +6755,27 @@ async fn a_conversation_in_plan_mode_is_told_so_and_cannot_change_anything() {
         None
     );
     server.shutdown().await;
+}
+
+#[test]
+fn a_file_a_later_turn_wrote_again_is_marked_under_the_earlier_answer() {
+    let row = |call: &str, artifact: &str| desktop::ReplyArtifact {
+        call_id: call.into(),
+        artifact: artifact.into(),
+        version: format!("{call}-{artifact}"),
+        name: artifact.into(),
+        kind: "image/png".into(),
+        path: Some(format!("figs/{artifact}")),
+        superseded: false,
+    };
+    let rows = desktop::mark_superseded(vec![
+        row("turn-1", "a.png"),
+        row("turn-1", "b.png"),
+        row("turn-2", "a.png"),
+        row("turn-3", "c.png"),
+    ]);
+    let marked: Vec<_> = rows.iter().map(|row| row.superseded).collect();
+    assert_eq!(marked, [true, false, false, false]);
 }
 
 #[tokio::test]
@@ -6596,6 +6849,26 @@ async fn files_a_turn_writes_become_artifacts_of_its_conversation() {
         .unwrap()
         .is_empty());
     assert!(server.artifacts("missing", None, "", 10).await.is_err());
+
+    // Under which answer: after the turn's write call, the version it made.
+    let replies = server.reply_artifacts(PROJECT, &writer).await.unwrap();
+    assert_eq!(replies.len(), 1, "{replies:?}");
+    assert_eq!(replies[0].call_id, "write-1");
+    assert_eq!(replies[0].artifact, artifact.id);
+    assert_eq!(replies[0].name, "answer.txt");
+    assert_eq!(replies[0].path.as_deref(), Some("answer.txt"));
+    assert!(!replies[0].superseded);
+    let shown = snapshot(&server, &writer).await;
+    assert!(shown
+        .items
+        .iter()
+        .any(|item| item.role == "tool" && item.call_id.as_deref() == Some("write-1")));
+    assert!(server
+        .reply_artifacts(PROJECT, &idle)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(server.reply_artifacts("missing", &writer).await.is_err());
 
     // Its versions, and a copy of one saved elsewhere from its snapshot,
     // even after the file in the project changed.
@@ -9295,6 +9568,7 @@ async fn a_conversations_research_is_drafted_reviewed_and_frozen() {
         None
     );
     assert!(!snapshot(&server, &session).await.read_only);
+    assert_eq!(snapshot(&server, &session).await.read_only_reason, None);
 
     // What is frozen is what the researcher made of it.
     draft.report.push_str("\n\nChecked by hand.");
@@ -9326,7 +9600,9 @@ async fn a_conversations_research_is_drafted_reviewed_and_frozen() {
     );
 
     // From now on it is a record: read, not continued or archived again.
-    assert!(snapshot(&server, &session).await.read_only);
+    let record = snapshot(&server, &session).await;
+    assert!(record.read_only);
+    assert_eq!(record.read_only_reason, Some(dto::ReadOnlyReason::Archived));
     let late = send(&server, &session, "one more thing").await.unwrap_err();
     assert!(late.contains("read-only"), "{late}");
     assert!(server
@@ -13930,6 +14206,146 @@ async fn a_scheduled_task_fires_once_per_time_into_a_new_conversation() {
 }
 
 #[tokio::test]
+async fn a_subagents_conversation_says_it_is_read_only_because_it_is_a_subagents() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let parent = server.create_conversation(PROJECT).await.unwrap();
+    let child = server.create_conversation(PROJECT).await.unwrap();
+    server
+        .0
+        .store
+        .set_session_dispatched_from(&child, &parent)
+        .await
+        .unwrap();
+    let watched = snapshot(&server, &child).await;
+    assert!(watched.read_only);
+    assert_eq!(
+        watched.read_only_reason,
+        Some(dto::ReadOnlyReason::Subagent)
+    );
+    let open = snapshot(&server, &parent).await;
+    assert!(!open.read_only && open.read_only_reason.is_none());
+    // An older client reads the snapshot as before: the reason is one
+    // more field, and absent when there is none.
+    let sent = serde_json::to_value(&open).unwrap();
+    assert!(sent.get("read_only_reason").is_none());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_conversation_keeps_one_timer_that_waits_while_the_conversation_is_busy() {
+    let temp = tempfile::tempdir().unwrap();
+    let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let record = seen.clone();
+    let factory: ModelFactory = Arc::new(move |_| Box::new(Everything(record.clone())));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let session = server.create_conversation(PROJECT).await.unwrap();
+    assert!(server
+        .conversation_timer(PROJECT, &session)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(server
+        .set_conversation_timer(PROJECT, "absent", "check", 600)
+        .await
+        .is_err());
+    assert!(server
+        .set_conversation_timer(PROJECT, &session, "check", 30)
+        .await
+        .is_err());
+
+    // Setting it again changes the one timer, and a paused one stays paused.
+    server
+        .set_conversation_timer(PROJECT, &session, "check the queue", 600)
+        .await
+        .unwrap();
+    let first = server
+        .conversation_timer(PROJECT, &session)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(first.enabled);
+    server.set_schedule_enabled(&first.id, false).await.unwrap();
+    let before = chrono::Utc::now().timestamp();
+    server
+        .set_conversation_timer(PROJECT, &session, "look again", 1_800)
+        .await
+        .unwrap();
+    let timer = server
+        .conversation_timer(PROJECT, &session)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(server.schedules().await.unwrap().len(), 1);
+    assert_eq!(
+        (timer.prompt.as_str(), timer.interval_secs, timer.enabled),
+        ("look again", 1_800, false)
+    );
+    assert!(timer.next_run_at >= before + 1_800);
+    assert_eq!(timer.session.as_deref(), Some(session.as_str()));
+    let due = timer.next_run_at;
+    // Paused, it does not fire.
+    assert_eq!(server.fire_due_schedules(due).await.unwrap(), 0);
+    server.set_schedule_enabled(&timer.id, true).await.unwrap();
+
+    // While a turn runs there, or a message waits for one, it stays due
+    // and nothing is recorded.
+    let live = server.session(&session);
+    live.live.lock().unwrap().running = true;
+    assert_eq!(server.fire_due_schedules(due).await.unwrap(), 0);
+    live.live.lock().unwrap().running = false;
+    let queued = live
+        .queue
+        .lock()
+        .unwrap()
+        .push(PROJECT, "after this turn", vec![], vec![])
+        .unwrap();
+    assert_eq!(server.fire_due_schedules(due).await.unwrap(), 0);
+    let waiting = server
+        .conversation_timer(PROJECT, &session)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(waiting.next_run_at, due);
+    assert!(waiting.runs.is_empty());
+
+    // Idle again, it fires into the conversation.
+    live.queue.lock().unwrap().take(queued).unwrap();
+    assert_eq!(server.fire_due_schedules(due).await.unwrap(), 1);
+    wait_for(&server, &session, |s| !s.running).await;
+    let fired = server
+        .conversation_timer(PROJECT, &session)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fired.next_run_at, due + 1_800);
+    assert!(fired.runs[0].error.is_none());
+    assert!(seen
+        .lock()
+        .unwrap()
+        .join("\n")
+        .contains("[Scheduled task: look again]"));
+
+    assert_eq!(
+        server
+            .cancel_conversation_schedules(PROJECT, &session)
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(server
+        .conversation_timer(PROJECT, &session)
+        .await
+        .unwrap()
+        .is_none());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_plugin_is_installed_once_and_brings_its_skills_to_the_projects_that_switch_it_on() {
     let temp = tempfile::tempdir().unwrap();
     let cfg = config(temp.path());
@@ -14364,6 +14780,31 @@ async fn the_browser_tools_are_offered_only_while_the_bridge_is_switched_on() {
     server.shutdown().await;
 }
 
+/// A snapshot as a client that draws compaction rows asks for it.
+async fn snapshot_with_compactions(server: &Server, id: &str) -> dto::Snapshot {
+    serde_json::from_value(
+        call(
+            server,
+            "native_conversation_snapshot",
+            PROJECT,
+            json!({"session_id": id, "compaction_rows": true}),
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap()
+}
+
+/// The compaction rows of a transcript, with where each one is.
+fn compaction_cards(items: &[dto::Item]) -> Vec<(usize, wisp_dto::ContextCompactionDto)> {
+    items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item.role == "compaction")
+        .map(|(at, item)| (at, serde_json::from_str(&item.text).unwrap()))
+        .collect()
+}
+
 #[tokio::test]
 async fn a_conversation_is_compacted_on_request_and_its_history_archived() {
     let temp = tempfile::tempdir().unwrap();
@@ -14381,11 +14822,11 @@ async fn a_conversation_is_compacted_on_request_and_its_history_archived() {
     let session = create(&server).await;
     // Nothing was said yet, and a conversation of another project is not ours.
     assert!(server
-        .compact_conversation(PROJECT, &session)
+        .compact_conversation(PROJECT, &session, desktop::CompactKind::Regular)
         .await
         .is_err());
     assert!(server
-        .compact_conversation("missing", &session)
+        .compact_conversation("missing", &session, desktop::CompactKind::Regular)
         .await
         .is_err());
 
@@ -14395,17 +14836,34 @@ async fn a_conversation_is_compacted_on_request_and_its_history_archived() {
     }
     let shown_before = snapshot(&server, &session).await.items.len();
     let done = server
-        .compact_conversation(PROJECT, &session)
+        .compact_conversation(PROJECT, &session, desktop::CompactKind::Regular)
         .await
         .unwrap();
     assert!(done.after <= done.before, "{done:?}");
+    // Regular compaction keeps every turn; it only trims old tool output.
+    assert!(!done.summarised);
     // The whole history is archived in the project.
     let archives: Vec<_> = std::fs::read_dir(cfg.workspace.join(".wisp/history"))
         .unwrap()
         .collect();
     assert_eq!(archives.len(), 1);
-    // The transcript on screen is as long as it was.
-    assert_eq!(snapshot(&server, &session).await.items.len(), shown_before);
+    // The transcript on screen keeps every row it had, and a compaction
+    // row after them says what happened and that it can be undone.
+    let shown = snapshot_with_compactions(&server, &session).await.items;
+    assert_eq!(shown.len(), shown_before + 1);
+    let marker = compaction_cards(&shown);
+    assert_eq!(marker.len(), 1, "{shown:?}");
+    let (at, card) = &marker[0];
+    assert_eq!(*at, shown.len() - 1);
+    // A client that did not ask (a phone, the web client) gets none: it
+    // would show the row's raw text.
+    let plain = snapshot(&server, &session).await.items;
+    assert_eq!(plain.len(), shown_before);
+    assert!(compaction_cards(&plain).is_empty());
+    assert_eq!(card.strategy, "manual");
+    assert!(card.can_undo && card.undo_reason.is_none(), "{card:?}");
+    assert!(card.checkpoint.is_none());
+    assert_eq!((card.before, card.after), (done.before, done.after));
 
     // Undone, the model is sent everything again; only the compaction
     // that was looked at, and only once.
@@ -14426,6 +14884,10 @@ async fn a_conversation_is_compacted_on_request_and_its_history_archived() {
         .unwrap();
     let restored = server.model_view(PROJECT, &session).await.unwrap();
     assert_eq!(restored.epoch, 0);
+    // Its row is gone with it.
+    let shown = snapshot_with_compactions(&server, &session).await.items;
+    assert!(compaction_cards(&shown).is_empty());
+    assert_eq!(shown.len(), shown_before);
     assert!(!restored.compacted);
     assert!(restored.chars >= whole_before);
     assert!(server
@@ -14433,13 +14895,18 @@ async fn a_conversation_is_compacted_on_request_and_its_history_archived() {
         .await
         .is_err());
 
-    // Compacted again, and the conversation goes on from what was kept;
-    // then it can no longer be undone.
-    server
-        .compact_conversation(PROJECT, &session)
+    // Compacted again, into a summary this time, and the conversation goes
+    // on from what was kept; then it can no longer be undone.
+    let summarised = server
+        .compact_conversation(PROJECT, &session, desktop::CompactKind::Semantic)
         .await
         .unwrap();
+    assert!(summarised.summarised, "{summarised:?}");
     let again = server.model_view(PROJECT, &session).await.unwrap().epoch;
+    let shown = snapshot_with_compactions(&server, &session).await.items;
+    let (_, card) = &compaction_cards(&shown)[0];
+    assert_eq!(card.epoch, again as u64);
+    assert!(card.checkpoint.is_some(), "{card:?}");
     send(&server, &session, "what did we find?").await.unwrap();
     wait_for(&server, &session, |s| !s.running).await;
     assert!(seen
@@ -14453,6 +14920,341 @@ async fn a_conversation_is_compacted_on_request_and_its_history_archived() {
         .unwrap_err()
         .to_string();
     assert!(refused.contains("went on after"), "{refused}");
+    // The row stays where the compaction was, before the question asked
+    // after it, and no longer offers undo.
+    let shown = snapshot_with_compactions(&server, &session).await.items;
+    let marker = compaction_cards(&shown);
+    assert_eq!(marker.len(), 1, "{shown:?}");
+    let (at, card) = &marker[0];
+    assert_eq!(shown[at + 1].role, "user");
+    assert_eq!(shown[at + 1].text, "what did we find?");
+    assert!(!card.can_undo);
+    assert_eq!(card.undo_reason.as_deref(), Some("has_new_turns"));
+    assert!(compaction_cards(&snapshot(&server, &session).await.items).is_empty());
+    server.shutdown().await;
+}
+
+/// Writes a handoff note when asked in the WebView's words, keeping the
+/// user's instruction in it, and otherwise answers as the offline model.
+struct HandoffWriter;
+#[async_trait]
+impl Provider for HandoffWriter {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _: &[ToolSchema],
+    ) -> wisp_llm::Result<Completion> {
+        let texts: Vec<String> = messages.iter().map(|m| m.content.as_text()).collect();
+        let content = if texts.first().is_some_and(|t| t.contains("handoff note")) {
+            let mut note = "## Goal and current stage\nAlign the reads.".to_owned();
+            if let Some(asked) = texts
+                .iter()
+                .find(|t| t.starts_with("<handoff-instruction>"))
+            {
+                note.push_str(&format!("\n\nAsked: {asked}"));
+            }
+            if texts.iter().any(|t| t.contains("align the reads")) {
+                note.push_str("\n\nFrom the transcript.");
+            }
+            note
+        } else {
+            "Saved result".to_owned()
+        };
+        Ok(Completion {
+            content,
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        _: &[Message],
+        _: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        sink.on_text("Saved result");
+        Ok(Completion {
+            content: "Saved result".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_conversation_is_handed_off_to_a_new_one_that_starts_from_the_note() {
+    let temp = tempfile::tempdir().unwrap();
+    let factory: ModelFactory = Arc::new(|_| Box::new(HandoffWriter));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let ask = |session: &str, instruction: Option<String>| dto::HandoffRequest {
+        session_id: session.into(),
+        instruction,
+    };
+    let source = create(&server).await;
+    // Nothing was said yet: there is nothing to hand off.
+    assert!(server
+        .draft_handoff(PROJECT, ask(&source, None))
+        .await
+        .is_err());
+    send(&server, &source, "align the reads").await.unwrap();
+    wait_for(&server, &source, |s| !s.running && s.items.len() >= 2).await;
+    let said = |messages: Vec<Message>| {
+        messages
+            .iter()
+            .map(|message| (message.role.clone(), message.content.as_text()))
+            .collect::<Vec<_>>()
+    };
+    let before = said(server.whole_transcript(&source).await.unwrap());
+
+    // Not this project's conversation, or too long an instruction.
+    assert!(server
+        .draft_handoff("missing", ask(&source, None))
+        .await
+        .is_err());
+    assert!(server
+        .draft_handoff(PROJECT, ask(&source, Some("研".repeat(8001))))
+        .await
+        .is_err());
+    // The model writes the note from the transcript, as the WebView asks.
+    let drafted = server
+        .draft_handoff(PROJECT, ask(&source, Some("keep the QC thresholds".into())))
+        .await
+        .unwrap();
+    assert_eq!(drafted.project_id, PROJECT);
+    assert_eq!(drafted.session_id, source);
+    assert!(
+        drafted.note.starts_with("## Goal and current stage"),
+        "{}",
+        drafted.note
+    );
+    assert!(drafted.note.contains("keep the QC thresholds"));
+    assert!(drafted.note.contains("From the transcript."));
+
+    // An empty note, or another project, starts nothing.
+    assert!(server
+        .start_from_handoff(PROJECT, &source, "  \n ")
+        .await
+        .is_err());
+    assert!(server
+        .start_from_handoff("missing", &source, "note")
+        .await
+        .is_err());
+    // The note as the user changed it is the new conversation's first
+    // message, in the same project.
+    let edited = format!("{}\n\nAlso re-run QC.", drafted.note);
+    let fresh = server
+        .start_from_handoff(PROJECT, &source, &edited)
+        .await
+        .unwrap();
+    assert_ne!(fresh, source);
+    assert_eq!(
+        server.0.store.frame_project_id(&fresh).await.unwrap(),
+        Some(PROJECT.to_owned())
+    );
+    let started = wait_for(&server, &fresh, |s| !s.running && s.items.len() >= 2).await;
+    assert!(started.error.is_none(), "{:?}", started.error);
+    assert_eq!(started.items[0].role, "user");
+    assert_eq!(started.items[0].text, edited);
+    let opened = said(server.whole_transcript(&fresh).await.unwrap());
+    assert_eq!(
+        opened
+            .iter()
+            .find(|(role, _)| *role == wisp_llm::Role::User),
+        Some(&(wisp_llm::Role::User, edited.clone()))
+    );
+    // The conversation handed off is as it was.
+    assert_eq!(
+        said(server.whole_transcript(&source).await.unwrap()),
+        before
+    );
+    server.shutdown().await;
+}
+
+/// Refuses every turn as too long for its context window while `full` is
+/// set, as a provider does once a conversation has outgrown it; writes a
+/// summary when asked for one, and otherwise answers. Records each turn's
+/// request.
+struct Outgrown {
+    full: Arc<std::sync::atomic::AtomicBool>,
+    seen: Arc<std::sync::Mutex<Vec<Vec<String>>>>,
+}
+#[async_trait]
+impl Provider for Outgrown {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+        Ok(Completion {
+            content: "Summary of the earlier turns".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        messages: &[Message],
+        _: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        self.seen
+            .lock()
+            .unwrap()
+            .push(messages.iter().map(|m| m.content.as_text()).collect());
+        if self.full.load(Ordering::Relaxed) {
+            return Err(wisp_llm::LlmError::Api {
+                status: 400,
+                body: r#"{"error":{"message":"This model's maximum context length is 8192 tokens. However, your messages resulted in 9000 tokens.","code":"context_length_exceeded"}}"#.into(),
+            });
+        }
+        sink.on_text("Continued");
+        Ok(Completion {
+            content: "Continued".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_turn_refused_as_too_long_is_compacted_and_continued_or_taken_elsewhere() {
+    let temp = tempfile::tempdir().unwrap();
+    let full: Arc<std::sync::atomic::AtomicBool> = Arc::default();
+    let seen: Arc<std::sync::Mutex<Vec<Vec<String>>>> = Arc::default();
+    let (outgrown, record) = (full.clone(), seen.clone());
+    let factory: ModelFactory = Arc::new(move |_| {
+        Box::new(Outgrown {
+            full: outgrown.clone(),
+            seen: record.clone(),
+        })
+    });
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    for message in ["align the reads", "now call variants"] {
+        send(&server, &session, message).await.unwrap();
+        let ended = wait_for(&server, &session, |s| !s.running && s.items.len() >= 2).await;
+        assert!(ended.error.is_none() && ended.error_kind.is_none());
+    }
+
+    // The conversation has outgrown the window: the turn fails, even after
+    // its own compaction, and the snapshot says why in a way a client can
+    // offer a way out of; the text stays for those that only show it.
+    full.store(true, Ordering::Relaxed);
+    send(&server, &session, "and summarise").await.unwrap();
+    let failed = wait_for(&server, &session, |s| !s.running && s.error.is_some()).await;
+    assert_eq!(
+        failed.error_kind,
+        Some(dto::TurnErrorKind::ContextTooLong),
+        "{:?}",
+        failed.error
+    );
+    assert!(
+        failed
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("maximum context length"),
+        "{:?}",
+        failed.error
+    );
+    let sent = serde_json::to_value(&failed).unwrap();
+    assert_eq!(sent["error_kind"], "context_too_long");
+
+    // Taken elsewhere: a new conversation is sent the WebView's prompt
+    // with this one referenced, and reads it from there.
+    full.store(false, Ordering::Relaxed);
+    assert!(server
+        .continue_in_new_conversation("missing", &session, "Continue.")
+        .await
+        .is_err());
+    let elsewhere = server
+        .continue_in_new_conversation(
+            PROJECT,
+            &session,
+            "Continue the last unfinished request from the attached conversation.",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        server.0.store.frame_project_id(&elsewhere).await.unwrap(),
+        Some(PROJECT.to_owned())
+    );
+    let there = wait_for(&server, &elsewhere, |s| !s.running && s.items.len() >= 2).await;
+    assert!(there.error.is_none(), "{:?}", there.error);
+    assert!(seen
+        .lock()
+        .unwrap()
+        .last()
+        .unwrap()
+        .iter()
+        .any(|text| text.contains("now call variants")));
+    // The conversation it came from still says what happened.
+    let still = snapshot(&server, &session).await;
+    assert_eq!(still.error_kind, Some(dto::TurnErrorKind::ContextTooLong));
+
+    // Compacted and continued: the same compaction the marker shows, then
+    // the interrupted turn goes on from what was saved, with no new
+    // message and nothing said twice.
+    let done = server
+        .compact_conversation(PROJECT, &session, desktop::CompactKind::Semantic)
+        .await
+        .unwrap();
+    assert!(done.summarised, "{done:?}");
+    let marked = compaction_cards(&snapshot_with_compactions(&server, &session).await.items);
+    assert!(
+        marked.iter().any(|(_, card)| card.strategy == "manual"),
+        "{marked:?}"
+    );
+    seen.lock().unwrap().clear();
+    // As the desktop asks for it.
+    server
+        .send(
+            PROJECT,
+            dto::SendRequest {
+                session_id: session.clone(),
+                request_id: uuid::Uuid::new_v4().to_string(),
+                message: String::new(),
+                resume: true,
+                resume_after: None,
+                attachments: vec![],
+                references: vec![],
+                acp_agent_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    let resumed = wait_for(&server, &session, |s| {
+        !s.running && s.items.last().is_some_and(|row| row.text == "Continued")
+    })
+    .await;
+    assert!(resumed.error.is_none() && resumed.error_kind.is_none());
+    let asked = seen.lock().unwrap().clone();
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    assert!(asked[0]
+        .iter()
+        .any(|text| text.contains("Summary of the earlier turns")));
+    assert_eq!(
+        server
+            .whole_transcript(&session)
+            .await
+            .unwrap()
+            .iter()
+            .filter(|message| message.content.as_text() == "and summarise")
+            .count(),
+        1
+    );
     server.shutdown().await;
 }
 
@@ -15376,5 +16178,256 @@ async fn the_webview_desktops_saved_models_come_with_their_keys() {
         .await
         .unwrap();
     assert!(twice.models.is_empty());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_sidebar_pages_through_more_conversations_than_one_list_holds() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let page = desktop::CONVERSATION_PAGE;
+    // Pinned first, so every conversation made after it is newer.
+    let pinned = create(&server).await;
+    server
+        .pin_conversation(PROJECT, &pinned, true)
+        .await
+        .unwrap();
+    let mut newest_first = Vec::new();
+    for _ in 0..page + 5 {
+        newest_first.insert(0, create(&server).await);
+    }
+    let ids = |list: &desktop::ConversationList| {
+        list.rows
+            .iter()
+            .map(|row| row.id.clone())
+            .collect::<Vec<_>>()
+    };
+
+    // One page: the newest hundred, the pinned one although it is older,
+    // and word that there is more.
+    let first = server.conversations(PROJECT, "", false).await.unwrap();
+    assert!(first.more);
+    assert_eq!(first.rows.len(), page + 1);
+    assert_eq!(ids(&first)[..page], newest_first[..page]);
+    assert_eq!(ids(&first)[page], pinned);
+    // Two pages: everything, once each, the older ones under the first page.
+    let both = server
+        .conversation_pages(PROJECT, "", false, 2)
+        .await
+        .unwrap();
+    assert!(!both.more);
+    assert_eq!(both.rows.len(), page + 6);
+    assert_eq!(ids(&both)[..page], newest_first[..page]);
+    let mut rest = newest_first[page..].to_vec();
+    rest.push(pinned.clone());
+    assert_eq!(ids(&both)[page..], rest[..]);
+    // Asking for more pages than there are is the same as asking for all.
+    let all = server
+        .conversation_pages(PROJECT, "", false, 5)
+        .await
+        .unwrap();
+    assert_eq!((ids(&all), all.more), (ids(&both), false));
+
+    // A search is cut off and paged the same way, so it misses nothing.
+    let found = server
+        .conversations(PROJECT, "new conversation", false)
+        .await
+        .unwrap();
+    assert!(found.more);
+    assert_eq!(found.rows.len(), page);
+    let found = server
+        .conversation_pages(PROJECT, "new conversation", false, 2)
+        .await
+        .unwrap();
+    assert!(!found.more);
+    assert_eq!(found.rows.len(), page + 6);
+
+    // The phone and web clients' list is what it was: the newest hundred,
+    // with no pinned row added and nothing said about more.
+    let remote = call(&server, "remote_sessions", PROJECT, json!({}))
+        .await
+        .unwrap();
+    let remote: Vec<String> = remote
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["id"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(remote, newest_first[..page]);
+    server.shutdown().await;
+}
+
+/// Asked to watch an alignment, waits on its Run with `monitor_run`; once
+/// that returns, says it was left running.
+struct WatchingModel;
+
+#[async_trait]
+impl Provider for WatchingModel {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+        Ok(Completion {
+            content: "[]".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        messages: &[Message],
+        _: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        let answered = messages
+            .iter()
+            .rev()
+            .take_while(|m| m.role != wisp_llm::Role::User)
+            .any(|m| m.role == wisp_llm::Role::Tool);
+        if !answered {
+            return Ok(Completion {
+                tool_calls: vec![ToolCall {
+                    id: "monitor-1".into(),
+                    kind: "function".into(),
+                    function: wisp_llm::FunctionCall {
+                        name: "monitor_run".into(),
+                        arguments: json!({"run_id": "align"}).to_string(),
+                    },
+                }],
+                finish_reason: Some("tool_calls".into()),
+                ..Default::default()
+            });
+        }
+        sink.on_text("Left it running.");
+        Ok(Completion {
+            content: "Left it running.".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_run_moved_to_the_background_frees_the_turn_and_reports_its_end() {
+    let temp = tempfile::tempdir().unwrap();
+    let server =
+        Server::open_with_models(config(temp.path()), Arc::new(|_| Box::new(WatchingModel)))
+            .await
+            .unwrap();
+    let session = create(&server).await;
+    let store = &server.0.store;
+    let mut run =
+        wisp_store::RunRecord::new("align", PROJECT, "local", "Align reads", "local_detached");
+    run.frame_id = Some(session.clone());
+    run.status = wisp_store::RunStatus::Running;
+    store.create_run(&run).await.unwrap();
+    // Held for the whole test: a Run nobody holds is the run manager's to
+    // recover, and it would mark this one, which has no process, as lost.
+    assert!(store
+        .claim_run_lifecycle("align", "test", 600)
+        .await
+        .unwrap());
+
+    send(&server, &session, "watch the alignment")
+        .await
+        .unwrap();
+    // The turn waits on the Run, whose card is not in the background yet.
+    let waiting = wait_for(&server, &session, |s| {
+        s.running
+            && s.items
+                .iter()
+                .any(|item| item.tool_name.as_deref() == Some("monitor_run"))
+    })
+    .await;
+    let card = waiting.run_cards.iter().find(|r| r.id == "align").unwrap();
+    assert!(!card.background_requested);
+    // A Run that does not exist, or is not this project's, is refused.
+    assert!(server
+        .background_run(PROJECT, "ghost", false)
+        .await
+        .is_err());
+    assert!(server
+        .background_run("missing", "align", false)
+        .await
+        .is_err());
+
+    server
+        .background_run(PROJECT, "align", false)
+        .await
+        .unwrap();
+    // The wait ends without touching the Run; the agent finishes its reply.
+    let done = wait_for(&server, &session, |s| !s.running).await;
+    let monitor = done
+        .items
+        .iter()
+        .find(|item| item.tool_name.as_deref() == Some("monitor_run"))
+        .unwrap();
+    assert!(
+        monitor.text.contains("wait_backgrounded"),
+        "{}",
+        monitor.text
+    );
+    assert!(
+        monitor.text.contains("Do not call monitor_run"),
+        "{}",
+        monitor.text
+    );
+    assert!(done
+        .items
+        .iter()
+        .any(|item| item.role == "assistant" && item.text == "Left it running."));
+    let card = done.run_cards.iter().find(|r| r.id == "align").unwrap();
+    assert_eq!(card.status, "running");
+    assert!(card.background_requested);
+    let going = store.get_run("align").await.unwrap().unwrap();
+    assert_eq!(going.status, wisp_store::RunStatus::Running);
+    // Asking again is fine, and the conversation takes new messages: a
+    // wait on the Run now returns at once.
+    server
+        .background_run(PROJECT, "align", false)
+        .await
+        .unwrap();
+    send(&server, &session, "anything else?").await.unwrap();
+    let again = wait_for(&server, &session, |s| !s.running).await;
+    let replies = again
+        .items
+        .iter()
+        .filter(|item| item.role == "assistant" && item.text == "Left it running.")
+        .count();
+    assert_eq!(replies, 2);
+
+    // The Run ends later; its conversation is told once, after it.
+    assert!(store
+        .finish_active_run_owned("align", "test", wisp_store::RunStatus::Succeeded, Some(0))
+        .await
+        .unwrap());
+    let notice = "Background Run “Align reads” succeeded";
+    let told = wait_for(&server, &session, |s| {
+        s.items
+            .iter()
+            .any(|item| item.role == "assistant" && item.text.starts_with(notice))
+    })
+    .await;
+    let card = told.run_cards.iter().find(|r| r.id == "align").unwrap();
+    assert_eq!(card.status, "succeeded");
+    assert!(!card.background_requested);
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let notices = snapshot(&server, &session)
+        .await
+        .items
+        .into_iter()
+        .filter(|item| item.role == "assistant" && item.text.starts_with(notice))
+        .count();
+    assert_eq!(notices, 1);
+    assert!(store
+        .list_pending_background_runs()
+        .await
+        .unwrap()
+        .is_empty());
     server.shutdown().await;
 }

@@ -47,11 +47,13 @@ pub fn pictures(text: &str) -> Vec<String> {
 }
 
 /// The project pictures the turn that the answer at `index` closes wrote
-/// with `write` or `edit`, as the WebView shows a turn's files under its
-/// answer: only under the turn's last answer, leaving out those the answer
-/// shows itself, in order, without repeats, and no more than
-/// [`PER_MESSAGE`] together with those. A call that failed wrote nothing.
-pub fn written(rows: &[Item], index: usize) -> Vec<String> {
+/// with `write` or `edit`, then those in `recorded` (the pictures recorded
+/// as the turn's artifacts, which include those written by code the model
+/// ran), as the WebView shows a turn's files under its answer: only under
+/// the turn's last answer, leaving out those the answer shows itself, in
+/// order, without repeats, and no more than [`PER_MESSAGE`] together with
+/// those. A call that failed wrote nothing.
+pub fn written(rows: &[Item], index: usize, recorded: &[String]) -> Vec<String> {
     let Some(row) = rows.get(index) else {
         return Vec::new();
     };
@@ -70,7 +72,7 @@ pub fn written(rows: &[Item], index: usize) -> Vec<String> {
         .rposition(|row| row.role == "user")
         .map_or(0, |at| at + 1);
     let shown = pictures(&row.text);
-    let mut found: Vec<String> = Vec::new();
+    let mut candidates: Vec<String> = Vec::new();
     for tool in &rows[start..index] {
         let writes = tool.role == "tool"
             && matches!(tool.tool_name.as_deref(), Some("write" | "edit"))
@@ -82,15 +84,17 @@ pub fn written(rows: &[Item], index: usize) -> Vec<String> {
             .input
             .as_deref()
             .and_then(|input| serde_json::from_str::<serde_json::Value>(input).ok())
-            .and_then(|input| input.get("path")?.as_str().map(str::to_owned))
-            .and_then(|path| project_picture(&path));
-        if let Some(path) = path {
-            if !shown.contains(&path)
-                && !found.contains(&path)
-                && shown.len() + found.len() < PER_MESSAGE
-            {
-                found.push(path);
-            }
+            .and_then(|input| input.get("path")?.as_str().map(str::to_owned));
+        candidates.extend(path);
+    }
+    candidates.extend(recorded.iter().cloned());
+    let mut found: Vec<String> = Vec::new();
+    for path in candidates.iter().filter_map(|path| project_picture(path)) {
+        if !shown.contains(&path)
+            && !found.contains(&path)
+            && shown.len() + found.len() < PER_MESSAGE
+        {
+            found.push(path);
         }
     }
     found
@@ -187,13 +191,30 @@ mod tests {
             row("assistant", None, None, "Any time.", None),
         ];
         // Under the last answer: what was written, less what it shows.
-        assert_eq!(written(&rows, 8), ["figs/a.png"]);
+        assert_eq!(written(&rows, 8, &[]), ["figs/a.png"]);
         // Not under an earlier answer of the same turn, a question, or a
         // turn that wrote nothing.
-        assert!(written(&rows, 2).is_empty());
-        assert!(written(&rows, 0).is_empty());
-        assert!(written(&rows, 10).is_empty());
-        assert!(written(&rows, 99).is_empty());
+        assert!(written(&rows, 2, &[]).is_empty());
+        assert!(written(&rows, 0, &[]).is_empty());
+        assert!(written(&rows, 10, &[]).is_empty());
+        assert!(written(&rows, 99, &[]).is_empty());
+
+        // Pictures recorded as the turn's artifacts (code the model ran
+        // wrote figs/e.png) join them, each picture once: not again when
+        // the answer shows it or `write` wrote it, and only pictures of the
+        // project.
+        let recorded = [
+            "figs/e.png".to_owned(),
+            "figs/a.png".to_owned(),
+            "figs/b.svg".to_owned(),
+            "tables/t.csv".to_owned(),
+            "figs/e.png".to_owned(),
+        ];
+        assert_eq!(written(&rows, 8, &recorded), ["figs/a.png", "figs/e.png"]);
+        assert!(written(&rows, 2, &recorded).is_empty());
+        // Never more than a message may show, with those it shows itself.
+        let many: Vec<String> = (0..9).map(|n| format!("figs/{n}.png")).collect();
+        assert_eq!(written(&rows, 8, &many).len(), PER_MESSAGE - 1);
     }
 
     #[test]

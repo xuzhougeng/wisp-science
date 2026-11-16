@@ -17,6 +17,7 @@ use wisp_server::{
 use super::{
     Workspace, chip,
     shell::{error_banner, glyph, nav_row},
+    surfaces,
 };
 use crate::{
     backend::{Reply, receive},
@@ -559,10 +560,7 @@ impl Workspace {
             .max_w(px(620.))
             .gap_4()
             .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(match saved {
+                surfaces::title(match saved {
                         Some(profile) => profile.name.clone(),
                         None => tr("New model").into(),
                     }),
@@ -736,15 +734,7 @@ impl Workspace {
                 nav_row("settings-back", "arrow-left", tr("Back"), false, true, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.close_settings(window, cx))),
             )
-            .child(
-                div()
-                    .px_2()
-                    .pt_3()
-                    .pb_1()
-                    .text_lg()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Settings")),
-            );
+            .child(surfaces::title(tr("Settings")).px_2().pt_3().pb_1());
         let query = self.settings_search.read(cx).value().to_string();
         let found = settings::search_sections(&query);
         let mut nav = nav.child(

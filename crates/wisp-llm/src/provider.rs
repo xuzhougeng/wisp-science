@@ -132,21 +132,45 @@ impl LlmError {
     pub fn is_context_overflow(&self) -> bool {
         match self {
             LlmError::Api { status, body } if matches!(*status, 400 | 413) => {
-                let lower = body.to_ascii_lowercase();
-                lower.contains("context length")
-                    || lower.contains("maximum context")
-                    || lower.contains("too many tokens")
-                    || lower.contains("context window")
-                    || lower.contains("prompt is too long")
-                    || lower.contains("token limit")
-                    || lower.contains("context_length_exceeded")
-                    || lower.contains("max context")
-                    || lower.contains("entity too large")
-                    || lower.contains("request entity too large")
+                says_context_overflow(&body.to_ascii_lowercase())
             }
             _ => false,
         }
     }
+}
+
+/// The phrases providers use when a request exceeds the context window,
+/// read from lowercased text.
+fn says_context_overflow(lower: &str) -> bool {
+    lower.contains("context length")
+        || lower.contains("maximum context")
+        || lower.contains("too many tokens")
+        || lower.contains("context window")
+        || lower.contains("prompt is too long")
+        || lower.contains("token limit")
+        || lower.contains("context_length_exceeded")
+        || lower.contains("max context")
+        || lower.contains("entity too large")
+        || lower.contains("request entity too large")
+}
+
+/// Whether a failed turn's error text (an [`LlmError`] as displayed, maybe
+/// behind context, the way hosts keep it) says the provider refused the
+/// request because the conversation no longer fits the context window: an
+/// `api: 400` or `api: 413` line in [`LlmError::is_context_overflow`]'s
+/// words or the WebView's (`input is too long`, `reduce the length`), or
+/// the agent's own report that compacting after such a refusal failed.
+/// Hosts keep only the text, so this is what tells a client after the turn
+/// has ended, and after a restart.
+pub fn is_context_overflow_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("context overflow recovery failed") {
+        return true;
+    }
+    (lower.contains("api: 400") || lower.contains("api: 413"))
+        && (says_context_overflow(&lower)
+            || lower.contains("input is too long")
+            || lower.contains("reduce the length"))
 }
 
 const PROXY_ENV_KEYS: [&str; 6] = [
@@ -1294,6 +1318,42 @@ mod tests {
             body: "rate_limit".into()
         }
         .is_context_overflow());
+    }
+
+    #[test]
+    fn context_overflow_is_read_from_a_turns_error_text() {
+        // As a host keeps it: the error displayed, the envelope's sentence.
+        let openai = LlmError::Api {
+            status: 400,
+            body: r#"{"error":{"message":"This model's maximum context length is 8192 tokens. However, your messages resulted in 9000 tokens.","code":"context_length_exceeded"}}"#.into(),
+        };
+        assert!(openai.is_context_overflow());
+        assert!(is_context_overflow_message(&openai.to_string()));
+        // Behind context, and in Anthropic's and the WebView's words.
+        assert!(is_context_overflow_message(
+            "turn failed: api: 400 prompt is too long: 210000 tokens > 200000 maximum"
+        ));
+        assert!(is_context_overflow_message(
+            "api: 400 Input is too long for requested model."
+        ));
+        assert!(is_context_overflow_message(
+            "api: 413 Request Entity Too Large"
+        ));
+        // Compacting after the refusal failed: still too long.
+        assert!(is_context_overflow_message(
+            "context overflow recovery failed: There is nothing to compact (original: api: 400 maximum context length exceeded)"
+        ));
+        // Not a provider's refusal, or another one.
+        assert!(!is_context_overflow_message(
+            "api: 429 rate limit reached for the context window"
+        ));
+        assert!(!is_context_overflow_message(
+            "The model mentioned its context window"
+        ));
+        assert!(!is_context_overflow_message("api: 400 invalid image_url"));
+        assert!(!is_context_overflow_message(
+            "http: error sending request: connection refused"
+        ));
     }
 
     #[test]

@@ -9,7 +9,11 @@ use gpui_component::{
     button::{Button, ButtonVariants},
 };
 
-use super::{Workspace, shell::glyph};
+use super::{
+    Workspace,
+    shell::glyph,
+    surfaces::{self, DialogWidth},
+};
 use crate::{backend::receive, layers::Layer};
 
 impl Workspace {
@@ -109,24 +113,10 @@ impl Workspace {
                     })),
             );
         }
-        let card = div()
-            .v_flex()
+        surfaces::dialog("privacy", DialogWidth::Narrow, tr("Privacy mode"))
             .gap_3()
-            .w(px(460.))
-            .max_w(relative(0.94))
-            .p_5()
-            .rounded(cx.theme().radius_lg)
-            .border_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().popover)
-            .shadow_lg()
-            // A click inside is not a click on the backdrop.
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Privacy mode")),
+            .close_on_click_outside(
+                cx.listener(|this, _, window, cx| this.toggle_privacy(window, cx)),
             )
             .child(div().text_xs().text_color(muted).child(tr(
                 "Choose projects to conceal while recording. Their project cards, recent \
@@ -138,61 +128,38 @@ impl Workspace {
                 tr("Privacy mode is off.")
             }))
             .child(list)
-            .child(
-                div()
-                    .h_flex()
-                    .gap_2()
-                    .child(
-                        Button::new("privacy-all")
-                            .label(tr("Select all"))
-                            .small()
-                            .ghost()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.privacy_picks = this
-                                    .projects
-                                    .iter()
-                                    .map(|project| project.id.clone())
-                                    .collect();
-                                cx.notify();
-                            })),
-                    )
-                    .child(div().flex_1())
-                    .child(
-                        Button::new("privacy-restore")
-                            .label(tr("Restore all"))
-                            .small()
-                            .disabled(!self.privacy.active)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.set_privacy(false, window, cx)
-                            })),
-                    )
-                    .child(
-                        Button::new("privacy-hide")
-                            .label(tr("Hide selected"))
-                            .small()
-                            .primary()
-                            .disabled(self.privacy_picks.is_empty())
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.set_privacy(true, window, cx)
-                            })),
-                    ),
-            );
-        div()
-            .id("privacy-backdrop")
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            // Nothing underneath is clickable while the dialog is open.
-            .occlude()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(cx.theme().overlay)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| this.toggle_privacy(window, cx)),
+            .aside(
+                Button::new("privacy-all")
+                    .label(tr("Select all"))
+                    .small()
+                    .ghost()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.privacy_picks = this
+                            .projects
+                            .iter()
+                            .map(|project| project.id.clone())
+                            .collect();
+                        cx.notify();
+                    })),
             )
-            .child(card)
+            .action(
+                Button::new("privacy-restore")
+                    .label(tr("Restore all"))
+                    .small()
+                    .disabled(!self.privacy.active)
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.set_privacy(false, window, cx)),
+                    ),
+            )
+            .action(
+                Button::new("privacy-hide")
+                    .label(tr("Hide selected"))
+                    .small()
+                    .primary()
+                    .disabled(self.privacy_picks.is_empty())
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.set_privacy(true, window, cx)),
+                    ),
+            )
     }
 }

@@ -13,8 +13,10 @@ use wisp_dto::{CommandHook, HookEvent, ProjectHooks};
 use super::{
     Workspace, chip,
     shell::{error_banner, glyph},
+    surfaces::{self, switch},
 };
 use crate::{
+    assets::icon,
     backend::{Reply, receive},
     layers::Layer,
     present::Tone,
@@ -278,21 +280,22 @@ impl Workspace {
             .gap_1()
             .flex_shrink_0()
             .child(
-                Button::new(SharedString::from(format!("hook-on-{index}")))
-                    .label(if on { tr("On") } else { tr("Off") })
-                    .small()
-                    .selected(on)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.save_hooks(
-                            move |hooks| {
-                                if let Some(hook) = hooks.get_mut(index) {
-                                    hook.enabled = !on;
-                                }
-                            },
-                            window,
-                            cx,
-                        )
-                    })),
+                switch(
+                    SharedString::from(format!("hook-on-{index}")),
+                    on,
+                    tr("Run this hook"),
+                )
+                .on_change(cx.listener(move |this, _, window, cx| {
+                    this.save_hooks(
+                        move |hooks| {
+                            if let Some(hook) = hooks.get_mut(index) {
+                                hook.enabled = !on;
+                            }
+                        },
+                        window,
+                        cx,
+                    )
+                })),
             )
             .child(
                 Button::new(SharedString::from(format!("hook-edit-{index}")))
@@ -467,37 +470,33 @@ impl Workspace {
 
     /// What went wrong with hooks in the open conversation's latest turn,
     /// over the composer; nothing when nothing did.
-    pub(super) fn render_hook_failures(&self, cx: &mut Context<Self>) -> Option<Div> {
+    pub(super) fn render_hook_failures(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let failures = &self.status.as_ref()?.hook_failures;
         if failures.is_empty() {
             return None;
         }
         let attention = cx.theme().warning;
-        let mut banner = div()
-            .v_flex()
-            .gap_1()
-            .mx_4()
-            .mb_2()
-            .px_3()
-            .py_2()
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(attention.opacity(0.5))
-            .bg(attention.opacity(0.06))
-            .text_xs()
-            .child(
-                div()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("A hook did not go as written")),
-            );
+        let muted = cx.theme().muted_foreground;
+        let mut banner = surfaces::bar("hook-failures", cx).v_flex().gap_1().child(
+            div()
+                .h_flex()
+                .gap_2()
+                .child(icon("circle-alert").text_color(attention))
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(tr("A hook did not go as written")),
+                ),
+        );
+        // What each said is detail: a caption under the heading.
         for failure in failures.iter().take(3) {
-            banner = banner.child(div().truncate().child(failure.clone()));
+            banner = banner.child(div().text_xs().truncate().child(failure.clone()));
         }
         if failures.len() > 3 {
-            banner = banner.child(crate::i18n::fill(
+            banner = banner.child(div().text_xs().text_color(muted).child(crate::i18n::fill(
                 tr("and {} more"),
                 &[&(failures.len() - 3)],
-            ));
+            )));
         }
         Some(banner)
     }

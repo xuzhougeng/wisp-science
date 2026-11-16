@@ -309,6 +309,83 @@ pub fn moved(folders: &[Folder], id: &str, up: bool) -> Option<Vec<String>> {
     Some(order)
 }
 
+/// Which list the sidebar shows: the project, what is typed in its search
+/// field, and whether it is the archive.
+pub type ListKey = (Option<String>, String, bool);
+
+/// How much of a project's conversations the sidebar has loaded. The host
+/// gives them a page at a time, newest first; "Load earlier" asks for one
+/// page more and the list is read again from the top, so a refresh keeps
+/// every page loaded and what was on screen stays where it was.
+#[derive(Debug, Default)]
+pub struct Paging {
+    key: Option<ListKey>,
+    pages: usize,
+    more: bool,
+    loading: bool,
+}
+
+impl Paging {
+    /// How many pages to ask for when the list `key` is read: as many as
+    /// are loaded of that list, or one when it is another list.
+    pub fn pages_for(&mut self, key: ListKey) -> usize {
+        let key = (key.0, key.1.trim().to_owned(), key.2);
+        if self.key.as_ref() != Some(&key) {
+            self.key = Some(key);
+            self.pages = 1;
+            self.more = false;
+            self.loading = false;
+        }
+        self.pages.max(1)
+    }
+
+    /// The host listed `pages` pages of the list `key`; `more` is whether
+    /// it left older ones out. An answer about another list, or about
+    /// fewer pages than are now wanted, says nothing.
+    pub fn answered(&mut self, key: &ListKey, pages: usize, more: bool) {
+        let key = (key.0.clone(), key.1.trim().to_owned(), key.2);
+        if self.key.as_ref() == Some(&key) && pages == self.pages.max(1) {
+            self.more = more;
+            self.loading = false;
+        }
+    }
+
+    /// The list could not be read: the button comes back.
+    pub fn failed(&mut self) {
+        self.loading = false;
+    }
+
+    /// Asks for one page more. False when there is nothing older or a page
+    /// is already on its way.
+    pub fn earlier(&mut self) -> bool {
+        if !self.more || self.loading {
+            return false;
+        }
+        self.pages = self.pages.max(1) + 1;
+        self.loading = true;
+        true
+    }
+
+    /// Whether the list was cut off, so the sidebar offers to load earlier
+    /// conversations.
+    pub fn offered(&self) -> bool {
+        self.more
+    }
+
+    pub fn loading(&self) -> bool {
+        self.loading
+    }
+}
+
+/// The words of the button under a list that was cut off.
+pub fn earlier_label(listing: Listing, loading: bool) -> &'static str {
+    match (loading, listing) {
+        (true, _) => tr("Loading…"),
+        (false, Listing::Search) => tr("Load more matches"),
+        (false, _) => tr("Load earlier conversations"),
+    }
+}
+
 /// The conversations picked in select mode.
 #[derive(Default)]
 pub struct Picks {
@@ -930,5 +1007,102 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(archive_line(&other), "Working…");
+    }
+
+    #[test]
+    fn loading_earlier_asks_for_one_page_more_of_the_same_list_only() {
+        let browse = |project: &str| (Some(project.to_owned()), String::new(), false);
+        let mut paging = Paging::default();
+        assert_eq!(paging.pages_for(browse("p")), 1);
+        // Nothing is offered until the host says the list was cut off.
+        assert!(!paging.offered() && !paging.earlier());
+        paging.answered(&browse("p"), 1, true);
+        assert!(paging.offered());
+        assert!(paging.earlier());
+        assert!(paging.loading());
+        // A second click while that page is on its way asks for nothing.
+        assert!(!paging.earlier());
+        // A refresh of the same list keeps every page loaded.
+        assert_eq!(paging.pages_for(browse("p")), 2);
+        // An answer for fewer pages, sent before the click, says nothing.
+        paging.answered(&browse("p"), 1, true);
+        assert!(paging.loading());
+        paging.answered(&browse("p"), 2, false);
+        assert!(!paging.loading() && !paging.offered());
+        assert_eq!(
+            earlier_label(Listing::Browse, false),
+            "Load earlier conversations"
+        );
+        assert_eq!(earlier_label(Listing::Search, false), "Load more matches");
+        assert_eq!(earlier_label(Listing::Archive, true), "Loading…");
+
+        // Another project, another search or the archive starts again at
+        // one page; spaces around a search are not another search.
+        assert_eq!(paging.pages_for(browse("q")), 1);
+        paging.answered(&browse("q"), 1, true);
+        assert!(paging.earlier());
+        paging.failed();
+        assert!(!paging.loading() && paging.offered());
+        let search = (Some("q".to_owned()), "kinase".to_owned(), false);
+        assert_eq!(paging.pages_for(search.clone()), 1);
+        paging.answered(&search, 1, true);
+        assert!(paging.earlier());
+        assert_eq!(
+            paging.pages_for((Some("q".to_owned()), " kinase ".to_owned(), false)),
+            2
+        );
+        assert_eq!(
+            paging.pages_for((Some("q".to_owned()), String::new(), true)),
+            1
+        );
+    }
+
+    #[test]
+    fn a_page_loaded_later_nests_its_children_and_keeps_groups_and_pins() {
+        let folders = [folder("f1", "Writing")];
+        let grouped: HashMap<String, String> = [("a", "f1"), ("kid", "f1"), ("old", "f1")]
+            .into_iter()
+            .map(|(id, folder)| (id.to_string(), folder.to_string()))
+            .collect();
+        let branched = HashMap::from([("kid".to_string(), "old".to_string())]);
+        let dispatched = HashMap::from([("sub".to_string(), "old".to_string())]);
+        let nested = nested(&branched, &dispatched);
+        // "p" is pinned and older than the first page: the host lists it
+        // with that page anyway.
+        let pinned = ["p".to_string()];
+        let first = vec![
+            row("a", "A", 10),
+            row("kid", "Kid", 20),
+            row("sub", "Sub", 30),
+            row("p", "P", 900),
+        ];
+        let lay = |sessions: &[SessionSearchInfo]| {
+            let listed = Listed {
+                rows: sessions,
+                pinned: &pinned,
+                folders: &folders,
+                grouped: &grouped,
+                branched: &nested,
+                collapsed: &HashSet::new(),
+                now: NOW,
+            };
+            shape(
+                &layout(&listed, Arrangement::default(), Listing::Browse),
+                sessions,
+            )
+        };
+        // The parent is on a later page: its branch and subagent stand on
+        // their own where they belong instead of going missing.
+        assert_eq!(lay(&first), "[Writing 2] a kid [No group 2] p sub");
+        let mut picks = Picks::default();
+        picks.toggle("sub");
+
+        // With the next page loaded the parent is listed and its children
+        // come under it, in its group; the pin still leads.
+        let mut both = first.clone();
+        both.push(row("old", "Old", 200));
+        assert_eq!(lay(&both), "[Writing 4] a old >kid >sub [No group 1] p");
+        picks.keep(&both);
+        assert!(picks.contains("sub"));
     }
 }

@@ -6,8 +6,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use gpui::{prelude::*, *};
 use gpui_component::{ActiveTheme, StyledExt};
 
-use super::{Workspace, shell::icon_button};
-use crate::transfers;
+use super::{Workspace, shell::icon_button, surfaces};
+use crate::{assets::icon, transfers};
 
 /// One transfer's meter: where it is, which file, how much, and a bar when
 /// the share done is known.
@@ -44,7 +44,7 @@ pub(super) fn meter(progress: &wisp_dto::RunProgress, cx: &App) -> Div {
 
 impl Workspace {
     /// The open conversation's transfers that show now, above the composer.
-    pub(super) fn render_transfers(&self, cx: &mut Context<Self>) -> Option<Div> {
+    pub(super) fn render_transfers(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let runs = &self.state.snapshot.as_ref()?.run_cards;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -55,54 +55,54 @@ impl Workspace {
             return None;
         }
         let folded = self.transfers_folded;
-        let mut tray = div()
-            .v_flex()
-            .gap_2()
-            .mx_4()
-            .mb_2()
-            .px_3()
-            .py_2()
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().secondary)
-            .child(
-                div()
-                    .h_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_xs()
-                            .font_semibold()
-                            .child(fill(tr("Transfers ({})"), &[&shown.len()])),
+        let mut tray = surfaces::bar("transfers", cx).v_flex().gap_2().child(
+            div()
+                .h_flex()
+                .gap_2()
+                .child(icon("sync").text_color(cx.theme().muted_foreground))
+                .child(
+                    div()
+                        .flex_1()
+                        .text_xs()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(fill(tr("Transfers ({})"), &[&shown.len()])),
+                )
+                .child(
+                    icon_button(
+                        "transfers-fold",
+                        if folded { "chevron-down" } else { "chevron-up" },
+                        if folded {
+                            tr("Show the transfers")
+                        } else {
+                            tr("Fold the transfers")
+                        },
                     )
-                    .child(
-                        icon_button(
-                            "transfers-fold",
-                            if folded { "chevron-down" } else { "chevron-up" },
-                            if folded {
-                                tr("Show the transfers")
-                            } else {
-                                tr("Fold the transfers")
-                            },
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.transfers_folded = !this.transfers_folded;
-                            cx.notify();
-                        })),
-                    ),
-            );
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.transfers_folded = !this.transfers_folded;
+                        cx.notify();
+                    })),
+                ),
+        );
         if !folded {
+            // Many at once scroll inside the tray rather than push the
+            // transcript up.
+            let mut list = div()
+                .id("transfers-list")
+                .v_flex()
+                .gap_2()
+                .max_h(px(180.))
+                .overflow_y_scroll();
             for (run, progress) in &shown {
-                tray = tray.child(
+                list = list.child(
                     div()
                         .v_flex()
+                        .flex_shrink_0()
                         .gap_1()
                         .child(div().text_xs().truncate().child(run.title.clone()))
                         .child(meter(progress, cx)),
                 );
             }
+            tray = tray.child(list);
         }
         Some(tray)
     }

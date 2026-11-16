@@ -16,6 +16,7 @@ use wisp_server::desktop::{
 use super::{
     Workspace, chip,
     shell::{error_banner, glyph, icon_button, nav_row},
+    surfaces,
 };
 use crate::{
     backend::{Reply, receive},
@@ -1288,14 +1289,7 @@ impl Workspace {
                 nav_row("papers-back", "arrow-left", tr("Back"), false, true, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.close_papers(window, cx))),
             )
-            .child(
-                div()
-                    .px_2()
-                    .pt_3()
-                    .text_lg()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Paper evidence")),
-            )
+            .child(surfaces::title(tr("Paper evidence")).px_2().pt_3())
             .child(
                 div()
                     .px_2()

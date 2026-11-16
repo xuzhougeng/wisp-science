@@ -228,7 +228,6 @@ pub fn styled(base: &ThemeConfig, look: &Look) -> ThemeConfig {
             &mut colors.caret,
             &mut colors.progress_bar,
             &mut colors.slider_bar,
-            &mut colors.switch,
             &mut colors.sidebar_primary,
         ] {
             *slot = set(accent);
@@ -272,6 +271,8 @@ pub fn styled(base: &ThemeConfig, look: &Look) -> ThemeConfig {
             (&mut colors.secondary_active, 0.14),
             (&mut colors.border, 0.14),
             (&mut colors.input, 0.18),
+            // A switch that is off; one that is on wears the accent.
+            (&mut colors.switch, 0.2),
             (&mut colors.sidebar_border, 0.12),
             (&mut colors.title_bar_border, 0.12),
             (&mut colors.window_border, 0.14),
@@ -421,6 +422,30 @@ mod tests {
             ..Look::default()
         };
         assert_eq!(styled(light, &tiny).font_size, light.font_size);
+    }
+
+    #[test]
+    fn a_switch_that_is_off_differs_from_one_that_is_on_in_every_palette() {
+        // An on switch wears `primary`, an off one `switch`; the thumb has
+        // a colour of its own so it is not the page's in either kind.
+        for base in bundled().themes {
+            assert!(base.colors.switch_thumb.is_some(), "{}", base.name);
+            let dark = base.mode.is_dark();
+            for palette in palettes(dark) {
+                let look = Look {
+                    light: palette,
+                    dark: palette,
+                    ..Look::default()
+                };
+                let worn = styled(&base, &look);
+                assert_ne!(
+                    worn.colors.switch, worn.colors.primary,
+                    "{}: {}",
+                    base.name, palette.key
+                );
+                assert_eq!(worn.colors.switch_thumb, base.colors.switch_thumb);
+            }
+        }
     }
 
     #[test]

@@ -11,11 +11,10 @@ use super::{Workspace, shell::icon_button};
 use crate::{
     assets::icon,
     backend::receive,
-    compose::Chip,
     files,
     home::{self, Screen},
     layers::Layer,
-    palette::{self, Command, Entry, Mode, PaletteState},
+    palette::{self, Command, Entry, Mode, PaletteState, Section},
     panel::PanelTab,
 };
 
@@ -31,8 +30,30 @@ impl Workspace {
 
     /// The same box, but picking a row adds it to the message being written.
     pub(super) fn toggle_attach_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.state.session.is_some() {
+        if self.state.session.is_some() && self.read_only().is_none() {
             self.show_palette(Mode::Attach, window, cx);
+        }
+    }
+
+    /// The same box listing only the project's memos, as the WebView's
+    /// `/memo` turns its `/` menu into a memo picker: `query` is what was
+    /// typed after the command. Picking one puts its text into the message
+    /// after what is written there; Escape leaves the message as it was.
+    pub(super) fn open_memo_picker(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.state.session.is_none() || self.read_only().is_some() {
+            return;
+        }
+        self.layers.close(Layer::Palette);
+        self.show_palette(Mode::Memos, window, cx);
+        if !query.is_empty() {
+            // Reported as a change, which filters the list.
+            self.palette_input
+                .update(cx, |input, cx| input.set_value(query, window, cx));
         }
     }
 
@@ -44,8 +65,11 @@ impl Workspace {
             self.layers.open(Layer::Palette);
             let placeholder = match mode {
                 Mode::Open => tr("Search conversations, projects and files…"),
-                Mode::Attach => tr("Add a file, a conversation or a skill to this message…"),
+                Mode::Attach => tr(
+                    "Add a file, an artifact, an environment, a conversation, a skill, a workflow or a memo…",
+                ),
                 Mode::Commands => tr("Run a command…"),
+                Mode::Memos => tr("Search memos"),
             };
             self.palette_input.update(cx, |input, cx| {
                 input.set_placeholder(placeholder, window, cx);
@@ -54,6 +78,11 @@ impl Workspace {
             });
             // The list with nothing typed is the recent conversations.
             self.load_recent(window, cx);
+            match mode {
+                Mode::Attach => self.offer_mentions(window, cx),
+                Mode::Memos => self.offer_memos(window, cx),
+                Mode::Open | Mode::Commands => {}
+            }
             // Clearing the box does not report a change when it was empty.
             self.search_palette(window, cx);
         }
@@ -70,7 +99,14 @@ impl Workspace {
                 Entry::Project { id, .. } => id.as_str(),
                 Entry::File(found) => found.project_id.as_str(),
                 Entry::Conversation { project, .. } => project.as_str(),
-                Entry::Skill { .. } | Entry::Command(_) => return true,
+                // The rest belongs to the project that is open.
+                Entry::Skill { .. }
+                | Entry::Artifact { .. }
+                | Entry::Environment { .. }
+                | Entry::Runtime { .. }
+                | Entry::Workflow { .. }
+                | Entry::Memo { .. }
+                | Entry::Command(_) => return true,
             };
             !crate::home::concealed(&self.privacy, project)
         });
@@ -82,6 +118,137 @@ impl Workspace {
             });
         }
         entries
+    }
+
+    /// Offers what else a message can carry, from the lists the window
+    /// reads for its own tabs: what it has now at once, then what the same
+    /// loaders read fresh. The project's artifacts (the Artifacts tab's list
+    /// for the whole project), where work can run (the Environments tab's
+    /// hosts), the interpreters above the composer, the workflow library and
+    /// the memos.
+    fn offer_mentions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let selection = self.state.selection();
+        let Some(project) = selection.project.clone() else {
+            return;
+        };
+        let opening = self.palette.opening();
+        let runtimes = self
+            .status
+            .as_ref()
+            .map_or(&[][..], |status| status.runtimes.as_slice());
+        let now = [
+            (Section::Runtimes, Some(palette::runtime_entries(runtimes))),
+            (
+                Section::Environments,
+                Some(palette::environment_entries(
+                    self.environments
+                        .as_ref()
+                        .map_or(&[][..], |view| view.hosts.as_slice()),
+                )),
+            ),
+            (
+                Section::Workflows,
+                (!self.workflows.is_empty()).then(|| palette::workflow_entries(&self.workflows)),
+            ),
+            (
+                Section::Memos,
+                self.memos.as_deref().map(palette::memo_entries),
+            ),
+        ];
+        for (section, entries) in now {
+            if let Some(entries) = entries {
+                self.palette.offer(opening, section, entries);
+            }
+        }
+        let session = selection.session.clone();
+        let artifacts = self
+            .backend
+            .artifacts(project.clone(), None, String::new(), 200);
+        let environments = self.backend.environments();
+        let workflows = self.backend.workflows();
+        let memos = self.backend.memos(project);
+        // Each arrives on its own; one that fails leaves its section as it was.
+        let offer = move |this: &mut Self, section: Section, entries: Vec<Entry>| {
+            this.accept_palette_results(|palette| palette.offer(opening, section, entries));
+        };
+        cx.spawn_in(window, async move |this, cx| {
+            let artifacts = receive(artifacts).await;
+            let _ = this.update(cx, |this, cx| {
+                if let Ok(rows) = artifacts {
+                    let entries = palette::artifact_entries(&rows, session.as_deref());
+                    offer(this, Section::Artifacts, entries);
+                }
+                cx.notify();
+            });
+            let environments = receive(environments).await;
+            let _ = this.update(cx, |this, cx| {
+                if let Ok(view) = environments {
+                    offer(
+                        this,
+                        Section::Environments,
+                        palette::environment_entries(&view.hosts),
+                    );
+                }
+                cx.notify();
+            });
+            let workflows = receive(workflows).await;
+            let _ = this.update(cx, |this, cx| {
+                if let Ok(workflows) = workflows {
+                    offer(
+                        this,
+                        Section::Workflows,
+                        palette::workflow_entries(&workflows),
+                    );
+                }
+                cx.notify();
+            });
+            let memos = receive(memos).await;
+            let _ = this.update(cx, |this, cx| {
+                if let Ok(memos) = memos {
+                    offer(this, Section::Memos, palette::memo_entries(&memos));
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Offers the project's memos to the `/memo` picker: those the Memos
+    /// tab already read at once, then the host's list.
+    fn offer_memos(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        let opening = self.palette.opening();
+        if let Some(memos) = self.memos.as_deref() {
+            self.palette
+                .offer(opening, Section::Memos, palette::memo_entries(memos));
+        }
+        let memos = self.backend.memos(project);
+        cx.spawn_in(window, async move |this, cx| {
+            let memos = receive(memos).await;
+            let _ = this.update(cx, |this, cx| {
+                match memos {
+                    Ok(memos) => this.accept_palette_results(|palette| {
+                        palette.offer(opening, Section::Memos, palette::memo_entries(&memos))
+                    }),
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Puts a memo's text into the message box after what is written there,
+    /// as the WebView's `/memo` does: the model reads a memo only this way.
+    fn put_memo(&mut self, body: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let text = crate::memos::insert(&self.composer.read(cx).value(), body);
+        self.state.save_draft(text.clone());
+        self.composer.update(cx, |input, cx| {
+            input.set_value(text, window, cx);
+            input.focus(window, cx);
+        });
     }
 
     /// Lists results that came back from the host, keeping the highlighted
@@ -109,8 +276,8 @@ impl Workspace {
         self.palette_scroll.scroll_to_item(0);
         cx.notify();
         let query = self.palette.query.clone();
-        // Commands are listed here; nothing is asked of the host.
-        if self.palette.mode == Mode::Commands {
+        // Commands and memos are listed here; nothing is asked of the host.
+        if matches!(self.palette.mode, Mode::Commands | Mode::Memos) {
             return;
         }
         let attach = self.palette.mode == Mode::Attach;
@@ -213,20 +380,27 @@ impl Workspace {
             return;
         };
         self.layers.close(Layer::Palette);
-        if self.palette.mode == Mode::Attach {
-            let chip = match entry {
-                Entry::File(file) => Chip::File(file.path),
-                Entry::Conversation { id, title, .. } => Chip::Conversation { id, title },
-                Entry::Skill { name, .. } => Chip::Skill(name),
-                Entry::Project { .. } | Entry::Command(_) => return,
-            };
-            self.attach(chip, cx);
+        if matches!(self.palette.mode, Mode::Attach | Mode::Memos) {
+            if let Entry::Memo { body, .. } = &entry {
+                self.put_memo(body, window, cx);
+            } else if let Entry::Command(command) = entry {
+                // The `/memo` picker's one row in a project with no memos.
+                return self.run_command(command, window, cx);
+            } else if let Some(chip) = entry.chip() {
+                self.attach(chip, cx);
+            }
             self.focus_composer(window, cx);
+            cx.notify();
             return;
         }
         match entry {
-            // Skills are only listed for attaching.
-            Entry::Skill { .. } => {}
+            // These are only listed for attaching.
+            Entry::Skill { .. }
+            | Entry::Artifact { .. }
+            | Entry::Environment { .. }
+            | Entry::Runtime { .. }
+            | Entry::Workflow { .. }
+            | Entry::Memo { .. } => {}
             Entry::Command(command) => self.run_command(command, window, cx),
             // Everything else goes somewhere that Settings would cover.
             Entry::Project { id, .. } => {
@@ -282,6 +456,7 @@ impl Workspace {
             Command::Trajectory => return self.open_trajectory(window, cx),
             Command::Review => return self.open_review(window, cx),
             Command::ModelView => return self.open_model_view(window, cx),
+            Command::Handoff => return self.open_handoff(window, cx),
             Command::ResearchArchive => return self.open_research_archive(window, cx),
             Command::Terminal => {
                 self.layers.close(Layer::Palette);
@@ -435,10 +610,18 @@ impl Workspace {
             .min_h_0()
             .overflow_y_scroll()
             .p_1();
+        let memo_picker = self.palette.mode == Mode::Memos;
         let mut section = None;
         for (index, entry) in entries.iter().enumerate() {
             if section != Some(entry.section()) {
                 section = Some(entry.section());
+                // The memo picker's row for a project without memos is
+                // under the memos' heading too.
+                let heading = if memo_picker {
+                    Section::Memos.title()
+                } else {
+                    entry.section().title()
+                };
                 list = list.child(
                     div()
                         .px_2()
@@ -447,25 +630,33 @@ impl Workspace {
                         .flex_shrink_0()
                         .text_xs()
                         .text_color(muted)
-                        .child(entry.section().title()),
+                        .child(heading),
                 );
             }
-            let (glyph, title, detail) = match entry {
-                Entry::Project { name, path, .. } => (
-                    "folder",
-                    name.clone(),
-                    home::short_path(path, home_dir.as_deref()),
-                ),
+            let glyph = entry.glyph();
+            let (title, detail) = match entry {
+                Entry::Project { name, path, .. } => {
+                    (name.clone(), home::short_path(path, home_dir.as_deref()))
+                }
                 Entry::File(file) => (
-                    "doc",
                     files::file_name(&file.path).to_owned(),
                     format!("{} · {}", file.project_name, file.path),
                 ),
-                Entry::Conversation { title, place, .. } => ("chat", title.clone(), place.clone()),
-                Entry::Skill { name, description } => ("skill", name.clone(), description.clone()),
-                Entry::Command(command) => {
-                    (command.icon(), command.label().to_owned(), String::new())
-                }
+                Entry::Conversation { title, place, .. } => (title.clone(), place.clone()),
+                Entry::Skill { name, description } => (name.clone(), description.clone()),
+                Entry::Artifact { name, detail, .. } => (name.clone(), detail.clone()),
+                Entry::Environment { label, detail, .. } => (label.clone(), detail.clone()),
+                Entry::Runtime { title, detail, .. } => (title.clone(), detail.clone()),
+                Entry::Workflow { name, goal, .. } => (name.clone(), goal.clone()),
+                Entry::Memo {
+                    heading, preview, ..
+                } => (heading.clone(), preview.clone()),
+                // The WebView's words for a project with no memos yet.
+                Entry::Command(Command::Memos) if memo_picker => (
+                    tr("This project has no memos yet").to_owned(),
+                    tr("Open Memos").to_owned(),
+                ),
+                Entry::Command(command) => (command.label().to_owned(), String::new()),
             };
             // A project can also be opened in a window of its own.
             let new_window = entry.window_project(self.palette.mode).map(|id| {
@@ -546,7 +737,9 @@ impl Workspace {
         }
         if entries.is_empty() {
             list = list.child(div().p_4().text_sm().text_color(muted).child(
-                if self.palette.query.is_empty() {
+                if memo_picker && self.palette.query.is_empty() {
+                    tr("Loading…").to_owned()
+                } else if self.palette.query.is_empty() {
                     tr("Type a file name, a word from a conversation, or a skill.").to_owned()
                 } else {
                     crate::i18n::fill(tr("Nothing matches “{}”."), &[&self.palette.query])
@@ -597,6 +790,9 @@ impl Workspace {
                             "↑ ↓ to move · Return to open · Esc to close"
                         }
                         Mode::Attach => "↑ ↓ to move · Return to add · Esc to close",
+                        Mode::Memos => {
+                            tr("↑ ↓ to move · Return to put it into the message · Esc to close")
+                        }
                     }),
             );
 

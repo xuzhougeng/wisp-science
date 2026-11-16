@@ -23,7 +23,11 @@ impl Workspace {
             .flat_map(|(index, item)| {
                 inline::pictures(&item.text)
                     .into_iter()
-                    .chain(inline::written(&self.rows, index))
+                    .chain(inline::written(
+                        &self.rows,
+                        index,
+                        &self.recorded_pictures(index),
+                    ))
                     .map(move |path| (index, path))
             })
             .filter(|(_, path)| !self.inline_images.contains_key(path))
@@ -55,7 +59,12 @@ impl Workspace {
                     for (index, item) in this.rows.iter().enumerate() {
                         let shows = item.role == "assistant"
                             && (inline::pictures(&item.text).contains(&path)
-                                || inline::written(&this.rows, index).contains(&path));
+                                || inline::written(
+                                    &this.rows,
+                                    index,
+                                    &this.recorded_pictures(index),
+                                )
+                                .contains(&path));
                         if shows {
                             this.list.splice(index..index + 1, 1);
                         }
@@ -67,14 +76,18 @@ impl Workspace {
         }
     }
 
-    /// The pictures the turn an answer closes wrote and the answer does not
-    /// show, under it, as the WebView shows a turn's files.
+    /// The pictures the turn an answer closes wrote, or recorded as its
+    /// artifacts, and the answer does not show, under it, as the WebView
+    /// shows a turn's files.
     pub(super) fn written_pictures(
         &self,
         index: usize,
         cx: &mut Context<Self>,
     ) -> Vec<Stateful<Div>> {
-        self.pictures(inline::written(&self.rows, index), cx)
+        self.pictures(
+            inline::written(&self.rows, index, &self.recorded_pictures(index)),
+            cx,
+        )
     }
 
     /// The pictures an answer points at that have been read, in order.

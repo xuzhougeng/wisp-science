@@ -16,6 +16,7 @@ use wisp_dto::{ResearchJournalInput, ResearchRecap};
 use super::{
     Workspace, chip,
     shell::{error_banner, glyph, icon_button, nav_row},
+    surfaces,
 };
 use crate::{
     assets::icon,
@@ -475,14 +476,7 @@ impl Workspace {
                 nav_row("journey-back", "arrow-left", tr("Back"), false, true, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.close_journey(window, cx))),
             )
-            .child(
-                div()
-                    .px_2()
-                    .pt_3()
-                    .text_lg()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Research journey")),
-            )
+            .child(surfaces::title(tr("Research journey")).px_2().pt_3())
             .child(
                 div()
                     .px_2()

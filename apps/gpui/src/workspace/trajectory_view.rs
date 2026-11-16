@@ -8,6 +8,7 @@ use gpui_component::{ActiveTheme, Sizable, StyledExt, button::Button};
 use super::{
     Workspace,
     shell::{error_banner, glyph},
+    surfaces::{self, DialogWidth},
 };
 use crate::{
     backend::receive,
@@ -66,27 +67,9 @@ impl Workspace {
     pub(super) fn render_trajectory(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
         let border = cx.theme().border;
-        let mut card = div()
-            .id("trajectory")
-            .v_flex()
-            .gap_2()
-            .w(px(760.))
-            .max_w(relative(0.94))
-            .max_h(relative(0.9))
-            .overflow_y_scroll()
-            .p_5()
-            .rounded(cx.theme().radius_lg)
-            .border_1()
-            .border_color(border)
-            .bg(cx.theme().popover)
-            .shadow_lg()
-            // A click inside is not a click on the backdrop.
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Trajectory")),
+        let mut card = surfaces::dialog("trajectory", DialogWidth::Wide, tr("Trajectory"))
+            .close_on_click_outside(
+                cx.listener(|this, _, window, cx| this.close_trajectory(window, cx)),
             );
         if let Some(error) = &self.trajectory_error {
             card = card.child(error_banner(error, cx));
@@ -124,31 +107,12 @@ impl Workspace {
                 }
             }
         }
-        card = card.child(
-            div().h_flex().justify_end().pt_2().child(
-                Button::new("trajectory-close")
-                    .label(tr("Close"))
-                    .small()
-                    .on_click(cx.listener(|this, _, window, cx| this.close_trajectory(window, cx))),
-            ),
-        );
-        div()
-            .id("trajectory-backdrop")
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            // Nothing underneath is clickable while the dialog is open.
-            .occlude()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(cx.theme().overlay)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| this.close_trajectory(window, cx)),
-            )
-            .child(card)
+        card.action(
+            Button::new("trajectory-close")
+                .label(tr("Close"))
+                .small()
+                .on_click(cx.listener(|this, _, window, cx| this.close_trajectory(window, cx))),
+        )
     }
 
     fn trajectory_totals(

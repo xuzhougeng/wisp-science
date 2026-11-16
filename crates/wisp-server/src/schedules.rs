@@ -7,8 +7,13 @@
 //! be shared from here because it lives in the Tauri shell, and the rows
 //! are the store's own, so both desktops see the same tasks.
 //!
-//! A conversation's own timer (a row that replaces its previous turn) is
-//! the WebView's to fire: it is listed nowhere here and never claimed.
+//! A task bound to a conversation is that conversation's timer: one per
+//! conversation, as the WebView keeps, sent into it each time, and while
+//! a turn runs there or messages wait for one it waits for the
+//! conversation to be idle instead of being refused, as the WebView's
+//! timer does. The WebView's own timer (a row that replaces its previous
+//! turn) is the WebView's to fire: it is listed nowhere here and never
+//! claimed.
 
 use anyhow::{ensure, Context, Result};
 use serde_json::json;
@@ -107,7 +112,40 @@ fn message(schedule: &ScheduleRecord) -> String {
     format!("[Scheduled task: {}]\n\n{}", schedule.name, schedule.prompt)
 }
 
+/// Whether `schedule` is the timer this host keeps for `session`.
+fn timer_of(schedule: &ScheduleRecord, session: &str) -> bool {
+    !schedule.replace_previous_turn && schedule.frame_id.as_deref() == Some(session)
+}
+
 impl Server {
+    /// A task as the page lists it, with its latest firings.
+    async fn row(&self, project_name: &str, schedule: ScheduleRecord) -> Result<ScheduleRow> {
+        let runs = self
+            .0
+            .store
+            .list_schedule_runs(&schedule.id, 5)
+            .await?
+            .into_iter()
+            .map(|run| ScheduleRun {
+                fired_at: run.fired_at,
+                session: run.frame_id,
+                error: run.error,
+            })
+            .collect();
+        Ok(ScheduleRow {
+            id: schedule.id,
+            project: schedule.project_id,
+            project_name: project_name.to_owned(),
+            name: schedule.name,
+            prompt: schedule.prompt,
+            interval_secs: schedule.interval_secs,
+            enabled: schedule.enabled,
+            next_run_at: schedule.next_run_at,
+            session: schedule.frame_id,
+            runs,
+        })
+    }
+
     /// Every project's scheduled tasks, the one due soonest first.
     pub async fn schedules(&self) -> Result<Vec<ScheduleRow>> {
         let store = &self.0.store;
@@ -117,28 +155,7 @@ impl Server {
                 if schedule.replace_previous_turn {
                     continue;
                 }
-                let runs = store
-                    .list_schedule_runs(&schedule.id, 5)
-                    .await?
-                    .into_iter()
-                    .map(|run| ScheduleRun {
-                        fired_at: run.fired_at,
-                        session: run.frame_id,
-                        error: run.error,
-                    })
-                    .collect();
-                rows.push(ScheduleRow {
-                    id: schedule.id,
-                    project: project.clone(),
-                    project_name: project_name.clone(),
-                    name: schedule.name,
-                    prompt: schedule.prompt,
-                    interval_secs: schedule.interval_secs,
-                    enabled: schedule.enabled,
-                    next_run_at: schedule.next_run_at,
-                    session: schedule.frame_id,
-                    runs,
-                });
+                rows.push(self.row(&project_name, schedule).await?);
             }
         }
         rows.sort_by(|a, b| {
@@ -159,6 +176,72 @@ impl Server {
         }
         let schedule = record(&input, chrono::Utc::now().timestamp())?;
         self.0.store.create_schedule(&schedule).await
+    }
+
+    /// The timer of one conversation, when it has one.
+    pub async fn conversation_timer(
+        &self,
+        project: &str,
+        session: &str,
+    ) -> Result<Option<ScheduleRow>> {
+        let Some(timer) = self
+            .0
+            .store
+            .list_schedules(project)
+            .await?
+            .into_iter()
+            .filter(|schedule| timer_of(schedule, session))
+            .max_by_key(|schedule| schedule.created_at)
+        else {
+            return Ok(None);
+        };
+        let name = self
+            .0
+            .store
+            .get_project(project)
+            .await?
+            .map(|(name, _)| name)
+            .unwrap_or_default();
+        Ok(Some(self.row(&name, timer).await?))
+    }
+
+    /// Gives a conversation its timer, or changes the one it has: one per
+    /// conversation, as the WebView keeps. A changed timer keeps whether
+    /// it was paused and fires one interval from now.
+    pub async fn set_conversation_timer(
+        &self,
+        project: &str,
+        session: &str,
+        prompt: &str,
+        interval_secs: i64,
+    ) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        self.own_conversation(project, session).await?;
+        let input = ScheduleInput {
+            project: project.to_owned(),
+            name: String::new(),
+            prompt: prompt.to_owned(),
+            interval_secs,
+            start_at: None,
+            session: Some(session.to_owned()),
+        };
+        let mut timer = record(&input, chrono::Utc::now().timestamp())?;
+        for schedule in self.0.store.list_schedules(project).await? {
+            if timer_of(&schedule, session) {
+                timer.enabled = schedule.enabled;
+                self.0.store.delete_schedule(&schedule.id).await?;
+            }
+        }
+        self.0.store.create_schedule(&timer).await
+    }
+
+    /// Whether a turn runs in `session` or messages wait there for one.
+    fn conversation_busy(&self, session: &str) -> bool {
+        let Some(live) = self.0.sessions.lock().unwrap().get(session).cloned() else {
+            return false;
+        };
+        let running = live.live.lock().unwrap().running;
+        running || !live.queue.lock().unwrap().is_empty()
     }
 
     /// Removes the timers of one conversation. Returns how many there were.
@@ -223,6 +306,15 @@ impl Server {
             if schedule.replace_previous_turn {
                 continue;
             }
+            // A conversation's timer waits while that conversation is busy:
+            // it stays due, unclaimed, and fires at the first look after.
+            if schedule
+                .frame_id
+                .as_deref()
+                .is_some_and(|session| self.conversation_busy(session))
+            {
+                continue;
+            }
             // Claimed before it is sent, so a slow turn or a second look
             // never fires the same time twice.
             let next = next_slot_after(schedule.next_run_at, schedule.interval_secs, now);
@@ -267,8 +359,9 @@ impl Server {
     async fn send_scheduled(&self, schedule: &ScheduleRecord) -> Result<String> {
         let fresh = schedule.frame_id.is_none();
         let session = match &schedule.frame_id {
-            // A conversation's timer goes into that conversation. While a
-            // turn runs there the send is refused and recorded as such.
+            // A conversation's timer goes into that conversation. A turn
+            // that started there since the due check refuses the send,
+            // which is recorded as such; run now is refused the same way.
             Some(session) => session.clone(),
             None => self.create_conversation(&schedule.project_id).await?,
         };
