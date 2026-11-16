@@ -945,20 +945,47 @@ Limits of this slice:
   was. Files the turn created are moved to `.wisp/trash/`, not erased.
 - `/timer` gives the open conversation its timer, a scheduled task
   bound to it: the prompt is sent into it every so many minutes, hours
-  or days while the app is open, as a new turn each time. A conversation
-  has one; `/timer` again changes its prompt and interval, keeps whether
-  it was paused, and fires one interval from then. While a turn runs
-  there or messages wait for one it stays due and fires at the first
-  look after (every half minute), as the WebView's does, instead of
-  being refused. Pause keeps the prompt and the interval; Resume keeps
-  the cadence's place on the clock, so a time missed while paused fires
-  once at the next look, as in the WebView. Unlike the WebView's it does
-  not replace the turn before it: every firing adds a turn. The strip
+  or days while the app is open, as `[Timer: …]`, and each firing
+  replaces the timer's previous turn, as the WebView's does: its
+  messages, tool calls and saved events go (files it wrote stay), and so
+  does any compaction made after it (the conversation returns to the
+  context it had before that turn); what you said in between stays. A
+  review's correction or a Stop hook's continuation of the timer's turn
+  is part of it and goes with it. While the timer's turn runs it takes
+  no guidance: a message written then waits for a turn of its own. A
+  conversation has one; `/timer` again changes its prompt and interval,
+  keeps whether it was paused, and fires one interval from then. While
+  a turn runs there or messages wait for one it stays due and fires at
+  the first look after (every half minute), as the WebView's does,
+  instead of being refused. Pause keeps the prompt and the interval;
+  Resume keeps the cadence's place on the clock, so a time missed while
+  paused fires once at the next look, as in the WebView. The strip
   cannot edit the prompt or the interval (send `/timer` again) and
   `/timer` alone does not open an editor. `/timer off` or Cancel timer
   removes it; it is also listed, marked, on the Scheduled tasks page.
-  A timer the WebView made (one that replaces its previous turn) is the
-  WebView's to show and fire, and is not shown here.
+  A conversation an ACP agent runs, or a subagent's, cannot have one.
+- Which desktop fires a scheduled task is the row's (`schedules.host`,
+  migration `0069_schedule_host`): a timer or task made here is marked
+  as the embedded host's and fires only here; the WebView desktop fires
+  only the rows it made (its scheduler skips marked rows, and its Run
+  now refuses them). A timer the WebView made is the WebView's to show
+  and fire: it is not shown here, and `/timer` in that conversation
+  says to change it there. Rows from before the mark keep what they
+  did: a timer made here then adds a turn each time (until `/timer`
+  sets it again, which makes it one that replaces its turn), and a task
+  that adds a turn is fired by whichever desktop is open (a time is
+  claimed once, so it fires once). A `/timer` typed in the WebView in a
+  conversation whose timer was set here changes that timer, which keeps
+  firing only here.
+- When a timer's firing takes rows away, the conversation reads them
+  again: the host's snapshot says where its latest page starts
+  (`next_before_seq`) and how many of the user's messages come before
+  it (`user_offset`), and earlier pages loaded behind it are dropped
+  once either moves, as the web client drops them when the page's start
+  moves; scrolling up loads them again. The phone clients keep only the
+  latest page (Android) or drop their earlier pages when its start moves
+  (iOS), so an older page there can show a replaced turn until the
+  timer's own turn ends and the page moves on.
 - The host's snapshot says why a conversation is read-only
   (`read_only_reason`: archived, subagent or frozen_branch; an optional
   field older clients ignore, and one they do not know reads as other). A subagent's conversation opened before the project's
@@ -1479,8 +1506,9 @@ Limits of this slice:
   refreshed. A task cannot be bound to an existing conversation or to
   a skill, and cannot be edited, only deleted and made again. The rows
   are the store's own (`schedules`), shared with the WebView desktop;
-  a conversation's own timer made there is neither listed nor fired
-  here.
+  a task made here carries the embedded host's mark and fires only
+  here, and a conversation's own timer made there is neither listed nor
+  fired here (see `/timer`).
 - Paper evidence keeps papers, versions, items and evidence in the same
   tables the WebView desktop uses, so a paper made in one shows in the
   other. A draft can be checked and finalized here with the WebView's

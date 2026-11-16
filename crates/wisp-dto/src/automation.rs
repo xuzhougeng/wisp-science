@@ -39,6 +39,35 @@ pub fn parse_timer_expression(expression: &str) -> Result<(i64, String), String>
 mod timer_tests {
     use super::*;
     #[test]
+    fn each_host_fires_its_own_rows_and_unmarked_replacing_timers_stay_the_webviews() {
+        let row = |host: Option<&str>, replace: bool| ScheduleRecord {
+            host: host.map(str::to_owned),
+            replace_previous_turn: replace,
+            ..Default::default()
+        };
+        let embedded = Some(EMBEDDED_SCHEDULE_HOST);
+        // The embedded host's own rows: only it fires them.
+        assert!(schedule_fired_by(&row(embedded, true), embedded));
+        assert!(schedule_fired_by(&row(embedded, false), embedded));
+        assert!(!schedule_fired_by(&row(embedded, true), None));
+        assert!(!schedule_fired_by(&row(embedded, false), None));
+        // An unmarked replacing timer is the WebView's alone.
+        assert!(schedule_fired_by(&row(None, true), None));
+        assert!(!schedule_fired_by(&row(None, true), embedded));
+        // An unmarked task that adds a turn is fired by both, as before.
+        assert!(schedule_fired_by(&row(None, false), None));
+        assert!(schedule_fired_by(&row(None, false), embedded));
+        // An unmarked row reads and writes as it always did.
+        let old: ScheduleRecord = serde_json::from_value(serde_json::json!({
+            "id": "s", "project_id": "p", "frame_id": null, "name": "n",
+            "prompt": "p", "skill": null, "interval_secs": 60, "enabled": true,
+            "next_run_at": 1, "last_run_at": null, "created_at": 1, "updated_at": 1
+        }))
+        .unwrap();
+        assert_eq!(old.host, None);
+        assert!(serde_json::to_value(&old).unwrap().get("host").is_none());
+    }
+    #[test]
     fn timer_grammar_preserves_prompt_and_rejects_invalid_intervals() {
         assert_eq!(
             parse_timer_expression(" 1h 当前进展如何\n检查日志 ").unwrap(),
@@ -64,6 +93,26 @@ mod timer_tests {
     }
 }
 
+/// The owner mark of a schedule the embedded host (the GPUI desktop's, or a
+/// headless server) made and fires. A row without a mark is the WebView
+/// desktop's, or was made before the hosts were told apart.
+pub const EMBEDDED_SCHEDULE_HOST: &str = "embedded";
+
+/// Whether the host named `host` (`None`: the WebView desktop; otherwise
+/// its owner mark) fires `schedule`. Each host fires the rows it marked. A
+/// row with no mark is the WebView's, except a conversation-bound or
+/// unbound task that does not replace its previous turn: both hosts fired
+/// those before rows were marked, and still do (claiming a slot is atomic,
+/// so a time fires once).
+pub fn schedule_fired_by(schedule: &ScheduleRecord, host: Option<&str>) -> bool {
+    match (schedule.host.as_deref(), host) {
+        (Some(owner), Some(host)) => owner == host,
+        (Some(_), None) => false,
+        (None, None) => true,
+        (None, Some(_)) => !schedule.replace_previous_turn,
+    }
+}
+
 /// An interval trigger that fires a prompt (with an optional skill) into a
 /// chat session while the app is running.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -84,6 +133,11 @@ pub struct ScheduleRecord {
     pub last_run_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
+    /// Which host fires it: `None` for the WebView desktop's rows (and rows
+    /// made before hosts were told apart), [`EMBEDDED_SCHEDULE_HOST`] for
+    /// the embedded host's. See [`schedule_fired_by`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

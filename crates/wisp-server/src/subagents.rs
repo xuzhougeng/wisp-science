@@ -369,6 +369,10 @@ impl Server {
                     {
                         return Ok(());
                     }
+                    // Not the timer's to take away with its turn.
+                    self.seal_timer_turn(&parent_live, parent)
+                        .await
+                        .map_err(|error| error.to_string())?;
                     let seq = store
                         .max_message_seq(parent)
                         .await

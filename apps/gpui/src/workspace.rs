@@ -904,6 +904,13 @@ pub struct Workspace {
     rows: Vec<Item>,
     history: Vec<Item>,
     before: Option<i64>,
+    /// Where the latest page started (its `next_before_seq` and how many
+    /// of the user's messages came before it) when `history` was loaded
+    /// behind it; see [`crate::outline::earlier_pages_hold`].
+    history_under: (Option<i64>, usize),
+    /// Counts the times `history` was dropped, so an earlier page asked
+    /// for before that is not put in front of rows it no longer joins.
+    history_epoch: u64,
     list: ListState,
     /// The example conversations that ship with Wisp, once listed.
     demos: Vec<wisp_server::desktop::DemoInfo>,
@@ -2014,6 +2021,8 @@ impl Workspace {
             rows: vec![],
             history: vec![],
             before: None,
+            history_under: (None, 0),
+            history_epoch: 0,
             list: ListState::new(0, ListAlignment::Bottom, px(300.)),
             demos: vec![],
             demo: None,
@@ -3023,9 +3032,8 @@ impl Workspace {
         self.run_card_rows.clear();
         self.backgrounded_runs.clear();
         self.swarm = None;
-        self.history.clear();
+        self.drop_history();
         self.before = None;
-        self.loading_history = false;
         self.error = None;
         self.expanded_run = None;
         self.close_search();
@@ -3403,12 +3411,34 @@ impl Workspace {
         }));
     }
 
+    /// Forgets the earlier pages loaded behind the latest one; they are
+    /// asked for again as the user scrolls up.
+    pub(super) fn drop_history(&mut self) {
+        self.history.clear();
+        self.history_epoch = self.history_epoch.wrapping_add(1);
+        self.loading_history = false;
+    }
+
     fn update_rows(&mut self) {
+        let Some(snapshot) = &self.state.snapshot else {
+            return;
+        };
+        // The latest page moved under the earlier pages loaded behind it (a
+        // turn ended, or a timer's firing took rows away): they would leave
+        // a gap or show rows that are gone, so they go, as the web client's
+        // do. Everything placed by row index is placed again below.
+        let latest = (snapshot.next_before_seq, snapshot.user_offset);
+        if !self.history.is_empty()
+            && !crate::outline::earlier_pages_hold(self.history_under, latest)
+        {
+            self.drop_history();
+        }
         let Some(snapshot) = &self.state.snapshot else {
             return;
         };
         if self.history.is_empty() {
             self.before = snapshot.next_before_seq;
+            self.history_under = latest;
         }
         let mut rows = self.history.clone();
         rows.extend(snapshot.items.clone());
@@ -3440,6 +3470,7 @@ impl Workspace {
             return;
         }
         self.loading_history = true;
+        let epoch = self.history_epoch;
         let selection = self.state.selection();
         let reply = self.backend.snapshot(
             selection.project.clone(),
@@ -3449,7 +3480,9 @@ impl Workspace {
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
             let _ = this.update_in(cx, |this, window, cx| {
-                if !this.state.current(&selection) {
+                // Read before the loaded pages were dropped: it no longer
+                // joins what is shown.
+                if !this.state.current(&selection) || this.history_epoch != epoch {
                     return;
                 }
                 this.loading_history = false;
@@ -3479,6 +3512,7 @@ impl Workspace {
             return;
         }
         self.loading_history = true;
+        let epoch = self.history_epoch;
         let selection = self.state.selection();
         let backend = self.backend.clone();
         let mut before = self.before;
@@ -3506,7 +3540,7 @@ impl Workspace {
                 }
             }
             let _ = this.update_in(cx, |this, window, cx| {
-                if !this.state.current(&selection) {
+                if !this.state.current(&selection) || this.history_epoch != epoch {
                     return;
                 }
                 this.loading_history = false;
@@ -3728,7 +3762,7 @@ impl Workspace {
                             this.state.save_draft(String::new());
                             this.chips.remove(&session);
                         }
-                        this.history.clear();
+                        this.drop_history();
                         if let Some(snapshot) = &mut this.state.snapshot {
                             snapshot.running = true;
                         }

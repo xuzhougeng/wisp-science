@@ -14730,6 +14730,7 @@ async fn a_scheduled_task_fires_once_per_time_into_a_new_conversation() {
         last_run_at: None,
         created_at: now,
         updated_at: now,
+        host: None,
     };
     server.0.store.create_schedule(&timer).await.unwrap();
     assert_eq!(server.schedules().await.unwrap().len(), 2);
@@ -14907,7 +14908,7 @@ async fn a_conversation_keeps_one_timer_that_waits_while_the_conversation_is_bus
         .lock()
         .unwrap()
         .join("\n")
-        .contains("[Scheduled task: look again]"));
+        .contains("[Timer: look again]"));
 
     assert_eq!(
         server
@@ -14921,6 +14922,539 @@ async fn a_conversation_keeps_one_timer_that_waits_while_the_conversation_is_bus
         .await
         .unwrap()
         .is_none());
+    server.shutdown().await;
+}
+
+/// Answers each turn after the last thing the user said; a turn whose last
+/// message is the user's and says "slow" waits until the test lets it go.
+struct HeldTurns {
+    gate: Arc<tokio::sync::Semaphore>,
+}
+#[async_trait]
+impl Provider for HeldTurns {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+        Ok(Completion {
+            content: "noted".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        messages: &[Message],
+        _: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        let last = messages
+            .last()
+            .filter(|message| message.role == wisp_llm::Role::User)
+            .map(|message| message.content.as_text())
+            .unwrap_or_default();
+        if last.contains("slow") {
+            self.gate.acquire().await.unwrap().forget();
+        }
+        let answer = format!("answer to {}", last.lines().next().unwrap_or_default());
+        sink.on_text(&answer);
+        Ok(Completion {
+            content: answer,
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+}
+
+fn held_turns(gate: Arc<tokio::sync::Semaphore>) -> ModelFactory {
+    Arc::new(move |_| Box::new(HeldTurns { gate: gate.clone() }))
+}
+
+/// What the user said in a conversation, as its model reads it now.
+async fn said(server: &Server, session: &str) -> Vec<String> {
+    server
+        .0
+        .store
+        .load_messages(session)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|message| message.role == wisp_llm::Role::User)
+        .map(|message| message.content.as_text())
+        .collect()
+}
+
+async fn idle(server: &Server, session: &str) {
+    wait_for(server, session, |s| !s.running).await;
+}
+
+#[tokio::test]
+async fn a_conversation_timer_replaces_its_previous_turn_and_keeps_what_came_between() {
+    let temp = tempfile::tempdir().unwrap();
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let server = Server::open_with_models(config(temp.path()), held_turns(gate.clone()))
+        .await
+        .unwrap();
+    let main = server.create_conversation(PROJECT).await.unwrap();
+    let other = server.create_conversation(PROJECT).await.unwrap();
+    send(&server, &main, "first question").await.unwrap();
+    idle(&server, &main).await;
+
+    // Set here: the embedded host's own row, which replaces its turn.
+    server
+        .set_conversation_timer(PROJECT, &main, "check the queue", 600)
+        .await
+        .unwrap();
+    let row = |id: String| {
+        let server = server.clone();
+        async move { server.0.store.get_schedule(&id).await.unwrap().unwrap() }
+    };
+    let timer = server
+        .conversation_timer(PROJECT, &main)
+        .await
+        .unwrap()
+        .unwrap();
+    let stored = row(timer.id.clone()).await;
+    assert!(stored.replace_previous_turn);
+    assert_eq!(
+        stored.host.as_deref(),
+        Some(wisp_store::EMBEDDED_SCHEDULE_HOST)
+    );
+
+    // The other conversation has a timer and a turn of its own.
+    server
+        .set_conversation_timer(PROJECT, &other, "other check", 600)
+        .await
+        .unwrap();
+    send(&server, &other, "other question").await.unwrap();
+    idle(&server, &other).await;
+    let other_timer = server
+        .conversation_timer(PROJECT, &other)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        server
+            .fire_due_schedules(other_timer.next_run_at)
+            .await
+            .unwrap(),
+        2,
+        "both timers are due by then"
+    );
+    idle(&server, &main).await;
+    idle(&server, &other).await;
+    // Paused from here on, so what fires next is the first one's alone.
+    server
+        .set_schedule_enabled(&other_timer.id, false)
+        .await
+        .unwrap();
+    let rows_of = |session: String| {
+        let server = server.clone();
+        async move {
+            server
+                .0
+                .store
+                .load_messages_with_seq(&session)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|(seq, message)| (seq, serde_json::to_string(&message).unwrap()))
+                .collect::<Vec<_>>()
+        }
+    };
+    let other_before = rows_of(other.clone()).await;
+    assert_eq!(
+        said(&server, &other).await,
+        ["other question", "[Timer: other check]\n\nother check"]
+    );
+
+    // A human turn after the first firing, then a compaction made after it.
+    send(&server, &main, "between").await.unwrap();
+    idle(&server, &main).await;
+    assert_eq!(
+        said(&server, &main).await,
+        [
+            "first question",
+            "[Timer: check the queue]\n\ncheck the queue",
+            "between"
+        ]
+    );
+    let compacted = vec![
+        Message::system("rules"),
+        Message::user("summary that still holds the timer's turn"),
+    ];
+    server
+        .0
+        .store
+        .open_context_epoch(
+            &main,
+            wisp_store::OpenContextEpoch {
+                messages: &compacted,
+                strategy: "auto",
+                kind: "semantic",
+                before_tokens: 100,
+                after_tokens: 20,
+                checkpoint_index: Some(1),
+                first_kept_seq: None,
+                archive_ref: None,
+                ui_event_seq: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(!server
+        .0
+        .store
+        .context_epochs(&main)
+        .await
+        .unwrap()
+        .is_empty());
+
+    // Busy with a turn of its own: the timer waits, still due, unclaimed.
+    let due = row(timer.id.clone()).await.next_run_at;
+    send(&server, &main, "slow work").await.unwrap();
+    wait_for(&server, &main, |s| s.running).await;
+    assert_eq!(server.fire_due_schedules(due).await.unwrap(), 0);
+    let waiting = row(timer.id.clone()).await;
+    assert_eq!(waiting.next_run_at, due);
+    gate.add_permits(1);
+    idle(&server, &main).await;
+
+    // Idle again, it fires and takes its previous turn away: what the user
+    // said in between stays, and so does the turn it waited for. The
+    // compaction that held the old turn goes with it, as the store does.
+    assert_eq!(server.fire_due_schedules(due).await.unwrap(), 1);
+    idle(&server, &main).await;
+    assert_eq!(
+        said(&server, &main).await,
+        [
+            "first question",
+            "between",
+            "slow work",
+            "[Timer: check the queue]\n\ncheck the queue"
+        ]
+    );
+    assert!(server
+        .0
+        .store
+        .context_epochs(&main)
+        .await
+        .unwrap()
+        .is_empty());
+    let answers: Vec<String> = server
+        .0
+        .store
+        .load_messages(&main)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|message| message.role == wisp_llm::Role::Assistant)
+        .map(|message| message.content.as_text())
+        .collect();
+    assert_eq!(
+        answers,
+        [
+            "answer to first question",
+            "answer to between",
+            "answer to slow work",
+            "answer to [Timer: check the queue]"
+        ]
+    );
+
+    // While a timer's turn runs it takes no guidance, as in the WebView;
+    // what is said then waits for a turn of its own.
+    server
+        .set_conversation_timer(PROJECT, &main, "slow check", 600)
+        .await
+        .unwrap();
+    let changed = row(timer.id.clone()).await;
+    assert_eq!(changed.prompt, "slow check", "the same row, changed");
+    assert_eq!(
+        server
+            .fire_due_schedules(changed.next_run_at)
+            .await
+            .unwrap(),
+        1
+    );
+    wait_for(&server, &main, |s| s.running).await;
+    assert!(!server.guide(PROJECT, &main, "look here").await.unwrap());
+    gate.add_permits(1);
+    idle(&server, &main).await;
+    // Two firings since the human turns: one timer turn.
+    let now_said = said(&server, &main).await;
+    assert_eq!(
+        now_said,
+        [
+            "first question",
+            "between",
+            "slow work",
+            "[Timer: slow check]\n\nslow check"
+        ]
+    );
+    let runs = server
+        .conversation_timer(PROJECT, &main)
+        .await
+        .unwrap()
+        .unwrap()
+        .runs;
+    assert!(runs.iter().all(|run| run.error.is_none()), "{runs:?}");
+
+    // Nothing of the other conversation was touched.
+    assert_eq!(rows_of(other.clone()).await, other_before);
+    server.shutdown().await;
+}
+
+/// Waits until the conversation's turn and whatever goes on with its
+/// timer's turn (a Stop hook's continuation) are over.
+async fn settled(server: &Server, session: &str) {
+    let live = server.session(session);
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            {
+                let live = live.live.lock().unwrap();
+                if !live.running && !live.timer_open {
+                    return;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the timer's turn must end");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn what_goes_on_with_a_timer_turn_is_replaced_with_it() {
+    use wisp_dto::HookEvent;
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(
+        config(temp.path()),
+        held_turns(Arc::new(tokio::sync::Semaphore::new(0))),
+    )
+    .await
+    .unwrap();
+    // Every turn is kept going once, as the WebView's Stop hooks do inside
+    // its timer's turn.
+    server
+        .set_command_hooks(vec![command_hook(
+            HookEvent::Stop,
+            "",
+            r#"grep -q '"stop_hook_active":false' && { echo "run the tests" >&2; exit 2; }; exit 0"#,
+        )])
+        .await
+        .unwrap();
+    let session = server.create_conversation(PROJECT).await.unwrap();
+    server
+        .set_conversation_timer(PROJECT, &session, "check", 600)
+        .await
+        .unwrap();
+    let mut due = server
+        .conversation_timer(PROJECT, &session)
+        .await
+        .unwrap()
+        .unwrap()
+        .next_run_at;
+    let mut rows = Vec::new();
+    for _ in 0..2 {
+        assert_eq!(server.fire_due_schedules(due).await.unwrap(), 1);
+        settled(&server, &session).await;
+        let saved = server.0.store.load_messages(&session).await.unwrap();
+        rows.push(saved.len());
+        due += 600;
+    }
+    // The continuation was the timer's: the second firing took it away
+    // with the turn, so the conversation is as long as after the first.
+    assert_eq!(rows[0], rows[1], "{rows:?}");
+    assert!(rows[0] >= 4, "a turn and its continuation: {rows:?}");
+    assert_eq!(said(&server, &session).await.len(), 1);
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_webviews_own_timer_is_never_fired_or_changed_here() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(
+        config(temp.path()),
+        held_turns(Arc::new(tokio::sync::Semaphore::new(0))),
+    )
+    .await
+    .unwrap();
+    let session = server.create_conversation(PROJECT).await.unwrap();
+    let now = chrono::Utc::now().timestamp();
+    // As the WebView saves its /timer: no owner mark, replacing its turn.
+    let webview = wisp_store::ScheduleRecord {
+        id: "webview-timer".into(),
+        project_id: PROJECT.into(),
+        frame_id: Some(session.clone()),
+        replace_previous_turn: true,
+        name: "check".into(),
+        prompt: "check".into(),
+        interval_secs: 600,
+        enabled: true,
+        next_run_at: now - 60,
+        created_at: now,
+        updated_at: now,
+        ..Default::default()
+    };
+    server.0.store.create_schedule(&webview).await.unwrap();
+    assert_eq!(server.fire_due_schedules(now).await.unwrap(), 0);
+    let kept = server
+        .0
+        .store
+        .get_schedule("webview-timer")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.next_run_at, now - 60, "not claimed");
+    assert!(server
+        .0
+        .store
+        .list_schedule_runs("webview-timer", 5)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(said(&server, &session).await.is_empty());
+    // Not this host's to list, run, change or cancel.
+    assert!(server.schedules().await.unwrap().is_empty());
+    assert!(server
+        .conversation_timer(PROJECT, &session)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(server.run_schedule_now("webview-timer").await.is_err());
+    assert!(server
+        .set_conversation_timer(PROJECT, &session, "mine", 600)
+        .await
+        .is_err());
+    assert_eq!(
+        server
+            .cancel_conversation_schedules(PROJECT, &session)
+            .await
+            .unwrap(),
+        0
+    );
+
+    // A timer set here before timers replaced their turn adds a turn each
+    // time until it is set again, which makes it this host's replacing one.
+    let other = server.create_conversation(PROJECT).await.unwrap();
+    let older = wisp_store::ScheduleRecord {
+        id: "older-timer".into(),
+        frame_id: Some(other.clone()),
+        replace_previous_turn: false,
+        enabled: false,
+        ..webview.clone()
+    };
+    server.0.store.create_schedule(&older).await.unwrap();
+    assert_eq!(
+        server
+            .conversation_timer(PROJECT, &other)
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        "older-timer"
+    );
+    server
+        .set_conversation_timer(PROJECT, &other, "converted", 600)
+        .await
+        .unwrap();
+    let converted = server
+        .conversation_timer(PROJECT, &other)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(converted.id, "older-timer");
+    assert!(!converted.enabled, "a paused timer stays paused");
+    let stored = server
+        .0
+        .store
+        .get_schedule(&converted.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(stored.replace_previous_turn);
+    assert_eq!(
+        stored.host.as_deref(),
+        Some(wisp_store::EMBEDDED_SCHEDULE_HOST)
+    );
+    assert!(server
+        .0
+        .store
+        .get_schedule("older-timer")
+        .await
+        .unwrap()
+        .is_none());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_timer_turn_a_closed_app_left_open_is_sealed_by_the_next_turn() {
+    let temp = tempfile::tempdir().unwrap();
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let server = Server::open_with_models(config(temp.path()), held_turns(gate.clone()))
+        .await
+        .unwrap();
+    let session = server.create_conversation(PROJECT).await.unwrap();
+    send(&server, &session, "first question").await.unwrap();
+    idle(&server, &session).await;
+    server
+        .set_conversation_timer(PROJECT, &session, "check", 600)
+        .await
+        .unwrap();
+    // The app closed in the middle of the timer's turn: its range is open.
+    let store = &server.0.store;
+    store.begin_session_timer_turn(&session).await.unwrap();
+    let seq = store.max_message_seq(&session).await.unwrap();
+    store
+        .append_message(&session, seq + 1, &Message::user("[Timer: check]\n\ncheck"))
+        .await
+        .unwrap();
+    store
+        .append_message(&session, seq + 2, &Message::assistant("half an answer"))
+        .await
+        .unwrap();
+    server.shutdown().await;
+    drop(server);
+
+    let server = Server::open_with_models(config(temp.path()), held_turns(gate.clone()))
+        .await
+        .unwrap();
+    // The next turn is the user's: it seals that range before it adds a row.
+    send(&server, &session, "after restart").await.unwrap();
+    idle(&server, &session).await;
+    let timer = server
+        .conversation_timer(PROJECT, &session)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        server.fire_due_schedules(timer.next_run_at).await.unwrap(),
+        1
+    );
+    idle(&server, &session).await;
+    // The timer's next firing took only the unfinished turn away.
+    assert_eq!(
+        said(&server, &session).await,
+        ["first question", "after restart", "[Timer: check]\n\ncheck"]
+    );
+    let answers: Vec<String> = server
+        .0
+        .store
+        .load_messages(&session)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|message| message.role == wisp_llm::Role::Assistant)
+        .map(|message| message.content.as_text())
+        .collect();
+    assert!(!answers.iter().any(|answer| answer == "half an answer"));
+    assert!(answers
+        .iter()
+        .any(|answer| answer == "answer to after restart"));
     server.shutdown().await;
 }
 

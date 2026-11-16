@@ -234,16 +234,68 @@ struct TurnPlace<'a> {
     project: &'a str,
     root: &'a str,
     origin: channels::TurnOrigin,
+    /// The turn is part of the conversation timer's turn.
+    timer: bool,
 }
 
 /// A correction an automatic review asked for: the conversation, what it
-/// is told, and where and by whom its turn was started.
+/// is told, and where and by whom its turn was started; `timer` when the
+/// turn it corrects was a conversation timer's, which it goes on with.
 struct Correction {
     frame: String,
     prompt: String,
     project: String,
     root: String,
     origin: channels::TurnOrigin,
+    timer: bool,
+}
+
+/// How a turn stands to the conversation's timer, whose firing replaces
+/// the timer's previous turn (`wisp_store`'s `session_timer_turns`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TimerTurn {
+    /// Not the timer's: a timer turn left open (one that is over, or one
+    /// a closed app left unfinished) is sealed before this one adds a row,
+    /// so the timer's next firing never takes it away.
+    No,
+    /// The timer firing: its previous turn was cleared and a new range is
+    /// opened before anything reads the transcript for the turn.
+    Firing,
+    /// A review's correction or a Stop hook's continuation of a timer
+    /// turn: part of that turn while nothing sealed it, as the WebView's
+    /// timer runs both inside its turn.
+    Continuing,
+}
+
+/// Checks a request and folds its files into its message, as the WebView
+/// saves them. Returns what a new conversation is named after.
+pub(crate) async fn prepare_request(root: &str, request: &mut dto::SendRequest) -> Result<String> {
+    ensure!(
+        request.attachments.len() <= 20 && request.references.len() <= 20,
+        "Attach at most 20 files and 20 references to one message"
+    );
+    for path in &request.attachments {
+        files::attachable(std::path::Path::new(root), path).await?;
+    }
+    // What the turn is named after, before the file list is folded in.
+    let subject = match request.message.trim() {
+        "" => request.attachments.first().cloned().unwrap_or_default(),
+        text => text.to_owned(),
+    };
+    // The same block the WebView saves, so a reloaded transcript shows
+    // the files and the model sees their project-relative paths.
+    request.message = dto::message_with_attachments(&request.message, &request.attachments);
+    // A resumed turn carries no new message.
+    ensure!(
+        (request.resume || !request.message.trim().is_empty())
+            && request.message.len() <= 128 * 1024,
+        "Message must contain 1–131072 bytes"
+    );
+    ensure!(
+        !request.request_id.trim().is_empty() && request.request_id.len() <= 128,
+        "Invalid request ID"
+    );
+    Ok(subject)
 }
 
 /// What the worker does after a turn: start the correction a review asked
@@ -520,18 +572,35 @@ impl Server {
             references: Vec::new(),
             acp_agent_id: None,
         };
+        let timer = if correction.timer {
+            TimerTurn::Continuing
+        } else {
+            TimerTurn::No
+        };
         if let Err(error) = self
-            .start_turn(
+            .start_turn_as(
                 &correction.project,
                 &correction.root,
                 request,
                 correction.origin,
+                timer,
             )
             .await
         {
             self.0.subagent_resumes.lock().unwrap().remove(&frame);
             self.0.corrections.lock().unwrap().remove(&frame);
             tracing::warn!(%error, "Could not correct what the review found");
+            // The timer turn it would have gone on with ends here, unless
+            // another turn runs now (whose range that is).
+            if correction.timer {
+                let session = self.session(&frame);
+                let _accept = session.accept.lock().await;
+                if !session.live.lock().unwrap().running {
+                    if let Err(error) = self.seal_timer_turn(&session, &frame).await {
+                        tracing::warn!(%error, "Could not end the timer's turn");
+                    }
+                }
+            }
         }
     }
 
@@ -769,36 +838,51 @@ impl Server {
         &self,
         project: &str,
         root: &str,
-        mut request: dto::SendRequest,
+        request: dto::SendRequest,
         origin: channels::TurnOrigin,
     ) -> Result<Value> {
-        ensure!(
-            request.attachments.len() <= 20 && request.references.len() <= 20,
-            "Attach at most 20 files and 20 references to one message"
-        );
-        for path in &request.attachments {
-            files::attachable(std::path::Path::new(root), path).await?;
-        }
-        // What the turn is named after, before the file list is folded in.
-        let subject = match request.message.trim() {
-            "" => request.attachments.first().cloned().unwrap_or_default(),
-            text => text.to_owned(),
-        };
-        // The same block the WebView saves, so a reloaded transcript shows
-        // the files and the model sees their project-relative paths.
-        request.message = dto::message_with_attachments(&request.message, &request.attachments);
-        // A resumed turn carries no new message.
-        ensure!(
-            (request.resume || !request.message.trim().is_empty())
-                && request.message.len() <= 128 * 1024,
-            "Message must contain 1–131072 bytes"
-        );
-        ensure!(
-            !request.request_id.trim().is_empty() && request.request_id.len() <= 128,
-            "Invalid request ID"
-        );
+        self.start_turn_as(project, root, request, origin, TimerTurn::No)
+            .await
+    }
+
+    /// [`Self::start_turn`], for a turn that may go on with a timer's
+    /// (a correction or Stop-hook continuation of one).
+    async fn start_turn_as(
+        &self,
+        project: &str,
+        root: &str,
+        mut request: dto::SendRequest,
+        origin: channels::TurnOrigin,
+        timer: TimerTurn,
+    ) -> Result<Value> {
+        let subject = prepare_request(root, &mut request).await?;
         let session = self.session(&request.session_id);
         let _accept = session.accept.lock().await;
+        self.accepted_turn(
+            project,
+            root,
+            request,
+            origin,
+            subject,
+            session.clone(),
+            timer,
+        )
+        .await
+    }
+
+    /// The rest of starting a turn, once the conversation's accept lock is
+    /// held by the caller and the request was prepared.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn accepted_turn(
+        &self,
+        project: &str,
+        root: &str,
+        request: dto::SendRequest,
+        origin: channels::TurnOrigin,
+        subject: String,
+        session: Arc<Session>,
+        timer: TimerTurn,
+    ) -> Result<Value> {
         let _admission = self.0.admission.read().await;
         ensure!(
             !self.0.shutting_down.load(Ordering::Relaxed),
@@ -893,6 +977,22 @@ impl Server {
             !session.live.lock().unwrap().running,
             "A turn is already running in this conversation"
         );
+        // A timer replaces its previous turn, which an ACP agent's own
+        // history would still hold.
+        ensure!(
+            timer != TimerTurn::Firing || acp.is_none(),
+            "Timers require a native Wisp conversation; ACP agents own their remote history."
+        );
+        // Every other turn first seals a timer turn left open, so the
+        // timer's next firing never takes this one away.
+        let timer_open = match timer {
+            TimerTurn::Firing => true,
+            TimerTurn::Continuing if session.live.lock().unwrap().timer_open => true,
+            _ => {
+                self.seal_timer_turn(&session, &request.session_id).await?;
+                false
+            }
+        };
         // Your UserPromptSubmit hooks see a new message first: one can
         // refuse it, and what they print is context for the turn.
         let mut hook_failures = Vec::new();
@@ -946,7 +1046,7 @@ impl Server {
             &self.0.store,
             project,
             &request.session_id,
-            (!request.resume).then_some(request.message.as_str()),
+            (!request.resume && timer != TimerTurn::Firing).then_some(request.message.as_str()),
         )
         .await;
         let mandate_reviews = mandate
@@ -997,6 +1097,26 @@ impl Server {
         };
         let auto_review = options.auto_review;
         let plan_mode = options.plan_first;
+        // The timer's previous turn goes before anything reads the
+        // conversation for this one, and a new range opens where it ends.
+        // A client that sees the generation move reads the rows again.
+        if timer == TimerTurn::Firing {
+            if self
+                .0
+                .store
+                .clear_session_timer_turn(&request.session_id)
+                .await?
+                .is_some()
+            {
+                let mut live = session.live.lock().unwrap();
+                live.generation = live.generation.wrapping_add(1);
+            }
+            self.0
+                .store
+                .begin_session_timer_turn(&request.session_id)
+                .await?;
+        }
+        session.live.lock().unwrap().timer_open = timer_open;
         let engine = match (acp, model) {
             (Some(agent), _) => Engine::Acp(
                 agent,
@@ -1032,9 +1152,12 @@ impl Server {
             .store
             .accept_server_turn(&request.session_id, &request.request_id, &request_json)
             .await?;
-        // The project's latest conversation, for the chat apps' target.
-        if let Err(error) = self.record_last_message_session(&request.session_id).await {
-            tracing::warn!(%error, "Could not record the latest conversation");
+        // The project's latest conversation, for the chat apps' target; a
+        // timer's turn is not one the user sent, as in the WebView.
+        if timer != TimerTurn::Firing {
+            if let Err(error) = self.record_last_message_session(&request.session_id).await {
+                tracing::warn!(%error, "Could not record the latest conversation");
+            }
         }
         // A conversation a lab member's mail or a parent's dispatch opened
         // keeps the name it was given, and so does the research assistant's.
@@ -1128,6 +1251,7 @@ impl Server {
                         project: &project_of_turn,
                         root: &root_of_turn,
                         origin,
+                        timer: timer_open,
                     },
                 )
                 .await;
@@ -1300,6 +1424,7 @@ impl Server {
         live.saved_through = page.latest_seq;
         live.messages = page.messages.into_iter().map(|(_, msg)| msg).collect();
         live.next_before_seq = page.next_before_seq;
+        live.user_offset = page.user_offset;
         session.cancel.store(false, Ordering::Relaxed);
     }
 
@@ -1335,6 +1460,9 @@ impl Server {
         drop(activity);
         let succeeded = error.is_none();
         let answered = succeeded && side_model.is_some();
+        // A timer's turn is not followed by suggestions or a memory
+        // proposal, as the WebView's is not; it is still reviewed.
+        let asks = answered && !place.timer;
         let ended = {
             let mut live = session.live.lock().unwrap();
             live.running = false;
@@ -1347,9 +1475,9 @@ impl Server {
             live.error = error;
             // Set with the turn's end, so whoever sees the turn over
             // can wait for the questions without missing them.
-            live.suggesting = answered;
+            live.suggesting = asks;
             live.reviewing = answered && auto_review;
-            live.proposing = answered;
+            live.proposing = asks;
             live.generation
         };
         // The turn is over: what follows is not one of the four.
@@ -1357,9 +1485,20 @@ impl Server {
         let frame = &request.session_id;
         match (answered, side_model) {
             (true, Some(side_model)) => {
+                let (for_suggestions, for_memory) = (side_model.clone(), side_model.clone());
                 tokio::join!(
-                    self.suggest_follow_ups(frame, session, side_model.clone(), ended),
-                    self.propose_memory_after_turn(frame, session, side_model.clone(), ended),
+                    async {
+                        if asks {
+                            self.suggest_follow_ups(frame, session, for_suggestions, ended)
+                                .await;
+                        }
+                    },
+                    async {
+                        if asks {
+                            self.propose_memory_after_turn(frame, session, for_memory, ended)
+                                .await;
+                        }
+                    },
                     async {
                         // A correction the review asks for goes before
                         // what was queued, as the WebView's review runs
@@ -1375,18 +1514,47 @@ impl Server {
                                 place,
                             )
                             .await;
-                        if !corrected {
-                            self.stop_hooks_after_turn(frame, session, place).await;
+                        let continued =
+                            corrected || self.stop_hooks_after_turn(frame, session, place).await;
+                        // A timer turn that nothing goes on with ends here.
+                        if place.timer && !continued {
+                            self.seal_timer_turn_at_end(session, frame).await;
                         }
                         self.drain_later(frame);
                     },
                 );
             }
             _ => {
-                if succeeded {
-                    self.stop_hooks_after_turn(frame, session, place).await;
+                let continued =
+                    succeeded && self.stop_hooks_after_turn(frame, session, place).await;
+                if place.timer && !continued {
+                    self.seal_timer_turn_at_end(session, frame).await;
                 }
                 self.drain_later(frame)
+            }
+        }
+    }
+
+    /// Seals the conversation's open timer turn, if there is one, so what
+    /// comes next is not the timer's to take away. The caller holds the
+    /// conversation's accept lock, or adds nothing while a turn runs.
+    pub(crate) async fn seal_timer_turn(&self, session: &Session, frame: &str) -> Result<()> {
+        self.0.store.finish_session_timer_turn(frame).await?;
+        session.live.lock().unwrap().timer_open = false;
+        Ok(())
+    }
+
+    /// Seals a timer turn that has ended, unless a turn started since
+    /// (which sealed it first). No firing starts while it is open.
+    async fn seal_timer_turn_at_end(&self, session: &Session, frame: &str) {
+        let _accept = session.accept.lock().await;
+        let current = {
+            let live = session.live.lock().unwrap();
+            live.timer_open && !live.running
+        };
+        if current {
+            if let Err(error) = self.seal_timer_turn(session, frame).await {
+                tracing::warn!(%error, "Could not end the timer's turn");
             }
         }
     }
@@ -1394,7 +1562,13 @@ impl Server {
     /// Your Stop hooks, after a turn that ended well: one that blocks has the
     /// turn go on once with its reason; if it still blocks after that, it is
     /// only said.
-    async fn stop_hooks_after_turn(&self, frame: &str, session: &Session, place: TurnPlace<'_>) {
+    /// True when the turn goes on with the hook's reason.
+    async fn stop_hooks_after_turn(
+        &self,
+        frame: &str,
+        session: &Session,
+        place: TurnPlace<'_>,
+    ) -> bool {
         let again = self.0.stop_continued.lock().unwrap().remove(frame);
         let (hooks, _) = hooks::TurnHooks::load(
             &self.0.store,
@@ -1411,11 +1585,13 @@ impl Server {
             )
             .await;
         let mut failures = outcome.errors.clone();
+        let mut continued = false;
         match outcome.block {
             Some(reason) if again => failures.push(format!(
                 "A Stop hook still blocks after one continuation: {reason}"
             )),
             Some(reason) if !self.0.shutting_down.load(Ordering::Relaxed) => {
+                continued = true;
                 self.0
                     .stop_continued
                     .lock()
@@ -1429,6 +1605,7 @@ impl Server {
                     project: place.project.to_owned(),
                     root: place.root.to_owned(),
                     origin: place.origin,
+                    timer: place.timer,
                 }));
             }
             _ => {}
@@ -1436,6 +1613,7 @@ impl Server {
         if !failures.is_empty() {
             session.live.lock().unwrap().hook_failures.extend(failures);
         }
+        continued
     }
 
     /// Has the turn that just ended reviewed, when its conversation asks
@@ -1504,6 +1682,7 @@ impl Server {
                     project: place.project.to_owned(),
                     root: place.root.to_owned(),
                     origin: place.origin,
+                    timer: place.timer,
                 }));
                 true
             }
@@ -1746,7 +1925,14 @@ impl Server {
             } else {
                 page.next_before_seq
             },
-            user_offset: 0,
+            // Where the page starts among the user's messages: it moves when
+            // rows before it are taken away (a timer replacing its turn), so
+            // a client drops the earlier pages it loaded and reads them again.
+            user_offset: if use_live {
+                live.user_offset
+            } else {
+                page.user_offset
+            },
             running: live.running,
             stopping: live.running && session.cancel.load(Ordering::Relaxed),
             activity_status: None,

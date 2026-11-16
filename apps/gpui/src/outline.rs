@@ -44,6 +44,21 @@ pub fn stitch(pages: Vec<Vec<Item>>, loaded: Vec<Item>) -> Vec<Item> {
     rows
 }
 
+/// Whether earlier pages loaded behind the latest page still join it.
+/// Each place is the latest page's start: its `next_before_seq` and how
+/// many of the user's messages come before it. They were loaded when it
+/// was at `loaded_under`; it is now at `latest`. Once it moved (a turn
+/// ended and the page slid on, or a conversation timer's firing took its
+/// previous turn away, in the page or before it) they would leave a gap
+/// or keep rows that are gone, so the caller drops and reloads them, as
+/// the web client does when the page's start changes.
+pub fn earlier_pages_hold(
+    loaded_under: (Option<i64>, usize),
+    latest: (Option<i64>, usize),
+) -> bool {
+    loaded_under == latest
+}
+
 fn title(item: &Item) -> String {
     let text = crate::compose::user_text(item);
     let line = text
@@ -69,6 +84,22 @@ fn title(item: &Item) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn earlier_pages_are_kept_only_while_the_latest_page_stays_where_it_was() {
+        // Nothing moved: what was loaded still joins it.
+        assert!(earlier_pages_hold((Some(40), 12), (Some(40), 12)));
+        // A turn ended and the latest page slid on.
+        assert!(!earlier_pages_hold((Some(40), 12), (Some(52), 15)));
+        // A timer's previous turn was taken away before the page: the page
+        // starts at the same row, but fewer of the user's messages come
+        // before it.
+        assert!(!earlier_pages_hold((Some(40), 12), (Some(40), 11)));
+        // Taken away from inside the page: it now reaches further back.
+        assert!(!earlier_pages_hold((Some(40), 12), (Some(31), 12)));
+        // The whole conversation fits in one page now.
+        assert!(!earlier_pages_hold((Some(40), 12), (None, 0)));
+    }
 
     #[test]
     fn earlier_pages_go_in_front_oldest_first_and_the_walk_ends() {

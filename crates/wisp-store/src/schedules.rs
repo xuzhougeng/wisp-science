@@ -10,7 +10,7 @@ use super::Store;
 use anyhow::Result;
 use sqlx::Row;
 
-pub use wisp_dto::{ScheduleRecord, ScheduleRunRecord};
+pub use wisp_dto::{schedule_fired_by, ScheduleRecord, ScheduleRunRecord, EMBEDDED_SCHEDULE_HOST};
 
 /// Smallest `anchor + k*interval` strictly greater than `now`. Advancing from
 /// the previous slot (not `now`) keeps the schedule on its original cadence.
@@ -37,11 +37,12 @@ fn schedule_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ScheduleRecord> {
         last_run_at: row.try_get("last_run_at")?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
+        host: row.try_get("host")?,
     })
 }
 
 const SCHEDULE_COLUMNS: &str =
-    "id,project_id,frame_id,replace_previous_turn,name,prompt,skill,interval_secs,enabled,next_run_at,last_run_at,created_at,updated_at";
+    "id,project_id,frame_id,replace_previous_turn,name,prompt,skill,interval_secs,enabled,next_run_at,last_run_at,created_at,updated_at,host";
 
 impl Store {
     pub async fn create_schedule(&self, schedule: &ScheduleRecord) -> Result<()> {
@@ -50,8 +51,8 @@ impl Store {
         }
         sqlx::query(
             "INSERT INTO schedules(\
-             id,project_id,frame_id,replace_previous_turn,name,prompt,skill,interval_secs,enabled,next_run_at,last_run_at,created_at,updated_at) \
-             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+             id,project_id,frame_id,replace_previous_turn,name,prompt,skill,interval_secs,enabled,next_run_at,last_run_at,created_at,updated_at,host) \
+             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(&schedule.id)
         .bind(&schedule.project_id)
@@ -66,6 +67,7 @@ impl Store {
         .bind(schedule.last_run_at)
         .bind(schedule.created_at)
         .bind(schedule.updated_at)
+        .bind(schedule.host.as_deref())
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -144,6 +146,39 @@ impl Store {
              ORDER BY next_run_at,id"
         ))
         .bind(now)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(schedule_from_row).collect()
+    }
+
+    /// The due schedules the host named `host` fires (`None`: the WebView
+    /// desktop; otherwise its owner mark), by [`schedule_fired_by`]'s rule:
+    /// its own marked rows, and unmarked rows as each host fired them before
+    /// rows were marked.
+    pub async fn due_schedules_for_host(
+        &self,
+        now: i64,
+        host: Option<&str>,
+    ) -> Result<Vec<ScheduleRecord>> {
+        if let Some(stores) = self.available_projects().await? {
+            let mut result = Vec::new();
+            for store in stores {
+                let value = Box::pin(store.due_schedules_for_host(now, host)).await?;
+                result.extend(value);
+            }
+            result.sort_by(|a, b| a.next_run_at.cmp(&b.next_run_at).then(a.id.cmp(&b.id)));
+            return Ok(result);
+        }
+        let rows = sqlx::query(&format!(
+            "SELECT {SCHEDULE_COLUMNS} FROM schedules \
+             WHERE enabled=1 AND next_run_at<=?1 \
+             AND EXISTS (SELECT 1 FROM projects WHERE id=schedules.project_id) \
+             AND (CASE WHEN ?2 IS NULL THEN host IS NULL \
+                  ELSE (host=?2 OR (host IS NULL AND replace_previous_turn=0)) END) \
+             ORDER BY next_run_at,id"
+        ))
+        .bind(now)
+        .bind(host)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(schedule_from_row).collect()
@@ -272,6 +307,7 @@ mod tests {
             last_run_at: None,
             created_at: 1,
             updated_at: 1,
+            host: None,
         }
     }
 
@@ -429,6 +465,66 @@ mod tests {
             "orphan schedules must not be claimed"
         );
 
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn each_host_is_given_only_the_due_rows_it_fires() {
+        let (store, root) = test_store().await;
+        let row = |id: &str, host: Option<&str>, replace: bool| ScheduleRecord {
+            frame_id: replace.then(|| format!("frame-{id}")),
+            replace_previous_turn: replace,
+            host: host.map(str::to_owned),
+            ..test_schedule(id, "p1", 100)
+        };
+        let embedded = Some(EMBEDDED_SCHEDULE_HOST);
+        for schedule in [
+            row("webview-timer", None, true),
+            row("shared-task", None, false),
+            row("embedded-timer", embedded, true),
+            row("embedded-task", embedded, false),
+        ] {
+            store.create_schedule(&schedule).await.unwrap();
+        }
+        let ids =
+            |rows: Vec<ScheduleRecord>| rows.into_iter().map(|row| row.id).collect::<Vec<_>>();
+        assert_eq!(
+            ids(store.due_schedules_for_host(1_000, None).await.unwrap()),
+            ["shared-task", "webview-timer"]
+        );
+        assert_eq!(
+            ids(store.due_schedules_for_host(1_000, embedded).await.unwrap()),
+            ["embedded-task", "embedded-timer", "shared-task"]
+        );
+        // The rule the query applies is the one the hosts check by hand.
+        for schedule in store.due_schedules(1_000).await.unwrap() {
+            for host in [None, embedded] {
+                assert_eq!(
+                    schedule_fired_by(&schedule, host),
+                    ids(store.due_schedules_for_host(1_000, host).await.unwrap())
+                        .contains(&schedule.id),
+                    "{} for {host:?}",
+                    schedule.id
+                );
+            }
+        }
+        // The mark is kept as written.
+        assert_eq!(
+            store
+                .get_schedule("embedded-timer")
+                .await
+                .unwrap()
+                .unwrap()
+                .host
+                .as_deref(),
+            embedded
+        );
+        assert!(store
+            .due_schedules_for_host(50, embedded)
+            .await
+            .unwrap()
+            .is_empty());
         drop(store);
         let _ = std::fs::remove_dir_all(root);
     }

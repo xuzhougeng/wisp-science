@@ -720,6 +720,8 @@ impl Server {
             {
                 let _accept = assistant.accept.lock().await;
                 if !assistant.live.lock().unwrap().running {
+                    // Not the timer's to take away with its turn.
+                    self.seal_timer_turn(&assistant, ASSISTANT_FRAME_ID).await?;
                     let seq = store.max_message_seq(ASSISTANT_FRAME_ID).await? + 1;
                     store
                         .append_message(ASSISTANT_FRAME_ID, seq, &Message::assistant(&text))

@@ -134,6 +134,8 @@ impl Server {
                         return Ok(());
                     };
                     let notice = wisp_runs::background::completion_notice(chinese, &ended);
+                    // Not the timer's to take away with its turn.
+                    self.seal_timer_turn(&session, &frame).await?;
                     let seq = store.max_message_seq(&frame).await? + 1;
                     store
                         .append_message(&frame, seq, &wisp_llm::Message::assistant(notice))

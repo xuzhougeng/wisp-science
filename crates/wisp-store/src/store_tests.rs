@@ -4870,6 +4870,7 @@ async fn delete_project_clears_later_child_tables_and_ignores_orphan_schedules()
         last_run_at: None,
         created_at: 1,
         updated_at: 1,
+        host: None,
     };
     store.create_schedule(&gone_schedule).await.unwrap();
     store
@@ -4993,6 +4994,7 @@ async fn delete_project_clears_later_child_tables_and_ignores_orphan_schedules()
             last_run_at: None,
             created_at: 1,
             updated_at: 1,
+            host: None,
         })
         .await
         .unwrap();
@@ -5220,6 +5222,7 @@ async fn delete_session_clears_later_frame_tables() {
             last_run_at: None,
             created_at: 1,
             updated_at: 1,
+            host: None,
         })
         .await
         .unwrap();
@@ -6133,6 +6136,7 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             SESSION_TIMERS_MIGRATION.to_string(),
             SERVER_TURNS_MIGRATION.to_string(),
             SESSION_SUBAGENT_MODEL_MIGRATION.to_string(),
+            SCHEDULE_HOST_MIGRATION.to_string(),
             AGENT_WORKFLOW_EXECUTION_ROUNDS_MIGRATION.to_string(),
         ]
     );
@@ -11593,4 +11597,62 @@ async fn active_run_summaries_skip_finished_runs_in_scope() {
             .len(),
         6
     );
+}
+
+#[tokio::test]
+async fn schedule_host_migration_runs_twice_and_leaves_older_rows_unowned() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&dir.path().join("old.sqlite")).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    // A database from before the column: neither it nor its record is
+    // there, and a WebView timer was saved then.
+    sqlx::query("ALTER TABLE schedules DROP COLUMN host")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM wisp_schema_migrations WHERE version=?")
+        .bind(SCHEDULE_HOST_MIGRATION)
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO schedules(id,project_id,frame_id,replace_previous_turn,name,prompt,\
+         interval_secs,enabled,next_run_at,created_at,updated_at) \
+         VALUES('old','p','f',1,'check','check',3600,1,100,1,1)",
+    )
+    .execute(&store.pool)
+    .await
+    .unwrap();
+    Store::migrate(&store.pool).await.unwrap();
+    // Again, recorded or not, it changes nothing and fails nothing.
+    Store::migrate(&store.pool).await.unwrap();
+    sqlx::query("DELETE FROM wisp_schema_migrations WHERE version=?")
+        .bind(SCHEDULE_HOST_MIGRATION)
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    Store::migrate(&store.pool).await.unwrap();
+    assert!(store
+        .schema_migrations()
+        .await
+        .unwrap()
+        .contains(&SCHEDULE_HOST_MIGRATION.to_string()));
+    let old = store.get_schedule("old").await.unwrap().unwrap();
+    assert_eq!(old.host, None);
+    assert!(old.replace_previous_turn);
+    // Still the WebView's alone.
+    assert_eq!(
+        store
+            .due_schedules_for_host(1_000, None)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(store
+        .due_schedules_for_host(1_000, Some(EMBEDDED_SCHEDULE_HOST))
+        .await
+        .unwrap()
+        .is_empty());
+    store.pool.close().await;
 }

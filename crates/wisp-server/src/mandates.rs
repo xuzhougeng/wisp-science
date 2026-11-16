@@ -580,6 +580,8 @@ impl Server {
             {
                 let _accept = assistant.accept.lock().await;
                 if !assistant.live.lock().unwrap().running {
+                    // Not the timer's to take away with its turn.
+                    self.seal_timer_turn(&assistant, &frame).await?;
                     let seq = store.max_message_seq(&frame).await? + 1;
                     store
                         .append_message(&frame, seq, &wisp_llm::Message::assistant(text))

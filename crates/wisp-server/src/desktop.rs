@@ -6253,7 +6253,9 @@ impl Server {
         self.ensure_not_frozen_branch(session).await?;
         let running = self.session(session);
         let live = running.live.lock().unwrap();
-        if !live.running || !live.guidable {
+        // A timer's turn takes no guidance, as in the WebView: what is said
+        // then is a turn of its own, after it, that the timer never takes.
+        if !live.running || !live.guidable || live.timer_open {
             return Ok(false);
         }
         let id = running.guided.fetch_add(1, Ordering::Relaxed) + 1;

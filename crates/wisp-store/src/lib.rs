@@ -103,7 +103,9 @@ pub use projects::{is_assistant_project_id, ASSISTANT_PROJECT_ID};
 pub use provenance::{canonical_json, canonical_json_sha256};
 pub use remote_staging::RemoteStagingEntry;
 pub use run_code_retention::RUN_CODE_SNAPSHOT_RUNS_KEPT;
-pub use schedules::{next_slot_after, ScheduleRecord, ScheduleRunRecord};
+pub use schedules::{
+    next_slot_after, schedule_fired_by, ScheduleRecord, ScheduleRunRecord, EMBEDDED_SCHEDULE_HOST,
+};
 pub use server_turns::ServerTurn;
 pub use session_artifacts::SessionFamilyArtifacts;
 pub use session_imports::RecoveredWorkspaceSession;
@@ -215,6 +217,7 @@ const SESSION_FILE_OPERATIONS_MIGRATION: &str = "0062_session_file_operations";
 const SESSION_TIMERS_MIGRATION: &str = "0063_session_timers";
 const SERVER_TURNS_MIGRATION: &str = "0066_server_turns";
 const SESSION_SUBAGENT_MODEL_MIGRATION: &str = "0067_session_subagent_model";
+const SCHEDULE_HOST_MIGRATION: &str = "0069_schedule_host";
 
 #[derive(Clone)]
 pub struct Store {
@@ -827,6 +830,13 @@ impl Store {
             sqlx::query("CREATE UNIQUE INDEX IF NOT EXISTS ix_session_timer ON schedules(frame_id) WHERE replace_previous_turn=1").execute(pool).await?;
             sqlx::query("CREATE TABLE IF NOT EXISTS session_timer_turns(frame_id TEXT PRIMARY KEY REFERENCES frames(id) ON DELETE CASCADE, base_epoch INTEGER NOT NULL, start_seq INTEGER NOT NULL, end_seq INTEGER, start_ui_seq INTEGER NOT NULL, end_ui_seq INTEGER)").execute(pool).await?;
             Self::record_migration(pool, SESSION_TIMERS_MIGRATION).await?;
+        }
+        // Which host fires a schedule: NULL keeps every existing row as it
+        // was (the WebView desktop's, or fired by both hosts when it adds a
+        // turn); rows the embedded host makes carry its mark.
+        if !Self::migration_applied(pool, SCHEDULE_HOST_MIGRATION).await? {
+            Self::add_columns_if_missing(pool, "schedules", &[("host", "TEXT")]).await?;
+            Self::record_migration(pool, SCHEDULE_HOST_MIGRATION).await?;
         }
         if !Self::migration_applied(pool, ARTIFACT_SOURCE_DISCARDED_MIGRATION).await? {
             Self::add_columns_if_missing(
