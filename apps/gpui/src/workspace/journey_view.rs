@@ -16,7 +16,7 @@ use wisp_dto::{ResearchJournalInput, ResearchRecap};
 use super::{
     Workspace, chip,
     shell::{error_banner, glyph, icon_button, nav_row},
-    surfaces,
+    surfaces::{self, DialogWidth},
 };
 use crate::{
     assets::icon,
@@ -42,6 +42,8 @@ impl Workspace {
         self.layers.close(Layer::Palette);
         self.layers.open(Layer::Journey);
         self.error = None;
+        self.forget_journey_extras();
+        self.journey_graph_shown = false;
         self.journey_search
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.show_month(Month::containing(now(), &Local), window, cx);
@@ -50,6 +52,7 @@ impl Workspace {
     pub(super) fn close_journey(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.layers.close(Layer::Journey) {
             self.journey = None;
+            self.forget_journey_extras();
             self.focus_composer(window, cx);
             cx.notify();
         }
@@ -74,7 +77,28 @@ impl Workspace {
                     return;
                 }
                 match result {
-                    Ok(journey) => this.journey = Some(journey),
+                    Ok(journey) => {
+                        // As in the WebView, the month's first output is
+                        // traced unless one that is still there already is.
+                        let kept = this.journey_output.as_ref().is_some_and(|output| {
+                            journey.entries.iter().any(|entry| entry.id == output.id)
+                        });
+                        let first = journey
+                            .entries
+                            .iter()
+                            .find(|entry| entry.kind == "artifact")
+                            .cloned();
+                        this.journey = Some(journey);
+                        if !kept {
+                            match first {
+                                Some(entry) => this.trace_output(entry, cx),
+                                None => {
+                                    this.journey_output = None;
+                                    this.journey_source = None;
+                                }
+                            }
+                        }
+                    }
                     Err(error) => this.error = Some(error),
                 }
                 cx.notify();
@@ -82,6 +106,138 @@ impl Workspace {
         })
         .detach();
         cx.notify();
+    }
+
+    /// Drops what the page read besides the month: the graph, the traced
+    /// output and the run record, and closes what showed them.
+    pub(super) fn forget_journey_extras(&mut self) {
+        self.journey_graph = None;
+        self.journey_edge = None;
+        self.journey_output = None;
+        self.journey_source = None;
+        self.journey_run = None;
+        self.layers.close(Layer::JourneyEdge);
+        self.layers.close(Layer::JourneyRun);
+    }
+
+    /// Shows the days, or the project's research graph read afresh.
+    pub(super) fn show_journey_graph(
+        &mut self,
+        shown: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.journey_graph_shown = shown;
+        self.journey_edge = None;
+        self.layers.close(Layer::JourneyEdge);
+        cx.notify();
+        if !shown {
+            return;
+        }
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        let reply = self.backend.research_graph(project);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(graph) => this.journey_graph = Some(graph),
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Opens the details of one relation of the graph.
+    pub(super) fn open_journey_edge(
+        &mut self,
+        edge: wisp_dto::ResearchEdge,
+        cx: &mut Context<Self>,
+    ) {
+        self.journey_edge = Some(edge);
+        self.layers.open(Layer::JourneyEdge);
+        cx.notify();
+    }
+
+    /// Shows where an output of the month came from, beside the days.
+    fn trace_output(&mut self, entry: wisp_dto::ResearchJourneyEntry, cx: &mut Context<Self>) {
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        let version = entry.source_id.clone();
+        self.journey_output = Some(entry);
+        self.journey_source = None;
+        let reply = self.backend.journey_source(project, version.clone());
+        cx.spawn(async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                // Only the answer for the output still chosen is shown.
+                if this
+                    .journey_output
+                    .as_ref()
+                    .is_some_and(|output| output.source_id == version)
+                {
+                    this.journey_source = Some(result);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Opens a run's record over the page.
+    fn open_journey_run(&mut self, run: String, cx: &mut Context<Self>) {
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        self.journey_run = Some((run.clone(), None));
+        self.layers.open(Layer::JourneyRun);
+        let reply = self.backend.journey_run(project, run.clone());
+        cx.spawn(async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update(cx, |this, cx| match this.journey_run.as_mut() {
+                Some((shown, record)) if *shown == run => {
+                    *record = Some(result);
+                    cx.notify();
+                }
+                _ => {}
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn close_journey_run(&mut self, cx: &mut Context<Self>) {
+        self.layers.close(Layer::JourneyRun);
+        self.journey_run = None;
+        cx.notify();
+    }
+
+    /// Leaves the page for a file of the project, shown in the Files panel.
+    fn open_journey_file(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_journey(window, cx);
+        self.reveal_file(path, window, cx);
+        cx.notify();
+    }
+
+    /// Leaves the page for one of the project's conversations.
+    fn open_journey_conversation(
+        &mut self,
+        frame: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = self.state.project.clone() else {
+            return;
+        };
+        self.layers.close(Layer::Journey);
+        self.journey = None;
+        self.forget_journey_extras();
+        self.open_session(project, frame, window, cx);
     }
 
     /// Drafts the recap of the local day `[from, until)` again, or for the
@@ -495,6 +651,33 @@ impl Workspace {
                     .h_flex()
                     .gap_1()
                     .px_1()
+                    .pb_2()
+                    .child(
+                        Button::new("journey-by-day")
+                            .label(tr("By day"))
+                            .xsmall()
+                            .ghost()
+                            .selected(!self.journey_graph_shown)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.show_journey_graph(false, window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("journey-relationships")
+                            .label(tr("Relationships"))
+                            .xsmall()
+                            .ghost()
+                            .selected(self.journey_graph_shown)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.show_journey_graph(true, window, cx)
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .h_flex()
+                    .gap_1()
+                    .px_1()
                     .child(
                         icon_button("journey-previous", "chevron-left", tr("Earlier month"))
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -547,6 +730,14 @@ impl Workspace {
                         ),
                 ),
             );
+
+        if self.journey_graph_shown {
+            return div()
+                .h_flex()
+                .size_full()
+                .child(side)
+                .child(self.render_journey_graph(cx));
+        }
 
         let mut body = div()
             .id("journey-body")
@@ -673,8 +864,22 @@ impl Workspace {
                             .child(status),
                     );
                 }
-                // A record that came from a conversation opens it.
-                if let (Some(project), Some(frame)) =
+                // An output is traced beside the days, as in the WebView;
+                // another record that came from a conversation opens it.
+                if entry.kind == "artifact" {
+                    let traced = (*entry).clone();
+                    let chosen = self
+                        .journey_output
+                        .as_ref()
+                        .is_some_and(|output| output.id == entry.id);
+                    row =
+                        row.cursor_pointer()
+                            .when(chosen, |row| row.bg(hover))
+                            .hover(move |style| style.bg(hover))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.trace_output(traced.clone(), cx)
+                            }));
+                } else if let (Some(project), Some(frame)) =
                     (self.state.project.clone(), entry.frame_id.clone())
                 {
                     row = row
@@ -690,6 +895,270 @@ impl Workspace {
             }
             body = body.child(group.border_b_1().border_color(border).pb_2());
         }
-        div().h_flex().size_full().child(side).child(body)
+        div()
+            .h_flex()
+            .size_full()
+            .child(side)
+            .child(body)
+            .child(self.journey_source_panel(cx))
+    }
+
+    /// Where the traced output came from, as the WebView's source details
+    /// show it: its version, the data its run read, the run itself, and
+    /// the way to the output, the run's record and the conversation.
+    fn journey_source_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let muted = cx.theme().muted_foreground;
+        let mut panel = div()
+            .id("journey-source")
+            .v_flex()
+            .w(px(300.))
+            .flex_shrink_0()
+            .h_full()
+            .p_4()
+            .gap_2()
+            .border_l_1()
+            .border_color(cx.theme().border)
+            .overflow_y_scroll()
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(tr("Source details")),
+            );
+        let Some(output) = &self.journey_output else {
+            return panel.child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(tr("Choose an output to trace where it came from.")),
+            );
+        };
+        let heading = |text: &'static str, glyph_name: &str| {
+            div()
+                .h_flex()
+                .gap_1()
+                .pt_2()
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .child(icon(glyph_name).text_color(muted))
+                .child(text)
+        };
+        panel = panel
+            .child(div().text_sm().child(output.title.clone()))
+            .child(div().text_xs().text_color(muted).child(format!(
+                "{} · {}",
+                journey::local_moment(output.occurred_at, &Local),
+                fill(tr("Version {}"), &[&output.version_number.unwrap_or(1)])
+            )));
+        if !output.summary.trim().is_empty() {
+            panel = panel.child(div().text_xs().child(output.summary.clone()));
+        }
+        match &self.journey_source {
+            None => {
+                panel = panel.child(div().text_xs().text_color(muted).child(tr("Reading…")));
+            }
+            Some(Err(error)) => {
+                panel = panel.child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().danger)
+                        .child(crate::i18n::host(error)),
+                );
+            }
+            Some(Ok(found)) => {
+                panel = panel.child(heading(tr("Input data"), "database"));
+                if found.source.inputs.is_empty() {
+                    panel = panel.child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(tr("No inputs recorded")),
+                    );
+                }
+                for (index, input) in found.source.inputs.iter().enumerate() {
+                    let path = found.input_paths.get(index).cloned().flatten();
+                    let name: AnyElement = match path {
+                        Some(path) => Button::new(("journey-input", index))
+                            .label(input.title.clone())
+                            .xsmall()
+                            .ghost()
+                            .tooltip(tr("Open this file in the Files panel"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_journey_file(path.clone(), window, cx)
+                            }))
+                            .into_any_element(),
+                        None => div()
+                            .text_xs()
+                            .truncate()
+                            .child(input.title.clone())
+                            .into_any_element(),
+                    };
+                    panel = panel.child(
+                        div().v_flex().child(name).child(
+                            div()
+                                .text_xs()
+                                .text_color(muted)
+                                .child(journey::input_detail(input)),
+                        ),
+                    );
+                }
+                let (run_title, run_lines) = journey::source_run_lines(&found.source, &Local);
+                panel = panel
+                    .child(heading(tr("Experiment"), "flask"))
+                    .child(div().text_xs().child(run_title));
+                for line in run_lines {
+                    panel = panel.child(div().text_xs().text_color(muted).child(line));
+                }
+                if let Some(run) = found.source.run_id.clone() {
+                    panel = panel.child(
+                        Button::new("journey-run-record")
+                            .icon(glyph("terminal"))
+                            .label(tr("View run record"))
+                            .xsmall()
+                            .ghost()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.open_journey_run(run.clone(), cx)
+                            })),
+                    );
+                }
+                let path = found.path.clone().filter(|_| !output.source_discarded);
+                panel = panel.child(
+                    Button::new("journey-open-output")
+                        .icon(glyph("external-link"))
+                        .label(if path.is_some() {
+                            tr("Open output")
+                        } else {
+                            tr("Source unavailable")
+                        })
+                        .xsmall()
+                        .ghost()
+                        .disabled(path.is_none())
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            if let Some(path) = path.clone() {
+                                this.open_journey_file(path, window, cx)
+                            }
+                        })),
+                );
+            }
+        }
+        if let Some(frame) = output.frame_id.clone() {
+            panel = panel.child(
+                Button::new("journey-output-conversation")
+                    .icon(glyph("chat"))
+                    .label(tr("Open the conversation"))
+                    .xsmall()
+                    .ghost()
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_journey_conversation(frame.clone(), window, cx)
+                    })),
+            );
+        }
+        panel
+    }
+
+    /// A run's record over the page: how it ended, where it ran, when, its
+    /// command, and the last of what it wrote.
+    pub(super) fn render_journey_run(
+        &self,
+        (_, record): &(
+            String,
+            Option<Result<wisp_server::desktop::JourneyRun, String>>,
+        ),
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let muted = cx.theme().muted_foreground;
+        let mut card = surfaces::dialog("journey-run", DialogWidth::Regular, tr("Run record"))
+            .close_on_click_outside(cx.listener(|this, _, _, cx| this.close_journey_run(cx)))
+            .action(
+                Button::new("journey-run-close")
+                    .label(tr("Close"))
+                    .small()
+                    .on_click(cx.listener(|this, _, _, cx| this.close_journey_run(cx))),
+            );
+        let run = match record {
+            None => return card.child(div().text_sm().text_color(muted).child(tr("Reading…"))),
+            Some(Err(error)) => {
+                return card.child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().danger)
+                        .child(crate::i18n::host(error)),
+                );
+            }
+            Some(Ok(run)) => run,
+        };
+        let not_recorded = || tr("Not recorded").to_owned();
+        let moment = |at: Option<i64>| {
+            at.map(|at| journey::local_moment(at, &Local))
+                .unwrap_or_else(not_recorded)
+        };
+        let tone = match run.status.as_str() {
+            "succeeded" => Tone::Success,
+            "failed" | "lost" => Tone::Danger,
+            _ => Tone::Neutral,
+        };
+        let fact = |label: &'static str, value: String| {
+            div()
+                .h_flex()
+                .gap_2()
+                .text_xs()
+                .child(div().w(px(150.)).text_color(muted).child(label))
+                .child(div().flex_1().min_w_0().child(value))
+        };
+        let text = |label: &'static str, value: &Option<String>, empty: &'static str| {
+            let block = div()
+                .v_flex()
+                .gap_1()
+                .pt_1()
+                .child(div().text_xs().text_color(muted).child(label));
+            match value.as_deref().filter(|value| !value.trim().is_empty()) {
+                Some(value) => block.child(
+                    div()
+                        .p_2()
+                        .rounded(cx.theme().radius)
+                        .bg(cx.theme().muted)
+                        .text_xs()
+                        .font_family(cx.theme().mono_font_family.clone())
+                        .child(value.to_owned()),
+                ),
+                None => block.child(div().text_xs().text_color(muted).child(empty)),
+            }
+        };
+        card = card
+            .child(
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(run.title.clone()),
+                    )
+                    .child(chip(journey::run_status(&run.status), tone, cx)),
+            )
+            .child(fact(tr("Execution context"), run.context.clone()))
+            .child(fact(
+                tr("Exit code"),
+                run.exit_code
+                    .map(|code| code.to_string())
+                    .unwrap_or_else(not_recorded),
+            ))
+            .child(fact(tr("Started (local time)"), moment(run.started_at)))
+            .child(fact(tr("Ended (local time)"), moment(run.ended_at)))
+            .child(text(tr("Command"), &run.command, tr("No command recorded")))
+            .child(text(
+                tr("Standard output · log tail"),
+                &run.stdout_tail,
+                tr("No standard output recorded"),
+            ))
+            .child(text(
+                tr("Standard error · log tail"),
+                &run.stderr_tail,
+                tr("No standard error recorded"),
+            ));
+        card
     }
 }

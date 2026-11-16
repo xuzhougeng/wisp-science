@@ -1,7 +1,7 @@
 //! Wording and small rules for favorites: passages, code and figures saved
 //! from conversations into one library for every project. No graphics state.
 use crate::i18n::tr;
-use wisp_server::desktop::LibraryItem;
+use wisp_server::desktop::{LibraryItem, LibraryItemVersion};
 
 /// Which kind of saved item a list shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -103,6 +103,51 @@ pub fn as_markdown(kind: &str, language: Option<&str>, body: &str) -> String {
     )
 }
 
+/// Whether an item's code can be edited into versions: code, and the code
+/// that made a figure when it has any. A passage stays as it was saved, as
+/// in the WebView.
+pub fn has_versions(kind: &str, code: &str) -> bool {
+    match kind {
+        "code" => true,
+        "figure" => !code.trim().is_empty(),
+        _ => false,
+    }
+}
+
+/// A version as its button names it: "v1 · Original", "v2".
+pub fn version_label(version: &LibraryItemVersion) -> String {
+    if version.version_number == 1 {
+        format!("v1 · {}", tr("Original"))
+    } else {
+        format!("v{}", version.version_number)
+    }
+}
+
+/// The version shown when an item's versions are read: the newest.
+pub fn newest(versions: &[LibraryItemVersion]) -> usize {
+    versions.len().saturating_sub(1)
+}
+
+/// Whether the editor holds something to save as a new version: words
+/// that differ from the version it started from.
+pub fn edit_to_save(started_from: &str, draft: &str) -> bool {
+    !draft.trim().is_empty() && draft != started_from
+}
+
+/// What Insert into chat puts into the message box: the WebView's request
+/// to run this version again, naming the item and the version so the
+/// answer can be traced back to them, and the code fenced below it.
+pub fn rerun_request(title: &str, version: &LibraryItemVersion) -> String {
+    format!(
+        "{}\n{}",
+        crate::i18n::fill(
+            tr("Please re-run version v{} of the starred item \"{}\" (library item {}):"),
+            &[&version.version_number, &title, &version.item_id],
+        ),
+        as_markdown("code", version.language.as_deref(), version.code.trim_end())
+    )
+}
+
 /// Whether a project file can be saved as a figure, by its name. The host
 /// decides for good; this only hides the button where it cannot work.
 pub fn is_image(path: &str) -> bool {
@@ -176,6 +221,44 @@ mod tests {
         let fenced = as_markdown("code", None, nested);
         assert!(fenced.starts_with("````\n") && fenced.ends_with("\n````"));
         assert!(fenced.contains(nested));
+    }
+
+    fn version(number: i64, code: &str) -> LibraryItemVersion {
+        LibraryItemVersion {
+            id: format!("v{number}"),
+            item_id: "item-1".into(),
+            version_number: number,
+            parent_version_id: None,
+            language: Some("python".into()),
+            code: code.into(),
+            origin: if number == 1 { "original" } else { "edit" }.into(),
+            created_at: number,
+        }
+    }
+
+    #[test]
+    fn versions_are_named_the_newest_shown_and_an_edit_saved_only_when_changed() {
+        let versions = [version(1, "print(1)"), version(2, "print(2)")];
+        assert_eq!(version_label(&versions[0]), "v1 · Original");
+        assert_eq!(version_label(&versions[1]), "v2");
+        assert_eq!(newest(&versions), 1);
+        assert_eq!(newest(&[]), 0);
+        assert!(!edit_to_save("print(2)", "print(2)"));
+        assert!(!edit_to_save("print(2)", "  \n"));
+        assert!(edit_to_save("print(2)", "print(3)"));
+        assert!(has_versions("code", ""));
+        assert!(has_versions("figure", "plot(x)") && !has_versions("figure", " "));
+        assert!(!has_versions("text", "a passage"));
+    }
+
+    #[test]
+    fn insert_into_chat_asks_to_rerun_the_version_with_its_code() {
+        let request = rerun_request("Normalise counts", &version(2, "x = 1\n\n"));
+        assert_eq!(
+            request,
+            "Please re-run version v2 of the starred item \"Normalise counts\" \
+             (library item item-1):\n```python\nx = 1\n```"
+        );
     }
 
     #[test]

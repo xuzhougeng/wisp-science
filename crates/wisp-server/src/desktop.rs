@@ -15,7 +15,7 @@ pub use wisp_dto::{ProjectMemo, ProjectMemoPatch};
 use wisp_llm::ProviderKind;
 pub use wisp_store::GlobalMemory;
 use wisp_store::Store;
-pub use wisp_store::{LibraryItem, LibraryItemSummary};
+pub use wisp_store::{LibraryItem, LibraryItemSummary, LibraryItemVersion};
 
 /// The saved model profiles: `{"profiles": [...], "default": "<id>"}`.
 const MODELS_SETTING: &str = "desktop.models";
@@ -1674,6 +1674,99 @@ impl Server {
             .await
     }
 
+    /// The project's research graph — its decisions, papers, data, runs and
+    /// outputs, and the relations between them — as the journey's
+    /// Relationships view shows it: the mainline's, as the WebView reads it.
+    pub async fn research_graph(&self, project: &str) -> Result<wisp_dto::ResearchGraph> {
+        self.known_project(project).await?;
+        let graph = self
+            .0
+            .store
+            .research_graph_in_scope(&wisp_store::StateScope::mainline(project))
+            .await?;
+        Ok(wisp_dto::ResearchGraph {
+            nodes: graph
+                .nodes
+                .into_iter()
+                .map(|node| wisp_dto::ResearchNode {
+                    id: node.id,
+                    kind: node.kind.as_str().to_owned(),
+                    title: node.title,
+                    ref_id: node.ref_id,
+                    metadata_json: node.metadata_json,
+                })
+                .collect(),
+            edges: graph
+                .edges
+                .into_iter()
+                .map(|edge| wisp_dto::ResearchEdge {
+                    source_id: edge.source_id,
+                    target_id: edge.target_id,
+                    relation: edge.relation,
+                    metadata_json: edge.metadata_json,
+                })
+                .collect(),
+        })
+    }
+
+    /// Where one version of an output in the journey came from: the run
+    /// that produced it, with what that run read, as the WebView's source
+    /// details show it. A version of another project, or of an exploration,
+    /// is refused before anything of it is read.
+    pub async fn journey_source(&self, project: &str, version: &str) -> Result<JourneySource> {
+        self.known_project(project).await?;
+        let store = &self.0.store;
+        let source = store
+            .research_journey_source(&wisp_store::StateScope::mainline(project), version)
+            .await?;
+        let path_of = |version: Option<String>| async move {
+            let version = version?;
+            let context = store
+                .get_artifact_version_context(&version)
+                .await
+                .ok()
+                .flatten()?;
+            (context.project_id == project)
+                .then(|| project_path(context.logical_key.as_deref()))
+                .flatten()
+        };
+        let path = path_of(Some(version.to_owned())).await;
+        let mut input_paths = Vec::with_capacity(source.inputs.len());
+        for input in &source.inputs {
+            input_paths.push(path_of(input.version_id.clone()).await);
+        }
+        Ok(JourneySource {
+            source,
+            path,
+            input_paths,
+        })
+    }
+
+    /// One run of the project as the journey's run record shows it.
+    pub async fn journey_run(&self, project: &str, run: &str) -> Result<JourneyRun> {
+        self.known_project(project).await?;
+        ensure!(
+            self.0
+                .store
+                .run_visible_in_scope(run, &wisp_store::StateScope::mainline(project))
+                .await?,
+            "Run is unavailable in this project"
+        );
+        let record = self.0.store.get_run(run).await?.context("Run not found")?;
+        Ok(JourneyRun {
+            id: record.id,
+            title: record.title,
+            status: record.status.as_str().to_owned(),
+            context: record.context_id,
+            exit_code: record.exit_code,
+            started_at: record.started_at,
+            ended_at: record.ended_at,
+            command: record.command,
+            stdout_tail: record.stdout_tail,
+            stderr_tail: record.stderr_tail,
+        })
+    }
+
     /// A project's name, description, and the rules the model is given in
     /// it. The rules are the project's own `.wisp/WISP.md`.
     pub async fn project_settings(&self, project: &str) -> Result<ProjectSettings> {
@@ -2417,6 +2510,22 @@ impl Server {
             item: detail.item,
             image: detail.content,
         })
+    }
+
+    /// Every version of a saved item's code, the original first: the
+    /// item as it was saved is version 1, and each saved edit adds one.
+    /// Nothing for an item that is gone.
+    pub async fn favorite_versions(&self, id: &str) -> Result<Vec<LibraryItemVersion>> {
+        self.library().await?.list_versions(id).await
+    }
+
+    /// Saves an edit of a saved item's code as its next version; the item
+    /// as it was saved never changes. A text excerpt cannot be edited.
+    pub async fn save_favorite_code(&self, id: &str, code: &str) -> Result<LibraryItemVersion> {
+        self.library()
+            .await?
+            .edit_code(id, None, code.to_owned())
+            .await
     }
 
     /// What was saved from one conversation, newest first.
@@ -6665,6 +6774,42 @@ pub(crate) fn mark_superseded(mut rows: Vec<ReplyArtifact>) -> Vec<ReplyArtifact
         rows[at].superseded = again;
     }
     rows
+}
+
+/// Where an output in the research journey came from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JourneySource {
+    /// The producing run and what it read; empty when no run is recorded.
+    pub source: wisp_dto::ResearchJourneySource,
+    /// Where the output is in the project, when it is a project file.
+    pub path: Option<String>,
+    /// The same for each of `source.inputs`, in their order.
+    pub input_paths: Vec<Option<String>>,
+}
+
+/// A run as the research journey's run record shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JourneyRun {
+    pub id: String,
+    pub title: String,
+    /// `submitted`, `started`, `succeeded`, `failed`, `cancelled`, `lost`.
+    pub status: String,
+    /// The execution context it ran on.
+    pub context: String,
+    pub exit_code: Option<i64>,
+    pub started_at: Option<i64>,
+    pub ended_at: Option<i64>,
+    pub command: Option<String>,
+    pub stdout_tail: Option<String>,
+    pub stderr_tail: Option<String>,
+}
+
+/// The project path an artifact's logical key names, if it names one.
+fn project_path(logical_key: Option<&str>) -> Option<String> {
+    logical_key?
+        .strip_prefix("path:")
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
 }
 
 /// One kept version of an artifact.

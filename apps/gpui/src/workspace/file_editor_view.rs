@@ -28,8 +28,9 @@ use crate::{
 actions!(file_editor, [SaveFile, RunCode, RunScript]);
 
 /// The key context around the editor, so its keys outrank the input's own
-/// (Cmd/Ctrl+Return would otherwise start a new line) and only there.
-const CONTEXT: &str = "FileEditor";
+/// (Cmd/Ctrl+Return would otherwise start a new line) and only there. The
+/// Favorites page's code editor takes it too, for Cmd/Ctrl+S.
+pub(super) const CONTEXT: &str = "FileEditor";
 
 /// The editor's keys, bound after the input component's so they win.
 /// `secondary` is Cmd on macOS and Ctrl elsewhere.

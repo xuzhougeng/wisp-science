@@ -234,28 +234,9 @@ pub(super) async fn append_code_version(
     language: Option<String>,
     code: String,
 ) -> Result<LibraryItemVersion, String> {
-    if code.trim().is_empty() {
-        return Err("Code is empty".into());
-    }
-    if code.len() > MAX_CODE_BYTES {
-        return Err("Code is too large to add to the library".into());
-    }
-    let detail = library
-        .get(id)
-        .await
-        .map_err(|e| format!("{e}"))?
-        .ok_or_else(|| "Library item not found".to_string())?;
-    if detail.item.kind == "text" {
-        // Text excerpts anchor "划线" highlights back to their session;
-        // editing them would break reveal, so they stay verbatim.
-        return Err("Text excerpts cannot be edited".into());
-    }
-    let language = language
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .or(detail.item.language);
+    // The checks are the store's, shared with the GPUI desktop's host.
     library
-        .insert_version(id, language, code)
+        .edit_code(id, language, code)
         .await
         .map_err(|e| format!("{e}"))
 }

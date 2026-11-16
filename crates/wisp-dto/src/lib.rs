@@ -35,6 +35,7 @@ pub mod project_browser;
 mod project_chat_search;
 pub mod remote_access;
 pub mod research_checklist;
+pub mod research_graph;
 pub mod source_run;
 pub mod specialist_package;
 pub use project_chat_search::*;

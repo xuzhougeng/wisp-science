@@ -82,6 +82,9 @@ pub struct NewLibraryItem {
     pub source_path: Option<String>,
 }
 
+/// The most code one saved version holds, in bytes.
+pub const CODE_LIMIT: usize = 2 * 1024 * 1024;
+
 const LIBRARY_ITEMS_DDL: &str = "CREATE TABLE IF NOT EXISTS library_items (\
      id TEXT PRIMARY KEY, \
      kind TEXT NOT NULL CHECK(kind IN ('code','figure','text')), \
@@ -406,6 +409,36 @@ impl LibraryStore {
         Ok(version)
     }
 
+    /// Saves an edit of a saved item's code as its next version, as both
+    /// desktops do: the code must say something and fit the library, a
+    /// text excerpt stays verbatim (it anchors a highlight in its
+    /// conversation), and a blank `language` keeps the item's own. Code the
+    /// same as the newest version adds nothing and returns that version.
+    pub async fn edit_code(
+        &self,
+        item_id: &str,
+        language: Option<String>,
+        code: String,
+    ) -> Result<LibraryItemVersion> {
+        if code.trim().is_empty() {
+            bail!("Code is empty");
+        }
+        if code.len() > CODE_LIMIT {
+            bail!("Code is too large to add to the library");
+        }
+        let Some(detail) = self.get(item_id).await? else {
+            bail!("Library item not found");
+        };
+        if detail.item.kind == "text" {
+            bail!("Text excerpts cannot be edited");
+        }
+        let language = language
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .or(detail.item.language);
+        self.insert_version(item_id, language, code).await
+    }
+
     /// Full version history: the implicit original first, then edits in
     /// ascending version order. Empty when the item no longer exists.
     pub async fn list_versions(&self, item_id: &str) -> Result<Vec<LibraryItemVersion>> {
@@ -698,6 +731,55 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(again.id, v3.id);
+        assert_eq!(store.list_versions(&item.id).await.unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn an_edit_is_checked_and_keeps_the_items_language() {
+        let store = store().await;
+        let item = store.insert(new_item("code")).await.unwrap();
+        let edited = store
+            .edit_code(&item.id, Some("  ".into()), "print(2)".into())
+            .await
+            .unwrap();
+        assert_eq!(edited.version_number, 2);
+        assert_eq!(edited.language.as_deref(), Some("python"));
+        let renamed = store
+            .edit_code(&item.id, Some(" r ".into()), "print(3)".into())
+            .await
+            .unwrap();
+        assert_eq!(renamed.language.as_deref(), Some("r"));
+        for (id, code, why) in [
+            (item.id.as_str(), " \n".to_owned(), "Code is empty"),
+            (
+                item.id.as_str(),
+                "x".repeat(CODE_LIMIT + 1),
+                "Code is too large to add to the library",
+            ),
+            ("missing", "print(4)".to_owned(), "Library item not found"),
+        ] {
+            let error = store.edit_code(id, None, code).await.unwrap_err();
+            assert_eq!(error.to_string(), why);
+        }
+        let excerpt = store
+            .insert(NewLibraryItem {
+                kind: "text".into(),
+                language: None,
+                content_type: None,
+                content: None,
+                source_path: None,
+                ..new_item("code")
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .edit_code(&excerpt.id, None, "changed".into())
+                .await
+                .unwrap_err()
+                .to_string(),
+            "Text excerpts cannot be edited"
+        );
         assert_eq!(store.list_versions(&item.id).await.unwrap().len(), 3);
     }
 

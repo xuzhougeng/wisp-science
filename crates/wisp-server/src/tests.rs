@@ -8035,6 +8035,228 @@ async fn a_projects_journey_lists_what_happened_and_what_the_researcher_recorded
 }
 
 #[tokio::test]
+async fn saved_code_is_edited_into_versions_and_the_original_stays() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    let code = server
+        .star_text(PROJECT, &session, "code", Some("python"), "print(1)\n")
+        .await
+        .unwrap();
+    let versions = server.favorite_versions(&code.id).await.unwrap();
+    assert_eq!(versions.len(), 1);
+    assert_eq!(
+        (versions[0].version_number, versions[0].origin.as_str()),
+        (1, "original")
+    );
+    let edited = server
+        .save_favorite_code(&code.id, "print(2)\n")
+        .await
+        .unwrap();
+    assert_eq!(edited.version_number, 2);
+    assert_eq!(edited.language.as_deref(), Some("python"));
+    // Saving it unchanged adds nothing; an empty edit is refused.
+    assert_eq!(
+        server
+            .save_favorite_code(&code.id, "print(2)\n")
+            .await
+            .unwrap()
+            .id,
+        edited.id
+    );
+    assert!(server.save_favorite_code(&code.id, "  ").await.is_err());
+    let versions = server.favorite_versions(&code.id).await.unwrap();
+    assert_eq!(
+        versions
+            .iter()
+            .map(|version| version.code.as_str())
+            .collect::<Vec<_>>(),
+        ["print(1)\n", "print(2)\n"]
+    );
+    // The item as saved is unchanged.
+    assert_eq!(
+        server.favorite(&code.id).await.unwrap().item.code,
+        "print(1)\n"
+    );
+    // A passage stays as it was saved.
+    let text = server
+        .star_text(PROJECT, &session, "text", None, "The reads are clean.")
+        .await
+        .unwrap();
+    assert!(server
+        .save_favorite_code(&text.id, "changed")
+        .await
+        .is_err());
+    assert!(server
+        .favorite_versions("missing")
+        .await
+        .unwrap()
+        .is_empty());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_journey_reads_the_research_graph_and_where_an_output_came_from() {
+    use wisp_store::{
+        ArtifactVersionDraft, LineageBasis, LineageConfidence, ResearchEdge, ResearchNode,
+        ResearchNodeKind, RunInput, RunRecord, RunStatus,
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let store = &server.0.store;
+    assert_eq!(
+        server.research_graph(PROJECT).await.unwrap(),
+        wisp_dto::ResearchGraph::default()
+    );
+    let mut decision =
+        ResearchNode::new("d1", PROJECT, ResearchNodeKind::Decision, "Use DESeq2").unwrap();
+    decision.metadata_json = r#"{"why":"counts"}"#.into();
+    store.save_research_node(&decision).await.unwrap();
+    store
+        .save_research_node(
+            &ResearchNode::new("a1", PROJECT, ResearchNodeKind::DataAsset, "counts.tsv").unwrap(),
+        )
+        .await
+        .unwrap();
+    store
+        .save_research_edge(&ResearchEdge::new("e1", PROJECT, "d1", "a1", "uses").unwrap())
+        .await
+        .unwrap();
+    let graph = server.research_graph(PROJECT).await.unwrap();
+    // In stored order: when each was made, then by id.
+    assert_eq!(
+        graph
+            .nodes
+            .iter()
+            .map(|node| (node.id.as_str(), node.kind.as_str()))
+            .collect::<Vec<_>>(),
+        [("a1", "data_asset"), ("d1", "decision")]
+    );
+    assert_eq!(graph.nodes[1].metadata_json, r#"{"why":"counts"}"#);
+    assert_eq!(
+        (
+            graph.edges[0].source_id.as_str(),
+            graph.edges[0].target_id.as_str(),
+            graph.edges[0].relation.as_str()
+        ),
+        ("d1", "a1", "uses")
+    );
+    assert!(server.research_graph("missing").await.is_err());
+
+    // An output a run produced, from an input that is itself a file here.
+    let session = create(&server).await;
+    let mut run = RunRecord::new("r1", PROJECT, "local", "Count reads", "command");
+    run.status = RunStatus::Succeeded;
+    run.exit_code = Some(0);
+    run.ended_at = Some(1_000);
+    run.stdout_tail = Some("done".into());
+    store.create_run(&run).await.unwrap();
+    let draft = |artifact: &str, path: &str, producer: Option<&str>| ArtifactVersionDraft {
+        version_id: None,
+        artifact_id: artifact.into(),
+        project_id: PROJECT.into(),
+        root_frame_id: session.clone(),
+        filename: path.rsplit('/').next().unwrap().into(),
+        content_type: "text/csv".into(),
+        storage_path: path.into(),
+        logical_key: Some(format!("path:{path}")),
+        size_bytes: None,
+        checksum: None,
+        producing_run_id: producer.map(str::to_owned),
+        env_snapshot_hash: None,
+        materialization: wisp_store::ArtifactMaterialization::Reference,
+        capture_timing: wisp_store::ArtifactCaptureTiming::AtCreation,
+    };
+    for (artifact, path) in [("in", "data/reads.csv"), ("out", "results/counts.csv")] {
+        store
+            .save_artifact(artifact, PROJECT, &session, path, "text/csv", path)
+            .await
+            .unwrap();
+    }
+    let input = store
+        .save_artifact_version(&draft("in", "data/reads.csv", None))
+        .await
+        .unwrap();
+    let output = store
+        .save_artifact_version(&draft("out", "results/counts.csv", Some("r1")))
+        .await
+        .unwrap();
+    for (id, version, reference, confidence) in [
+        (
+            "i1",
+            Some(input.clone()),
+            "data/reads.csv",
+            LineageConfidence::Exact,
+        ),
+        (
+            "i2",
+            None,
+            "s3://bucket/genome.fa",
+            LineageConfidence::Uncertain,
+        ),
+    ] {
+        store
+            .save_run_input(&RunInput {
+                id: id.into(),
+                run_id: "r1".into(),
+                artifact_version_id: version,
+                external_resource_id: None,
+                source_ref: reference.into(),
+                role: "input".into(),
+                required: true,
+                basis: LineageBasis::Declared,
+                confidence,
+                created_at: 1,
+            })
+            .await
+            .unwrap();
+    }
+    let found = server.journey_source(PROJECT, &output).await.unwrap();
+    assert_eq!(found.source.run_id.as_deref(), Some("r1"));
+    assert_eq!(found.source.run_title, "Count reads");
+    assert_eq!(found.source.run_status, "succeeded");
+    assert_eq!(found.path.as_deref(), Some("results/counts.csv"));
+    assert_eq!(
+        found
+            .source
+            .inputs
+            .iter()
+            .map(|input| input.title.as_str())
+            .collect::<Vec<_>>(),
+        ["data/reads.csv", "s3://bucket/genome.fa"]
+    );
+    assert_eq!(found.input_paths, [Some("data/reads.csv".to_owned()), None]);
+    // An input of no run says so with an empty source.
+    let plain = server.journey_source(PROJECT, &input).await.unwrap();
+    assert_eq!(plain.source, wisp_dto::ResearchJourneySource::default());
+    assert_eq!(plain.path.as_deref(), Some("data/reads.csv"));
+
+    let record = server.journey_run(PROJECT, "r1").await.unwrap();
+    assert_eq!(
+        (
+            record.title.as_str(),
+            record.status.as_str(),
+            record.exit_code
+        ),
+        ("Count reads", "succeeded", Some(0))
+    );
+    assert_eq!(record.stdout_tail.as_deref(), Some("done"));
+
+    // Nothing of one project is read through another.
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    assert!(server.journey_source(&lab, &output).await.is_err());
+    assert!(server.journey_run(&lab, "r1").await.is_err());
+    assert!(server.research_graph(&lab).await.unwrap().nodes.is_empty());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_conversation_is_read_back_as_a_trajectory() {
     let temp = tempfile::tempdir().unwrap();
     let calls = Arc::new(AtomicUsize::new(0));

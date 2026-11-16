@@ -20,6 +20,7 @@ mod home_view;
 mod hosts_view;
 mod import_view;
 mod inline_view;
+mod journey_graph_view;
 mod journey_view;
 mod mandates_view;
 mod memory_view;
@@ -237,6 +238,22 @@ pub struct Workspace {
     journey_search: Entity<InputState>,
     /// The local day whose recap is being drafted, by its midnight.
     recap_drafting: Option<i64>,
+    /// The journey's Relationships view: shown in place of the days, the
+    /// project's research graph once read, drawn as a graph rather than
+    /// listed, and the relation whose details are open.
+    journey_graph_shown: bool,
+    journey_graph: Option<wisp_dto::ResearchGraph>,
+    journey_graph_drawn: bool,
+    journey_edge: Option<wisp_dto::ResearchEdge>,
+    /// The output whose source is shown beside the days, and that source
+    /// once read.
+    journey_output: Option<wisp_dto::ResearchJourneyEntry>,
+    journey_source: Option<Result<wisp_server::desktop::JourneySource, String>>,
+    /// The run whose record is open over the page, and the record once read.
+    journey_run: Option<(
+        String,
+        Option<Result<wisp_server::desktop::JourneyRun, String>>,
+    )>,
     /// The research assistant's plan for today.
     assistant_plan: Vec<wisp_dto::ResearchAssistantPlanItem>,
     /// The weekly habit tidy, on the Memory tab.
@@ -807,6 +824,12 @@ pub struct Workspace {
     /// The item open on the Favorites page, and its picture if it has one.
     favorite: Option<Favorite>,
     favorite_image: Option<std::sync::Arc<Image>>,
+    /// The open item's code versions, the original first, the one shown,
+    /// the editor for a new one and the code that edit started from.
+    favorite_versions: Vec<wisp_server::desktop::LibraryItemVersion>,
+    favorite_shown: usize,
+    favorite_code: Entity<InputState>,
+    favorite_edit_base: String,
     /// Pictures the open project's answers point at, by path. `None` is a
     /// picture that is being read or could not be.
     inline_images: HashMap<String, Option<std::sync::Arc<Image>>>,
@@ -968,6 +991,11 @@ impl Workspace {
                 .searchable(false)
         });
         let memory_text = cx.new(|cx| InputState::new(window, cx).multi_line(true));
+        let favorite_code = cx.new(|cx| {
+            InputState::new(window, cx)
+                .code_editor("text")
+                .searchable(false)
+        });
         let steps_input = cx.new(|cx| InputState::new(window, cx));
         let mcp_name = cx.new(|cx| InputState::new(window, cx).placeholder(tr("Lab notebook")));
         let env_fields = ["gpu", "10.0.0.8", "", "22", "~/.ssh/id_ed25519", "", ""]
@@ -1273,6 +1301,12 @@ impl Workspace {
                     cx.notify();
                 }
             }),
+            // Whether an edit of saved code can be saved shows as it is typed.
+            cx.subscribe_in(&favorite_code, window, |_, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            }),
             cx.subscribe_in(&aside_input, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::PressEnter { .. }) {
                     this.ask_aside(window, cx);
@@ -1533,6 +1567,13 @@ impl Workspace {
             journey_request: 0,
             journey_search,
             recap_drafting: None,
+            journey_graph_shown: false,
+            journey_graph: None,
+            journey_graph_drawn: false,
+            journey_edge: None,
+            journey_output: None,
+            journey_source: None,
+            journey_run: None,
             assistant_plan: Vec::new(),
             memory_tidy: None,
             console_runtime: None,
@@ -1832,6 +1873,10 @@ impl Workspace {
             favorites_search,
             favorite: None,
             favorite_image: None,
+            favorite_versions: Vec::new(),
+            favorite_shown: 0,
+            favorite_code,
+            favorite_edit_base: String::new(),
             file_image: None,
             file_document: None,
             file_pages: None,
@@ -1974,8 +2019,11 @@ impl Workspace {
             Some(Layer::Favorites) => {
                 self.favorite = None;
                 self.favorite_image = None;
+                self.favorite_versions.clear();
                 self.focus_composer(window, cx);
             }
+            // The edit is given up; the version shown stays.
+            Some(Layer::FavoriteCode) => {}
             // The page stays open underneath and keeps its focus.
             Some(Layer::ConfirmRemoveFavorite) => {}
             Some(Layer::McpForm | Layer::ConfirmRemoveMcp) => self.mcp_editing = None,
@@ -2028,6 +2076,7 @@ impl Workspace {
             Some(Layer::Outline) => self.focus_composer(window, cx),
             Some(Layer::Journey) => {
                 self.journey = None;
+                self.forget_journey_extras();
                 self.focus_composer(window, cx);
             }
             Some(Layer::Calendar) => {
@@ -2088,6 +2137,8 @@ impl Workspace {
             // The page stays open underneath.
             Some(Layer::JournalForm) => {}
             Some(Layer::RecapForm) => self.recap_editing = None,
+            Some(Layer::JourneyEdge) => self.journey_edge = None,
+            Some(Layer::JourneyRun) => self.journey_run = None,
             Some(Layer::Schedules) => self.focus_composer(window, cx),
             Some(Layer::ScheduleForm) => {}
             Some(Layer::ConfirmDeleteSchedule) => self.schedule_deleting = None,
@@ -4526,6 +4577,12 @@ impl Render for Workspace {
             root.child(self.render_run_review(cx))
         } else {
             root
+        };
+        let root = match &self.journey_run {
+            Some(open) if self.layers.contains(Layer::JourneyRun) => {
+                root.child(self.render_journey_run(open, cx))
+            }
+            _ => root,
         };
         let root = if self.layers.contains(Layer::Trajectory) {
             root.child(self.render_trajectory(cx))

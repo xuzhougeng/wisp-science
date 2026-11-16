@@ -1,5 +1,6 @@
 use crate::app_support::compose_icon;
 use crate::bindings::invoke;
+use crate::dto::research_graph::{self as shared, metadata_summary};
 use crate::dto::{ResearchEdge, ResearchGraph, ResearchNode};
 use crate::i18n::{t, tf, Locale};
 use crate::window_capture_escape;
@@ -7,23 +8,11 @@ use leptos::*;
 use std::collections::HashMap;
 use wasm_bindgen::JsValue;
 
-/// Node kinds in display order, paired with their i18n key. Closed set — it
-/// mirrors `wisp_store::ResearchNodeKind`, so every stored node lands in a
-/// section here.
-const KINDS: [(&str, &str); 5] = [
-    ("decision", "graph.kind.decision"),
-    ("paper", "graph.kind.paper"),
-    ("data_asset", "graph.kind.data_asset"),
-    ("run", "graph.kind.run"),
-    ("artifact", "graph.kind.artifact"),
-];
+pub(super) use crate::dto::research_graph::metadata_pairs;
 
-const GRAPH_NODE_WIDTH: i32 = 176;
-const GRAPH_NODE_HEIGHT: i32 = 58;
-const GRAPH_COLUMN_GAP: i32 = 64;
-const GRAPH_ROW_GAP: i32 = 92;
-const GRAPH_HEADER_Y: i32 = 34;
-const GRAPH_FIRST_ROW_Y: i32 = 64;
+const GRAPH_NODE_WIDTH: i32 = shared::NODE_WIDTH;
+const GRAPH_NODE_HEIGHT: i32 = shared::NODE_HEIGHT;
+const GRAPH_HEADER_Y: i32 = shared::HEADER_Y;
 
 /// A node plus its outgoing edges and their resolved target labels.
 pub(super) struct GraphRow {
@@ -31,77 +20,29 @@ pub(super) struct GraphRow {
     pub(super) links: Vec<(ResearchEdge, String)>,
 }
 
-/// Parse raw `metadata_json` into displayable `key: value` pairs.
-/// String values render bare; anything else renders as compact JSON. Empty,
-/// non-object, or unparseable metadata yields no pairs, so nothing renders.
-pub(super) fn metadata_pairs(metadata_json: &str) -> Vec<(String, String)> {
-    match serde_json::from_str::<serde_json::Value>(metadata_json) {
-        Ok(serde_json::Value::Object(map)) => map
-            .into_iter()
-            .map(|(key, value)| match value {
-                serde_json::Value::String(text) => (key, text),
-                other => (key, other.to_string()),
-            })
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
-fn metadata_summary(metadata_json: &str) -> String {
-    metadata_pairs(metadata_json)
-        .into_iter()
-        .map(|(key, value)| format!("{key}: {value}"))
-        .collect::<Vec<_>>()
-        .join(" · ")
-}
-
-/// Bucket nodes by kind and hang each node's outgoing edges off it.
+/// Bucket nodes by kind and hang each node's outgoing edges off it, in the
+/// order and grouping both desktops share (`wisp_dto::research_graph`).
 ///
 /// Both endpoints are guaranteed to name a node in the same project — the store
 /// counts them before inserting an edge (`Store::save_research_edge`) and every
 /// delete path drops edges before their nodes — so no edge goes unrendered.
 pub(super) fn group_graph(graph: &ResearchGraph) -> Vec<(&'static str, Vec<GraphRow>)> {
-    let titles: HashMap<&str, &str> = graph
-        .nodes
-        .iter()
-        .map(|node| (node.id.as_str(), node.title.as_str()))
-        .collect();
-    let label = |id: &str| {
-        titles
-            .get(id)
-            .map(|t| (*t).to_string())
-            .unwrap_or_else(|| id.to_string())
-    };
-
-    let mut outgoing: HashMap<&str, Vec<&ResearchEdge>> = HashMap::new();
-    for edge in &graph.edges {
-        outgoing
-            .entry(edge.source_id.as_str())
-            .or_default()
-            .push(edge);
-    }
-
-    KINDS
+    shared::group_by_kind(graph)
         .into_iter()
-        .filter_map(|(kind, label_key)| {
-            let rows = graph
-                .nodes
-                .iter()
-                .filter(|node| node.kind == kind)
-                .map(|node| GraphRow {
-                    node: node.clone(),
-                    links: outgoing
-                        .get(node.id.as_str())
-                        .map(|edges| {
-                            edges
-                                .iter()
-                                .map(|edge| ((*edge).clone(), label(&edge.target_id)))
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                })
-                .collect::<Vec<_>>();
-            (!rows.is_empty()).then_some((label_key, rows))
+        .map(|(kind, rows)| {
+            (
+                kind_label_key(kind),
+                rows.into_iter()
+                    .map(|row| GraphRow {
+                        node: row.node.clone(),
+                        links: row
+                            .links
+                            .into_iter()
+                            .map(|(edge, target)| (edge.clone(), target))
+                            .collect(),
+                    })
+                    .collect(),
+            )
         })
         .collect()
 }
@@ -137,153 +78,44 @@ struct GraphLayout {
     edges: Vec<GraphEdgeLayout>,
 }
 
+/// The shared fixed-column layout (`wisp_dto::research_graph::layout`),
+/// with each route written as an SVG path.
 fn layout_graph(graph: &ResearchGraph) -> GraphLayout {
-    // ponytail: fixed type columns keep the first graph view dependency-free;
-    // add interactive layout only if real dense projects outgrow this overview.
-    let visible_kinds = KINDS
-        .iter()
-        .copied()
-        .filter(|(kind, _)| graph.nodes.iter().any(|node| node.kind == *kind))
-        .collect::<Vec<_>>();
-    let column_count = visible_kinds.len().max(1) as i32;
-    let used_width = column_count * GRAPH_NODE_WIDTH + (column_count - 1) * GRAPH_COLUMN_GAP;
-    let width = (used_width + 80).max(720);
-    let first_x = (width - used_width) / 2;
-    let max_rows = visible_kinds
-        .iter()
-        .map(|(kind, _)| graph.nodes.iter().filter(|node| node.kind == *kind).count())
-        .max()
-        .unwrap_or(0) as i32;
-    let height = (GRAPH_FIRST_ROW_Y + max_rows * GRAPH_ROW_GAP + 28).max(360);
-
-    let mut positions = HashMap::new();
-    let mut nodes = Vec::with_capacity(graph.nodes.len());
-    let columns = visible_kinds
-        .into_iter()
-        .enumerate()
-        .map(|(column, (kind, label_key))| {
-            let x = first_x + column as i32 * (GRAPH_NODE_WIDTH + GRAPH_COLUMN_GAP);
-            for (row, node) in graph
-                .nodes
-                .iter()
-                .filter(|node| node.kind == kind)
-                .enumerate()
-            {
-                let y = GRAPH_FIRST_ROW_Y + row as i32 * GRAPH_ROW_GAP;
-                positions.insert(node.id.clone(), (x, y));
-                nodes.push(GraphNodeLayout {
-                    node: node.clone(),
-                    x,
-                    y,
-                });
-            }
-            GraphColumnLayout { label_key, x }
-        })
-        .collect::<Vec<_>>();
-
-    let titles = graph
-        .nodes
-        .iter()
-        .map(|node| (node.id.as_str(), node.title.as_str()))
-        .collect::<HashMap<_, _>>();
-    let edges = graph
-        .edges
-        .iter()
-        .filter_map(|edge| {
-            let &(source_x, source_y) = positions.get(&edge.source_id)?;
-            let &(target_x, target_y) = positions.get(&edge.target_id)?;
-            let source_title = titles.get(edge.source_id.as_str())?;
-            let target_title = titles.get(edge.target_id.as_str())?;
-            let (path, label_x, label_y) = if source_x == target_x {
-                let downward = source_y < target_y;
-                let start_y = if downward {
-                    source_y + GRAPH_NODE_HEIGHT
-                } else {
-                    source_y
-                };
-                let end_y = if downward {
-                    target_y
-                } else {
-                    target_y + GRAPH_NODE_HEIGHT
-                };
-                let center_x = source_x + GRAPH_NODE_WIDTH / 2;
-                let side_x = source_x + GRAPH_NODE_WIDTH + 34;
-                (
-                    format!(
-                        "M {center_x} {start_y} C {side_x} {start_y}, {side_x} {end_y}, {center_x} {end_y}"
-                    ),
-                    side_x,
-                    (start_y + end_y) / 2 - 5,
-                )
-            } else {
-                let direction = if source_x < target_x { 1 } else { -1 };
-                let start_x = if direction > 0 {
-                    source_x + GRAPH_NODE_WIDTH
-                } else {
-                    source_x
-                };
-                let end_x = if direction > 0 {
-                    target_x
-                } else {
-                    target_x + GRAPH_NODE_WIDTH
-                };
-                let start_y = source_y + GRAPH_NODE_HEIGHT / 2;
-                let end_y = target_y + GRAPH_NODE_HEIGHT / 2;
-                let label_x = (start_x + end_x) / 2;
-                if (source_x - target_x).abs() > GRAPH_NODE_WIDTH + GRAPH_COLUMN_GAP {
-                    // A direct long edge would pass through nodes in intervening
-                    // columns, so use the whitespace between graph rows.
-                    let lane_y = start_y.max(end_y) + GRAPH_NODE_HEIGHT / 2 + 18;
-                    let lane_start = start_x + direction * 42;
-                    let lane_end = end_x - direction * 42;
-                    (
-                        format!(
-                            "M {start_x} {start_y} C {} {start_y}, {} {lane_y}, {lane_start} {lane_y} \
-                             L {lane_end} {lane_y} C {} {lane_y}, {} {end_y}, {end_x} {end_y}",
-                            start_x + direction * 24,
-                            start_x + direction * 24,
-                            end_x - direction * 24,
-                            end_x - direction * 24,
-                        ),
-                        label_x,
-                        lane_y - 5,
-                    )
-                } else {
-                    let control_x = (start_x + end_x) / 2;
-                    (
-                        format!(
-                            "M {start_x} {start_y} C {control_x} {start_y}, {control_x} {end_y}, {end_x} {end_y}"
-                        ),
-                        label_x,
-                        (start_y + end_y) / 2 - 5,
-                    )
-                }
-            };
-            let metadata = metadata_summary(&edge.metadata_json);
-            let title = if metadata.is_empty() {
-                format!("{source_title} —{}→ {target_title}", edge.relation)
-            } else {
-                format!(
-                    "{source_title} —{}→ {target_title} · {metadata}",
-                    edge.relation
-                )
-            };
-            Some(GraphEdgeLayout {
-                edge: edge.clone(),
-                title,
-                path,
-                label_x,
-                label_y,
-            })
-        })
-        .collect();
-
+    let shared = shared::layout(graph);
     GraphLayout {
-        width,
-        height,
-        columns,
-        nodes,
-        edges,
+        width: shared.width,
+        height: shared.height,
+        columns: shared
+            .columns
+            .into_iter()
+            .map(|column| GraphColumnLayout {
+                label_key: kind_label_key(column.kind),
+                x: column.x,
+            })
+            .collect(),
+        nodes: shared
+            .nodes
+            .into_iter()
+            .map(|place| GraphNodeLayout {
+                node: graph.nodes[place.node].clone(),
+                x: place.x,
+                y: place.y,
+            })
+            .collect(),
+        edges: shared
+            .edges
+            .into_iter()
+            .map(|place| {
+                let edge = &graph.edges[place.edge];
+                GraphEdgeLayout {
+                    edge: edge.clone(),
+                    title: shared::edge_title(graph, edge),
+                    path: place.route.svg_path(),
+                    label_x: place.label.x,
+                    label_y: place.label.y,
+                }
+            })
+            .collect(),
     }
 }
 
@@ -297,11 +129,16 @@ fn truncate_label(text: &str, max_chars: usize) -> String {
         .collect()
 }
 
+/// The i18n key of a node kind's name. The kinds are `shared::KINDS`.
 fn kind_label_key(kind: &str) -> &'static str {
-    KINDS
-        .iter()
-        .find_map(|(candidate, label)| (*candidate == kind).then_some(*label))
-        .unwrap_or("graph.title")
+    match kind {
+        "decision" => "graph.kind.decision",
+        "paper" => "graph.kind.paper",
+        "data_asset" => "graph.kind.data_asset",
+        "run" => "graph.kind.run",
+        "artifact" => "graph.kind.artifact",
+        _ => "graph.title",
+    }
 }
 
 fn empty_graph(locale: Locale) -> View {

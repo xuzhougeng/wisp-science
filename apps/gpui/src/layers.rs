@@ -88,6 +88,10 @@ pub enum Layer {
     JournalForm,
     /// A day's recap being changed, on the journey page.
     RecapForm,
+    /// The details of one relation in the journey's relation graph.
+    JourneyEdge,
+    /// A run's record, as a dialog over the journey page.
+    JourneyRun,
     /// The scheduled tasks of every project: a page of its own.
     Schedules,
     /// The form on that page for a new task.
@@ -191,6 +195,9 @@ pub enum Layer {
     Favorites,
     /// Question on the Favorites page before a saved item is removed.
     ConfirmRemoveFavorite,
+    /// A saved item's code being edited into a new version, on the
+    /// Favorites page.
+    FavoriteCode,
     /// The form for an MCP server, on the Connections page of Settings.
     McpForm,
     /// Question before an MCP server is removed.
@@ -324,9 +331,11 @@ impl Layer {
             | Layer::PluginAddress
             | Layer::ConfirmResetRemoteCode
             | Layer::ConfirmRemoveQuickAction => Some(Layer::Settings),
-            Layer::ConfirmRemoveFavorite => Some(Layer::Favorites),
+            Layer::ConfirmRemoveFavorite | Layer::FavoriteCode => Some(Layer::Favorites),
             Layer::ConfirmSyncReplace => Some(Layer::ProjectSettings),
-            Layer::JournalForm | Layer::RecapForm => Some(Layer::Journey),
+            Layer::JournalForm | Layer::RecapForm | Layer::JourneyEdge | Layer::JourneyRun => {
+                Some(Layer::Journey)
+            }
             Layer::ScheduleForm | Layer::ConfirmDeleteSchedule => Some(Layer::Schedules),
             Layer::MandateForm | Layer::ConfirmDeleteMandate => Some(Layer::Mandates),
             Layer::PaperForm
@@ -754,6 +763,15 @@ mod tests {
         assert!(stack.close(Layer::Favorites));
         assert!(!stack.contains(Layer::ConfirmRemoveFavorite));
         assert!(stack.contains(Layer::FilesPanel));
+        // An edit of saved code is inside the page: Escape gives it up and
+        // leaves the page, and leaving the page takes it along.
+        stack.open(Layer::Favorites);
+        stack.open(Layer::FavoriteCode);
+        assert_eq!(stack.dismiss_top(), Some(Layer::FavoriteCode));
+        assert!(stack.contains(Layer::Favorites));
+        stack.open(Layer::FavoriteCode);
+        assert!(stack.close(Layer::Favorites));
+        assert!(!stack.contains(Layer::FavoriteCode));
     }
 
     #[test]
@@ -948,7 +966,18 @@ mod tests {
         stack.open(Layer::RecapForm);
         assert_eq!(stack.dismiss_top(), Some(Layer::RecapForm));
         assert!(stack.contains(Layer::Journey));
-        stack.close(Layer::Journey);
+        // A relation's details and a run's record are inside the page:
+        // one press closes the topmost, and the page stays.
+        stack.open(Layer::JourneyEdge);
+        stack.open(Layer::JourneyRun);
+        assert_eq!(stack.dismiss_top(), Some(Layer::JourneyRun));
+        assert_eq!(stack.dismiss_top(), Some(Layer::JourneyEdge));
+        assert!(stack.contains(Layer::Journey));
+        // Leaving the page takes both along.
+        stack.open(Layer::JourneyEdge);
+        stack.open(Layer::JourneyRun);
+        assert!(stack.close(Layer::Journey));
+        assert!(!stack.contains(Layer::JourneyEdge) && !stack.contains(Layer::JourneyRun));
         // The scheduled tasks page has a form and a question inside it.
         stack.open(Layer::Schedules);
         stack.open(Layer::ScheduleForm);

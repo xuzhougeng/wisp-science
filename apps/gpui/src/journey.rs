@@ -4,7 +4,10 @@
 //! parameter here and the window's is used when drawing.
 use crate::i18n::{Locale, tr};
 use chrono::{DateTime, Datelike, NaiveDate, TimeZone};
-use wisp_dto::{ResearchJourney, ResearchJourneyEntry, ResearchRecap, ResearchRecapEdit};
+use wisp_dto::{
+    ResearchGraph, ResearchJourney, ResearchJourneyEntry, ResearchJourneySource, ResearchRecap,
+    ResearchRecapEdit,
+};
 
 use crate::present::Tone;
 
@@ -286,6 +289,170 @@ pub fn from_lines(
         .collect()
 }
 
+/// A research-graph kind's name, as a column or section heading.
+pub fn graph_kind_label(kind: &str) -> &'static str {
+    match kind {
+        "decision" => tr("Decisions"),
+        "paper" => tr("Papers"),
+        "data_asset" => tr("Data assets"),
+        "run" => tr("Runs"),
+        "artifact" => tr("Artifacts"),
+        _ => tr("Records"),
+    }
+}
+
+/// How much the graph shown holds, "3 nodes · 2 relationships".
+pub fn graph_summary(graph: &ResearchGraph) -> String {
+    crate::i18n::fill(
+        tr("{} nodes · {} relationships"),
+        &[&graph.nodes.len(), &graph.edges.len()],
+    )
+}
+
+/// The part of the graph the page's filter asks for: the nodes whose
+/// title, reference, kind or metadata hold every word, the nodes directly
+/// related to one of them, and the relations that touch one of them. No
+/// words keep the whole graph. Order stays as stored, so the layout of
+/// what is kept does not jump about.
+pub fn filter_graph(graph: &ResearchGraph, filter: &str) -> ResearchGraph {
+    let words: Vec<String> = filter.split_whitespace().map(str::to_lowercase).collect();
+    if words.is_empty() {
+        return graph.clone();
+    }
+    let matched: std::collections::HashSet<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            let text = format!(
+                "{} {} {} {} {}",
+                node.title,
+                node.ref_id.as_deref().unwrap_or_default(),
+                node.kind,
+                graph_kind_label(&node.kind),
+                wisp_dto::research_graph::metadata_summary(&node.metadata_json)
+            )
+            .to_lowercase();
+            words.iter().all(|word| text.contains(word))
+        })
+        .map(|node| node.id.as_str())
+        .collect();
+    let edges: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            matched.contains(edge.source_id.as_str()) || matched.contains(edge.target_id.as_str())
+        })
+        .cloned()
+        .collect();
+    let kept: std::collections::HashSet<&str> = edges
+        .iter()
+        .flat_map(|edge| [edge.source_id.as_str(), edge.target_id.as_str()])
+        .chain(matched.iter().copied())
+        .collect();
+    ResearchGraph {
+        nodes: graph
+            .nodes
+            .iter()
+            .filter(|node| kept.contains(node.id.as_str()))
+            .cloned()
+            .collect(),
+        edges,
+    }
+}
+
+/// `text` cut to `limit` characters, the last of them an ellipsis.
+pub fn shorten(text: &str, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        return text.to_owned();
+    }
+    text.chars()
+        .take(limit.saturating_sub(1))
+        .chain(std::iter::once('…'))
+        .collect()
+}
+
+/// A run's status in words, for any status the host records.
+pub fn run_status(status: &str) -> &'static str {
+    match status {
+        "submitted" => tr("submitted"),
+        "started" | "running" => tr("started"),
+        "succeeded" => tr("finished"),
+        "failed" => tr("failed"),
+        "cancelled" => tr("cancelled"),
+        "lost" => tr("lost"),
+        _ => tr("unknown"),
+    }
+}
+
+/// A moment as local date and time, "2026-11-14 13:05".
+pub fn local_moment<Tz: TimeZone>(at: i64, zone: &Tz) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    local(at, zone).format("%Y-%m-%d %H:%M").to_string()
+}
+
+/// What the source details say about the run that made an output: its
+/// title, or that none is recorded; then where it ran and how it ended,
+/// and when it ended, when those are known.
+pub fn source_run_lines<Tz: TimeZone>(
+    source: &ResearchJourneySource,
+    zone: &Tz,
+) -> (String, Vec<String>)
+where
+    Tz::Offset: std::fmt::Display,
+{
+    if source.run_id.is_none() {
+        return (tr("No producing run recorded").to_owned(), Vec::new());
+    }
+    let mut lines = vec![format!(
+        "{} · {}",
+        source.context_id,
+        run_status(&source.run_status)
+    )];
+    if let Some(at) = source.generated_at {
+        lines.push(crate::i18n::fill(
+            tr("Completed {}"),
+            &[&local_moment(at, zone)],
+        ));
+    }
+    let title = if source.run_title.trim().is_empty() {
+        tr("Untitled run").to_owned()
+    } else {
+        source.run_title.clone()
+    };
+    (title, lines)
+}
+
+/// What an input of the run is to it and how sure the record is of it,
+/// "input · exact".
+pub fn input_detail(input: &wisp_dto::ResearchJourneyInput) -> String {
+    [input.role.trim(), input.confidence.trim()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// The two ends of an arrow's head at the last point of `points`, set back
+/// along the last piece of the line.
+pub fn arrow_head(points: &[(f32, f32)]) -> Vec<(f32, f32)> {
+    let [.., (fx, fy), (tx, ty)] = points else {
+        return Vec::new();
+    };
+    let (dx, dy) = (tx - fx, ty - fy);
+    let length = (dx * dx + dy * dy).sqrt();
+    if length == 0. {
+        return Vec::new();
+    }
+    let (ux, uy) = (dx / length, dy / length);
+    let (back, side) = (7., 3.5);
+    vec![
+        (tx - ux * back - uy * side, ty - uy * back + ux * side),
+        (tx - ux * back + uy * side, ty - uy * back - ux * side),
+    ]
+}
+
 fn day_label(date: NaiveDate) -> String {
     day_label_in(crate::i18n::current(), date)
 }
@@ -519,6 +686,128 @@ mod tests {
         file.source_discarded = true;
         assert_eq!(status_label(&file), Some("source discarded"));
         assert_eq!(status_label(&entry("finding", "x", 0)), None);
+    }
+
+    fn graph() -> ResearchGraph {
+        use wisp_dto::{ResearchEdge, ResearchNode};
+        let node = |id: &str, kind: &str, title: &str| ResearchNode {
+            id: id.into(),
+            kind: kind.into(),
+            title: title.into(),
+            ref_id: None,
+            metadata_json: "{}".into(),
+        };
+        let edge = |source: &str, target: &str, relation: &str| ResearchEdge {
+            source_id: source.into(),
+            target_id: target.into(),
+            relation: relation.into(),
+            metadata_json: "{}".into(),
+        };
+        let mut paper = node("p1", "paper", "Love et al. 2014");
+        paper.metadata_json = r#"{"doi":"10.1186/s13059"}"#.into();
+        ResearchGraph {
+            nodes: vec![
+                node("d1", "decision", "Use DESeq2"),
+                paper,
+                node("a1", "data_asset", "counts.tsv"),
+                node("r1", "run", "Align reads"),
+            ],
+            edges: vec![
+                edge("d1", "p1", "cites"),
+                edge("d1", "a1", "applies to"),
+                edge("r1", "a1", "produced"),
+            ],
+        }
+    }
+
+    #[test]
+    fn the_filter_keeps_what_matches_and_what_it_is_directly_related_to() {
+        let whole = graph();
+        assert_eq!(filter_graph(&whole, "  "), whole);
+        assert_eq!(graph_summary(&whole), "4 nodes · 3 relationships");
+        // A paper found by its metadata brings the decision citing it.
+        let cited = filter_graph(&whole, "s13059");
+        assert_eq!(
+            cited
+                .nodes
+                .iter()
+                .map(|n| n.id.as_str())
+                .collect::<Vec<_>>(),
+            ["d1", "p1"]
+        );
+        assert_eq!(cited.edges.len(), 1);
+        // The decision brings both things it points at, in stored order,
+        // and not the run that only shares a neighbour with it.
+        let decided = filter_graph(&whole, "deseq2 DECISIONS");
+        assert_eq!(
+            decided
+                .nodes
+                .iter()
+                .map(|n| n.id.as_str())
+                .collect::<Vec<_>>(),
+            ["d1", "p1", "a1"]
+        );
+        assert_eq!(decided.edges.len(), 2);
+        // The filtered graph lays out with every kept relation joined.
+        let laid = wisp_dto::research_graph::layout(&decided);
+        assert_eq!(laid.edges.len(), 2);
+        assert!(filter_graph(&whole, "nothing like this").nodes.is_empty());
+        assert_eq!(graph_kind_label("data_asset"), "Data assets");
+        assert_eq!(shorten("applies to the counts", 10), "applies t…");
+        assert_eq!(shorten("cites", 10), "cites");
+    }
+
+    #[test]
+    fn an_outputs_source_names_its_run_and_its_inputs() {
+        let utc = zone(0);
+        assert_eq!(
+            source_run_lines(&ResearchJourneySource::default(), &utc),
+            ("No producing run recorded".to_owned(), vec![])
+        );
+        let source = ResearchJourneySource {
+            run_id: Some("r1".into()),
+            run_title: "Count reads".into(),
+            run_status: "succeeded".into(),
+            context_id: "local".into(),
+            // 2026-11-14 12:00 UTC.
+            generated_at: Some(1_794_657_600),
+            inputs: vec![],
+        };
+        assert_eq!(
+            source_run_lines(&source, &utc),
+            (
+                "Count reads".to_owned(),
+                vec![
+                    "local · finished".to_owned(),
+                    "Completed 2026-11-14 12:00".to_owned()
+                ]
+            )
+        );
+        assert_eq!(
+            source_run_lines(&source, &zone(8)).1[1],
+            "Completed 2026-11-14 20:00"
+        );
+        let input = wisp_dto::ResearchJourneyInput {
+            title: "data/reads.csv".into(),
+            role: "input".into(),
+            version_id: None,
+            confidence: "exact".into(),
+        };
+        assert_eq!(input_detail(&input), "input · exact");
+        assert_eq!(run_status("lost"), "lost");
+        assert_eq!(run_status("weird"), "unknown");
+    }
+
+    #[test]
+    fn an_arrow_head_points_back_along_the_last_piece() {
+        // Ending rightwards at (10, 0): both ends behind it, one each side.
+        let wings = arrow_head(&[(0., 0.), (10., 0.)]);
+        assert_eq!(wings, [(3., 3.5), (3., -3.5)]);
+        // Ending downwards.
+        let wings = arrow_head(&[(0., 0.), (0., 10.)]);
+        assert_eq!(wings, [(-3.5, 3.), (3.5, 3.)]);
+        assert!(arrow_head(&[(1., 1.)]).is_empty());
+        assert!(arrow_head(&[(1., 1.), (1., 1.)]).is_empty());
     }
 
     #[test]

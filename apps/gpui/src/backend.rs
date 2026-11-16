@@ -379,6 +379,29 @@ impl Backend {
         self.local(move |host| async move { host.journey(&project, from, until).await })
     }
 
+    /// The project's research graph: its nodes and the relations between.
+    pub fn research_graph(&self, project: String) -> Reply<wisp_dto::ResearchGraph> {
+        self.local(move |host| async move { host.research_graph(&project).await })
+    }
+
+    /// The run that produced one version of an output, and what it read.
+    pub fn journey_source(
+        &self,
+        project: String,
+        version: String,
+    ) -> Reply<wisp_server::desktop::JourneySource> {
+        self.local(move |host| async move { host.journey_source(&project, &version).await })
+    }
+
+    /// One run of the project as the journey's run record shows it.
+    pub fn journey_run(
+        &self,
+        project: String,
+        run: String,
+    ) -> Reply<wisp_server::desktop::JourneyRun> {
+        self.local(move |host| async move { host.journey_run(&project, &run).await })
+    }
+
     /// Every project's history between two moments, for the calendar.
     pub fn calendar(&self, from: i64, until: i64) -> Reply<Vec<wisp_dto::ResearchCalendarProject>> {
         self.local(move |host| async move { host.calendar(from, until).await })
@@ -757,6 +780,23 @@ impl Backend {
 
     pub fn favorite(&self, id: String) -> Reply<Favorite> {
         self.local(move |host| async move { host.favorite(&id).await })
+    }
+
+    /// Every version of a saved item's code, the original first.
+    pub fn favorite_versions(
+        &self,
+        id: String,
+    ) -> Reply<Vec<wisp_server::desktop::LibraryItemVersion>> {
+        self.local(move |host| async move { host.favorite_versions(&id).await })
+    }
+
+    /// Saves an edit of a saved item's code as its next version.
+    pub fn save_favorite_code(
+        &self,
+        id: String,
+        code: String,
+    ) -> Reply<wisp_server::desktop::LibraryItemVersion> {
+        self.local(move |host| async move { host.save_favorite_code(&id, &code).await })
     }
 
     pub fn conversation_favorites(
