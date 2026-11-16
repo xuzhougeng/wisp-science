@@ -194,10 +194,11 @@ which it only reads.
 | Read state | A finished answer is marked read once it is on screen in the active window |
 | Transcript | Virtualized Markdown, selectable text, paginated history |
 | Tool calls | One folded line each with outcome and elapsed time; click for the verbatim input and output; interrupted calls stop claiming to run |
+| Agent cards | A call that hands work to other agents is a card in its place: `explore` with its question, status and folded findings; `dispatch_subagent` with the subagent conversation's title, status and task, and a button that opens it; `delegate_tasks` with the batch's goal, status, task counts and a line per task (status, instruction, its conversation), Show in Agents and Stop while it runs. `subagent_status`, `stop_subagent`, `get_delegated_result` and a background batch's result coming back are one folded line naming the subagent or batch. Until the batches or the conversation list are read the call stays a tool row |
 | Runs | A Runs tab: runs started by the conversation with kind, status, exit code, command and output tails; a run that has not ended can be cancelled, and is followed until it ends. One that has ended and kept a workspace where it ran can have it deleted after a question (its logs are saved into the project first, and outputs never brought back are not lost without a second question); a cleaned run, or one whose cleanup failed, says so. A run that moves files between machines shows its phase, file, bytes, rate and time left on its card, and while it moves (and a few seconds after) in a Transfers tray above the composer that folds to one line. A finished run on an SSH host has a folder button: a dialog lists what it left there a folder at a time, with a name filter and More… for long folders, and the files and folders chosen (across folders) are brought into the project as the conversation's results, a folder as one archive, or deleted there after a question; the whole workspace can be deleted from it too. In the transcript, a call that started or watched a run shows the run's state now, and Show in Runs opens its output there |
 | Artifacts | Files a turn wrote are recorded when it ends; an Artifacts tab lists them for the conversation or the project and opens them, and lists each one's versions, any of which can be saved as a copy from its snapshot (checked against its checksum, up to 512 MB); By folder puts them under their folders, and each one's trail button says which tool call wrote it, with the code and Open the conversation |
 | Side panel | Tabs: Files, Runs, Environments (this computer and the saved SSH hosts: attach one to the conversation so its runs may go there, take it away, check it, open a terminal or its folders, and set where the project keeps things there: uploaded data, run folders and the results folder), Artifacts, Notebook, Provenance (the loaded part's tool calls with how each went, opening to what each was given and returned, with Show in the conversation), Agents, Highlights, Memos, Memory, Aside; the open tab is named, the others are icons. − beside the open tab takes it away and + adds one back; the tabs kept are remembered, and opening a tab from elsewhere brings it back |
-| Agents | The Agents tab lists the helpers the conversation sent off to explore: what each was asked, how it went, and what it found |
+| Agents | The Agents tab lists the helpers the conversation sent off to explore: what each was asked, how it went, and what it found; the transcript draws those calls, and the subagents and batches the agent started, as cards |
 | Aside | The Aside tab (or the command palette) asks the conversation's model a question about the open conversation; the answer shows beside it and nothing is added to the conversation. The latest turns are quoted whole; passages from before them that match the question go along labelled [E1]… and are listed under the answer, with who said them and the words they matched. Ask aside under a message opens it with that message quoted in the question |
 | Quoting | Quote under a message puts it in the message box as a quotation after what you were writing, ready to answer; a selected passage is copied with Cmd/Ctrl+C |
 | Favorites | A star under any message saves it as it reads now; an image in Artifacts can be saved as a figure. Highlights lists what this conversation saved; the Favorites page lists everything from every project, with search, a kind filter, the item in full, its source conversation and removal after a confirmation |
@@ -762,6 +763,22 @@ Limits of this slice:
   the loaded transcript like the Notebook: the `explore` calls from the
   messages that are loaded, with a helper's findings once it has
   reported back, not its steps along the way.
+- The transcript draws each call that hands work to other agents as a
+  card in place of its tool row (`agents::cards`). An `explore` card is
+  read from its own row. A `dispatch_subagent` card names the subagent
+  its result returned (or, for a further instruction, its `session_id`)
+  and is drawn only when the conversation list says that conversation
+  was started by this one; its title and status are the list's, and the
+  list refreshes every few seconds. A `delegate_tasks` card is the batch
+  whose `workflow_id` its result names; while the call is still out
+  (waiting on its plan card or running in the turn) it is the newest
+  batch of this conversation with the same goal not already claimed by
+  another call. The batches are read for the open conversation whenever
+  its transcript has such a call, not only while the Agents tab shows,
+  and again while one runs, so a card follows its batch in the turn and
+  in the background. A call whose work cannot be found yet, or is gone
+  (a denied batch), stays an ordinary tool row. `map_items` work keeps
+  its place in the Agents tab and has no card.
 - The sub-agent model is the model the `explore` helper works on, the
   only sub-agent this host has. The order is the WebView's: a
   conversation's own choice for its sub-agents (its `frames` column, set
@@ -2214,7 +2231,18 @@ second press adds nothing. Send it and confirm the model reads the
 Ask something that makes the model call `explore`, then open the Agents
 tab: the helper is listed with its question, reads Running until it
 reports back, then shows its findings; the arrow goes to its row in the
-conversation.
+conversation. In the transcript the call is a card with the question and
+its status; Tab reaches Findings and Enter opens them.
+Ask the model to delegate two independent read-only tasks: the call is a
+Delegated tasks card with the goal, a line per task moving from Waiting to
+Running to Done and the counts under the goal; the chat button on a task
+opens its watch-only conversation, Show in Agents opens the tab, and Stop
+is there only while the batch runs. Ask for a background batch: the card
+says In the background and keeps updating after the turn ends; its result
+coming back is one folded line naming the batch. Restart the app and open
+the conversation: the cards come back from the saved batches. Ask for a
+subagent: the call is a Subagent card with the conversation's title,
+Running, then Idle, and Open its conversation opens it.
 Open the Aside tab in a conversation with an answer in it, ask what the
 answer was, and confirm the reply is about that conversation while the
 transcript is unchanged. Ask a second question that leans on the first

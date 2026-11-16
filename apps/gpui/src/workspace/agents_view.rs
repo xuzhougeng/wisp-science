@@ -21,18 +21,34 @@ impl Workspace {
         self.layers.contains(Layer::FilesPanel) && self.panel_tab == PanelTab::Agents
     }
 
+    /// Whether the open conversation's batches are wanted: the Agents tab
+    /// shows them, or the transcript has calls whose cards are drawn from
+    /// them.
+    pub(super) fn agents_wanted(&self) -> bool {
+        self.agents_visible() || agents::wants_batches(&self.rows)
+    }
+
+    /// Reads the open conversation's batches when its transcript has cards
+    /// drawn from them and they have not been read for it yet.
+    pub(super) fn ensure_batches(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if agents::wants_batches(&self.rows) && self.batches_for != self.state.session {
+            self.load_batches(window, cx);
+        }
+    }
+
     /// Lists the open conversation's delegated batches.
     pub(super) fn load_batches(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let selection = self.state.selection();
         let (Some(project), Some(session)) = (selection.project.clone(), selection.session.clone())
         else {
             self.batches.clear();
+            self.batches_for = None;
             return;
         };
         self.batches_request += 1;
         let request = self.batches_request;
         let swarm = self.backend.swarm_progress(session.clone());
-        let reply = self.backend.delegated_batches(project, session);
+        let reply = self.backend.delegated_batches(project, session.clone());
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
             let swarm = receive(swarm).await.ok().flatten();
@@ -44,13 +60,16 @@ impl Workspace {
                 // A batch that cannot be read is left out, not an error of
                 // the conversation's.
                 this.batches = result.unwrap_or_default();
+                this.batches_for = Some(session.clone());
+                // The transcript's cards follow their batches.
+                this.place_agent_cards();
                 // A batch may run on after the turn: look again while one
-                // does and the tab is showing.
+                // does and the tab or a card in the transcript shows it.
                 let swarming = this
                     .swarm
                     .as_ref()
                     .is_some_and(|swarm| !swarm.phase.terminal());
-                if this.agents_visible()
+                if this.agents_wanted()
                     && (swarming || this.batches.iter().any(DelegatedBatch::running))
                 {
                     cx.spawn_in(window, async move |this, cx| {
@@ -231,7 +250,12 @@ impl Workspace {
     }
 
     /// Stops a running batch and every task in it.
-    fn stop_batch(&mut self, batch: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn stop_batch(
+        &mut self,
+        batch: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(session) = self.state.session.clone() else {
             return;
         };

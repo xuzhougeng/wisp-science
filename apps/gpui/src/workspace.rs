@@ -1,3 +1,4 @@
+mod agent_cards_view;
 mod agents_view;
 mod archive_view;
 mod aside_view;
@@ -702,6 +703,13 @@ pub struct Workspace {
     explorations: Vec<wisp_dto::ExplorationSummary>,
     /// The task batches the open conversation's agent delegated.
     batches: Vec<wisp_server::desktop::DelegatedBatch>,
+    /// The conversation `batches` were read for; until it is the open one,
+    /// the calls that delegated them stay ordinary tool rows.
+    batches_for: Option<String>,
+    /// The card each transcript row that hands work to other agents is
+    /// drawn as, by row, worked out again whenever the rows, the batches or
+    /// the conversation list change.
+    agent_cards: HashMap<usize, crate::agents::Card>,
     /// The latest work over many items the open conversation ran.
     swarm: Option<wisp_dto::SwarmProgress>,
     batches_request: u64,
@@ -1695,6 +1703,8 @@ impl Workspace {
             new_project_note: None,
             explorations: Vec::new(),
             batches: Vec::new(),
+            batches_for: None,
+            agent_cards: HashMap::new(),
             swarm: None,
             batches_request: 0,
             budget_target: None,
@@ -2649,6 +2659,8 @@ impl Workspace {
         self.aside_run = None;
         self.turn_tokens.clear();
         self.batches.clear();
+        self.batches_for = None;
+        self.agent_cards.clear();
         self.swarm = None;
         self.history.clear();
         self.before = None;
@@ -2697,6 +2709,9 @@ impl Workspace {
                         this.grouped = list.grouped;
                         this.branched = list.branched;
                         this.dispatched = list.dispatched;
+                        // A subagent's card follows its conversation's title
+                        // and status.
+                        this.place_agent_cards();
                         this.picks.keep(&this.sessions);
                         // The host may start a turn in the open conversation
                         // by itself (a subagent's report, a background batch's
@@ -2884,7 +2899,7 @@ impl Workspace {
         if selection.session.is_none() {
             return;
         }
-        if self.agents_visible() {
+        if self.agents_wanted() {
             self.load_batches(window, cx);
         }
         if selection
@@ -2936,6 +2951,7 @@ impl Workspace {
                                         this.tell_user(event, window);
                                     }
                                     this.update_rows();
+                                    this.ensure_batches(window, cx);
                                     this.load_inline_images(window, cx);
                                     // An open search card follows its run.
                                     this.refresh_search(window, cx);
@@ -2948,7 +2964,7 @@ impl Workspace {
                                         }
                                         // A batch the turn delegates shows
                                         // up while the turn waits for it.
-                                        if this.agents_visible() && this.status_tick % 3 == 0 {
+                                        if this.agents_wanted() && this.status_tick % 3 == 0 {
                                             this.load_batches(window, cx);
                                         }
                                     } else if was_running {
@@ -2960,7 +2976,7 @@ impl Workspace {
                                         this.reload_files(window, cx);
                                         this.reload_artifacts(window, cx);
                                         this.load_reply_artifacts(window, cx);
-                                        if this.agents_visible() {
+                                        if this.agents_wanted() {
                                             this.load_batches(window, cx);
                                         }
                                         // The assistant's turn may have
@@ -3020,6 +3036,7 @@ impl Workspace {
             .splice(prefix..self.rows.len(), rows.len() - prefix);
         self.rows = rows;
         self.place_generated();
+        self.place_agent_cards();
         // The same words, in the transcript as it is now.
         if self.layers.contains(Layer::Find) {
             self.find.refresh(&self.rows);
@@ -3054,6 +3071,7 @@ impl Workspace {
                         this.history = history;
                         this.before = page.next_before_seq;
                         this.update_rows();
+                        this.ensure_batches(window, cx);
                         this.load_inline_images(window, cx);
                     }
                     Err(error) => this.error = Some(error),
@@ -3106,6 +3124,7 @@ impl Workspace {
                 this.history = crate::outline::stitch(pages, std::mem::take(&mut this.history));
                 this.before = before;
                 this.update_rows();
+                this.ensure_batches(window, cx);
                 this.load_inline_images(window, cx);
                 if let Some(error) = failure {
                     this.error = Some(error);

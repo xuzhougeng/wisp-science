@@ -238,14 +238,15 @@ fn line_box(depth: usize) -> Div {
 
 /// A line that is pressed with the pointer, or reached with Tab and pressed
 /// with Enter or Space, as `surfaces::switch` is: a fold of the list or a
-/// file in it. Without `on_press` it is only shown.
+/// file in it, or a fold of a card in the transcript. Without `on_press` it
+/// is only shown.
 #[derive(IntoElement)]
-struct Press {
-    id: ElementId,
-    content: Div,
+pub(super) struct Press {
+    pub(super) id: ElementId,
+    pub(super) content: Div,
     /// The file's place in the project, shown when the pointer rests on it.
-    tooltip: Option<SharedString>,
-    on_press: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
+    pub(super) tooltip: Option<SharedString>,
+    pub(super) on_press: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
 }
 
 impl RenderOnce for Press {

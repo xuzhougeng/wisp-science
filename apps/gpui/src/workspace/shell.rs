@@ -910,6 +910,11 @@ impl Workspace {
                 if let Some(steps) = controls::execution_steps(item) {
                     return self.progress_card(steps, cx);
                 }
+                // A call that handed work to other agents, once that work
+                // is known: a card in place of the tool row.
+                if let Some(card) = self.agent_cards.get(&index) {
+                    return self.agent_card(index, card, window, cx);
+                }
                 let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
                 let key = present::tool_key(item, index);
                 let open = self.open_tools.contains(&key);
