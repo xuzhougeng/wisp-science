@@ -1,9 +1,11 @@
 //! What the model is sent, as its dialog words it. The host reads the
 //! conversation's saved working set; this only says what is in it.
 use crate::i18n::tr;
-use wisp_server::desktop::{ModelRowKind, ModelView, ModelViewRow};
+use wisp_server::desktop::{
+    ContextToolDetail, ContextUsage, ModelRowKind, ModelView, ModelViewRow, SentContext, TokenUsage,
+};
 
-use crate::controls::compact;
+use crate::controls::{compact, context_percent};
 
 /// A line longer than this is cut in its row, so the row opens.
 const ONE_LINE: usize = 90;
@@ -92,6 +94,153 @@ pub fn by_kind(view: &ModelView) -> Vec<(&'static str, usize, usize)> {
         .collect()
 }
 
+/// A kind of what the latest request was made of, as the WebView's
+/// context usage names and orders them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sent {
+    SystemPrompt,
+    ToolDefinitions,
+    Rules,
+    Skills,
+    DynamicTools,
+    SubagentDefinitions,
+    Conversation,
+}
+
+impl Sent {
+    pub const ALL: [Sent; 7] = [
+        Sent::SystemPrompt,
+        Sent::ToolDefinitions,
+        Sent::Rules,
+        Sent::Skills,
+        Sent::DynamicTools,
+        Sent::SubagentDefinitions,
+        Sent::Conversation,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Sent::SystemPrompt => tr("System prompt"),
+            Sent::ToolDefinitions => tr("Tool definitions"),
+            Sent::Rules => tr("Rules"),
+            Sent::Skills => tr("Skills"),
+            Sent::DynamicTools => tr("MCP & dynamic tools"),
+            Sent::SubagentDefinitions => tr("Sub-agent definitions"),
+            Sent::Conversation => tr("Conversation"),
+        }
+    }
+
+    fn tokens(self, usage: &ContextUsage) -> usize {
+        match self {
+            Sent::SystemPrompt => usage.system_prompt,
+            Sent::ToolDefinitions => usage.tool_definitions,
+            Sent::Rules => usage.rules,
+            Sent::Skills => usage.skills,
+            Sent::DynamicTools => usage.mcp_dynamic_tools,
+            Sent::SubagentDefinitions => usage.subagent_definitions,
+            Sent::Conversation => usage.conversation,
+        }
+    }
+}
+
+/// What one kind of the latest request holds, as its row opens to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Holds<'a> {
+    /// Tools, one by one, with what the model reads about each.
+    Tools(&'a [ContextToolDetail]),
+    Text(&'a str),
+    /// The conversation is the rows below; nothing else to open.
+    Nothing,
+}
+
+/// What `kind` holds in the latest request.
+pub fn holds(sent: &SentContext, kind: Sent) -> Holds<'_> {
+    let details = &sent.details;
+    match kind {
+        Sent::SystemPrompt => Holds::Text(&details.system_prompt),
+        Sent::ToolDefinitions => Holds::Tools(&details.tool_definitions),
+        Sent::Rules => Holds::Text(&details.rules),
+        Sent::Skills => Holds::Text(&details.skills),
+        Sent::DynamicTools => Holds::Tools(&details.mcp_dynamic_tools),
+        Sent::SubagentDefinitions => Holds::Tools(&details.subagent_definitions),
+        Sent::Conversation => Holds::Nothing,
+    }
+}
+
+/// Whether a kind's row opens: it holds text or tools to read.
+pub fn sent_opens(sent: &SentContext, kind: Sent) -> bool {
+    match holds(sent, kind) {
+        Holds::Tools(tools) => !tools.is_empty(),
+        Holds::Text(text) => !text.trim().is_empty(),
+        Holds::Nothing => false,
+    }
+}
+
+/// The latest request kind by kind, every kind in the WebView's order,
+/// with its tokens and its share of the context window (of the request,
+/// when the window is not known or is smaller), as the WebView's bar
+/// measures them.
+pub fn sent_kinds(sent: &SentContext) -> Vec<(Sent, usize, usize)> {
+    let all = sent.max_context.max(sent.usage.total()).max(1);
+    Sent::ALL
+        .into_iter()
+        .map(|kind| {
+            let tokens = kind.tokens(&sent.usage);
+            (kind, tokens, (tokens * 100 + all / 2) / all)
+        })
+        .collect()
+}
+
+/// The line over the kinds: how big the latest request was, and how full
+/// it made the context window, as the composer's percentage counts it.
+pub fn sent_line(sent: &SentContext) -> String {
+    let used = sent.usage.total();
+    let full = TokenUsage {
+        context_tokens: used,
+        max_context: sent.max_context,
+        ..Default::default()
+    };
+    match context_percent(&full) {
+        Some(percent) => crate::i18n::fill(
+            tr("The latest request to the model: about {} of {} tokens, {}% of its context."),
+            &[
+                &compact(used as u64),
+                &compact(sent.max_context as u64),
+                &percent,
+            ],
+        ),
+        None => crate::i18n::fill(
+            tr("The latest request to the model: about {} tokens."),
+            &[&compact(used as u64)],
+        ),
+    }
+}
+
+/// As much of a kind's text as it opens to, as a row's is cut on the host.
+const OPENED_LIMIT: usize = 16_000;
+
+/// A kind's text as it opens: whole, or cut with how much more there is.
+pub fn opened_text(text: &str) -> String {
+    let mut chars = text.trim_end().chars();
+    let kept: String = chars.by_ref().take(OPENED_LIMIT).collect();
+    match chars.count() {
+        0 => kept,
+        more => format!(
+            "{kept}\n{}",
+            crate::i18n::fill(tr("[… {} more characters]"), &[&more])
+        ),
+    }
+}
+
+/// A tool's line under its kind: the first thing its description says.
+pub fn tool_line(tool: &ContextToolDetail) -> &str {
+    tool.description
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or_default()
+}
+
 pub fn share(row: &ModelViewRow, view: &ModelView) -> String {
     let percent = if view.chars == 0 {
         0
@@ -177,6 +326,7 @@ mod tests {
                 ..Default::default()
             },
             epoch: 0,
+            sent: None,
         };
         assert_eq!(
             by_kind(&view),
@@ -193,6 +343,105 @@ mod tests {
         assert!(by_kind(&empty).is_empty());
     }
 
+    fn tool(name: &str, description: &str) -> ContextToolDetail {
+        ContextToolDetail {
+            name: name.into(),
+            description: description.into(),
+        }
+    }
+
+    fn sent() -> SentContext {
+        SentContext {
+            usage: ContextUsage {
+                system_prompt: 2_000,
+                tool_definitions: 6_000,
+                mcp_dynamic_tools: 1_000,
+                conversation: 11_000,
+                ..Default::default()
+            },
+            details: wisp_server::desktop::ContextUsageDetails {
+                system_prompt: "You are Wisp.".into(),
+                tool_definitions: vec![
+                    tool("read", "\n  Read a file.\nMore about reading."),
+                    tool("shell", "Run a command."),
+                ],
+                mcp_dynamic_tools: vec![tool("pubmed_search", "Search PubMed.")],
+                ..Default::default()
+            },
+            max_context: 200_000,
+        }
+    }
+
+    #[test]
+    fn the_latest_request_is_every_kind_with_its_share_of_the_window() {
+        let sent = sent();
+        let kinds = sent_kinds(&sent);
+        assert_eq!(
+            kinds.iter().map(|(kind, ..)| *kind).collect::<Vec<_>>(),
+            Sent::ALL
+        );
+        assert_eq!(kinds[0], (Sent::SystemPrompt, 2_000, 1));
+        assert_eq!(kinds[1], (Sent::ToolDefinitions, 6_000, 3));
+        // A kind that holds nothing is still listed, as the WebView lists it.
+        assert_eq!(kinds[2], (Sent::Rules, 0, 0));
+        assert_eq!(kinds[6], (Sent::Conversation, 11_000, 6));
+        assert_eq!(
+            sent_line(&sent),
+            "The latest request to the model: about 20.0k of 200.0k tokens, 10% of its context."
+        );
+        // A window that is not known: the request is the whole.
+        let unknown = SentContext {
+            max_context: 0,
+            ..sent.clone()
+        };
+        assert_eq!(sent_kinds(&unknown)[6], (Sent::Conversation, 11_000, 55));
+        assert_eq!(
+            sent_line(&unknown),
+            "The latest request to the model: about 20.0k tokens."
+        );
+    }
+
+    #[test]
+    fn each_kind_opens_to_its_tools_or_its_text() {
+        let sent = sent();
+        let Holds::Tools(built_in) = holds(&sent, Sent::ToolDefinitions) else {
+            panic!("tools");
+        };
+        assert_eq!(
+            built_in
+                .iter()
+                .map(|tool| tool.name.as_str())
+                .collect::<Vec<_>>(),
+            ["read", "shell"]
+        );
+        assert_eq!(tool_line(&built_in[0]), "Read a file.");
+        assert_eq!(
+            holds(&sent, Sent::DynamicTools),
+            Holds::Tools(&sent.details.mcp_dynamic_tools)
+        );
+        assert_eq!(
+            holds(&sent, Sent::SystemPrompt),
+            Holds::Text("You are Wisp.")
+        );
+        assert_eq!(holds(&sent, Sent::Conversation), Holds::Nothing);
+        assert!(sent_opens(&sent, Sent::ToolDefinitions));
+        assert!(sent_opens(&sent, Sent::SystemPrompt));
+        // Nothing to read in it, or the rows below are what it holds.
+        assert!(!sent_opens(&sent, Sent::Rules));
+        assert!(!sent_opens(&sent, Sent::SubagentDefinitions));
+        assert!(!sent_opens(&sent, Sent::Conversation));
+        assert_eq!(tool_line(&tool("x", "")), "");
+        // A long text opens cut, saying how much is left out.
+        assert_eq!(opened_text("rules\n"), "rules");
+        let long = "é".repeat(OPENED_LIMIT + 3);
+        let opened = opened_text(&long);
+        assert!(opened.ends_with("\n[… 3 more characters]"), "{opened}");
+        assert_eq!(
+            opened.chars().count(),
+            OPENED_LIMIT + "\n[… 3 more characters]".chars().count()
+        );
+    }
+
     #[test]
     fn a_row_is_labelled_summarised_and_weighed() {
         let mut tool = row(ModelRowKind::Tool, "\n  400 reads.fq\nmore", 3_000);
@@ -206,6 +455,7 @@ mod tests {
             compacted: false,
             breakdown: Default::default(),
             epoch: 0,
+            sent: None,
         };
         assert_eq!(share(&tool, &view), "≈750 · 25%");
 

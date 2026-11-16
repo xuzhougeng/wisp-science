@@ -3022,6 +3022,8 @@ impl Server {
             live.messages.clear();
             live.outcomes.clear();
             live.usage = None;
+            // The latest request was made of what is now taken back.
+            live.context = None;
             live.error = None;
             // So do the questions and the review that followed it.
             live.follow_ups.clear();
@@ -6752,6 +6754,9 @@ impl Server {
         let messages = self.0.store.load_messages(session).await?;
         let mut view = crate::model_view::fold(&messages);
         view.epoch = self.0.store.frame_head_epoch(session).await?;
+        // And what the latest request was made of, tools included, while
+        // this host has it.
+        view.sent = self.session(session).live.lock().unwrap().context.clone();
         Ok(view)
     }
 
@@ -7988,7 +7993,7 @@ pub use crate::experts::{Expert, ExpertInput};
 pub use crate::explorations::{FileChange, PromotionPreview, StartedExploration};
 pub use crate::method_search::control::MethodSearchRunDetails;
 pub use crate::method_search::prepare::{MethodSearchAuditReport, ProtectedFileAudit};
-pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow};
+pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow, SentContext};
 pub use crate::origin::FileOrigin;
 pub use crate::papers::{
     Paper, PaperAudience, PaperCapsule, PaperCapsuleStatus, PaperCheck, PaperFinding, PaperInput,
@@ -8059,12 +8064,12 @@ pub use crate::workflows::{
     WorkflowInput, WorkflowTask, CAPABILITIES as WORKFLOW_CAPABILITIES,
     TASK_LIMIT as WORKFLOW_TASK_LIMIT,
 };
-/// A working set's estimated tokens by kind.
-pub use wisp_core::ContextUsage;
 /// Which model a task's agent works on.
 pub use wisp_core::ModelTier;
 /// The most tasks a workflow run as agents takes.
 pub use wisp_core::MAX_DELEGATION_TASKS as WORKFLOW_AGENT_LIMIT;
+/// A working set's estimated tokens by kind, and what each kind holds.
+pub use wisp_core::{ContextToolDetail, ContextUsage, ContextUsageDetails};
 pub use wisp_dto::AutoFailureAnalysisSettings;
 pub use wisp_dto::{
     ArchiveFile, ArchiveFileChoice, ArchiveScript, ConfirmResearchArchive, ResearchArchive,

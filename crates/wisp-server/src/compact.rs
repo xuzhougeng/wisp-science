@@ -142,8 +142,13 @@ impl Server {
             )
             .await?;
         // The context meter says how full the context is now.
-        if let Some(usage) = live.live.lock().unwrap().usage.as_mut() {
-            usage.context_tokens = after;
+        {
+            let mut state = live.live.lock().unwrap();
+            if let Some(usage) = state.usage.as_mut() {
+                usage.context_tokens = after;
+            }
+            // The latest request's split no longer says what is sent.
+            state.context = None;
         }
         Ok(Compacted {
             before,
@@ -191,11 +196,11 @@ impl Server {
             Ok(_) => {
                 // Nothing was said since, so the context is as full as it
                 // was when the compaction began.
-                if let (Some(usage), Some(record)) =
-                    (live.live.lock().unwrap().usage.as_mut(), undone)
-                {
+                let mut state = live.live.lock().unwrap();
+                if let (Some(usage), Some(record)) = (state.usage.as_mut(), undone) {
                     usage.context_tokens = usize::try_from(record.before_tokens).unwrap_or(0);
                 }
+                state.context = None;
                 Ok(())
             }
             Err(error) if error.to_string().contains("context_epoch_has_new_turns") => {

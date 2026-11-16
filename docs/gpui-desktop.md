@@ -156,7 +156,7 @@ which it only reads.
 | Notifications | When a turn ends or a tool waits for approval while Wisp is in the background, a system notification is posted and, if chosen, a sound is played (Settings, General); a recent conversation that is not open is announced too when it stops working |
 | Language | Settings, General, chooses the interface language: System (Chinese on a Chinese system, English otherwise), English or 中文 |
 | Delete a project's folder | Removing a project offers Delete folder too: after you type the project's name, the project is removed and its folder is deleted with every file in it |
-| What the model is sent | Clicking the context percentage by the composer (or the command palette) lists the conversation's working set: the instructions, the summary that stands in for compacted turns, and each message with about how many tokens it takes; above them, the same set by kind (system prompt, rules, skills, sub-agent definitions, conversation), with the core's estimate and each one's share, as the WebView's context usage splits it, tool definitions excepted; Compact… there asks how to compact the conversation, and Hand off… opens the handoff note over it |
+| What the model is sent | Clicking the context percentage by the composer (or the command palette) lists the conversation's working set: the instructions, the summary that stands in for compacted turns, and each message with about how many tokens it takes; above them, the WebView's context usage: once a turn has run, the latest request by its seven kinds (system prompt, tool definitions, rules, skills, MCP & dynamic tools, sub-agent definitions, conversation) as the core counted it for the request, each with its share of the context window, and each opening to its text or to its tools one by one with what the model reads about each; before that, and after a compaction or an undone turn, the saved set by kind with the core's estimate, tool definitions excepted; Compact… there asks how to compact the conversation, and Hand off… opens the handoff note over it |
 | Compaction | `/compact` (or Compact… in What the model is sent) opens a dialog that offers regular compaction (old tool output becomes short archived stubs, every question and answer stays) or semantic compaction (older turns are folded into a summary with a short recent tail), with Cancel and Start compaction. Wherever the conversation was compacted, automatically or on request, the transcript shows a quiet line: who compacted it, whether older turns were summarised or old tool output trimmed, how many tokens before and after and how much smaller; a summary opens under the line with a click, and the latest compaction offers Undo the compaction until the conversation goes on |
 | Handoff | Hand off… in What the model is sent (or Hand off to a new conversation in the command palette) has the conversation's model write a handoff note from what it is sent now, in the WebView's headings (goal and stage, completed work, pending work, state to keep outside the conversation); an optional instruction steers it and Regenerate writes it again. The note is read and changed in the dialog, and Start new conversation opens a new conversation in the same project whose first message is the note; the conversation handed off is left as it was |
 | Too-long recovery | When the model refuses a turn because the conversation no longer fits its context window, even after the turn compacted it by itself, a bar above the composer says so, with the provider's words, and offers the WebView's three ways on: Compact and continue (the compact dialog, set to semantic; once it is done the unfinished turn goes on from what was saved, without a new message and without running finished tools again), Continue in a new conversation (a new conversation in the project is asked to go on with the unfinished request, with this one attached as context) and Pause conversation (the bar goes and the error stays) |
@@ -228,7 +228,7 @@ which it only reads.
 | Messages | Copy any message as Markdown |
 | Attachments | Attach files with the system dialog or by dropping them onto the conversation, or add a project file, an artifact, an environment (this computer or a saved SSH host), a runtime, another conversation, a skill or a workflow from the add-context box; shown as chips until sent. A memo picked there is put into the message as text |
 | Drafts | Survive navigation; preserved on send failure, cleared on durable acceptance |
-| Execution | Shared agent/tools, streamed snapshots while running, stop and errors |
+| Execution | Shared agent/tools, streamed snapshots while running, stop and errors; while a cut or refused model request is retried inside the turn, a bar above the composer says so in the WebView's words (which attempt of how many, the wait before the next try or Reconnecting, the last error), and what the cut attempt had streamed is taken off the answer |
 | Approvals | Exact pending request; allow once, allow that tool for the rest of the conversation, always allow it in this project, or deny |
 | Escape | One window-level stack: Escape closes only the topmost of command palette, file preview, Files panel, Settings, title editor, delete confirmation, remove-project confirmation, the Full access question, the model and effort menus, the remove-model question, the sort menu, select mode and its group menu and delete question, a group's name field, actions and delete question, the conversation's group and move menus, the go-back question, the memo editor and its delete question, the memory editor and its delete question, the question before Clear all of the memory, the share dialog, the Favorites page, its remove question and an edit of saved code there, the journey's relation details and run record, the question about a script changed on disk and the one before closing over unsaved edits, and, after all of them, the newest card for another project's conversation |
 | Shortcuts | Cmd/Ctrl+K opens the command palette; Cmd/Ctrl+P opens it with only its commands, as the WebView's action palette; Cmd/Ctrl+N starts a conversation in the open project; Cmd/Ctrl+, opens Settings |
@@ -790,9 +790,15 @@ Limits of this slice:
   working set of the last turn: parts of the instructions that are
   refreshed when a turn starts (compute contexts, project rules, package
   sources) show as they were then, and a turn that is running shows only
-  what it has saved. Token figures are the length in characters divided
-  by four, not the model's own count; tool definitions are sent too and
-  are not listed. A row's opened text stops at 16,000 characters. When
+  what it has saved. Token figures on the rows are the length in
+  characters divided by four, not the model's own count. The kinds above
+  them are the latest request's, as the core counted it while the turn
+  ran (calibrated to the provider, tool definitions at the fixed estimate
+  compaction uses), and what each kind holds is read from the turn's agent
+  when the turn ends; the embedded host keeps them in memory only, so after
+  a restart, a compaction, its undo or an undone turn the kinds are the
+  saved set's again, without tools, until the next turn. A row's or a
+  kind's opened text stops at 16,000 characters. When
   the working set is compacted, Undo the compaction puts back what the
   compaction replaced, as the WebView's undo does: only the compaction
   shown, only while nothing has been said after it, and not while a turn
@@ -2347,6 +2353,19 @@ research; press it: the archive opens. Open a subagent's conversation: a
 card says whose subagent it is, with Open the parent, and no bar above
 the transcript says it again. In either, drop a file on the transcript
 and press the paste shortcut: nothing is attached.
+In a new conversation open the context percentage after the first turn:
+above the messages are seven kinds, Tool definitions among them, each
+with its tokens and share of the window, and a line saying how full the
+latest request made it. Open Tool definitions: the built-in tools, one a
+line, with the first line of each description; MCP & dynamic tools and
+Sub-agent definitions list theirs; Conversation does not open. Restart
+the app and open it again before sending: the kinds are the saved ones,
+without tool definitions, and the note says so. With a model endpoint
+that drops its answer stream half-way once (a local proxy cutting the
+connection), send a message: a bar above the composer says the stream
+was interrupted, which attempt of five, and when it is tried again, then
+Reconnecting to the model…; the half answer leaves the transcript, the
+bar goes when the answer streams again, and the answer appears once.
 After a few turns send `/compact`: a dialog offers Regular compact and
 Semantic compact, each explained. Press Escape right away: only the
 dialog closes. Send `/compact` again, keep Regular and press Start
@@ -2530,8 +2549,8 @@ the composer sends there.
 Press Escape on a draft you did not change: the dialog closes and nothing
 is written; Research archive again reopens the same draft.
 Switch Review turns on in the composer and have a turn run a tool: when
-it ends the line above the composer reads Reviewing the answer…, then the
-result. Press See: the findings open; Ask Wisp to correct puts them in the
+it ends the line above the composer reads Reviewer is checking the
+margins…, with the WebView's line under it, then the result. Press See: the findings open; Ask Wisp to correct puts them in the
 composer. Send a short message: no review follows and the old result is
 gone. Put a result away with its close button. In Settings, Conversation,
 turn Review turns on and confirm a new conversation starts with the

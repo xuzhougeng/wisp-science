@@ -749,6 +749,10 @@ mod tests {
             ("workspace/shell.rs", "render_approvals"),
             ("workspace/shell.rs", "plan_approval_card"),
             ("workspace/review_view.rs", "render_review_banner"),
+            (
+                "workspace/stream_recovery_view.rs",
+                "render_stream_recovery",
+            ),
             ("workspace/settings_hooks.rs", "render_hook_failures"),
             ("workspace/memory_view.rs", "render_memory_proposal"),
             ("workspace/follow_ups_view.rs", "render_follow_ups"),
@@ -786,6 +790,7 @@ mod tests {
         for function in [
             "render_approvals",
             "render_review_banner",
+            "render_stream_recovery",
             "render_hook_failures",
             "render_memory_proposal",
             "render_follow_ups",

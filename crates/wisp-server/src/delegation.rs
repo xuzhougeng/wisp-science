@@ -2729,6 +2729,7 @@ impl Server {
             live.messages.clear();
             live.draft.clear();
             live.reasoning.clear();
+            live.recovery = None;
             live.error = error.clone();
         }
         match error {

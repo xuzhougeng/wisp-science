@@ -1709,24 +1709,13 @@ fn discard_stream_draft_rows(
             "reasoning" => &mut reasoning_bytes,
             _ => break,
         };
-        let keep = trimmed_prefix_len(&row.text, *budget);
+        let keep = wisp_core::kept_draft_len(&row.text, *budget);
         *budget -= row.text.len() - keep;
         row.text.truncate(keep);
         if row.text.is_empty() {
             items.remove(index);
         }
     }
-}
-
-/// Length of `text` after dropping up to `bytes` from its tail, snapped to a
-/// char boundary. The deltas were appended whole, so the boundary is exact
-/// unless the counts drifted; snapping keeps `truncate` from panicking then.
-fn trimmed_prefix_len(text: &str, bytes: usize) -> usize {
-    let mut keep = text.len().saturating_sub(bytes);
-    while keep > 0 && !text.is_char_boundary(keep) {
-        keep -= 1;
-    }
-    keep
 }
 
 fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) {

@@ -15,11 +15,22 @@ pub enum Asked {
     Done(Review),
 }
 
+/// What is said while the reviewer reads, in the WebView's words for it:
+/// a title and the line under it. The bar above the composer says it while
+/// the review of the latest turn runs, and the review dialog while the
+/// review asked for runs; each is the only place it is said.
+pub fn reading() -> (&'static str, &'static str) {
+    (
+        tr("Reviewer is checking the margins…"),
+        tr("Red pen uncapped; claims are looking nervous"),
+    )
+}
+
 /// The line above the composer about the review that followed the latest
 /// turn, and whether there is a report to open.
 pub fn banner(outcome: &ReviewOutcome) -> (String, Tone, bool) {
     match outcome {
-        ReviewOutcome::Reading => (tr("Reviewing the answer…").into(), Tone::Neutral, false),
+        ReviewOutcome::Reading => (reading().0.into(), Tone::Neutral, false),
         ReviewOutcome::Failed(problem) => (
             crate::i18n::fill(
                 tr("The answer was not reviewed: {}"),
@@ -176,8 +187,13 @@ mod tests {
     fn the_banner_says_where_the_review_of_the_latest_turn_stands() {
         assert_eq!(
             banner(&ReviewOutcome::Reading),
-            ("Reviewing the answer…".into(), Tone::Neutral, false)
+            (
+                "Reviewer is checking the margins…".into(),
+                Tone::Neutral,
+                false
+            )
         );
+        assert_eq!(reading().1, "Red pen uncapped; claims are looking nervous");
         assert_eq!(
             banner(&ReviewOutcome::Failed("no report".into())),
             (

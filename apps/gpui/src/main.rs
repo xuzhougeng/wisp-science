@@ -65,6 +65,7 @@ mod share;
 mod slash;
 mod smiles;
 mod state;
+mod stream_recovery;
 mod sync;
 mod tabs;
 mod terminal;

@@ -1419,6 +1419,9 @@ impl Server {
         live.proposing = false;
         live.stop_reason = None;
         live.hook_failures.clear();
+        live.recovery = None;
+        // The latest request is this turn's from now on.
+        live.context = None;
         session.suggested.notify_waiters();
         live.calls.clear();
         live.provenance.clear();
@@ -1477,6 +1480,7 @@ impl Server {
             live.messages.clear();
             live.draft.clear();
             live.reasoning.clear();
+            live.recovery = None;
             live.error = error;
             // Set with the turn's end, so whoever sees the turn over
             // can wait for the questions without missing them.
@@ -1926,6 +1930,8 @@ impl Server {
                 options.acp_agent.is_empty() && wisp_llm::is_context_overflow_message(error)
             })
             .map(|_| dto::TurnErrorKind::ContextTooLong);
+        // Only while the turn runs: one that ended has nothing to retry.
+        let stream_recovery = live.recovery.clone().filter(|_| live.running);
         let snapshot = dto::Snapshot {
             magpie: None,
             schema: dto::SCHEMA.into(),
@@ -1981,6 +1987,7 @@ impl Server {
             request_id: turn.as_ref().map(|turn| turn.request_id.clone()),
             error,
             error_kind,
+            stream_recovery,
             approval_scopes: approvals
                 .iter()
                 .map(|a| (a.approval_id.clone(), vec![dto::ApprovalScope::Once]))

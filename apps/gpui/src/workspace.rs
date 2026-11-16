@@ -69,6 +69,7 @@ mod settings_workflows;
 mod share_view;
 mod shell;
 mod slash_view;
+mod stream_recovery_view;
 mod surfaces;
 mod tabs_view;
 mod terminal_view;
@@ -198,6 +199,9 @@ pub struct Workspace {
     model_view_error: Option<String>,
     /// The rows opened to show their whole text.
     model_view_open: HashSet<usize>,
+    /// The kind of the latest request opened to show what it holds; one
+    /// at a time, as in the WebView's context usage.
+    model_view_kind: Option<crate::model_view::Sent>,
     /// The kind of compaction the compact dialog has chosen.
     compact_kind: crate::compaction::Kind,
     /// A compaction asked for there is running.
@@ -1705,6 +1709,7 @@ impl Workspace {
             model_view: None,
             model_view_error: None,
             model_view_open: HashSet::new(),
+            model_view_kind: None,
             compact_kind: Default::default(),
             compacting: false,
             compact_error: None,

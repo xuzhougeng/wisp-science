@@ -9605,6 +9605,189 @@ async fn the_model_view_is_what_the_next_turn_would_be_sent() {
 }
 
 #[tokio::test]
+async fn the_model_view_keeps_what_the_latest_request_was_made_of_tools_included() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    // No turn has run here: only the saved working set can be shown.
+    assert_eq!(
+        server.model_view(PROJECT, &session).await.unwrap().sent,
+        None
+    );
+
+    send(&server, &session, "count the reads").await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    let view = server.model_view(PROJECT, &session).await.unwrap();
+    let sent = view.sent.expect("the turn's request is kept");
+    // The saved working set still leaves tool definitions out; the request
+    // counted them, by where each tool comes from.
+    assert_eq!(view.breakdown.tool_definitions, 0);
+    assert!(sent.usage.tool_definitions > 0, "{:?}", sent.usage);
+    assert!(sent.usage.system_prompt > 0 && sent.usage.conversation > 0);
+    let names = |tools: &[desktop::ContextToolDetail]| -> Vec<String> {
+        tools.iter().map(|tool| tool.name.clone()).collect()
+    };
+    let built_in = names(&sent.details.tool_definitions);
+    let delegating = names(&sent.details.subagent_definitions);
+    let dynamic = names(&sent.details.mcp_dynamic_tools);
+    for tool in ["read", "shell", "write"] {
+        assert!(
+            built_in.iter().any(|name| name == tool),
+            "{tool}: {built_in:?}"
+        );
+    }
+    // A top-level conversation can hand work on; those tools count apart.
+    assert!(
+        delegating.iter().any(|name| name == "dispatch_subagent"),
+        "{delegating:?}"
+    );
+    for name in &built_in {
+        assert!(
+            !delegating.contains(name) && !dynamic.contains(name),
+            "{name}"
+        );
+    }
+    // Each tool is listed with what the model reads about it.
+    assert!(sent
+        .details
+        .tool_definitions
+        .iter()
+        .all(|tool| !tool.description.is_empty()));
+    assert!(!sent.details.system_prompt.trim().is_empty());
+
+    // An undone turn takes back what the latest request was made of.
+    let latest = desktop::TurnRef {
+        from_end: 0,
+        text: "count the reads".into(),
+    };
+    server.undo_turn(PROJECT, &session, &latest).await.unwrap();
+    assert_eq!(
+        server.model_view(PROJECT, &session).await.unwrap().sent,
+        None
+    );
+    server.shutdown().await;
+}
+
+/// Cuts its answer to "count the reads" off once, half-way, then answers
+/// whole when asked again, after the test lets it.
+struct CutOnce {
+    asked: Arc<AtomicUsize>,
+    gate: Arc<tokio::sync::Semaphore>,
+}
+
+#[async_trait]
+impl Provider for CutOnce {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+        Ok(Completion {
+            content: "noted".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        let asked = messages.last().is_some_and(|message| {
+            message.role == wisp_llm::Role::User && message.content.as_text() == "count the reads"
+        });
+        if !asked {
+            return self.complete(messages, tools).await;
+        }
+        match self.asked.fetch_add(1, Ordering::SeqCst) {
+            0 => {
+                sink.on_text("Half an ans");
+                Err(wisp_llm::LlmError::Incomplete)
+            }
+            _ => {
+                self.gate.acquire().await.unwrap().forget();
+                sink.on_text("The whole answer");
+                Ok(Completion {
+                    content: "The whole answer".into(),
+                    finish_reason: Some("stop".into()),
+                    ..Default::default()
+                })
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_cut_answer_is_retried_in_the_turn_and_shown_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let asked = Arc::new(AtomicUsize::new(0));
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let factory: ModelFactory = {
+        let (asked, gate) = (asked.clone(), gate.clone());
+        Arc::new(move |_| {
+            Box::new(CutOnce {
+                asked: asked.clone(),
+                gate: gate.clone(),
+            })
+        })
+    };
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    send(&server, &session, "count the reads").await.unwrap();
+    // The request is sent again and held there, so the state is read while
+    // it stands.
+    let retrying = wait_for(&server, &session, |s| {
+        s.stream_recovery
+            .as_ref()
+            .is_some_and(|r| r.phase == dto::StreamRecoveryPhase::Reconnecting)
+    })
+    .await;
+    assert!(retrying.running);
+    let recovery = retrying.stream_recovery.unwrap();
+    assert_eq!(recovery.cause, dto::StreamRecoveryCause::Stream);
+    assert_eq!((recovery.attempt, recovery.retry_in_ms), (1, 0));
+    assert!(recovery.max_attempts >= 1);
+    assert!(!recovery.error.is_empty());
+    // What the cut attempt had streamed is gone, not left for the retry
+    // to be added to.
+    assert!(retrying
+        .items
+        .iter()
+        .all(|item| !item.text.contains("Half an ans")));
+
+    gate.add_permits(1);
+    let ended = wait_for(&server, &session, |s| !s.running).await;
+    assert_eq!(ended.stream_recovery, None);
+    assert_eq!(ended.error, None);
+    let answers: Vec<_> = ended
+        .items
+        .iter()
+        .filter(|item| item.role == "assistant")
+        .map(|item| item.text.as_str())
+        .collect();
+    assert_eq!(answers, ["The whole answer"]);
+    assert_eq!(asked.load(Ordering::SeqCst), 2);
+    // A snapshot without one says nothing about it, for older clients.
+    let sent = call(
+        &server,
+        "native_conversation_snapshot",
+        PROJECT,
+        json!({"session_id": session}),
+    )
+    .await
+    .unwrap();
+    assert!(sent.get("stream_recovery").is_none());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_conversation_that_asks_for_it_is_reviewed_after_each_turn_worth_it() {
     // A model that runs one tool per conversation and answers briefly, and
     // reports one finding whenever it is asked to review.
@@ -16701,6 +16884,14 @@ async fn a_conversation_is_compacted_on_request_and_its_history_archived() {
         wait_for(&server, &session, |s| !s.running).await;
     }
     let shown_before = snapshot(&server, &session).await.items.len();
+    // What the last turn's request was made of is kept until the
+    // compaction changes what is sent.
+    assert!(server
+        .model_view(PROJECT, &session)
+        .await
+        .unwrap()
+        .sent
+        .is_some());
     let done = server
         .compact_conversation(PROJECT, &session, desktop::CompactKind::Regular)
         .await
@@ -16735,6 +16926,7 @@ async fn a_conversation_is_compacted_on_request_and_its_history_archived() {
     // that was looked at, and only once.
     let compacted = server.model_view(PROJECT, &session).await.unwrap();
     assert!(compacted.epoch > 0);
+    assert_eq!(compacted.sent, None);
     let whole_before = compacted.chars;
     assert!(server
         .undo_compaction(PROJECT, &session, compacted.epoch + 1)
