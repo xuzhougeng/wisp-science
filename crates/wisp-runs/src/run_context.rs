@@ -1214,6 +1214,13 @@ impl RunManager {
             if self.active.lock().await.contains_key(&run.id) {
                 continue;
             }
+            // A method search that was just started waits for its own
+            // coordinator to take it, which this manager does not run. It is
+            // not lost: one still waiting when the app stops is paused at the
+            // next start by the searches' own recovery.
+            if run.kind == "method_search" && run.status == wisp_store::RunStatus::Submitted {
+                continue;
+            }
             let lease_secs = run
                 .remote_handle_json
                 .as_deref()

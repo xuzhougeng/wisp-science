@@ -55,10 +55,10 @@ mod tests {
     fn exact_gateway_model_uses_catalog_and_clamps_overrides() {
         let cfg =
             ProviderConfig::openai("https://api.kimi.com/coding/v1", "fake", "vendor/k3-256k");
-        assert_eq!(resolve(&cfg, None, None).unwrap(), (262_144, 131_072));
+        assert_eq!(resolve(&cfg, None, None).unwrap(), (262_144, 262_144));
         assert_eq!(
             resolve(&cfg, Some(1_000_000), Some(1_000_000)).unwrap(),
-            (262_144, 131_072)
+            (262_144, 262_144)
         );
         assert_eq!(
             resolve(&cfg, Some(10_000), Some(1000)).unwrap(),

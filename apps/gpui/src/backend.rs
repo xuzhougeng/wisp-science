@@ -5,8 +5,24 @@ use std::{future::Future, path::PathBuf, sync::Arc};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio::{runtime::Runtime, sync::OnceCell, task::JoinHandle};
-use wisp_dto::remote_access::RemoteRequest;
-use wisp_server::{Server, config::Config};
+use wisp_dto::{
+    SessionSearchInfo,
+    native_conversations::{SendAccepted, SendRequest},
+    native_files::{Directory, Preview},
+    remote_access::RemoteRequest,
+};
+use wisp_server::{
+    Server,
+    config::Config,
+    desktop::{
+        ArtifactRow, BatchAction, BatchReport, ConnectorRow, ConversationList, ConversationOptions,
+        ConversationStatus, CredentialRow, EnvironmentsView, Favorite, FileMatch, Folder,
+        GlobalMemory, LibraryItem, LibraryItemSummary, McpServer, McpServerInput, McpServerRow,
+        MemoryView, ModelInput, ModelSettings, ProjectGrants, ProjectMemo, ProjectMemoPatch,
+        ProjectSettings, ReferenceOption, Remember, SkillRow, SshHostRow, StorageView,
+        TurnDefaults, TurnRef, UsageView,
+    },
+};
 use wisp_sync::DirectRemoteHost;
 
 #[derive(Clone)]
@@ -39,16 +55,37 @@ impl Backend {
     pub fn initialize(&self) -> Reply<()> {
         let host = self.host.clone();
         self.spawn(async move {
-            let base = dirs::data_local_dir().ok_or("Cannot locate the local data directory")?;
-            let data = std::env::var_os("WISP_GPUI_DATA")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| base.join("wisp-science-gpui"));
-            let workspace = std::env::var_os("WISP_GPUI_WORKSPACE")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| base.join("wisp-science-gpui-workspace"));
+            let data = crate::settings::data_dir()?;
+            let fallback = crate::settings::default_workspace()
+                .ok_or("Cannot locate the local data directory")?;
+            // A folder chosen in Settings, General, is used from the start
+            // after it was chosen; the environment's choice wins.
+            let chosen = std::fs::read_to_string(data.join(crate::settings::WORKSPACE_FILE)).ok();
+            let workspace = crate::settings::workspace_folder(
+                std::env::var_os("WISP_GPUI_WORKSPACE").map(PathBuf::from),
+                chosen.as_deref(),
+                fallback,
+            );
             host.get_or_try_init(|| async {
                 let config = Config::local(data, workspace).map_err(|e| format!("{e:#}"))?;
-                Server::open(config).await.map_err(|e| format!("{e:#}"))
+                let server = Server::open(config).await.map_err(|e| format!("{e:#}"))?;
+                // Scheduled tasks fire while the app is open.
+                server.start_scheduler();
+                // The bridge to the browser extension, when it was left on.
+                server.start_browser().await;
+                // The tunnel for remote web access, when it was left on.
+                server.start_remote_access().await;
+                // The chat apps that were left on.
+                server.start_channels().await;
+                // The StickS3 desk display's listener, when it was left on;
+                // a failure shows on its page and never stops the app.
+                let _ = server.start_device_bridge().await;
+                // Cloud-drive folder projects publish this device's edits.
+                server.start_folder_publisher();
+                // Background task batches the app closed on are settled, and
+                // results not yet delivered reach their conversations.
+                server.start_batch_deliveries();
+                Ok::<_, String>(server)
             })
             .await?;
             Ok(())
@@ -78,15 +115,2550 @@ impl Backend {
         })
     }
 
-    pub fn register_project(&self, path: PathBuf) -> Reply<String> {
+    /// Runs a desktop-only host operation. These are direct method calls and
+    /// have no remote command name.
+    fn local<T, F>(&self, work: impl FnOnce(Server) -> F + Send + 'static) -> Reply<T>
+    where
+        T: Send + 'static,
+        F: Future<Output = anyhow::Result<T>> + Send,
+    {
         let host = self.host.clone();
         self.spawn(async move {
-            host.get()
-                .ok_or("Host is not ready")?
-                .register_local_project(&path)
-                .await
-                .map_err(|e| format!("{e:#}"))
+            let host = host.get().ok_or("Host is not ready")?.clone();
+            work(host).await.map_err(|e| format!("{e:#}"))
         })
+    }
+
+    pub fn create_project(
+        &self,
+        parent: PathBuf,
+        name: String,
+        description: String,
+        standard_layout: bool,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.create_local_project(&parent, &name, &description, standard_layout)
+                .await
+        })
+    }
+
+    pub fn upload_files(
+        &self,
+        project: String,
+        folder: String,
+        sources: Vec<PathBuf>,
+    ) -> Reply<Vec<wisp_dto::LocalFileUploadResult>> {
+        self.local(move |host| async move { host.upload_files(&project, &folder, sources).await })
+    }
+
+    pub fn register_project(&self, path: PathBuf) -> Reply<String> {
+        self.local(move |host| async move { host.register_local_project(&path).await })
+    }
+
+    pub fn recent_conversations(&self, limit: usize) -> Reply<Vec<SessionSearchInfo>> {
+        self.local(move |host| async move { host.recent_conversations(limit).await })
+    }
+
+    pub fn find_conversations(&self, query: String, limit: usize) -> Reply<Vec<SessionSearchInfo>> {
+        self.local(move |host| async move { host.find_conversations(&query, limit).await })
+    }
+
+    /// Files by name across every project.
+    /// Files by name in one project, or in every project.
+    pub fn find_files(
+        &self,
+        project: Option<String>,
+        query: String,
+        limit: usize,
+    ) -> Reply<Vec<FileMatch>> {
+        self.local(
+            move |host| async move { host.find_files(project.as_deref(), &query, limit).await },
+        )
+    }
+
+    pub fn skill_options(
+        &self,
+        project: String,
+        query: String,
+        limit: usize,
+    ) -> Reply<Vec<ReferenceOption>> {
+        self.local(move |host| async move { host.skill_options(&project, &query, limit).await })
+    }
+
+    /// Copies files picked outside the project into it and returns the
+    /// project-relative path of each.
+    pub fn import_attachments(&self, project: String, files: Vec<PathBuf>) -> Reply<Vec<String>> {
+        self.local(move |host| async move { host.import_attachments(&project, &files).await })
+    }
+
+    /// Sends a message with its files and references.
+    pub fn send_message(&self, project: String, request: SendRequest) -> Reply<SendAccepted> {
+        self.local(move |host| async move { host.send(&project, request).await })
+    }
+
+    pub fn project_directory(&self, project: String, path: String) -> Reply<Directory> {
+        self.local(move |host| async move { host.project_directory(&project, &path).await })
+    }
+
+    /// A picture in the project: its content type and its bytes.
+    /// A document of the project as Markdown to read.
+    pub fn document_preview(&self, project: String, path: String) -> Reply<Option<String>> {
+        self.local(move |host| async move { host.document_preview(&project, &path).await })
+    }
+
+    pub fn project_image(&self, project: String, path: String) -> Reply<(String, Vec<u8>)> {
+        self.local(move |host| async move { host.project_image(&project, &path).await })
+    }
+
+    /// A PDF of the project, whole, for its pages to be drawn.
+    pub fn project_pdf(&self, project: String, path: String) -> Reply<Vec<u8>> {
+        self.local(move |host| async move { host.project_pdf(&project, &path).await })
+    }
+
+    /// Makes an empty folder or file in a project folder.
+    pub fn create_project_entry(
+        &self,
+        project: String,
+        parent: String,
+        name: String,
+        folder: bool,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.create_project_entry(&project, &parent, &name, folder)
+                .await
+        })
+    }
+
+    pub fn rename_project_entry(
+        &self,
+        project: String,
+        path: String,
+        name: String,
+    ) -> Reply<String> {
+        self.local(
+            move |host| async move { host.rename_project_entry(&project, &path, &name).await },
+        )
+    }
+
+    /// Moves a file or folder to the project's trash; the reply is where
+    /// it went.
+    pub fn trash_project_entry(&self, project: String, path: String) -> Reply<String> {
+        self.local(move |host| async move { host.trash_project_entry(&project, &path).await })
+    }
+
+    pub fn project_file(&self, project: String, path: String) -> Reply<Preview> {
+        self.local(move |host| async move { host.project_file(&project, &path).await })
+    }
+
+    /// Writes a project as one archive at `destination`.
+    pub fn export_project(&self, project: String, destination: PathBuf) -> Reply<()> {
+        self.local(move |host| async move { host.export_project(&project, &destination).await })
+    }
+
+    /// Reads an archive and puts its project in a new folder under `parent`.
+    /// How far the project export or import under way has got.
+    pub fn archive_progress(&self) -> Reply<Option<wisp_server::desktop::ArchiveProgress>> {
+        self.local(|host| async move { Ok(host.archive_progress()) })
+    }
+
+    /// Writes a project as a folder package under `parent`; answers the
+    /// folder made.
+    pub fn export_project_folder(&self, project: String, parent: PathBuf) -> Reply<PathBuf> {
+        self.local(move |host| async move { host.export_project_folder(&project, &parent).await })
+    }
+
+    /// Opens a project folder package where it is.
+    pub fn import_project_folder(&self, package: PathBuf) -> Reply<String> {
+        self.local(move |host| async move { host.import_project_folder(&package).await })
+    }
+
+    pub fn import_project(&self, archive: PathBuf, parent: PathBuf) -> Reply<String> {
+        self.local(move |host| async move { host.import_project(&archive, &parent).await })
+    }
+
+    /// The WebView desktop's projects and settings in its database, which
+    /// is only read.
+    pub fn webview_data(&self, database: PathBuf) -> Reply<wisp_server::desktop::WebViewData> {
+        self.local(move |host| async move { host.webview_data(&database).await })
+    }
+
+    /// Brings the chosen WebView projects, groups of settings and saved
+    /// models over; the reply says how each project went and which groups
+    /// and models came.
+    pub fn import_webview(
+        &self,
+        database: PathBuf,
+        ids: Vec<String>,
+        settings: Vec<String>,
+        models: Vec<String>,
+    ) -> Reply<wisp_server::desktop::WebViewOutcome> {
+        self.local(move |host| async move {
+            host.import_webview(&database, &ids, &settings, &models)
+                .await
+        })
+    }
+
+    /// What Wisp can draw on in a project, counted.
+    pub fn capabilities(&self, project: String) -> Reply<wisp_server::desktop::Capabilities> {
+        self.local(move |host| async move { host.capabilities(&project).await })
+    }
+
+    /// What each saved turn of a conversation used.
+    pub fn turn_tokens(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<Vec<wisp_server::desktop::TurnTokens>> {
+        self.local(move |host| async move { host.turn_tokens(&project, &session).await })
+    }
+
+    /// A conversation as a trajectory: its turns, their steps and totals.
+    pub fn trajectory(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<wisp_dto::TrajectorySnapshotDto> {
+        self.local(move |host| async move { host.trajectory(&project, &session).await })
+    }
+
+    /// A conversation, whole, as a Markdown document.
+    pub fn share_rows(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<Vec<wisp_dto::native_conversations::ShareRow>> {
+        self.local(move |host| async move { host.share_rows(&project, &session).await })
+    }
+
+    pub fn export_conversation(&self, project: String, session: String) -> Reply<String> {
+        self.local(move |host| async move { host.export_conversation(&project, &session).await })
+    }
+
+    /// What happened in a project between two moments, newest first.
+    pub fn journey(
+        &self,
+        project: String,
+        from: i64,
+        until: i64,
+    ) -> Reply<wisp_dto::ResearchJourney> {
+        self.local(move |host| async move { host.journey(&project, from, until).await })
+    }
+
+    /// Every project's history between two moments, for the calendar.
+    pub fn calendar(&self, from: i64, until: i64) -> Reply<Vec<wisp_dto::ResearchCalendarProject>> {
+        self.local(move |host| async move { host.calendar(from, until).await })
+    }
+
+    /// Adds a record the researcher wrote to the project's history.
+    /// Drafts (again) the recap of one local day of the project.
+    pub fn draft_recap(
+        &self,
+        project: String,
+        from: i64,
+        until: i64,
+    ) -> Reply<Option<wisp_dto::ResearchRecap>> {
+        self.local(move |host| async move { host.draft_recap(&project, from, until).await })
+    }
+
+    /// Confirms, dismisses or edits a recap.
+    pub fn update_recap(
+        &self,
+        project: String,
+        edit: wisp_dto::ResearchRecapEdit,
+    ) -> Reply<wisp_dto::ResearchRecap> {
+        self.local(move |host| async move { host.update_recap(&project, edit).await })
+    }
+
+    pub fn daily_recap(&self) -> Reply<wisp_dto::DailyRecapAutomation> {
+        self.local(move |host| async move { Ok(host.daily_recap().await) })
+    }
+
+    pub fn set_daily_recap(
+        &self,
+        enabled: bool,
+        time: String,
+    ) -> Reply<wisp_dto::DailyRecapAutomation> {
+        self.local(move |host| async move { host.set_daily_recap(enabled, &time).await })
+    }
+
+    pub fn run_daily_recap_now(&self) -> Reply<wisp_dto::DailyRecapAutomation> {
+        self.local(move |host| async move { Ok(host.run_daily_recap_now().await) })
+    }
+
+    pub fn add_journal_entry(
+        &self,
+        project: String,
+        input: wisp_dto::ResearchJournalInput,
+    ) -> Reply<String> {
+        self.local(move |host| async move { host.add_journal_entry(&project, input).await })
+    }
+
+    pub fn project_settings(&self, project: String) -> Reply<ProjectSettings> {
+        self.local(move |host| async move { host.project_settings(&project).await })
+    }
+
+    /// Saves a project's name, description and rules; the reply is what
+    /// was kept.
+    pub fn set_project_settings(
+        &self,
+        project: String,
+        settings: ProjectSettings,
+    ) -> Reply<ProjectSettings> {
+        self.local(move |host| async move { host.set_project_settings(&project, settings).await })
+    }
+
+    pub fn star_project(&self, project: String, starred: bool) -> Reply<()> {
+        self.local(move |host| async move { host.star_project(&project, starred).await })
+    }
+
+    /// What deleting a project together with its folder would delete.
+    pub fn project_folder(&self, project: String) -> Reply<wisp_server::desktop::ProjectFolder> {
+        self.local(move |host| async move { host.project_folder(&project).await })
+    }
+
+    /// Removes a project and deletes its folder. `typed` is the project's
+    /// name as the user typed it; the host checks it again.
+    pub fn delete_project_and_folder(&self, project: String, typed: String) -> Reply<()> {
+        self.local(
+            move |host| async move { host.delete_project_and_folder(&project, &typed).await },
+        )
+    }
+
+    pub fn remove_project(&self, project: String) -> Reply<()> {
+        self.local(move |host| async move { host.remove_project(&project).await })
+    }
+
+    pub fn conversations(
+        &self,
+        project: String,
+        query: String,
+        archived: bool,
+    ) -> Reply<ConversationList> {
+        self.local(move |host| async move { host.conversations(&project, &query, archived).await })
+    }
+
+    pub fn rename_conversation(
+        &self,
+        project: String,
+        session: String,
+        title: String,
+    ) -> Reply<()> {
+        self.local(
+            move |host| async move { host.rename_conversation(&project, &session, &title).await },
+        )
+    }
+
+    pub fn pin_conversation(&self, project: String, session: String, pinned: bool) -> Reply<()> {
+        self.local(
+            move |host| async move { host.pin_conversation(&project, &session, pinned).await },
+        )
+    }
+
+    pub fn archive_conversation(
+        &self,
+        project: String,
+        session: String,
+        archived: bool,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.archive_conversation(&project, &session, archived)
+                .await
+        })
+    }
+
+    pub fn delete_conversation(&self, project: String, session: String) -> Reply<()> {
+        self.local(move |host| async move { host.delete_conversation(&project, &session).await })
+    }
+
+    pub fn create_folder(&self, project: String, name: String) -> Reply<Folder> {
+        self.local(move |host| async move { host.create_folder(&project, &name).await })
+    }
+
+    pub fn rename_folder(&self, project: String, folder: String, name: String) -> Reply<()> {
+        self.local(move |host| async move { host.rename_folder(&project, &folder, &name).await })
+    }
+
+    pub fn delete_folder(&self, project: String, folder: String) -> Reply<()> {
+        self.local(move |host| async move { host.delete_folder(&project, &folder).await })
+    }
+
+    pub fn reorder_folders(&self, project: String, folders: Vec<String>) -> Reply<()> {
+        self.local(move |host| async move { host.reorder_folders(&project, &folders).await })
+    }
+
+    pub fn group_conversation(
+        &self,
+        project: String,
+        session: String,
+        folder: Option<String>,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.group_conversation(&project, &session, folder.as_deref())
+                .await
+        })
+    }
+
+    pub fn batch(
+        &self,
+        project: String,
+        sessions: Vec<String>,
+        action: BatchAction,
+    ) -> Reply<BatchReport> {
+        self.local(move |host| async move { host.batch(&project, &sessions, action).await })
+    }
+
+    /// Copies (`keep`) or moves a conversation to another project and
+    /// returns its id there.
+    pub fn preview_move_with_artifacts(
+        &self,
+        project: String,
+        session: String,
+        target: String,
+    ) -> Reply<wisp_dto::SessionArtifactPreview> {
+        self.local(move |host| async move {
+            host.preview_move_with_artifacts(&project, &session, &target)
+                .await
+        })
+    }
+
+    pub fn move_conversation_with_artifacts(
+        &self,
+        project: String,
+        session: String,
+        target: String,
+        fingerprint: String,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.move_conversation_with_artifacts(&project, &session, &target, &fingerprint)
+                .await
+        })
+    }
+
+    pub fn transfer_conversation(
+        &self,
+        project: String,
+        session: String,
+        target: String,
+        keep: bool,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.transfer_conversation(&project, &session, &target, keep)
+                .await
+        })
+    }
+
+    /// Cuts the conversation back to just before `turn` and returns that
+    /// message's text.
+    pub fn rewind_conversation(
+        &self,
+        project: String,
+        session: String,
+        turn: TurnRef,
+    ) -> Reply<String> {
+        self.local(
+            move |host| async move { host.rewind_conversation(&project, &session, &turn).await },
+        )
+    }
+
+    /// Goes back to a message; with `undo_files`, the latest turn's files
+    /// are put back as well and what was done to them is said.
+    pub fn rewind_or_undo(
+        &self,
+        project: String,
+        session: String,
+        turn: TurnRef,
+        undo_files: bool,
+    ) -> Reply<(String, Option<wisp_server::desktop::TurnFiles>)> {
+        self.local(move |host| async move {
+            if undo_files {
+                let (text, files) = host.undo_turn(&project, &session, &turn).await?;
+                Ok((text, Some(files)))
+            } else {
+                let text = host.rewind_conversation(&project, &session, &turn).await?;
+                Ok((text, None))
+            }
+        })
+    }
+
+    /// Copies the conversation, or its part through `upto`'s reply, into a
+    /// new one and returns its id.
+    pub fn branch_conversation(
+        &self,
+        project: String,
+        session: String,
+        upto: Option<TurnRef>,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.branch_conversation(&project, &session, upto.as_ref())
+                .await
+        })
+    }
+
+    pub fn memos(&self, project: String) -> Reply<Vec<ProjectMemo>> {
+        self.local(move |host| async move { host.memos(&project).await })
+    }
+
+    pub fn add_memo(&self, project: String, title: String, body: String) -> Reply<ProjectMemo> {
+        self.local(move |host| async move { host.add_memo(&project, &title, &body).await })
+    }
+
+    pub fn update_memo(&self, project: String, patch: ProjectMemoPatch) -> Reply<ProjectMemo> {
+        self.local(move |host| async move { host.update_memo(&project, patch).await })
+    }
+
+    pub fn delete_memo(&self, project: String, memo: String) -> Reply<()> {
+        self.local(move |host| async move { host.delete_memo(&project, &memo).await })
+    }
+
+    pub fn memory(&self, project: String) -> Reply<MemoryView> {
+        self.local(move |host| async move { host.memory(&project).await })
+    }
+
+    pub fn memory_tidy(&self) -> Reply<wisp_dto::MemoryTidyAutomation> {
+        self.local(move |host| async move { Ok(host.memory_tidy().await) })
+    }
+
+    pub fn set_memory_tidy(&self, enabled: bool) -> Reply<wisp_dto::MemoryTidyAutomation> {
+        self.local(move |host| async move { host.set_memory_tidy(enabled).await })
+    }
+
+    pub fn run_memory_tidy_now(&self) -> Reply<wisp_dto::MemoryTidyAutomation> {
+        self.local(move |host| async move { Ok(host.run_memory_tidy_now().await) })
+    }
+
+    /// Applies (`true`) or dismisses one tidy proposal.
+    pub fn settle_memory_tidy(
+        &self,
+        id: String,
+        apply: bool,
+    ) -> Reply<wisp_dto::MemoryTidyAutomation> {
+        self.local(move |host| async move {
+            match apply {
+                true => host.apply_memory_tidy(&id).await,
+                false => host.dismiss_memory_tidy(&id).await,
+            }
+        })
+    }
+
+    pub fn set_memory_enabled(&self, enabled: bool) -> Reply<()> {
+        self.local(move |host| async move { host.set_memory_enabled(enabled).await })
+    }
+
+    pub fn memory_note(&self, project: String, name: String) -> Reply<String> {
+        self.local(move |host| async move { host.memory_note(&project, &name).await })
+    }
+
+    pub fn save_memory_note(&self, project: String, name: String, content: String) -> Reply<()> {
+        self.local(
+            move |host| async move { host.save_memory_note(&project, &name, &content).await },
+        )
+    }
+
+    pub fn delete_memory_note(&self, project: String, name: String) -> Reply<()> {
+        self.local(move |host| async move { host.delete_memory_note(&project, &name).await })
+    }
+
+    /// Keeps `text` for the project, or with `everywhere` as a habit.
+    pub fn remember(
+        &self,
+        project: String,
+        session: Option<String>,
+        text: String,
+        everywhere: bool,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.remember(&project, session.as_deref(), &text, everywhere)
+                .await
+        })
+    }
+
+    pub fn add_habit(&self, content: String) -> Reply<GlobalMemory> {
+        self.local(move |host| async move { host.add_habit(&content).await })
+    }
+
+    pub fn update_habit(&self, id: String, content: String) -> Reply<()> {
+        self.local(move |host| async move { host.update_habit(&id, &content).await })
+    }
+
+    pub fn delete_habit(&self, id: String) -> Reply<()> {
+        self.local(move |host| async move { host.delete_habit(&id).await })
+    }
+
+    pub fn favorites(
+        &self,
+        query: String,
+        kind: Option<&'static str>,
+    ) -> Reply<Vec<LibraryItemSummary>> {
+        self.local(move |host| async move { host.favorites(&query, kind).await })
+    }
+
+    pub fn favorite(&self, id: String) -> Reply<Favorite> {
+        self.local(move |host| async move { host.favorite(&id).await })
+    }
+
+    pub fn conversation_favorites(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<Vec<LibraryItem>> {
+        self.local(move |host| async move { host.conversation_favorites(&project, &session).await })
+    }
+
+    /// Saves a message's text as it reads now.
+    pub fn star_text(&self, project: String, session: String, text: String) -> Reply<LibraryItem> {
+        self.local(move |host| async move {
+            host.star_text(&project, &session, "text", None, &text)
+                .await
+        })
+    }
+
+    /// Saves a piece of code with the language it is in.
+    pub fn star_code(
+        &self,
+        project: String,
+        session: String,
+        language: String,
+        code: String,
+    ) -> Reply<LibraryItem> {
+        self.local(move |host| async move {
+            host.star_text(&project, &session, "code", Some(&language), &code)
+                .await
+        })
+    }
+
+    pub fn star_figure(
+        &self,
+        project: String,
+        session: String,
+        path: String,
+    ) -> Reply<LibraryItem> {
+        self.local(move |host| async move { host.star_figure(&project, &session, &path).await })
+    }
+
+    pub fn unstar(&self, id: String) -> Reply<()> {
+        self.local(move |host| async move { host.unstar(&id).await })
+    }
+
+    pub fn preference(&self, name: &'static str) -> Reply<Option<String>> {
+        self.local(move |host| async move { host.preference(name).await })
+    }
+
+    pub fn set_preference(&self, name: &'static str, value: String) -> Reply<()> {
+        self.local(move |host| async move { host.set_preference(name, &value).await })
+    }
+
+    pub fn artifact_versions(
+        &self,
+        project: String,
+        artifact: String,
+    ) -> Reply<Vec<wisp_server::desktop::ArtifactVersionRow>> {
+        self.local(move |host| async move { host.artifact_versions(&project, &artifact).await })
+    }
+
+    pub fn save_artifact_version(
+        &self,
+        project: String,
+        version: String,
+        destination: PathBuf,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.save_artifact_version(&project, &version, &destination)
+                .await
+        })
+    }
+
+    pub fn artifacts(
+        &self,
+        project: String,
+        session: Option<String>,
+        query: String,
+        limit: usize,
+    ) -> Reply<Vec<ArtifactRow>> {
+        self.local(move |host| async move {
+            host.artifacts(&project, session.as_deref(), &query, limit)
+                .await
+        })
+    }
+
+    pub fn cancel_run(&self, project: String, run: String) -> Reply<()> {
+        self.local(move |host| async move { host.cancel_run(&project, &run).await })
+    }
+
+    /// Where a project's work keeps things on a saved SSH host.
+    pub fn host_storage(
+        &self,
+        project: String,
+        alias: String,
+    ) -> Reply<wisp_server::desktop::HostStorage> {
+        self.local(move |host| async move { host.host_storage(&project, &alias).await })
+    }
+
+    pub fn set_host_storage(
+        &self,
+        project: String,
+        alias: String,
+        storage: wisp_server::desktop::HostStorage,
+    ) -> Reply<wisp_server::desktop::HostStorage> {
+        self.local(
+            move |host| async move { host.set_host_storage(&project, &alias, storage).await },
+        )
+    }
+
+    /// The SSH hosts a conversation's work may run on, by alias.
+    pub fn conversation_hosts(&self, project: String, session: String) -> Reply<Vec<String>> {
+        self.local(move |host| async move { host.conversation_hosts(&project, &session).await })
+    }
+
+    /// Attaches a saved host to a conversation, or takes it away; answers
+    /// the hosts attached now.
+    pub fn set_conversation_host(
+        &self,
+        project: String,
+        session: String,
+        alias: String,
+        attached: bool,
+    ) -> Reply<Vec<String>> {
+        self.local(move |host| async move {
+            host.set_conversation_host(&project, &session, &alias, attached)
+                .await
+        })
+    }
+
+    /// One page of one folder of what a finished run left on its SSH host.
+    pub fn run_workspace(
+        &self,
+        project: String,
+        run: String,
+        path: String,
+        filter: String,
+        offset: usize,
+    ) -> Reply<wisp_dto::WorkspaceListing> {
+        self.local(move |host| async move {
+            host.run_workspace(&project, &run, &path, &filter, offset)
+                .await
+        })
+    }
+
+    /// Brings the chosen files and folders of a run's workspace into the
+    /// project; answers how many came.
+    pub fn download_run_files(
+        &self,
+        project: String,
+        run: String,
+        files: Vec<String>,
+        folders: Vec<String>,
+    ) -> Reply<usize> {
+        self.local(move |host| async move {
+            host.download_run_files(&project, &run, files, folders)
+                .await
+        })
+    }
+
+    pub fn delete_run_files(&self, project: String, run: String, paths: Vec<String>) -> Reply<()> {
+        self.local(move |host| async move { host.delete_run_files(&project, &run, paths).await })
+    }
+
+    /// Deletes a finished run's workspace where it ran; `force` lets
+    /// outputs never brought back go with it.
+    pub fn clean_run(&self, project: String, run: String, force: bool) -> Reply<()> {
+        self.local(move |host| async move { host.clean_run(&project, &run, force).await })
+    }
+
+    /// A method search's card: read as it is, or after one of its controls.
+    pub fn method_search(
+        &self,
+        project: String,
+        run: String,
+        control: Option<crate::method_search::Control>,
+    ) -> Reply<wisp_dto::MethodSearchRunDetails> {
+        use crate::method_search::Control;
+        self.local(move |host| async move {
+            let details = match control {
+                None => host.method_search_run(&project, &run).await?,
+                Some(Control::Start) => host.start_method_search(&project, &run).await?,
+                Some(Control::Pause) => host.pause_method_search(&project, &run).await?,
+                Some(Control::Resume) => host.resume_method_search(&project, &run).await?,
+            };
+            // Read through the shared DTO, as the WebView reads it.
+            Ok(serde_json::from_value(serde_json::to_value(&details)?)?)
+        })
+    }
+
+    /// One file a method search promoted, as text.
+    pub fn method_search_output(
+        &self,
+        project: String,
+        run: String,
+        version: String,
+    ) -> Reply<String> {
+        self.local(
+            move |host| async move { host.method_search_output(&project, &run, &version).await },
+        )
+    }
+
+    pub fn conversation_status(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<ConversationStatus> {
+        self.local(move |host| async move { host.conversation_status(&project, &session).await })
+    }
+
+    pub fn set_conversation_options(
+        &self,
+        project: String,
+        session: String,
+        options: ConversationOptions,
+    ) -> Reply<ConversationOptions> {
+        self.local(move |host| async move {
+            host.set_conversation_options(&project, &session, options)
+                .await
+        })
+    }
+
+    /// Turns a waiting request down with what should change.
+    pub fn answer_with_feedback(
+        &self,
+        project: String,
+        session: String,
+        approval: String,
+        feedback: String,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.answer_with_feedback(&project, &session, &approval, &feedback)
+                .await
+        })
+    }
+
+    pub fn answer_approval(
+        &self,
+        project: String,
+        session: String,
+        approval: String,
+        approved: bool,
+        remember: Remember,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.answer_approval(&project, &session, &approval, approved, remember)
+                .await
+        })
+    }
+
+    /// Starts an empty conversation the way the desktop's defaults say.
+    pub fn create_conversation(&self, project: String) -> Reply<String> {
+        self.local(move |host| async move { host.create_conversation(&project).await })
+    }
+
+    pub fn network(&self) -> Reply<wisp_dto::NetworkSettings> {
+        self.local(|host| async move { host.network().await })
+    }
+
+    /// Saves the routes and package sources; the reply is what was kept.
+    pub fn set_network(
+        &self,
+        settings: wisp_dto::NetworkSettings,
+    ) -> Reply<wisp_dto::NetworkSettings> {
+        self.local(move |host| async move { host.set_network(settings).await })
+    }
+
+    pub fn environments(&self) -> Reply<EnvironmentsView> {
+        self.local(|host| async move { host.environments().await })
+    }
+
+    /// Connects to the host now; the reply is what was found or why not.
+    pub fn check_environment(
+        &self,
+        alias: String,
+    ) -> Reply<wisp_server::desktop::EnvironmentCheck> {
+        self.local(move |host| async move { host.check_environment(&alias).await })
+    }
+
+    pub fn save_ssh_host(&self, row: SshHostRow) -> Reply<()> {
+        self.local(move |host| async move { host.save_ssh_host(row).await })
+    }
+
+    pub fn import_ssh_hosts(&self, aliases: Vec<String>) -> Reply<()> {
+        self.local(move |host| async move { host.import_ssh_hosts(&aliases).await })
+    }
+
+    pub fn remove_ssh_host(&self, alias: String) -> Reply<()> {
+        self.local(move |host| async move { host.remove_ssh_host(&alias).await })
+    }
+
+    /// Where new work runs: the host with this alias, or this computer.
+    pub fn set_default_environment(&self, alias: Option<String>) -> Reply<()> {
+        self.local(move |host| async move { host.set_default_environment(alias.as_deref()).await })
+    }
+
+    pub fn mcp_servers(&self) -> Reply<Vec<McpServerRow>> {
+        self.local(|host| async move { host.mcp_servers().await })
+    }
+
+    pub fn save_mcp_server(&self, input: McpServerInput) -> Reply<McpServer> {
+        self.local(move |host| async move { host.save_mcp_server(input).await })
+    }
+
+    pub fn set_mcp_server_enabled(&self, id: String, enabled: bool) -> Reply<()> {
+        self.local(move |host| async move { host.set_mcp_server_enabled(&id, enabled).await })
+    }
+
+    pub fn delete_mcp_server(&self, id: String) -> Reply<()> {
+        self.local(move |host| async move { host.delete_mcp_server(&id).await })
+    }
+
+    /// Connects now and returns the names of the tools the server offers.
+    pub fn test_mcp_server(&self, id: String) -> Reply<Vec<String>> {
+        self.local(move |host| async move { host.test_mcp_server(&id).await })
+    }
+
+    pub fn credentials(&self) -> Reply<Vec<CredentialRow>> {
+        self.local(|host| async move { host.credentials().await })
+    }
+
+    /// Saves a service key, or with an empty value forgets it.
+    pub fn set_credential(&self, id: &'static str, value: String) -> Reply<()> {
+        self.local(move |host| async move { host.set_credential(id, &value).await })
+    }
+
+    pub fn custom_credentials(&self) -> Reply<Vec<wisp_server::desktop::CustomCredential>> {
+        self.local(|host| async move { host.custom_credentials().await })
+    }
+
+    pub fn add_custom_credential(
+        &self,
+        name: String,
+        env_var: String,
+        value: String,
+    ) -> Reply<Vec<wisp_server::desktop::CustomCredential>> {
+        self.local(
+            move |host| async move { host.add_custom_credential(&name, &env_var, &value).await },
+        )
+    }
+
+    pub fn remove_custom_credential(
+        &self,
+        id: String,
+    ) -> Reply<Vec<wisp_server::desktop::CustomCredential>> {
+        self.local(move |host| async move { host.remove_custom_credential(&id).await })
+    }
+
+    pub fn usage(&self) -> Reply<UsageView> {
+        self.local(|host| async move { host.usage().await })
+    }
+
+    pub fn storage(&self) -> Reply<StorageView> {
+        self.local(|host| async move { host.storage().await })
+    }
+
+    pub fn connectors(&self) -> Reply<Vec<ConnectorRow>> {
+        self.local(|host| async move { host.connectors().await })
+    }
+
+    pub fn set_connector_enabled(&self, domain: String, enabled: bool) -> Reply<()> {
+        self.local(move |host| async move { host.set_connector_enabled(&domain, enabled).await })
+    }
+
+    pub fn skills(&self, project: Option<String>) -> Reply<Vec<SkillRow>> {
+        self.local(move |host| async move { host.skills(project.as_deref()).await })
+    }
+
+    /// Gives a skill the researcher's own tags; none puts its own back.
+    pub fn set_skill_tags(&self, name: String, tags: Vec<String>) -> Reply<()> {
+        self.local(move |host| async move { host.set_skill_tags(&name, tags).await })
+    }
+
+    pub fn set_skill_enabled(&self, name: String, enabled: bool) -> Reply<()> {
+        self.local(move |host| async move { host.set_skill_enabled(&name, enabled).await })
+    }
+
+    pub fn turn_defaults(&self) -> Reply<TurnDefaults> {
+        self.local(|host| async move { host.turn_defaults().await })
+    }
+
+    pub fn set_turn_defaults(&self, defaults: TurnDefaults) -> Reply<TurnDefaults> {
+        self.local(move |host| async move { host.set_turn_defaults(defaults).await })
+    }
+
+    pub fn project_grants(&self) -> Reply<Vec<ProjectGrants>> {
+        self.local(|host| async move { host.project_grants().await })
+    }
+
+    pub fn revoke_project_grant(&self, project: String, tool: String) -> Reply<()> {
+        self.local(move |host| async move { host.revoke_project_grant(&project, &tool).await })
+    }
+
+    /// Tools allowed in every project.
+    pub fn global_grants(&self) -> Reply<Vec<String>> {
+        self.local(|host| async move { host.global_grants().await })
+    }
+
+    pub fn revoke_global_grant(&self, tool: String) -> Reply<()> {
+        self.local(move |host| async move { host.revoke_global_grant(&tool).await })
+    }
+
+    /// What the model is sent for a conversation: its saved working set.
+    /// Puts back what the compaction at `epoch` replaced.
+    pub fn undo_compaction(&self, project: String, session: String, epoch: i64) -> Reply<()> {
+        self.local(move |host| async move { host.undo_compaction(&project, &session, epoch).await })
+    }
+
+    pub fn model_view(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<wisp_server::desktop::ModelView> {
+        self.local(move |host| async move { host.model_view(&project, &session).await })
+    }
+
+    /// Has the conversation's model review the conversation.
+    pub fn review_conversation(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<wisp_server::desktop::Review> {
+        self.local(move |host| async move { host.review_conversation(&project, &session).await })
+    }
+
+    /// Makes a sample project in a new folder under `parent`.
+    pub fn create_sample_project(&self, parent: PathBuf) -> Reply<String> {
+        self.local(move |host| async move { host.create_sample_project(&parent).await })
+    }
+
+    /// The example conversations that ship with Wisp.
+    pub fn demos(&self) -> Reply<Vec<wisp_server::desktop::DemoInfo>> {
+        self.local(move |host| async move { host.demos().await })
+    }
+
+    /// One example conversation, as it was recorded.
+    pub fn demo(&self, id: String) -> Reply<wisp_server::desktop::Demo> {
+        self.local(move |host| async move { host.demo(&id).await })
+    }
+
+    /// Copies an example into a project; the reply is the new conversation.
+    pub fn copy_demo(&self, id: String, project: String) -> Reply<String> {
+        self.local(move |host| async move { host.copy_demo(&id, &project).await })
+    }
+
+    /// The research archive of a conversation, if it has been frozen.
+    pub fn research_archive(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<Option<wisp_server::desktop::ResearchArchive>> {
+        self.local(move |host| async move { host.research_archive(&project, &session).await })
+    }
+
+    /// A new conversation that goes on from a frozen archive.
+    pub fn continue_research(&self, project: String, session: String) -> Reply<String> {
+        self.local(move |host| async move { host.continue_research(&project, &session).await })
+    }
+
+    /// Has the model draft an archive of a conversation; nothing is saved.
+    /// Conversations Codex and Claude Code keep on this computer.
+    pub fn external_conversations(
+        &self,
+        project: String,
+    ) -> Reply<Vec<wisp_server::desktop::ExternalConversation>> {
+        self.local(move |host| async move { host.external_conversations(&project).await })
+    }
+
+    /// Brings one of them into the project.
+    pub fn import_external_conversation(
+        &self,
+        project: String,
+        path: String,
+    ) -> Reply<(String, wisp_server::desktop::ImportOutcome)> {
+        self.local(
+            move |host| async move { host.import_external_conversation(&project, &path).await },
+        )
+    }
+
+    /// Where a branch stands for being brought back into its source.
+    pub fn branch_merge(
+        &self,
+        project: String,
+        branch: String,
+    ) -> Reply<wisp_server::desktop::BranchMerge> {
+        self.local(move |host| async move { host.branch_merge(&project, &branch).await })
+    }
+
+    /// Has the model summarise what a branch did after it split off.
+    pub fn draft_branch_summary(
+        &self,
+        project: String,
+        branch: String,
+        guard: String,
+    ) -> Reply<String> {
+        self.local(
+            move |host| async move { host.draft_branch_summary(&project, &branch, &guard).await },
+        )
+    }
+
+    /// Adds a branch's summary to its source; returns the source.
+    pub fn merge_branch(
+        &self,
+        project: String,
+        branch: String,
+        guard: String,
+        summary: String,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.merge_branch(&project, &branch, &guard, &summary).await
+        })
+    }
+
+    pub fn draft_research_archive(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<wisp_server::desktop::ArchiveDraft> {
+        self.local(move |host| async move { host.draft_research_archive(&project, &session).await })
+    }
+
+    /// Freezes a reviewed draft as the conversation's research archive.
+    pub fn freeze_research_archive(
+        &self,
+        project: String,
+        session: String,
+        draft: wisp_server::desktop::ArchiveDraft,
+    ) -> Reply<wisp_server::desktop::ResearchArchive> {
+        self.local(move |host| async move {
+            host.freeze_research_archive(&project, &session, draft)
+                .await
+        })
+    }
+
+    /// One folder of a saved SSH host, to look at.
+    pub fn remote_directory(
+        &self,
+        alias: String,
+        path: String,
+    ) -> Reply<wisp_server::desktop::RemoteDirectory> {
+        self.local(move |host| async move { host.remote_directory(&alias, &path).await })
+    }
+
+    /// Copies a host's file to `destination` as a run; answers its id.
+    pub fn download_from_host(
+        &self,
+        project: String,
+        session: Option<String>,
+        alias: String,
+        path: String,
+        destination: std::path::PathBuf,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.download_from_host(&project, session.as_deref(), &alias, &path, destination)
+                .await
+        })
+    }
+
+    /// Copies files of this computer into a host's folder, a run each.
+    pub fn upload_to_host(
+        &self,
+        project: String,
+        session: Option<String>,
+        alias: String,
+        folder: String,
+        sources: Vec<String>,
+    ) -> Reply<Vec<String>> {
+        self.local(move |host| async move {
+            host.upload_to_host(&project, session.as_deref(), &alias, &folder, sources)
+                .await
+        })
+    }
+
+    /// The tool call that last wrote a project file, if one is known.
+    pub fn file_origin(
+        &self,
+        project: String,
+        session: Option<String>,
+        path: String,
+    ) -> Reply<Option<wisp_server::desktop::FileOrigin>> {
+        self.local(move |host| async move {
+            host.file_origin(&project, session.as_deref(), &path).await
+        })
+    }
+
+    /// What a run on this computer wrote, in full or its end.
+    pub fn run_log(&self, project: String, run: String) -> Reply<wisp_server::desktop::RunLog> {
+        self.local(move |host| async move { host.run_log(&project, &run).await })
+    }
+
+    /// Asks the release page whether a newer version has been published.
+    pub fn update_check_at_start(&self) -> Reply<bool> {
+        self.local(|host| async move { host.update_check_at_start().await })
+    }
+
+    pub fn set_update_check_at_start(&self, enabled: bool) -> Reply<()> {
+        self.local(move |host| async move { host.set_update_check_at_start(enabled).await })
+    }
+
+    pub fn check_for_update(&self) -> Reply<wisp_server::desktop::UpdateCheck> {
+        self.local(|host| async move { host.check_for_update().await })
+    }
+
+    /// Compacts a conversation now.
+    pub fn compact_conversation(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<wisp_server::desktop::Compacted> {
+        self.local(move |host| async move { host.compact_conversation(&project, &session).await })
+    }
+
+    /// The browser tools as they stand.
+    pub fn browser_settings(&self) -> Reply<wisp_server::desktop::BrowserSettings> {
+        self.local(|host| async move { host.browser_settings().await })
+    }
+
+    pub fn set_browser_enabled(
+        &self,
+        enabled: bool,
+    ) -> Reply<wisp_server::desktop::BrowserSettings> {
+        self.local(move |host| async move { host.set_browser_enabled(enabled).await })
+    }
+
+    pub fn save_browser_filters(
+        &self,
+        filters: wisp_server::desktop::BrowserFilters,
+    ) -> Reply<wisp_server::desktop::BrowserSettings> {
+        self.local(move |host| async move { host.save_browser_filters(filters).await })
+    }
+
+    /// The workflow templates.
+    pub fn workflows(&self) -> Reply<Vec<wisp_server::desktop::Workflow>> {
+        self.local(|host| async move { host.workflows().await })
+    }
+
+    pub fn save_workflow(
+        &self,
+        input: wisp_server::desktop::WorkflowInput,
+    ) -> Reply<Vec<wisp_server::desktop::Workflow>> {
+        self.local(move |host| async move { host.save_workflow(input).await })
+    }
+
+    pub fn delete_workflow(&self, id: String) -> Reply<Vec<wisp_server::desktop::Workflow>> {
+        self.local(move |host| async move { host.delete_workflow(&id).await })
+    }
+
+    /// Starts a run in `project`; the conversation it runs in.
+    pub fn run_workflow(&self, project: String, id: String) -> Reply<String> {
+        self.local(move |host| async move { host.run_workflow(&project, &id).await })
+    }
+
+    /// Has the model draft a memory of one turn (none is the latest).
+    pub fn suggest_memory(
+        &self,
+        project: String,
+        session: String,
+        turn: Option<wisp_server::desktop::TurnRef>,
+    ) -> Reply<wisp_server::desktop::MemorySuggestion> {
+        self.local(move |host| async move {
+            host.suggest_memory(&project, &session, turn.as_ref()).await
+        })
+    }
+
+    /// Keeps a pasted picture in the project's `uploads` as `name`.
+    pub fn import_pasted(&self, project: String, name: String, bytes: Vec<u8>) -> Reply<String> {
+        self.local(move |host| async move { host.import_pasted(&project, &name, &bytes).await })
+    }
+
+    /// Opens a terminal of `project`: this computer's shell, or one on an
+    /// environment such as `ssh:alias`.
+    pub fn open_terminal(
+        &self,
+        project: String,
+        context: Option<String>,
+        folder: Option<String>,
+    ) -> Reply<wisp_dto::native_conversations::TerminalInfo> {
+        self.local(move |host| async move {
+            host.open_terminal(&project, context.as_deref(), folder.as_deref())
+                .await
+        })
+    }
+
+    /// The project's open terminals.
+    pub fn terminals(
+        &self,
+        project: String,
+    ) -> Reply<Vec<wisp_dto::native_conversations::TerminalInfo>> {
+        self.local(move |host| async move { Ok(host.terminals(&project)) })
+    }
+
+    /// What a terminal wrote from `cursor` on, waiting a little for more.
+    pub fn read_terminal(
+        &self,
+        project: String,
+        id: String,
+        cursor: Option<u64>,
+    ) -> Reply<wisp_dto::native_conversations::TerminalOutput> {
+        self.local(move |host| async move {
+            host.read_terminal(
+                &project,
+                &id,
+                cursor,
+                std::time::Duration::from_millis(1500),
+            )
+            .await
+        })
+    }
+
+    pub fn write_terminal(&self, project: String, id: String, bytes: Vec<u8>) -> Reply<()> {
+        self.local(move |host| async move { host.write_terminal(&project, &id, &bytes) })
+    }
+
+    pub fn resize_terminal(&self, project: String, id: String, rows: u16, cols: u16) -> Reply<()> {
+        self.local(move |host| async move { host.resize_terminal(&project, &id, rows, cols) })
+    }
+
+    pub fn close_terminal(&self, project: String, id: String) -> Reply<()> {
+        self.local(move |host| async move { host.close_terminal(&project, &id) })
+    }
+
+    /// Writes a workflow from skills' method documents, to review.
+    pub fn workflow_from_skills(
+        &self,
+        project: String,
+        request: String,
+        skills: Vec<String>,
+    ) -> Reply<wisp_server::desktop::Workflow> {
+        self.local(move |host| async move {
+            host.workflow_from_skills(&project, &request, &skills).await
+        })
+    }
+
+    /// The workspace folder chosen for the next start, if one is.
+    pub fn chosen_workspace(&self) -> Reply<Option<String>> {
+        self.spawn(async move {
+            let file = crate::settings::data_dir()?.join(crate::settings::WORKSPACE_FILE);
+            Ok(std::fs::read_to_string(file)
+                .ok()
+                .map(|chosen| chosen.trim().to_owned())
+                .filter(|chosen| !chosen.is_empty()))
+        })
+    }
+
+    /// Keeps `folder` as the workspace folder from the next start; `None`
+    /// goes back to the default.
+    pub fn choose_workspace(&self, folder: Option<String>) -> Reply<()> {
+        self.spawn(async move {
+            let data = crate::settings::data_dir()?;
+            let file = data.join(crate::settings::WORKSPACE_FILE);
+            match folder {
+                Some(folder) => {
+                    std::fs::create_dir_all(&data).map_err(|error| error.to_string())?;
+                    std::fs::write(file, folder).map_err(|error| error.to_string())
+                }
+                None => match std::fs::remove_file(file) {
+                    Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                        Err(error.to_string())
+                    }
+                    _ => Ok(()),
+                },
+            }
+        })
+    }
+
+    /// The projects hidden while recording, and whether that is on.
+    pub fn privacy_mode(&self) -> Reply<wisp_dto::project_browser::PrivacyMode> {
+        self.local(|host| async move { host.privacy_mode().await })
+    }
+
+    pub fn set_privacy_mode(&self, active: bool, projects: Vec<String>) -> Reply<()> {
+        self.local(move |host| async move { host.set_privacy_mode(active, projects).await })
+    }
+
+    /// Whether each new project keeps its own database in its folder.
+    pub fn separate_project_storage(&self) -> Reply<bool> {
+        self.local(|host| async move { host.separate_project_storage().await })
+    }
+
+    pub fn set_separate_project_storage(&self, on: bool) -> Reply<()> {
+        self.local(move |host| async move { host.set_separate_project_storage(on).await })
+    }
+
+    /// Starts a quick action's workflow as agents on `input`.
+    pub fn start_quick_action(
+        &self,
+        project: String,
+        id: String,
+        input: String,
+    ) -> Reply<wisp_server::desktop::DraftedWorkflow> {
+        self.local(move |host| async move { host.start_quick_action(&project, &id, &input).await })
+    }
+
+    /// Drafts a workflow as agents in a new conversation of `project`.
+    pub fn draft_workflow(
+        &self,
+        project: String,
+        id: String,
+    ) -> Reply<wisp_server::desktop::DraftedWorkflow> {
+        self.local(move |host| async move { host.draft_workflow(&project, &id).await })
+    }
+
+    /// Remote web access as it stands.
+    pub fn remote_access(&self) -> Reply<wisp_server::desktop::RemoteAccess> {
+        self.local(|host| async move { host.remote_access().await })
+    }
+
+    pub fn set_remote_access(
+        &self,
+        enabled: bool,
+        relay_url: String,
+        token: Option<String>,
+    ) -> Reply<wisp_server::desktop::RemoteAccess> {
+        self.local(
+            move |host| async move { host.set_remote_access(enabled, &relay_url, token).await },
+        )
+    }
+
+    pub fn reset_remote_access_code(&self) -> Reply<wisp_server::desktop::RemoteAccess> {
+        self.local(|host| async move { host.reset_remote_access_code().await })
+    }
+
+    /// The installed plugins, and whether `project` has each switched on.
+    pub fn plugins(&self, project: Option<String>) -> Reply<Vec<wisp_server::desktop::PluginRow>> {
+        self.local(move |host| async move { host.plugins(project.as_deref()).await })
+    }
+
+    pub fn install_plugin(&self, folder: PathBuf) -> Reply<wisp_server::desktop::PluginRow> {
+        self.local(move |host| async move { host.install_plugin(&folder).await })
+    }
+
+    /// Downloads a plugin's archive from an HTTPS address and installs it
+    /// once its SHA-256 is the one given.
+    pub fn install_plugin_from_address(
+        &self,
+        address: String,
+        sha256: String,
+    ) -> Reply<wisp_server::desktop::PluginRow> {
+        self.local(
+            move |host| async move { host.install_plugin_from_address(&address, &sha256).await },
+        )
+    }
+
+    pub fn set_plugin_enabled(
+        &self,
+        project: String,
+        id: String,
+        version: String,
+        enabled: bool,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.set_plugin_enabled(&project, &id, &version, enabled)
+                .await
+        })
+    }
+
+    pub fn remove_plugin(&self, id: String, version: String) -> Reply<()> {
+        self.local(move |host| async move { host.remove_plugin(&id, &version).await })
+    }
+
+    /// Every project's scheduled tasks.
+    pub fn schedules(&self) -> Reply<Vec<wisp_server::desktop::ScheduleRow>> {
+        self.local(|host| async move { host.schedules().await })
+    }
+
+    pub fn create_schedule(&self, input: wisp_server::desktop::ScheduleInput) -> Reply<()> {
+        self.local(move |host| async move { host.create_schedule(input).await })
+    }
+
+    pub fn set_schedule_enabled(&self, id: String, enabled: bool) -> Reply<()> {
+        self.local(move |host| async move { host.set_schedule_enabled(&id, enabled).await })
+    }
+
+    pub fn delete_schedule(&self, id: String) -> Reply<()> {
+        self.local(move |host| async move { host.delete_schedule(&id).await })
+    }
+
+    /// Removes one conversation's timers; how many there were.
+    pub fn cancel_conversation_schedules(&self, project: String, session: String) -> Reply<usize> {
+        self.local(move |host| async move {
+            host.cancel_conversation_schedules(&project, &session).await
+        })
+    }
+
+    /// Fires a task at once; the conversation it was sent into.
+    pub fn run_schedule_now(&self, id: String) -> Reply<String> {
+        self.local(move |host| async move { host.run_schedule_now(&id).await })
+    }
+
+    /// The papers the project is writing.
+    pub fn papers(&self, project: String) -> Reply<Vec<wisp_server::desktop::PaperRow>> {
+        self.local(move |host| async move { host.papers(&project).await })
+    }
+
+    /// One paper at a version, or at its newest.
+    pub fn paper(
+        &self,
+        project: String,
+        paper: String,
+        version: Option<String>,
+    ) -> Reply<wisp_server::desktop::Paper> {
+        self.local(
+            move |host| async move { host.paper(&project, &paper, version.as_deref()).await },
+        )
+    }
+
+    pub fn create_paper(
+        &self,
+        project: String,
+        input: wisp_server::desktop::PaperInput,
+    ) -> Reply<wisp_server::desktop::Paper> {
+        self.local(move |host| async move { host.create_paper(&project, input).await })
+    }
+
+    pub fn rename_paper(
+        &self,
+        project: String,
+        paper: String,
+        title: String,
+        description: String,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.rename_paper(&project, &paper, &title, &description)
+                .await
+        })
+    }
+
+    pub fn delete_paper(&self, project: String, paper: String) -> Reply<()> {
+        self.local(move |host| async move { host.delete_paper(&project, &paper).await })
+    }
+
+    pub fn save_paper_item(
+        &self,
+        project: String,
+        version: String,
+        input: wisp_server::desktop::PaperItemInput,
+    ) -> Reply<()> {
+        self.local(move |host| async move { host.save_paper_item(&project, &version, input).await })
+    }
+
+    pub fn delete_paper_item(&self, project: String, version: String, item: String) -> Reply<()> {
+        self.local(
+            move |host| async move { host.delete_paper_item(&project, &version, &item).await },
+        )
+    }
+
+    /// Results or runs to choose evidence from, and whether more follow.
+    pub fn paper_source_choices(
+        &self,
+        project: String,
+        kind: wisp_server::desktop::PaperSourceKind,
+        query: String,
+        offset: u32,
+    ) -> Reply<(Vec<wisp_server::desktop::PaperSourceChoice>, bool)> {
+        self.local(move |host| async move {
+            host.paper_source_choices(&project, kind, &query, offset)
+                .await
+        })
+    }
+
+    pub fn bind_paper_source(
+        &self,
+        project: String,
+        version: String,
+        item: String,
+        kind: wisp_server::desktop::PaperSourceKind,
+        source: String,
+        purpose: String,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.bind_paper_source(&project, &version, &item, kind, &source, &purpose)
+                .await
+        })
+    }
+
+    pub fn unbind_paper_source(
+        &self,
+        project: String,
+        version: String,
+        binding: String,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.unbind_paper_source(&project, &version, &binding).await
+        })
+    }
+
+    pub fn check_paper(
+        &self,
+        project: String,
+        version: String,
+        policy: wisp_server::desktop::PaperPolicy,
+    ) -> Reply<wisp_server::desktop::PaperCheck> {
+        self.local(move |host| async move { host.check_paper(&project, &version, policy).await })
+    }
+
+    pub fn finalize_paper(
+        &self,
+        project: String,
+        version: String,
+        policy: wisp_server::desktop::PaperPolicy,
+    ) -> Reply<wisp_server::desktop::PaperCheck> {
+        self.local(move |host| async move { host.finalize_paper(&project, &version, policy).await })
+    }
+
+    pub fn waive_paper_finding(
+        &self,
+        project: String,
+        version: String,
+        code: String,
+        reason: String,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.waive_paper_finding(&project, &version, &code, &reason)
+                .await
+        })
+    }
+
+    pub fn new_paper_version(
+        &self,
+        project: String,
+        paper: String,
+        version: String,
+        label: String,
+    ) -> Reply<wisp_server::desktop::Paper> {
+        self.local(move |host| async move {
+            host.new_paper_version(&project, &paper, &version, &label)
+                .await
+        })
+    }
+
+    /// What is installed under the data folder, and how an install goes.
+    pub fn toolchain(&self) -> Reply<wisp_dto::ToolchainStatus> {
+        self.local(|host| async move { Ok(host.toolchain()) })
+    }
+
+    pub fn install_toolchain(&self, tools: Vec<String>) -> Reply<wisp_dto::ToolchainStatus> {
+        self.local(move |host| async move { host.install_toolchain(tools).await })
+    }
+
+    pub fn cancel_toolchain_install(&self) -> Reply<bool> {
+        self.local(|host| async move { Ok(host.cancel_toolchain_install()) })
+    }
+
+    pub fn acp_agents(&self) -> Reply<Vec<wisp_server::desktop::AcpAgentRow>> {
+        self.local(|host| async move { Ok(host.acp_agents().await) })
+    }
+
+    pub fn save_acp_agent(&self, agent: wisp_server::desktop::AcpAgent) -> Reply<String> {
+        self.local(move |host| async move { host.save_acp_agent(agent).await })
+    }
+
+    pub fn remove_acp_agent(&self, id: String) -> Reply<()> {
+        self.local(move |host| async move { host.remove_acp_agent(&id).await })
+    }
+
+    pub fn set_acp_mode(
+        &self,
+        project: String,
+        session: String,
+        mode: String,
+    ) -> Reply<wisp_server::desktop::AcpControls> {
+        self.local(move |host| async move { host.set_acp_mode(&project, &session, &mode).await })
+    }
+
+    pub fn set_acp_option(
+        &self,
+        project: String,
+        session: String,
+        option: String,
+        pick: wisp_server::desktop::AcpPick,
+    ) -> Reply<wisp_server::desktop::AcpControls> {
+        self.local(move |host| async move {
+            host.set_acp_option(&project, &session, &option, pick).await
+        })
+    }
+
+    pub fn sign_in_acp_agent(
+        &self,
+        id: String,
+        method: String,
+    ) -> Reply<wisp_server::desktop::AcpSignInOutcome> {
+        self.local(move |host| async move { host.sign_in_acp_agent(&id, &method).await })
+    }
+
+    pub fn test_acp_agent(&self, id: String) -> Reply<wisp_server::desktop::AcpAgentReport> {
+        self.local(move |host| async move { host.test_acp_agent(&id).await })
+    }
+
+    pub fn subscriptions(&self) -> Reply<Vec<wisp_server::desktop::SubscriptionRow>> {
+        self.local(|host| async move { Ok(host.subscriptions()) })
+    }
+
+    pub fn start_subscription_sign_in(
+        &self,
+        subscription: wisp_server::desktop::Subscription,
+        device: bool,
+    ) -> Reply<wisp_server::desktop::SignInChallenge> {
+        self.local(move |host| async move {
+            host.start_subscription_sign_in(subscription, device).await
+        })
+    }
+
+    pub fn subscription_sign_in(&self, id: String) -> Reply<wisp_server::desktop::SignInState> {
+        self.local(move |host| async move { host.subscription_sign_in(&id) })
+    }
+
+    pub fn submit_subscription_redirect(
+        &self,
+        id: String,
+        redirect: String,
+    ) -> Reply<wisp_server::desktop::SignInState> {
+        self.local(
+            move |host| async move { host.submit_subscription_redirect(&id, &redirect).await },
+        )
+    }
+
+    pub fn cancel_subscription_sign_in(&self, id: String) -> Reply<()> {
+        self.local(move |host| async move {
+            host.cancel_subscription_sign_in(&id);
+            Ok(())
+        })
+    }
+
+    /// The credentials never come here; the host keeps them in the keychain.
+    pub fn save_subscription_sign_in(
+        &self,
+        id: String,
+    ) -> Reply<wisp_server::desktop::ModelSettings> {
+        self.local(move |host| async move { host.save_subscription_sign_in(&id).await })
+    }
+
+    pub fn sign_out_subscription(
+        &self,
+        subscription: wisp_server::desktop::Subscription,
+    ) -> Reply<wisp_server::desktop::ModelSettings> {
+        self.local(move |host| async move { host.sign_out_subscription(subscription).await })
+    }
+
+    /// The ChatGPT (Codex) accounts kept on this computer, one active.
+    pub fn codex_accounts(&self) -> Reply<Vec<wisp_server::desktop::CodexAccount>> {
+        self.local(|host| async move { host.codex_accounts() })
+    }
+
+    pub fn switch_codex_account(&self, id: String) -> Reply<wisp_server::desktop::ModelSettings> {
+        self.local(move |host| async move { host.switch_codex_account(&id).await })
+    }
+
+    pub fn remove_codex_account(&self, id: String) -> Reply<wisp_server::desktop::ModelSettings> {
+        self.local(move |host| async move { host.remove_codex_account(&id).await })
+    }
+
+    /// Asks ChatGPT how much of the account's allowance is used.
+    pub fn codex_account_usage(&self, id: String) -> Reply<wisp_server::desktop::CodexUsage> {
+        self.local(move |host| async move { host.codex_account_usage(&id).await })
+    }
+
+    /// Brings in the sign-ins of Codex CLI and CLIProxyAPI; how many
+    /// accounts were found, and the models afterwards.
+    pub fn import_codex_accounts(&self) -> Reply<(usize, wisp_server::desktop::ModelSettings)> {
+        self.local(|host| async move {
+            let found = host.import_codex_accounts().await?;
+            Ok((found, host.model_settings().await?))
+        })
+    }
+
+    pub fn weixin_status(
+        &self,
+        destination: wisp_server::desktop::WeixinDestination,
+    ) -> Reply<wisp_server::desktop::WeixinStatus> {
+        self.local(move |host| async move { Ok(host.weixin_status(destination).await) })
+    }
+
+    pub fn start_weixin_bind(&self) -> Reply<wisp_server::desktop::WeixinQr> {
+        self.local(|host| async move { host.start_weixin_bind().await })
+    }
+
+    pub fn poll_weixin_bind(
+        &self,
+        destination: wisp_server::desktop::WeixinDestination,
+        qrcode: String,
+    ) -> Reply<wisp_server::desktop::WeixinScan> {
+        self.local(move |host| async move { host.poll_weixin_bind(destination, &qrcode).await })
+    }
+
+    pub fn set_weixin_enabled(
+        &self,
+        destination: wisp_server::desktop::WeixinDestination,
+        enabled: bool,
+    ) -> Reply<wisp_server::desktop::WeixinStatus> {
+        self.local(move |host| async move { host.set_weixin_enabled(destination, enabled).await })
+    }
+
+    pub fn unbind_weixin(
+        &self,
+        destination: wisp_server::desktop::WeixinDestination,
+    ) -> Reply<wisp_server::desktop::WeixinStatus> {
+        self.local(move |host| async move { host.unbind_weixin(destination).await })
+    }
+
+    pub fn feishu_status(&self) -> Reply<wisp_server::desktop::FeishuStatus> {
+        self.local(|host| async move { Ok(host.feishu_status().await) })
+    }
+
+    /// Keeps the Feishu app's ID, its service, a typed secret (none keeps
+    /// the stored one), and turns the bot on or off.
+    pub fn set_feishu(
+        &self,
+        enabled: bool,
+        lark: bool,
+        app_id: String,
+        secret: Option<String>,
+    ) -> Reply<wisp_server::desktop::FeishuStatus> {
+        self.local(move |host| async move { host.set_feishu(enabled, lark, &app_id, secret).await })
+    }
+
+    pub fn start_feishu_bind(&self, lark: bool) -> Reply<wisp_server::desktop::FeishuBind> {
+        self.local(move |host| async move { host.start_feishu_bind(lark).await })
+    }
+
+    pub fn poll_feishu_bind(&self, flow: String) -> Reply<wisp_server::desktop::FeishuBindPoll> {
+        self.local(move |host| async move { host.poll_feishu_bind(&flow).await })
+    }
+
+    pub fn cancel_feishu_bind(&self, flow: String) -> Reply<()> {
+        self.local(move |host| async move {
+            host.cancel_feishu_bind(&flow).await;
+            Ok(())
+        })
+    }
+
+    pub fn unbind_feishu(&self) -> Reply<wisp_server::desktop::FeishuStatus> {
+        self.local(|host| async move { host.unbind_feishu().await })
+    }
+
+    pub fn set_feishu_owner(&self, open_id: String) -> Reply<wisp_server::desktop::FeishuStatus> {
+        self.local(move |host| async move { host.set_feishu_owner(&open_id).await })
+    }
+
+    pub fn confirm_feishu_owner(&self) -> Reply<wisp_server::desktop::FeishuStatus> {
+        self.local(|host| async move { host.confirm_feishu_owner().await })
+    }
+
+    pub fn reject_feishu_owner(&self) -> Reply<wisp_server::desktop::FeishuStatus> {
+        self.local(|host| async move { host.reject_feishu_owner().await })
+    }
+
+    /// The Wisp Lab this computer belongs to, as its relay sees it.
+    pub fn lab_status(&self) -> Reply<wisp_server::desktop::LabStatus> {
+        self.local(|host| async move { Ok(host.lab_status().await) })
+    }
+
+    /// Founds the relay's lab, or asks to join it with an invite code.
+    pub fn join_lab(
+        &self,
+        relay: String,
+        token: Option<String>,
+        name: String,
+        lab_name: String,
+        invite: String,
+    ) -> Reply<wisp_server::desktop::LabStatus> {
+        self.local(move |host| async move {
+            host.join_lab(&relay, token, &name, &lab_name, &invite)
+                .await
+        })
+    }
+
+    pub fn set_lab_relay_token(&self, token: String) -> Reply<()> {
+        self.local(move |host| async move { host.set_lab_relay_token(&token).await })
+    }
+
+    pub fn leave_lab(&self, forget: bool) -> Reply<()> {
+        self.local(move |host| async move { host.leave_lab(forget).await })
+    }
+
+    pub fn set_lab_inbox_project(&self, project: String) -> Reply<()> {
+        self.local(move |host| async move { host.set_lab_inbox_project(&project).await })
+    }
+
+    pub fn create_lab_invite(&self) -> Reply<String> {
+        self.local(|host| async move { host.create_lab_invite().await })
+    }
+
+    pub fn approve_lab_member(&self, member: String) -> Reply<()> {
+        self.local(move |host| async move { host.approve_lab_member(&member).await })
+    }
+
+    pub fn remove_lab_member(&self, member: String) -> Reply<()> {
+        self.local(move |host| async move { host.remove_lab_member(&member).await })
+    }
+
+    /// The StickS3 desk display's listener as it stands.
+    pub fn device_bridge(&self) -> Reply<wisp_server::desktop::DeviceBridge> {
+        self.local(|host| async move { Ok(host.device_bridge().await) })
+    }
+
+    pub fn set_device_bridge(
+        &self,
+        enabled: bool,
+        address: String,
+        port: u32,
+    ) -> Reply<wisp_server::desktop::DeviceBridge> {
+        self.local(move |host| async move { host.set_device_bridge(enabled, &address, port).await })
+    }
+
+    pub fn device_bridge_token(&self) -> Reply<String> {
+        self.local(|host| async move { host.device_bridge_token() })
+    }
+
+    pub fn rotate_device_bridge_token(&self) -> Reply<String> {
+        self.local(|host| async move { host.rotate_device_bridge_token() })
+    }
+
+    /// Waits until the desk display asks for a conversation.
+    pub fn next_device_focus(&self) -> Reply<(String, String)> {
+        self.local(|host| async move { Ok(host.next_device_focus().await) })
+    }
+
+    pub fn project_sync(
+        &self,
+        project: String,
+    ) -> Reply<Option<wisp_server::desktop::ProjectSyncInfo>> {
+        self.local(move |host| async move { host.project_sync(&project).await })
+    }
+
+    pub fn sync_project(&self, project: String) -> Reply<wisp_server::desktop::ProjectSyncResult> {
+        self.local(move |host| async move { host.sync_project(&project).await })
+    }
+
+    /// Ends a conflict with the other device's copy, or this device's.
+    pub fn resolve_project_sync(
+        &self,
+        project: String,
+        use_remote: bool,
+    ) -> Reply<wisp_server::desktop::ProjectSyncResult> {
+        self.local(move |host| async move { host.resolve_project_sync(&project, use_remote).await })
+    }
+
+    pub fn enable_project_folder_sync(
+        &self,
+        project: String,
+    ) -> Reply<wisp_server::desktop::ProjectSyncResult> {
+        self.local(move |host| async move { host.enable_project_folder_sync(&project).await })
+    }
+
+    pub fn adopt_newer_folder_version(&self, project: String) -> Reply<()> {
+        self.local(move |host| async move {
+            host.adopt_newer_folder_version(&project).await;
+            Ok(())
+        })
+    }
+
+    pub fn project_sync_code(&self, project: String) -> Reply<String> {
+        self.local(move |host| async move { host.project_sync_code(&project).await })
+    }
+
+    /// Downloads a project from another device into a new folder under
+    /// `parent`; its id.
+    pub fn join_synced_project(&self, code: String, parent: PathBuf) -> Reply<String> {
+        self.local(move |host| async move { host.join_synced_project(&code, &parent).await })
+    }
+
+    pub fn sync_settings(&self) -> Reply<wisp_server::desktop::SyncSettings> {
+        self.local(|host| async move { Ok(host.sync_settings().await) })
+    }
+
+    pub fn set_sync_settings(
+        &self,
+        backend: String,
+        relay: String,
+        token: Option<String>,
+        folder: String,
+    ) -> Reply<wisp_server::desktop::SyncSettings> {
+        self.local(move |host| async move {
+            host.set_sync_settings(&backend, &relay, token, &folder)
+                .await
+        })
+    }
+
+    pub fn publish_lab_knowledge_base(&self, project: String) -> Reply<()> {
+        self.local(move |host| async move { host.publish_lab_knowledge_base(&project).await })
+    }
+
+    pub fn join_lab_knowledge_base(&self, parent: PathBuf) -> Reply<String> {
+        self.local(move |host| async move { host.join_lab_knowledge_base(&parent).await })
+    }
+
+    /// Starts the conversation's Python or R; returns its id.
+    pub fn start_runtime(
+        &self,
+        project: String,
+        session: String,
+        language: wisp_server::desktop::RuntimeLanguage,
+    ) -> Reply<String> {
+        self.local(
+            move |host| async move { host.start_runtime(&project, &session, language).await },
+        )
+    }
+
+    pub fn runtime_objects(
+        &self,
+        project: String,
+        session: String,
+        id: String,
+    ) -> Reply<wisp_server::desktop::RuntimeObjectList> {
+        self.local(move |host| async move { host.runtime_objects(&project, &session, &id).await })
+    }
+
+    pub fn restart_runtime(&self, project: String, session: String, id: String) -> Reply<String> {
+        self.local(move |host| async move { host.restart_runtime(&project, &session, &id).await })
+    }
+
+    pub fn run_in_runtime(
+        &self,
+        project: String,
+        session: String,
+        id: String,
+        code: String,
+    ) -> Reply<wisp_server::desktop::RuntimeOutput> {
+        self.local(
+            move |host| async move { host.run_in_runtime(&project, &session, &id, &code).await },
+        )
+    }
+
+    /// What the system's terminal runs to open a shell on a context.
+    pub fn terminal_launch(
+        &self,
+        project: String,
+        context: String,
+        folder: Option<String>,
+    ) -> Reply<wisp_server::desktop::TerminalLaunch> {
+        self.local(move |host| async move {
+            host.terminal_launch(&project, &context, folder.as_deref())
+                .await
+        })
+    }
+
+    /// What the conversation sends the model, as JSON, and a file name.
+    pub fn debug_request(&self, project: String, session: String) -> Reply<(String, String)> {
+        self.local(move |host| async move { host.debug_request(&project, &session).await })
+    }
+
+    /// Keeps a project file as an artifact of the conversation.
+    pub fn register_artifact(&self, project: String, session: String, path: String) -> Reply<()> {
+        self.local(
+            move |host| async move { host.register_artifact(&project, &session, &path).await },
+        )
+    }
+
+    pub fn mandates(&self) -> Reply<Vec<wisp_dto::MandateOverview>> {
+        self.local(move |host| async move { host.mandates().await })
+    }
+
+    /// Makes a mandate, or with `id` changes one.
+    pub fn save_mandate(
+        &self,
+        id: Option<String>,
+        draft: wisp_dto::MandateDraft,
+    ) -> Reply<wisp_dto::MandateRecord> {
+        self.local(move |host| async move {
+            match id {
+                Some(id) => host.update_mandate(&id, draft).await,
+                None => host.create_mandate(draft).await,
+            }
+        })
+    }
+
+    pub fn set_mandate_status(&self, id: String, status: String) -> Reply<wisp_dto::MandateRecord> {
+        self.local(move |host| async move { host.set_mandate_status(&id, &status).await })
+    }
+
+    pub fn delete_mandate(&self, id: String) -> Reply<()> {
+        self.local(move |host| async move { host.delete_mandate(&id).await })
+    }
+
+    pub fn run_mandate_now(&self, id: String) -> Reply<()> {
+        self.local(move |host| async move { host.run_mandate_now(&id).await })
+    }
+
+    pub fn reply_to_mandate(&self, id: String, text: String) -> Reply<wisp_dto::MandateRecord> {
+        self.local(move |host| async move { host.reply_to_mandate(&id, &text).await })
+    }
+
+    pub fn report_mandate(&self, id: String) -> Reply<wisp_dto::MandateReport> {
+        self.local(move |host| async move { host.report_mandate(&id).await })
+    }
+
+    /// The research assistant's project and its one conversation, made on
+    /// first use.
+    pub fn open_assistant(&self) -> Reply<(String, String)> {
+        self.local(move |host| async move { host.open_assistant().await })
+    }
+
+    /// The assistant's plan for `day` (`YYYY-MM-DD`), with earlier items
+    /// still open.
+    pub fn assistant_plan(&self, day: String) -> Reply<Vec<wisp_dto::ResearchAssistantPlanItem>> {
+        self.local(move |host| async move { host.assistant_plan(&day).await })
+    }
+
+    pub fn set_assistant_plan_item(&self, id: String, status: String) -> Reply<()> {
+        self.local(move |host| async move { host.set_assistant_plan_item(&id, &status).await })
+    }
+
+    /// The task batches the conversation's agent delegated, newest first.
+    pub fn delegated_batches(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<Vec<wisp_server::desktop::DelegatedBatch>> {
+        self.local(move |host| async move { host.delegated_batches(&project, &session).await })
+    }
+
+    /// Runs a failed or stopped batch of the conversation again.
+    pub fn retry_delegated_batch(
+        &self,
+        session: String,
+        batch: String,
+        budgets: std::collections::HashMap<String, u32>,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.retry_delegated_batch(&session, &batch, &budgets).await
+        })
+    }
+
+    /// The latest work over many items the conversation ran.
+    pub fn swarm_progress(&self, session: String) -> Reply<Option<wisp_dto::SwarmProgress>> {
+        self.local(move |host| async move { Ok(host.swarm_progress(&session)) })
+    }
+
+    /// Stops a running batch of the conversation and the tasks in it.
+    pub fn cancel_delegated_batch(&self, session: String, batch: String) -> Reply<()> {
+        self.local(move |host| async move { host.cancel_delegated_batch(&session, &batch).await })
+    }
+
+    /// Approves a drafted workflow of the conversation and runs it.
+    pub fn approve_delegated_batch(&self, session: String, batch: String) -> Reply<()> {
+        self.local(move |host| async move { host.approve_delegated_batch(&session, &batch).await })
+    }
+
+    /// Throws away a drafted workflow of the conversation.
+    pub fn discard_delegated_batch(&self, session: String, batch: String) -> Reply<()> {
+        self.local(move |host| async move { host.discard_delegated_batch(&session, &batch).await })
+    }
+
+    pub fn explorations(&self, project: String) -> Reply<Vec<wisp_dto::ExplorationSummary>> {
+        self.local(move |host| async move { host.explorations(&project).await })
+    }
+
+    /// Starts an exploration from the answer to `turn` (the latest when
+    /// none).
+    pub fn start_exploration(
+        &self,
+        project: String,
+        session: String,
+        turn: Option<wisp_server::desktop::TurnRef>,
+        name: String,
+    ) -> Reply<wisp_server::desktop::StartedExploration> {
+        self.local(move |host| async move {
+            host.start_exploration(&project, &session, turn.as_ref(), &name)
+                .await
+        })
+    }
+
+    pub fn preview_exploration(
+        &self,
+        project: String,
+        exploration: String,
+    ) -> Reply<wisp_server::desktop::PromotionPreview> {
+        self.local(
+            move |host| async move { host.preview_exploration(&project, &exploration).await },
+        )
+    }
+
+    /// Keeps an exploration; the mainline conversation it continues.
+    pub fn promote_exploration(
+        &self,
+        project: String,
+        exploration: String,
+        guard: String,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.promote_exploration(&project, &exploration, &guard)
+                .await
+        })
+    }
+
+    pub fn discard_exploration(&self, project: String, exploration: String) -> Reply<()> {
+        self.local(
+            move |host| async move { host.discard_exploration(&project, &exploration).await },
+        )
+    }
+
+    pub fn abandon_exploration_round(&self, project: String, source: String) -> Reply<()> {
+        self.local(
+            move |host| async move { host.abandon_exploration_round(&project, &source).await },
+        )
+    }
+
+    pub fn exploration_folders(
+        &self,
+        project: String,
+        exploration: String,
+    ) -> Reply<(PathBuf, PathBuf)> {
+        self.local(
+            move |host| async move { host.exploration_folders(&project, &exploration).await },
+        )
+    }
+
+    pub fn finish_manual_resolution(&self, project: String, exploration: String) -> Reply<()> {
+        self.local(move |host| async move {
+            host.finish_manual_resolution(&project, &exploration).await
+        })
+    }
+
+    pub fn onboarding_done(&self) -> Reply<bool> {
+        self.local(|host| async move { host.onboarding_done().await })
+    }
+
+    pub fn finish_onboarding(&self) -> Reply<()> {
+        self.local(|host| async move { host.finish_onboarding().await })
+    }
+
+    /// Never logged or kept here: the key goes to the system keychain.
+    pub fn set_up_deepseek(&self, key: String) -> Reply<wisp_server::desktop::ModelSettings> {
+        self.local(move |host| async move { host.set_up_deepseek(&key).await })
+    }
+
+    /// The decision model as the form shows it; never its key.
+    pub fn decision_model(&self) -> Reply<wisp_dto::DecisionModelSettings> {
+        self.local(|host| async move { host.decision_model().await })
+    }
+
+    pub fn save_decision_model(
+        &self,
+        settings: wisp_dto::DecisionModelSettings,
+        api_key: Option<String>,
+    ) -> Reply<wisp_dto::DecisionModelSettings> {
+        self.local(move |host| async move { host.save_decision_model(settings, api_key).await })
+    }
+
+    pub fn clear_decision_model_key(
+        &self,
+        preset: String,
+    ) -> Reply<wisp_dto::DecisionModelSettings> {
+        self.local(move |host| async move { host.clear_decision_model_key(&preset).await })
+    }
+
+    /// Asks the form's endpoint one question; saves nothing.
+    pub fn test_decision_model(
+        &self,
+        settings: wisp_dto::DecisionModelSettings,
+        api_key: Option<String>,
+    ) -> Reply<wisp_dto::DecisionModelProbe> {
+        self.local(move |host| async move { host.test_decision_model(settings, api_key).await })
+    }
+
+    /// The pet the user chose, with what to draw when it is on.
+    pub fn pet(&self) -> Reply<wisp_server::desktop::Pet> {
+        self.local(|host| async move { host.pet().await })
+    }
+
+    pub fn set_pet(&self, enabled: bool, directory: String) -> Reply<wisp_server::desktop::Pet> {
+        self.local(move |host| async move { host.set_pet(enabled, &directory).await })
+    }
+
+    /// The requests kept as quick actions.
+    pub fn quick_actions(&self) -> Reply<Vec<wisp_server::desktop::QuickAction>> {
+        self.local(|host| async move { host.quick_actions().await })
+    }
+
+    pub fn save_quick_action(
+        &self,
+        input: wisp_server::desktop::QuickActionInput,
+    ) -> Reply<Vec<wisp_server::desktop::QuickAction>> {
+        self.local(move |host| async move { host.save_quick_action(input).await })
+    }
+
+    pub fn delete_quick_action(&self, id: String) -> Reply<Vec<wisp_server::desktop::QuickAction>> {
+        self.local(move |host| async move { host.delete_quick_action(&id).await })
+    }
+
+    /// The experts a conversation can be started as.
+    pub fn experts(&self) -> Reply<Vec<wisp_server::desktop::Expert>> {
+        self.local(|host| async move { host.experts().await })
+    }
+
+    pub fn save_expert(
+        &self,
+        input: wisp_server::desktop::ExpertInput,
+    ) -> Reply<Vec<wisp_server::desktop::Expert>> {
+        self.local(move |host| async move { host.save_expert(input).await })
+    }
+
+    pub fn delete_expert(&self, id: String) -> Reply<Vec<wisp_server::desktop::Expert>> {
+        self.local(move |host| async move { host.delete_expert(&id).await })
+    }
+
+    /// Has one turn reviewed: the conversation as it stood when it ended.
+    pub fn review_turn(
+        &self,
+        project: String,
+        session: String,
+        turn: wisp_server::desktop::TurnRef,
+    ) -> Reply<wisp_server::desktop::Review> {
+        self.local(move |host| async move { host.review_turn(&project, &session, &turn).await })
+    }
+
+    /// Asks the conversation's model a question about the conversation,
+    /// without adding anything to it.
+    pub fn ask_aside_about_run(
+        &self,
+        project: String,
+        session: String,
+        run: String,
+        earlier: Vec<wisp_server::desktop::AsideExchange>,
+        question: String,
+    ) -> Reply<wisp_server::desktop::AsideAnswer> {
+        self.local(move |host| async move {
+            host.ask_aside_about_run(&project, &session, &run, &earlier, &question)
+                .await
+        })
+    }
+
+    pub fn ask_aside(
+        &self,
+        project: String,
+        session: String,
+        earlier: Vec<wisp_server::desktop::AsideExchange>,
+        question: String,
+    ) -> Reply<wisp_server::desktop::AsideAnswer> {
+        self.local(move |host| async move {
+            host.ask_aside(&project, &session, &earlier, &question)
+                .await
+        })
+    }
+
+    /// Stops one of a conversation's interpreters, or takes a stopped one
+    /// off the list.
+    /// Puts a message into the running turn; false when it no longer reads
+    /// any, and the message is to be sent as a turn of its own.
+    pub fn guide(&self, project: String, session: String, text: String) -> Reply<bool> {
+        self.local(move |host| async move { host.guide(&project, &session, &text).await })
+    }
+
+    /// Keeps a message for when the conversation's turn ends; the host
+    /// sends it then, whether or not the conversation is open.
+    pub fn queue_message(&self, project: String, request: SendRequest) -> Reply<u64> {
+        self.local(move |host| async move { host.queue_message(&project, request).await })
+    }
+
+    /// Takes a waiting message back out.
+    pub fn take_queued(
+        &self,
+        project: String,
+        session: String,
+        id: u64,
+    ) -> Reply<Option<wisp_server::desktop::QueuedMessage>> {
+        self.local(move |host| async move { host.take_queued(&project, &session, id).await })
+    }
+
+    pub fn move_queued_up(&self, project: String, session: String, id: u64) -> Reply<bool> {
+        self.local(move |host| async move { host.move_queued_up(&project, &session, id).await })
+    }
+
+    /// Gives a waiting message to the running turn now.
+    pub fn guide_with_queued(&self, project: String, session: String, id: u64) -> Reply<bool> {
+        self.local(move |host| async move { host.guide_with_queued(&project, &session, id).await })
+    }
+
+    /// Sends the next waiting message now, past what holds the queue.
+    pub fn send_queued_now(&self, project: String, session: String) -> Reply<bool> {
+        self.local(move |host| async move { host.send_queued_now(&project, &session).await })
+    }
+
+    pub fn stop_runtime(&self, project: String, session: String, id: String) -> Reply<()> {
+        self.local(move |host| async move { host.stop_runtime(&project, &session, &id).await })
+    }
+
+    /// Returns once the host is no longer asking a model about the turn
+    /// that just ended: what could be asked next, and a review of it.
+    pub fn after_turn_settled(&self, project: String, session: String) -> Reply<()> {
+        self.local(move |host| async move { host.after_turn_settled(&project, &session).await })
+    }
+
+    /// Puts away the memory drafted after the latest turn.
+    pub fn dismiss_memory_proposal(&self, project: String, session: String) -> Reply<()> {
+        self.local(
+            move |host| async move { host.dismiss_memory_proposal(&project, &session).await },
+        )
+    }
+
+    /// When a turn whose tools failed often has a memory drafted.
+    pub fn failure_analysis(&self) -> Reply<wisp_server::desktop::AutoFailureAnalysisSettings> {
+        self.local(|host| async move { host.failure_analysis().await })
+    }
+
+    pub fn set_failure_analysis(
+        &self,
+        settings: wisp_server::desktop::AutoFailureAnalysisSettings,
+    ) -> Reply<wisp_server::desktop::AutoFailureAnalysisSettings> {
+        self.local(move |host| async move { host.set_failure_analysis(settings).await })
+    }
+
+    /// Puts away the review that followed the latest turn.
+    pub fn dismiss_review(&self, project: String, session: String) -> Reply<()> {
+        self.local(move |host| async move { host.dismiss_review(&project, &session).await })
+    }
+
+    /// The model profile reviews are made with; empty is the conversation's.
+    pub fn review_model(&self) -> Reply<String> {
+        self.local(|host| async move { host.review_model().await })
+    }
+
+    /// The model profile sub-agents work on; empty is the conversation's.
+    pub fn subagent_model(&self) -> Reply<String> {
+        self.local(|host| async move { host.subagent_model().await })
+    }
+
+    pub fn set_subagent_model(&self, profile: String) -> Reply<String> {
+        self.local(move |host| async move { host.set_subagent_model(&profile).await })
+    }
+
+    pub fn set_review_model(&self, profile: String) -> Reply<String> {
+        self.local(move |host| async move { host.set_review_model(&profile).await })
+    }
+
+    /// The community directory of skills, as published now when `refresh`.
+    pub fn community_skills(&self, refresh: bool) -> Reply<wisp_dto::CommunitySkillCatalog> {
+        self.local(move |host| async move { host.community_skills(refresh).await })
+    }
+
+    /// The skill packages at a GitHub address, for `project`.
+    pub fn preview_github_skills(
+        &self,
+        project: String,
+        address: String,
+        exact_ref: String,
+    ) -> Reply<Vec<wisp_dto::SkillStoreCandidate>> {
+        self.local(move |host| async move {
+            host.preview_github_skills(&project, &address, &exact_ref)
+                .await
+        })
+    }
+
+    /// Installs one package into your own skills folder.
+    pub fn install_github_skill(
+        &self,
+        project: String,
+        source: wisp_dto::SkillInstallSource,
+    ) -> Reply<wisp_dto::SkillInstallResult> {
+        self.local(move |host| async move { host.install_github_skill(&project, source).await })
+    }
+
+    /// Where the local environment's executables are.
+    pub fn tool_paths(&self) -> Reply<Vec<wisp_server::desktop::ToolPath>> {
+        self.local(|host| async move { host.tool_paths().await })
+    }
+
+    pub fn set_tool_paths(
+        &self,
+        paths: std::collections::BTreeMap<String, String>,
+    ) -> Reply<Vec<wisp_server::desktop::ToolPath>> {
+        self.local(move |host| async move { host.set_tool_paths(paths).await })
+    }
+
+    /// Your command hooks.
+    pub fn command_hooks(&self) -> Reply<Vec<wisp_dto::CommandHook>> {
+        self.local(|host| async move { host.command_hooks().await })
+    }
+
+    pub fn set_command_hooks(
+        &self,
+        hooks: Vec<wisp_dto::CommandHook>,
+    ) -> Reply<Vec<wisp_dto::CommandHook>> {
+        self.local(move |host| async move { host.set_command_hooks(hooks).await })
+    }
+
+    /// The project's `.wisp/hooks.json`, as it is now.
+    pub fn project_hooks(&self, project: String) -> Reply<Option<wisp_dto::ProjectHooks>> {
+        self.local(move |host| async move { host.project_hooks(&project).await })
+    }
+
+    pub fn set_project_hooks_trust(
+        &self,
+        project: String,
+        sha256: Option<String>,
+    ) -> Reply<Option<wisp_dto::ProjectHooks>> {
+        self.local(move |host| async move { host.set_project_hooks_trust(&project, sha256).await })
+    }
+
+    /// How a project's tools are approved: its mode and rules for single
+    /// tools, under the WebView's keys.
+    pub fn project_approvals(
+        &self,
+        project: String,
+    ) -> Reply<wisp_server::desktop::ProjectApprovals> {
+        self.local(move |host| async move { host.project_approvals(&project).await })
+    }
+
+    pub fn set_approval_scope(
+        &self,
+        project: String,
+        scope: wisp_server::desktop::ApprovalScope,
+    ) -> Reply<wisp_server::desktop::ProjectApprovals> {
+        self.local(move |host| async move { host.set_approval_scope(&project, scope).await })
+    }
+
+    /// Lets a bundled connector's tools run whatever their rules.
+    pub fn set_connector_skip(
+        &self,
+        project: String,
+        connector: String,
+        on: bool,
+    ) -> Reply<wisp_server::desktop::ProjectApprovals> {
+        self.local(
+            move |host| async move { host.set_connector_skip(&project, &connector, on).await },
+        )
+    }
+
+    pub fn set_tool_rule(
+        &self,
+        project: String,
+        tool: String,
+        rule: Option<wisp_server::desktop::ToolRule>,
+    ) -> Reply<wisp_server::desktop::ProjectApprovals> {
+        self.local(move |host| async move { host.set_tool_rule(&project, &tool, rule).await })
+    }
+
+    /// The model profile that describes pictures for a model that cannot
+    /// see them; empty is the first saved one that can.
+    pub fn picture_model(&self) -> Reply<String> {
+        self.local(|host| async move { host.picture_model().await })
+    }
+
+    pub fn set_picture_model(&self, profile: String) -> Reply<String> {
+        self.local(move |host| async move { host.set_picture_model(&profile).await })
+    }
+
+    /// Puts away the questions suggested after the latest answer.
+    pub fn dismiss_follow_ups(&self, project: String, session: String) -> Reply<()> {
+        self.local(move |host| async move { host.dismiss_follow_ups(&project, &session).await })
+    }
+
+    pub fn revoke_allowed_tools(&self, project: String, session: String) -> Reply<()> {
+        self.local(move |host| async move { host.revoke_allowed_tools(&project, &session).await })
+    }
+
+    pub fn model_settings(&self) -> Reply<ModelSettings> {
+        self.local(|host| async move { host.model_settings().await })
+    }
+
+    pub fn save_model_profile(&self, input: ModelInput) -> Reply<ModelSettings> {
+        self.local(move |host| async move { host.save_model_profile(input).await })
+    }
+
+    pub fn set_default_model(&self, id: String) -> Reply<ModelSettings> {
+        self.local(move |host| async move { host.set_default_model(&id).await })
+    }
+
+    pub fn delete_model_profile(&self, id: String) -> Reply<ModelSettings> {
+        self.local(move |host| async move { host.delete_model_profile(&id).await })
+    }
+
+    /// Sends one request with the form as typed; nothing is saved.
+    pub fn test_model(&self, input: ModelInput) -> Reply<String> {
+        self.local(move |host| async move { host.test_model(input).await })
     }
 
     pub async fn shutdown(&self) {

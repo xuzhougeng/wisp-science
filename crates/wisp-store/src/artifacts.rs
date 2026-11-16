@@ -408,6 +408,23 @@ impl Store {
         row.map(artifact_version_from_row).transpose()
     }
 
+    /// Every version of one artifact, oldest first.
+    pub async fn list_artifact_versions(&self, artifact_id: &str) -> Result<Vec<ArtifactVersion>> {
+        if let Some(store) = self.route_entity("artifacts", "id", artifact_id).await? {
+            return Box::pin(store.list_artifact_versions(artifact_id)).await;
+        }
+        let rows = sqlx::query(
+            "SELECT id,artifact_id,version_number,content_type,storage_path,size_bytes,checksum,\
+                    parent_version_id,producing_run_id,env_snapshot_hash,materialization,\
+                    capture_timing,created_at \
+             FROM artifact_versions WHERE artifact_id=? ORDER BY version_number,id",
+        )
+        .bind(artifact_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(artifact_version_from_row).collect()
+    }
+
     pub async fn list_artifact_versions_owned_by_exploration(
         &self,
         exploration_id: &str,

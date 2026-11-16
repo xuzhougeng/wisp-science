@@ -50,7 +50,8 @@ pub use execution::{
 };
 pub use map_items::MapItemsTool;
 pub use memory::{
-    MemoryManager, MemorySearchQuery, MemorySearchRequest, MemorySearchResponse, MemorySearchResult,
+    global_memory_block, MemoryManager, MemorySearchQuery, MemorySearchRequest,
+    MemorySearchResponse, MemorySearchResult,
 };
 pub use orchestration::{
     DelegationMode, DelegationPlan, DelegationPlanStep, RunActivitySpec, WorkflowTaskKind,

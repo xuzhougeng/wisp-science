@@ -62,6 +62,11 @@ impl WorkspaceState {
         }
     }
 
+    /// Drops the draft of a conversation that no longer exists.
+    pub fn forget_draft(&mut self, session: &str) {
+        self.drafts.remove(session);
+    }
+
     pub fn draft(&self) -> String {
         self.session
             .as_ref()
@@ -123,6 +128,12 @@ mod tests {
         assert!(state.draft().is_empty());
         state.select(Some("p".into()), Some("a".into()));
         assert_eq!(state.draft(), "中文\nexperiment 🧪");
+        state.select(Some("p".into()), Some("b".into()));
+        state.save_draft("kept".into());
+        state.forget_draft("a");
+        assert_eq!(state.draft(), "kept");
+        state.select(Some("p".into()), Some("a".into()));
+        assert!(state.draft().is_empty());
         assert!(!state.can_send("hello", false));
         state.accept(&state.selection(), snapshot("p", "a", 1));
         assert!(state.can_send("hello", false));

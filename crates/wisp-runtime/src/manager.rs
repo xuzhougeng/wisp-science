@@ -404,11 +404,25 @@ impl RuntimeManager {
         r_worker: Option<PathBuf>,
         envs: Vec<(String, String)>,
     ) -> Self {
+        Self::local_with_rscript(app_data, python_worker, r_worker, envs, None)
+    }
+
+    /// A local launcher that asks `rscript` for the host's own `Rscript`
+    /// each time R starts, before looking on `PATH` and in the usual
+    /// places, so an R the host installed meanwhile is used.
+    pub fn local_with_rscript(
+        app_data: PathBuf,
+        python_worker: PathBuf,
+        r_worker: Option<PathBuf>,
+        envs: Vec<(String, String)>,
+        rscript: Option<RscriptResolver>,
+    ) -> Self {
         Self::new(Arc::new(LocalRuntimeLauncher {
             app_data,
             python_worker,
             r_worker,
             envs,
+            rscript,
         }))
     }
 
@@ -743,11 +757,15 @@ impl RuntimeManager {
     }
 }
 
+/// Where the host keeps an `Rscript` of its own, asked each time R starts.
+pub type RscriptResolver = Arc<dyn Fn() -> Option<PathBuf> + Send + Sync>;
+
 struct LocalRuntimeLauncher {
     app_data: PathBuf,
     python_worker: PathBuf,
     r_worker: Option<PathBuf>,
     envs: Vec<(String, String)>,
+    rscript: Option<RscriptResolver>,
 }
 
 #[async_trait]
@@ -776,7 +794,12 @@ impl RuntimeLauncher for LocalRuntimeLauncher {
                 )
             }
             RuntimeLanguage::R => {
-                let rscript = find_rscript()
+                let rscript = self
+                    .rscript
+                    .as_ref()
+                    .and_then(|own| own())
+                    .filter(|path| path.is_file())
+                    .or_else(find_rscript)
                     .map(|path| crate::direct_rscript(&path))
                     .ok_or_else(|| {
                         anyhow!("Rscript not found on PATH; install R and add Rscript to PATH")

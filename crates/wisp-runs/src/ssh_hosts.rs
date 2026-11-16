@@ -88,7 +88,8 @@ pub struct SshConnection {
     pub auth_method: SshAuthMethod,
 }
 
-fn password_secret_name(alias: &str) -> String {
+/// The name a host's password is kept under in the OS keyring.
+pub fn password_secret_name(alias: &str) -> String {
     format!("ssh_password:{alias}")
 }
 

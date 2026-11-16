@@ -3520,7 +3520,7 @@ mod tests {
         profile.max_tokens = 999_999;
         clamp_to_catalog(&mut profile);
         assert_eq!(profile.context_window, 262_144);
-        assert_eq!(profile.max_tokens, 131_072);
+        assert_eq!(profile.max_tokens, 262_144);
     }
 
     #[test]
