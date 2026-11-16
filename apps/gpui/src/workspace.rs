@@ -919,6 +919,10 @@ pub struct Workspace {
     layers: EscapeStack,
     files: FilesState,
     file_view: Entity<InputState>,
+    /// The text of a host's file being looked at, read only.
+    remote_text: Entity<InputState>,
+    /// The picture of a host's file being looked at, by its key.
+    remote_image: Option<(String, std::sync::Arc<Image>)>,
     /// The script being edited in the preview, when the previewed file is
     /// one that can be.
     file_edit: Option<crate::files::Editing>,
@@ -949,6 +953,11 @@ pub struct Workspace {
     storage_host: Option<(String, bool)>,
     /// Data folder, run folders, results folder.
     storage_fields: [Entity<InputState>; 3],
+    /// One host's runs, or the files the project placed there, under its
+    /// card in the Environments tab.
+    host_detail: Option<hosts_view::HostDetail>,
+    /// The placed file whose deletion is being asked about.
+    staged_removing: Option<wisp_server::desktop::StagedFile>,
     artifacts: Vec<ArtifactRow>,
     /// The Artifacts tab lists the whole project instead of the conversation.
     artifacts_all: bool,
@@ -1019,6 +1028,11 @@ impl Workspace {
         });
         // In-editor search would be a nested surface outside the Escape stack.
         let file_view = cx.new(|cx| {
+            InputState::new(window, cx)
+                .code_editor("text")
+                .searchable(false)
+        });
+        let remote_text = cx.new(|cx| {
             InputState::new(window, cx)
                 .code_editor("text")
                 .searchable(false)
@@ -2009,6 +2023,8 @@ impl Workspace {
             layers: EscapeStack::default(),
             files: FilesState::default(),
             file_view,
+            remote_text,
+            remote_image: None,
             file_edit: None,
             file_drafts: Default::default(),
             close_confirmed: false,
@@ -2022,6 +2038,8 @@ impl Workspace {
             conversation_hosts: None,
             hosts_busy: false,
             storage_host: None,
+            host_detail: None,
+            staged_removing: None,
             storage_fields,
             artifacts: vec![],
             artifacts_all: false,
@@ -2060,6 +2078,12 @@ impl Workspace {
             Some(Layer::PanelTabMenu) => {}
             Some(Layer::ConfirmCleanRun) => self.run_cleaning = None,
             Some(Layer::HostStorageForm) => self.storage_host = None,
+            Some(Layer::RemotePreview) => self.close_remote_look(),
+            Some(Layer::HostDetail) => {
+                self.host_detail = None;
+                self.staged_removing = None;
+            }
+            Some(Layer::ConfirmRemoveStaged) => self.staged_removing = None,
             Some(Layer::RunReview) => self.run_review = None,
             Some(Layer::PrivacyMode) => self.privacy_picks.clear(),
             Some(Layer::ConfirmRunFilesDelete) => {
@@ -2522,6 +2546,10 @@ impl Workspace {
     fn choose(&mut self, project: Option<String>, session: Option<String>) {
         if self.state.project != project {
             self.layers.close(Layer::FilePreview);
+            // A host's runs and placed files are the project's.
+            self.host_detail = None;
+            self.staged_removing = None;
+            self.layers.close(Layer::HostDetail);
             // The list, its groups and the picks belong to the project.
             self.layers.close(Layer::SelectMode);
             for layer in Layer::SIDEBAR {
@@ -4787,6 +4815,10 @@ impl Render for Workspace {
             root.child(self.render_clear_memory(cx))
         } else {
             root
+        };
+        let root = match self.render_remove_staged(cx) {
+            Some(dialog) => root.child(dialog),
+            None => root,
         };
         let root = if self.layers.contains(Layer::FileChangedOnDisk) {
             root.child(self.render_file_changed(cx))

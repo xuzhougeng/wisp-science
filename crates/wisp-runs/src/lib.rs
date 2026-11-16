@@ -10,6 +10,7 @@ pub mod exploration_isolation;
 pub mod harvest;
 pub mod mime;
 pub mod openssh;
+pub mod remote_file;
 pub mod snapshot_store;
 pub mod ssh_guard;
 pub mod ssh_hosts;

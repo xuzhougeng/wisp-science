@@ -40,3 +40,27 @@ pub fn mime_for_path(path: &Path) -> &'static str {
         _ => "application/octet-stream",
     }
 }
+
+/// Mimes whose bytes are shown as text.
+pub fn is_text_mime(mime: &str) -> bool {
+    mime.starts_with("text/")
+        || mime == "application/json"
+        || mime == "application/x-ipynb+json"
+        || mime == "text/markdown"
+}
+
+/// An extension allowlist always lags reality — `.toml`, `.lock`, `.yaml`, `.R`
+/// and friends previewed as "unsupported" purely because nothing named them.
+/// For anything without an explicit mime, let the bytes decide instead.
+pub fn looks_like_text(bytes: &[u8]) -> bool {
+    !bytes.contains(&0) && std::str::from_utf8(bytes).is_ok()
+}
+
+/// The shared text-vs-binary decision for previews, local or remote: named
+/// text mimes are text, unnamed extensions are sniffed, the rest is not.
+pub fn is_text_preview_bytes(mime: &str, bytes: &[u8]) -> bool {
+    is_text_mime(mime)
+        || mime == "chemical/x-pdb"
+        || mime == "chemical/x-mdl-molfile"
+        || (mime == "application/octet-stream" && looks_like_text(bytes))
+}

@@ -1379,6 +1379,46 @@ impl Backend {
         self.local(move |host| async move { host.remote_directory(&alias, &path).await })
     }
 
+    /// A file of a saved SSH host, to look at; nothing of it is kept.
+    pub fn remote_file(
+        &self,
+        alias: String,
+        path: String,
+        listed_size: Option<u64>,
+    ) -> Reply<wisp_server::desktop::RemoteFile> {
+        self.local(move |host| async move { host.remote_file(&alias, &path, listed_size).await })
+    }
+
+    /// What the project placed on a saved SSH host and keeps a record of.
+    pub fn host_staged_files(
+        &self,
+        project: String,
+        alias: String,
+    ) -> Reply<Vec<wisp_server::desktop::StagedFile>> {
+        self.local(move |host| async move { host.host_staged_files(&project, &alias).await })
+    }
+
+    /// Deletes one of those files from the host; answers the list again.
+    pub fn remove_host_staged_file(
+        &self,
+        project: String,
+        alias: String,
+        id: String,
+    ) -> Reply<Vec<wisp_server::desktop::StagedFile>> {
+        self.local(
+            move |host| async move { host.remove_host_staged_file(&project, &alias, &id).await },
+        )
+    }
+
+    /// The project's runs on a saved SSH host, newest first.
+    pub fn host_runs(
+        &self,
+        project: String,
+        alias: String,
+    ) -> Reply<Vec<wisp_server::desktop::HostRun>> {
+        self.local(move |host| async move { host.host_runs(&project, &alias).await })
+    }
+
     /// Copies a host's file to `destination` as a run; answers its id.
     pub fn download_from_host(
         &self,

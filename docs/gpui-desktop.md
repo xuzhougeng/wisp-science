@@ -147,7 +147,7 @@ which it only reads.
 | Capabilities | A dialog for the open project: how many skills, connectors, MCP servers and SSH hosts are on or usable, the state of memory, and which command-line tools were found on this computer |
 | Follow-up questions | After an answer, up to three questions you could ask next show above the composer; picking one puts it in the composer to send or change, and the list can be put away |
 | Sample project | The home page's flask button makes a small sample project in a folder you choose and opens it: made-up counts for twelve samples, a script, and a README of things to ask. Its play-file button opens Example conversations: the research recorded with Wisp that ships with it, read only, and Copy to a project, which adds one to a project as a conversation to go on with |
-| Host folders | With an SSH host saved, the Files tab offers it beside the project: its folders are listed, to walk through; a file's download button copies it to a place on this computer you choose, and the upload button in the folder's header copies files of this computer into the folder shown, each as a run of the open conversation whose progress the transfer tray shows; nothing there is replaced |
+| Host folders | With an SSH host saved, the Files tab offers it beside the project: its folders are listed, to walk through; a file opens in place of the listing as the WebView's preview reads it (text as its first megabyte, laid out as Markdown or a table where a project file would be; a picture whole up to 32 MB, with zoom; anything else says to copy it here), and Escape or the back button returns to the folder; a file's download button copies it to a place on this computer you choose, and the upload button in the folder's header copies files of this computer into the folder shown, each as a run of the open conversation whose progress the transfer tray shows; nothing there is replaced, renamed or deleted from the Files tab |
 | File origin | A file's preview has a trail button in its header: which tool call last wrote it, with the code it ran, the project files it read and the conversation, which it can open |
 | Terminal | Terminals drawn in the window, in a dock at the foot of the conversation (Terminals in the top bar shows or hides it; hidden, they keep running): the Files tab's terminal button (or the command palette) opens one in the folder being browsed, + one in the project's folder, the host button one on a saved SSH host, and Terminal on a host's row in Environments or over a host's folder in Files one there; several at once as tabs, each closed with its ×; the dock's last button opens the system's terminal instead |
 | Updates | Wisp looks for a newer release when it starts (unless turned off) and shows a note only when there is one; Settings, General, has Check for updates and the At start switch, says whether a newer release has been published and opens the release page |
@@ -200,7 +200,7 @@ which it only reads.
 | Agent cards | A call that hands work to other agents is a card in its place: `explore` with its question, status and folded findings; `dispatch_subagent` with the subagent conversation's title, status and task, and a button that opens it; `delegate_tasks` with the batch's goal, status, task counts and a line per task (status, instruction, its conversation), Show in Agents and Stop while it runs. `subagent_status`, `stop_subagent`, `get_delegated_result` and a background batch's result coming back are one folded line naming the subagent or batch. Until the batches or the conversation list are read the call stays a tool row |
 | Runs | A Runs tab: runs started by the conversation with kind, status, exit code, command and output tails; a run that has not ended can be cancelled, and is followed until it ends. One that has ended and kept a workspace where it ran can have it deleted after a question (its logs are saved into the project first, and outputs never brought back are not lost without a second question); a cleaned run, or one whose cleanup failed, says so. A run that moves files between machines shows its phase, file, bytes, rate and time left on its card, and while it moves (and a few seconds after) in a Transfers tray above the composer that folds to one line. A finished run on an SSH host has a folder button: a dialog lists what it left there a folder at a time, with a name filter and More… for long folders, and the files and folders chosen (across folders) are brought into the project as the conversation's results, a folder as one archive, or deleted there after a question; the whole workspace can be deleted from it too. In the transcript each run has one card, under the call that waits on it while it goes on (a `run_in_context` still waiting on its run included) and under the call that submitted it once it has ended, so an explicit `monitor_run` leaves no second card: its state as an icon and a word, where and how long it ran, a transfer's meter, and, with the call opened, its remote folder, command and output tails; Ask, Move to background (a turn waiting on the run stops waiting with `wait_backgrounded` and finishes its reply while the run goes on; the conversation gets one message when the run ends, even after a restart), Cancel, the review dialog for a finished run on an SSH host, and Show in Runs for its whole output, log and clean-up |
 | Artifacts | Files a turn wrote are recorded when it ends; an Artifacts tab lists them for the conversation or the project and opens them, and lists each one's versions, any of which can be saved as a copy from its snapshot (checked against its checksum, up to 512 MB); By folder puts them under their folders, and each one's trail button says which tool call wrote it, with the code and Open the conversation |
-| Side panel | Tabs: Files, Runs, Environments (this computer and the saved SSH hosts: attach one to the conversation so its runs may go there, take it away, check it, open a terminal or its folders, and set where the project keeps things there: uploaded data, run folders and the results folder), Artifacts, Notebook, Provenance (the loaded part's tool calls with how each went, opening to what each was given and returned, with Show in the conversation), Agents, Highlights, Memos, Memory, Aside, each named in words, the open one in ink with a short teal line under it. − beside the open tab takes it away and + adds one back; the tabs kept are remembered, and opening a tab from elsewhere brings it back |
+| Side panel | Tabs: Files, Runs, Environments (this computer and the saved SSH hosts: attach one to the conversation so its runs may go there, take it away, check it, open a terminal or its folders, see the Python and R its last check found, list the project's runs there, list the files the project placed there and delete one no run needs after a question, and set where the project keeps things there: uploaded data, run folders and the results folder), Artifacts, Notebook, Provenance (the loaded part's tool calls with how each went, opening to what each was given and returned, with Show in the conversation), Agents, Highlights, Memos, Memory, Aside, each named in words, the open one in ink with a short teal line under it. − beside the open tab takes it away and + adds one back; the tabs kept are remembered, and opening a tab from elsewhere brings it back |
 | Agents | The Agents tab lists the helpers the conversation sent off to explore: what each was asked, how it went, and what it found; the transcript draws those calls, and the subagents and batches the agent started, as cards |
 | Aside | The Aside tab (or the command palette) asks the conversation's model a question about the open conversation; the answer shows beside it and nothing is added to the conversation. The latest turns are quoted whole; passages from before them that match the question go along labelled [E1]… and are listed under the answer, with who said them and the words they matched. Ask aside under a message opens it with that message quoted in the question |
 | Quoting | Quote under a message puts it in the message box as a quotation after what you were writing, ready to answer; a selected passage is copied with Cmd/Ctrl+C |
@@ -651,10 +651,19 @@ Limits of this slice:
   answers and tool results (the plans are left out, as the WebView leaves
   them) and is named after the example. The title is the first sentence
   of the recorded request.
-- A host's folders are only listed: files there cannot be opened,
-  downloaded, uploaded, renamed or removed from the Files tab, and
-  nothing on the host is changed by looking. The host has to have passed
-  a check in Settings, as for runs. Each folder is one SSH request over
+- A host's file is read for a preview with the WebView's own scripts
+  (`wisp_runs::remote_file`, which `src-tauri` now calls too), each the
+  remote command of one `ssh`, the path single-quoted as data: text as its
+  first megabyte with the file's whole size (the header says when it was
+  cut), a picture whole up to 32 MB (one larger by the listing is not
+  fetched, and the host refuses one that grew past it); a PDF, an Office
+  document or another kind that is never text is not fetched and says to
+  copy it here, and a notebook, an HTML page, an alignment or a structure
+  shows as its text. The bytes stay in the window: nothing is written into
+  the project. Files cannot be renamed or removed from the Files tab (the
+  WebView cannot either), and there is no field to type a folder's path,
+  which the WebView has. The host has to have passed a check in Settings,
+  as for runs. Each folder is one SSH request over
   the run manager's connection with a twenty-second limit; at most 2,000
   entries are listed, fewer when names are very long, and the folder
   says when there was more. Hidden files are not listed. WSL is not
@@ -1950,6 +1959,17 @@ the host is offered beside This project. Choose it: its home folder is
 listed, folders first; go into one and back Up; Reload. Choose This
 project: the project's files are back as they were. With a host that has
 not been checked, confirm the tab says a check is needed.
+On the host, click a text file: its text shows with its size, and for one
+over a megabyte the header says only the first megabyte is shown; a `.csv`
+shows as a table and a `.md` laid out. Click a picture: it shows and zooms
+with the wheel. Click a PDF: it says to copy it here. Press Escape: the
+folder is back and the panel stays. In Environments press a host's list
+button: the project's runs there are listed; press its archive button: the
+files the project placed there are listed with whether a run still needs
+each. Press the trash button on one no run needs: a dialog names the host
+and the whole path and says it cannot be undone; press Escape and only the
+dialog closes; press it again and Delete from the host: it is gone from the
+list and from the host.
 On the host, press a file's download button and choose a place: the
 Transfers tray shows it coming, and the file is there when it ends. Press
 the upload button in the folder's header, pick two small files: they show as

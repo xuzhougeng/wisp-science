@@ -35,6 +35,16 @@ impl Workspace {
         self.layers.close(Layer::FilePreview);
         self.layers.close(Layer::PanelTabMenu);
         self.files.close_preview();
+        // What a tab showed in place of its list is not left open, out of
+        // sight, for Escape to close.
+        if tab != PanelTab::Files {
+            self.close_remote_look();
+        }
+        if tab != PanelTab::Environments {
+            self.host_detail = None;
+            self.staged_removing = None;
+            self.layers.close(Layer::HostDetail);
+        }
         self.layers.open(Layer::FilesPanel);
         self.panel_tab = tab;
         self.keep_panel_tab(tab, window, cx);

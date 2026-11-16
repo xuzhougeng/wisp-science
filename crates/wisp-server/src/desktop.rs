@@ -3558,6 +3558,136 @@ impl Server {
         crate::remote_dir::parse(alias, output)
     }
 
+    /// A file of a saved SSH host, for the Files tab to show, read as the
+    /// WebView's preview reads it: text as its first megabyte, a picture
+    /// whole up to 32 MB. `listed_size` is what the folder listing said; a
+    /// picture larger than the cap by it is not fetched. Nothing is kept,
+    /// in the project or anywhere else.
+    pub async fn remote_file(
+        &self,
+        alias: &str,
+        path: &str,
+        listed_size: Option<u64>,
+    ) -> Result<RemoteFile> {
+        let context = self.host_to_read(alias, path).await?;
+        let (alias, path) = (alias.trim().to_owned(), path.to_owned());
+        tokio::task::spawn_blocking(move || {
+            let mut runner = wisp_runs::remote_file::ProcessRemoteRunner;
+            crate::remote_file::fetch(&alias, &context, &path, listed_size, &mut runner)
+        })
+        .await?
+        .map_err(anyhow::Error::msg)
+    }
+
+    /// The saved host `alias`, when `path` of it may be read: a path is
+    /// named, the host's files were not given up when it was discarded,
+    /// and it has passed a check.
+    async fn host_to_read(&self, alias: &str, path: &str) -> Result<wisp_store::ExecutionContext> {
+        ensure!(!path.trim().is_empty(), "Choose a file of the host");
+        let id = format!("ssh:{}", alias.trim());
+        let context = self
+            .0
+            .store
+            .get_execution_context(&id)
+            .await?
+            .context("That host is no longer saved")?;
+        wisp_runs::remote_files::refuse_if_context_path_discarded(&self.0.store, &id, path)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        wisp_runs::ssh_hosts::require_managed_ssh_ready(&context).map_err(anyhow::Error::msg)?;
+        Ok(context)
+    }
+
+    /// What the project placed on a saved SSH host and keeps a record of:
+    /// the WebView's Remote files list of a server. Each says whether a
+    /// run still needs it, a newer copy replaced it, or nothing does.
+    pub async fn host_staged_files(&self, project: &str, alias: &str) -> Result<Vec<StagedFile>> {
+        self.known_project(project).await?;
+        let context = self.saved_host(alias).await?;
+        wisp_runs::remote_files::list_remote_files(&self.0.store, project, &context.id)
+            .await
+            .map_err(anyhow::Error::msg)
+    }
+
+    /// Deletes one of those files from the host for good, as the WebView's
+    /// Delete from server does: only a file in the project's record, and
+    /// not one a run still needs. A replaced one only leaves the record,
+    /// since its path holds the newer copy. Answers the list again.
+    pub async fn remove_host_staged_file(
+        &self,
+        project: &str,
+        alias: &str,
+        id: &str,
+    ) -> Result<Vec<StagedFile>> {
+        self.remove_host_staged_file_with(project, alias, id, self.0.runs.runner_ref())
+            .await
+    }
+
+    pub(crate) async fn remove_host_staged_file_with(
+        &self,
+        project: &str,
+        alias: &str,
+        id: &str,
+        runner: &dyn wisp_runs::RunCommandRunner,
+    ) -> Result<Vec<StagedFile>> {
+        self.known_project(project).await?;
+        let context = self.saved_host(alias).await?;
+        let _admission = self.0.admission.read().await;
+        wisp_runs::remote_files::remove_remote_files(
+            &self.0.store,
+            runner,
+            project,
+            &context,
+            &[id.to_owned()],
+            false,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        wisp_runs::remote_files::list_remote_files(&self.0.store, project, &context.id)
+            .await
+            .map_err(anyhow::Error::msg)
+    }
+
+    /// The project's runs on a saved SSH host, newest first: the WebView's
+    /// Runs list of a server.
+    pub async fn host_runs(&self, project: &str, alias: &str) -> Result<Vec<HostRun>> {
+        self.known_project(project).await?;
+        let context = self.saved_host(alias).await?;
+        Ok(self
+            .0
+            .store
+            .list_run_summaries_in_scope(&wisp_store::StateScope::mainline(project.to_owned()))
+            .await?
+            .into_iter()
+            .filter(|run| run.context_id == context.id)
+            .map(|run| HostRun {
+                id: run.id,
+                session: run.frame_id,
+                title: run.title,
+                kind: run.kind,
+                status: run.status.as_str().to_owned(),
+                created_at: run.created_at,
+                ended_at: run.ended_at,
+                exit_code: run.exit_code,
+            })
+            .collect())
+    }
+
+    /// A saved SSH host by its alias.
+    async fn saved_host(&self, alias: &str) -> Result<wisp_store::ExecutionContext> {
+        let context = self
+            .0
+            .store
+            .get_execution_context(&format!("ssh:{}", alias.trim()))
+            .await?
+            .context("That host is no longer saved")?;
+        ensure!(
+            context.kind == wisp_store::ExecutionContextKind::Ssh,
+            "That is not an SSH host"
+        );
+        Ok(context)
+    }
+
     /// A saved SSH host's execution context, ready for work, and `session`
     /// checked to be `project`'s when one is given.
     async fn host_for_transfer(
@@ -7797,6 +7927,22 @@ pub use crate::webview_import::{
 };
 
 /// Where a project's work keeps things on one SSH host.
+/// One of the project's runs on an SSH host.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostRun {
+    pub id: String,
+    /// The conversation that started it, when one did.
+    pub session: Option<String>,
+    pub title: String,
+    pub kind: String,
+    /// `submitted`, `running`, `succeeded`, `failed` and the rest.
+    pub status: String,
+    /// When it was made, and ended, in seconds since 1970.
+    pub created_at: i64,
+    pub ended_at: Option<i64>,
+    pub exit_code: Option<i64>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HostStorage {
     /// Where uploaded data goes there: a whole path or one under `~/`.
@@ -7813,6 +7959,7 @@ pub use crate::queue::QueuedMessage;
 pub use crate::quick_actions::{QuickAction, QuickActionInput};
 pub use crate::remote_access::{RemoteAccess, RemoteState};
 pub use crate::remote_dir::RemoteDirectory;
+pub use crate::remote_file::{RemoteFile, RemoteFileBody};
 pub use crate::review::{Finding as ReviewFinding, Outcome as ReviewOutcome, Review};
 pub use crate::run_log::RunLog;
 /// How many times a turn may carry on by itself after a cut answer.
@@ -7842,6 +7989,8 @@ pub use wisp_dto::{
     ArchiveFile, ArchiveFileChoice, ArchiveScript, ConfirmResearchArchive, ResearchArchive,
 };
 pub use wisp_dto::{LabKnowledgeBaseInfo, LabMemberInfo, LabStatus};
+/// A file the project placed on an SSH host, from its record there.
+pub use wisp_runs::remote_files::{RemoteFileState as StagedState, RemoteFileView as StagedFile};
 /// The checks the WebView makes on a research archive's title, report and
 /// scripts before it is frozen, for a client to say what is wrong first.
 pub use wisp_store::research_archive_files::validate_content as research_archive_problem;
@@ -7974,7 +8123,7 @@ fn crop_png(bytes: &[u8], region: wisp_dto::image_pins::ImageRegion) -> Result<V
     Ok(png)
 }
 
-fn image_type(path: &std::path::Path) -> Option<&'static str> {
+pub(crate) fn image_type(path: &std::path::Path) -> Option<&'static str> {
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     Some(match extension.as_str() {
         "png" => "image/png",

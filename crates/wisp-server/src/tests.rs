@@ -17182,3 +17182,131 @@ async fn a_run_moved_to_the_background_frees_the_turn_and_reports_its_end() {
         .is_empty());
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_hosts_files_and_runs_are_listed_and_only_unused_files_deleted() {
+    use desktop::{SshHostRow, StagedState};
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let key = temp.path().join("id_lab");
+    std::fs::write(&key, b"test-key\n").unwrap();
+    server
+        .save_ssh_host(SshHostRow {
+            alias: "gpu".into(),
+            host_name: "10.0.0.8".into(),
+            user: "lab".into(),
+            identity_file: key.to_string_lossy().into_owned(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let store = &server.0.store;
+
+    // A file of a host is read only from a saved host, and only one named.
+    let ghost = server
+        .remote_file("ghost", "/a.txt", None)
+        .await
+        .unwrap_err();
+    assert!(ghost.to_string().contains("no longer saved"), "{ghost}");
+    let nothing = server.remote_file("gpu", "  ", None).await.unwrap_err();
+    assert!(nothing.to_string().contains("Choose a file"), "{nothing}");
+
+    // Runs on the host, newest first, and none from elsewhere.
+    let mut older = wisp_store::RunRecord::new("r-old", PROJECT, "ssh:gpu", "Align", "ssh_direct");
+    older.created_at = 100;
+    older.status = wisp_store::RunStatus::Succeeded;
+    let mut newer = wisp_store::RunRecord::new("r-new", PROJECT, "ssh:gpu", "Call", "ssh_direct");
+    newer.created_at = 200;
+    let local = wisp_store::RunRecord::new("r-local", PROJECT, "local", "Plot", "command");
+    for run in [&older, &newer, &local] {
+        store.create_run(run).await.unwrap();
+    }
+    let runs = server.host_runs(PROJECT, "gpu").await.unwrap();
+    let ids: Vec<_> = runs.iter().map(|run| run.id.as_str()).collect();
+    assert_eq!(ids, ["r-new", "r-old"]);
+    assert_eq!(runs[1].status, "succeeded");
+    assert!(server.host_runs(PROJECT, "ghost").await.is_err());
+    assert!(server.host_runs("missing", "gpu").await.is_err());
+
+    // What the project placed there: one a running run still needs, one
+    // nothing needs any more, with a name that is not shell-safe.
+    let needed = wisp_store::RemoteStagingEntry::new(
+        PROJECT,
+        "ssh:gpu",
+        Some("r-new".into()),
+        "~/wisp/in.fq",
+        "run_input",
+    );
+    let mut unused = wisp_store::RemoteStagingEntry::new(
+        PROJECT,
+        "ssh:gpu",
+        None,
+        "/scratch/it's; $(rm -rf ~)/old.bam",
+        "harvest_persist",
+    );
+    unused.created_at = needed.created_at + 1;
+    store.record_remote_staging(&needed).await.unwrap();
+    store.record_remote_staging(&unused).await.unwrap();
+    let staged = server.host_staged_files(PROJECT, "gpu").await.unwrap();
+    let state = |id: &str| staged.iter().find(|file| file.id == id).unwrap().state;
+    assert_eq!(state(&needed.id), StagedState::Active);
+    assert_eq!(state(&unused.id), StagedState::Orphan);
+
+    struct Deleting(std::sync::Mutex<Vec<wisp_runs::RunCommand>>, String);
+    #[async_trait]
+    impl wisp_runs::RunCommandRunner for Deleting {
+        async fn run(
+            &self,
+            command: wisp_runs::RunCommand,
+            _: std::time::Duration,
+        ) -> Result<wisp_runs::RunCommandOutput, String> {
+            self.0.lock().unwrap().push(command);
+            Ok(wisp_runs::RunCommandOutput {
+                exit_code: 0,
+                stdout: format!("__WISP_RM__:{}\n", self.1),
+                stderr: String::new(),
+            })
+        }
+    }
+    // One a run still needs is refused before anything is asked.
+    let deleting = Deleting(Default::default(), needed.id.clone());
+    let refused = server
+        .remove_host_staged_file_with(PROJECT, "gpu", &needed.id, &deleting)
+        .await
+        .unwrap_err();
+    assert!(
+        refused.to_string().contains("still referenced"),
+        "{refused}"
+    );
+    assert!(deleting.0.lock().unwrap().is_empty());
+    // Nor one that is not in the record, whatever path it names.
+    assert!(server
+        .remove_host_staged_file_with(PROJECT, "gpu", "/", &deleting)
+        .await
+        .is_err());
+    assert!(deleting.0.lock().unwrap().is_empty());
+
+    // The unused one is deleted with its path quoted as data.
+    let deleting = Deleting(Default::default(), unused.id.clone());
+    let left = server
+        .remove_host_staged_file_with(PROJECT, "gpu", &unused.id, &deleting)
+        .await
+        .unwrap();
+    assert_eq!(
+        left.iter().map(|file| file.id.as_str()).collect::<Vec<_>>(),
+        [needed.id.as_str()]
+    );
+    let asked = deleting.0.lock().unwrap();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].program, "ssh");
+    assert_eq!(asked[0].args.last().map(String::as_str), Some("sh -s"));
+    let script = asked[0].stdin.as_deref().unwrap();
+    assert!(
+        script.contains("path='/scratch/it'\\''s; $(rm -rf ~)/old.bam'\nrm -rf \"$path\"\n"),
+        "{script}"
+    );
+    assert_eq!(script.matches("rm -rf \"$path\"").count(), 1);
+    server.shutdown().await;
+}

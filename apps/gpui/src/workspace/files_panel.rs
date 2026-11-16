@@ -9,7 +9,7 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
+    input::{Input, InputState},
     text::TextView,
 };
 
@@ -924,7 +924,7 @@ impl Workspace {
                     return self.render_notebook(&content.path, book, window, cx);
                 }
                 match files::table(&content.path, text) {
-                    Some(table) => self.render_table(&table, cx),
+                    Some(table) => self.render_table(&table, &self.file_view, cx),
                     None if self.live_edit().is_some() => {
                         self.render_file_editor(cx).into_any_element()
                     }
@@ -1518,8 +1518,14 @@ impl Workspace {
             .into_any_element()
     }
 
-    /// A delimited file as a grid, with a switch to its text.
-    fn render_table(&self, table: &files::Table, cx: &mut Context<Self>) -> AnyElement {
+    /// A delimited file as a grid, with a switch to its text, which
+    /// `text` holds: a project file's or a host's.
+    pub(super) fn render_table(
+        &self,
+        table: &files::Table,
+        text: &Entity<InputState>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let muted = cx.theme().muted_foreground;
         let border = cx.theme().border;
         let mut bar = div().h_flex().gap_3().px_3().py_1().child(
@@ -1542,7 +1548,12 @@ impl Workspace {
                 .flex_1()
                 .min_h_0()
                 .child(bar)
-                .child(self.render_text_preview())
+                .child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .child(Input::new(text).disabled(true).h_full()),
+                )
                 .into_any_element();
         }
         if let Some(note) = files::table_note(table) {
@@ -1791,7 +1802,7 @@ impl Workspace {
             PanelTab::Files => {}
         }
         let panel = panel.children(self.render_locations(cx));
-        if let Some(remote) = self.render_remote_files(cx) {
+        if let Some(remote) = self.render_remote_files(window, cx) {
             return panel.child(remote).into_any_element();
         }
         let location = if self.files.path.is_empty() {

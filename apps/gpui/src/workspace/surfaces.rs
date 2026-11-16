@@ -967,6 +967,7 @@ mod tests {
             ("workspace/file_editor_view.rs", "render_file_changed"),
             ("workspace/file_editor_view.rs", "render_close_unsaved"),
             ("workspace/memory_view.rs", "render_clear_memory"),
+            ("workspace/hosts_view.rs", "render_remove_staged"),
             ("workspace/share_view.rs", "render_share"),
             ("workspace/reuse_view.rs", "render_session_reuse"),
         ] {
@@ -1147,6 +1148,7 @@ mod tests {
             ("workspace/memory_view.rs", "memory_card"),
             ("workspace/memory_view.rs", "tidy_card"),
             ("workspace/hosts_view.rs", "host_storage_form"),
+            ("workspace/hosts_view.rs", "host_detail_card"),
         ];
         let entries = [
             ("workspace/panel_tabs.rs", "render_runs_tab"),
@@ -1166,6 +1168,7 @@ mod tests {
         ];
         let headers = [
             ("workspace/remote_files_view.rs", "render_remote_files"),
+            ("workspace/remote_files_view.rs", "render_remote_look"),
             ("workspace/memos_view.rs", "memo_editor"),
             ("workspace/memory_view.rs", "memory_editor"),
         ];

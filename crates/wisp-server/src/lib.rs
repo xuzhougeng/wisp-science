@@ -49,6 +49,7 @@ mod quick_actions;
 mod recaps;
 mod remote_access;
 mod remote_dir;
+mod remote_file;
 mod research_archive;
 mod review;
 mod run_log;

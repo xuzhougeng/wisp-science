@@ -28,6 +28,15 @@ pub enum Layer {
     /// Where the project keeps things on one SSH host, in the
     /// Environments tab.
     HostStorageForm,
+    /// A file of an SSH host shown in the Files tab, in place of its
+    /// folder's listing.
+    RemotePreview,
+    /// One SSH host's runs, or the files the project placed there, under
+    /// its card in the Environments tab.
+    HostDetail,
+    /// Question, as a dialog, before a file the project placed on a host
+    /// is deleted from it.
+    ConfirmRemoveStaged,
     /// What a finished run left on its SSH host: a dialog over everything.
     RunReview,
     /// The projects to hide while recording: a dialog over everything.
@@ -314,6 +323,8 @@ impl Layer {
             | Layer::PanelTabMenu
             | Layer::ConfirmCleanRun
             | Layer::HostStorageForm
+            | Layer::RemotePreview
+            | Layer::HostDetail
             | Layer::FileName
             | Layer::ConfirmTrashFile
             | Layer::MemoEditor
@@ -366,6 +377,7 @@ impl Layer {
             Layer::ExampleCopy => Some(Layer::Examples),
             Layer::ConfirmRunFilesDelete => Some(Layer::RunReview),
             Layer::FileChangedOnDisk | Layer::PictureSelect => Some(Layer::FilePreview),
+            Layer::ConfirmRemoveStaged => Some(Layer::HostDetail),
             Layer::PictureRegion => Some(Layer::PictureSelect),
             Layer::SessionReuse => Some(Layer::ReuseRange),
             Layer::ConfirmDiscardArchive => Some(Layer::ResearchArchive),
@@ -603,6 +615,29 @@ mod tests {
         assert_eq!(stack.dismiss_top(), Some(Layer::HostStorageForm));
         assert!(stack.contains(Layer::FilesPanel));
         stack.close(Layer::FilesPanel);
+
+        // So does a host's file, shown in place of its folder.
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::RemotePreview);
+        assert_eq!(stack.dismiss_top(), Some(Layer::RemotePreview));
+        assert!(stack.contains(Layer::FilesPanel));
+        stack.close(Layer::FilesPanel);
+
+        // The question before a placed file is deleted closes first, then
+        // the host's list under its card, then the panel.
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::HostDetail);
+        stack.open(Layer::ConfirmRemoveStaged);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmRemoveStaged));
+        assert!(stack.contains(Layer::HostDetail));
+        assert_eq!(stack.dismiss_top(), Some(Layer::HostDetail));
+        assert!(stack.contains(Layer::FilesPanel));
+        // The list going takes its question with it.
+        stack.open(Layer::HostDetail);
+        stack.open(Layer::ConfirmRemoveStaged);
+        assert!(stack.close(Layer::FilesPanel));
+        assert!(!stack.contains(Layer::HostDetail));
+        assert!(!stack.contains(Layer::ConfirmRemoveStaged));
 
         // So does the question before a run's workspace is cleaned.
         stack.open(Layer::FilesPanel);
