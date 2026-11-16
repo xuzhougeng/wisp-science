@@ -7996,7 +7996,7 @@ pub use crate::aside::Exchange as AsideExchange;
 pub use crate::aside::{Answer as AsideAnswer, Source as AsideSource};
 pub use crate::assistant::{is_assistant, ASSISTANT_FRAME_ID};
 pub use crate::background_runs::BackgroundRunEnded;
-pub use crate::browser::{BrowserSettings, BrowserStatus};
+pub use crate::browser::{BrowserAlerts, BrowserSettings, BrowserStatus};
 pub use crate::browser_filters::{BrowserFilters, BrowserHostRule};
 pub use crate::channels::{
     feishu::{FeishuBind, FeishuBindPoll, FeishuStatus},

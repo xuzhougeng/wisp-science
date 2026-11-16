@@ -3,6 +3,7 @@ mod agents_view;
 mod archive_view;
 mod aside_view;
 mod assistant_view;
+mod browser_prompts_view;
 mod calendar_view;
 mod capabilities_view;
 mod compact_view;
@@ -623,6 +624,12 @@ pub struct Workspace {
     browser: Option<wisp_server::desktop::BrowserSettings>,
     /// Blocked host and why, preferred host and why.
     browser_fields: [Entity<InputState>; 4],
+    /// What is asked or told about the browser over the shown project.
+    browser_prompts: crate::browser::Prompts,
+    /// The project those are about.
+    browser_project: Option<String>,
+    /// Asks the host about the browser every two seconds.
+    browser_watch: Option<Task<()>>,
     /// The workflow templates.
     workflows: Vec<wisp_server::desktop::Workflow>,
     /// The workflow in the form or the remove question; empty is a new one.
@@ -1926,6 +1933,9 @@ impl Workspace {
             decision_testing: false,
             browser: None,
             browser_fields,
+            browser_prompts: Default::default(),
+            browser_project: None,
+            browser_watch: None,
             workflows: Vec::new(),
             workflow_editing: None,
             workflow_fields,
@@ -2339,6 +2349,11 @@ impl Workspace {
             }
             // Putting the guide away is finishing it, as in the WebView.
             Some(Layer::Onboarding) => self.finish_onboarding(cx),
+            Some(
+                layer @ (Layer::BrowserTabCleanup
+                | Layer::BrowserNeedsHuman
+                | Layer::BrowserExtensionUpdate),
+            ) => self.escape_browser_prompt(layer, window, cx),
             // The newest card goes; the others wait for the next press.
             Some(Layer::SessionNotices) => {
                 self.notices.dismiss_newest();
@@ -2737,6 +2752,8 @@ impl Workspace {
                         this.load_environments(window, cx);
                         // The desk display can ask for a conversation.
                         this.follow_device_focus(window, cx);
+                        // What the browser asks of the user, and its update.
+                        this.watch_browser(window, cx);
                         // A Run moved to the background is told about
                         // when it ends.
                         this.listen_for_run_endings(cx);
@@ -4968,6 +4985,18 @@ impl Render for Workspace {
         };
         let root = if self.layers.contains(Layer::ConfirmCloseUnsaved) {
             root.child(self.render_close_unsaved(cx))
+        } else {
+            root
+        };
+        // What the browser asks: the question about a human over the one
+        // about tabs, as the WebView draws them.
+        let root = if self.layers.contains(Layer::BrowserTabCleanup) {
+            root.children(self.render_browser_cleanup(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::BrowserNeedsHuman) {
+            root.children(self.render_browser_needs_human(cx))
         } else {
             root
         };

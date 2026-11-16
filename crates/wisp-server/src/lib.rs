@@ -1466,6 +1466,8 @@ impl Server {
         // the turn over, so an exploration can start from its answer at
         // once, while follow-ups and the review are still being asked for.
         drop(activity);
+        // The tabs the turn opened in the browser are closed or offered.
+        self.browser_turn_over(&request.request_id);
         let succeeded = error.is_none();
         let answered = succeeded && side_model.is_some();
         // A timer's turn is not followed by suggestions or a memory

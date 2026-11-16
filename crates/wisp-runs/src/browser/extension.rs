@@ -1,3 +1,7 @@
+//! The managed copy of the Wisp extension: the folder the user loads in the
+//! browser, kept in the app's data folder and refreshed from the copy the
+//! app ships, so it does not move when the app is reinstalled.
+
 use base64::Engine;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -139,7 +143,7 @@ pub fn inspect(dir: &Path, expected_extension_id: &str) -> Result<ExtensionPacka
     let version = manifest
         .get("version")
         .and_then(Value::as_str)
-        .filter(|value| semver::Version::parse(value).is_ok())
+        .filter(|value| super::valid_version(value))
         .ok_or_else(|| "browser extension manifest has an invalid version".to_string())?
         .to_string();
     let key = manifest
@@ -272,7 +276,7 @@ mod tests {
     #[test]
     fn managed_copy_is_verified_and_repaired() {
         let source =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../browser-extension");
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../browser-extension");
         let root = std::env::temp_dir().join(format!("wisp-managed-extension-{}", Uuid::new_v4()));
         let destination = root.join("browser-extension");
 
@@ -297,7 +301,7 @@ mod tests {
     #[test]
     fn invalid_bundled_package_does_not_replace_the_last_verified_copy() {
         let bundled =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../browser-extension");
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../browser-extension");
         let root = std::env::temp_dir().join(format!("wisp-invalid-extension-{}", Uuid::new_v4()));
         let source = root.join("source");
         let destination = root.join("browser-extension");

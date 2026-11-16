@@ -12,8 +12,9 @@ use url::Url;
 use wisp_store::Store;
 
 pub const SETTING_KEY: &str = "browser_url_filters";
-pub const AUTO_LAUNCH_KEY: &str = "browser_auto_launch";
-pub const AUTO_CLOSE_TABS_KEY: &str = "browser_auto_close_tabs";
+pub use wisp_runs::browser::{
+    auto_close_tabs_enabled, auto_launch_enabled, AUTO_CLOSE_TABS_KEY, AUTO_LAUNCH_KEY,
+};
 const MAX_RULES: usize = 200;
 const MAX_REASON_CHARS: usize = 240;
 
@@ -108,25 +109,6 @@ pub async fn set_browser_url_filters(
     save(&state.store, filters).await
 }
 
-pub fn parse_auto_launch(raw: Option<&str>) -> bool {
-    match raw.map(str::trim) {
-        None | Some("") => true,
-        Some("false") | Some("0") | Some("off") => false,
-        Some(_) => true,
-    }
-}
-
-pub async fn auto_launch_enabled(store: &Store) -> bool {
-    parse_auto_launch(
-        store
-            .get_setting(AUTO_LAUNCH_KEY)
-            .await
-            .ok()
-            .flatten()
-            .as_deref(),
-    )
-}
-
 #[tauri::command]
 pub async fn get_browser_auto_launch(state: State<'_, crate::AppState>) -> Result<bool, String> {
     Ok(auto_launch_enabled(&state.store).await)
@@ -143,24 +125,6 @@ pub async fn set_browser_auto_launch(
         .await
         .map_err(|error| error.to_string())?;
     Ok(enabled)
-}
-
-pub fn parse_auto_close_tabs(raw: Option<&str>) -> bool {
-    match raw.map(str::trim) {
-        Some("true") | Some("1") | Some("on") => true,
-        Some(_) | None => false,
-    }
-}
-
-pub async fn auto_close_tabs_enabled(store: &Store) -> bool {
-    parse_auto_close_tabs(
-        store
-            .get_setting(AUTO_CLOSE_TABS_KEY)
-            .await
-            .ok()
-            .flatten()
-            .as_deref(),
-    )
 }
 
 #[tauri::command]
@@ -325,6 +289,7 @@ fn js_navigation_regex() -> &'static regex::Regex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wisp_runs::browser::{parse_auto_close_tabs, parse_auto_launch};
 
     #[test]
     fn parses_hosts_from_bare_domains_and_urls() {

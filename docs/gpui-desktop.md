@@ -170,7 +170,7 @@ desktop can hold them as they are.
 | File actions | A previewed file's path can be copied, the file attached to the message, shown in the file manager or opened with the system's own application |
 | Script editor | An R (`.R`, `.r`) or Python (`.py`, `.pyw`) script previewed in the Files tab is edited where it is shown, with line numbers, as in the WebView's source editor: Save (or Cmd/Ctrl+S in the editor) writes it over the file, keeping the file's line endings and final newline, and appears with "Not saved" under the name while there is something to save; Run (Cmd/Ctrl+Return) runs the selection, or the whole statement under the caret and then moves to the next one, and Run script (Cmd/Ctrl+Shift+Return) saves and runs the saved file whole, both in the open conversation's interpreter for the script's language (started on the first run), with the output and plots in the console above the composer. A save is refused when the file changed on disk after the edit began, and a dialog offers Keep editing, Reload from disk or Overwrite. Unsaved edits stay per file while the window is open, through switching files, closing the preview and changing conversation; closing the window over them asks first |
 | Slash commands | A message that is only a command does something instead of being sent: `/review`, `/trajectory`, `/context`, `/btw <question>`, `/plan`, `/save-as-skill`, `/skills`, `/files`, `/upload`, `/memo`, `/remember`, `/archive`, `/compact`, `/timer 30m <prompt>`, `/fork`, `/rewind`, `/permission`, `/share`, `/help`; typing "/" where a word starts, or the composer's "/" button, lists them with the project's skills, narrowing as you type |
-| Browser | Settings, Browser, switches on a bridge to the Wisp extension in your own Chrome or Chromium; conversations can then open a tab, read it and run a script in it, only in tabs they opened themselves, and hosts can be blocked or preferred |
+| Browser | Settings, Browser, switches on a bridge to the Wisp extension in your own Chrome or Chromium; conversations can then open a tab, read it, run a script in it and look at it (a screenshot), only in tabs they opened themselves, and hosts can be blocked or preferred. Open browser automatically starts your browser when a tool finds the extension away; Automatically close browser tabs closes a turn's tabs when it ends, and otherwise a dialog asks which to close. A page that asks for a human shows a dialog to complete the challenge in the browser, and the conversation goes on when you confirm; an extension older than the app's own gets a bar above the composer that updates it |
 | Workflows | Settings, Workflows, keeps templates of a goal broken into tasks, each saying which earlier tasks it needs and what it may do as an agent, with an approval policy; Run starts a conversation in the open project and gives the model the tasks stage by stage, and Run as agents drafts them as a batch of agents in a new conversation, approved or discarded in its Agents tab |
 | Chat apps | Settings, Chat apps, binds a WeChat bot by scanning a QR code (and a second one for the research assistant), and a Feishu (or Lark) bot by scanning to make its app or by entering an App ID and App Secret, with its owner confirmed here; the owner's messages then run in the project chats go to and the answer comes back (on Feishu as a card that shows the turn's progress), with `/project`, `/session`, `/new`, `/status`, `/stop` and, in WeChat, approvals answered by code (`/approve`, `/reject`); and Wisp Lab: found a lab on a wisp-relay or ask to join one with an invite code, see the members (the leader approves, refuses or removes them and makes invite codes), choose the project that answers other members' agents, replace the relay token, leave |
 | Remote web access | Settings, Remote access, opens this desktop's projects in a phone or a browser through a wisp-relay of your own: it dials out (no inbound port), shows whether the tunnel is up and how many browsers are connected, and gives a link and a code that can be copied or replaced; the same page turns on the StickS3 desk display's listener (one IPv4 address and port of this computer, a token to show, copy or replace), which shows the device what the agent is doing and the pet, and opens the conversation the device asks for |
@@ -1087,22 +1087,55 @@ Limits of this slice:
   on this computer only, on the port the extension dials
   (127.0.0.1:18765), so it and the WebView desktop cannot both hold it.
   Only the Wisp extension's origin is let in. It is a smaller bridge
-  than the WebView's: four tools (`browser_setup`, `web_open_tab`,
-  `web_scan`, `web_execute_js`), one session, and a conversation may
-  read and drive only the tabs it opened (and tabs those open), never a
-  tab the user has open. A script may be page JavaScript or the command
-  that closes the conversation's own tabs; the extension's other
-  commands (DevTools protocol, switching or creating tabs by command,
-  downloads, screenshots, chat-site turns) are refused. Not ported:
-  starting the browser, closing a turn's tabs when it ends, the
-  human-verification prompt, the side panel, the isolated workspace
-  session, updating the extension, screenshots and saving assets. The
-  extension is loaded by hand from the folder the page names; a packaged
-  app has to ship that folder for the page to find it. Every tool asks
-  first unless it was allowed. The host lists are kept under the
-  WebView's key (`browser_url_filters`); the switch is this desktop's
-  own (`desktop.browser.enabled`). The bridge was tested against a
-  stand-in for the extension, not against a real browser.
+  than the WebView's: five tools (`browser_setup`, `web_open_tab`,
+  `web_scan`, `web_execute_js`, `web_screenshot`), one session, and a
+  conversation may read, drive and photograph only the tabs it opened
+  (and tabs those open), never a tab the user has open. A script may be
+  page JavaScript or the command that closes the conversation's own
+  tabs; the extension's other commands (DevTools protocol, switching or
+  creating tabs by command, downloads, chat-site turns) are refused, and
+  the screenshot's own capture command is sent by the bridge, never by
+  the model. A viewport screenshot goes to the model as a picture, as
+  `view_image`'s does; a whole-page or element capture, or one given
+  `save_path`, is written into the project as a PNG instead
+  (`browser-assets/screenshots/` unless a project-relative path is
+  given). Every tool asks first unless it was allowed.
+- The Browser page's two switches are the WebView's and are kept under
+  its keys: Open browser automatically (`browser_auto_launch`, on by
+  default) starts the user's own browser with its normal profile when a
+  browser tool finds the extension away and waits up to fifteen seconds
+  for it; Automatically close browser tabs (`browser_auto_close_tabs`,
+  off by default) closes the tabs a turn opened when the turn ends.
+  Otherwise the window shows Close tabs Wisp opened?, every tab ticked;
+  Keep all (or Escape) leaves them, Close selected closes the ticked
+  ones. A tab whose page asks the visitor to prove they are human is
+  held: it is not driven, closed by the model or closed at the turn's
+  end, and Human verification needed shows it, with Show this tab,
+  Later (or Escape, until the waiting tabs change) and I completed
+  verification, which looks at the tab again and, with the challenge
+  gone, sends the conversation the WebView's message to go on, as a
+  new turn that can be stopped like any; nothing waits on the user in
+  the meantime. When the extension is away at a turn's end its tabs wait
+  for it to come back. The window asks the host every two seconds.
+  Unlike the WebView, these questions are kept while the app runs, not
+  across a restart, since tab ids may name other tabs after one.
+- The extension folder the page names is a managed copy in the data
+  folder (`browser-extension`), refreshed from the one the app ships and
+  checked against it, as the WebView keeps one. An extension older than
+  that copy (or speaking an older protocol, or naming no capabilities)
+  gets a bar above the composer: Update extension refreshes the folder
+  and has an extension that can reload itself do so, then waits for its
+  new hello; an older one needs Reload on the browser's extension page,
+  which the bar then explains step by step, with the folder copied. Copy
+  extension path, Open extension page, Recheck and Dismiss (or Escape
+  once nothing else is open; until the app ships another version) are
+  there too. Not ported: the isolated
+  workspace sessions, sharing a tab the user had open, saving page
+  assets, chat-site turns (`web_agent_*`) and the extension side panel's
+  turns. The host lists are kept under the WebView's key
+  (`browser_url_filters`); the switch is this desktop's own
+  (`desktop.browser.enabled`). The bridge was tested against a stand-in
+  for the extension, not against a real browser.
 - A workflow runs in one of two ways. Run makes it one conversation: the
   host lays the tasks out in the stages their dependencies allow and the
   conversation's model carries them out in that order, with the usual

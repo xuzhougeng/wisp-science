@@ -762,6 +762,10 @@ mod tests {
             ("workspace/slash_view.rs", "timer_strip"),
             ("workspace/shell.rs", "read_only_card"),
             ("workspace/reuse_view.rs", "render_reuse_range"),
+            (
+                "workspace/browser_prompts_view.rs",
+                "render_browser_extension_bar",
+            ),
         ] {
             let body = method(file(name), function)
                 .unwrap_or_else(|| panic!("{name} has no fn {function}"));
@@ -796,6 +800,7 @@ mod tests {
             "render_follow_ups",
             "render_transfers",
             "render_reuse_range",
+            "render_browser_extension_bar",
         ] {
             assert!(
                 gathered.contains(&format!("self.{function}(")),
@@ -975,6 +980,14 @@ mod tests {
             ("workspace/hosts_view.rs", "render_remove_staged"),
             ("workspace/share_view.rs", "render_share"),
             ("workspace/reuse_view.rs", "render_session_reuse"),
+            (
+                "workspace/browser_prompts_view.rs",
+                "render_browser_cleanup",
+            ),
+            (
+                "workspace/browser_prompts_view.rs",
+                "render_browser_needs_human",
+            ),
         ] {
             let body = method(file(name), function)
                 .unwrap_or_else(|| panic!("{name} has no fn {function}"));

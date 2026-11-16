@@ -2741,6 +2741,8 @@ impl Workspace {
         // What waits on the user between the transcript and the composer
         // keeps the composer's column, with its edges on the composer box's.
         let bars = [
+            self.render_browser_extension_bar(cx)
+                .map(IntoElement::into_any_element),
             self.render_stream_recovery(cx)
                 .map(IntoElement::into_any_element),
             self.render_context_recovery(cx)

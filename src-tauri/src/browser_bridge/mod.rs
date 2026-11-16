@@ -18,7 +18,6 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
@@ -39,18 +38,21 @@ use wisp_store::Store;
 use wisp_tools::{Approval, ImageData, Tool, ToolEnv, ToolResult};
 
 use crate::browser_url_filters::{self, BrowserUrlFilters};
+use wisp_runs::browser::extension as extension_manager;
+use wisp_runs::browser::launch::{open_extension_page, spawn_user_browser};
+use wisp_runs::browser::{
+    bundled_manifest_version, close_ids_from_script, human_verification_handoff, is_tabs_create,
+    json_command, needs_human_block_message, project_relative_path,
+    script_allowed_during_needs_human, EXTENSION_ID, EXTENSION_ORIGIN, REQUIRED_PROTOCOL,
+};
 
 mod chat_site;
 mod errors;
-mod extension_manager;
 mod project_workspace;
 pub(crate) mod side_panel;
 mod workspace;
 
 const BRIDGE_ADDR: &str = "127.0.0.1:18765";
-const REQUIRED_PROTOCOL: i64 = 2;
-const EXTENSION_ID: &str = "gnkjgagleagkgdlkkcianolobfdoocnp";
-const EXTENSION_ORIGIN: &str = "chrome-extension://gnkjgagleagkgdlkkcianolobfdoocnp";
 const BROWSER_DISCONNECTED_CODE: &str = "browser_extension_disconnected";
 const BROWSER_DISCONNECTED_MARKER: &str = "WISP_BROWSER_DISCONNECTED";
 const DISCONNECTED_ASSISTANT_INSTRUCTION: &str = "Live web retrieval is unavailable. Do not answer live, latest, current, or URL-specific questions from prior knowledge. Tell the user this turn contains no live web retrieval, relay the install steps, and wait until status is connected. Only continue from memory if they explicitly ask for a knowledge-only answer.";
@@ -548,29 +550,13 @@ fn refusal_summary(refusal: Option<&RefusedConnection>) -> Value {
     })
 }
 
-fn bundled_manifest_version(dir: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(dir.join("manifest.json")).ok()?;
-    let value: Value = serde_json::from_str(&text).ok()?;
-    value.get("version")?.as_str().map(str::to_string)
-}
-
-fn extension_version_outdated(current: &str, bundled: Option<&str>) -> bool {
-    let Some(bundled) = bundled else {
-        return false;
-    };
-    match (
-        semver::Version::parse(current),
-        semver::Version::parse(bundled),
-    ) {
-        (Ok(current), Ok(bundled)) => current < bundled,
-        _ => current != bundled,
-    }
-}
-
 fn session_requires_update(meta: &SessionMeta, bundled_version: Option<&str>) -> bool {
-    meta.protocol_version < REQUIRED_PROTOCOL
-        || meta.capabilities.is_empty()
-        || extension_version_outdated(&meta.extension_version, bundled_version)
+    wisp_runs::browser::extension_requires_update(
+        meta.protocol_version,
+        &meta.capabilities,
+        &meta.extension_version,
+        bundled_version,
+    )
 }
 
 fn workspace_path_matches(expected: Option<&str>, actual: &str) -> bool {
@@ -2362,14 +2348,7 @@ impl BrowserBridge {
     /// Tests never spawn a browser (`can_launch` is false on `new()`).
     pub fn open_extension_setup(&self) -> BrowserExtensionSetup {
         let extension_path = self.verified_extension_path();
-        let opened = self.can_launch
-            && browser_extension_page_plan().is_some_and(|(program, args)| {
-                spawn_browser_with_url(&program, &args)
-                    .map_err(|error| {
-                        tracing::warn!(target: "wisp", "extension page launch failed: {error}");
-                    })
-                    .is_ok()
-            });
+        let opened = self.can_launch && open_extension_page();
         BrowserExtensionSetup {
             extension_path,
             opened,
@@ -2498,210 +2477,6 @@ impl BrowserBridge {
     }
 }
 
-/// Start the user's existing Chrome/Chromium/Edge so the unpacked Wisp
-/// extension can reconnect. Does not use a temporary automation profile.
-fn spawn_user_browser(url: Option<&str>) -> Result<(), String> {
-    let (program, args) = first_available_browser()
-        .ok_or_else(|| "no Chrome, Chromium, or Edge browser was found".to_string())?;
-    let mut args = shared_browser_launch_args(&program, args);
-    if let Some(url) = url {
-        *args
-            .last_mut()
-            .expect("shared launch always includes a URL") = url.into();
-    }
-    let mut command = std::process::Command::new(&program);
-    command
-        .args(&args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x00000008 | 0x00000200);
-    }
-    command
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("failed to start {}: {error}", program.display()))
-}
-
-fn shared_browser_launch_args(program: &Path, mut args: Vec<String>) -> Vec<String> {
-    if program.ends_with("open") {
-        args.push("--args".into());
-    }
-    args.push(format!(
-        "{}/",
-        extensions_page_url(program, &args).replace("extensions", "newtab")
-    ));
-    args
-}
-
-fn first_available_browser() -> Option<(PathBuf, Vec<String>)> {
-    browser_launch_candidates()
-        .into_iter()
-        .find(|(program, args)| launch_plan_available(program, args))
-}
-
-/// Launch plan for the first real browser executable, pointed at its
-/// extension manager page. The `cmd /C start` fallback is skipped: it cannot
-/// carry the `*://extensions` URL.
-fn browser_extension_page_plan() -> Option<(PathBuf, Vec<String>)> {
-    browser_launch_candidates()
-        .into_iter()
-        .filter(|(program, _)| program.file_name().and_then(|name| name.to_str()) != Some("cmd"))
-        .find(|(program, args)| launch_plan_available(program, args))
-        .map(|(program, args)| {
-            let args = extension_page_launch_args(&program, args);
-            (program, args)
-        })
-}
-
-/// `open -a App` needs `--args` before `chrome://…`; Chromium executables take
-/// the URL as a trailing argument.
-fn extension_page_launch_args(program: &Path, mut args: Vec<String>) -> Vec<String> {
-    let url = extensions_page_url(program, &args);
-    if program.ends_with("open") {
-        args.push("--args".into());
-    }
-    args.push(url.to_string());
-    args
-}
-
-/// Each Chromium fork only understands its own `*://extensions` scheme.
-fn extensions_page_url(program: &Path, args: &[String]) -> &'static str {
-    let name = if program.ends_with("open") {
-        // macOS `open -a "<App Name>"`: the browser identity sits in the args.
-        args.get(1).map(String::as_str).unwrap_or_default()
-    } else {
-        program
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or_default()
-    }
-    .to_lowercase();
-    if name.contains("edge") {
-        "edge://extensions"
-    } else if name.contains("brave") {
-        "brave://extensions"
-    } else {
-        "chrome://extensions"
-    }
-}
-
-/// Start `program` detached like `spawn_user_browser`, with caller-chosen args.
-fn spawn_browser_with_url(program: &Path, args: &[String]) -> Result<(), String> {
-    let mut command = std::process::Command::new(program);
-    command
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x00000008 | 0x00000200);
-    }
-    command
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("failed to start {}: {error}", program.display()))
-}
-
-/// OS-specific launch plans. The first available program is used at runtime.
-fn browser_launch_candidates() -> Vec<(PathBuf, Vec<String>)> {
-    #[cfg(windows)]
-    {
-        let mut candidates = Vec::new();
-        for root in [
-            std::env::var_os("LOCALAPPDATA"),
-            std::env::var_os("PROGRAMFILES"),
-            std::env::var_os("PROGRAMFILES(X86)"),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            let root = PathBuf::from(root);
-            candidates.push((
-                root.join("Google/Chrome/Application/chrome.exe"),
-                Vec::new(),
-            ));
-            candidates.push((
-                root.join("Microsoft/Edge/Application/msedge.exe"),
-                Vec::new(),
-            ));
-            candidates.push((
-                root.join("BraveSoftware/Brave-Browser/Application/brave.exe"),
-                Vec::new(),
-            ));
-        }
-        candidates.push((
-            PathBuf::from("cmd"),
-            vec!["/C".into(), "start".into(), String::new(), "chrome".into()],
-        ));
-        candidates
-    }
-    #[cfg(target_os = "macos")]
-    {
-        [
-            "Google Chrome",
-            "Microsoft Edge",
-            "Chromium",
-            "Brave Browser",
-        ]
-        .into_iter()
-        .map(|name| {
-            (
-                PathBuf::from("/usr/bin/open"),
-                vec!["-a".into(), name.into()],
-            )
-        })
-        .collect()
-    }
-    #[cfg(not(any(windows, target_os = "macos")))]
-    {
-        [
-            "google-chrome-stable",
-            "google-chrome",
-            "chromium-browser",
-            "chromium",
-            "microsoft-edge-stable",
-            "microsoft-edge",
-            "brave-browser",
-        ]
-        .into_iter()
-        .map(|name| (PathBuf::from(name), Vec::new()))
-        .collect()
-    }
-}
-
-fn launch_plan_available(
-    program: &Path,
-    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] args: &[String],
-) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        if program.ends_with("open") && args.first().map(String::as_str) == Some("-a") {
-            return args.get(1).is_some_and(|name| {
-                Path::new("/Applications")
-                    .join(format!("{name}.app"))
-                    .is_dir()
-            });
-        }
-    }
-    if program.components().count() > 1 {
-        return program.is_file();
-    }
-    let Some(path) = std::env::var_os("PATH") else {
-        return false;
-    };
-    std::env::split_paths(&path).any(|dir| {
-        let candidate = dir.join(program);
-        candidate.is_file()
-            || cfg!(windows) && dir.join(format!("{}.exe", program.display())).is_file()
-    })
-}
-
 fn allowed_extension_origin(origin: Option<&str>) -> bool {
     origin == Some(EXTENSION_ORIGIN)
 }
@@ -2776,38 +2551,6 @@ fn parse_tab(value: &Value) -> Option<BrowserTab> {
 
 fn parse_created_tab(value: &Value) -> Option<BrowserTab> {
     parse_tab(value.get("tab").unwrap_or(value))
-}
-
-fn json_command(script: &str) -> Option<Value> {
-    serde_json::from_str(script.trim()).ok()
-}
-
-fn is_tabs_create(script: &str) -> bool {
-    json_command(script).is_some_and(|value| {
-        value.get("cmd").and_then(Value::as_str) == Some("tabs")
-            && value.get("method").and_then(Value::as_str) == Some("create")
-    })
-}
-
-fn close_ids_from_script(script: &str) -> Option<Vec<i64>> {
-    let value = json_command(script)?;
-    if value.get("cmd").and_then(Value::as_str) != Some("tabs") {
-        return None;
-    }
-    if value.get("method").and_then(Value::as_str) != Some("close") {
-        return None;
-    }
-    value
-        .get("tabIds")
-        .and_then(Value::as_array)
-        .map(|rows| rows.iter().filter_map(Value::as_i64).collect::<Vec<_>>())
-        .or_else(|| {
-            value
-                .get("tabId")
-                .and_then(Value::as_i64)
-                .map(|id| vec![id])
-        })
-        .filter(|ids| !ids.is_empty())
 }
 
 fn select_tab(state: &SessionState, requested: Option<i64>) -> Result<i64, String> {
@@ -3153,63 +2896,6 @@ async fn begin_chat_turn(
         tab_id,
         site,
     })
-}
-
-/// Resolve a user-supplied project-relative path. Rejects absolute paths and
-/// any `..`/prefix component, so tool arguments cannot escape the project
-/// root ("path traversal").
-fn project_relative_path(root: &Path, rel: &str) -> Result<PathBuf, String> {
-    use std::path::Component;
-    let trimmed = rel.trim();
-    if trimmed.is_empty() {
-        return Err("path must be a non-empty project-relative path".into());
-    }
-    let path = Path::new(trimmed);
-    let inside_root = !path.is_absolute()
-        && path
-            .components()
-            .all(|part| matches!(part, Component::Normal(_) | Component::CurDir));
-    if !inside_root {
-        return Err(format!(
-            "path must stay inside the project (no absolute paths or '..' segments): {trimmed}"
-        ));
-    }
-    Ok(root.join(path))
-}
-
-fn human_verification_handoff(page: &Value) -> Option<Value> {
-    let title = page.get("title").and_then(Value::as_str).unwrap_or("");
-    let text = page.get("text").and_then(Value::as_str).unwrap_or("");
-    let content = format!("{title}\n{text}").to_ascii_lowercase();
-    if !content.contains("are you a robot")
-        || !(content.contains("confirm you are a human") || content.contains("captcha challenge"))
-    {
-        return None;
-    }
-    Some(json!({
-        "required": true,
-        "reason": "captcha_challenge",
-        "instruction": "A verification prompt has been shown in the Wisp app. Stop browser automation. Do not call ask_user and do not click, solve, or bypass the challenge. End your turn. The user will confirm in the app after completing the challenge in the visible browser tab.",
-        "resume": "After the user confirms, a follow-up message arrives. Call web_scan on the same tab and continue only when the challenge is no longer detected."
-    }))
-}
-
-fn needs_human_block_message() -> String {
-    "This tab needs human verification. Do not automate the challenge. Wait for the user to complete it in the visible browser tab and confirm in the Wisp app.".into()
-}
-
-fn script_allowed_during_needs_human(script: &str) -> bool {
-    let Some(value) = json_command(script) else {
-        return false;
-    };
-    match value.get("cmd").and_then(Value::as_str) {
-        Some("control") => true,
-        Some("tabs") => matches!(
-            value.get("method").and_then(Value::as_str),
-            None | Some("switch") | Some("query") | Some("list")
-        ),
-        _ => false,
-    }
 }
 
 const SCAN_SCRIPT: &str = r##"(() => {
@@ -4929,38 +4615,6 @@ mod tests {
         let _ = std::fs::remove_file(tmp);
     }
 
-    #[test]
-    fn are_you_a_robot_page_requires_manual_handoff() {
-        let handoff = human_verification_handoff(&json!({
-            "title": "Are you a robot?",
-            "text": "Please confirm you are a human by completing the captcha challenge below."
-        }))
-        .unwrap();
-
-        assert_eq!(handoff["required"], true);
-        assert_eq!(handoff["reason"], "captcha_challenge");
-        assert!(handoff["instruction"]
-            .as_str()
-            .unwrap()
-            .contains("verification prompt"));
-        assert!(handoff["instruction"]
-            .as_str()
-            .unwrap()
-            .contains("Do not call ask_user"));
-        assert!(human_verification_handoff(&json!({
-            "title": "Browser automation article",
-            "text": "This article asks: Are you a robot?"
-        }))
-        .is_none());
-        let sciencedirect = human_verification_handoff(&json!({
-            "title": "Just a moment...",
-            "url": "https://www.sciencedirect.com/science/article/pii/S000",
-            "text": "Are you a robot?\nPlease confirm you are a human by completing the captcha challenge below."
-        }))
-        .unwrap();
-        assert_eq!(sciencedirect["reason"], "captcha_challenge");
-    }
-
     #[tokio::test]
     async fn setup_reports_the_extension_folder_without_requiring_approval() {
         let extension_dir = wisp_paths::browser_extension_dir().unwrap();
@@ -5062,58 +4716,6 @@ mod tests {
         assert_eq!(incomplete_info["status"], "extension_missing");
         assert!(incomplete_info["extension_path"].is_null());
         let _ = std::fs::remove_dir_all(&incomplete);
-    }
-
-    #[test]
-    fn extension_page_url_matches_the_browser_scheme() {
-        // Windows/Linux executables identify the browser by file stem.
-        assert_eq!(
-            extensions_page_url(Path::new("chrome"), &[]),
-            "chrome://extensions"
-        );
-        assert_eq!(
-            extensions_page_url(Path::new("chromium"), &[]),
-            "chrome://extensions"
-        );
-        assert_eq!(
-            extensions_page_url(Path::new("msedge"), &[]),
-            "edge://extensions"
-        );
-        assert_eq!(
-            extensions_page_url(Path::new("microsoft-edge-stable"), &[]),
-            "edge://extensions"
-        );
-        assert_eq!(
-            extensions_page_url(Path::new("brave"), &[]),
-            "brave://extensions"
-        );
-        // macOS goes through `open -a "<App Name>"`, so the identity is an arg.
-        let open = Path::new("/usr/bin/open");
-        assert_eq!(
-            extensions_page_url(open, &["-a".into(), "Google Chrome".into()]),
-            "chrome://extensions"
-        );
-        assert_eq!(
-            extensions_page_url(open, &["-a".into(), "Microsoft Edge".into()]),
-            "edge://extensions"
-        );
-        assert_eq!(
-            extensions_page_url(open, &["-a".into(), "Brave Browser".into()]),
-            "brave://extensions"
-        );
-        assert_eq!(
-            extension_page_launch_args(open, vec!["-a".into(), "Google Chrome".into()]),
-            vec![
-                "-a".to_string(),
-                "Google Chrome".into(),
-                "--args".into(),
-                "chrome://extensions".into(),
-            ]
-        );
-        assert_eq!(
-            extension_page_launch_args(Path::new("msedge"), Vec::new()),
-            vec!["edge://extensions".to_string()]
-        );
     }
 
     #[test]
@@ -5585,25 +5187,6 @@ mod tests {
         assert!(bridge.tabs_on(Some("workspace")).await.is_ok());
     }
 
-    #[test]
-    fn shared_launch_uses_normal_profile_and_new_tab_on_each_platform() {
-        for (program, args, expected) in [
-            ("chrome.exe", vec![], vec!["chrome://newtab/"]),
-            ("msedge.exe", vec![], vec!["edge://newtab/"]),
-            (
-                "/usr/bin/open",
-                vec!["-a", "Google Chrome"],
-                vec!["-a", "Google Chrome", "--args", "chrome://newtab/"],
-            ),
-        ] {
-            let actual = shared_browser_launch_args(
-                Path::new(program),
-                args.into_iter().map(String::from).collect(),
-            );
-            assert_eq!(actual, expected);
-        }
-    }
-
     #[tokio::test]
     async fn automatic_launch_targets_only_disconnected_shared() {
         let (store, tmp) = empty_store().await;
@@ -5729,24 +5312,6 @@ mod tests {
                 .unwrap_err()
                 .contains("chatgpt.com")
         );
-    }
-
-    #[test]
-    fn project_relative_path_rejects_traversal_and_absolute_paths() {
-        let root = Path::new("/project");
-        assert_eq!(
-            project_relative_path(root, "browser-assets/shot.png").unwrap(),
-            root.join("browser-assets/shot.png")
-        );
-        assert_eq!(
-            project_relative_path(root, "./figures/a.png").unwrap(),
-            root.join("./figures/a.png")
-        );
-        assert!(project_relative_path(root, "../outside.png").is_err());
-        assert!(project_relative_path(root, "a/../../outside.png").is_err());
-        assert!(project_relative_path(root, "/etc/passwd").is_err());
-        assert!(project_relative_path(root, "").is_err());
-        assert!(project_relative_path(root, "   ").is_err());
     }
 
     #[test]
@@ -5914,25 +5479,6 @@ mod tests {
         assert!(update.status.connected);
         assert!(!update.status.update_required);
         assert_eq!(update.status.current_version.as_deref(), Some("0.5.0"));
-    }
-
-    #[test]
-    fn launch_candidates_name_a_real_chrome_family_browser() {
-        let candidates = browser_launch_candidates();
-        assert!(!candidates.is_empty());
-        let rendered: Vec<String> = candidates
-            .iter()
-            .map(|(program, args)| format!("{} {}", program.display(), args.join(" ")))
-            .collect();
-        let blob = rendered.join("\n").to_lowercase();
-        assert!(
-            blob.contains("chrome") || blob.contains("chromium") || blob.contains("msedge"),
-            "expected a Chrome-family launch plan, got {blob}"
-        );
-        #[cfg(windows)]
-        assert!(blob.contains("chrome.exe") || blob.contains("start"));
-        #[cfg(target_os = "macos")]
-        assert!(blob.contains("open") && blob.contains("google chrome"));
     }
 
     #[derive(Clone)]

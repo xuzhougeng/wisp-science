@@ -2713,6 +2713,8 @@ impl Server {
                 limit.map_or(0, |limit| limit.as_secs())
             ));
         }
+        // The tabs the task opened in the browser are closed or offered.
+        self.browser_turn_over(&send.request_id);
         if let Err(failure) = store
             .finish_server_turn(child, &send.request_id, error.as_deref())
             .await

@@ -16758,6 +16758,39 @@ async fn the_browser_tools_are_offered_only_while_the_bridge_is_switched_on() {
     let start = server.browser_settings().await.unwrap();
     assert!(!start.enabled && !start.listening && start.problem.is_none());
     assert_eq!(start.status, desktop::BrowserStatus::default());
+    // The two settings of the WebView's Browser page, under its keys and
+    // with its defaults: a browser is started, tabs are not closed.
+    assert!(start.auto_launch && !start.auto_close_tabs);
+    let changed = server.set_browser_auto_launch(false).await.unwrap();
+    assert!(!changed.auto_launch);
+    let changed = server.set_browser_auto_close_tabs(true).await.unwrap();
+    assert!(changed.auto_close_tabs);
+    assert_eq!(
+        server
+            .0
+            .store
+            .get_setting("browser_auto_close_tabs")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("true")
+    );
+    assert!(
+        !server
+            .set_browser_auto_close_tabs(false)
+            .await
+            .unwrap()
+            .auto_close_tabs
+    );
+    // Off, there is nothing to tell the app about the browser.
+    assert_eq!(
+        server.browser_alerts(PROJECT).await.unwrap(),
+        desktop::BrowserAlerts::default()
+    );
+    assert!(server
+        .confirm_browser_tab_cleanup("t", Vec::new())
+        .await
+        .is_err());
 
     let offered = |seen: &Arc<std::sync::Mutex<Vec<String>>>| {
         let mut seen = seen.lock().unwrap();
@@ -16766,6 +16799,7 @@ async fn the_browser_tools_are_offered_only_while_the_bridge_is_switched_on() {
             "web_open_tab",
             "web_scan",
             "web_execute_js",
+            "web_screenshot",
         ]
         .into_iter()
         .filter(|name| {
@@ -16790,7 +16824,97 @@ async fn the_browser_tools_are_offered_only_while_the_bridge_is_switched_on() {
     assert!(!on.status.connected);
     send(&server, &session, "and today?").await.unwrap();
     wait_for(&server, &session, |s| !s.running).await;
-    assert_eq!(offered(&seen), 4);
+    assert_eq!(offered(&seen), 5);
+    // On, the folder to load is the managed copy in the data folder.
+    if let Some(folder) = &on.extension_path {
+        assert!(std::path::Path::new(folder).starts_with(dunce::canonicalize(temp.path()).unwrap()));
+    }
+    // Nothing waits for the user while no turn opened a tab.
+    assert_eq!(
+        server.browser_alerts(PROJECT).await.unwrap(),
+        desktop::BrowserAlerts::default()
+    );
+    // A turn's tabs are asked about over its conversation's project only.
+    {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message as Frame};
+        let bridge = server.0.browser.bridge().unwrap();
+        let mut request = format!("ws://{}", bridge.addr())
+            .into_client_request()
+            .unwrap();
+        request.headers_mut().insert(
+            "origin",
+            wisp_runs::browser::EXTENSION_ORIGIN.parse().unwrap(),
+        );
+        let (mut extension, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+        let hello = json!({"type": "ext_ready", "protocol_version": 2,
+            "extension_version": "0.5.0", "tabs": [], "capabilities": ["tab_scope"]});
+        extension
+            .send(Frame::Text(hello.to_string().into()))
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while server
+                .browser_settings()
+                .await
+                .unwrap()
+                .status
+                .extension_version
+                != "0.5.0"
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let opening = {
+            let (bridge, session) = (bridge.clone(), session.clone());
+            tokio::spawn(async move {
+                bridge
+                    .open_tab(
+                        &session,
+                        "turn-1",
+                        "https://example.org/",
+                        false,
+                        &Default::default(),
+                    )
+                    .await
+            })
+        };
+        let asked: Value = loop {
+            if let Some(Ok(Frame::Text(text))) = extension.next().await {
+                let value: Value = serde_json::from_str(&text).unwrap();
+                if value.get("id").is_some() {
+                    break value;
+                }
+            }
+        };
+        let reply = json!({"type": "result", "id": asked["id"],
+            "result": {"id": 21, "url": "https://example.org/", "title": "Example"}});
+        extension
+            .send(Frame::Text(reply.to_string().into()))
+            .await
+            .unwrap();
+        opening.await.unwrap().unwrap();
+        bridge.complete_turn("turn-1").await;
+        let alerts = server.browser_alerts(PROJECT).await.unwrap();
+        assert_eq!(alerts.cleanups.len(), 1);
+        assert_eq!(alerts.cleanups[0].frame_id, session);
+        assert!(server
+            .browser_alerts("another-project")
+            .await
+            .unwrap()
+            .cleanups
+            .is_empty());
+        // Keep all: the question is gone.
+        server.dismiss_browser_tab_cleanup("turn-1").await.unwrap();
+        assert!(server
+            .browser_alerts(PROJECT)
+            .await
+            .unwrap()
+            .cleanups
+            .is_empty());
+    }
 
     // The lists are kept with it.
     let rule = |host: &str| desktop::BrowserHostRule {

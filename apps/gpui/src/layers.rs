@@ -280,6 +280,16 @@ pub enum Layer {
     /// failed, in the window's corner over the page. Escape closes the
     /// newest card once nothing else is open.
     SessionNotices,
+    /// The question, as a dialog, whether to close the tabs an ended turn
+    /// opened in the user's browser. Escape keeps them all.
+    BrowserTabCleanup,
+    /// The question, as a dialog, that asks the user to complete a
+    /// human-verification challenge in the browser. Escape is Later.
+    BrowserNeedsHuman,
+    /// The bar above the composer that says the browser extension has to
+    /// be updated. Escape dismisses it once nothing else is open, as the
+    /// WebView's does.
+    BrowserExtensionUpdate,
 }
 
 impl Layer {
@@ -687,6 +697,33 @@ mod tests {
         assert!(stack.contains(Layer::SessionNotices));
         assert!(stack.close(Layer::SessionNotices));
         assert_eq!(stack.dismiss_top(), None);
+    }
+
+    #[test]
+    fn the_browser_questions_close_one_press_at_a_time_over_what_is_open() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::Settings);
+        // A turn ended with tabs to ask about, then a page asked for a
+        // human: that question is drawn over the other and goes first.
+        stack.open(Layer::BrowserTabCleanup);
+        stack.open(Layer::BrowserNeedsHuman);
+        assert_eq!(stack.dismiss_top(), Some(Layer::BrowserNeedsHuman));
+        assert!(stack.contains(Layer::BrowserTabCleanup));
+        assert_eq!(stack.dismiss_top(), Some(Layer::BrowserTabCleanup));
+        assert!(stack.contains(Layer::Settings));
+        // Closing Settings does not take a browser question with it.
+        stack.open(Layer::BrowserTabCleanup);
+        assert!(stack.close(Layer::Settings));
+        assert_eq!(stack.dismiss_top(), Some(Layer::BrowserTabCleanup));
+        assert_eq!(stack.dismiss_top(), None);
+        // The update bar waits under whatever is open, as the WebView's
+        // Escape reaches it last.
+        stack.open(Layer::Palette);
+        stack.open_beneath(Layer::BrowserExtensionUpdate);
+        stack.open(Layer::BrowserNeedsHuman);
+        assert_eq!(stack.dismiss_top(), Some(Layer::BrowserNeedsHuman));
+        assert_eq!(stack.dismiss_top(), Some(Layer::Palette));
+        assert_eq!(stack.dismiss_top(), Some(Layer::BrowserExtensionUpdate));
     }
 
     #[test]

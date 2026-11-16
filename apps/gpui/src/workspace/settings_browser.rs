@@ -201,6 +201,42 @@ impl Workspace {
                     },
                 )),
                 cx,
+            ))
+            // The WebView's two behaviours, under its settings keys.
+            .child(setting(
+                tr("Open browser automatically"),
+                tr(
+                    "When a browser tool needs Chrome/Chromium and it isn't running, start it so \
+                     the Wisp extension can reconnect. Uses your existing profile, not a \
+                     temporary automation browser.",
+                ),
+                switch(
+                    "browser-auto-launch",
+                    settings.auto_launch,
+                    tr("Open browser automatically"),
+                )
+                .on_change(cx.listener(|this, on: &bool, window, cx| {
+                    let reply = this.backend.set_browser_auto_launch(*on);
+                    this.receive_browser(reply, None, window, cx);
+                })),
+                cx,
+            ))
+            .child(setting(
+                tr("Automatically close browser tabs"),
+                tr(
+                    "When a conversation turn ends, close tabs Wisp opened during that turn. \
+                     Tabs you already had open are left alone.",
+                ),
+                switch(
+                    "browser-auto-close-tabs",
+                    settings.auto_close_tabs,
+                    tr("Automatically close browser tabs"),
+                )
+                .on_change(cx.listener(|this, on: &bool, window, cx| {
+                    let reply = this.backend.set_browser_auto_close_tabs(*on);
+                    this.receive_browser(reply, None, window, cx);
+                })),
+                cx,
             ));
         let folder = settings.extension_path.clone();
         page = page.child(setting(
