@@ -5059,16 +5059,41 @@ impl Server {
         Ok(id)
     }
 
-    /// Has the conversation's model write a draft archive of it: a report
-    /// and the scripts that can be put together from what was run. Nothing
-    /// is saved; the researcher reviews the draft and freezes it.
+    /// The conversation's research archive draft that was not frozen yet,
+    /// to go on reviewing it, as the WebView reopens one.
+    pub async fn research_archive_draft(
+        &self,
+        project: &str,
+        session: &str,
+    ) -> Result<Option<ResearchArchive>> {
+        self.own_conversation(project, session).await?;
+        Ok(self
+            .0
+            .store
+            .research_archive(session)
+            .await?
+            .filter(|archive| archive.frozen_at.is_none()))
+    }
+
+    /// Has the conversation's model write a draft archive of it, as the
+    /// WebView's Archive research does: a report, the scripts that can be
+    /// put together from what was run, and the local files the conversation
+    /// recorded, each kept as a snapshot unless the model recommends
+    /// deleting one that may be deleted. The draft is kept, in place of an
+    /// earlier one, for the researcher to review and freeze; no file is
+    /// touched.
     pub async fn draft_research_archive(
         &self,
         project: &str,
         session: &str,
-    ) -> Result<ArchiveDraft> {
+    ) -> Result<ResearchArchive> {
         self.archivable(project, session).await?;
         let store = &self.0.store;
+        let root = std::path::PathBuf::from(self.project_root(project).await?);
+        let (_, source_hash) = store.research_archive_source(session).await?;
+        let mut files = wisp_store::research_archive_files::candidates(store, &root, session)
+            .await
+            .map_err(anyhow::Error::msg)?;
         let options = self.stored_options(session).await?;
         let mut model = self.0.model.read().unwrap().pick(&options.model)?.provider;
         let routes = crate::network::load(store).await;
@@ -5078,13 +5103,38 @@ impl Server {
         let messages = self.whole_transcript(session).await?;
         let provider = (self.0.models)(model);
         let transcript = crate::review::transcript(&messages);
-        match crate::research_archive::draft(provider.as_ref(), transcript).await {
-            Ok(draft) => Ok(draft),
-            Err(error) => bail!(
-                "{}",
-                crate::network::explain(store, &format!("{error:#}")).await
-            ),
-        }
+        let draft =
+            match crate::research_archive::draft(provider.as_ref(), transcript, &files).await {
+                Ok(draft) => draft,
+                Err(error) => bail!(
+                    "{}",
+                    crate::network::explain(store, &format!("{error:#}")).await
+                ),
+            };
+        wisp_store::research_archive_files::recommend_deletions(&mut files, &draft.delete_paths);
+        let archive = ResearchArchive {
+            id: uuid::Uuid::new_v4().to_string(),
+            project_id: project.to_owned(),
+            frame_id: session.to_owned(),
+            source_hash,
+            title: draft.title,
+            report: draft.report,
+            scripts: draft.scripts,
+            files,
+            created_at: chrono::Utc::now().timestamp(),
+            frozen_at: None,
+            warnings: wisp_store::research_archive_files::DRAFT_WARNINGS
+                .map(String::from)
+                .to_vec(),
+        };
+        // What was said while the model wrote is not in the draft.
+        self.archivable(project, session).await?;
+        ensure!(
+            store.research_archive_source(session).await?.1 == archive.source_hash,
+            "The notebook changed while preparing the draft. Generate it again."
+        );
+        store.save_research_archive_draft(&archive).await?;
+        Ok(archive)
     }
 
     /// The conversations Codex CLI and Claude Code keep on this computer,
@@ -5281,51 +5331,61 @@ impl Server {
         Ok(merged.main_session_id)
     }
 
-    /// Freezes `draft` as the conversation's research archive: the report
-    /// and scripts are written under `.wisp/research-archives/` in the
-    /// project and the record is kept. From then on the conversation is
-    /// read-only. No project file is moved or deleted.
+    /// Freezes the conversation's kept draft as the researcher reviewed it
+    /// in `input`, as the WebView's Archive and clean up does: snapshots,
+    /// scripts, the notebook and the report are written under
+    /// `.wisp/research-archives/<id>/`, the record is frozen and the
+    /// conversation is read-only, and then the files chosen for deletion
+    /// are deleted for good, each with a receipt. Refused, with every file
+    /// as it was, when the conversation or a listed file changed since the
+    /// draft, or a choice is not one the draft offered. A deletion that
+    /// fails after the freeze leaves the archive frozen with its receipt;
+    /// [`Self::retry_research_archive_cleanup`] tries it again.
     pub async fn freeze_research_archive(
         &self,
         project: &str,
         session: &str,
-        draft: ArchiveDraft,
+        input: ConfirmResearchArchive,
     ) -> Result<ResearchArchive> {
         let _admission = self.0.admission.write().await;
         self.archivable(project, session).await?;
-        let draft = crate::research_archive::checked(draft)?;
         let store = &self.0.store;
         let root = std::path::PathBuf::from(self.project_root(project).await?);
-        let id = uuid::Uuid::new_v4().to_string();
-        let (_, source_hash) = store.research_archive_source(session).await?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_secs() as i64)
-            .unwrap_or_default();
-        let folder = crate::research_archive::folder(&root, &id);
-        let written = draft.clone();
-        let target = folder.clone();
-        tokio::task::spawn_blocking(move || crate::research_archive::write(&target, &written))
-            .await??;
-        let mut record =
-            crate::research_archive::record(id, project, session, source_hash, draft, now);
-        let kept = async {
-            store.save_research_archive_draft(&record).await?;
-            record.frozen_at = Some(now);
-            store.freeze_research_archive(&record).await
+        let draft = store
+            .research_archive(session)
+            .await?
+            .filter(|archive| archive.frozen_at.is_none())
+            .context("Prepare an archive draft first")?;
+        let result =
+            wisp_store::research_archive_files::freeze_files(store, &root, draft, input).await;
+        // Even a failed receipt leaves the conversation frozen.
+        if self.archived(session).await? {
+            // What the conversation kept running is no longer needed.
+            let runtime = self.session(session).runtime.lock().unwrap().take();
+            if let Some(runtime) = runtime {
+                runtime.shutdown_all().await;
+            }
         }
-        .await;
-        if let Err(error) = kept {
-            // Nothing was frozen: the files written for it go again.
-            let _ = tokio::fs::remove_dir_all(&folder).await;
-            return Err(error);
-        }
-        // What the conversation kept running is no longer needed.
-        let runtime = self.session(session).runtime.lock().unwrap().take();
-        if let Some(runtime) = runtime {
-            runtime.shutdown_all().await;
-        }
-        Ok(record)
+        result.map_err(anyhow::Error::msg)
+    }
+
+    /// Deletes again the files a frozen archive chose to delete that were
+    /// not deleted, as the WebView's Retry incomplete cleanup does. A file
+    /// that changed or is used elsewhere since is kept.
+    pub async fn retry_research_archive_cleanup(
+        &self,
+        project: &str,
+        session: &str,
+    ) -> Result<ResearchArchive> {
+        let _admission = self.0.admission.write().await;
+        let archive = self
+            .research_archive(project, session)
+            .await?
+            .context("Archive is not frozen")?;
+        let root = std::path::PathBuf::from(self.project_root(project).await?);
+        wisp_store::research_archive_files::cleanup_files(&self.0.store, &root, &archive)
+            .await
+            .map_err(anyhow::Error::msg)
     }
 
     /// A conversation can be archived once: when it is the project's own,
@@ -7755,7 +7815,6 @@ pub use crate::queue::QueuedMessage;
 pub use crate::quick_actions::{QuickAction, QuickActionInput};
 pub use crate::remote_access::{RemoteAccess, RemoteState};
 pub use crate::remote_dir::RemoteDirectory;
-pub use crate::research_archive::ArchiveDraft;
 pub use crate::review::{Finding as ReviewFinding, Outcome as ReviewOutcome, Review};
 pub use crate::run_log::RunLog;
 /// How many times a turn may carry on by itself after a cut answer.
@@ -7781,8 +7840,13 @@ pub use wisp_core::ModelTier;
 /// The most tasks a workflow run as agents takes.
 pub use wisp_core::MAX_DELEGATION_TASKS as WORKFLOW_AGENT_LIMIT;
 pub use wisp_dto::AutoFailureAnalysisSettings;
-pub use wisp_dto::{ArchiveScript, ResearchArchive};
+pub use wisp_dto::{
+    ArchiveFile, ArchiveFileChoice, ArchiveScript, ConfirmResearchArchive, ResearchArchive,
+};
 pub use wisp_dto::{LabKnowledgeBaseInfo, LabMemberInfo, LabStatus};
+/// The checks the WebView makes on a research archive's title, report and
+/// scripts before it is frozen, for a client to say what is wrong first.
+pub use wisp_store::research_archive_files::validate_content as research_archive_problem;
 
 /// A project's folder, as the question before it is deleted describes it.
 #[derive(Clone, Debug, PartialEq, Eq)]

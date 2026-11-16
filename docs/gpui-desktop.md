@@ -175,7 +175,7 @@ which it only reads.
 | Plugins | Settings, Plugins, installs a plugin from a folder in the Claude plugin layout (`.claude-plugin/plugin.json`, `skills/*/SKILL.md`) into the app's data without running anything in it, lists what each brings, switches one on for the open project, whose conversations then have its skills, and removes it |
 | Decision model | Settings, Decision model, sets up one fast endpoint (TypeSafe Jev, StartLux-Decision hosted or self-hosted, or a custom System One server) with its key, thinking mode and timeout, and tests it; while one is in use the model's `map_items` tool, which runs one step over many items, also offers its `decide` step, and an MCP server whose tools are Cua Driver's also gives `desktop_autopilot`, which drives the computer step by step with the decision model (asking before it runs) |
 | Pet | Settings, Pet, turns on an animated companion drawn from a folder you choose (pet.json and a sprite sheet, Codex-compatible version 2); it stands in the transcript's corner and shows whether the conversation is working, being reviewed, waiting for you, done or failed |
-| Research archive | A conversation's Research archive button (or the command palette) has the model draft a report of its findings with the scripts behind them; you change the draft and freeze it, which writes it into the project and makes the conversation read-only; Continue research then opens a new conversation, linked to the archive, that starts from its report |
+| Research archive | A conversation's Research archive button (or the command palette) has the model draft a report of its findings with the scripts behind them and a choice for each local file the conversation recorded (Keep snapshot, Keep in place, Permanently delete); the draft is kept, so the dialog reopens on it. You change the title, the report, each script's name and text in the code editor and each file's choice, the dialog names every file that will be deleted, and once you say you reviewed the materials Freeze writes the report, scripts and snapshots into the project, makes the conversation read-only and then deletes the chosen files for good, the rules and code the WebView uses; Continue research then opens a new conversation, linked to the archive, that starts from its report |
 | Review turns | The composer's Review turns switch has each turn that used a tool, or said a good deal, reviewed when it ends; the result shows above the composer, and See opens the findings |
 | Review | A conversation's Review button (or the command palette) has the model read the conversation as a reviewer and lists claims its own tool output does not support, each with the evidence and a fix; Ask Wisp to correct puts the corrections in the composer |
 | Save as skill | Save as skill in a conversation's More menu (or the command palette) puts a request in the composer that asks Wisp to distill the conversation into a reusable skill; you send it, changed or not |
@@ -1230,19 +1230,28 @@ Limits of this slice:
   The folder is checked each time it is read (a 1536x2288 PNG or WebP
   sheet of at most 16 MB inside the folder); a folder that stops being
   a pet is reported in Settings and nothing is drawn.
-- A research archive is written once and cannot be undone from here:
-  the report and scripts go to `.wisp/research-archives/<id>/` in the
-  project, the record goes to the store's `research_archives` table (the
-  WebView reads both), and the conversation is read-only from then on,
-  for this desktop, the WebView and a paired phone. The draft is one
-  model request over the conversation's latest 80,000 characters, with
-  tool output cut at 4,000 each, so a long conversation is drafted from
-  its end; the model is given five minutes. Unlike the WebView nothing
-  is snapshotted, moved or deleted: project files stay exactly as they
-  are, the scripts in a draft are frozen as the model wrote them (their
-  names are listed, their text is not editable here), and there is no
-  "continue from this archive" link in a new conversation. Closing the
-  dialog before freezing throws the draft away.
+- A research archive is written once and cannot be undone from here.
+  Freezing is the WebView's own code (`wisp_store::research_archive_files`):
+  the report, the scripts, the notebook and the snapshots go to
+  `.wisp/research-archives/<id>/` in the project, the record goes to the
+  store's `research_archives` table, and the conversation is read-only
+  from then on, for this desktop, the WebView and a paired phone. Files
+  chosen for deletion are deleted for good after the record is frozen,
+  as in the WebView: there is no trash to restore them from (the Files
+  tab's Delete, by contrast, moves to `.wisp/trash`). Only files the
+  conversation recorded are listed; only one it created, that no other
+  conversation, run, evidence or archive uses, outside `.wisp/` and
+  `uploads/`, can be chosen for deletion; links, paths out of the project
+  and files changed since the draft are refused, and a failed snapshot
+  freezes nothing and deletes nothing. A deletion that fails after the
+  freeze is kept as the file's receipt, with Retry incomplete cleanup. The
+  draft is one model request over the conversation's latest 80,000
+  characters, with tool output cut at 4,000 each, so a long conversation
+  is drafted from its end; the model is given five minutes. Unlike the
+  WebView the dialog cannot be minimized to a corner pill, and the draft
+  is not drafted from bounded chunks of the whole stored notebook. Closing
+  the dialog, by Close or Escape, after changing the draft asks before the
+  changes are given up; the draft the model wrote stays kept.
 - Review turns is off until switched on, per conversation; Settings,
   Conversation, sets what conversations start with (the WebView's keys,
   `frame_auto_review:<id>` and `auto_review_default_enabled`). A
@@ -2380,17 +2389,28 @@ the page and the pet idles in the transcript's lower right corner. Click
 it: it waves once. Send a message: it works while the turn runs, waits
 while an approval is open, and jumps when the turn ends. Turn it off:
 it goes.
-In a conversation with results press Research archive: the dialog says a
-draft is being written, then shows a title and a report to edit and the
-scripts that go with it. Change a sentence and press Freeze: the dialog
-shows the frozen report and where it is; `.wisp/research-archives/<id>/`
-holds REPORT.md with your change and the scripts; in this conversation
-a card stands in the message box's place, and a new conversation works
-as before.
+In a conversation that wrote a few files press Research archive: the
+dialog says a draft is being written, then shows a title and a report to
+edit, the scripts with the first open in the code editor, and the files
+the conversation recorded, each with Keep snapshot, Keep in place and
+Permanently delete (unavailable, with a tooltip, for an input). Change a
+line of one script, open another and come back: the change is there.
+Choose Permanently delete on a scratch file: the line under the files
+names it with its size. Freeze stays unavailable until the switch saying
+you reviewed the materials is on, and turns off again after any change.
+Press Escape: a question asks before the changes are given up; Escape
+again leaves the draft open. Press Freeze: the dialog shows the frozen
+report, each file with what became of it and Open saved material for a
+snapshot; the scratch file is gone from the project,
+`.wisp/research-archives/<id>/` holds REPORT.md with your change and,
+in a folder of its own, the edited script and the snapshots; in this
+conversation a card stands in the message box's place, and a new
+conversation works as before.
 Press Continue research: a conversation named "Continue · <title>" opens
 with the report and where the materials are as its first message, and
 the composer sends there.
-Press Escape on a draft: nothing is written.
+Press Escape on a draft you did not change: the dialog closes and nothing
+is written; Research archive again reopens the same draft.
 Switch Review turns on in the composer and have a turn run a tool: when
 it ends the line above the composer reads Reviewing the answer…, then the
 result. Press See: the findings open; Ask Wisp to correct puts them in the

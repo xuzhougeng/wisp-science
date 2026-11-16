@@ -2,6 +2,7 @@
 
 mod acp;
 mod agents;
+mod archive;
 mod aside;
 mod assets;
 mod assistant;

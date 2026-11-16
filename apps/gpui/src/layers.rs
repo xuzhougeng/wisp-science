@@ -156,6 +156,9 @@ pub enum Layer {
     SessionReuse,
     /// The research archive of the open conversation: a dialog over it.
     ResearchArchive,
+    /// Question over that dialog before the changes to its draft are
+    /// given up.
+    ConfirmDiscardArchive,
     /// The messages of the open conversation to put into its shared page:
     /// a dialog over it.
     ShareMessages,
@@ -365,6 +368,7 @@ impl Layer {
             Layer::FileChangedOnDisk | Layer::PictureSelect => Some(Layer::FilePreview),
             Layer::PictureRegion => Some(Layer::PictureSelect),
             Layer::SessionReuse => Some(Layer::ReuseRange),
+            Layer::ConfirmDiscardArchive => Some(Layer::ResearchArchive),
             _ => None,
         }
     }
@@ -1114,6 +1118,16 @@ mod tests {
         stack.open(Layer::FilesPanel);
         stack.open(Layer::ResearchArchive);
         assert_eq!(stack.dismiss_top(), Some(Layer::ResearchArchive));
+        // The question before its draft's changes are given up goes first,
+        // and leaves the draft open under it.
+        stack.open(Layer::ResearchArchive);
+        stack.open(Layer::ConfirmDiscardArchive);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmDiscardArchive));
+        assert!(stack.contains(Layer::ResearchArchive));
+        // Closing the dialog closes the question with it.
+        stack.open(Layer::ConfirmDiscardArchive);
+        assert!(stack.close(Layer::ResearchArchive));
+        assert!(!stack.contains(Layer::ConfirmDiscardArchive));
         assert!(stack.close(Layer::FilesPanel));
         // So is importing conversations.
         stack.open(Layer::FilesPanel);

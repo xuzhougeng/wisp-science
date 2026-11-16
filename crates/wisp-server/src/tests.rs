@@ -9796,6 +9796,7 @@ async fn an_example_is_read_and_copied_into_a_project_to_go_on_with() {
 
 #[tokio::test]
 async fn a_conversations_research_is_drafted_reviewed_and_frozen() {
+    use desktop::{ArchiveFileChoice, ConfirmResearchArchive, ResearchArchive};
     // A model that answers a turn, and drafts an archive when asked to.
     struct Archivist;
     #[async_trait]
@@ -9813,9 +9814,13 @@ async fn a_conversations_research_is_drafted_reviewed_and_frozen() {
         ) -> wisp_llm::Result<Completion> {
             let system = messages[0].content.as_text();
             let content = if system.starts_with("Prepare a research notebook archive") {
-                assert!(messages[1].content.as_text().contains("count the reads"));
+                let asked = messages[1].content.as_text();
+                assert!(asked.contains("count the reads"));
+                // It is told which files the conversation recorded.
+                assert!(asked.contains("tmp.csv"), "{asked}");
                 r###"{"title":"Read counts","report":"## Findings\n100 reads.",
-                    "scripts":[{"filename":"count.sh","content":"wc -l reads.fq"}]}"###
+                    "scripts":[{"filename":"count.sh","content":"wc -l reads.fq"}],
+                    "delete_paths":["tmp.csv","reads.fq"]}"###
             } else {
                 "[]"
             };
@@ -9839,6 +9844,26 @@ async fn a_conversations_research_is_drafted_reviewed_and_frozen() {
             })
         }
     }
+    /// The researcher's review: `action` for each file the draft lists.
+    fn review(
+        draft: &ResearchArchive,
+        action: impl Fn(&str) -> &'static str,
+    ) -> ConfirmResearchArchive {
+        ConfirmResearchArchive {
+            id: draft.id.clone(),
+            title: draft.title.clone(),
+            report: draft.report.clone(),
+            scripts: draft.scripts.clone(),
+            files: draft
+                .files
+                .iter()
+                .map(|file| ArchiveFileChoice {
+                    path: file.path.clone(),
+                    action: action(&file.path).into(),
+                })
+                .collect(),
+        }
+    }
     let temp = tempfile::tempdir().unwrap();
     let factory: ModelFactory = Arc::new(|_| Box::new(Archivist));
     let server = Server::open_with_models(config(temp.path()), factory)
@@ -9856,48 +9881,166 @@ async fn a_conversations_research_is_drafted_reviewed_and_frozen() {
         server.research_archive(PROJECT, &session).await.unwrap(),
         None
     );
+    // The files the conversation recorded: the input it read, a result
+    // and a scratch file it made.
+    let workspace = temp.path().join("workspace");
+    for (name, existed) in [
+        ("reads.fq", true),
+        ("counts.csv", false),
+        ("tmp.csv", false),
+    ] {
+        std::fs::write(workspace.join(name), format!("original {name}")).unwrap();
+        let (hash, _) =
+            wisp_store::research_archive_files::file_hash(&workspace.join(name)).unwrap();
+        server
+            .0
+            .store
+            .save_turn_file_undo(
+                &session,
+                1,
+                name,
+                existed,
+                None,
+                None,
+                Some(&hash),
+                true,
+                None,
+            )
+            .await
+            .unwrap();
+    }
+    std::fs::write(workspace.join("notes.txt"), "not recorded").unwrap();
 
-    // The draft is the model's; nothing is saved by drafting.
-    let mut draft = server
+    // The draft is the model's, with a choice for each recorded file: a
+    // snapshot, unless the model would delete one that may be deleted.
+    // It is kept to be reviewed; the conversation is not frozen by it.
+    let draft = server
         .draft_research_archive(PROJECT, &session)
         .await
         .unwrap();
     assert_eq!(draft.title, "Read counts");
     assert_eq!(draft.scripts.len(), 1);
+    let listed: Vec<_> = draft
+        .files
+        .iter()
+        .map(|file| (file.path.as_str(), file.action.as_str(), file.can_delete))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("counts.csv", "snapshot", true),
+            ("reads.fq", "snapshot", false),
+            ("tmp.csv", "delete", true),
+        ]
+    );
     assert_eq!(
         server.research_archive(PROJECT, &session).await.unwrap(),
         None
     );
+    assert_eq!(
+        server
+            .research_archive_draft(PROJECT, &session)
+            .await
+            .unwrap(),
+        Some(draft.clone())
+    );
     assert!(!snapshot(&server, &session).await.read_only);
     assert_eq!(snapshot(&server, &session).await.read_only_reason, None);
+    for name in ["reads.fq", "counts.csv", "tmp.csv"] {
+        assert!(workspace.join(name).is_file());
+    }
+
+    // What is refused freezes nothing and deletes nothing: an empty
+    // title, the input chosen for deletion, a file the draft did not list.
+    let mut refused = review(&draft, |path| match path {
+        "tmp.csv" => "delete",
+        _ => "snapshot",
+    });
+    refused.title = " ".into();
+    let input = review(&draft, |_| "delete");
+    let mut forged = review(&draft, |_| "snapshot");
+    forged.files[0].path = "../outside.txt".into();
+    let mut renamed = review(&draft, |_| "snapshot");
+    renamed.scripts[0].filename = "../count.sh".into();
+    for refused in [refused, input, forged, renamed] {
+        assert!(server
+            .freeze_research_archive(PROJECT, &session, refused)
+            .await
+            .is_err());
+    }
+    assert_eq!(
+        server.research_archive(PROJECT, &session).await.unwrap(),
+        None
+    );
+    for name in ["reads.fq", "counts.csv", "tmp.csv"] {
+        assert!(workspace.join(name).is_file(), "{name}");
+    }
 
     // What is frozen is what the researcher made of it.
-    draft.report.push_str("\n\nChecked by hand.");
-    let refused = desktop::ArchiveDraft {
-        title: " ".into(),
-        ..draft.clone()
-    };
-    assert!(server
-        .freeze_research_archive(PROJECT, &session, refused)
-        .await
-        .is_err());
+    let mut reviewed = review(&draft, |path| match path {
+        "counts.csv" => "snapshot",
+        "reads.fq" => "reference",
+        _ => "delete",
+    });
+    reviewed.report.push_str("\n\nChecked by hand.");
+    reviewed.scripts[0].content = "wc -l reads.fq > counts.csv\n".into();
     let frozen = server
-        .freeze_research_archive(PROJECT, &session, draft)
+        .freeze_research_archive(PROJECT, &session, reviewed)
         .await
         .unwrap();
     assert!(frozen.frozen_at.is_some());
-    let folder = temp
-        .path()
-        .join("workspace/.wisp/research-archives")
-        .join(&frozen.id);
+    let file = |path: &str| frozen.files.iter().find(|f| f.path == path).unwrap();
+    // The scratch file is gone for good; the input and the result stay.
+    assert!(!workspace.join("tmp.csv").exists());
+    assert_eq!(file("tmp.csv").cleanup_status, "deleted");
     assert_eq!(
-        std::fs::read_to_string(folder.join("REPORT.md")).unwrap(),
-        "# Read counts\n\n## Findings\n100 reads.\n\nChecked by hand.\n"
+        std::fs::read_to_string(workspace.join("reads.fq")).unwrap(),
+        "original reads.fq"
     );
-    assert!(folder.join("scripts/count.sh").is_file());
+    assert_eq!(file("reads.fq").snapshot_path, None);
+    assert_eq!(
+        std::fs::read_to_string(workspace.join("counts.csv")).unwrap(),
+        "original counts.csv"
+    );
+    assert_eq!(
+        std::fs::read_to_string(workspace.join("notes.txt")).unwrap(),
+        "not recorded"
+    );
+    // The result's snapshot and the edited script are in the archive.
+    let copy = workspace.join(file("counts.csv").snapshot_path.as_ref().unwrap());
+    assert_eq!(
+        std::fs::read_to_string(&copy).unwrap(),
+        "original counts.csv"
+    );
+    assert_eq!(
+        std::fs::read_to_string(copy.parent().unwrap().join("script-count.sh")).unwrap(),
+        "wc -l reads.fq > counts.csv\n"
+    );
+    let folder = workspace.join(".wisp/research-archives").join(&frozen.id);
+    let report = std::fs::read_to_string(folder.join("REPORT.md")).unwrap();
+    assert!(
+        report.starts_with("# Read counts\n\n## Findings\n100 reads.\n\nChecked by hand.\n"),
+        "{report}"
+    );
+    assert!(report.contains("- tmp.csv — delete\n"), "{report}");
     assert_eq!(
         server.research_archive(PROJECT, &session).await.unwrap(),
         Some(frozen.clone())
+    );
+    assert_eq!(
+        server
+            .research_archive_draft(PROJECT, &session)
+            .await
+            .unwrap(),
+        None
+    );
+    // Nothing is left to delete; trying again changes nothing.
+    assert_eq!(
+        server
+            .retry_research_archive_cleanup(PROJECT, &session)
+            .await
+            .unwrap(),
+        frozen
     );
 
     // From now on it is a record: read, not continued or archived again.
@@ -9923,6 +10066,10 @@ async fn a_conversations_research_is_drafted_reviewed_and_frozen() {
     assert!(!snapshot(&server, &continued).await.read_only);
     // Only from a frozen archive.
     assert!(server.continue_research(PROJECT, &continued).await.is_err());
+    assert!(server
+        .retry_research_archive_cleanup(PROJECT, &continued)
+        .await
+        .is_err());
     // Another conversation of the project is untouched.
     let next = create(&server).await;
     send(&server, &next, "count the reads again").await.unwrap();

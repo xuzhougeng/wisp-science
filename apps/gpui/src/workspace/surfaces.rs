@@ -958,6 +958,7 @@ mod tests {
             ("workspace/review_view.rs", "render_review"),
             ("workspace/compact_view.rs", "render_compact_dialog"),
             ("workspace/archive_view.rs", "render_research_archive"),
+            ("workspace/archive_view.rs", "render_discard_archive"),
             ("workspace/explore_view.rs", "render_exploration_preview"),
             ("workspace/explore_view.rs", "render_start_exploration"),
             ("workspace/project_settings.rs", "render_project_settings"),

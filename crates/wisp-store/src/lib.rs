@@ -39,6 +39,7 @@ mod publication_sources;
 mod publications;
 mod remote_staging;
 mod research;
+pub mod research_archive_files;
 mod research_archives;
 mod research_checklist;
 mod research_journey;

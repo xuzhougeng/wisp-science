@@ -1272,7 +1272,6 @@ impl Backend {
         self.local(move |host| async move { host.continue_research(&project, &session).await })
     }
 
-    /// Has the model draft an archive of a conversation; nothing is saved.
     /// Conversations Codex and Claude Code keep on this computer.
     pub fn external_conversations(
         &self,
@@ -1326,23 +1325,47 @@ impl Backend {
         })
     }
 
+    /// The conversation's research archive draft that is not frozen yet.
+    pub fn research_archive_draft(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<Option<wisp_server::desktop::ResearchArchive>> {
+        self.local(move |host| async move { host.research_archive_draft(&project, &session).await })
+    }
+
+    /// Has the model draft an archive of a conversation, with a choice for
+    /// each local file it recorded. The draft is kept; no file is touched.
     pub fn draft_research_archive(
         &self,
         project: String,
         session: String,
-    ) -> Reply<wisp_server::desktop::ArchiveDraft> {
+    ) -> Reply<wisp_server::desktop::ResearchArchive> {
         self.local(move |host| async move { host.draft_research_archive(&project, &session).await })
     }
 
-    /// Freezes a reviewed draft as the conversation's research archive.
+    /// Freezes the kept draft as the researcher reviewed it: the files
+    /// chosen for deletion are then deleted for good.
     pub fn freeze_research_archive(
         &self,
         project: String,
         session: String,
-        draft: wisp_server::desktop::ArchiveDraft,
+        input: wisp_server::desktop::ConfirmResearchArchive,
     ) -> Reply<wisp_server::desktop::ResearchArchive> {
         self.local(move |host| async move {
-            host.freeze_research_archive(&project, &session, draft)
+            host.freeze_research_archive(&project, &session, input)
+                .await
+        })
+    }
+
+    /// Tries again to delete what a frozen archive chose to delete.
+    pub fn retry_research_archive_cleanup(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<wisp_server::desktop::ResearchArchive> {
+        self.local(move |host| async move {
+            host.retry_research_archive_cleanup(&project, &session)
                 .await
         })
     }

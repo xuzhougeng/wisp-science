@@ -117,6 +117,7 @@ use wisp_server::desktop::{
 };
 
 use crate::{
+    archive,
     backend::{Backend, receive},
     compose::{self, Chip, Pending},
     controls,
@@ -191,8 +192,8 @@ pub struct Workspace {
     /// The import dialog.
     imports: import_view::Imports,
     webview_imports: webview_import_view::WebViewImports,
-    /// Title, report.
-    archive_fields: [Entity<InputState>; 2],
+    /// Title, report, and the name and text of the script shown.
+    archive_fields: [Entity<InputState>; 4],
     model_view: Option<wisp_server::desktop::ModelView>,
     model_view_error: Option<String>,
     /// The rows opened to show their whole text.
@@ -1200,6 +1201,13 @@ impl Workspace {
         let archive_fields = [
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
+            cx.new(|cx| InputState::new(window, cx)),
+            // In-editor search would be a nested surface outside the Escape stack.
+            cx.new(|cx| {
+                InputState::new(window, cx)
+                    .code_editor("text")
+                    .searchable(false)
+            }),
         ];
         let merge_summary = cx.new(|cx| InputState::new(window, cx).multi_line(true));
         let handoff_fields = [
@@ -1338,6 +1346,27 @@ impl Workspace {
             cx.subscribe_in(&journey_search, window, |_, _, event, _, cx| {
                 if matches!(event, InputEvent::Change) {
                     cx.notify();
+                }
+            }),
+            // The archive's draft follows its fields as they are typed in.
+            cx.subscribe_in(&archive_fields[0], window, |this, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.note_archive_edit(cx);
+                }
+            }),
+            cx.subscribe_in(&archive_fields[1], window, |this, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.note_archive_edit(cx);
+                }
+            }),
+            cx.subscribe_in(&archive_fields[2], window, |this, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.note_archive_edit(cx);
+                }
+            }),
+            cx.subscribe_in(&archive_fields[3], window, |this, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.note_archive_edit(cx);
                 }
             }),
             // Whether an edit of saved code can be saved shows as it is typed.
@@ -2197,11 +2226,18 @@ impl Workspace {
                 self.reuse = None;
                 self.reuse_error = None;
             }
+            // A draft with changes asks before they are given up.
             Some(Layer::ResearchArchive) => {
-                self.archive = None;
-                self.archive_error = None;
-                self.focus_composer(window, cx);
+                if self.archive_needs_asking(cx) {
+                    self.layers.open(Layer::ResearchArchive);
+                    self.ask_before_leaving_archive(archive::Leaving::Close, cx);
+                } else {
+                    self.archive = None;
+                    self.archive_error = None;
+                    self.focus_composer(window, cx);
+                }
             }
+            Some(Layer::ConfirmDiscardArchive) => self.stop_asking_about_archive(),
             Some(Layer::BranchMerge) => {
                 self.merge = None;
                 self.merge_error = None;
@@ -4712,6 +4748,11 @@ impl Render for Workspace {
         };
         let root = if self.layers.contains(Layer::ResearchArchive) {
             root.child(self.render_research_archive(window, cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::ConfirmDiscardArchive) {
+            root.child(self.render_discard_archive(cx))
         } else {
             root
         };
