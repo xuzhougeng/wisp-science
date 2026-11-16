@@ -16326,6 +16326,12 @@ async fn a_run_moved_to_the_background_frees_the_turn_and_reports_its_end() {
     run.frame_id = Some(session.clone());
     run.status = wisp_store::RunStatus::Running;
     store.create_run(&run).await.unwrap();
+    // Held for the whole test: a Run nobody holds is the run manager's to
+    // recover, and it would mark this one, which has no process, as lost.
+    assert!(store
+        .claim_run_lifecycle("align", "test", 600)
+        .await
+        .unwrap());
 
     send(&server, &session, "watch the alignment")
         .await
@@ -16396,10 +16402,6 @@ async fn a_run_moved_to_the_background_frees_the_turn_and_reports_its_end() {
     assert_eq!(replies, 2);
 
     // The Run ends later; its conversation is told once, after it.
-    assert!(store
-        .claim_run_lifecycle("align", "test", 60)
-        .await
-        .unwrap());
     assert!(store
         .finish_active_run_owned("align", "test", wisp_store::RunStatus::Succeeded, Some(0))
         .await
