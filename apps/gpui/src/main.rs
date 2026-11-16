@@ -137,6 +137,8 @@ fn open_window_noting(
         |window, cx| {
             let keeper = backend.clone();
             let workspace = cx.new(|cx| workspace::Workspace::new(backend, window, cx));
+            let guard = workspace.downgrade();
+            let leaving = project.clone();
             if let Some(project) = project {
                 workspace.update(cx, |workspace, cx| {
                     workspace.enter_project(project.clone(), window, cx);
@@ -149,11 +151,21 @@ fn open_window_noting(
                 if note {
                     save_project_windows(&keeper, project_windows::note(&project, true), cx);
                 }
-                window.on_window_should_close(cx, move |_, cx| {
-                    save_project_windows(&keeper, project_windows::note(&project, false), cx);
-                    true
-                });
             }
+            window.on_window_should_close(cx, move |_, cx| {
+                // Not over a script's edits that are not saved, until the
+                // user says to close without them.
+                if !guard
+                    .update(cx, |workspace, cx| workspace.may_close_window(cx))
+                    .unwrap_or(true)
+                {
+                    return false;
+                }
+                if let Some(project) = &leaving {
+                    save_project_windows(&keeper, project_windows::note(project, false), cx);
+                }
+                true
+            });
             cx.new(|cx| Root::new(workspace, window, cx))
         },
     );
@@ -258,6 +270,7 @@ fn main() -> anyhow::Result<()> {
             ]);
             // After the input component's own keys, so the composer's win.
             cx.bind_keys(workspace::composer_bindings());
+            cx.bind_keys(workspace::file_editor_bindings());
             cx.set_menus(vec![Menu {
                 name: "Wisp Science".into(),
                 items: vec![

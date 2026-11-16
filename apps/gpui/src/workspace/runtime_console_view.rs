@@ -63,6 +63,30 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Shows a run made from outside the console (a script's editor) in
+    /// the console on interpreter `id`, opening it there without taking
+    /// the keyboard from where the run was made.
+    pub(super) fn show_console_run(
+        &mut self,
+        id: String,
+        code: &str,
+        output: wisp_server::desktop::RuntimeOutput,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.console_runtime.as_deref() != Some(id.as_str()) {
+            self.console_entries.clear();
+        }
+        self.console_runtime = Some(id);
+        // Under what is open, so Escape still closes the editor first.
+        self.layers.open_beneath(Layer::RuntimeConsole);
+        console::push(&mut self.console_entries, console::Entry::new(code, output));
+        self.console_scroll.scroll_to_bottom();
+        self.load_console_objects(window, cx);
+        self.load_status(window, cx);
+        cx.notify();
+    }
+
     fn close_console(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.layers.close(Layer::RuntimeConsole) {
             self.console_runtime = None;

@@ -10,6 +10,7 @@ mod conversation_actions;
 mod demos_view;
 mod explore_view;
 mod favorites_view;
+mod file_editor_view;
 mod files_panel;
 mod find_view;
 mod follow_ups_view;
@@ -79,6 +80,7 @@ use std::{
 };
 
 actions!(composer, [SendMessage]);
+pub use file_editor_view::file_editor_bindings;
 
 /// The composer's own keys, bound after the input component's so they win
 /// where both apply: with the Return choice, Return sends and Shift+Return
@@ -856,6 +858,13 @@ pub struct Workspace {
     layers: EscapeStack,
     files: FilesState,
     file_view: Entity<InputState>,
+    /// The script being edited in the preview, when the previewed file is
+    /// one that can be.
+    file_edit: Option<crate::files::Editing>,
+    /// Unsaved edits of every file, kept while the window is open.
+    file_drafts: crate::files::Drafts,
+    /// The window may close over unsaved edits: the user said so.
+    close_confirmed: bool,
     expanded_run: Option<String>,
     /// Which tab the side panel shows.
     panel_tab: PanelTab,
@@ -1296,6 +1305,12 @@ impl Workspace {
                     _ => {}
                 },
             ),
+            // Each change to an edited script is kept as its draft.
+            cx.subscribe_in(&file_view, window, |this, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.note_file_edit(cx);
+                }
+            }),
             cx.subscribe_in(&file_name_input, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::PressEnter { .. }) {
                     this.save_file_name(window, cx);
@@ -1832,6 +1847,9 @@ impl Workspace {
             layers: EscapeStack::default(),
             files: FilesState::default(),
             file_view,
+            file_edit: None,
+            file_drafts: Default::default(),
+            close_confirmed: false,
             expanded_run: None,
             panel_tab: PanelTab::default(),
             kept_tabs: PanelTab::ALL.to_vec(),
@@ -1866,6 +1884,8 @@ impl Workspace {
     fn dismiss_top(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         match self.layers.dismiss_top() {
             Some(Layer::FilePreview) => {
+                // An unsaved edit stays as the file's draft.
+                self.file_edit = None;
                 self.files.close_preview();
                 self.file_image = None;
                 self.file_document = None;
@@ -2079,6 +2099,8 @@ impl Workspace {
             }
             Some(Layer::PaperWaiver) => self.paper_waiving = None,
             Some(Layer::ConfirmTrashFile) => self.file_trashing = None,
+            // The edit stays as it was, unsaved.
+            Some(Layer::FileChangedOnDisk | Layer::ConfirmCloseUnsaved) => {}
             // Menus and questions that hold no focus of their own.
             Some(
                 Layer::SortMenu
@@ -4532,6 +4554,16 @@ impl Render for Workspace {
         };
         let root = if self.layers.contains(Layer::Onboarding) {
             root.child(self.render_onboarding(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::FileChangedOnDisk) {
+            root.child(self.render_file_changed(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::ConfirmCloseUnsaved) {
+            root.child(self.render_close_unsaved(cx))
         } else {
             root
         };

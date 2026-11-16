@@ -259,6 +259,22 @@ impl Backend {
         )
     }
 
+    /// Saves an edit of a project file: with `original`, only while the
+    /// file still holds that text (otherwise the reply says it changed on
+    /// disk and nothing is written); without it, over whatever is there.
+    pub fn save_project_file(
+        &self,
+        project: String,
+        path: String,
+        original: Option<String>,
+        text: String,
+    ) -> Reply<wisp_server::desktop::FileSave> {
+        self.local(move |host| async move {
+            host.save_project_file(&project, &path, original.as_deref(), &text)
+                .await
+        })
+    }
+
     /// Moves a file or folder to the project's trash; the reply is where
     /// it went.
     pub fn trash_project_entry(&self, project: String, path: String) -> Reply<String> {
@@ -2244,6 +2260,20 @@ impl Backend {
         self.local(
             move |host| async move { host.run_in_runtime(&project, &session, &id, &code).await },
         )
+    }
+
+    /// Runs the saved project script `path` whole in interpreter `id`.
+    pub fn run_script_in_runtime(
+        &self,
+        project: String,
+        session: String,
+        id: String,
+        path: String,
+    ) -> Reply<wisp_server::desktop::RuntimeOutput> {
+        self.local(move |host| async move {
+            host.run_script_in_runtime(&project, &session, &id, &path)
+                .await
+        })
     }
 
     /// What the system's terminal runs to open a shell on a context.

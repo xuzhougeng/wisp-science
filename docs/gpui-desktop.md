@@ -166,6 +166,7 @@ which it only reads.
 | Undo a turn | Going back to the latest message can also undo its files: a file the turn edited gets its earlier content, a file it created goes to the project's trash, and a file changed again since is left and named |
 | Table preview | A `.csv` or `.tsv` file is previewed as a grid of its first 200 rows and 30 columns, with a switch to its text |
 | File actions | A previewed file's path can be copied, the file attached to the message, shown in the file manager or opened with the system's own application |
+| Script editor | An R (`.R`, `.r`) or Python (`.py`, `.pyw`) script previewed in the Files tab is edited where it is shown, with line numbers, as in the WebView's source editor: Save (or Cmd/Ctrl+S in the editor) writes it over the file, keeping the file's line endings and final newline, and appears with "Not saved" under the name while there is something to save; Run (Cmd/Ctrl+Return) runs the selection, or the whole statement under the caret and then moves to the next one, and Run script (Cmd/Ctrl+Shift+Return) saves and runs the saved file whole, both in the open conversation's interpreter for the script's language (started on the first run), with the output and plots in the console above the composer. A save is refused when the file changed on disk after the edit began, and a dialog offers Keep editing, Reload from disk or Overwrite. Unsaved edits stay per file while the window is open, through switching files, closing the preview and changing conversation; closing the window over them asks first |
 | Slash commands | A message that is only a command does something instead of being sent: `/review`, `/trajectory`, `/context`, `/btw <question>`, `/plan`, `/save-as-skill`, `/skills`, `/files`, `/upload`, `/memo`, `/remember`, `/archive`, `/compact`, `/timer 30m <prompt>`, `/fork`, `/rewind`, `/permission`, `/share`, `/help`; typing "/" where a word starts, or the composer's "/" button, lists them with the project's skills, narrowing as you type |
 | Browser | Settings, Browser, switches on a bridge to the Wisp extension in your own Chrome or Chromium; conversations can then open a tab, read it and run a script in it, only in tabs they opened themselves, and hosts can be blocked or preferred |
 | Workflows | Settings, Workflows, keeps templates of a goal broken into tasks, each saying which earlier tasks it needs and what it may do as an agent, with an approval policy; Run starts a conversation in the open project and gives the model the tasks stage by stage, and Run as agents drafts them as a batch of agents in a new conversation, approved or discarded in its Agents tab |
@@ -228,7 +229,7 @@ which it only reads.
 | Drafts | Survive navigation; preserved on send failure, cleared on durable acceptance |
 | Execution | Shared agent/tools, streamed snapshots while running, stop and errors |
 | Approvals | Exact pending request; allow once, allow that tool for the rest of the conversation, always allow it in this project, or deny |
-| Escape | One window-level stack: Escape closes only the topmost of command palette, file preview, Files panel, Settings, title editor, delete confirmation, remove-project confirmation, the Full access question, the model and effort menus, the remove-model question, the sort menu, select mode and its group menu and delete question, a group's name field, actions and delete question, the conversation's group and move menus, the go-back question, the memo editor and its delete question, the memory editor and its delete question, the Favorites page and its remove question, and, after all of them, the newest card for another project's conversation |
+| Escape | One window-level stack: Escape closes only the topmost of command palette, file preview, Files panel, Settings, title editor, delete confirmation, remove-project confirmation, the Full access question, the model and effort menus, the remove-model question, the sort menu, select mode and its group menu and delete question, a group's name field, actions and delete question, the conversation's group and move menus, the go-back question, the memo editor and its delete question, the memory editor and its delete question, the Favorites page and its remove question, the question about a script changed on disk and the one before closing over unsaved edits, and, after all of them, the newest card for another project's conversation |
 | Shortcuts | Cmd/Ctrl+K opens the command palette; Cmd/Ctrl+P opens it with only its commands, as the WebView's action palette; Cmd/Ctrl+N starts a conversation in the open project; Cmd/Ctrl+, opens Settings |
 | Lifecycle | Background IO, stale-result rejection, cancel/clean workers on exit |
 
@@ -480,8 +481,27 @@ Limits of this slice:
 - Files shows the local project root only, one directory at a time (at most
   2000 entries), hides `.wisp`, `.git`, links and special files, and previews
   the first 1 MB of a text file. Markdown up to 256 KB is rendered; larger or
-  other text is shown verbatim. No edit, upload, download, image, PDF or
-  Office preview.
+  other text is shown verbatim and read-only, except R and Python scripts.
+- A script is edited only when it was loaded whole: one over 1 MB, one
+  with more than 8,000 lines, or one that is not UTF-8 text is shown
+  read-only with a line that says why, as the WebView does. Other text
+  files (Markdown, shell, JSON, …) are not edited, as in the WebView. The
+  editor numbers lines but does not colour the code: the component's
+  language grammars are a build feature the app does not take. There is
+  no "Selected lines" label as the selection changes. Saving goes through
+  the host's project-file confinement (inside the project after links are
+  followed, never `.wisp` or `.git`, an existing UTF-8 file, at most 8 MB),
+  is refused while the project is frozen for an exploration, and records
+  no artifact version, as in the WebView. A file of mixed line endings is
+  saved with the more common one. Drafts live in the window: quitting the
+  app (Cmd/Ctrl+Q) does not ask and they are lost, as they are in the
+  WebView. Running needs an open conversation: its interpreter on this
+  computer runs the code. Run script reads the file from the project
+  folder, so it is refused in an exploration's conversation, whose
+  interpreter works in the exploration's copy; Run still sends the code.
+  There is no runtime binding to an SSH or WSL context as the WebView's
+  editor has, and no external editor (the WebView has none either: its
+  "Open in editor" opens a chat snapshot's source in its own editor).
 - The palette finds files by name, not content. Each project is walked
   breadth-first for at most 20,000 entries, skipping links, dot-folders,
   `node_modules` and `__pycache__`, so a file deep in a very large tree can be

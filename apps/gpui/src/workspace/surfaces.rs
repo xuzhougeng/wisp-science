@@ -769,6 +769,8 @@ mod tests {
             ("workspace/project_settings.rs", "render_project_settings"),
             ("workspace/project_sync_view.rs", "render_join_synced"),
             ("workspace/trajectory_view.rs", "render_trajectory"),
+            ("workspace/file_editor_view.rs", "render_file_changed"),
+            ("workspace/file_editor_view.rs", "render_close_unsaved"),
         ] {
             let body = method(file(name), function)
                 .unwrap_or_else(|| panic!("{name} has no fn {function}"));

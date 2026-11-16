@@ -162,6 +162,47 @@ pub async fn trash(root: &Path, path: &str, now: u64) -> Result<String> {
         .replace(std::path::MAIN_SEPARATOR, "/"))
 }
 
+/// The most an edited file may be once saved; the WebView's save command
+/// takes the same.
+pub const SAVE_LIMIT: usize = 8 * 1024 * 1024;
+
+/// What saving an edited file did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileSave {
+    Saved,
+    /// Nothing was written: the file on disk is no longer the text the
+    /// edit began from (the assistant or another program changed it).
+    ChangedOnDisk,
+}
+
+/// Writes `text` over the existing project file `path`, as the user's own
+/// edit. With `original`, only while the file still holds exactly that
+/// text; otherwise nothing is written and [`FileSave::ChangedOnDisk`] says
+/// why. Without it, whatever the file holds is replaced. The file must be
+/// there already, inside the project after any link is followed, not in
+/// the project's own records, and UTF-8 text: new files are made with
+/// [`create`], and an editor never saw a file it could not read as text.
+pub async fn save(root: &Path, path: &str, original: Option<&str>, text: &str) -> Result<FileSave> {
+    ensure!(
+        text.len() <= SAVE_LIMIT,
+        "The file would be more than 8 MB; it is not saved from here"
+    );
+    let real = resolve(root, path).await?;
+    ensure!(
+        tokio::fs::metadata(&real).await?.is_file(),
+        "Select a regular file"
+    );
+    let on_disk = tokio::fs::read(&real).await?;
+    let Ok(on_disk) = std::str::from_utf8(&on_disk) else {
+        anyhow::bail!("This file is not UTF-8 text, so it is not saved from here");
+    };
+    if original.is_some_and(|original| original != on_disk) {
+        return Ok(FileSave::ChangedOnDisk);
+    }
+    tokio::fs::write(&real, text).await?;
+    Ok(FileSave::Saved)
+}
+
 /// A file a message may carry: project-relative, inside the project, and a
 /// regular file. The same confinement as the file browser.
 pub async fn attachable(root: &Path, path: &str) -> Result<()> {
@@ -699,6 +740,88 @@ mod tests {
             assert!(trash(root, "reads", 1702).await.is_ok());
             assert!(!root.join("reads").exists());
             assert_eq!(std::fs::read(&outside).unwrap(), b"reads");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_edit_is_saved_only_over_the_text_it_began_from_and_only_inside_the_project() {
+        let project = tempfile::tempdir().unwrap();
+        let root = project.path();
+        std::fs::create_dir_all(root.join("analysis")).unwrap();
+        std::fs::write(root.join("analysis/qc.py"), "print(1)\r\n").unwrap();
+
+        // Over the text it was loaded as, the file takes the edit as given:
+        // its line endings are the editor's to keep.
+        assert_eq!(
+            save(root, "analysis/qc.py", Some("print(1)\r\n"), "print(2)\r\n")
+                .await
+                .unwrap(),
+            FileSave::Saved
+        );
+        assert_eq!(
+            std::fs::read(root.join("analysis/qc.py")).unwrap(),
+            b"print(2)\r\n"
+        );
+
+        // Changed on disk since: nothing is written, and the caller is told.
+        std::fs::write(root.join("analysis/qc.py"), "print(3)\n").unwrap();
+        assert_eq!(
+            save(root, "analysis/qc.py", Some("print(2)\r\n"), "mine\n")
+                .await
+                .unwrap(),
+            FileSave::ChangedOnDisk
+        );
+        assert_eq!(
+            std::fs::read(root.join("analysis/qc.py")).unwrap(),
+            b"print(3)\n"
+        );
+        // Asked to overwrite, it does.
+        assert_eq!(
+            save(root, "analysis/qc.py", None, "mine\n").await.unwrap(),
+            FileSave::Saved
+        );
+        assert_eq!(
+            std::fs::read(root.join("analysis/qc.py")).unwrap(),
+            b"mine\n"
+        );
+
+        // Never a new file, a folder, a file outside the project or in its
+        // own records, nor one that is not UTF-8 text, nor too much.
+        std::fs::create_dir_all(root.join(".wisp")).unwrap();
+        std::fs::write(root.join(".wisp/notes.txt"), "x").unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        std::fs::write(elsewhere.path().join("outside.py"), "kept").unwrap();
+        let outside = elsewhere.path().join("outside.py");
+        for path in [
+            "analysis/new.py",
+            "analysis",
+            "../outside.py",
+            outside.to_str().unwrap(),
+            ".wisp/notes.txt",
+            "analysis\\qc.py",
+        ] {
+            assert!(save(root, path, None, "x").await.is_err(), "{path}");
+        }
+        assert!(!root.join("analysis/new.py").exists());
+        std::fs::write(root.join("latin1.txt"), b"caf\xe9").unwrap();
+        assert!(save(root, "latin1.txt", None, "café").await.is_err());
+        assert_eq!(std::fs::read(root.join("latin1.txt")).unwrap(), b"caf\xe9");
+        let huge = "x".repeat(SAVE_LIMIT + 1);
+        assert!(save(root, "analysis/qc.py", None, &huge).await.is_err());
+        assert_eq!(
+            std::fs::read(root.join("analysis/qc.py")).unwrap(),
+            b"mine\n"
+        );
+
+        // A link that leads out of the project is never written through.
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&outside, root.join("escape.py")).unwrap();
+            assert!(save(root, "escape.py", None, "overwritten").await.is_err());
+            assert!(save(root, "escape.py", Some("kept"), "overwritten")
+                .await
+                .is_err());
+            assert_eq!(std::fs::read(&outside).unwrap(), b"kept");
         }
     }
 

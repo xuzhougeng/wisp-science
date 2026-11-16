@@ -2,6 +2,7 @@
 //! management and the model it runs on. They are typed methods rather than
 //! dispatch commands, so nothing here can be reached through the remote
 //! allowlist.
+pub use crate::files::FileSave;
 pub use crate::output::{tool_question, TokenUsage};
 use crate::{config::ModelConfig, Server};
 use anyhow::{bail, ensure, Context, Result};
@@ -1151,6 +1152,37 @@ impl Server {
         let _admission = self.0.admission.read().await;
         let root = self.project_root(project).await?;
         crate::files::rename(std::path::Path::new(&root), path, name).await
+    }
+
+    /// Saves the user's edit of an existing project file, as the WebView's
+    /// source editor does (`save_file`): with `original`, only while the
+    /// file still holds that text, so an edit left open across a turn that
+    /// rewrote the file does not silently replace that turn's work. A
+    /// project frozen while one of its explorations runs takes no edits,
+    /// as no other write.
+    pub async fn save_project_file(
+        &self,
+        project: &str,
+        path: &str,
+        original: Option<&str>,
+        text: &str,
+    ) -> Result<FileSave> {
+        let _admission = self.0.admission.read().await;
+        let root = self.project_root(project).await?;
+        crate::explorations::service::require_writable_scope(
+            &self.0.store,
+            &wisp_store::StateScope::mainline(project.to_owned()),
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        let saved = crate::files::save(std::path::Path::new(&root), path, original, text).await?;
+        if saved == FileSave::Saved {
+            self.0
+                .store
+                .bump_state_generation(&wisp_store::StateScope::mainline(project.to_owned()))
+                .await?;
+        }
+        Ok(saved)
     }
 
     /// Moves a project file or folder into the project's `.wisp/trash`;

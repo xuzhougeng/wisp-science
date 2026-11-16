@@ -744,6 +744,265 @@ pub fn thumbnail(name: &str, size: u64) -> bool {
     ) && size <= THUMBNAIL_BYTES
 }
 
+// Editing a script where it is previewed, as the WebView's source editor
+// (`RpCodeEditor` in `ui/src/app_support/previews.rs`) does: only R and
+// Python sources, the languages a conversation has an interpreter for, and
+// only one the preview loaded whole. Everything else stays read-only.
+
+/// A script that can be edited and run in the preview.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Script {
+    Python,
+    R,
+}
+
+impl Script {
+    /// By its name, as the WebView tells them: `.py` and `.pyw` are Python,
+    /// `.r` in either case is R.
+    pub fn of(path: &str) -> Option<Self> {
+        let (_, kind) = file_name(path).rsplit_once('.')?;
+        match kind.to_ascii_lowercase().as_str() {
+            "py" | "pyw" => Some(Self::Python),
+            "r" => Some(Self::R),
+            _ => None,
+        }
+    }
+
+    pub fn runtime(self) -> wisp_server::desktop::RuntimeLanguage {
+        match self {
+            Self::Python => wisp_server::desktop::RuntimeLanguage::Python,
+            Self::R => wisp_server::desktop::RuntimeLanguage::R,
+        }
+    }
+
+    /// The language as the shared statement finder names it.
+    pub fn statement_language(self) -> &'static str {
+        match self {
+            Self::Python => "python",
+            Self::R => "r",
+        }
+    }
+}
+
+/// The most lines a script may have and still be edited; the WebView shows
+/// a longer one read-only.
+pub const EDIT_LINES: usize = 8_000;
+
+/// Whether the previewed file opens in the editor: `None` for a file that
+/// is not a script (read-only, with nothing to say), `Some(Ok)` for a
+/// script to edit, `Some(Err)` with why a script is shown read-only. A
+/// script the host cut short is never editable: saving the head would
+/// lose the rest.
+pub fn editable(content: &FileContent) -> Option<Result<Script, &'static str>> {
+    let script = Script::of(&content.path)?;
+    let Some(text) = &content.text else {
+        return Some(Err(tr(
+            "This file is not text, so it cannot be edited here.",
+        )));
+    };
+    if content.truncated {
+        return Some(Err(tr(
+            "Only the first 1 MB is shown, so this script is read-only here.",
+        )));
+    }
+    // The host reads a file as UTF-8 and puts a replacement character
+    // where it could not; saving that would change bytes no one touched.
+    if text.contains('\u{FFFD}') {
+        return Some(Err(tr(
+            "This script is not plain UTF-8 text, so it is read-only here.",
+        )));
+    }
+    // As the WebView clips a preview: at the line limit's newline, when
+    // anything follows it.
+    let cut = text
+        .match_indices('\n')
+        .nth(EDIT_LINES - 1)
+        .is_some_and(|(at, _)| at + 1 < text.len());
+    if cut {
+        return Some(Err(tr(
+            "This script has more than 8,000 lines, so it is read-only here.",
+        )));
+    }
+    Some(Ok(script))
+}
+
+/// The file's text as the editor shows it: every line ending a plain
+/// newline.
+pub fn editor_text(disk: &str) -> String {
+    disk.replace("\r\n", "\n")
+}
+
+/// Whether the file ends its lines with CR LF: when most of its line
+/// endings are.
+fn crlf(disk: &str) -> bool {
+    let crlf = disk.matches("\r\n").count();
+    let lf = disk.matches('\n').count() - crlf;
+    crlf > 0 && crlf >= lf
+}
+
+/// What is written for the editor's `edited` text over a file that held
+/// `disk`: its lines end as the file's did (CR LF on a Windows-made
+/// file), and a file that ended with a newline still does. A file of mixed
+/// endings takes the more common one.
+pub fn saved_text(disk: &str, edited: &str) -> String {
+    let mut text = editor_text(edited);
+    if disk.ends_with('\n') && !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    if crlf(disk) {
+        text = text.replace('\n', "\r\n");
+    }
+    text
+}
+
+/// Whether the editor holds anything the file does not: the editor's text
+/// against the file's as the editor showed it.
+pub fn is_dirty(disk: &str, edited: &str) -> bool {
+    editor_text(disk) != edited
+}
+
+/// The script being edited in the preview.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Editing {
+    pub project: String,
+    pub path: String,
+    pub script: Script,
+    /// The file's text when the edit began, exactly as on disk: what a
+    /// save checks the file still holds.
+    pub base: String,
+    pub dirty: bool,
+    pub saving: bool,
+    /// The file on disk is no longer `base`: the assistant or another
+    /// program changed it after the edit began.
+    pub changed_on_disk: bool,
+    /// Why the last save failed.
+    pub problem: Option<String>,
+}
+
+/// Unsaved edits, per project and file, kept while the window is open:
+/// the WebView keeps them per file the same way, so switching files or
+/// closing the preview loses nothing.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Drafts(std::collections::BTreeMap<(String, String), Draft>);
+
+/// One file's unsaved edit and the text it began from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Draft {
+    pub base: String,
+    pub text: String,
+}
+
+impl Drafts {
+    /// Keeps `text` as the draft of `path` while it differs from `base`;
+    /// one edited back to the file's text is no draft.
+    pub fn note(&mut self, project: &str, path: &str, base: &str, text: &str) {
+        let key = (project.to_owned(), path.to_owned());
+        if is_dirty(base, text) {
+            self.0.insert(
+                key,
+                Draft {
+                    base: base.to_owned(),
+                    text: text.to_owned(),
+                },
+            );
+        } else {
+            self.0.remove(&key);
+        }
+    }
+
+    pub fn get(&self, project: &str, path: &str) -> Option<&Draft> {
+        self.0.get(&(project.to_owned(), path.to_owned()))
+    }
+
+    /// Forgets the draft of `path`: it was saved, or thrown away on purpose.
+    pub fn forget(&mut self, project: &str, path: &str) {
+        self.0.remove(&(project.to_owned(), path.to_owned()));
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The files with unsaved edits, by name, in order.
+    pub fn names(&self) -> Vec<String> {
+        self.0
+            .keys()
+            .map(|(_, path)| file_name(path).to_owned())
+            .collect()
+    }
+}
+
+/// What opening a file again finds of an edit left in it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Reopened {
+    /// No draft: the editor shows the file.
+    Clean,
+    /// The draft goes back into the editor.
+    Draft,
+    /// The draft goes back into the editor, but the file changed on disk
+    /// after the edit began; saving it would replace that change.
+    ChangedOnDisk,
+}
+
+pub fn reopen(draft: Option<&Draft>, disk: &str) -> Reopened {
+    match draft {
+        None => Reopened::Clean,
+        Some(draft) if draft.base == disk => Reopened::Draft,
+        Some(_) => Reopened::ChangedOnDisk,
+    }
+}
+
+/// What Run sends for the editor's text and its selection (UTF-16
+/// offsets, as the input reports them): the selection when there is one,
+/// otherwise the whole statement under the caret, as in the WebView (the
+/// shared [`wisp_dto::source_run`]). With the statement comes where the
+/// caret goes next, as a line and a column in characters, both from 0.
+pub fn run_code(
+    text: &str,
+    script: Script,
+    start_utf16: u32,
+    end_utf16: u32,
+) -> Option<(String, Option<(u32, u32)>)> {
+    let run = wisp_dto::source_run::source_execution(
+        text,
+        start_utf16,
+        end_utf16,
+        script.statement_language(),
+    )?;
+    let next = run.next_caret_utf16.map(|caret| {
+        let byte = wisp_dto::source_run::utf16_to_byte_index(text, caret);
+        line_and_column(text, byte)
+    });
+    Some((run.code, next))
+}
+
+/// The line and the column in characters, both from 0, of byte `byte`.
+fn line_and_column(text: &str, byte: usize) -> (u32, u32) {
+    let before = &text[..byte.min(text.len())];
+    let line = before.matches('\n').count();
+    let start = before.rfind('\n').map_or(0, |newline| newline + 1);
+    (line as u32, before[start..].chars().count() as u32)
+}
+
+/// How a whole-script run reads in the console, as the WebView echoes it.
+pub fn script_echo(path: &str) -> String {
+    format!("script {path}")
+}
+
+/// What the window says before it closes over unsaved edits.
+pub fn unsaved_note(names: &[String]) -> String {
+    match names {
+        [one] => crate::i18n::fill(
+            tr("{} has edits that are not saved. They are lost if the window closes."),
+            &[one],
+        ),
+        many => crate::i18n::fill(
+            tr("{} files have edits that are not saved ({}). They are lost if the window closes."),
+            &[&many.len(), &many.join(", ")],
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -1237,5 +1496,174 @@ mod tests {
         for path in ["qc.csv", "README.md", "figure.png", "pdf", "archive.zip"] {
             assert!(!is_document(path), "{path}");
         }
+    }
+
+    fn content(path: &str, text: Option<&str>, truncated: bool) -> FileContent {
+        FileContent {
+            path: path.into(),
+            mime: "text/plain".into(),
+            text: text.map(str::to_owned),
+            base64: None,
+            truncated,
+            total_bytes: text.map(|text| text.len() as u64),
+        }
+    }
+
+    #[test]
+    fn only_r_and_python_scripts_loaded_whole_are_edited() {
+        assert_eq!(Script::of("analysis/qc.py"), Some(Script::Python));
+        assert_eq!(Script::of("gui.PYW"), Some(Script::Python));
+        assert_eq!(Script::of("plot.R"), Some(Script::R));
+        assert_eq!(Script::of("plot.r"), Some(Script::R));
+        for path in [
+            "notes.md",
+            "report.Rmd",
+            "run.sh",
+            "data.csv",
+            "r",
+            "py",
+            "a.py/b",
+        ] {
+            assert_eq!(Script::of(path), None, "{path}");
+        }
+        assert_eq!(
+            editable(&content("qc.py", Some("print(1)\n"), false)),
+            Some(Ok(Script::Python))
+        );
+        // Other text is read, with nothing to say about it.
+        assert_eq!(editable(&content("notes.md", Some("# hi"), false)), None);
+        // A script the host cut, could not read as UTF-8, or too long to
+        // number is shown read-only, and says why.
+        for refused in [
+            content("qc.py", Some("x = 1\n"), true),
+            content("qc.py", None, false),
+            content("qc.py", Some("caf\u{FFFD}\n"), false),
+            content(
+                "plot.R",
+                Some(&format!("{}y", "x\n".repeat(EDIT_LINES))),
+                false,
+            ),
+        ] {
+            assert!(
+                matches!(editable(&refused), Some(Err(why)) if !why.is_empty()),
+                "{refused:?}"
+            );
+        }
+        // A script of exactly the limit is still editable.
+        let at_limit = "x\n".repeat(EDIT_LINES);
+        assert_eq!(
+            editable(&content("plot.R", Some(&at_limit), false)),
+            Some(Ok(Script::R))
+        );
+    }
+
+    #[test]
+    fn a_save_keeps_the_files_line_endings_and_final_newline() {
+        // Shown with plain newlines.
+        assert_eq!(editor_text("a\r\nb\r\n"), "a\nb\n");
+        // Written back as the file had them.
+        assert_eq!(saved_text("a\r\nb\r\n", "a\nc\n"), "a\r\nc\r\n");
+        assert_eq!(saved_text("a\nb\n", "a\nc\n"), "a\nc\n");
+        // A file that ended with a newline still does; one that did not is
+        // written as edited.
+        assert_eq!(saved_text("a\nb\n", "a\nc"), "a\nc\n");
+        assert_eq!(saved_text("a\r\nb\r\n", "a\nc"), "a\r\nc\r\n");
+        assert_eq!(saved_text("a\nb", "a\nc"), "a\nc");
+        assert_eq!(saved_text("a\nb", "a\nc\n"), "a\nc\n");
+        // Emptied stays empty.
+        assert_eq!(saved_text("a\n", ""), "");
+        // Mixed endings take the more common one.
+        assert_eq!(saved_text("a\r\nb\r\nc\n", "x\ny\n"), "x\r\ny\r\n");
+        assert_eq!(saved_text("a\nb\nc\r\n", "x\ny\n"), "x\ny\n");
+        // An edit that changes nothing is not one, whatever the endings.
+        assert!(!is_dirty("a\r\nb\r\n", "a\nb\n"));
+        assert!(is_dirty("a\r\nb\r\n", "a\nb"));
+        assert!(is_dirty("x = 1\n", "x = 2\n"));
+        assert!(!is_dirty("", ""));
+    }
+
+    #[test]
+    fn drafts_are_kept_per_project_and_file_until_saved_or_undone() {
+        let mut drafts = Drafts::default();
+        assert!(drafts.is_empty());
+        drafts.note("lab", "qc.py", "x = 1\n", "x = 2\n");
+        drafts.note("lab", "plot.R", "plot(1)\n", "plot(2)\n");
+        // The same path in another project is another file.
+        drafts.note("other", "qc.py", "x = 1\n", "x = 3\n");
+        assert_eq!(drafts.get("lab", "qc.py").unwrap().text, "x = 2\n");
+        assert_eq!(drafts.get("other", "qc.py").unwrap().text, "x = 3\n");
+        assert_eq!(drafts.names(), ["plot.R", "qc.py", "qc.py"]);
+        // Typed back to the file's text, it is no draft.
+        drafts.note("lab", "qc.py", "x = 1\n", "x = 1\n");
+        assert_eq!(drafts.get("lab", "qc.py"), None);
+        // Line endings alone do not make one.
+        drafts.note("lab", "win.py", "a\r\n", "a\n");
+        assert_eq!(drafts.get("lab", "win.py"), None);
+        drafts.forget("lab", "plot.R");
+        drafts.forget("other", "qc.py");
+        assert!(drafts.is_empty());
+    }
+
+    #[test]
+    fn a_draft_reopened_over_a_file_changed_on_disk_says_so() {
+        let draft = Draft {
+            base: "x = 1\n".into(),
+            text: "x = 2\n".into(),
+        };
+        assert_eq!(reopen(None, "x = 1\n"), Reopened::Clean);
+        assert_eq!(reopen(Some(&draft), "x = 1\n"), Reopened::Draft);
+        assert_eq!(reopen(Some(&draft), "x = 9\n"), Reopened::ChangedOnDisk);
+        // Byte for byte: a file rewritten with other line endings changed.
+        assert_eq!(reopen(Some(&draft), "x = 1\r\n"), Reopened::ChangedOnDisk);
+    }
+
+    #[test]
+    fn run_sends_the_selection_or_the_statement_and_moves_on() {
+        let text = "x <- 1\n绘图 <- c(1,\n  2)\nprint(绘图)\n";
+        let utf16 = |prefix: &str| prefix.encode_utf16().count() as u32;
+        // A selection goes as it is, and the caret stays.
+        let start = utf16("x <- 1\n");
+        let end = start + utf16("绘图 <- c(1,");
+        assert_eq!(
+            run_code(text, Script::R, start, end),
+            Some(("绘图 <- c(1,".into(), None))
+        );
+        // A caret runs its whole statement, across lines, and goes to the
+        // next one: line 3, column 0.
+        let caret = start + 1;
+        assert_eq!(
+            run_code(text, Script::R, caret, caret),
+            Some(("绘图 <- c(1,\n  2)".into(), Some((3, 0))))
+        );
+        // Python blocks run whole.
+        let py = "def f():\n    return 1\nf()\n";
+        assert_eq!(
+            run_code(py, Script::Python, 0, 0),
+            Some(("def f():\n    return 1".into(), Some((2, 0))))
+        );
+        // Nothing to run on an empty line at the end, or in nothing.
+        assert_eq!(run_code("x = 1\n", Script::Python, 6, 6), None);
+        assert_eq!(run_code("", Script::Python, 0, 0), None);
+        // A whole script goes by its path, as the WebView echoes it.
+        assert_eq!(script_echo("analysis/qc.py"), "script analysis/qc.py");
+        assert_eq!(Script::Python.statement_language(), "python");
+        assert_eq!(Script::R.statement_language(), "r");
+        assert_eq!(
+            Script::R.runtime(),
+            wisp_server::desktop::RuntimeLanguage::R
+        );
+    }
+
+    #[test]
+    fn the_window_names_what_closing_it_would_lose() {
+        assert_eq!(
+            unsaved_note(&["qc.py".into()]),
+            "qc.py has edits that are not saved. They are lost if the window closes."
+        );
+        assert_eq!(
+            unsaved_note(&["qc.py".into(), "plot.R".into()]),
+            "2 files have edits that are not saved (qc.py, plot.R). They are lost if the \
+             window closes."
+        );
     }
 }

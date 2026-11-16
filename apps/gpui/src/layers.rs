@@ -9,6 +9,11 @@ pub enum Layer {
     FilesPanel,
     /// File preview shown over the browser's directory listing.
     FilePreview,
+    /// Question over the preview when an edited script changed on disk
+    /// after the edit began: keep editing, reload, or overwrite.
+    FileChangedOnDisk,
+    /// Question before the window closes over edits that are not saved.
+    ConfirmCloseUnsaved,
     /// The side panel's tabs that can be added back, under its tab row.
     PanelTabMenu,
     /// Question under a run's card before its workspace is deleted.
@@ -327,6 +332,7 @@ impl Layer {
             Layer::GroupMenu | Layer::TransferMenu => Some(Layer::ConversationMenu),
             Layer::ExampleCopy => Some(Layer::Examples),
             Layer::ConfirmRunFilesDelete => Some(Layer::RunReview),
+            Layer::FileChangedOnDisk => Some(Layer::FilePreview),
             _ => None,
         }
     }
@@ -457,6 +463,28 @@ mod tests {
         assert_eq!(stack.dismiss_top(), Some(Layer::FilesPanel));
         assert!(!stack.contains(Layer::FilesPanel));
         assert_eq!(stack.dismiss_top(), None);
+    }
+
+    #[test]
+    fn the_question_about_a_changed_file_goes_first_and_with_its_preview() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::FilePreview);
+        stack.open(Layer::FileChangedOnDisk);
+        // One press closes the question; the edit stays open under it.
+        assert_eq!(stack.dismiss_top(), Some(Layer::FileChangedOnDisk));
+        assert!(stack.contains(Layer::FilePreview));
+        // Leaving the preview takes a question about it along.
+        stack.open(Layer::FileChangedOnDisk);
+        assert!(stack.close(Layer::FilePreview));
+        assert!(!stack.contains(Layer::FileChangedOnDisk));
+        assert!(stack.contains(Layer::FilesPanel));
+        // The question before closing the window stands over everything and
+        // goes on its own.
+        stack.open(Layer::FilePreview);
+        stack.open(Layer::ConfirmCloseUnsaved);
+        assert_eq!(stack.dismiss_top(), Some(Layer::ConfirmCloseUnsaved));
+        assert!(stack.contains(Layer::FilePreview));
     }
 
     #[test]
