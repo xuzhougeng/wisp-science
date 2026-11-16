@@ -1,6 +1,7 @@
-//! The dialog that brings the WebView desktop's projects here. Its
-//! database is found where the WebView keeps it, or chosen; it is only
-//! read. The projects that can come are ticked, and one press brings them.
+//! The dialog that brings the WebView desktop's projects and settings
+//! here. Its database is found where the WebView keeps it, or chosen; it is
+//! only read. The projects and groups of settings that can come are
+//! ticked, and one press brings them.
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
@@ -10,7 +11,7 @@ use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
 };
-use wisp_server::desktop::{WebViewImport, WebViewProject};
+use wisp_server::desktop::{WebViewOutcome, WebViewProject};
 
 use super::{
     Workspace, chip,
@@ -25,11 +26,14 @@ pub(super) struct WebViewImports {
     pub database: Option<PathBuf>,
     /// Its projects; `None` while they are read.
     pub found: Option<Vec<WebViewProject>>,
+    /// The groups of its settings that can come.
+    pub settings: Vec<String>,
     pub error: Option<String>,
     pub picks: BTreeSet<String>,
+    pub setting_picks: BTreeSet<String>,
     pub busy: bool,
-    /// How the last import went, project by project.
-    pub done: Vec<WebViewImport>,
+    /// How the last import went.
+    pub done: Option<WebViewOutcome>,
 }
 
 impl Workspace {
@@ -45,12 +49,13 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Lists the projects in `database`, ticking the ones that can come.
+    /// Lists the projects and settings in `database`, ticking the ones
+    /// that can come.
     fn read_webview(&mut self, database: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         self.webview_imports.database = Some(database.clone());
         self.webview_imports.found = None;
         self.webview_imports.error = None;
-        let reply = self.backend.webview_projects(database.clone());
+        let reply = self.backend.webview_data(database.clone());
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
             let _ = this.update(cx, |this, cx| {
@@ -61,12 +66,15 @@ impl Workspace {
                     return;
                 }
                 match result {
-                    Ok(found) => {
-                        imports.picks = webview_import::first_picks(&found);
-                        imports.found = Some(found);
+                    Ok(data) => {
+                        imports.picks = webview_import::first_picks(&data.projects);
+                        imports.setting_picks = data.settings.iter().cloned().collect();
+                        imports.found = Some(data.projects);
+                        imports.settings = data.settings;
                     }
                     Err(error) => {
                         imports.found = Some(Vec::new());
+                        imports.settings.clear();
                         imports.error = Some(error);
                     }
                 }
@@ -93,7 +101,7 @@ impl Workspace {
             };
             let _ = this.update_in(cx, |this, window, cx| {
                 if this.layers.contains(Layer::WebViewImport) {
-                    this.webview_imports.done.clear();
+                    this.webview_imports.done = None;
                     this.read_webview(path, window, cx);
                     cx.notify();
                 }
@@ -102,20 +110,27 @@ impl Workspace {
         .detach();
     }
 
-    /// Brings the ticked projects over, then lists them again.
+    /// Brings the ticked projects and settings over, then lists what is
+    /// left again.
     fn bring_webview_projects(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let imports = &mut self.webview_imports;
         let (Some(database), Some(found)) = (imports.database.clone(), &imports.found) else {
             return;
         };
         let ids = webview_import::chosen(found, &imports.picks);
-        if imports.busy || ids.is_empty() {
+        let settings: Vec<String> = imports
+            .settings
+            .iter()
+            .filter(|group| imports.setting_picks.contains(*group))
+            .cloned()
+            .collect();
+        if imports.busy || (ids.is_empty() && settings.is_empty()) {
             return;
         }
         imports.busy = true;
         imports.error = None;
-        imports.done.clear();
-        let reply = self.backend.import_webview_projects(database.clone(), ids);
+        imports.done = None;
+        let reply = self.backend.import_webview(database.clone(), ids, settings);
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -128,7 +143,7 @@ impl Workspace {
                 this.webview_imports.busy = false;
                 match result {
                     Ok(done) => {
-                        this.webview_imports.done = done;
+                        this.webview_imports.done = Some(done);
                         this.read_webview(database, window, cx);
                         this.load_projects(window, cx);
                         this.load_recent(window, cx);
@@ -177,10 +192,12 @@ impl Workspace {
                     .child(tr("Bring over from the WebView desktop")),
             )
             .child(div().text_sm().text_color(muted).child(tr(
-                "The projects of Wisp's WebView desktop on this computer. Its database is \
-                 only read. A project kept in it is copied here and goes on using its folder \
-                 where it is; one that keeps its own database in its folder is opened there, \
-                 so both desktops then share it. Settings and model keys stay behind.",
+                "The projects and settings of Wisp's WebView desktop on this computer. Its \
+                 database is only read. A project kept in it is copied here, with its settings, \
+                 and goes on using its folder where it is; one that keeps its own database in \
+                 its folder is opened there, so both desktops then share it. A group of \
+                 settings comes only while none of it is set here. Saved models and their keys \
+                 stay behind.",
             )));
         let place = imports.database.as_ref().map_or_else(
             || tr("No WebView data was found on this computer.").to_owned(),
@@ -214,13 +231,9 @@ impl Workspace {
         if let Some(error) = &imports.error {
             card = card.child(error_banner(error, cx));
         }
-        if !imports.done.is_empty() {
-            card = card.child(
-                div()
-                    .text_sm()
-                    .child(webview_import::summary(&imports.done)),
-            );
-            for done in imports.done.iter().filter(|done| done.error.is_some()) {
+        if let Some(outcome) = &imports.done {
+            card = card.child(div().text_sm().child(webview_import::summary(outcome)));
+            for done in outcome.projects.iter().filter(|done| done.error.is_some()) {
                 card = card.child(div().text_xs().text_color(cx.theme().danger).child(format!(
                     "{}: {}",
                     done.name,
@@ -308,13 +321,58 @@ impl Workspace {
                 }
             }
         }
+        if !imports.settings.is_empty() {
+            card = card.child(
+                div()
+                    .pt_3()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(tr("Settings")),
+            );
+            for (index, group) in imports.settings.iter().enumerate() {
+                let picked = imports.setting_picks.contains(group);
+                let group = group.clone();
+                card = card.child(
+                    div()
+                        .id(("webview-setting", index))
+                        .h_flex()
+                        .gap_3()
+                        .px_2()
+                        .py_1()
+                        .rounded(cx.theme().radius)
+                        .cursor_pointer()
+                        .hover(|row| row.bg(cx.theme().list_hover))
+                        .child(glyph(if picked { "check-square" } else { "circle" }).small())
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_sm()
+                                .child(webview_import::setting_label(&group)),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let picks = &mut this.webview_imports.setting_picks;
+                            if !picks.remove(&group) {
+                                picks.insert(group.clone());
+                            }
+                            cx.notify();
+                        })),
+                );
+            }
+        }
         let chosen = imports.found.as_deref().map_or(0, |found| {
             webview_import::chosen(found, &imports.picks).len()
-        });
-        let can_come = imports
-            .found
-            .as_deref()
-            .is_some_and(|found| !webview_import::first_picks(found).is_empty());
+        }) + imports
+            .settings
+            .iter()
+            .filter(|group| imports.setting_picks.contains(*group))
+            .count();
+        let can_come = !imports.settings.is_empty()
+            || imports
+                .found
+                .as_deref()
+                .is_some_and(|found| !webview_import::first_picks(found).is_empty());
         card = card.child(
             div()
                 .h_flex()
@@ -328,9 +386,11 @@ impl Workspace {
                             .ghost()
                             .disabled(imports.busy)
                             .on_click(cx.listener(|this, _, _, cx| {
-                                if let Some(found) = &this.webview_imports.found {
-                                    this.webview_imports.picks = webview_import::first_picks(found);
+                                let imports = &mut this.webview_imports;
+                                if let Some(found) = &imports.found {
+                                    imports.picks = webview_import::first_picks(found);
                                 }
+                                imports.setting_picks = imports.settings.iter().cloned().collect();
                                 cx.notify();
                             })),
                     )

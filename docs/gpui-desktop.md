@@ -115,8 +115,9 @@ The preview database lives in `wisp-science-gpui` under the OS local-data direct
 `wisp-science-gpui-workspace`; `WISP_GPUI_WORKSPACE` overrides that root.
 **Do not point the preview at a production desktop/server database.** Opening a
 folder registers its research root; it does not import existing desktop chats.
-Bring over on the home page copies the WebView desktop's projects and their
-conversations from its database, which it only reads.
+Bring over on the home page copies the WebView desktop's projects, their
+conversations and the settings that mean the same here from its database,
+which it only reads.
 
 ## Implemented slice
 
@@ -138,7 +139,7 @@ conversations from its database, which it only reads.
 | Large pictures | When the model asks to look at a picture larger than it takes, a question of its own asks whether to send a smaller temporary copy (the file is not changed): Resize and continue, or Cancel, for that once only |
 | Privacy mode | ⌘⇧H (or the palette's Privacy mode) chooses projects to hide while the screen is recorded or shared: their cards, their conversations in the recent list and their rows in the palette are left out until Restore all. The choice is the WebView's, kept in the store, so both desktops honour it |
 | Pictures in answers | When an answer shows a picture of the project with Markdown image syntax, the picture is drawn under the answer, and so are the pictures its turn wrote with `write` or `edit` that it does not show (under the turn's last answer); clicking one opens it in the Files tab |
-| WebView projects | Bring over on the home page (or the palette's command) lists the WebView desktop's projects from its database, found where the WebView keeps it or chosen, and read without being changed: each with its folder and its conversations, the ones already here or whose folder is gone held back. The ticked ones come in one press, and a line says how many came and why any did not: one kept in the WebView's database is copied with its conversations and goes on using its folder where it is, one that keeps its own database in its folder is opened there, so both desktops share it; a starred one stays starred |
+| WebView projects | Bring over on the home page (or the palette's command) lists the WebView desktop's projects from its database, found where the WebView keeps it or chosen, and read without being changed: each with its folder and its conversations, the ones already here or whose folder is gone held back. The ticked ones come in one press, and a line says how many came and why any did not: one kept in the WebView's database is copied with its conversations and goes on using its folder where it is, one that keeps its own database in its folder is opened there, so both desktops share it; a starred one stays starred, and a copied one keeps its own settings and its conversations'. Under Settings the WebView's own settings that mean the same here are offered by group (network routes, skills switched off and tags, experts, ACP agents, command hooks, your credentials' names and more), each only while none of it is set here, so nothing made here is replaced; saved models and their keys stay behind |
 | Project archives | Export on a project's card writes the project, its records and its files, as one zip; its folder-package button writes them as a folder another computer opens in place, in a new folder named after the project. Import on the home page takes either: a zip is put in a folder you choose, a folder package is opened where it is. While either runs, a line on the home page says the step, the files and bytes done of all, and the file it is at |
 | Project sync | Project settings, Sync: Sync now publishes the project through a relay or a shared folder (set in Settings, Remote access) or brings in another device's changes, Copy device code, and after a conflict Use the other device's copy or Keep this device's copy, each asked first; a project in a cloud-drive folder can save itself there instead. Join a project from another device on the home page takes a device code and a folder |
 | Capabilities | A dialog for the open project: how many skills, connectors, MCP servers and SSH hosts are on or usable, the state of memory, and which command-line tools were found on this computer |
@@ -2535,10 +2536,13 @@ With the WebView desktop's data on this computer (or with its
 `wisp.sqlite` copied under `$HOME/Library/Application
 Support/science.wisp-science/wisp-science/` of a scratch `HOME`), press
 Bring over on the home page: its projects are listed with their folders and
-conversation counts, the built-in one marked Already here. Untick one and
-press Bring over: the line says how many came, the home page lists them,
-and their conversations open. Open the dialog again: they are now marked
-Already here. Press Escape: it closes. The WebView's database file is
+conversation counts, the built-in one marked Already here, and under
+Settings the groups the WebView has set and this desktop has not. Untick
+one project and one group and press Bring over: the line says how many
+projects came and which settings, the home page lists them, their
+conversations open, and the settings show on their pages. Open the dialog
+again: the projects are now marked Already here and the groups that came
+are gone. Press Escape: it closes. The WebView's database file is
 unchanged.
 In a conversation of more than twelve turns, ask aside about something
 said early on, by a word it used: the answer cites [E1] and Earlier

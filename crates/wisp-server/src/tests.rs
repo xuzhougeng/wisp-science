@@ -15115,14 +15115,34 @@ async fn the_webview_desktops_projects_are_listed_and_brought_over_from_a_copy()
             .create_project("assistant:x", "Hidden", hidden.to_str().unwrap())
             .await
             .unwrap();
+        // Settings of its own, of the copied project and of its
+        // conversation.
+        for (key, value) in [
+            ("memory_enabled", "false"),
+            ("skill_tags", r#"{"stats":["mine"]}"#),
+            ("follow_up_questions", "false"),
+            ("approval_scope:kept", "project"),
+            ("frame_plan_mode:kept-1", "true"),
+        ] {
+            webview.set_setting(key, value).await.unwrap();
+        }
     }
     // Made with the project, then moved away.
     std::fs::remove_dir_all(temp.path().join("gone")).unwrap();
     let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
         .await
         .unwrap();
+    // A setting made here is never replaced.
+    server
+        .0
+        .store
+        .set_setting("follow_up_questions", "true")
+        .await
+        .unwrap();
 
-    let found = server.webview_projects(&database).await.unwrap();
+    let data = server.webview_data(&database).await.unwrap();
+    assert_eq!(data.settings, ["skills", "memory"]);
+    let found = data.projects;
     let ids: Vec<&str> = found.iter().map(|project| project.id.as_str()).collect();
     // Starred first, then by name; the hidden one is left out.
     assert_eq!(ids, ["kept", "gone", "own"]);
@@ -15135,9 +15155,9 @@ async fn the_webview_desktops_projects_are_listed_and_brought_over_from_a_copy()
     // Only a Wisp database that is there is read.
     let other = temp.path().join("other.sqlite");
     std::fs::write(&other, b"").unwrap();
-    assert!(server.webview_projects(&other).await.is_err());
+    assert!(server.webview_data(&other).await.is_err());
     assert!(server
-        .webview_projects(&temp.path().join("missing.sqlite"))
+        .webview_data(&temp.path().join("missing.sqlite"))
         .await
         .is_err());
 
@@ -15145,10 +15165,26 @@ async fn the_webview_desktops_projects_are_listed_and_brought_over_from_a_copy()
         .into_iter()
         .map(String::from)
         .collect();
-    let done = server
-        .import_webview_projects(&database, &chosen)
+    let settings: Vec<String> = ["memory", "follow_ups", "nothing"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    let outcome = server
+        .import_webview(&database, &chosen, &settings)
         .await
         .unwrap();
+    assert_eq!(outcome.settings, ["memory"]);
+    let setting = |key: &'static str| {
+        let store = server.0.store.clone();
+        async move { store.get_setting(key).await.unwrap() }
+    };
+    assert_eq!(setting("memory_enabled").await.as_deref(), Some("false"));
+    assert_eq!(
+        setting("follow_up_questions").await.as_deref(),
+        Some("true")
+    );
+    assert_eq!(setting("skill_tags").await, None);
+    let done = outcome.projects;
     let outcome: Vec<(&str, bool)> = done
         .iter()
         .map(|done| (done.id.as_str(), done.error.is_none()))
@@ -15192,12 +15228,21 @@ async fn the_webview_desktops_projects_are_listed_and_brought_over_from_a_copy()
         .await
         .unwrap()
         .contains("kept"));
+    // Its settings and its conversation's came with it.
+    assert_eq!(
+        setting("approval_scope:kept").await.as_deref(),
+        Some("project")
+    );
+    assert_eq!(
+        setting("frame_plan_mode:kept-1").await.as_deref(),
+        Some("true")
+    );
     // The one with its own database is opened in its folder.
     assert_eq!(server.0.store.list_sessions("own").await.unwrap().len(), 1);
-    let here: Vec<String> = server
-        .webview_projects(&database)
-        .await
-        .unwrap()
+    let again = server.webview_data(&database).await.unwrap();
+    assert_eq!(again.settings, ["skills"]);
+    let here: Vec<String> = again
+        .projects
         .into_iter()
         .filter(|project| project.here)
         .map(|project| project.id)
@@ -15205,10 +15250,10 @@ async fn the_webview_desktops_projects_are_listed_and_brought_over_from_a_copy()
     assert_eq!(here, ["kept", "own"]);
     // A second time is refused, and the copy is not left behind.
     let again = server
-        .import_webview_projects(&database, &["kept".to_owned()])
+        .import_webview(&database, &["kept".to_owned()], &[])
         .await
         .unwrap();
-    assert!(again[0].error.is_some());
+    assert!(again.projects[0].error.is_some());
     assert!(!server.0.config.data.join("webview-import").exists());
     server.shutdown().await;
 

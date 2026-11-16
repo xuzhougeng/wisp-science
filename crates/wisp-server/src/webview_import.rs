@@ -5,8 +5,11 @@
 //! which everything is then read. A project the WebView keeps in its own
 //! database is copied from it and goes on using its folder where it is; a
 //! project that keeps its database in its folder is opened where it is, as
-//! a folder package is, so both desktops then share it.
-use std::collections::HashSet;
+//! a folder package is, so both desktops then share it. The WebView's
+//! settings that mean the same here come too, by group, never over one
+//! made here, and so do those of each project copied and its
+//! conversations.
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
@@ -18,6 +21,46 @@ use crate::Server;
 /// The folder in this host's data folder the copy is made in; emptied
 /// before and after every import.
 const SCRATCH: &str = "webview-import";
+
+/// The WebView's settings that mean the same here, in the groups they
+/// are offered by: a group's name and its keys. Saved models, their keys
+/// and the decision model, whose key is kept under another name, do not
+/// come.
+pub const SETTING_GROUPS: &[(&str, &[&str])] = &[
+    ("network", &["network_settings", "proxy_url"]),
+    ("skills", &["disabled_skills", "skill_tags"]),
+    ("connectors", &["disabled_connectors"]),
+    ("experts", &["specialists"]),
+    ("acp_agents", &["acp_agent_profiles"]),
+    ("hooks", &["command_hooks"]),
+    ("credentials", &["custom_credentials"]),
+    ("browser", &["browser_url_filters"]),
+    ("review", &["auto_review_default_enabled"]),
+    ("failure_analysis", &["auto_failure_analysis"]),
+    ("compaction", &["auto_compact", "auto_compact_percent"]),
+    ("continuing", &["auto_continue", "auto_continue_limit"]),
+    ("memory", &["memory_enabled"]),
+    ("follow_ups", &["follow_up_questions"]),
+    ("update_check", &["update_check_enabled"]),
+    ("pet", &["pet_enabled", "pet_directory"]),
+];
+
+/// What the WebView has that can come.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WebViewData {
+    pub projects: Vec<WebViewProject>,
+    /// The groups of [`SETTING_GROUPS`] the WebView has made and this
+    /// desktop has not, in that order.
+    pub settings: Vec<String>,
+}
+
+/// How an import went.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WebViewOutcome {
+    pub projects: Vec<WebViewImport>,
+    /// The groups of settings brought over.
+    pub settings: Vec<String>,
+}
 
 /// A project of the WebView desktop.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -140,10 +183,70 @@ async fn projects(pool: &SqlitePool) -> Result<Vec<WebViewProject>> {
     Ok(found)
 }
 
+/// The WebView's values for the keys of [`SETTING_GROUPS`].
+async fn setting_values(pool: &SqlitePool) -> Result<HashMap<String, String>> {
+    let mut values = HashMap::new();
+    if !has_table(pool, "settings").await? {
+        return Ok(values);
+    }
+    for key in SETTING_GROUPS.iter().flat_map(|(_, keys)| keys.iter()) {
+        let value: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key=?")
+            .bind(key)
+            .fetch_optional(pool)
+            .await?;
+        if let Some(value) = value {
+            values.insert((*key).to_owned(), value);
+        }
+    }
+    Ok(values)
+}
+
+/// The groups that can come: the WebView has made one of their settings
+/// and this desktop none.
+async fn offered(
+    store: &wisp_store::Store,
+    values: &HashMap<String, String>,
+) -> Result<Vec<String>> {
+    let mut groups = Vec::new();
+    for (group, keys) in SETTING_GROUPS {
+        if !keys.iter().any(|key| values.contains_key(*key)) {
+            continue;
+        }
+        let mut here = false;
+        for key in *keys {
+            here |= store.get_setting(key).await?.is_some();
+        }
+        if !here {
+            groups.push((*group).to_owned());
+        }
+    }
+    Ok(groups)
+}
+
+/// The settings that belong to one project or to one of its
+/// conversations: their keys end in its id after a colon, or name the
+/// conversation's ACP options.
+async fn project_settings(pool: &SqlitePool, project: &str) -> Result<Vec<(String, String)>> {
+    if !has_table(pool, "settings").await? {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_as(
+        "SELECT key, value FROM settings WHERE substr(key, -length(?1) - 1) = ':' || ?1 \
+         UNION \
+         SELECT s.key, s.value FROM settings s JOIN frames f ON f.project_id = ?1 \
+         WHERE substr(s.key, -length(f.id) - 1) = ':' || f.id \
+            OR substr(s.key, 1, length(f.id) + 20) = 'acp.config_options.' || f.id || '.'",
+    )
+    .bind(project)
+    .fetch_all(pool)
+    .await?)
+}
+
 /// Brings one project over from the copy of the WebView's database.
 async fn bring(
     store: &wisp_store::Store,
     copy: &wisp_store::Store,
+    rows: &SqlitePool,
     data: &Path,
     scratch: &Path,
     project: &WebViewProject,
@@ -174,6 +277,12 @@ async fn bring(
             .import_project_database(&records, &project.id, &folder)
             .await?;
         let _ = std::fs::remove_file(&records);
+        // A copy leaves its settings behind; they come here unless set.
+        for (key, value) in project_settings(rows, &project.id).await? {
+            if store.get_setting(&key).await?.is_none() {
+                store.set_setting(&key, &value).await?;
+            }
+        }
     }
     if project.starred {
         let _ = store.set_project_starred(&project.id, true).await;
@@ -182,29 +291,39 @@ async fn bring(
 }
 
 impl Server {
-    /// The WebView desktop's projects in its database at `database`, read
-    /// without changing it, each marked when it is already here.
-    pub async fn webview_projects(&self, database: &Path) -> Result<Vec<WebViewProject>> {
+    /// The WebView desktop's projects and settings in its database at
+    /// `database`, read without changing it: each project marked when it
+    /// is already here, and the groups of settings this desktop has not
+    /// made.
+    pub async fn webview_data(&self, database: &Path) -> Result<WebViewData> {
         let pool = read_only(database).await?;
-        let found = projects(&pool).await;
+        let read =
+            async { anyhow::Ok((projects(&pool).await?, setting_values(&pool).await?)) }.await;
         pool.close().await;
-        let mut found = found?;
-        for project in &mut found {
+        let (mut projects, values) = read?;
+        for project in &mut projects {
             project.here = self.0.store.get_project(&project.id).await?.is_some();
         }
-        Ok(found)
+        Ok(WebViewData {
+            projects,
+            settings: offered(&self.0.store, &values).await?,
+        })
     }
 
-    /// Brings the WebView desktop's projects `ids` over from its database
-    /// at `database`, which is not changed: one kept in the WebView's
-    /// database is copied and goes on using its folder where it is, and
-    /// one that keeps its database in its folder is opened there. The reply
-    /// says how each went; one that fails does not stop the rest.
-    pub async fn import_webview_projects(
+    /// Brings the WebView desktop's projects `ids` and groups of settings
+    /// `settings` over from its database at `database`, which is not
+    /// changed: a project kept in the WebView's database is copied, with
+    /// its settings, and goes on using its folder where it is, and one that
+    /// keeps its database in its folder is opened there; a group of
+    /// settings comes only while none of it is set here. The reply says
+    /// how each project went, one that fails not stopping the rest, and
+    /// which groups came.
+    pub async fn import_webview(
         &self,
         database: &Path,
         ids: &[String],
-    ) -> Result<Vec<WebViewImport>> {
+        settings: &[String],
+    ) -> Result<WebViewOutcome> {
         // Exclusive, as any import is: no turn starts meanwhile.
         let _admission = self.0.admission.write().await;
         ensure!(
@@ -238,14 +357,23 @@ impl Server {
                     .execute(&pool)
                     .await?;
             }
-            anyhow::Ok(found)
+            anyhow::Ok((found, setting_values(&pool).await?))
         }
         .await;
-        pool.close().await;
-        let found = listed?;
-        let records = wisp_store::Store::open(&copy)
-            .await
-            .context("Cannot read the copy of the WebView's database")?;
+        let (found, values) = match listed {
+            Ok(listed) => listed,
+            Err(error) => {
+                pool.close().await;
+                return Err(error);
+            }
+        };
+        let records = match wisp_store::Store::open(&copy).await {
+            Ok(records) => records,
+            Err(error) => {
+                pool.close().await;
+                return Err(error.context("Cannot read the copy of the WebView's database"));
+            }
+        };
 
         let mut done = Vec::with_capacity(ids.len());
         for id in ids {
@@ -257,15 +385,34 @@ impl Server {
                 });
                 continue;
             };
-            let result = bring(&self.0.store, &records, data, &scratch, project).await;
+            let result = bring(&self.0.store, &records, &pool, data, &scratch, project).await;
             done.push(WebViewImport {
                 id: project.id.clone(),
                 name: project.name.clone(),
                 error: result.err().map(|error| format!("{error:#}")),
             });
         }
+        pool.close().await;
         drop(records);
         let _ = std::fs::remove_dir_all(&scratch);
-        Ok(done)
+
+        let offered = offered(&self.0.store, &values).await?;
+        let mut brought = Vec::new();
+        for (group, keys) in SETTING_GROUPS {
+            if !settings.iter().any(|chosen| chosen == group) || !offered.iter().any(|g| g == group)
+            {
+                continue;
+            }
+            for key in *keys {
+                if let Some(value) = values.get(*key) {
+                    self.0.store.set_setting(key, value).await?;
+                }
+            }
+            brought.push((*group).to_owned());
+        }
+        Ok(WebViewOutcome {
+            projects: done,
+            settings: brought,
+        })
     }
 }

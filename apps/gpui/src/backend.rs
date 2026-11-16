@@ -276,21 +276,21 @@ impl Backend {
         self.local(move |host| async move { host.import_project(&archive, &parent).await })
     }
 
-    /// The WebView desktop's projects in its database, which is only read.
-    pub fn webview_projects(
-        &self,
-        database: PathBuf,
-    ) -> Reply<Vec<wisp_server::desktop::WebViewProject>> {
-        self.local(move |host| async move { host.webview_projects(&database).await })
+    /// The WebView desktop's projects and settings in its database, which
+    /// is only read.
+    pub fn webview_data(&self, database: PathBuf) -> Reply<wisp_server::desktop::WebViewData> {
+        self.local(move |host| async move { host.webview_data(&database).await })
     }
 
-    /// Brings the chosen WebView projects over; the reply says how each went.
-    pub fn import_webview_projects(
+    /// Brings the chosen WebView projects and groups of settings over; the
+    /// reply says how each project went and which groups came.
+    pub fn import_webview(
         &self,
         database: PathBuf,
         ids: Vec<String>,
-    ) -> Reply<Vec<wisp_server::desktop::WebViewImport>> {
-        self.local(move |host| async move { host.import_webview_projects(&database, &ids).await })
+        settings: Vec<String>,
+    ) -> Reply<wisp_server::desktop::WebViewOutcome> {
+        self.local(move |host| async move { host.import_webview(&database, &ids, &settings).await })
     }
 
     /// What Wisp can draw on in a project, counted.
