@@ -316,6 +316,15 @@ impl Workspace {
                     .font_family(cx.theme().mono_font_family.clone())
                     .child(settings::transport_line(&row.server.transport)),
             );
+        // Brought over without a value the keychain would not give.
+        if !row.unset.is_empty() {
+            about = about.child(div().text_xs().text_color(cx.theme().warning).child(
+                crate::i18n::fill(
+                    tr("Enter again before it is sent: {}"),
+                    &[&row.unset.join(", ")],
+                ),
+            ));
+        }
         // The latest test says more than the last turn's failure.
         match (self.mcp_tested.get(&id), &row.error) {
             (Some(None), _) => {

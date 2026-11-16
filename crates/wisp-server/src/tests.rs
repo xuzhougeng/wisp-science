@@ -5097,6 +5097,8 @@ async fn a_users_mcp_server_gives_turns_its_tools_and_each_asks_before_it_runs()
         .await
         .unwrap();
     assert_eq!(saved.headers, ["X-Lab-Key"]);
+    // Its value is saved, so nothing waits to be entered.
+    assert!(server.mcp_servers().await.unwrap()[0].unset.is_empty());
     assert!(!crate::mcp::load(&server.0.store)
         .await
         .iter()
@@ -18409,6 +18411,554 @@ async fn the_webview_desktops_saved_models_come_with_their_keys() {
         .unwrap();
     assert!(twice.models.is_empty());
     server.shutdown().await;
+}
+
+/// Folds a WebView database's write-ahead log into the file, so reading
+/// it afterwards can be checked against the file's bytes.
+async fn settle_webview_database(path: &Path) {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(path))
+        .await
+        .unwrap();
+    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+}
+
+/// Every file under `folder` that holds `secret` anywhere in its bytes.
+fn files_holding(folder: &Path, secret: &str) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    let mut folders = vec![folder.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(&folder).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                folders.push(path);
+            } else if std::fs::read(&path)
+                .unwrap_or_default()
+                .windows(secret.len())
+                .any(|window| window == secret.as_bytes())
+            {
+                found.push(path);
+            }
+        }
+    }
+    found
+}
+
+#[tokio::test]
+async fn the_webview_desktops_lists_come_as_they_are_only_while_none_are_here() {
+    use desktop::{SecretStore, WebViewHold};
+    let temp = tempfile::tempdir().unwrap();
+    let webview_dir = temp.path().join("webview");
+    let database = webview_dir.join("wisp.sqlite");
+    let kept = temp.path().join("kept");
+    std::fs::create_dir(&kept).unwrap();
+    let workflow = |id: &str, name: &str, tasks: serde_json::Value| {
+        json!({"id": id, "name": name, "description": "Shown in the WebView",
+               "proposal": {"goal": format!("Goal of {name}"), "context": "",
+                            "approval_policy": "auto_safe", "tasks": tasks},
+               "builtin": false})
+    };
+    let action = |id: &str, name: &str, template: &str, enabled: bool, order: i64| {
+        json!({"id": id, "name": name, "description": "", "icon": "search",
+               "context": "selection", "workflow_template_id": template,
+               "enabled": enabled, "sort_order": order, "builtin": false})
+    };
+    {
+        let webview = wisp_store::Store::open_application(&database)
+            .await
+            .unwrap();
+        webview
+            .create_project("kept", "Kept study", kept.to_str().unwrap())
+            .await
+            .unwrap();
+        webview
+            .create_frame("kept-1", "kept", "agent", "model")
+            .await
+            .unwrap();
+        webview
+            .append_message("kept-1", 1, &Message::user("saved conversation"))
+            .await
+            .unwrap();
+        let servers = json!([
+            {"id": "lab", "name": "Lab tools", "enabled": true, "proxy_url": "",
+             "transport": {"kind": "stdio", "command": "/opt/lab/bin/serve",
+                           "args": ["--stdio"],
+                           "env": [{"name": "API_KEY", "has_value": true},
+                                   // From before values moved to the keychain.
+                                   {"name": "REGION", "value": "made-up-plain-region"}]}},
+            {"id": "papers", "name": "Papers", "enabled": false, "proxy_url": "none",
+             "transport": {"kind": "http", "url": "https://mcp.example.invalid/",
+                           "headers": [{"name": "Authorization", "has_value": true}],
+                           "auth": "none"}},
+            {"id": "own-folder", "name": "Own folder", "enabled": true,
+             "transport": {"kind": "stdio", "command": "serve", "cwd": "/opt/lab"}},
+            {"id": "signed-in", "name": "Signed in", "enabled": true,
+             "transport": {"kind": "http", "url": "https://oauth.example.invalid/",
+                           "auth": "oauth"}},
+            {"id": 5},
+        ]);
+        let templates = json!([
+            // Listed with the later task first.
+            workflow(
+                "workflow-claims",
+                "Claim check",
+                json!([
+                    {"id": "write_report", "instruction": "Write it up.",
+                     "depends_on": ["find_papers"], "capabilities": ["project_write"],
+                     "model_tier": "fast", "budget": {"max_tokens": 5000},
+                     "timeout_secs": 600, "isolated": true},
+                    {"id": "find_papers", "instruction": "Find the papers.",
+                     "capabilities": ["project_read"],
+                     "specialist_id": "scientific_illustrator",
+                     "executor": {"kind": "native"}},
+                ])
+            ),
+            workflow(
+                "workflow-skills",
+                "Method search",
+                json!([
+                    {"id": "search", "instruction": "Search.", "skill_ids": ["pubmed"]},
+                ])
+            ),
+            workflow(
+                "workflow-remote",
+                "Remote",
+                json!([
+                    {"id": "remote", "instruction": "Elsewhere.",
+                     "executor": {"kind": "acp", "profile_id": "codex"}},
+                ])
+            ),
+            workflow(
+                "workflow-expert",
+                "Expert one",
+                json!([
+                    {"id": "judge", "instruction": "Judge.", "specialist_id": "nobody"},
+                ])
+            ),
+            json!({"id": "roundtable", "name": "Roundtable", "builtin": true,
+                   "proposal": {"goal": "g", "approval_policy": "review_all", "tasks": []}}),
+        ]);
+        let actions = json!([
+            action("check", "Check it", "workflow-claims", true, 2),
+            action("off", "Off one", "workflow-claims", false, 1),
+            action("theirs", "Built in", "literature_evidence_review", true, 3),
+            action("skills", "Needs skills", "workflow-skills", true, 4),
+            {"id": "literature_research", "name": "Research literature", "context": "selection",
+             "workflow_template_id": "literature_evidence_review", "builtin": true},
+        ]);
+        let decision = json!({"enabled": true, "preset": "startlux_bamboo",
+                              "base_url": "https://api.bamboonode.dev/", "model": "decider",
+                              "think_mode": "Auto", "timeout_secs": 45,
+                              "stored_keys": ["startlux_bamboo"]});
+        for (key, value) in [
+            ("mcp_connections", servers.to_string()),
+            ("workflow_templates", templates.to_string()),
+            ("quick_actions", actions.to_string()),
+            ("decision_model", decision.to_string()),
+        ] {
+            webview.set_setting(key, &value).await.unwrap();
+        }
+    }
+    // Its favorites: code saved from a conversation that comes along and
+    // edited twice, a figure from one that does not, and a passage.
+    let (code_id, figure_id) = {
+        let library = wisp_store::LibraryStore::open(&webview_dir.join("library.sqlite"))
+            .await
+            .unwrap();
+        let item = |kind: &str, session: &str, project: &str| wisp_store::NewLibraryItem {
+            kind: kind.into(),
+            title: format!("A {kind}"),
+            language: (kind == "code").then(|| "python".into()),
+            code: if kind == "figure" {
+                String::new()
+            } else {
+                format!("print('{kind}')")
+            },
+            content_type: (kind == "figure").then(|| "image/png".into()),
+            content: (kind == "figure").then(|| vec![137, 80, 78, 71]),
+            source_project_id: project.into(),
+            source_project_name: "Study".into(),
+            source_session_id: session.into(),
+            source_session_title: "Analysis".into(),
+            source_path: (kind == "figure").then(|| "figures/plot.png".into()),
+        };
+        let code = library
+            .insert(item("code", "kept-1", "kept"))
+            .await
+            .unwrap();
+        library
+            .edit_code(&code.id, None, "print(2)".into())
+            .await
+            .unwrap();
+        library
+            .edit_code(&code.id, None, "print(3)".into())
+            .await
+            .unwrap();
+        let figure = library
+            .insert(item("figure", "gone-1", "gone"))
+            .await
+            .unwrap();
+        library
+            .insert(item("text", "gone-2", "gone"))
+            .await
+            .unwrap();
+        (code.id, figure.id)
+    };
+    settle_webview_database(&database).await;
+    settle_webview_database(&webview_dir.join("library.sqlite")).await;
+    let webview_bytes = |name: &str| std::fs::read(webview_dir.join(name)).unwrap();
+    let (database_before, library_before) = (
+        webview_bytes("wisp.sqlite"),
+        webview_bytes("library.sqlite"),
+    );
+
+    let secrets = Arc::new(desktop::MemorySecrets::default());
+    for (name, value) in [
+        ("mcp_env:lab:API_KEY", "made-up-env-secret"),
+        ("decision_api_key:startlux_bamboo", "made-up-decision-key"),
+        ("typesafe_api_key", "made-up-typesafe-key"),
+    ] {
+        secrets.set(name, value).unwrap();
+    }
+    let server = Server::open_with(
+        config(temp.path()),
+        models(Arc::default(), false),
+        secrets.clone(),
+    )
+    .await
+    .unwrap();
+
+    let data = server.webview_data(&database).await.unwrap();
+    let group = |groups: &[desktop::WebViewGroup], name: &str| {
+        groups
+            .iter()
+            .find(|group| group.group == name)
+            .unwrap_or_else(|| panic!("no {name} in {groups:?}"))
+            .clone()
+    };
+    let names: Vec<&str> = data
+        .groups
+        .iter()
+        .map(|group| group.group.as_str())
+        .collect();
+    assert_eq!(names, desktop::WEBVIEW_LIST_GROUPS);
+    let servers = group(&data.groups, "mcp_servers");
+    assert_eq!(servers.items, ["Lab tools", "Papers"]);
+    assert_eq!(servers.without_secret, ["Papers"]);
+    assert_eq!(
+        servers.held,
+        [
+            ("Own folder".to_owned(), WebViewHold::OwnFolder),
+            ("Signed in".to_owned(), WebViewHold::OAuth),
+            (String::new(), WebViewHold::Unreadable),
+        ]
+    );
+    let decision = group(&data.groups, "decision_model");
+    assert_eq!(decision.items, ["startlux_bamboo"]);
+    assert!(decision.without_secret.is_empty());
+    let workflows = group(&data.groups, "workflows");
+    assert_eq!(workflows.items, ["Claim check"]);
+    assert_eq!(
+        workflows.held,
+        [
+            ("Method search".to_owned(), WebViewHold::Skills),
+            ("Remote".to_owned(), WebViewHold::Executor),
+            (
+                "Expert one".to_owned(),
+                WebViewHold::Expert("nobody".into())
+            ),
+        ]
+    );
+    let actions = group(&data.groups, "quick_actions");
+    assert_eq!(actions.items, ["Check it"]);
+    assert_eq!(
+        actions.held,
+        [
+            ("Off one".to_owned(), WebViewHold::Off),
+            ("Built in".to_owned(), WebViewHold::BuiltInWorkflow),
+            ("Needs skills".to_owned(), WebViewHold::NoWorkflow),
+        ]
+    );
+    let favorites = group(&data.groups, "favorites");
+    assert_eq!(favorites.items, ["A code", "A figure", "A text"]);
+    // None of their conversations is here yet.
+    assert_eq!(favorites.unlinked, 3);
+
+    let chosen: Vec<String> = desktop::WEBVIEW_LIST_GROUPS
+        .iter()
+        .map(|group| (*group).to_owned())
+        .collect();
+    let outcome = server
+        .import_webview(&database, &["kept".to_owned()], &chosen, &[])
+        .await
+        .unwrap();
+    assert!(
+        outcome.projects[0].error.is_none(),
+        "{:?}",
+        outcome.projects
+    );
+    assert_eq!(
+        group(&outcome.groups, "mcp_servers").without_secret,
+        ["Papers"]
+    );
+    // The conversation came first, so only the other two lost their link.
+    assert_eq!(group(&outcome.groups, "favorites").unlinked, 2);
+
+    // The servers, as the WebView had them, their values in the keychain.
+    let rows = server.mcp_servers().await.unwrap();
+    let listed: Vec<(&str, bool, &[String], &[String], &str)> = rows
+        .iter()
+        .map(|row| {
+            (
+                row.server.id.as_str(),
+                row.server.enabled,
+                row.server.env.as_slice(),
+                row.unset.as_slice(),
+                row.server.proxy.as_str(),
+            )
+        })
+        .collect();
+    let (api, region, authorization) = (
+        "API_KEY".to_owned(),
+        "REGION".to_owned(),
+        "Authorization".to_owned(),
+    );
+    assert_eq!(
+        listed,
+        [
+            ("lab", true, &[api.clone(), region.clone()][..], &[][..], ""),
+            (
+                "papers",
+                false,
+                &[][..],
+                &[authorization.clone()][..],
+                "none"
+            ),
+        ]
+    );
+    assert_eq!(
+        rows[0].server.transport,
+        crate::mcp::McpTransport::Stdio {
+            command: "/opt/lab/bin/serve".into(),
+            args: vec!["--stdio".into()],
+        }
+    );
+    assert_eq!(rows[1].server.headers, [authorization]);
+    let credentials = server.mcp_credentials(&rows[0].server).await;
+    assert_eq!(
+        credentials.env,
+        [
+            (api, "made-up-env-secret".to_owned()),
+            (region, "made-up-plain-region".to_owned())
+        ]
+    );
+
+    // The decision model, its keys under this desktop's names.
+    let decision = server.decision_model().await.unwrap();
+    assert_eq!(
+        (
+            decision.enabled,
+            decision.preset.as_str(),
+            decision.base_url.as_str(),
+            decision.model.as_str(),
+            decision.think_mode.as_str(),
+            decision.timeout_secs
+        ),
+        (
+            true,
+            "startlux_bamboo",
+            "https://api.bamboonode.dev",
+            "decider",
+            "auto",
+            45
+        )
+    );
+    assert_eq!(decision.stored_keys, ["typesafe", "startlux_bamboo"]);
+    assert!(server.decision_model_in_use().await.is_some());
+
+    // The workflow, its tasks in an order each can run in, beside the
+    // starters; the quick action that starts it.
+    let library = crate::workflows::list(&server.0.store).await;
+    let claims = library
+        .iter()
+        .find(|workflow| workflow.id == "workflow-claims")
+        .unwrap();
+    assert_eq!(library.len(), crate::workflows::starters().len() + 1);
+    assert_eq!(
+        claims.approval,
+        crate::workflows::WorkflowApproval::AutoSafe
+    );
+    let titles: Vec<&str> = claims
+        .tasks
+        .iter()
+        .map(|task| task.title.as_str())
+        .collect();
+    assert_eq!(titles, ["Find papers", "Write report"]);
+    assert_eq!(claims.tasks[1].after, [0]);
+    assert_eq!(claims.tasks[1].capabilities, ["project_write"]);
+    let agent = &claims.tasks[1].agent;
+    assert_eq!(
+        (
+            agent.model,
+            agent.max_tokens,
+            agent.timeout_secs,
+            agent.isolated
+        ),
+        (
+            Some(wisp_core::ModelTier::Fast),
+            Some(5000),
+            Some(600),
+            true
+        )
+    );
+    assert_eq!(
+        claims.tasks[0].agent.expert.as_deref(),
+        Some("scientific_illustrator")
+    );
+    let actions = crate::quick_actions::list(&server.0.store).await;
+    let check = actions.iter().find(|action| action.id == "check").unwrap();
+    assert_eq!(
+        (
+            check.name.as_str(),
+            check.prompt.as_str(),
+            check.workflow.as_str()
+        ),
+        ("Check it", "", "workflow-claims")
+    );
+    assert_eq!(actions.len(), crate::quick_actions::starters().len() + 1);
+
+    // The favorites, with their ids, versions in order and pictures; a
+    // link only to the conversation that is here.
+    let saved = server.favorites("", None).await.unwrap();
+    assert_eq!(saved.len(), 3);
+    let code = saved.iter().find(|item| item.id == code_id).unwrap();
+    assert_eq!(
+        (
+            code.source_project_id.as_str(),
+            code.source_session_id.as_str()
+        ),
+        ("kept", "kept-1")
+    );
+    for item in saved.iter().filter(|item| item.id != code_id) {
+        assert!(item.source_project_id.is_empty() && item.source_session_id.is_empty());
+        assert_eq!(item.source_session_title, "Analysis");
+    }
+    let versions: Vec<(i64, String)> = server
+        .favorite_versions(&code_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|version| (version.version_number, version.code))
+        .collect();
+    assert_eq!(
+        versions,
+        [
+            (1, "print('code')".to_owned()),
+            (2, "print(2)".to_owned()),
+            (3, "print(3)".to_owned())
+        ]
+    );
+    assert_eq!(
+        server.favorite(&figure_id).await.unwrap().image,
+        Some(vec![137, 80, 78, 71])
+    );
+
+    // Bringing over again finds nothing to bring and changes nothing.
+    let again = server.webview_data(&database).await.unwrap();
+    assert!(again.groups.is_empty(), "{:?}", again.groups);
+    let twice = server
+        .import_webview(&database, &[], &chosen, &[])
+        .await
+        .unwrap();
+    assert!(twice.groups.is_empty());
+    assert_eq!(server.mcp_servers().await.unwrap().len(), 2);
+    assert_eq!(crate::workflows::list(&server.0.store).await, library);
+    assert_eq!(crate::quick_actions::list(&server.0.store).await, actions);
+    assert_eq!(server.favorites("", None).await.unwrap().len(), 3);
+    server.shutdown().await;
+
+    // No secret is in this desktop's files, only in the keychain.
+    for secret in [
+        "made-up-env-secret",
+        "made-up-plain-region",
+        "made-up-decision-key",
+        "made-up-typesafe-key",
+    ] {
+        assert_eq!(
+            files_holding(&temp.path().join("data"), secret),
+            Vec::<std::path::PathBuf>::new(),
+            "{secret}"
+        );
+    }
+    // The WebView's own files are as they were.
+    assert!(webview_bytes("wisp.sqlite") == database_before);
+    assert!(webview_bytes("library.sqlite") == library_before);
+
+    // A desktop that has its own of each takes none of the WebView's.
+    let other = tempfile::tempdir().unwrap();
+    let mine = Server::open_with(config(other.path()), models(Arc::default(), false), secrets)
+        .await
+        .unwrap();
+    let store = &mine.0.store;
+    let own = crate::mcp::McpServer {
+        id: "mine".into(),
+        name: "Mine".into(),
+        enabled: true,
+        transport: crate::mcp::McpTransport::Http {
+            url: "https://mine.example.invalid".into(),
+        },
+        env: Vec::new(),
+        headers: Vec::new(),
+        proxy: String::new(),
+    };
+    crate::mcp::save(store, std::slice::from_ref(&own))
+        .await
+        .unwrap();
+    store
+        .set_setting("decision_model", r#"{"preset":"custom"}"#)
+        .await
+        .unwrap();
+    crate::workflows::save(store, &[]).await.unwrap();
+    crate::quick_actions::save(store, &[]).await.unwrap();
+    mine.library()
+        .await
+        .unwrap()
+        .insert(wisp_store::NewLibraryItem {
+            kind: "text".into(),
+            title: "Mine".into(),
+            language: None,
+            code: "my passage".into(),
+            content_type: None,
+            content: None,
+            source_project_id: String::new(),
+            source_project_name: String::new(),
+            source_session_id: String::new(),
+            source_session_title: String::new(),
+            source_path: None,
+        })
+        .await
+        .unwrap();
+    assert!(mine
+        .webview_data(&database)
+        .await
+        .unwrap()
+        .groups
+        .is_empty());
+    let none = mine
+        .import_webview(&database, &[], &chosen, &[])
+        .await
+        .unwrap();
+    assert!(none.groups.is_empty());
+    assert_eq!(crate::mcp::load(store).await, [own]);
+    assert!(crate::workflows::list(store).await.is_empty());
+    assert!(crate::quick_actions::list(store).await.is_empty());
+    assert_eq!(mine.favorites("", None).await.unwrap().len(), 1);
+    mine.shutdown().await;
 }
 
 #[tokio::test]

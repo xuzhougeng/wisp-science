@@ -1,7 +1,9 @@
-//! The dialog that brings the WebView desktop's projects and settings
-//! here. Its database is found where the WebView keeps it, or chosen; it is
-//! only read. The projects and groups of settings that can come are
-//! ticked, and one press brings them.
+//! The dialog that brings the WebView desktop's projects, settings and
+//! lists here. Its database is found where the WebView keeps it, or
+//! chosen; it is only read, as is the favorites library beside it. The
+//! projects, groups of settings and lists that can come are ticked, each
+//! list saying what of it would stay behind and why, and one press brings
+//! them.
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
@@ -11,7 +13,7 @@ use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
 };
-use wisp_server::desktop::{WebViewModel, WebViewOutcome, WebViewProject};
+use wisp_server::desktop::{WebViewGroup, WebViewModel, WebViewOutcome, WebViewProject};
 
 use super::{
     Workspace, chip,
@@ -31,10 +33,13 @@ pub(super) struct WebViewImports {
     pub models: Vec<WebViewModel>,
     /// The groups of its settings that can come.
     pub settings: Vec<String>,
+    /// Its lists this desktop has none of, with what of each would come.
+    pub groups: Vec<WebViewGroup>,
     pub error: Option<String>,
     pub picks: BTreeSet<String>,
     pub setting_picks: BTreeSet<String>,
     pub model_picks: BTreeSet<String>,
+    pub group_picks: BTreeSet<String>,
     pub busy: bool,
     /// How the last import went.
     pub done: Option<WebViewOutcome>,
@@ -74,14 +79,17 @@ impl Workspace {
                         imports.picks = webview_import::first_picks(&data.projects);
                         imports.setting_picks = data.settings.iter().cloned().collect();
                         imports.model_picks = webview_import::first_model_picks(&data.models);
+                        imports.group_picks = webview_import::first_group_picks(&data.groups);
                         imports.models = data.models;
                         imports.found = Some(data.projects);
                         imports.settings = data.settings;
+                        imports.groups = data.groups;
                     }
                     Err(error) => {
                         imports.found = Some(Vec::new());
                         imports.settings.clear();
                         imports.models.clear();
+                        imports.groups.clear();
                         imports.error = Some(error);
                     }
                 }
@@ -125,11 +133,16 @@ impl Workspace {
             return;
         };
         let ids = webview_import::chosen(found, &imports.picks);
+        // The host takes the lists among the groups.
         let settings: Vec<String> = imports
             .settings
             .iter()
             .filter(|group| imports.setting_picks.contains(*group))
             .cloned()
+            .chain(webview_import::chosen_groups(
+                &imports.groups,
+                &imports.group_picks,
+            ))
             .collect();
         let models = webview_import::chosen_models(&imports.models, &imports.model_picks);
         if imports.busy || (ids.is_empty() && settings.is_empty() && models.is_empty()) {
@@ -237,6 +250,16 @@ impl Workspace {
                     done.name,
                     done.error.as_deref().unwrap_or_default()
                 )));
+            }
+            // What of each list chosen stayed behind, and why.
+            for group in &outcome.groups {
+                for (name, hold) in &group.held {
+                    card = card.child(div().text_xs().text_color(muted).child(format!(
+                        "{}: {}",
+                        webview_import::group_label(&group.group),
+                        webview_import::held_line(name, hold)
+                    )));
+                }
             }
         }
         match &imports.found {
@@ -376,6 +399,85 @@ impl Workspace {
                 card = card.child(row);
             }
         }
+        if !imports.groups.is_empty() {
+            card = card
+                .child(
+                    div()
+                        .pt_3()
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(tr("More from the WebView")),
+                )
+                .child(div().text_xs().text_color(muted).child(tr(
+                    "Each comes only while this desktop has none of its own, and each item only \
+                     as the WebView has it; what cannot come is left behind, with why.",
+                )));
+            for (index, group) in imports.groups.iter().enumerate() {
+                let open = !group.items.is_empty();
+                let picked = open && imports.group_picks.contains(&group.group);
+                let key = group.group.clone();
+                let mut about = div()
+                    .v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .truncate()
+                            .text_sm()
+                            .child(webview_import::group_label(&group.group)),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(webview_import::group_detail(group)),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(webview_import::group_note(&group.group)),
+                    );
+                for (name, hold) in &group.held {
+                    about = about.child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(webview_import::held_line(name, hold)),
+                    );
+                }
+                let mut row = div()
+                    .id(("webview-list", index))
+                    .h_flex()
+                    .items_start()
+                    .gap_3()
+                    .px_2()
+                    .py_1()
+                    .rounded(cx.theme().radius)
+                    .child(
+                        glyph(match (open, picked) {
+                            (false, _) => "circle-minus",
+                            (true, true) => "check-square",
+                            (true, false) => "circle",
+                        })
+                        .small(),
+                    )
+                    .child(about);
+                if open {
+                    row = row
+                        .cursor_pointer()
+                        .hover(|row| row.bg(cx.theme().list_hover))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let picks = &mut this.webview_imports.group_picks;
+                            if !picks.remove(&key) {
+                                picks.insert(key.clone());
+                            }
+                            cx.notify();
+                        }));
+                }
+                card = card.child(row);
+            }
+        }
         if !imports.settings.is_empty() {
             card = card.child(
                 div()
@@ -423,9 +525,11 @@ impl Workspace {
             .iter()
             .filter(|group| imports.setting_picks.contains(*group))
             .count()
-            + webview_import::chosen_models(&imports.models, &imports.model_picks).len();
+            + webview_import::chosen_models(&imports.models, &imports.model_picks).len()
+            + webview_import::chosen_groups(&imports.groups, &imports.group_picks).len();
         let can_come = !imports.settings.is_empty()
             || imports.models.iter().any(|model| !model.here)
+            || imports.groups.iter().any(|group| !group.items.is_empty())
             || imports
                 .found
                 .as_deref()
@@ -444,6 +548,7 @@ impl Workspace {
                         }
                         imports.setting_picks = imports.settings.iter().cloned().collect();
                         imports.model_picks = webview_import::first_model_picks(&imports.models);
+                        imports.group_picks = webview_import::first_group_picks(&imports.groups);
                         cx.notify();
                     })),
             )

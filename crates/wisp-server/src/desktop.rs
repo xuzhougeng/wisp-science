@@ -2496,7 +2496,7 @@ impl Server {
     /// The favorites library. It is one database for every project, apart
     /// from the conversations, so deleting a project or a conversation does
     /// not take what was saved from it.
-    async fn library(&self) -> Result<&wisp_store::LibraryStore> {
+    pub(crate) async fn library(&self) -> Result<&wisp_store::LibraryStore> {
         self.0
             .library
             .get_or_try_init(|| async {
@@ -3894,7 +3894,7 @@ impl Server {
 
     /// Where a server's environment variables and headers are kept, with
     /// their values, as one JSON object: `{"env": {…}, "headers": {…}}`.
-    fn mcp_extra_secret(key_id: &str, server: &str) -> String {
+    pub(crate) fn mcp_extra_secret(key_id: &str, server: &str) -> String {
         format!("desktop.mcp.{key_id}.{server}.extra")
     }
 
@@ -3924,7 +3924,7 @@ impl Server {
 
     /// What a connection to `server` is made with: its token, and the
     /// variables and headers it names with their saved values.
-    async fn mcp_credentials(&self, server: &McpServer) -> crate::mcp::Credentials {
+    pub(crate) async fn mcp_credentials(&self, server: &McpServer) -> crate::mcp::Credentials {
         let (env, headers) = self.mcp_extra(&server.id).await;
         let pick = |names: &[String], values: &BTreeMap<String, String>| {
             names
@@ -4035,7 +4035,21 @@ impl Server {
     pub async fn mcp_servers(&self) -> Result<Vec<McpServerRow>> {
         let mut rows = Vec::new();
         for server in crate::mcp::load(&self.0.store).await {
+            let (env, headers) = self.mcp_extra(&server.id).await;
+            let unset = server
+                .env
+                .iter()
+                .filter(|name| !env.contains_key(*name))
+                .chain(
+                    server
+                        .headers
+                        .iter()
+                        .filter(|name| !headers.contains_key(*name)),
+                )
+                .cloned()
+                .collect();
             rows.push(McpServerRow {
+                unset,
                 has_token: self.mcp_token(&server.id).await.is_some(),
                 error: self.0.mcp.error(&server.id),
                 server,
@@ -7521,6 +7535,10 @@ pub struct McpServerRow {
     pub server: McpServer,
     /// A token is saved for it. The token itself is never handed back.
     pub has_token: bool,
+    /// The variables and headers it names with no value saved, as one
+    /// brought over from the WebView whose value the keychain would not
+    /// give: each is entered again before it is sent.
+    pub unset: Vec<String>,
     /// Why it gave no tools the last time it was asked.
     pub error: Option<String>,
 }
@@ -8005,8 +8023,8 @@ pub use crate::pet::{Pet, PetLook, SHEET_HEIGHT, SHEET_WIDTH};
 pub use crate::plugins::PluginRow;
 pub use crate::project_archive::ArchiveProgress;
 pub use crate::webview_import::{
-    WebViewData, WebViewImport, WebViewModel, WebViewOutcome, WebViewProject,
-    SETTING_GROUPS as WEBVIEW_SETTING_GROUPS,
+    WebViewData, WebViewGroup, WebViewHold, WebViewImport, WebViewModel, WebViewOutcome,
+    WebViewProject, LIST_GROUPS as WEBVIEW_LIST_GROUPS, SETTING_GROUPS as WEBVIEW_SETTING_GROUPS,
 };
 /// The file name a version's evidence capsule is offered under when saving
 /// it, from the paper's title and the version's id, as the WebView offers.

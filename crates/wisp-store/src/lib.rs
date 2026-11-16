@@ -81,8 +81,8 @@ pub use explorations::{
 pub use external_session_cache::ExternalSessionCacheRecord;
 pub use global_memories::GlobalMemory;
 pub use library::{
-    LibraryItem, LibraryItemDetail, LibraryItemSummary, LibraryItemVersion, LibraryStore,
-    NewLibraryItem, CODE_LIMIT as LIBRARY_CODE_LIMIT,
+    LibraryItem, LibraryItemDetail, LibraryItemSummary, LibraryItemVersion, LibraryRecord,
+    LibraryStore, NewLibraryItem, CODE_LIMIT as LIBRARY_CODE_LIMIT,
 };
 pub use mandates::{
     MandateRecord, MandateReport, MandateRequest, MandateRound, MANDATE_REQUEST_KINDS,

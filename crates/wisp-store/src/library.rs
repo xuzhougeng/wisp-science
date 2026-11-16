@@ -82,6 +82,42 @@ pub struct NewLibraryItem {
     pub source_path: Option<String>,
 }
 
+/// One saved item with every column a library keeps for it, and its saved
+/// edits, so it can be carried from one library into another as it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibraryRecord {
+    pub id: String,
+    pub kind: String,
+    pub title: String,
+    pub language: Option<String>,
+    pub code: String,
+    pub content_type: Option<String>,
+    /// A figure's picture, kept in the library itself.
+    pub content: Option<Vec<u8>>,
+    pub content_sha256: String,
+    pub source_project_id: String,
+    pub source_project_name: String,
+    pub source_session_id: String,
+    pub source_session_title: String,
+    pub source_path: Option<String>,
+    pub source_key: String,
+    pub created_at: i64,
+    /// Its saved edits in order; the item as it was saved is version 1.
+    pub edits: Vec<LibraryItemVersion>,
+}
+
+impl LibraryRecord {
+    /// A library can hold it: a kind it knows, and a picture exactly when
+    /// it is a figure.
+    pub fn fits(&self) -> bool {
+        match self.kind.as_str() {
+            "figure" => self.content.is_some(),
+            "code" | "text" => self.content.is_none(),
+            _ => false,
+        }
+    }
+}
+
 /// The most code one saved version holds, in bytes.
 pub const CODE_LIMIT: usize = 2 * 1024 * 1024;
 
@@ -439,6 +475,180 @@ impl LibraryStore {
         self.insert_version(item_id, language, code).await
     }
 
+    /// Nothing is saved in it.
+    pub async fn is_empty(&self) -> Result<bool> {
+        let any: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM library_items)")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(!any)
+    }
+
+    /// Every item of the library at `path`, in the order it was saved,
+    /// with its edits, read at one moment through a connection that cannot
+    /// write: nothing there is changed, and no table is made in a library
+    /// older than this one.
+    pub async fn read_records(path: &Path) -> Result<Vec<LibraryRecord>> {
+        if !path.is_file() {
+            bail!("No library at {}", path.display());
+        }
+        let opts = SqliteConnectOptions::new()
+            .filename(path)
+            .read_only(true)
+            .busy_timeout(std::time::Duration::from_secs(5));
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await?;
+        let read = Self::records_in(&pool).await;
+        pool.close().await;
+        read
+    }
+
+    async fn records_in(pool: &SqlitePool) -> Result<Vec<LibraryRecord>> {
+        let mut tx = pool.begin().await?;
+        let has = |table: &'static str| {
+            sqlx::query_scalar::<sqlx::Sqlite, bool>(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)",
+            )
+            .bind(table)
+        };
+        if !has("library_items").fetch_one(&mut *tx).await? {
+            return Ok(Vec::new());
+        }
+        let rows = sqlx::query(
+            "SELECT id,kind,title,language,code,content_type,content_blob,content_sha256,\
+             source_project_id,source_project_name,source_session_id,source_session_title,\
+             source_path,source_key,created_at FROM library_items ORDER BY rowid",
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        let mut records = Vec::with_capacity(rows.len());
+        for row in rows {
+            records.push(LibraryRecord {
+                id: row.try_get("id")?,
+                kind: row.try_get("kind")?,
+                title: row.try_get("title")?,
+                language: row.try_get("language")?,
+                code: row.try_get("code")?,
+                content_type: row.try_get("content_type")?,
+                content: row.try_get("content_blob")?,
+                content_sha256: row.try_get("content_sha256")?,
+                source_project_id: row.try_get("source_project_id")?,
+                source_project_name: row.try_get("source_project_name")?,
+                source_session_id: row.try_get("source_session_id")?,
+                source_session_title: row.try_get("source_session_title")?,
+                source_path: row.try_get("source_path")?,
+                source_key: row.try_get("source_key")?,
+                created_at: row.try_get("created_at")?,
+                edits: Vec::new(),
+            });
+        }
+        if has("library_item_versions").fetch_one(&mut *tx).await? {
+            let edits: Vec<(
+                String,
+                String,
+                i64,
+                Option<String>,
+                Option<String>,
+                String,
+                String,
+                i64,
+            )> = sqlx::query_as(
+                "SELECT id,item_id,version_number,parent_version_id,language,code,origin,\
+                     created_at FROM library_item_versions ORDER BY item_id, version_number",
+            )
+            .fetch_all(&mut *tx)
+            .await?;
+            for (
+                id,
+                item_id,
+                version_number,
+                parent_version_id,
+                language,
+                code,
+                origin,
+                created_at,
+            ) in edits
+            {
+                if let Some(record) = records.iter_mut().find(|record| record.id == item_id) {
+                    record.edits.push(LibraryItemVersion {
+                        id,
+                        item_id,
+                        version_number,
+                        parent_version_id,
+                        language,
+                        code,
+                        origin,
+                        created_at,
+                    });
+                }
+            }
+        }
+        tx.commit().await?;
+        Ok(records)
+    }
+
+    /// Adds items read from another library as they were there: their ids,
+    /// times, pictures and edits kept, the edits in their order. One whose
+    /// id or source is already here, or that this library could not hold,
+    /// is left out, so adding the same items twice adds nothing. Gives the
+    /// ids added.
+    pub async fn adopt(&self, records: &[LibraryRecord]) -> Result<Vec<String>> {
+        let mut tx = self.pool.begin().await?;
+        let mut added = Vec::new();
+        for record in records.iter().filter(|record| record.fits()) {
+            let inserted = sqlx::query(
+                "INSERT INTO library_items(\
+                 id,kind,title,language,code,content_type,content_blob,content_sha256,\
+                 source_project_id,source_project_name,source_session_id,source_session_title,\
+                 source_path,source_key,created_at) \
+                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
+            )
+            .bind(&record.id)
+            .bind(&record.kind)
+            .bind(&record.title)
+            .bind(&record.language)
+            .bind(&record.code)
+            .bind(&record.content_type)
+            .bind(&record.content)
+            .bind(&record.content_sha256)
+            .bind(&record.source_project_id)
+            .bind(&record.source_project_name)
+            .bind(&record.source_session_id)
+            .bind(&record.source_session_title)
+            .bind(&record.source_path)
+            .bind(&record.source_key)
+            .bind(record.created_at)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+                > 0;
+            if !inserted {
+                continue;
+            }
+            for edit in &record.edits {
+                sqlx::query(
+                    "INSERT INTO library_item_versions(\
+                     id,item_id,version_number,parent_version_id,language,code,origin,created_at) \
+                     VALUES(?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
+                )
+                .bind(&edit.id)
+                .bind(&record.id)
+                .bind(edit.version_number)
+                .bind(&edit.parent_version_id)
+                .bind(&edit.language)
+                .bind(&edit.code)
+                .bind(&edit.origin)
+                .bind(edit.created_at)
+                .execute(&mut *tx)
+                .await?;
+            }
+            added.push(record.id.clone());
+        }
+        tx.commit().await?;
+        Ok(added)
+    }
+
     /// Full version history: the implicit original first, then edits in
     /// ascending version order. Empty when the item no longer exists.
     pub async fn list_versions(&self, item_id: &str) -> Result<Vec<LibraryItemVersion>> {
@@ -689,6 +899,50 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert!(items.iter().any(|item| item.id == "legacy-1"));
         assert!(items.iter().any(|item| item.kind == "text"));
+    }
+
+    #[tokio::test]
+    async fn items_are_carried_to_another_library_as_they_are_once() {
+        let from = store().await;
+        let code = from.insert(new_item("code")).await.unwrap();
+        from.insert_version(&code.id, None, "print(2)".into())
+            .await
+            .unwrap();
+        let figure = from.insert(new_item("figure")).await.unwrap();
+        // Only a library that is there is read.
+        let missing = std::env::temp_dir()
+            .join(format!("wisp-library-carry-test-{}", uuid::Uuid::new_v4()))
+            .join("library.sqlite");
+        assert!(LibraryStore::read_records(&missing).await.is_err());
+
+        let records = LibraryStore::records_in(&from.pool).await.unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].edits.len(), 1);
+        let to = store().await;
+        assert!(to.is_empty().await.unwrap());
+        let mut unfit = records[1].clone();
+        unfit.id = "unfit".into();
+        unfit.source_key = "unfit".into();
+        unfit.content = None;
+        let mut carried = records.clone();
+        carried.push(unfit);
+        assert_eq!(
+            to.adopt(&carried).await.unwrap(),
+            [code.id.clone(), figure.id.clone()]
+        );
+        assert!(!to.is_empty().await.unwrap());
+        let versions = to.list_versions(&code.id).await.unwrap();
+        assert_eq!(
+            versions.iter().map(|v| v.code.as_str()).collect::<Vec<_>>(),
+            ["print(1)", "print(2)"]
+        );
+        assert_eq!(
+            to.get(&figure.id).await.unwrap().unwrap().content,
+            Some(vec![1, 2, 3, 4])
+        );
+        // A second time adds nothing.
+        assert!(to.adopt(&records).await.unwrap().is_empty());
+        assert_eq!(to.list().await.unwrap().len(), 2);
     }
 
     #[tokio::test]

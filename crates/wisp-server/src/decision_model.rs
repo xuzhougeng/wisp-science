@@ -25,7 +25,7 @@ use wisp_store::Store;
 
 use crate::desktop::SecretStore;
 
-const SETTINGS_KEY: &str = "decision_model";
+pub(crate) const SETTINGS_KEY: &str = "decision_model";
 const FIRST_PRESET: &str = "typesafe";
 const PROBE_ID: &str = "probe";
 pub(crate) const KEY_REQUIRED: &str = "This decision model service needs an API key.";
@@ -176,6 +176,45 @@ pub(crate) async fn save(
         .set_setting(SETTINGS_KEY, &serde_json::to_string(&settings)?)
         .await?;
     Ok(load(store, secrets, Some(key_id)).await)
+}
+
+/// A key as a form would take it: one word of at most 4096 characters.
+pub(crate) fn usable_key(key: &str) -> Option<&str> {
+    let key = key.trim();
+    (!key.is_empty() && key.len() <= 4_096 && !key.contains(char::is_whitespace)).then_some(key)
+}
+
+/// Takes a form another desktop saved, as these checks take it, with the
+/// keys it kept for its services in `keys`, by service; a key a form would
+/// refuse is not kept. Unlike a save, a switched-on service whose key is
+/// missing is taken as it is, off in use until its key is entered here.
+/// Gives the services whose keys were kept; a refused form changes nothing.
+pub(crate) async fn adopt(
+    store: &Store,
+    secrets: &dyn SecretStore,
+    key_id: &str,
+    settings: DecisionModelSettings,
+    keys: &[(String, String)],
+) -> Result<Vec<String>> {
+    let settings = normalize(settings)?;
+    let mut kept = Vec::new();
+    for (preset, key) in keys {
+        let (Some(preset), Some(key)) = (DecisionPreset::find(preset), usable_key(key)) else {
+            continue;
+        };
+        if secrets.set(&secret(key_id, preset.id), key).is_ok() {
+            kept.push(preset.id.to_owned());
+        }
+    }
+    store
+        .set_setting(SETTINGS_KEY, &serde_json::to_string(&settings)?)
+        .await?;
+    Ok(kept)
+}
+
+/// A form as a save would keep it, or why a save would refuse it.
+pub(crate) fn checked(settings: DecisionModelSettings) -> Result<DecisionModelSettings> {
+    normalize(settings)
 }
 
 /// Forgets one service's key.
@@ -344,5 +383,42 @@ mod tests {
         // request is made.
         let untested = test(&store, &secrets, Some("k1"), form("typesafe"), None).await;
         assert_eq!(untested.unwrap_err().to_string(), KEY_REQUIRED);
+    }
+
+    #[tokio::test]
+    async fn a_form_from_another_desktop_is_taken_with_the_keys_it_could_bring() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(&temp.path().join("wisp.sqlite")).await.unwrap();
+        let secrets = MemorySecrets::default();
+        // A form a save would refuse is not taken.
+        let broken = DecisionModelSettings {
+            base_url: "ftp://lab.example".into(),
+            ..form("custom")
+        };
+        assert!(adopt(&store, &secrets, "k1", broken, &[]).await.is_err());
+        assert_eq!(store.get_setting(SETTINGS_KEY).await.unwrap(), None);
+
+        // Switched on without the key its service needs: taken as it is,
+        // and not in use until the key is entered here. A key a form
+        // would refuse, or of no service, is not kept.
+        let on = DecisionModelSettings {
+            enabled: true,
+            ..form("typesafe")
+        };
+        let keys = [
+            ("typesafe".to_owned(), "two words".to_owned()),
+            ("startlux_bamboo".to_owned(), " sk-made-up ".to_owned()),
+            ("nobody".to_owned(), "sk-other".to_owned()),
+        ];
+        let kept = adopt(&store, &secrets, "k1", on, &keys).await.unwrap();
+        assert_eq!(kept, ["startlux_bamboo"]);
+        let taken = load(&store, &secrets, Some("k1")).await;
+        assert!(taken.enabled && !taken.has_key("typesafe"));
+        assert_eq!(taken.stored_keys, ["startlux_bamboo"]);
+        assert!(configured(&store, &secrets, Some("k1")).await.is_none());
+        assert_eq!(
+            secrets.get(&secret("k1", "startlux_bamboo")).as_deref(),
+            Some("sk-made-up")
+        );
     }
 }

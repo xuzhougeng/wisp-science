@@ -3,15 +3,16 @@
 //! as agents on what was typed, as the WebView's quick actions start
 //! theirs.
 //!
-//! The WebView's actions name its own workflow templates, which this host
-//! does not keep, so these are kept under a key of this desktop's own and
-//! the WebView's are neither read nor changed.
+//! The WebView's actions name its own workflow templates, so these are
+//! kept under a key of this desktop's own. The WebView's are never
+//! changed; they are read only to bring over, with the workflows they
+//! start, those this desktop can hold as they are.
 
 use anyhow::{bail, ensure, Result};
 use serde::{Deserialize, Serialize};
 use wisp_store::Store;
 
-const KEY: &str = "desktop.quick_actions";
+pub(crate) const KEY: &str = "desktop.quick_actions";
 pub(crate) const NAME_LIMIT: usize = 60;
 pub(crate) const PROMPT_LIMIT: usize = 8_000;
 pub(crate) const LIMIT: usize = 40;
@@ -41,7 +42,7 @@ pub struct QuickActionInput {
 
 /// What a desktop that never saved any starts with. They are the user's
 /// from then on: changed or removed like any other.
-fn starters() -> Vec<QuickAction> {
+pub(crate) fn starters() -> Vec<QuickAction> {
     [
         (
             "literature",
@@ -90,7 +91,7 @@ pub(crate) async fn list(store: &Store) -> Vec<QuickAction> {
     }
 }
 
-async fn save(store: &Store, actions: &[QuickAction]) -> Result<()> {
+pub(crate) async fn save(store: &Store, actions: &[QuickAction]) -> Result<()> {
     store
         .set_setting(KEY, &serde_json::to_string(actions)?)
         .await
