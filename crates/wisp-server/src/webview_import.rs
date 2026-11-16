@@ -8,12 +8,14 @@
 //! a folder package is, so both desktops then share it. The WebView's
 //! settings that mean the same here come too, by group, never over one
 //! made here, and so do those of each project copied and its
-//! conversations.
+//! conversations. Its saved models come with their keys, which go from
+//! the keychain to the keychain under this desktop's names.
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
 use anyhow::{ensure, Context, Result};
+use serde::Deserialize;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 
 use crate::Server;
@@ -22,10 +24,14 @@ use crate::Server;
 /// before and after every import.
 const SCRATCH: &str = "webview-import";
 
+/// The WebView's saved models, kept as one JSON list.
+const MODELS: &str = "model_profiles";
+/// The id of the WebView's everyday model.
+const ACTIVE_MODEL: &str = "active_model_id";
+
 /// The WebView's settings that mean the same here, in the groups they
-/// are offered by: a group's name and its keys. Saved models, their keys
-/// and the decision model, whose key is kept under another name, do not
-/// come.
+/// are offered by: a group's name and its keys. The decision model, whose
+/// key is kept under another name, does not come.
 pub const SETTING_GROUPS: &[(&str, &[&str])] = &[
     ("network", &["network_settings", "proxy_url"]),
     ("skills", &["disabled_skills", "skill_tags"]),
@@ -43,12 +49,109 @@ pub const SETTING_GROUPS: &[(&str, &[&str])] = &[
     ("follow_ups", &["follow_up_questions"]),
     ("update_check", &["update_check_enabled"]),
     ("pet", &["pet_enabled", "pet_directory"]),
+    ("subagent_model", &["subagent_model_id"]),
 ];
+
+/// A model the WebView saved.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebViewModel {
+    pub id: String,
+    pub name: String,
+    /// The model's id at its provider.
+    pub model: String,
+    pub provider: String,
+    /// Its key is in the keychain, or it is a subscription signed in to.
+    pub has_key: bool,
+    /// The WebView's everyday model.
+    pub active: bool,
+    /// A saved model with its id is already here.
+    pub here: bool,
+}
+
+/// One saved model as the WebView keeps it; what is not needed here is
+/// left out, and anything missing is empty.
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct WebViewProfile {
+    id: String,
+    label: String,
+    provider: String,
+    api_url: String,
+    endpoint_suffix: String,
+    model: String,
+    max_tokens: u64,
+    context_window: u64,
+    reasoning_effort: String,
+    proxy_url: Option<String>,
+}
+
+impl WebViewProfile {
+    /// The fields this desktop saves a model with: the endpoint with its
+    /// path, and the limits only when the WebView gave them.
+    fn fields(&self) -> crate::desktop::ModelFields {
+        let base = self.api_url.trim().trim_end_matches('/');
+        let suffix = self.endpoint_suffix.trim().trim_matches('/');
+        let limit = |value: u64| {
+            if value == 0 {
+                String::new()
+            } else {
+                value.to_string()
+            }
+        };
+        crate::desktop::ModelFields {
+            provider: self.provider.trim().to_owned(),
+            api_url: if suffix.is_empty() {
+                base.to_owned()
+            } else {
+                format!("{base}/{suffix}")
+            },
+            model: self.model.trim().to_owned(),
+            max_context: limit(self.context_window),
+            max_tokens: limit(self.max_tokens),
+            reasoning_effort: self.reasoning_effort.trim().to_owned(),
+            proxy: self
+                .proxy_url
+                .as_deref()
+                .unwrap_or_default()
+                .trim()
+                .to_owned(),
+        }
+    }
+}
+
+/// Where the WebView keeps a saved model's key in the keychain.
+fn webview_key(id: &str) -> String {
+    format!("model_key:{id}")
+}
+
+/// The WebView's saved models, each entry read on its own so one it
+/// cannot read does not hide the rest, and its everyday model's id.
+async fn webview_profiles(pool: &SqlitePool) -> Result<(Vec<WebViewProfile>, String)> {
+    if !has_table(pool, "settings").await? {
+        return Ok((Vec::new(), String::new()));
+    }
+    let read = |key: &'static str| async move {
+        sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key=?")
+            .bind(key)
+            .fetch_optional(pool)
+            .await
+    };
+    let profiles = read(MODELS)
+        .await?
+        .and_then(|raw| serde_json::from_str::<Vec<serde_json::Value>>(&raw).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|entry| serde_json::from_value::<WebViewProfile>(entry).ok())
+        .filter(|profile| !profile.id.trim().is_empty() && !profile.model.trim().is_empty())
+        .collect();
+    Ok((profiles, read(ACTIVE_MODEL).await?.unwrap_or_default()))
+}
 
 /// What the WebView has that can come.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WebViewData {
     pub projects: Vec<WebViewProject>,
+    pub models: Vec<WebViewModel>,
     /// The groups of [`SETTING_GROUPS`] the WebView has made and this
     /// desktop has not, in that order.
     pub settings: Vec<String>,
@@ -58,6 +161,8 @@ pub struct WebViewData {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WebViewOutcome {
     pub projects: Vec<WebViewImport>,
+    /// The ids of the saved models brought over.
+    pub models: Vec<String>,
     /// The groups of settings brought over.
     pub settings: Vec<String>,
 }
@@ -297,33 +402,72 @@ impl Server {
     /// made.
     pub async fn webview_data(&self, database: &Path) -> Result<WebViewData> {
         let pool = read_only(database).await?;
-        let read =
-            async { anyhow::Ok((projects(&pool).await?, setting_values(&pool).await?)) }.await;
+        let read = async {
+            anyhow::Ok((
+                projects(&pool).await?,
+                setting_values(&pool).await?,
+                webview_profiles(&pool).await?,
+            ))
+        }
+        .await;
         pool.close().await;
-        let (mut projects, values) = read?;
+        let (mut projects, values, (profiles, active)) = read?;
         for project in &mut projects {
             project.here = self.0.store.get_project(&project.id).await?.is_some();
         }
+        let here: HashSet<String> = self
+            .model_settings()
+            .await?
+            .profiles
+            .into_iter()
+            .map(|profile| profile.id)
+            .collect();
+        let models = profiles
+            .into_iter()
+            .map(|profile| WebViewModel {
+                has_key: match crate::subscriptions::Subscription::of_provider(&profile.provider) {
+                    Some(subscription) => {
+                        crate::subscriptions::load(self.0.secrets.as_ref(), subscription).is_some()
+                    }
+                    None => self.0.secrets.get(&webview_key(&profile.id)).is_some(),
+                },
+                active: profile.id == active,
+                here: here.contains(&profile.id),
+                name: match profile.label.trim() {
+                    "" => profile.model.trim().to_owned(),
+                    label => label.to_owned(),
+                },
+                model: profile.model.trim().to_owned(),
+                provider: profile.provider.trim().to_owned(),
+                id: profile.id,
+            })
+            .collect();
         Ok(WebViewData {
             projects,
+            models,
             settings: offered(&self.0.store, &values).await?,
         })
     }
 
-    /// Brings the WebView desktop's projects `ids` and groups of settings
-    /// `settings` over from its database at `database`, which is not
-    /// changed: a project kept in the WebView's database is copied, with
-    /// its settings, and goes on using its folder where it is, and one that
-    /// keeps its database in its folder is opened there; a group of
-    /// settings comes only while none of it is set here. The reply says
-    /// how each project went, one that fails not stopping the rest, and
-    /// which groups came.
+    /// Brings the WebView desktop's projects `ids`, groups of settings
+    /// `settings` and saved models `models` over from its database at
+    /// `database`, which is not changed: a project kept in the WebView's
+    /// database is copied, with its settings, and goes on using its folder
+    /// where it is, and one that keeps its database in its folder is
+    /// opened there; a group of settings comes only while none of it is
+    /// set here; a model comes with its key unless one with its id is
+    /// here. The reply says how each project went, one that fails not
+    /// stopping the rest, and which groups and models came.
     pub async fn import_webview(
         &self,
         database: &Path,
         ids: &[String],
         settings: &[String],
+        models: &[String],
     ) -> Result<WebViewOutcome> {
+        if !models.is_empty() {
+            self.editable_models()?;
+        }
         // Exclusive, as any import is: no turn starts meanwhile.
         let _admission = self.0.admission.write().await;
         ensure!(
@@ -357,10 +501,14 @@ impl Server {
                     .execute(&pool)
                     .await?;
             }
-            anyhow::Ok((found, setting_values(&pool).await?))
+            anyhow::Ok((
+                found,
+                setting_values(&pool).await?,
+                webview_profiles(&pool).await?,
+            ))
         }
         .await;
-        let (found, values) = match listed {
+        let (found, values, (profiles, active)) = match listed {
             Ok(listed) => listed,
             Err(error) => {
                 pool.close().await;
@@ -410,8 +558,33 @@ impl Server {
             }
             brought.push((*group).to_owned());
         }
+
+        let chosen: Vec<_> = profiles
+            .iter()
+            .filter(|profile| models.contains(&profile.id))
+            .map(|profile| {
+                // A subscription runs on its sign-in, which both share.
+                let key = crate::subscriptions::Subscription::of_provider(&profile.provider)
+                    .is_none()
+                    .then(|| self.0.secrets.get(&webview_key(&profile.id)))
+                    .flatten();
+                (
+                    profile.id.clone(),
+                    profile.label.clone(),
+                    profile.fields(),
+                    key,
+                )
+            })
+            .collect();
+        let models = if chosen.is_empty() {
+            Vec::new()
+        } else {
+            self.adopt_model_profiles(chosen, Some(active.as_str()))
+                .await?
+        };
         Ok(WebViewOutcome {
             projects: done,
+            models,
             settings: brought,
         })
     }

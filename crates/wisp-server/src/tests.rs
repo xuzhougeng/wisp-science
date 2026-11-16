@@ -15142,6 +15142,12 @@ async fn the_webview_desktops_projects_are_listed_and_brought_over_from_a_copy()
 
     let data = server.webview_data(&database).await.unwrap();
     assert_eq!(data.settings, ["skills", "memory"]);
+    assert!(data.models.is_empty());
+    // Models are not taken while the environment sets the model.
+    assert!(server
+        .import_webview(&database, &[], &[], &["any".to_owned()])
+        .await
+        .is_err());
     let found = data.projects;
     let ids: Vec<&str> = found.iter().map(|project| project.id.as_str()).collect();
     // Starred first, then by name; the hidden one is left out.
@@ -15170,7 +15176,7 @@ async fn the_webview_desktops_projects_are_listed_and_brought_over_from_a_copy()
         .map(String::from)
         .collect();
     let outcome = server
-        .import_webview(&database, &chosen, &settings)
+        .import_webview(&database, &chosen, &settings, &[])
         .await
         .unwrap();
     assert_eq!(outcome.settings, ["memory"]);
@@ -15250,7 +15256,7 @@ async fn the_webview_desktops_projects_are_listed_and_brought_over_from_a_copy()
     assert_eq!(here, ["kept", "own"]);
     // A second time is refused, and the copy is not left behind.
     let again = server
-        .import_webview(&database, &["kept".to_owned()], &[])
+        .import_webview(&database, &["kept".to_owned()], &[], &[])
         .await
         .unwrap();
     assert!(again.projects[0].error.is_some());
@@ -15264,4 +15270,111 @@ async fn the_webview_desktops_projects_are_listed_and_brought_over_from_a_copy()
     assert_eq!(webview.list_sessions("kept").await.unwrap().len(), 1);
     assert_eq!(webview.list_sessions("own").await.unwrap().len(), 1);
     assert!(webview.get_project("gone").await.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn the_webview_desktops_saved_models_come_with_their_keys() {
+    use desktop::SecretStore;
+    let temp = tempfile::tempdir().unwrap();
+    let database = temp.path().join("webview").join("wisp.sqlite");
+    {
+        let webview = wisp_store::Store::open_application(&database)
+            .await
+            .unwrap();
+        let profiles = json!([
+            {"id": "wv-flash", "label": "Flash", "provider": "openai",
+             "api_url": "https://api.example.invalid", "model": "flash-model",
+             "max_tokens": 0, "context_window": 0},
+            {"id": "wv-local", "label": "", "provider": "openai",
+             "api_url": "http://127.0.0.1:9/", "endpoint_suffix": "/v1/",
+             "model": "local-model", "max_tokens": 4000, "context_window": 32000,
+             "proxy_url": "none", "has_api_key": true},
+            // One it cannot read does not hide the rest.
+            {"id": 5},
+        ]);
+        webview
+            .set_setting("model_profiles", &profiles.to_string())
+            .await
+            .unwrap();
+        webview
+            .set_setting("active_model_id", "wv-local")
+            .await
+            .unwrap();
+    }
+    let mut cfg = config(temp.path());
+    cfg.model = None;
+    let secrets = Arc::new(desktop::MemorySecrets::default());
+    secrets.set("model_key:wv-local", "made-up-key").unwrap();
+    let server = Server::open_with(cfg, models(Arc::default(), false), secrets.clone())
+        .await
+        .unwrap();
+
+    let data = server.webview_data(&database).await.unwrap();
+    let listed: Vec<(&str, &str, bool, bool, bool)> = data
+        .models
+        .iter()
+        .map(|model| {
+            (
+                model.id.as_str(),
+                model.name.as_str(),
+                model.has_key,
+                model.active,
+                model.here,
+            )
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("wv-flash", "Flash", false, false, false),
+            ("wv-local", "local-model", true, true, false)
+        ]
+    );
+
+    let chosen = ["wv-local".to_owned(), "wv-flash".to_owned()];
+    let outcome = server
+        .import_webview(&database, &[], &[], &chosen)
+        .await
+        .unwrap();
+    // In the WebView's order.
+    assert_eq!(outcome.models, ["wv-flash", "wv-local"]);
+    let settings = server.model_settings().await.unwrap();
+    let profile = |id: &str| {
+        settings
+            .profiles
+            .iter()
+            .find(|profile| profile.id == id)
+            .unwrap()
+            .clone()
+    };
+    let local = profile("wv-local");
+    assert_eq!(local.fields.api_url, "http://127.0.0.1:9/v1");
+    assert_eq!(
+        (
+            local.fields.max_context.as_str(),
+            local.fields.max_tokens.as_str(),
+            local.fields.proxy.as_str()
+        ),
+        ("32000", "4000", "none")
+    );
+    // The WebView's everyday model is the default, usable with its key.
+    assert!(local.has_api_key && local.is_default, "{local:?}");
+    assert_eq!(local.problem, None);
+    let flash = profile("wv-flash");
+    assert_eq!(flash.name, "Flash");
+    assert!(!flash.has_api_key && flash.fields.max_context.is_empty());
+    // The WebView's own key is left where it was.
+    assert_eq!(
+        secrets.get("model_key:wv-local").as_deref(),
+        Some("made-up-key")
+    );
+    // Both are here now; bringing one again adds nothing.
+    let again = server.webview_data(&database).await.unwrap();
+    assert!(again.models.iter().all(|model| model.here));
+    let twice = server
+        .import_webview(&database, &[], &[], &["wv-local".to_owned()])
+        .await
+        .unwrap();
+    assert!(twice.models.is_empty());
+    server.shutdown().await;
 }

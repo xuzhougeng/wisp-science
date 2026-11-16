@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::i18n::{fill, tr};
-use wisp_server::desktop::{WebViewOutcome, WebViewProject};
+use wisp_server::desktop::{WebViewModel, WebViewOutcome, WebViewProject};
 
 /// Where the WebView desktop keeps its database under `data`, the
 /// system's application data folder, as Tauri names its folder there.
@@ -60,6 +60,40 @@ pub fn detail(project: &WebViewProject) -> String {
     }
 }
 
+/// The saved models ticked when the list is first shown: every one not
+/// here yet.
+pub fn first_model_picks(models: &[WebViewModel]) -> BTreeSet<String> {
+    models
+        .iter()
+        .filter(|model| !model.here)
+        .map(|model| model.id.clone())
+        .collect()
+}
+
+/// The ticked saved models that can come, in the order they are listed.
+pub fn chosen_models(models: &[WebViewModel], picks: &BTreeSet<String>) -> Vec<String> {
+    models
+        .iter()
+        .filter(|model| !model.here && picks.contains(&model.id))
+        .map(|model| model.id.clone())
+        .collect()
+}
+
+/// The line under a saved model's name: its id at the provider, and
+/// whether its key comes too.
+pub fn model_detail(model: &WebViewModel) -> String {
+    let key = if model.has_key {
+        tr("its key comes too")
+    } else {
+        tr("no key saved; enter it here")
+    };
+    let mut parts = vec![model.model.as_str(), key];
+    if model.active {
+        parts.push(tr("the WebView's everyday model"));
+    }
+    parts.join(" · ")
+}
+
 /// What a group of the WebView's settings is called here.
 pub fn setting_label(group: &str) -> &'static str {
     match group {
@@ -79,6 +113,7 @@ pub fn setting_label(group: &str) -> &'static str {
         "follow_ups" => tr("Suggesting what to ask next"),
         "update_check" => tr("Checking for updates"),
         "pet" => tr("The pet"),
+        "subagent_model" => tr("The sub-agent model"),
         _ => tr("Other settings"),
     }
 }
@@ -100,6 +135,11 @@ pub fn summary(outcome: &WebViewOutcome) -> String {
             &[&brought, &all],
         )),
     };
+    let models = match outcome.models.len() {
+        0 => None,
+        1 => Some(tr("1 saved model was brought over.").to_owned()),
+        count => Some(fill(tr("{} saved models were brought over."), &[&count])),
+    };
     let settings = (!outcome.settings.is_empty()).then(|| {
         let names: Vec<&str> = outcome
             .settings
@@ -108,10 +148,11 @@ pub fn summary(outcome: &WebViewOutcome) -> String {
             .collect();
         fill(tr("Settings brought over: {}."), &[&names.join(", ")])
     });
-    match (projects, settings) {
-        (None, None) => tr("Nothing was brought over.").into(),
-        (Some(line), None) | (None, Some(line)) => line,
-        (Some(projects), Some(settings)) => format!("{projects} {settings}"),
+    let lines: Vec<String> = [projects, models, settings].into_iter().flatten().collect();
+    if lines.is_empty() {
+        tr("Nothing was brought over.").into()
+    } else {
+        lines.join(" ")
     }
 }
 
@@ -183,6 +224,7 @@ mod tests {
         let outcome = |projects: Vec<wisp_server::desktop::WebViewImport>, settings: &[&str]| {
             WebViewOutcome {
                 projects,
+                models: Vec::new(),
                 settings: settings.iter().map(|group| (*group).to_owned()).collect(),
             }
         };
@@ -217,6 +259,47 @@ mod tests {
             summary(&outcome(Vec::new(), &[])),
             "Nothing was brought over."
         );
+        let mut with_models = outcome(vec![done("a", None)], &["memory"]);
+        with_models.models = vec!["m1".into(), "m2".into()];
+        assert_eq!(
+            summary(&with_models),
+            "The project was brought over. 2 saved models were brought over. \
+             Settings brought over: Memory."
+        );
+        with_models.models.pop();
+        with_models.projects.clear();
+        with_models.settings.clear();
+        assert_eq!(summary(&with_models), "1 saved model was brought over.");
+    }
+
+    #[test]
+    fn a_saved_model_says_whether_its_key_comes() {
+        let mut model = WebViewModel {
+            id: "m".into(),
+            name: "Flash".into(),
+            model: "flash-model".into(),
+            provider: "openai".into(),
+            has_key: true,
+            active: true,
+            here: false,
+        };
+        assert_eq!(
+            model_detail(&model),
+            "flash-model · its key comes too · the WebView's everyday model"
+        );
+        model.has_key = false;
+        model.active = false;
+        assert_eq!(
+            model_detail(&model),
+            "flash-model · no key saved; enter it here"
+        );
+        let mut here = model.clone();
+        here.id = "h".into();
+        here.here = true;
+        let models = [model, here];
+        assert_eq!(first_model_picks(&models).len(), 1);
+        let ticked: BTreeSet<String> = ["h", "m"].map(String::from).into();
+        assert_eq!(chosen_models(&models, &ticked), ["m"]);
     }
 
     #[test]

@@ -467,7 +467,7 @@ impl Server {
         Ok(self.0.model.read().unwrap().settings())
     }
 
-    fn editable_models(&self) -> Result<()> {
+    pub(crate) fn editable_models(&self) -> Result<()> {
         ensure!(
             self.0.model.read().unwrap().source != ModelSource::Environment,
             "The model is set by WISP_* environment variables; unset them to edit it here"
@@ -581,6 +581,55 @@ impl Server {
             saved.default = id;
         }
         self.store_models(&saved).await
+    }
+
+    /// Adds saved models brought from elsewhere, each with its key when it
+    /// has one; one whose id is already here is left alone. While there is
+    /// no default, `preferred` becomes it when it came, else the first that
+    /// came. Returns the ids added.
+    pub(crate) async fn adopt_model_profiles(
+        &self,
+        profiles: Vec<(String, String, ModelFields, Option<String>)>,
+        preferred: Option<&str>,
+    ) -> Result<Vec<String>> {
+        self.editable_models()?;
+        let mut saved = saved_models(&self.0.store).await?;
+        let mut added = Vec::new();
+        for (id, name, fields, key) in profiles {
+            if id.trim().is_empty() || saved.profiles.iter().any(|profile| profile.id == id) {
+                continue;
+            }
+            if let Some(key) = key.filter(|key| !key.trim().is_empty()) {
+                self.0
+                    .secrets
+                    .set(&key_name(&self.key_id().await?, &id), key.trim())?;
+            }
+            let name = match name.trim() {
+                "" => fields.model.trim(),
+                name => name,
+            };
+            saved.profiles.push(SavedProfile {
+                id: id.clone(),
+                name: name.chars().take(NAME_LIMIT).collect(),
+                fields,
+            });
+            added.push(id);
+        }
+        let Some(first) = added.first() else {
+            return Ok(added);
+        };
+        if !saved
+            .profiles
+            .iter()
+            .any(|profile| profile.id == saved.default)
+        {
+            saved.default = preferred
+                .filter(|preferred| added.iter().any(|id| id == preferred))
+                .unwrap_or(first)
+                .to_owned();
+        }
+        self.store_models(&saved).await?;
+        Ok(added)
     }
 
     /// Whether the first-run guide was finished or put away, in this
@@ -7292,7 +7341,7 @@ pub use crate::pet::{Pet, PetLook, SHEET_HEIGHT, SHEET_WIDTH};
 pub use crate::plugins::PluginRow;
 pub use crate::project_archive::ArchiveProgress;
 pub use crate::webview_import::{
-    WebViewData, WebViewImport, WebViewOutcome, WebViewProject,
+    WebViewData, WebViewImport, WebViewModel, WebViewOutcome, WebViewProject,
     SETTING_GROUPS as WEBVIEW_SETTING_GROUPS,
 };
 

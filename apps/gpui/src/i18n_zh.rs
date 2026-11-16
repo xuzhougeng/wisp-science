@@ -2419,8 +2419,8 @@ pub const ZH: &[(&str, &str)] = &[
     ("{} of {} projects were brought over.", "已带过来 {} 个，共 {} 个项目。"),
     ("Bring over from the WebView desktop", "从 WebView 桌面版带过来"),
     (
-        "The projects and settings of Wisp's WebView desktop on this computer. Its database is only read. A project kept in it is copied here, with its settings, and goes on using its folder where it is; one that keeps its own database in its folder is opened there, so both desktops then share it. A group of settings comes only while none of it is set here. Saved models and their keys stay behind.",
-        "这台电脑上 Wisp WebView 桌面版的项目和设置。它的数据库只读不写。存在其中的项目会连同它的设置复制到这里，继续使用原处的文件夹；在自己文件夹里自带数据库的项目会在原处打开，两个桌面版从此共用它。一组设置只有在这里还一项都没设过时才会带过来。已保存的模型和它们的密钥不会带过来。",
+        "The projects and settings of Wisp's WebView desktop on this computer. Its database is only read. A project kept in it is copied here, with its settings, and goes on using its folder where it is; one that keeps its own database in its folder is opened there, so both desktops then share it. A group of settings comes only while none of it is set here. A saved model comes with its key, from the keychain to the keychain.",
+        "这台电脑上 Wisp WebView 桌面版的项目和设置。它的数据库只读不写。存在其中的项目会连同它的设置复制到这里，继续使用原处的文件夹；在自己文件夹里自带数据库的项目会在原处打开，两个桌面版从此共用它。一组设置只有在这里还一项都没设过时才会带过来。已保存的模型会连同密钥一起带过来，从钥匙串到钥匙串。",
     ),
     ("No WebView data was found on this computer.", "这台电脑上没有找到 WebView 的数据。"),
     ("Choose its database…", "选择它的数据库…"),
@@ -2445,4 +2445,11 @@ pub const ZH: &[(&str, &str)] = &[
     ("No project was brought over.", "没有带过来任何项目。"),
     ("Settings brought over: {}.", "已带过来的设置：{}。"),
     ("Command hooks", "命令钩子"),
+    ("The sub-agent model", "子代理模型"),
+    ("its key comes too", "密钥一起带过来"),
+    ("no key saved; enter it here", "没有保存密钥，请在这里填写"),
+    ("the WebView's everyday model", "WebView 的日常模型"),
+    ("1 saved model was brought over.", "已带过来 1 个已保存的模型。"),
+    ("{} saved models were brought over.", "已带过来 {} 个已保存的模型。"),
+    ("Saved models", "已保存的模型"),
 ];

@@ -11,7 +11,7 @@ use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
 };
-use wisp_server::desktop::{WebViewOutcome, WebViewProject};
+use wisp_server::desktop::{WebViewModel, WebViewOutcome, WebViewProject};
 
 use super::{
     Workspace, chip,
@@ -26,11 +26,14 @@ pub(super) struct WebViewImports {
     pub database: Option<PathBuf>,
     /// Its projects; `None` while they are read.
     pub found: Option<Vec<WebViewProject>>,
+    /// Its saved models.
+    pub models: Vec<WebViewModel>,
     /// The groups of its settings that can come.
     pub settings: Vec<String>,
     pub error: Option<String>,
     pub picks: BTreeSet<String>,
     pub setting_picks: BTreeSet<String>,
+    pub model_picks: BTreeSet<String>,
     pub busy: bool,
     /// How the last import went.
     pub done: Option<WebViewOutcome>,
@@ -69,12 +72,15 @@ impl Workspace {
                     Ok(data) => {
                         imports.picks = webview_import::first_picks(&data.projects);
                         imports.setting_picks = data.settings.iter().cloned().collect();
+                        imports.model_picks = webview_import::first_model_picks(&data.models);
+                        imports.models = data.models;
                         imports.found = Some(data.projects);
                         imports.settings = data.settings;
                     }
                     Err(error) => {
                         imports.found = Some(Vec::new());
                         imports.settings.clear();
+                        imports.models.clear();
                         imports.error = Some(error);
                     }
                 }
@@ -124,13 +130,16 @@ impl Workspace {
             .filter(|group| imports.setting_picks.contains(*group))
             .cloned()
             .collect();
-        if imports.busy || (ids.is_empty() && settings.is_empty()) {
+        let models = webview_import::chosen_models(&imports.models, &imports.model_picks);
+        if imports.busy || (ids.is_empty() && settings.is_empty() && models.is_empty()) {
             return;
         }
         imports.busy = true;
         imports.error = None;
         imports.done = None;
-        let reply = self.backend.import_webview(database.clone(), ids, settings);
+        let reply = self
+            .backend
+            .import_webview(database.clone(), ids, settings, models);
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -196,8 +205,8 @@ impl Workspace {
                  database is only read. A project kept in it is copied here, with its settings, \
                  and goes on using its folder where it is; one that keeps its own database in \
                  its folder is opened there, so both desktops then share it. A group of \
-                 settings comes only while none of it is set here. Saved models and their keys \
-                 stay behind.",
+                 settings comes only while none of it is set here. A saved model comes with its \
+                 key, from the keychain to the keychain.",
             )));
         let place = imports.database.as_ref().map_or_else(
             || tr("No WebView data was found on this computer.").to_owned(),
@@ -321,6 +330,63 @@ impl Workspace {
                 }
             }
         }
+        if !imports.models.is_empty() {
+            card = card.child(
+                div()
+                    .pt_3()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(tr("Saved models")),
+            );
+            for (index, model) in imports.models.iter().enumerate() {
+                let picked = !model.here && imports.model_picks.contains(&model.id);
+                let id = model.id.clone();
+                let mut row = div()
+                    .id(("webview-model", index))
+                    .h_flex()
+                    .gap_3()
+                    .px_2()
+                    .py_1()
+                    .rounded(cx.theme().radius)
+                    .child(
+                        glyph(match (model.here, picked) {
+                            (true, _) => "circle-minus",
+                            (false, true) => "check-square",
+                            (false, false) => "circle",
+                        })
+                        .small(),
+                    )
+                    .child(
+                        div()
+                            .v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .child(div().truncate().text_sm().child(model.name.clone()))
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child(webview_import::model_detail(model)),
+                            ),
+                    );
+                if model.here {
+                    row = row.child(chip(tr("Already here"), Tone::Neutral, cx));
+                } else {
+                    row = row
+                        .cursor_pointer()
+                        .hover(|row| row.bg(cx.theme().list_hover))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let picks = &mut this.webview_imports.model_picks;
+                            if !picks.remove(&id) {
+                                picks.insert(id.clone());
+                            }
+                            cx.notify();
+                        }));
+                }
+                card = card.child(row);
+            }
+        }
         if !imports.settings.is_empty() {
             card = card.child(
                 div()
@@ -367,8 +433,10 @@ impl Workspace {
             .settings
             .iter()
             .filter(|group| imports.setting_picks.contains(*group))
-            .count();
+            .count()
+            + webview_import::chosen_models(&imports.models, &imports.model_picks).len();
         let can_come = !imports.settings.is_empty()
+            || imports.models.iter().any(|model| !model.here)
             || imports
                 .found
                 .as_deref()
@@ -391,6 +459,8 @@ impl Workspace {
                                     imports.picks = webview_import::first_picks(found);
                                 }
                                 imports.setting_picks = imports.settings.iter().cloned().collect();
+                                imports.model_picks =
+                                    webview_import::first_model_picks(&imports.models);
                                 cx.notify();
                             })),
                     )

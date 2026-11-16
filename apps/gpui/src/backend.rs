@@ -282,15 +282,20 @@ impl Backend {
         self.local(move |host| async move { host.webview_data(&database).await })
     }
 
-    /// Brings the chosen WebView projects and groups of settings over; the
-    /// reply says how each project went and which groups came.
+    /// Brings the chosen WebView projects, groups of settings and saved
+    /// models over; the reply says how each project went and which groups
+    /// and models came.
     pub fn import_webview(
         &self,
         database: PathBuf,
         ids: Vec<String>,
         settings: Vec<String>,
+        models: Vec<String>,
     ) -> Reply<wisp_server::desktop::WebViewOutcome> {
-        self.local(move |host| async move { host.import_webview(&database, &ids, &settings).await })
+        self.local(move |host| async move {
+            host.import_webview(&database, &ids, &settings, &models)
+                .await
+        })
     }
 
     /// What Wisp can draw on in a project, counted.
