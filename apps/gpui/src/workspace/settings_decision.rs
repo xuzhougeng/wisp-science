@@ -9,7 +9,7 @@ use gpui_component::{
 };
 use wisp_dto::{DECISION_PRESETS, DECISION_THINK_MODES, DecisionModelSettings, DecisionPreset};
 
-use super::{Workspace, settings_sections::setting};
+use super::{Workspace, settings_sections::setting, surfaces::switch};
 use crate::{
     backend::{Reply, receive},
     decision,
@@ -232,16 +232,14 @@ impl Workspace {
         .child(setting(
             tr("Use a decision model"),
             tr("Off, map_items still runs its worker step on the sub-agent model."),
-            Button::new("decision-enabled")
-                .label(if enabled { tr("On") } else { tr("Off") })
-                .small()
-                .selected(enabled)
-                .on_click(cx.listener(|this, _, _, cx| {
+            switch("decision-enabled", enabled, tr("Use a decision model")).on_change(cx.listener(
+                |this, _, _, cx| {
                     this.decision_draft.enabled = !this.decision_draft.enabled;
                     this.decision_note = None;
                     this.settings_error = None;
                     cx.notify();
-                })),
+                },
+            )),
             cx,
         ))
         .child(setting(

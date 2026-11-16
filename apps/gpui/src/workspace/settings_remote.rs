@@ -11,7 +11,7 @@ use gpui_component::{
 };
 use wisp_server::desktop::RemoteAccess;
 
-use super::{Workspace, settings_sections::setting, tone_color};
+use super::{Workspace, settings_sections::setting, surfaces::switch, tone_color};
 use crate::{
     backend::{Reply, receive},
     layers::Layer,
@@ -148,13 +148,9 @@ impl Workspace {
             .child(setting(
                 tr("Remote web access"),
                 tr("On, the tunnel is dialled when the app starts and kept up while it runs."),
-                Button::new("remote-enabled")
-                    .label(if enabled { tr("On") } else { tr("Off") })
-                    .small()
-                    .selected(enabled)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.save_remote_access(!enabled, window, cx)
-                    })),
+                switch("remote-enabled", enabled, tr("Remote web access")).on_change(cx.listener(
+                    move |this, _, window, cx| this.save_remote_access(!enabled, window, cx),
+                )),
                 cx,
             ))
             .child(setting(
@@ -400,13 +396,11 @@ impl Workspace {
             .child(setting(
                 tr("Listen for the device"),
                 tr("On, the address below is listened on while the app runs."),
-                Button::new("device-enabled")
-                    .label(if enabled { tr("On") } else { tr("Off") })
-                    .small()
-                    .selected(enabled)
-                    .on_click(cx.listener(move |this, _, window, cx| {
+                switch("device-enabled", enabled, tr("Listen for the device")).on_change(
+                    cx.listener(move |this, _, window, cx| {
                         this.save_device_bridge(!enabled, window, cx)
-                    })),
+                    }),
+                ),
                 cx,
             ))
             .child(setting(

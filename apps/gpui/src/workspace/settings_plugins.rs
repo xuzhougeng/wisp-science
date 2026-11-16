@@ -9,7 +9,7 @@ use gpui_component::{
 };
 use wisp_server::desktop::PluginRow;
 
-use super::Workspace;
+use super::{Workspace, surfaces::switch};
 use crate::{
     backend::{Reply, receive},
     layers::Layer,
@@ -210,23 +210,24 @@ impl Workspace {
             let removing = id.clone();
             actions = actions
                 .child(
-                    Button::new(SharedString::from(format!("plugin-toggle-{id}")))
-                        .label(if enabled { tr("On") } else { tr("Off") })
-                        .small()
-                        .selected(enabled)
-                        .disabled(project.is_none())
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            let Some(project) = project.clone() else {
-                                return;
-                            };
-                            let reply = this.backend.set_plugin_enabled(
-                                project,
-                                id.clone(),
-                                version.clone(),
-                                !enabled,
-                            );
-                            this.change_plugins(reply, window, cx)
-                        })),
+                    switch(
+                        SharedString::from(format!("plugin-toggle-{id}")),
+                        enabled,
+                        tr("Use this plugin in this project"),
+                    )
+                    .disabled(project.is_none())
+                    .on_change(cx.listener(move |this, _, window, cx| {
+                        let Some(project) = project.clone() else {
+                            return;
+                        };
+                        let reply = this.backend.set_plugin_enabled(
+                            project,
+                            id.clone(),
+                            version.clone(),
+                            !enabled,
+                        );
+                        this.change_plugins(reply, window, cx)
+                    })),
                 )
                 .child(
                     Button::new(SharedString::from(format!("plugin-remove-{removing}")))

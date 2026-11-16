@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     input::Input,
 };
@@ -390,11 +390,8 @@ impl Workspace {
                     .h_flex()
                     .gap_2()
                     .child(
-                        Button::new("new-project-layout")
-                            .label(if layout { tr("On") } else { tr("Off") })
-                            .small()
-                            .selected(layout)
-                            .on_click(cx.listener(|this, _, _, cx| {
+                        surfaces::switch("new-project-layout", layout, tr("Standard layout"))
+                            .on_change(cx.listener(|this, _, _, cx| {
                                 this.new_project_layout = !this.new_project_layout;
                                 cx.notify();
                             })),

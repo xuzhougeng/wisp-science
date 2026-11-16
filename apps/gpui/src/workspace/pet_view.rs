@@ -5,13 +5,13 @@ use std::time::Duration;
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Selectable, Sizable, StyledExt,
+    ActiveTheme, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     input::Input,
 };
 use wisp_server::desktop::{Pet, PetLook};
 
-use super::{Workspace, settings_sections::setting};
+use super::{Workspace, settings_sections::setting, surfaces::switch};
 use crate::{
     backend::{Reply, receive},
     pet::{self, Activity, CELL, COLUMNS, Player, ROWS},
@@ -257,13 +257,9 @@ impl Workspace {
                 "An animated companion in the corner of the conversation. It works while a \
                  turn runs, waits when you are needed, and jumps when the turn is done.",
             ),
-            Button::new("pet-enabled")
-                .label(if enabled { tr("On") } else { tr("Off") })
-                .small()
-                .selected(enabled)
-                .on_click(
-                    cx.listener(move |this, _, window, cx| this.save_pet(!enabled, window, cx)),
-                ),
+            switch("pet-enabled", enabled, tr("Show pet")).on_change(
+                cx.listener(move |this, _, window, cx| this.save_pet(!enabled, window, cx)),
+            ),
             cx,
         ))
         .child(setting(

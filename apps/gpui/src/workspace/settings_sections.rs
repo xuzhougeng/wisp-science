@@ -13,6 +13,7 @@ use wisp_server::desktop::TurnDefaults;
 use super::{
     Workspace,
     shell::{error_banner, glyph, icon_button},
+    surfaces::switch,
 };
 use crate::{
     backend::receive,
@@ -846,13 +847,16 @@ impl Workspace {
                                     })),
                             )
                             .child(
-                                Button::new(SharedString::from(format!("skill-{}", row.name)))
-                                    .label(if enabled { tr("On") } else { tr("Off") })
-                                    .small()
-                                    .selected(enabled)
-                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                switch(
+                                    SharedString::from(format!("skill-{}", row.name)),
+                                    enabled,
+                                    tr("Use this skill"),
+                                )
+                                .on_change(cx.listener(
+                                    move |this, _, window, cx| {
                                         this.set_skill_enabled(name.clone(), !enabled, window, cx)
-                                    })),
+                                    },
+                                )),
                             ),
                     ),
             );
@@ -1039,14 +1043,16 @@ impl Workspace {
                     .border_color(cx.theme().border)
                     .child(about)
                     .child(
-                        Button::new(SharedString::from(format!("connector-{}", row.domain)))
-                            .label(if enabled { tr("On") } else { tr("Off") })
-                            .small()
-                            .selected(enabled)
-                            .flex_shrink_0()
-                            .on_click(cx.listener(move |this, _, window, cx| {
+                        switch(
+                            SharedString::from(format!("connector-{}", row.domain)),
+                            enabled,
+                            tr("Use this connector"),
+                        )
+                        .on_change(cx.listener(
+                            move |this, _, window, cx| {
                                 this.set_connector_enabled(toggling.clone(), !enabled, window, cx)
-                            })),
+                            },
+                        )),
                     ),
             );
         }
@@ -1817,14 +1823,15 @@ impl Workspace {
                          folder, so the folder can be moved or synced on its own. Projects that \
                          exist stay where they are.",
                     ),
-                    Button::new("separate-storage")
-                        .label(if on { tr("On") } else { tr("Off") })
-                        .small()
-                        .selected(on)
-                        .disabled(self.separate_storage.is_none())
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.set_separate_storage(!on, window, cx)
-                        })),
+                    switch(
+                        "separate-storage",
+                        on,
+                        tr("Each project its own database"),
+                    )
+                    .disabled(self.separate_storage.is_none())
+                    .on_change(cx.listener(move |this, _, window, cx| {
+                        this.set_separate_storage(!on, window, cx)
+                    })),
                     cx,
                 )
             })
@@ -1833,29 +1840,25 @@ impl Workspace {
                 tr(
                     "When a turn ends or a tool waits for approval while you are in another app, post a system notification. Windows has none without an installed app, so only the sound is available there.",
                 ),
-                Button::new("notify-banner")
-                    .label(if self.notify.banner { tr("On") } else { tr("Off") })
-                    .small()
-                    .selected(self.notify.banner)
-                    .on_click(cx.listener(|this, _, window, cx| {
+                switch("notify-banner", self.notify.banner, tr("Notify me")).on_change(
+                    cx.listener(|this, _, window, cx| {
                         this.notify.banner = !this.notify.banner;
                         let value = this.notify.banner.to_string();
                         this.save_general(NOTIFY, value, window, cx);
-                    })),
+                    }),
+                ),
                 cx,
             ))
             .child(setting(
                 tr("Play a sound"),
                 tr("Also play a sound then, whether or not a notification is posted."),
-                Button::new("notify-sound")
-                    .label(if self.notify.sound { tr("On") } else { tr("Off") })
-                    .small()
-                    .selected(self.notify.sound)
-                    .on_click(cx.listener(|this, _, window, cx| {
+                switch("notify-sound", self.notify.sound, tr("Play a sound")).on_change(
+                    cx.listener(|this, _, window, cx| {
                         this.notify.sound = !this.notify.sound;
                         let value = this.notify.sound.to_string();
                         this.save_general(NOTIFY_SOUND, value, window, cx);
-                    })),
+                    }),
+                ),
                 cx,
             ))
             .child({
@@ -1907,18 +1910,24 @@ impl Workspace {
                 );
                 let at_start = self.update_at_start;
                 actions = actions.child(
-                    Button::new("update-at-start")
-                        .label(if at_start {
-                            tr("At start: on")
-                        } else {
-                            tr("At start: off")
-                        })
-                        .small()
-                        .selected(at_start)
-                        .tooltip(tr("Also look for a newer version each time Wisp starts"))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.set_update_at_start(!at_start, window, cx)
-                        })),
+                    div()
+                        .h_flex()
+                        .gap_2()
+                        .pl_2()
+                        .text_sm()
+                        .child(tr("Check at start"))
+                        .child(
+                            switch(
+                                "update-at-start",
+                                at_start,
+                                tr("Also look for a newer version each time Wisp starts"),
+                            )
+                            .on_change(cx.listener(
+                                move |this, _, window, cx| {
+                                    this.set_update_at_start(!at_start, window, cx)
+                                },
+                            )),
+                        ),
                 );
                 if let (true, Some(settings::Update::Found(found))) = (available, &self.update) {
                     let url = found.url.clone();
@@ -2324,24 +2333,21 @@ impl Workspace {
                 "When the context fills up, older turns are summarised so the conversation \
              can go on. Off, a long conversation ends when the model's window is full.",
             ),
-            Button::new("auto-compact")
-                .label(if defaults.auto_compact {
-                    tr("On")
-                } else {
-                    tr("Off")
-                })
-                .small()
-                .selected(defaults.auto_compact)
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.save_turn_defaults(
-                        TurnDefaults {
-                            auto_compact: !defaults.auto_compact,
-                            ..defaults
-                        },
-                        window,
-                        cx,
-                    )
-                })),
+            switch(
+                "auto-compact",
+                defaults.auto_compact,
+                tr("Compact automatically"),
+            )
+            .on_change(cx.listener(move |this, _, window, cx| {
+                this.save_turn_defaults(
+                    TurnDefaults {
+                        auto_compact: !defaults.auto_compact,
+                        ..defaults
+                    },
+                    window,
+                    cx,
+                )
+            })),
             cx,
         ))
         .child({
@@ -2371,15 +2377,13 @@ impl Workspace {
                     .h_flex()
                     .gap_1()
                     .child(
-                        Button::new("auto-continue")
-                            .label(if defaults.auto_continue {
-                                tr("On")
-                            } else {
-                                tr("Off")
-                            })
-                            .small()
-                            .selected(defaults.auto_continue)
-                            .on_click(cx.listener(move |this, _, window, cx| {
+                        switch(
+                            "auto-continue",
+                            defaults.auto_continue,
+                            tr("Continue cut-off answers"),
+                        )
+                        .on_change(cx.listener(
+                            move |this, _, window, cx| {
                                 this.save_turn_defaults(
                                     TurnDefaults {
                                         auto_continue: !defaults.auto_continue,
@@ -2388,7 +2392,8 @@ impl Workspace {
                                     window,
                                     cx,
                                 )
-                            })),
+                            },
+                        )),
                     )
                     .child(step("continue-down", "minus", tr("Fewer times"), false))
                     .child(
@@ -2432,24 +2437,21 @@ impl Workspace {
              questions you could ask next. They show above the composer. Off, that extra \
              request is not made.",
             ),
-            Button::new("follow-ups")
-                .label(if defaults.follow_ups {
-                    tr("On")
-                } else {
-                    tr("Off")
-                })
-                .small()
-                .selected(defaults.follow_ups)
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.save_turn_defaults(
-                        TurnDefaults {
-                            follow_ups: !defaults.follow_ups,
-                            ..defaults
-                        },
-                        window,
-                        cx,
-                    )
-                })),
+            switch(
+                "follow-ups",
+                defaults.follow_ups,
+                tr("Suggest what to ask next"),
+            )
+            .on_change(cx.listener(move |this, _, window, cx| {
+                this.save_turn_defaults(
+                    TurnDefaults {
+                        follow_ups: !defaults.follow_ups,
+                        ..defaults
+                    },
+                    window,
+                    cx,
+                )
+            })),
             cx,
         ))
         .child(setting(
@@ -2459,24 +2461,21 @@ impl Workspace {
              claims against the tool output and the result shows above the composer. This \
              is what conversations start with; each can be switched in its composer.",
             ),
-            Button::new("auto-review-default")
-                .label(if defaults.auto_review {
-                    tr("On")
-                } else {
-                    tr("Off")
-                })
-                .small()
-                .selected(defaults.auto_review)
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.save_turn_defaults(
-                        TurnDefaults {
-                            auto_review: !defaults.auto_review,
-                            ..defaults
-                        },
-                        window,
-                        cx,
-                    )
-                })),
+            switch(
+                "auto-review-default",
+                defaults.auto_review,
+                tr("Review turns"),
+            )
+            .on_change(cx.listener(move |this, _, window, cx| {
+                this.save_turn_defaults(
+                    TurnDefaults {
+                        auto_review: !defaults.auto_review,
+                        ..defaults
+                    },
+                    window,
+                    cx,
+                )
+            })),
             cx,
         ))
         .children(
@@ -2524,21 +2523,18 @@ impl Workspace {
             .h_flex()
             .gap_1()
             .child(
-                Button::new("failure-analysis")
-                    .label(if failures.enabled {
-                        tr("On")
-                    } else {
-                        tr("Off")
-                    })
-                    .small()
-                    .selected(failures.enabled)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        let next = wisp_server::desktop::AutoFailureAnalysisSettings {
-                            enabled: !failures.enabled,
-                            ..failures
-                        };
-                        this.save_failure_analysis(next, window, cx)
-                    })),
+                switch(
+                    "failure-analysis",
+                    failures.enabled,
+                    tr("Draft a memory when tools fail"),
+                )
+                .on_change(cx.listener(move |this, _, window, cx| {
+                    let next = wisp_server::desktop::AutoFailureAnalysisSettings {
+                        enabled: !failures.enabled,
+                        ..failures
+                    };
+                    this.save_failure_analysis(next, window, cx)
+                })),
             )
             .child(Self::failure_step(
                 "failure-rate-down",

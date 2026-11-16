@@ -14,6 +14,7 @@ use wisp_dto::MandateOverview;
 use super::{
     Workspace, chip,
     shell::{error_banner, glyph, nav_row},
+    surfaces::switch,
 };
 use crate::{
     backend::{Reply, receive},
@@ -250,14 +251,15 @@ impl Workspace {
                     .h_flex()
                     .gap_2()
                     .child(
-                        Button::new("mandate-review")
-                            .label(if review { tr("On") } else { tr("Off") })
-                            .xsmall()
-                            .selected(review)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.mandate_review = !review;
-                                cx.notify();
-                            })),
+                        switch(
+                            "mandate-review",
+                            review,
+                            tr("Ask before anything that changes files or runs work"),
+                        )
+                        .on_change(cx.listener(move |this, _, _, cx| {
+                            this.mandate_review = !review;
+                            cx.notify();
+                        })),
                     )
                     .child(
                         div()

@@ -13,6 +13,7 @@ use wisp_server::desktop::{ScheduleInput, ScheduleRow};
 use super::{
     Workspace, chip,
     shell::{error_banner, glyph, nav_row},
+    surfaces::switch,
 };
 use crate::{
     backend::{Reply, receive},
@@ -118,13 +119,11 @@ impl Workspace {
                     .h_flex()
                     .gap_2()
                     .child(
-                        Button::new("daily-recap-enabled")
-                            .label(if enabled { tr("On") } else { tr("Off") })
-                            .small()
-                            .selected(enabled)
-                            .on_click(cx.listener(move |this, _, window, cx| {
+                        switch("daily-recap-enabled", enabled, tr("Daily recap")).on_change(
+                            cx.listener(move |this, _, window, cx| {
                                 this.save_daily_recap(!enabled, window, cx)
-                            })),
+                            }),
+                        ),
                     )
                     .child(div().w(px(80.)).child(Input::new(&self.recap_time).small()))
                     .child(
@@ -522,15 +521,15 @@ impl Workspace {
                         })),
                 )
                 .child(
-                    Button::new(SharedString::from(format!("schedule-toggle-{id}")))
-                        .label(if enabled { tr("On") } else { tr("Off") })
-                        .small()
-                        .selected(enabled)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            let reply =
-                                this.backend.set_schedule_enabled(toggle.clone(), !enabled);
-                            this.change_schedules(reply, None, window, cx)
-                        })),
+                    switch(
+                        SharedString::from(format!("schedule-toggle-{id}")),
+                        enabled,
+                        tr("Run this task on its schedule"),
+                    )
+                    .on_change(cx.listener(move |this, _, window, cx| {
+                        let reply = this.backend.set_schedule_enabled(toggle.clone(), !enabled);
+                        this.change_schedules(reply, None, window, cx)
+                    })),
                 )
                 .child(
                     Button::new(SharedString::from(format!("schedule-delete-{id}")))

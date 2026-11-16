@@ -122,7 +122,11 @@ names and never a colour of their own.
 
 ## Controls
 
-- **On/off**: a switch, never a button that says On or Off.
+- **On/off**: a switch (`surfaces::switch`), never a button that says On or
+  Off. It sits at the right end of its row, teal when on and a shade of the
+  page when off (in every palette), with the setting's name to its left and
+  a tooltip that says what it switches; Tab reaches it and Enter or Space
+  flips it. A test in `surfaces.rs` rejects a button labelled On or Off.
 - **Dialogs**: a card of one of three widths with a Title, a backdrop and a
   shadow; the main action is at the right end, Cancel to its left.
 - **Icons**: the shared stroke set in `apps/gpui/assets/icons`; no emoji or
@@ -136,13 +140,14 @@ names and never a colour of their own.
 | --- | --- |
 | Colours, radius, base sizes | `apps/gpui/assets/wisp-theme.json` |
 | The rem and the palettes | `apps/gpui/src/theme.rs` |
-| Titles, display text, cards, the reading column | `apps/gpui/src/workspace/surfaces.rs` |
+| Titles, display text, cards, the reading column, the on/off switch | `apps/gpui/src/workspace/surfaces.rs` |
+| A setting's row: name and note on the left, control on the right | `setting` in `apps/gpui/src/workspace/settings_sections.rs` |
 
 ## Not done yet
 
 The first change that follows this page restyles the theme, the home page,
-the conversation's column, its actions and the composer's settings. Still to bring under it: the switch in place
-of the On/Off buttons in Settings, dialogs drawn from one shape, `text_lg()`
-titles in individual views, per-view shadows, the side panel as margin
-notes, and the bars above the composer (approvals, follow-ups, reviews),
-which still run the full width.
+the conversation's column, its actions and the composer's settings; a second
+puts a switch in place of every On/Off button. Still to bring under it:
+dialogs drawn from one shape, `text_lg()` titles in individual views,
+per-view shadows, the side panel as margin notes, and the bars above the
+composer (approvals, follow-ups, reviews), which still run the full width.

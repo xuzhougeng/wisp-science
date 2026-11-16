@@ -14,7 +14,7 @@ use wisp_server::desktop::{
     FeishuBindPoll, FeishuStatus, QrMatrix, WeixinDestination, WeixinScan, WeixinStatus,
 };
 
-use super::{Workspace, chip, settings_sections::setting, tone_color};
+use super::{Workspace, chip, settings_sections::setting, surfaces::switch, tone_color};
 use crate::{
     backend::{Reply, receive},
     channels,
@@ -301,13 +301,9 @@ impl Workspace {
             .child(setting(
                 tr("Answer messages"),
                 tr("On, the bot runs while the app is open."),
-                Button::new("feishu-enabled")
-                    .label(if enabled { tr("On") } else { tr("Off") })
-                    .small()
-                    .selected(enabled)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.save_feishu(!enabled, window, cx)
-                    })),
+                switch("feishu-enabled", enabled, tr("Answer messages")).on_change(
+                    cx.listener(move |this, _, window, cx| this.save_feishu(!enabled, window, cx)),
+                ),
                 cx,
             ))
             .child(setting(
@@ -746,13 +742,11 @@ impl Workspace {
             card = card.child(setting(
                 tr("Answer messages"),
                 tr("On, the bot runs while the app is open."),
-                Button::new(("weixin-enabled", n))
-                    .label(if enabled { tr("On") } else { tr("Off") })
-                    .small()
-                    .selected(enabled)
-                    .on_click(cx.listener(move |this, _, window, cx| {
+                switch(("weixin-enabled", n), enabled, tr("Answer messages")).on_change(
+                    cx.listener(move |this, _, window, cx| {
                         this.set_weixin_enabled(destination, !enabled, window, cx)
-                    })),
+                    }),
+                ),
                 cx,
             ));
         }

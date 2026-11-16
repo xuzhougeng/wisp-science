@@ -13,6 +13,7 @@ use wisp_dto::{CommandHook, HookEvent, ProjectHooks};
 use super::{
     Workspace, chip,
     shell::{error_banner, glyph},
+    surfaces::switch,
 };
 use crate::{
     backend::{Reply, receive},
@@ -278,21 +279,22 @@ impl Workspace {
             .gap_1()
             .flex_shrink_0()
             .child(
-                Button::new(SharedString::from(format!("hook-on-{index}")))
-                    .label(if on { tr("On") } else { tr("Off") })
-                    .small()
-                    .selected(on)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.save_hooks(
-                            move |hooks| {
-                                if let Some(hook) = hooks.get_mut(index) {
-                                    hook.enabled = !on;
-                                }
-                            },
-                            window,
-                            cx,
-                        )
-                    })),
+                switch(
+                    SharedString::from(format!("hook-on-{index}")),
+                    on,
+                    tr("Run this hook"),
+                )
+                .on_change(cx.listener(move |this, _, window, cx| {
+                    this.save_hooks(
+                        move |hooks| {
+                            if let Some(hook) = hooks.get_mut(index) {
+                                hook.enabled = !on;
+                            }
+                        },
+                        window,
+                        cx,
+                    )
+                })),
             )
             .child(
                 Button::new(SharedString::from(format!("hook-edit-{index}")))

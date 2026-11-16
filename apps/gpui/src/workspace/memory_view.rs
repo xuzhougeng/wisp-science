@@ -4,7 +4,7 @@
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     input::Input,
 };
@@ -12,6 +12,7 @@ use gpui_component::{
 use super::{
     Workspace,
     shell::{error_banner, glyph, icon_button},
+    surfaces::switch,
 };
 use crate::{
     assets::icon,
@@ -135,14 +136,12 @@ impl Workspace {
                     .h_flex()
                     .gap_2()
                     .child(
-                        Button::new("tidy-enabled")
-                            .label(if enabled { tr("On") } else { tr("Off") })
-                            .small()
-                            .selected(enabled)
-                            .on_click(cx.listener(move |this, _, window, cx| {
+                        switch("tidy-enabled", enabled, tr("Tidy habits")).on_change(cx.listener(
+                            move |this, _, window, cx| {
                                 let reply = this.backend.set_memory_tidy(!enabled);
                                 this.show_memory_tidy(reply, window, cx);
-                            })),
+                            },
+                        )),
                     )
                     .child(
                         Button::new("tidy-now")
@@ -821,16 +820,9 @@ impl Workspace {
                         })),
                 )
                 .child(
-                    Button::new("memory-toggle")
-                        .label(if enabled {
-                            tr("Turn off")
-                        } else {
-                            tr("Turn on")
-                        })
-                        .small()
-                        .flex_shrink_0()
+                    switch("memory-toggle", enabled, tr("Memory"))
                         .disabled(self.pending)
-                        .on_click(
+                        .on_change(
                             cx.listener(|this, _, window, cx| this.toggle_memory(window, cx)),
                         ),
                 ),
