@@ -4293,6 +4293,49 @@ impl Server {
             .collect())
     }
 
+    /// The files each turn of a conversation recorded as artifacts, oldest
+    /// turn first, each with the turn's last tool call so it can be shown
+    /// under the answer that closes that turn, as the WebView shows a
+    /// reply's generated files. A version deleted since is left out; one a
+    /// later turn wrote again is marked. Turns from before the host kept
+    /// this have none.
+    pub async fn reply_artifacts(
+        &self,
+        project: &str,
+        session: &str,
+    ) -> Result<Vec<ReplyArtifact>> {
+        self.own_conversation(project, session).await?;
+        let store = &self.0.store;
+        let mut rows = Vec::new();
+        for saved in store.load_session_ui_events(session).await? {
+            let Ok(event) = serde_json::from_str::<crate::output::ArtifactsEvent>(&saved) else {
+                continue;
+            };
+            if event.kind != crate::output::ARTIFACTS_EVENT {
+                continue;
+            }
+            for version in event.versions {
+                let Some(context) = store.get_artifact_version_context(&version).await? else {
+                    continue;
+                };
+                rows.push(ReplyArtifact {
+                    call_id: event.call_id.clone(),
+                    artifact: context.version.artifact_id,
+                    version: context.version.id,
+                    name: context.filename,
+                    kind: context.version.content_type,
+                    path: context
+                        .logical_key
+                        .as_deref()
+                        .and_then(|key| key.strip_prefix("path:"))
+                        .map(str::to_owned),
+                    superseded: false,
+                });
+            }
+        }
+        Ok(mark_superseded(rows))
+    }
+
     /// Asks a run that has not finished to stop.
     pub async fn cancel_run(&self, project: &str, run: &str) -> Result<()> {
         self.project_root(project).await?;
@@ -6439,6 +6482,38 @@ pub struct ArtifactRow {
     pub size_bytes: Option<u64>,
     pub session_id: String,
     pub session_title: String,
+}
+
+/// A file one turn of a conversation recorded as an artifact, for the
+/// answer that closes the turn.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplyArtifact {
+    /// The turn's last tool call: the file belongs under the answer that
+    /// closes the turn this call is in.
+    pub call_id: String,
+    pub artifact: String,
+    /// The version this turn recorded.
+    pub version: String,
+    pub name: String,
+    /// MIME type.
+    pub kind: String,
+    /// Where the file is in the project, when it is a project file.
+    pub path: Option<String>,
+    /// A later turn of the conversation wrote the file again.
+    pub superseded: bool,
+}
+
+/// Marks each file a later turn of the same conversation wrote again;
+/// `rows` are in the order the turns recorded them.
+pub(crate) fn mark_superseded(mut rows: Vec<ReplyArtifact>) -> Vec<ReplyArtifact> {
+    for at in 0..rows.len() {
+        let artifact = &rows[at].artifact;
+        let again = rows[at + 1..]
+            .iter()
+            .any(|later| later.artifact == *artifact && later.call_id != rows[at].call_id);
+        rows[at].superseded = again;
+    }
+    rows
 }
 
 /// One kept version of an artifact.

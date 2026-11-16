@@ -1735,6 +1735,8 @@ pub const ZH: &[(&str, &str)] = &[
     ("Show in Runs", "在运行中查看"),
     // Inline pictures.
     ("Open it in Files", "在文件中打开"),
+    ("Generated · {}", "已生成 · {}"),
+    ("Updated", "已更新"),
     // Working plan.
     ("Plan", "计划"),
     ("Plan: {} of {} done", "计划：已完成 {}/{}"),

@@ -677,7 +677,8 @@ pub(crate) fn session_runtimes(
 /// Records the files a turn wrote as artifacts of its conversation: one
 /// artifact per project path, with a new version each time it is rewritten.
 /// The same identity and snapshot rules as the WebView desktop. A file that
-/// cannot be recorded is skipped; it never fails the turn.
+/// cannot be recorded is skipped; it never fails the turn. Returns the
+/// versions it recorded, in order.
 pub(crate) async fn record_artifacts(
     store: &Store,
     project: &str,
@@ -685,9 +686,10 @@ pub(crate) async fn record_artifacts(
     root: &std::path::Path,
     frame: &str,
     written: Vec<String>,
-) {
+) -> Vec<String> {
+    let mut recorded = Vec::new();
     let Ok(root) = tokio::fs::canonicalize(root).await else {
-        return;
+        return recorded;
     };
     let mut seen = std::collections::HashSet::new();
     for path in written {
@@ -760,10 +762,14 @@ pub(crate) async fn record_artifacts(
             materialization: captured.materialization,
             capture_timing: wisp_store::ArtifactCaptureTiming::AtCreation,
         };
-        if let Err(error) = store.save_artifact_version(&draft).await {
-            tracing::warn!(%error, path = %relative, "Could not record an artifact");
+        match store.save_artifact_version(&draft).await {
+            Ok(version) => recorded.push(version),
+            Err(error) => {
+                tracing::warn!(%error, path = %relative, "Could not record an artifact")
+            }
         }
     }
+    recorded
 }
 
 /// Most of a referenced conversation that is passed along, newest kept.
@@ -1007,6 +1013,8 @@ pub async fn run(
     scope: TurnScope,
 ) -> Result<()> {
     let start_seq = store.max_message_seq(&request.session_id).await?;
+    // Where this turn's messages start among the live ones.
+    let first_message = session.live.lock().unwrap().messages.len();
     let (tx, persist) = persisting(&store, &request.session_id, &session).await?;
     let artifact_project = project.clone();
     let scope_key = scope.state.scope_key().to_owned();
@@ -1138,7 +1146,7 @@ pub async fn run(
     }
     // Whatever the turn's outcome, the files it wrote exist and are its work.
     let written = std::mem::take(&mut session.live.lock().unwrap().written);
-    record_artifacts(
+    let recorded = record_artifacts(
         &store,
         &artifact_project,
         &scope_key,
@@ -1147,6 +1155,29 @@ pub async fn run(
         written,
     )
     .await;
+    // And under which answer they belong: after the turn's last tool call.
+    let call = {
+        let live = session.live.lock().unwrap();
+        live.messages
+            .get(first_message..)
+            .and_then(crate::output::last_call)
+    };
+    if let (false, Some(call_id)) = (recorded.is_empty(), call) {
+        let event = crate::output::ArtifactsEvent {
+            kind: crate::output::ARTIFACTS_EVENT.into(),
+            call_id,
+            versions: recorded,
+        };
+        let saved = async {
+            let seq = store.next_session_ui_event_seq(&request.session_id).await?;
+            store
+                .append_session_ui_event(&request.session_id, seq, &serde_json::to_string(&event)?)
+                .await
+        };
+        if let Err(error) = saved.await {
+            tracing::warn!(%error, "Could not keep which answer the turn's artifacts belong to");
+        }
+    }
     if let Some(compacted) = agent.ctx.last_compaction() {
         store
             .open_context_epoch(

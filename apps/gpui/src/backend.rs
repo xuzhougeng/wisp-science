@@ -780,6 +780,16 @@ impl Backend {
         })
     }
 
+    /// The files each turn of a conversation recorded, for the answers
+    /// that close those turns.
+    pub fn reply_artifacts(
+        &self,
+        project: String,
+        session: String,
+    ) -> Reply<Vec<wisp_server::desktop::ReplyArtifact>> {
+        self.local(move |host| async move { host.reply_artifacts(&project, &session).await })
+    }
+
     pub fn cancel_run(&self, project: String, run: String) -> Reply<()> {
         self.local(move |host| async move { host.cancel_run(&project, &run).await })
     }

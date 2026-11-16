@@ -6525,6 +6525,27 @@ async fn a_conversation_in_plan_mode_is_told_so_and_cannot_change_anything() {
     server.shutdown().await;
 }
 
+#[test]
+fn a_file_a_later_turn_wrote_again_is_marked_under_the_earlier_answer() {
+    let row = |call: &str, artifact: &str| desktop::ReplyArtifact {
+        call_id: call.into(),
+        artifact: artifact.into(),
+        version: format!("{call}-{artifact}"),
+        name: artifact.into(),
+        kind: "image/png".into(),
+        path: Some(format!("figs/{artifact}")),
+        superseded: false,
+    };
+    let rows = desktop::mark_superseded(vec![
+        row("turn-1", "a.png"),
+        row("turn-1", "b.png"),
+        row("turn-2", "a.png"),
+        row("turn-3", "c.png"),
+    ]);
+    let marked: Vec<_> = rows.iter().map(|row| row.superseded).collect();
+    assert_eq!(marked, [true, false, false, false]);
+}
+
 #[tokio::test]
 async fn files_a_turn_writes_become_artifacts_of_its_conversation() {
     let temp = tempfile::tempdir().unwrap();
@@ -6596,6 +6617,26 @@ async fn files_a_turn_writes_become_artifacts_of_its_conversation() {
         .unwrap()
         .is_empty());
     assert!(server.artifacts("missing", None, "", 10).await.is_err());
+
+    // Under which answer: after the turn's write call, the version it made.
+    let replies = server.reply_artifacts(PROJECT, &writer).await.unwrap();
+    assert_eq!(replies.len(), 1, "{replies:?}");
+    assert_eq!(replies[0].call_id, "write-1");
+    assert_eq!(replies[0].artifact, artifact.id);
+    assert_eq!(replies[0].name, "answer.txt");
+    assert_eq!(replies[0].path.as_deref(), Some("answer.txt"));
+    assert!(!replies[0].superseded);
+    let shown = snapshot(&server, &writer).await;
+    assert!(shown
+        .items
+        .iter()
+        .any(|item| item.role == "tool" && item.call_id.as_deref() == Some("write-1")));
+    assert!(server
+        .reply_artifacts(PROJECT, &idle)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(server.reply_artifacts("missing", &writer).await.is_err());
 
     // Its versions, and a copy of one saved elsewhere from its snapshot,
     // even after the file in the project changed.

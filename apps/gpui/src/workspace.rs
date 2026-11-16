@@ -11,6 +11,7 @@ mod favorites_view;
 mod files_panel;
 mod find_view;
 mod follow_ups_view;
+mod generated_view;
 mod home_view;
 mod hosts_view;
 mod import_view;
@@ -755,6 +756,18 @@ pub struct Workspace {
     /// Pictures the open project's answers point at, by path. `None` is a
     /// picture that is being read or could not be.
     inline_images: HashMap<String, Option<std::sync::Arc<Image>>>,
+    /// The files each turn of the open conversation recorded, as the host
+    /// lists them for the answers that close those turns.
+    reply_artifacts: Vec<wisp_server::desktop::ReplyArtifact>,
+    /// Those files by the row of the answer they go under, worked out again
+    /// whenever the rows or the files change.
+    generated: HashMap<usize, crate::generated::Reply>,
+    /// The open "Generated" lists and folders while the conversation stays
+    /// loaded: an answer's key with "" for the list itself, or a folder's
+    /// path in it.
+    generated_open: HashSet<(String, String)>,
+    /// Only the latest request may fill `reply_artifacts`.
+    reply_artifacts_request: u64,
     /// The picture being previewed in the Files panel, with its path.
     file_image: Option<(String, std::sync::Arc<Image>)>,
     /// The document being previewed, turned into text, with its path.
@@ -1718,6 +1731,10 @@ impl Workspace {
             structure_turn: (0.0, 0.0),
             structure_drag: None,
             inline_images: HashMap::new(),
+            reply_artifacts: Vec::new(),
+            generated: HashMap::new(),
+            generated_open: HashSet::new(),
+            reply_artifacts_request: 0,
             favorite_request: 0,
             rename,
             settings,
@@ -2625,6 +2642,12 @@ impl Workspace {
         self.expanded_run = None;
         self.close_search();
         self.open_tools.clear();
+        // The files under the answers, and what was open of them, were the
+        // conversation's being left.
+        self.reply_artifacts.clear();
+        self.generated.clear();
+        self.generated_open.clear();
+        self.reply_artifacts_request += 1;
         self.list.reset(0);
     }
 
@@ -2705,6 +2728,7 @@ impl Workspace {
         self.load_saved(window, cx);
         self.ensure_files(window, cx);
         self.reload_artifacts(window, cx);
+        self.load_reply_artifacts(window, cx);
         self.remember_place(window, cx);
     }
 
@@ -2920,6 +2944,7 @@ impl Workspace {
                                         this.refresh_lists(window, cx);
                                         this.reload_files(window, cx);
                                         this.reload_artifacts(window, cx);
+                                        this.load_reply_artifacts(window, cx);
                                         if this.agents_visible() {
                                             this.load_batches(window, cx);
                                         }
@@ -2979,6 +3004,7 @@ impl Workspace {
         self.list
             .splice(prefix..self.rows.len(), rows.len() - prefix);
         self.rows = rows;
+        self.place_generated();
         // The same words, in the transcript as it is now.
         if self.layers.contains(Layer::Find) {
             self.find.refresh(&self.rows);

@@ -22,6 +22,14 @@ Manual smoke: generate many outputs across nested directories, open Generated,
 check counts, expand individual folders, preview a file, and use Open in center.
 Check a narrow window, keyboard toggling, root files and duplicate basenames.
 
+In the GPUI desktop the list holds the project files the turn recorded as
+artifacts: those written with `write` or `edit` and by Python, R or shell code
+the model ran. It is under the turn's last answer. Tables and equations inside
+the answer, uploaded files and outputs a run harvested outside a turn are not
+listed, and turns that ended before the host started keeping which answer its
+artifacts belong to have no list (their files are in the Artifacts tab).
+Clicking a file opens it in the Files tab; there is no Open in center yet.
+
 An open artifact preview stays in place while background tools produce or update
 other outputs. Its zoom, provenance tab, and unsent code edits are preserved;
 image navigation updates as new images become available. Selecting another image

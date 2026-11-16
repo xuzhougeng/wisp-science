@@ -24,6 +24,35 @@ pub struct OutcomeEvent {
     pub outcome: ToolOutcome,
 }
 
+/// The `kind` of the event that says which artifact versions a turn
+/// recorded.
+pub const ARTIFACTS_EVENT: &str = "ServerArtifacts";
+
+/// Kept beside a conversation's messages when a turn ends having recorded
+/// artifacts: the versions it recorded, and the last tool call of the turn,
+/// so a client can show the files under the answer that closes that call's
+/// turn. A client finds the call among its rows by id, whatever page of the
+/// transcript it has loaded.
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ArtifactsEvent {
+    pub kind: String,
+    pub call_id: String,
+    pub versions: Vec<String>,
+}
+
+/// The id of the last tool call among `messages`: the latest tool result's
+/// call, or the last call the model asked for when its result never came.
+pub(crate) fn last_call(messages: &[Message]) -> Option<String> {
+    messages
+        .iter()
+        .rev()
+        .find_map(|message| match message.role {
+            wisp_llm::Role::Tool => message.tool_call_id.clone(),
+            wisp_llm::Role::Assistant => message.tool_calls.last().map(|call| call.id.clone()),
+            _ => None,
+        })
+}
+
 pub struct PersistedMessage {
     pub message: Message,
     pub outcome: Option<ToolOutcome>,
@@ -644,6 +673,52 @@ mod tests {
                 context_tokens: 1_200,
                 max_context: 64_000,
             })
+        );
+    }
+
+    #[test]
+    fn a_turns_artifacts_are_shown_after_its_last_tool_call() {
+        let asked = |ids: &[&str]| {
+            let mut message = Message::assistant("");
+            message.tool_calls = ids
+                .iter()
+                .map(|id| wisp_llm::ToolCall {
+                    id: (*id).into(),
+                    kind: "function".into(),
+                    function: wisp_llm::FunctionCall {
+                        name: "python".into(),
+                        arguments: "{}".into(),
+                    },
+                })
+                .collect();
+            message
+        };
+        let turn = [
+            Message::user("plot it"),
+            asked(&["c1", "c2"]),
+            Message::tool("c1", "python", "ok"),
+            Message::tool("c2", "write", "ok"),
+            Message::assistant("Done."),
+        ];
+        assert_eq!(last_call(&turn).as_deref(), Some("c2"));
+        // A call whose result never came is still the turn's last.
+        assert_eq!(last_call(&turn[..2]).as_deref(), Some("c2"));
+        // A turn without tool calls has none to show its files after.
+        assert_eq!(
+            last_call(&[Message::user("hi"), Message::assistant("Hello")]),
+            None
+        );
+        // The event reads back as it was written.
+        let event = ArtifactsEvent {
+            kind: ARTIFACTS_EVENT.into(),
+            call_id: "c2".into(),
+            versions: vec!["v1".into()],
+        };
+        let saved = serde_json::to_string(&event).unwrap();
+        assert!(saved.starts_with(r#"{"kind":"ServerArtifacts""#), "{saved}");
+        assert_eq!(
+            serde_json::from_str::<ArtifactsEvent>(&saved).unwrap(),
+            event
         );
     }
 }

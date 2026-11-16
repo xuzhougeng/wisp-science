@@ -394,6 +394,7 @@ impl Workspace {
         self.clear_transcript();
         self.start_poll(window, cx);
         self.load_status(window, cx);
+        self.load_reply_artifacts(window, cx);
     }
 
     /// Starts a branch that holds the conversation through the turn the row
