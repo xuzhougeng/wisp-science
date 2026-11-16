@@ -10,7 +10,7 @@ use gpui_component::{
 };
 use wisp_server::desktop::RuntimeLanguage;
 
-use super::{Workspace, shell::icon_button};
+use super::{Workspace, shell::icon_button, surfaces};
 use crate::{backend::receive, console, layers::Layer};
 
 impl Workspace {
@@ -168,7 +168,7 @@ impl Workspace {
         cx.notify();
     }
 
-    pub(super) fn render_console(&self, cx: &mut Context<Self>) -> Option<Div> {
+    pub(super) fn render_console(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         if !self.layers.contains(Layer::RuntimeConsole) {
             return None;
         }
@@ -182,19 +182,15 @@ impl Workspace {
             .map(crate::controls::runtime_label)
             .unwrap_or_else(|| tr("Interpreter").to_owned());
         let busy = self.console_busy;
-        let mut panel = div()
+        let mut panel = surfaces::bar("runtime-console", cx)
             .v_flex()
             .gap_2()
-            .p_2()
             .max_h(px(420.))
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(cx.theme().border)
             .child(
                 div()
                     .h_flex()
                     .gap_2()
-                    .child(div().flex_1().text_sm().font_semibold().child(label))
+                    .child(div().flex_1().font_weight(FontWeight::MEDIUM).child(label))
                     .child(
                         Button::new("console-restart")
                             .label(tr("Restart"))

@@ -105,6 +105,16 @@ names and never a colour of their own.
 - The conversation keeps a reading column (`surfaces::READING_WIDTH`),
   centred in the space the sidebar and the side panel leave. The composer
   sits in the same column.
+- What waits between the transcript and the composer (approvals and plans
+  to approve, the line about a review, hooks that failed, a drafted memory,
+  the questions to ask next, the transfer tray) and the composer's own
+  strips (an interpreter's console, the model's thinking, queued messages,
+  the full-access question) are bars in that column, their edges on the
+  composer box's at any width. A bar is a card (`surfaces::bar`): white,
+  a hairline, `radius_lg`, no shadow and no tint; its status is the
+  theme's colour on an icon or a word, and it has at most one filled
+  button. Bars stack with a small gap; approvals and transfers scroll
+  inside a capped height, so a stack of them never takes the transcript.
 - The conversation's name in the bar above it is a Title. What can be done
   with the conversation (rename, pin, group, move, export, review, archive,
   delete) is a menu under the bar's More button, in groups with a hairline
@@ -140,14 +150,14 @@ names and never a colour of their own.
 | --- | --- |
 | Colours, radius, base sizes | `apps/gpui/assets/wisp-theme.json` |
 | The rem and the palettes | `apps/gpui/src/theme.rs` |
-| Titles, display text, cards, the reading column, the on/off switch | `apps/gpui/src/workspace/surfaces.rs` |
+| Titles, display text, cards, the reading column, the bars above the composer (`bar`, `above_composer`), the on/off switch | `apps/gpui/src/workspace/surfaces.rs` |
 | A setting's row: name and note on the left, control on the right | `setting` in `apps/gpui/src/workspace/settings_sections.rs` |
 
 ## Not done yet
 
 The first change that follows this page restyles the theme, the home page,
 the conversation's column, its actions and the composer's settings; a second
-puts a switch in place of every On/Off button. Still to bring under it:
-dialogs drawn from one shape, `text_lg()` titles in individual views,
-per-view shadows, the side panel as margin notes, and the bars above the
-composer (approvals, follow-ups, reviews), which still run the full width.
+puts a switch in place of every On/Off button; a third puts the bars above
+the composer in its column. Still to bring under it: dialogs drawn from one
+shape, `text_lg()` titles in individual views, per-view shadows, and the
+side panel as margin notes.

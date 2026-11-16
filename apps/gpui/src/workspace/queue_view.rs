@@ -8,7 +8,7 @@ use gpui_component::{
     button::{Button, ButtonVariants},
 };
 
-use super::{Workspace, shell::glyph};
+use super::{Workspace, shell::glyph, surfaces};
 use crate::{assets::icon, backend::receive, compose::Pending, controls, queue};
 use wisp_dto::native_conversations::SendRequest;
 use wisp_server::desktop::QueuedMessage;
@@ -239,7 +239,11 @@ impl Workspace {
 
     /// What waits in the open conversation, above the composer; nothing
     /// when nothing waits.
-    pub(super) fn queue_strip(&self, running: bool, cx: &mut Context<Self>) -> Option<Div> {
+    pub(super) fn queue_strip(
+        &self,
+        running: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<Stateful<Div>> {
         self.state.session.as_ref()?;
         let waiting = self.waiting();
         if waiting.is_empty() {
@@ -270,7 +274,7 @@ impl Workspace {
                     .on_click(cx.listener(|this, _, window, cx| this.send_next_queued(window, cx))),
             );
         }
-        let mut strip = div().v_flex().gap_1().px_1().child(heading);
+        let mut strip = surfaces::bar("queue", cx).v_flex().gap_1().child(heading);
         for queued in waiting {
             let id = queued.id;
             // Only words can be read mid-turn; attachments wait for a turn.

@@ -1162,13 +1162,13 @@ impl Workspace {
             return None;
         }
         let attention = tone_color(Tone::Attention, cx);
+        // Several at once scroll here, so they never push the transcript
+        // out of the window.
         let mut approvals = div()
             .id("approvals")
             .v_flex()
             .flex_shrink_0()
             .gap_2()
-            .px_4()
-            .pb_2()
             .max_h(px(260.))
             .overflow_y_scroll();
         for approval in &snapshot.approvals {
@@ -1182,14 +1182,9 @@ impl Workspace {
             if let Some(picture) = controls::image_resize(&approval.message) {
                 let (resize, cancel) = (id.clone(), id.clone());
                 approvals = approvals.child(
-                    div()
+                    surfaces::bar(SharedString::from(format!("approval-{id}")), cx)
                         .v_flex()
                         .gap_2()
-                        .p_3()
-                        .rounded(cx.theme().radius_lg)
-                        .border_1()
-                        .border_color(attention.opacity(0.5))
-                        .bg(attention.opacity(0.06))
                         .child(
                             div()
                                 .h_flex()
@@ -1297,14 +1292,9 @@ impl Workspace {
             buttons = buttons.child(answer(tr("Deny"), "ban", false, Remember::No));
             approvals =
                 approvals.child(
-                    div()
+                    surfaces::bar(SharedString::from(format!("approval-{id}")), cx)
                         .v_flex()
                         .gap_2()
-                        .p_3()
-                        .rounded(cx.theme().radius_lg)
-                        .border_1()
-                        .border_color(attention.opacity(0.5))
-                        .bg(attention.opacity(0.06))
                         .child(
                             div()
                                 .h_flex()
@@ -1339,16 +1329,16 @@ impl Workspace {
 
     /// A plan the model asks to start on: its steps, to approve, to turn
     /// down, or to send back with what should change.
-    fn plan_approval_card(&self, id: String, steps: Vec<String>, cx: &mut Context<Self>) -> Div {
+    fn plan_approval_card(
+        &self,
+        id: String,
+        steps: Vec<String>,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         let attention = tone_color(Tone::Attention, cx);
-        let mut card = div()
+        let mut card = surfaces::bar(SharedString::from(format!("approval-{id}")), cx)
             .v_flex()
             .gap_2()
-            .p_3()
-            .rounded(cx.theme().radius_lg)
-            .border_1()
-            .border_color(attention.opacity(0.5))
-            .bg(attention.opacity(0.06))
             .child(
                 div()
                     .h_flex()
@@ -2209,7 +2199,9 @@ impl Workspace {
                 .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
         );
 
-        let mut area = div().v_flex().flex_shrink_0().gap_1().px_4().pb_4().pt_1();
+        // `px_4` is the inset `surfaces::above_composer` shares, so the bars
+        // there line up with the box below.
+        let mut area = div().v_flex().flex_shrink_0().gap_2().px_4().pb_4().pt_1();
         if let Some(console) = self.render_console(cx) {
             area = area.child(console);
         }
@@ -2308,13 +2300,9 @@ impl Workspace {
             .filter(|text| running && !text.trim().is_empty());
         if let Some(thinking) = thinking {
             area = area.child(
-                div()
+                surfaces::bar("thinking", cx)
                     .v_flex()
                     .gap_1()
-                    .px_3()
-                    .py_2()
-                    .rounded(cx.theme().radius)
-                    .bg(cx.theme().muted)
                     .child(
                         div()
                             .h_flex()
@@ -2355,13 +2343,9 @@ impl Workspace {
         }
         if self.layers.contains(Layer::ConfirmFullAccess) {
             area = area.child(
-                div()
+                surfaces::bar("full-access-question", cx)
                     .h_flex()
                     .gap_2()
-                    .px_3()
-                    .py_2()
-                    .rounded(cx.theme().radius)
-                    .bg(attention.opacity(0.08))
                     .child(icon("bolt").text_color(attention))
                     .child(div().flex_1().min_w_0().text_sm().child(tr(
                         "Let Wisp change files and run commands in this conversation without \
@@ -2649,26 +2633,25 @@ impl Workspace {
                 )
                 .children(pet),
         );
-        if let Some(approvals) = self.render_approvals(cx) {
-            content = content.child(approvals);
-        }
-        if let Some(review) = self.render_review_banner(cx) {
-            content = content.child(review);
-        }
-        if let Some(failures) = self.render_hook_failures(cx) {
-            content = content.child(failures);
-        }
-        if let Some(proposal) = self.render_memory_proposal(cx) {
-            content = content.child(proposal);
-        }
-        if let Some(follow_ups) = self.render_follow_ups(cx) {
-            content = content.child(follow_ups);
-        }
-        if let Some(transfers) = self.render_transfers(cx) {
-            content = content.child(transfers);
-        }
+        // What waits on the user between the transcript and the composer
+        // keeps the composer's column, with its edges on the composer box's.
+        let bars = [
+            self.render_approvals(cx).map(IntoElement::into_any_element),
+            self.render_review_banner(cx)
+                .map(IntoElement::into_any_element),
+            self.render_hook_failures(cx)
+                .map(IntoElement::into_any_element),
+            self.render_memory_proposal(cx)
+                .map(IntoElement::into_any_element),
+            self.render_follow_ups(cx)
+                .map(IntoElement::into_any_element),
+            self.render_transfers(cx).map(IntoElement::into_any_element),
+        ];
         // The composer sits in the same column as what it answers.
         content
+            .children(surfaces::above_composer(
+                bars.into_iter().flatten().collect(),
+            ))
             .child(surfaces::reading_column(self.render_composer(running, cx)).flex_shrink_0())
             .children(self.render_terminal_dock(cx))
     }

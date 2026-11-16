@@ -8,8 +8,9 @@ use gpui_component::{
     button::{Button, ButtonVariants},
 };
 
-use super::{Workspace, shell::error_banner, tone_color};
+use super::{Workspace, shell::error_banner, surfaces, tone_color};
 use crate::{
+    assets::icon,
     backend::receive,
     layers::Layer,
     review::{self, Asked},
@@ -113,27 +114,21 @@ impl Workspace {
     }
 
     /// The line above the composer about the review of the latest turn.
-    pub(super) fn render_review_banner(&self, cx: &mut Context<Self>) -> Option<Div> {
+    pub(super) fn render_review_banner(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let outcome = self.status.as_ref()?.review.as_ref()?;
         let (said, tone, opens) = review::banner(outcome);
-        let mut line = div()
+        let tone = tone_color(tone, cx);
+        let mut line = surfaces::bar("review-banner", cx)
             .h_flex()
-            .flex_shrink_0()
             .gap_2()
-            .mx_4()
-            .mb_2()
-            .px_3()
-            .py_1p5()
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(cx.theme().border)
+            .child(icon("review").text_color(tone))
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .truncate()
                     .text_sm()
-                    .text_color(tone_color(tone, cx))
+                    .text_color(tone)
                     .child(said),
             );
         if let (true, wisp_server::desktop::ReviewOutcome::Done(found)) = (opens, outcome) {

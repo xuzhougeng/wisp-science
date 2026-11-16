@@ -1,12 +1,13 @@
 //! The shapes every page shares, from `docs/gpui-design-language.md`: the
-//! two text roles above body size with their serif face, the card, and the
-//! conversation's reading column, and the switch of an on/off setting.
+//! two text roles above body size with their serif face, the card, the
+//! conversation's reading column with the bars above its composer, and the
+//! switch of an on/off setting.
 //! Views take these instead of choosing a size, a face, a border or a
 //! control of their own.
 use std::rc::Rc;
 
 use gpui::{prelude::*, *};
-use gpui_component::{ActiveTheme, Disableable, switch::Switch, tooltip::Tooltip};
+use gpui_component::{ActiveTheme, Disableable, StyledExt, switch::Switch, tooltip::Tooltip};
 
 /// The serif face of titles.
 const SERIF: &str = "Georgia";
@@ -152,6 +153,24 @@ pub(super) fn reading_column(child: impl IntoElement) -> Div {
         .child(div().w_full().max_w(px(READING_WIDTH)).child(child))
 }
 
+/// The shape of a bar above the composer (an approval, the line about a
+/// review, a hook that failed, a drafted memory, the questions to ask
+/// next, the transfers, the composer's own strips): a card kept compact.
+/// The caller lays out its row or column.
+pub(super) fn bar(id: impl Into<ElementId>, cx: &App) -> Stateful<Div> {
+    card(id, cx).flex_shrink_0().px_3().py_2()
+}
+
+/// Stacks the bars that sit between the transcript and the composer in the
+/// conversation's reading column. The inset is the composer's own
+/// (`px_4` in `render_composer`), so their edges are the composer box's at
+/// any width.
+pub(super) fn above_composer(bars: Vec<AnyElement>) -> Option<Div> {
+    (!bars.is_empty()).then(|| {
+        reading_column(div().v_flex().gap_2().px_4().pt_2().pb_1().children(bars)).flex_shrink_0()
+    })
+}
+
 /// The items of a grid `columns` wide, row by row; the last row may be
 /// short.
 pub(super) fn rows_of<T>(items: Vec<T>, columns: usize) -> Vec<Vec<T>> {
@@ -295,6 +314,80 @@ mod tests {
         assert_eq!(rows_of(Vec::<u8>::new(), 2), Vec::<Vec<u8>>::new());
         // No columns is one column, not a loop that never ends.
         assert_eq!(rows_of(vec![1, 2], 0), vec![vec![1], vec![2]]);
+    }
+
+    /// The text of method `name` in `source`, from its signature to the
+    /// brace that closes it at the `impl`'s indent.
+    fn method<'a>(source: &'a str, name: &str) -> Option<&'a str> {
+        let start = source.find(&format!("fn {name}("))?;
+        let rest = &source[start..];
+        Some(&rest[..rest.find("\n    }\n")?])
+    }
+
+    #[test]
+    fn the_bars_above_the_composer_are_cards_in_its_column() {
+        let files = sources();
+        let file = |name: &str| {
+            files
+                .iter()
+                .find(|(path, _)| path.ends_with(name))
+                .map(|(_, text)| text.as_str())
+                .unwrap_or_else(|| panic!("no {name}"))
+        };
+        // Each is drawn as `bar`, with no margin, fill, tint or shadow of
+        // its own that would take it out of the column or the family.
+        for (name, function) in [
+            ("workspace/shell.rs", "render_approvals"),
+            ("workspace/shell.rs", "plan_approval_card"),
+            ("workspace/review_view.rs", "render_review_banner"),
+            ("workspace/settings_hooks.rs", "render_hook_failures"),
+            ("workspace/memory_view.rs", "render_memory_proposal"),
+            ("workspace/follow_ups_view.rs", "render_follow_ups"),
+            ("workspace/transfers_view.rs", "render_transfers"),
+            ("workspace/queue_view.rs", "queue_strip"),
+            ("workspace/runtime_console_view.rs", "render_console"),
+        ] {
+            let body = method(file(name), function)
+                .unwrap_or_else(|| panic!("{name} has no fn {function}"));
+            assert!(body.contains("surfaces::bar("), "{function} is not a bar");
+            for other in [
+                ".mx_4()",
+                ".mb_2()",
+                ".shadow",
+                ".bg(attention",
+                ".border_color(attention",
+                ".bg(cx.theme().secondary)",
+            ] {
+                assert!(!body.contains(other), "{function} uses {other}");
+            }
+        }
+        // Those between the transcript and the composer are stacked in the
+        // composer's column, not added to the page one by one.
+        let conversation = method(file("workspace/shell.rs"), "render_conversation").unwrap();
+        let from = conversation
+            .find("let bars")
+            .expect("the bars are gathered");
+        let to = conversation
+            .find("surfaces::above_composer(")
+            .expect("and stacked above the composer");
+        let gathered = &conversation[from..to];
+        for function in [
+            "render_approvals",
+            "render_review_banner",
+            "render_hook_failures",
+            "render_memory_proposal",
+            "render_follow_ups",
+            "render_transfers",
+        ] {
+            assert!(
+                gathered.contains(&format!("self.{function}(")),
+                "{function}"
+            );
+            assert_eq!(
+                conversation.matches(&format!("self.{function}(")).count(),
+                1
+            );
+        }
     }
 
     #[test]

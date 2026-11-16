@@ -12,7 +12,7 @@ use gpui_component::{
 use super::{
     Workspace,
     shell::{error_banner, glyph, icon_button},
-    surfaces::switch,
+    surfaces::{self, switch},
 };
 use crate::{
     assets::icon,
@@ -368,20 +368,12 @@ impl Workspace {
 
     /// The line above the composer about a memory drafted after the latest
     /// turn.
-    pub(super) fn render_memory_proposal(&self, cx: &mut Context<Self>) -> Option<Div> {
+    pub(super) fn render_memory_proposal(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let proposal = self.status.as_ref()?.memory_proposal.as_ref()?;
         Some(
-            div()
+            surfaces::bar("memory-proposal", cx)
                 .h_flex()
-                .flex_shrink_0()
                 .gap_2()
-                .mx_4()
-                .mb_2()
-                .px_3()
-                .py_1p5()
-                .rounded(cx.theme().radius)
-                .border_1()
-                .border_color(cx.theme().border)
                 .child(icon("memory").text_color(cx.theme().muted_foreground))
                 .child(
                     div()
