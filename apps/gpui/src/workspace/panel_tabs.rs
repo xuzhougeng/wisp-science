@@ -34,7 +34,10 @@ impl Workspace {
     ) {
         self.layers.close(Layer::FilePreview);
         self.layers.close(Layer::PanelTabMenu);
-        self.files.close_preview();
+        // The panel's preview, not a document shown in the centre.
+        if !self.preview_in_centre() {
+            self.files.close_preview();
+        }
         // What a tab showed in place of its list is not left open, out of
         // sight, for Escape to close.
         if tab != PanelTab::Files {
@@ -1257,6 +1260,20 @@ impl Workspace {
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.star_artifact(session.clone(), path.clone(), window, cx)
                     })),
+                );
+            }
+            // As the WebView's Open in center on an artifact's tile.
+            if let Some(path) = artifact
+                .path
+                .clone()
+                .filter(|_| self.state.session.is_some())
+            {
+                row = row.child(
+                    icon_button(("artifact-centre", index), "doc", tr("Open in centre"))
+                        .xsmall()
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.open_in_centre(path.clone(), window, cx)
+                        })),
                 );
             }
             if let Some(path) = artifact.path.clone() {

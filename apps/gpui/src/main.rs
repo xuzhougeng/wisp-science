@@ -9,6 +9,7 @@ mod assistant;
 mod backend;
 mod browser;
 mod calendar;
+mod centre;
 mod channels;
 mod cif;
 mod codex_pool;

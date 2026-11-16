@@ -6,6 +6,7 @@ mod assistant_view;
 mod browser_prompts_view;
 mod calendar_view;
 mod capabilities_view;
+mod centre_view;
 mod compact_view;
 mod conversation_actions;
 mod demos_view;
@@ -387,6 +388,13 @@ pub struct Workspace {
     known: HashMap<String, SessionSearchInfo>,
     /// The conversations opened in this window, as tabs.
     tabs: crate::tabs::Tabs,
+    /// The project files each conversation has open in the centre, as tabs
+    /// after its own, and the split that puts it beside the one shown.
+    centre: crate::centre::Centre,
+    /// The document tab whose menu is open, by its path.
+    centre_menu: Option<String>,
+    /// How wide the split centre was when last drawn, for its widths.
+    centre_width: std::rc::Rc<std::cell::Cell<Option<f32>>>,
     /// The SSH host folder the Files tab is looking at, instead of the
     /// project's own files.
     remote: Option<crate::files::RemoteBrowse>,
@@ -1816,6 +1824,9 @@ impl Workspace {
             inbox: vec![],
             known: HashMap::new(),
             tabs: Default::default(),
+            centre: Default::default(),
+            centre_menu: None,
+            centre_width: std::rc::Rc::default(),
             remote: None,
             run_logs: HashMap::new(),
             open_search: None,
@@ -2412,6 +2423,7 @@ impl Workspace {
             ) => {}
             // A move waiting to be confirmed is forgotten with its menu.
             Some(Layer::TransferMenu) => self.transfer_preview = None,
+            Some(Layer::CentreTabMenu) => self.centre_menu = None,
             None => return false,
         }
         cx.notify();
@@ -2629,6 +2641,12 @@ impl Workspace {
     /// Changes the selection. File state belongs to a project, so a preview
     /// from the previous project must not stay open over the new one.
     fn choose(&mut self, project: Option<String>, session: Option<String>) {
+        // The document the centre shows is the conversation's being left:
+        // its tab stays with it, and it is read again when it comes back
+        // (`restore_centre`).
+        if self.state.session != session && self.preview_in_centre() {
+            self.drop_preview();
+        }
         if self.state.project != project {
             self.layers.close(Layer::FilePreview);
             // A host's runs and placed files are the project's.
@@ -2689,9 +2707,11 @@ impl Workspace {
             Layer::BranchMerge,
             Layer::RunReview,
             Layer::ShareMessages,
+            Layer::CentreTabMenu,
         ] {
             self.layers.close(layer);
         }
+        self.centre_menu = None;
         self.run_review = None;
         self.sharing = None;
         self.archive = None;
@@ -3263,6 +3283,8 @@ impl Workspace {
         self.start_poll(window, cx);
         self.load_status(window, cx);
         self.load_saved(window, cx);
+        // The documents it had open come back, the one it showed with them.
+        self.restore_centre(window, cx);
         self.ensure_files(window, cx);
         self.reload_artifacts(window, cx);
         self.load_reply_artifacts(window, cx);
@@ -4839,7 +4861,7 @@ impl Render for Workspace {
                     if !self.sidebar_hidden {
                         row = row.child(self.render_sidebar(cx));
                     }
-                    row = row.child(self.render_conversation(cx));
+                    row = row.child(self.render_conversation(window, cx));
                     if self.layers.contains(Layer::FilesPanel) {
                         row = row.child(self.render_files(window, cx));
                     }

@@ -1018,6 +1018,13 @@ pub const ZH: &[(&str, &str)] = &[
     ("Play a sound", "播放提示音"),
     ("Also play a sound then, whether or not a notification is posted.", "此时同时播放提示音，无论是否发出通知。"),
     ("Close this tab; the conversation is kept", "关闭这个标签页；会话会保留"),
+    // Documents in the centre, in the WebView's words (`center.*`).
+    ("Open in centre", "在中间打开"),
+    ("Close tab", "关闭标签"),
+    ("Close current", "关闭当前"),
+    ("Close tabs to the right", "关闭右侧标签"),
+    ("Close all files", "关闭全部文件"),
+    ("Chat beside the document", "在文档旁边对话"),
     // Updates.
     ("Updates", "更新"),
     ("Check for updates", "检查更新"),

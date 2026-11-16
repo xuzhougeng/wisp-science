@@ -2582,10 +2582,12 @@ impl Workspace {
     }
 
     /// Everything to the right of the sidebar.
-    pub(super) fn render_conversation(&self, cx: &mut Context<Self>) -> Div {
+    pub(super) fn render_conversation(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
         let drop_tint = cx.theme().primary.opacity(0.06);
-        let mut content = div()
+        // The tabs and the conversation's header stay over a document
+        // shown in the centre; what follows them is the conversation.
+        let page = div()
             .v_flex()
             .flex_1()
             .min_w(px(300.))
@@ -2598,6 +2600,7 @@ impl Workspace {
             }))
             .children(self.render_tabs(cx))
             .child(self.render_topbar(cx));
+        let mut content = div().v_flex().flex_1().min_w_0().min_h_0();
         if let Some(bar) = self.render_conversation_bar(cx) {
             content = content.child(bar);
         }
@@ -2653,33 +2656,35 @@ impl Workspace {
         }
         if self.state.session.is_none() {
             let can_start = !self.pending && self.state.project.is_some();
-            return content.child(
-                div()
-                    .v_flex()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .gap_3()
-                    .p_8()
-                    .child(surfaces::display(tr(
-                        "What would you like to research today?",
-                    )))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(tr("Start a conversation, or pick one on the left.")),
-                    )
-                    .child(
-                        Button::new("empty-new-chat")
-                            .icon(glyph("plus"))
-                            .label(tr("New conversation"))
-                            .primary()
-                            .disabled(!can_start)
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.create_session(window, cx)),
-                            ),
-                    ),
+            return page.child(
+                content.child(
+                    div()
+                        .v_flex()
+                        .flex_1()
+                        .items_center()
+                        .justify_center()
+                        .gap_3()
+                        .p_8()
+                        .child(surfaces::display(tr(
+                            "What would you like to research today?",
+                        )))
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(tr("Start a conversation, or pick one on the left.")),
+                        )
+                        .child(
+                            Button::new("empty-new-chat")
+                                .icon(glyph("plus"))
+                                .label(tr("New conversation"))
+                                .primary()
+                                .disabled(!can_start)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.create_session(window, cx)
+                                })),
+                        ),
+                ),
             );
         }
         if self.before.is_some() {
@@ -2761,11 +2766,14 @@ impl Workspace {
                 .map(IntoElement::into_any_element),
         ];
         // The composer sits in the same column as what it answers.
-        content
+        let content = content
             .children(surfaces::above_composer(
                 bars.into_iter().flatten().collect(),
             ))
-            .child(surfaces::reading_column(self.render_composer(running, cx)).flex_shrink_0())
+            .child(surfaces::reading_column(self.render_composer(running, cx)).flex_shrink_0());
+        // A document opened in the centre takes the conversation's place,
+        // or sits beside it; the terminals stay at the foot of the page.
+        self.render_centre(page, content, window, cx)
             .children(self.render_terminal_dock(cx))
     }
 }

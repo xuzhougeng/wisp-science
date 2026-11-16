@@ -920,6 +920,7 @@ mod tests {
             ("workspace/shell.rs", "outline_menu"),
             ("workspace/conversation_actions.rs", "conversation_menu"),
             ("workspace/panel_tabs.rs", "panel_tab_menu"),
+            ("workspace/centre_view.rs", "centre_tab_menu"),
             ("workspace/organise_view.rs", "popup"),
             ("workspace/demos_view.rs", "example_copy_menu"),
             ("workspace/terminal_view.rs", "terminal_hosts_menu"),
@@ -1220,6 +1221,56 @@ mod tests {
                 "{function}"
             );
         }
+    }
+
+    #[test]
+    fn a_document_in_the_centre_is_the_files_tabs_preview_beside_a_reading_column() {
+        let files = sources();
+        let file = |name: &str| {
+            files
+                .iter()
+                .find(|(path, _)| path.ends_with(name))
+                .map(|(_, text)| text.as_str())
+                .unwrap_or_else(|| panic!("no {name}"))
+        };
+        let panel = file("workspace/files_panel.rs");
+        let centre = file("workspace/centre_view.rs");
+        // One preview, drawn in either place from the same parts: the Files
+        // tab and the centre both take `preview_parts`, which holds the
+        // header, the editor's and the picture's bars and the preview.
+        let parts = method(panel, "preview_parts").unwrap();
+        for part in [
+            "surfaces::panel_header(",
+            "self.render_file_editor_bar(cx)",
+            "self.render_picture_bar(cx)",
+            "self.render_preview(window, cx)",
+        ] {
+            assert!(parts.contains(part), "preview_parts has no {part}");
+        }
+        let side = method(panel, "render_files").unwrap();
+        assert_eq!(side.matches("self.preview_parts(").count(), 1);
+        let document = method(centre, "render_centre_document").unwrap();
+        assert!(document.contains("self.preview_parts("));
+        // The centre draws no preview of its own.
+        for own in [
+            "TextView::",
+            "Input::new(",
+            "img(",
+            "self.render_preview(",
+            "self.render_picture(",
+            "self.render_file_editor(",
+        ] {
+            assert!(!centre.contains(own), "centre_view.rs uses {own}");
+        }
+        // The conversation keeps a column to read in beside a document, and
+        // the centre keeps room for both, so the side panel gives way first.
+        let split = method(centre, "render_centre").unwrap();
+        assert!(split.contains(".min_w(px(centre::CHAT_MIN))"));
+        assert!(split.contains("page.min_w(px(centre::SPLIT_MIN))"));
+        // The conversation's own rows keep the reading column in it.
+        let conversation = method(file("workspace/shell.rs"), "render_conversation").unwrap();
+        assert!(conversation.contains("self.render_centre(page, content, window, cx)"));
+        assert!(conversation.contains("surfaces::reading_column(row)"));
     }
 
     #[test]

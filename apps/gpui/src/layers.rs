@@ -98,6 +98,11 @@ pub enum Layer {
     /// The open conversation's actions, under the More button of its
     /// header. Group and Move open beside it.
     ConversationMenu,
+    /// What can be closed from a document's tab in the centre (it, the tabs
+    /// to its right, all of them), under the tab that was right-clicked.
+    /// The documents themselves are not layers: Escape never closes one,
+    /// as in the WebView.
+    CentreTabMenu,
     /// The research journey of the open project: a page of its own.
     Journey,
     /// The form on the journey page for a record of the researcher's own.
@@ -835,6 +840,38 @@ mod tests {
         assert!(stack.close(Layer::ConversationMenu));
         assert!(!stack.contains(Layer::TransferMenu));
         assert_eq!(stack.dismiss_top(), None);
+    }
+
+    #[test]
+    fn a_centre_tab_menu_closes_alone_and_a_document_never_does() {
+        // A document in the centre with the side panel open beside it, and
+        // the menu of a document's tab: one Escape, pressed right after the
+        // menu opened, closes the menu and nothing under it.
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::CentreTabMenu);
+        assert_eq!(stack.dismiss_top(), Some(Layer::CentreTabMenu));
+        assert!(stack.contains(Layer::FilesPanel));
+        // The document is not a layer: once the panel is gone too, Escape
+        // has nothing left to close, so a document with unsaved edits is
+        // never closed by it.
+        assert_eq!(stack.dismiss_top(), Some(Layer::FilesPanel));
+        assert_eq!(stack.dismiss_top(), None);
+        // A picture marked in the centre has no preview layer under its
+        // marking: Escape gives up the region, then the marking, and stops.
+        stack.open(Layer::PictureSelect);
+        stack.open(Layer::PictureRegion);
+        stack.open(Layer::CentreTabMenu);
+        assert_eq!(stack.dismiss_top(), Some(Layer::CentreTabMenu));
+        assert_eq!(stack.dismiss_top(), Some(Layer::PictureRegion));
+        assert!(stack.contains(Layer::PictureSelect));
+        assert_eq!(stack.dismiss_top(), Some(Layer::PictureSelect));
+        assert_eq!(stack.dismiss_top(), None);
+        // The question about a script changed on disk goes first there too.
+        stack.open(Layer::CentreTabMenu);
+        stack.open(Layer::FileChangedOnDisk);
+        assert_eq!(stack.dismiss_top(), Some(Layer::FileChangedOnDisk));
+        assert!(stack.contains(Layer::CentreTabMenu));
     }
 
     #[test]

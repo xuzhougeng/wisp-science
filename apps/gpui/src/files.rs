@@ -12,6 +12,8 @@ use wisp_dto::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ticket {
     generation: u64,
+    /// A preview's ticket, counted apart from the listings'.
+    preview: bool,
     pub project: String,
     pub path: String,
 }
@@ -83,11 +85,18 @@ pub fn sort_entries(entries: &mut [DirEntry], sort: FileSort) {
 #[derive(Default)]
 pub struct FilesState {
     generation: u64,
+    /// Previews count their requests apart from the listings', so a folder
+    /// listed in the Files tab does not drop a document being read for the
+    /// centre, nor the other way round.
+    preview_generation: u64,
     project: Option<String>,
     /// Directory currently listed; empty for the project root.
     pub path: String,
     pub entries: Vec<DirEntry>,
     pub loaded: bool,
+    /// A folder's listing is on its way; a preview being read is not
+    /// counted, so the list beside a document in the centre is still asked
+    /// for while it is read.
     pub loading: bool,
     /// File being previewed, known before its content arrives.
     pub preview_path: Option<String>,
@@ -176,14 +185,15 @@ impl FilesState {
         }
         *self = Self {
             generation: self.generation + 1,
+            preview_generation: self.preview_generation + 1,
             project: project.map(str::to_owned),
             sort: self.sort,
             ..Self::default()
         };
     }
 
-    /// Starts a directory or preview request for `path`, superseding any
-    /// request still in flight. `None` until a project is selected.
+    /// Starts a directory request for `path`, superseding any listing
+    /// still in flight. `None` until a project is selected.
     pub fn begin(&mut self, path: &str) -> Option<Ticket> {
         let project = self.project.clone()?;
         self.generation += 1;
@@ -191,25 +201,40 @@ impl FilesState {
         self.error = None;
         Some(Ticket {
             generation: self.generation,
+            preview: false,
             project,
             path: path.to_owned(),
         })
     }
 
-    /// Starts a preview request, replacing any preview already shown.
+    /// Starts a preview request, replacing any preview already shown and
+    /// superseding a preview request still in flight.
     pub fn begin_preview(&mut self, path: &str) -> Option<Ticket> {
-        let ticket = self.begin(path)?;
+        let project = self.project.clone()?;
+        self.preview_generation += 1;
+        self.error = None;
         self.preview = None;
         self.preview_path = Some(path.to_owned());
-        Some(ticket)
+        Some(Ticket {
+            generation: self.preview_generation,
+            preview: true,
+            project,
+            path: path.to_owned(),
+        })
     }
 
     fn current(&self, ticket: &Ticket) -> bool {
-        ticket.generation == self.generation && Some(&ticket.project) == self.project.as_ref()
+        let latest = if ticket.preview {
+            self.preview_generation
+        } else {
+            self.generation
+        };
+        ticket.generation == latest && Some(&ticket.project) == self.project.as_ref()
     }
 
     pub fn accept_directory(&mut self, ticket: &Ticket, directory: Directory) -> bool {
-        if !self.current(ticket)
+        if ticket.preview
+            || !self.current(ticket)
             || directory.schema != SCHEMA
             || directory.project_id != ticket.project
             || directory.path != ticket.path
@@ -231,14 +256,14 @@ impl FilesState {
     }
 
     pub fn accept_preview(&mut self, ticket: &Ticket, preview: Preview) -> bool {
-        if !self.current(ticket)
+        if !ticket.preview
+            || !self.current(ticket)
             || preview.schema != SCHEMA
             || preview.project_id != ticket.project
             || preview.requested_path != ticket.path
         {
             return false;
         }
-        self.loading = false;
         self.preview = Some(preview.content);
         true
     }
@@ -247,7 +272,9 @@ impl FilesState {
         if !self.current(ticket) {
             return false;
         }
-        self.loading = false;
+        if !ticket.preview {
+            self.loading = false;
+        }
         self.error = Some(error);
         true
     }
@@ -265,8 +292,7 @@ impl FilesState {
 
     /// Returns to the listing and drops a preview response still in flight.
     pub fn close_preview(&mut self) {
-        self.generation += 1;
-        self.loading = false;
+        self.preview_generation += 1;
         self.preview = None;
         self.preview_path = None;
     }
@@ -1424,6 +1450,36 @@ mod tests {
             files.preview.as_ref().unwrap().text.as_deref(),
             Some("# 笔记")
         );
+    }
+
+    #[test]
+    fn a_listing_and_a_preview_in_flight_do_not_drop_each_other() {
+        // A document read for the centre while the Files tab lists a
+        // folder beside it: each answer is taken.
+        let mut files = FilesState::default();
+        files.set_project(Some("p"));
+        let reading = files.begin_preview("analysis/fit.R").unwrap();
+        // Only a listing counts as the Files tab loading, so its folder is
+        // still asked for while the document is read.
+        assert!(!files.loading);
+        let listing = files.begin("data").unwrap();
+        assert!(files.loading);
+        assert!(files.accept_directory(&listing, directory("p", "data", &["a.csv"])));
+        assert!(!files.loading);
+        assert!(files.accept_preview(&reading, preview("p", "analysis/fit.R", "x <- 1")));
+        assert_eq!(files.path, "data");
+        assert_eq!(files.preview_path.as_deref(), Some("analysis/fit.R"));
+        // A ticket answers only what it asked for.
+        let listing = files.begin("").unwrap();
+        assert!(!files.accept_preview(&listing, preview("p", "", "x")));
+        let reading = files.begin_preview("notes.md").unwrap();
+        assert!(!files.accept_directory(&reading, directory("p", "notes.md", &[])));
+        // Each still supersedes its own kind, and a project switch both.
+        let newer = files.begin_preview("other.md").unwrap();
+        assert!(!files.accept_preview(&reading, preview("p", "notes.md", "late")));
+        files.set_project(Some("q"));
+        assert!(!files.accept_preview(&newer, preview("p", "other.md", "late")));
+        assert!(!files.accept_directory(&listing, directory("p", "", &["a"])));
     }
 
     #[test]
